@@ -244,6 +244,33 @@ mod tests {
     }
 
     #[test]
+    fn products_list_left_factors_before_right() {
+        let lhs: Expr<Fr, Opening, Derived, Challenge> =
+            derived(Derived::Offset) + constant(Fr::from_u64(2)) * opening(Opening::A);
+        let rhs = opening(Opening::B) * challenge(Challenge::Alpha) + opening(Opening::A);
+        let expr = lhs * rhs;
+
+        let term = |coefficient: u64, factors: Vec<Source<Opening, Derived, Challenge>>| Term {
+            coefficient: Fr::from_u64(coefficient),
+            factors,
+        };
+        let (a, b) = (Source::Opening(Opening::A), Source::Opening(Opening::B));
+        let (offset, alpha) = (
+            Source::Derived(Derived::Offset),
+            Source::Challenge(Challenge::Alpha),
+        );
+        assert_eq!(
+            expr.terms,
+            vec![
+                term(1, vec![offset.clone(), b.clone(), alpha.clone()]),
+                term(1, vec![offset, a.clone()]),
+                term(2, vec![a.clone(), b, alpha]),
+                term(2, vec![a.clone(), a]),
+            ]
+        );
+    }
+
+    #[test]
     fn expression_zero_power_is_one() {
         let expr: Expr<Fr, Opening, Derived, Challenge> = Expr::zero().pow(0);
 

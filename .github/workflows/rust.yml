@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install taplo
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: taplo-cli
       - name: taplo fmt --check
@@ -66,7 +66,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Require one jolt-field identity (no akita-field post-cutover)
@@ -101,6 +101,17 @@ jobs:
         run: cargo clippy --all --all-targets --features allocative,host,zk
       - name: cargo clippy --no-default-features
         run: cargo clippy --all --all-targets --no-default-features
+      # jolt-transcript's field codecs and sponge backends sit behind features
+      # that no workspace consumer enables together, so lint them all here.
+      - name: cargo clippy -p jolt-transcript --all-features
+        run: cargo clippy -p jolt-transcript --all-targets --all-features
+      # --all-features turns on parallel; lint the sequential nonce search too.
+      - name: cargo clippy -p jolt-transcript --features bn254,solinas,binary,prover-grinding
+        run: cargo clippy -p jolt-transcript --all-targets --features bn254,solinas,binary,prover-grinding
+      # jolt-poly's and jolt-sumcheck's binary features gate the F8 sumcheck
+      # domain. No workspace crate enables them, so build them explicitly.
+      - name: cargo clippy -p jolt-poly -p jolt-sumcheck --features binary
+        run: cargo clippy -p jolt-poly -p jolt-sumcheck --all-targets --features jolt-poly/binary,jolt-sumcheck/binary,jolt-sumcheck/committed,jolt-sumcheck/r1cs
       # jolt-verifier's prover-fixtures feature gates live prover artifact
       # generation for verifier tests. It is not enabled by the workspace-wide
       # invocations above, so build it explicitly in both modes.
@@ -205,7 +216,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: bnjbvr/cargo-machete@135555c9cd9f3b4723dee2766f0cacb99aac092b # main
+      - uses: bnjbvr/cargo-machete@fb7ff0f4aa2a60cf75ab656d27f67d47d719b830 # main
       - name: cargo machete
         run: cargo machete --with-metadata
 
@@ -263,7 +274,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests
@@ -318,7 +329,7 @@ jobs:
           shared-key: release-tests
           save-if: false
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       # Guest ELFs link ZeroOS, so building them needs its musl toolchain.
@@ -372,7 +383,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests with zk feature
@@ -418,7 +429,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       # The Akita arm of the guest x mode matrix plus the Akita prover
@@ -465,7 +476,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       # e2e_matrix selects field_ops, field_limbs, and muldiv for the
@@ -514,7 +525,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       # The same field_ops, field_limbs, and muldiv matrix table runs over fp128.
@@ -567,7 +578,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       # The fixture-driven field-inline suites: valid-fixture acceptance
@@ -606,7 +617,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       # The fixture-driven akita suites: valid-fixture acceptance
@@ -733,7 +744,7 @@ jobs:
         with:
           shared-key: dev-tests-${{ matrix.shard }}
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Discover modular crates
@@ -767,6 +778,14 @@ jobs:
               cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
           done
+      # The shard loop above tests jolt-transcript with default features, which
+      # leave out the Solinas and binary field codecs and their tests.
+      - name: Test jolt-transcript with all features
+        if: matrix.shard == 1
+        run: cargo nextest run -p jolt-transcript --all-features --cargo-quiet
+      - name: Test jolt-transcript with sequential grinding
+        if: matrix.shard == 1
+        run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,prover-grinding --cargo-quiet
       # jolt-witness's parallel feature is not a default, so the shard loop
       # above tests only the serial paths; the shipped provers enable it
       # (via jolt-kernels' default), so test the rayon fast paths directly.
@@ -781,6 +800,9 @@ jobs:
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
+      - name: Test jolt-poly and jolt-sumcheck with binary fields
+        if: matrix.shard == 0
+        run: cargo nextest run -p jolt-poly -p jolt-sumcheck --features jolt-poly/binary,jolt-sumcheck/binary --cargo-quiet
       - name: Test isolated external sumcheck consumer
         if: matrix.shard == 0
         run: cargo nextest run --manifest-path crates/jolt-sumcheck/tests/external-consumer/Cargo.toml --locked --cargo-quiet
@@ -846,7 +868,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Run verifier fixtures
@@ -864,7 +886,7 @@ jobs:
         with:
           shared-key: dev-inlines
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Discover inline crates
@@ -902,7 +924,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Generate test fixtures
@@ -926,7 +948,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Run tracer tests
@@ -949,7 +971,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install nextest
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: nextest
       - name: Run extractor tests

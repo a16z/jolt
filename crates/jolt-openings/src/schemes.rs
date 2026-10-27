@@ -46,6 +46,8 @@ pub trait GroupSetupMetadata {
     fn one_hot_k(&self) -> usize;
     /// Number of witness chunks selected by the one-hot setup.
     fn one_hot_num_chunks(&self) -> usize;
+    /// Number of leading folding levels using those witness chunks.
+    fn one_hot_num_chunked_levels(&self) -> usize;
 }
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.

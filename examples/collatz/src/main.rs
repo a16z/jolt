@@ -21,10 +21,10 @@ pub fn main() {
     let input = 19;
     let (output, proof, program_io) = prove_collatz_single(input);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_collatz_single(input, output, program_io.panic, proof);
+    verify_collatz_single(input, output, program_io.panic, proof)
+        .expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 
     let mut program = guest::compile_collatz_convergence_range(target_dir);
 
@@ -44,8 +44,8 @@ pub fn main() {
     let now = Instant::now();
     let (output, proof, program_io) = prove_collatz_convergence(start, start + 100);
     info!("Prover runtime: {} s", now.elapsed().as_secs_f64());
-    let is_valid = verify_collatz_convergence(start, start + 100, output, program_io.panic, proof);
+    verify_collatz_convergence(start, start + 100, output, program_io.panic, proof)
+        .expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }

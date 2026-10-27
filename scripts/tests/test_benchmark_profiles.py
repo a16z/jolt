@@ -19,6 +19,7 @@ class BenchmarkProfileTests(unittest.TestCase):
                 "fibonacci_akita_w2r2,20,3\n"
                 "fibonacci_akita_w4r2,20,4\n"
                 "fibonacci_akita_w8r2,20,5\n"
+                "fibonacci_akita_w16r4,20,6\n"
             )
             for options, expected in [
                 ([], "1.00s"),
@@ -26,6 +27,7 @@ class BenchmarkProfileTests(unittest.TestCase):
                 (["--protocol", "akita", "--akita-chunk-profile", "w2r2"], "3.00s"),
                 (["--protocol", "akita", "--akita-chunk-profile", "w4r2"], "4.00s"),
                 (["--protocol", "akita", "--akita-chunk-profile", "w8r2"], "5.00s"),
+                (["--protocol", "akita", "--akita-chunk-profile", "w16r4"], "6.00s"),
             ]:
                 with self.subTest(options=options):
                     result = subprocess.run(

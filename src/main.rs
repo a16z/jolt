@@ -219,6 +219,15 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         jolt_rustflags.push("-Zunstable-options");
     }
 
+    if args
+        .base
+        .target
+        .as_deref()
+        .is_none_or(|target| target.starts_with("riscv64"))
+    {
+        jolt_rustflags.extend(["-Clink-arg=--wrap=memcpy", "-Clink-arg=--wrap=memmove"]);
+    }
+
     // Also set medany for C code (cc crate reads CFLAGS_{target}).
     let cflags_target = match args.base.mode {
         StdMode::Std => "riscv64imac_zero_linux_musl",
@@ -249,6 +258,21 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     // never for JOLT_BACKTRACE (which only needs symbol metadata).
     if force_frame_pointers {
         jolt_rustflags.push("-Cforce-frame-pointers=yes");
+    }
+
+    // zeroos-build writes the linker script under `cargo metadata`'s target directory,
+    // which ignores a passthrough `--target-dir`. Without this, concurrent builds of one
+    // guest into separate target dirs rewrite a shared script while another build links.
+    let cargo_args = &args.base.cargo_args;
+    let target_dir = cargo_args.iter().enumerate().find_map(|(i, arg)| {
+        if arg == "--target-dir" {
+            cargo_args.get(i + 1).map(String::as_str)
+        } else {
+            arg.strip_prefix("--target-dir=")
+        }
+    });
+    if let Some(target_dir) = target_dir {
+        std::env::set_var("CARGO_TARGET_DIR", target_dir);
     }
 
     zeroos_build::cmds::build_binary_with_rustflags(
@@ -556,10 +580,9 @@ pub fn main() {
     let verify_fib = guest::build_verifier_fib(verifier_preprocessing);
 
     let (output, proof, io_device) = prove_fib(50);
-    let is_valid = verify_fib(50, output, io_device.panic, proof);
+    verify_fib(50, output, io_device.panic, proof).expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }
 "#;
 
@@ -614,10 +637,9 @@ pub fn main() {
 
     // n is private — verifier doesn't receive it
     let (output, proof, io_device) = prove_fib(PrivateInput::new(50));
-    let is_valid = verify_fib(output, io_device.panic, proof);
+    verify_fib(output, io_device.panic, proof).expect("proof verification failed");
 
     info!("output: {output}");
-    info!("valid: {is_valid}");
 }
 "#;
 

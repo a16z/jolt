@@ -1,8 +1,8 @@
 use std::{
     collections::BTreeMap,
+    error::Error,
     fmt,
-    io::{Cursor, ErrorKind},
-    path::{Path, PathBuf},
+    io::{Cursor, Error as IoError, ErrorKind},
     sync::Arc,
     sync::OnceLock,
 };
@@ -13,7 +13,7 @@ use std::{cell::Cell, num::NonZeroUsize};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_pcs::{
-    AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaProverSetup as BackendProverSetup,
+    AkitaCommitmentScheme, AkitaDeserialize, AkitaProverSetup as BackendProverSetup,
     AkitaSerialize, AkitaVerifier, CommitmentHandle, CpuBackend, DensePoly, OneHotPoly,
 };
 use akita_schedules::ValidatedScheduleCatalog;
@@ -33,6 +33,7 @@ use crate::one_hot_family::{
     with_one_hot_family, AkitaOneHotBackendScheme, AkitaOneHotBackendVerifier, OneHotFamily,
 };
 pub use crate::one_hot_family::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+use crate::schedule_artifacts::AkitaScheduleArtifacts;
 use crate::schedule_registry::GroupedScheduleParams;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
@@ -46,180 +47,6 @@ const _: () = assert!(
     AKITA_SOURCE_RING_DIMENSION
         == akita_config::proof_optimized::fp128::OneHot::A_RING_DIMENSIONS[0]
 );
-/// Runtime bytes for Jolt's base schedule families.
-///
-/// These bytes are ordinary input data. They are intentionally neither
-/// generated Rust nor embedded with `include_bytes!`.
-///
-/// Serialized bundles are regenerable preprocessing inputs, not a stable binary
-/// format. The multi-chunk fields break compatibility with older bincode bundles;
-/// reload compatible `.aks` catalogs and rebuild cached setup parameters. Serde
-/// defaults support omitted fields in map-based formats such as JSON, not older
-/// bincode encodings. This is separate from [`AkitaVerifierSetup`] transport.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AkitaScheduleArtifacts {
-    dense: Vec<u8>,
-    full_dense: Vec<u8>,
-    pub(crate) one_hot_k16: Vec<u8>,
-    pub(crate) one_hot_k256: Vec<u8>,
-    #[serde(default)]
-    pub(crate) one_hot_k16_w2r2: Vec<u8>,
-    #[serde(default)]
-    pub(crate) one_hot_k256_w2r2: Vec<u8>,
-    #[serde(default)]
-    pub(crate) one_hot_k16_w4r2: Vec<u8>,
-    #[serde(default)]
-    pub(crate) one_hot_k256_w4r2: Vec<u8>,
-    #[serde(default)]
-    pub(crate) one_hot_k16_w8r2: Vec<u8>,
-    #[serde(default)]
-    pub(crate) one_hot_k256_w8r2: Vec<u8>,
-}
-
-impl AkitaScheduleArtifacts {
-    const DIRECTORY_ENV: &'static str = "JOLT_AKITA_SCHEDULE_DIR";
-
-    pub fn new(
-        dense: Vec<u8>,
-        full_dense: Vec<u8>,
-        one_hot_k16: Vec<u8>,
-        one_hot_k256: Vec<u8>,
-    ) -> Self {
-        Self {
-            dense,
-            full_dense,
-            one_hot_k16,
-            one_hot_k256,
-            one_hot_k16_w2r2: Vec::new(),
-            one_hot_k256_w2r2: Vec::new(),
-            one_hot_k16_w4r2: Vec::new(),
-            one_hot_k256_w4r2: Vec::new(),
-            one_hot_k16_w8r2: Vec::new(),
-            one_hot_k256_w8r2: Vec::new(),
-        }
-    }
-
-    /// Load Jolt's checked-in artifacts from a normal filesystem directory.
-    pub fn from_directory(directory: impl AsRef<Path>) -> Result<Self, OpeningsError> {
-        let directory = directory.as_ref();
-        let read = |family: &str| {
-            let path = directory.join(format!("{family}.aks"));
-            std::fs::read(&path).map_err(|error| {
-                OpeningsError::InvalidSetup(format!(
-                    "read Akita schedule artifact {}: {error}",
-                    path.display()
-                ))
-            })
-        };
-        let read_optional = |family: &str| {
-            let path = directory.join(format!("{family}.aks"));
-            match std::fs::read(&path) {
-                Ok(bytes) => Ok(bytes),
-                Err(error) if error.kind() == ErrorKind::NotFound => Ok(Vec::new()),
-                Err(error) => Err(OpeningsError::InvalidSetup(format!(
-                    "read Akita schedule artifact {}: {error}",
-                    path.display()
-                ))),
-            }
-        };
-        Ok(Self {
-            dense: read(JoltDenseBounded::schedule_family_name())?,
-            full_dense: read(JoltDenseFull::schedule_family_name())?,
-            one_hot_k16: read(OneHotFamily::K16Single.family_name())?,
-            one_hot_k256: read(OneHotFamily::K256Single.family_name())?,
-            one_hot_k16_w2r2: read_optional(OneHotFamily::K16W2R2.family_name())?,
-            one_hot_k256_w2r2: read_optional(OneHotFamily::K256W2R2.family_name())?,
-            one_hot_k16_w4r2: read_optional(OneHotFamily::K16W4R2.family_name())?,
-            one_hot_k256_w4r2: read_optional(OneHotFamily::K256W4R2.family_name())?,
-            one_hot_k16_w8r2: read_optional(OneHotFamily::K16W8R2.family_name())?,
-            one_hot_k256_w8r2: read_optional(OneHotFamily::K256W8R2.family_name())?,
-        })
-    }
-
-    /// The `schedules/` directory packaged with this crate: the fallback the
-    /// default loader uses when `JOLT_AKITA_SCHEDULE_DIR` is unset, and the
-    /// fixed location the checked-in catalog guards read directly, because
-    /// they validate the committed artifacts rather than whatever an override
-    /// points at.
-    pub fn packaged_directory() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("schedules")
-    }
-
-    /// Loads from `JOLT_AKITA_SCHEDULE_DIR`, or from the packaged `schedules/`
-    /// directory when the variable is unset. Protocol setup and verification
-    /// never consult the environment.
-    fn from_default_directory() -> Result<Self, OpeningsError> {
-        let directory = std::env::var_os(Self::DIRECTORY_ENV)
-            .map_or_else(Self::packaged_directory, PathBuf::from);
-        Self::from_directory(directory)
-    }
-
-    /// Host/dev loader in the shared-handle form every setup call takes: the
-    /// one way hosts, benches, and tests load a bundle they intend to hand to
-    /// [`AkitaSetupParams`]. Reads `JOLT_AKITA_SCHEDULE_DIR`, falling back to
-    /// [`Self::packaged_directory`].
-    ///
-    /// The handle is what is shared, not the bytes: every call re-reads the
-    /// four required `.aks` files and any present profile companions, so hosts
-    /// still load once at preprocessing and pass
-    /// the bundle to each setup. Callers that must compare setup provenance
-    /// keep their own handle rather than calling this twice — the Akita
-    /// prover's advice guards test bundle identity with `Arc::ptr_eq`.
-    ///
-    /// Panics rather than returning: the packaged `schedules/` directory is
-    /// part of the installation, so a missing or unreadable catalog is a
-    /// broken deployment, not a condition any caller can act on. This is host
-    /// and deployment-side only; nothing on the verify path reaches it.
-    /// Deployments that must handle a missing catalog load a versioned,
-    /// deployment-owned path with [`Self::from_directory`] instead.
-    #[expect(
-        clippy::expect_used,
-        reason = "an unreadable packaged schedule directory is a broken installation"
-    )]
-    pub fn shared_from_default_directory() -> Arc<Self> {
-        Arc::new(
-            Self::from_default_directory()
-                .expect("the external Akita schedule artifacts must load"),
-        )
-    }
-
-    pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(&self.dense)
-            .map(|catalog| catalog.catalog().clone())
-    }
-
-    pub fn full_dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        TrustedScheduleCatalog::<JoltDenseFull>::from_artifact_bytes(&self.full_dense)
-            .map(|catalog| catalog.catalog().clone())
-    }
-
-    pub(crate) fn full_dense_scheme(
-        &self,
-    ) -> Result<AkitaCommitmentScheme<JoltDenseFull>, AkitaError> {
-        AkitaCommitmentScheme::<JoltDenseFull>::from_schedule_artifact(&self.full_dense)
-    }
-
-    pub fn one_hot_catalog(
-        &self,
-        one_hot_k: usize,
-    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        self.one_hot_catalog_for_profile(one_hot_k, AkitaChunkProfile::Single)
-    }
-
-    pub fn one_hot_catalog_for_profile(
-        &self,
-        one_hot_k: usize,
-        profile: AkitaChunkProfile,
-    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        let family = OneHotFamily::from_parts(one_hot_k, profile)?;
-        with_one_hot_family!(family, |Cfg| {
-            TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(family.artifact(self))
-                .map(|catalog| catalog.catalog().clone())
-        })
-    }
-}
-
 pub(crate) type AkitaBackendExtField = <AkitaConfig as CommitmentConfig>::ExtField;
 
 pub(crate) type AkitaBackendScheme = AkitaCommitmentScheme<AkitaConfig>;
@@ -241,40 +68,64 @@ const SCHEDULE_SELECTION_BYTES: usize = 32;
 /// so oversizing costs virtual address space only.
 const BACKEND_WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
+/// `None` where the platform cannot spawn threads at all (wasm32), the case in
+/// which rayon itself runs its global pool on the current thread.
 #[expect(
-    clippy::expect_used,
-    reason = "a pool that cannot spawn threads is an unrecoverable environment failure"
+    clippy::panic,
+    reason = "a pool that cannot spawn threads on a threaded platform is an unrecoverable environment failure"
 )]
-fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> ThreadPool {
+fn build_backend_pool(name: &'static str, num_threads: Option<usize>) -> Option<ThreadPool> {
     let mut builder = ThreadPoolBuilder::new()
         .thread_name(move |index| format!("{name}-{index}"))
         .stack_size(BACKEND_WORKER_STACK_BYTES);
     if let Some(num_threads) = num_threads {
         builder = builder.num_threads(num_threads);
     }
-    builder
-        .build()
-        .expect("the Akita backend thread pool must build")
+    match builder.build() {
+        Ok(pool) => Some(pool),
+        Err(error)
+            if error
+                .source()
+                .and_then(|source| source.downcast_ref::<IoError>())
+                .is_some_and(|source| source.kind() == ErrorKind::Unsupported) =>
+        {
+            None
+        }
+        Err(error) => panic!("the Akita backend thread pool must build: {error}"),
+    }
 }
 
-fn backend_pool() -> &'static ThreadPool {
-    static POOL: OnceLock<ThreadPool> = OnceLock::new();
+fn backend_pool() -> Option<&'static ThreadPool> {
+    static POOL: OnceLock<Option<ThreadPool>> = OnceLock::new();
     POOL.get_or_init(|| build_backend_pool("jolt-akita", None))
+        .as_ref()
 }
 
 #[cfg(feature = "profiling")]
+#[expect(
+    clippy::expect_used,
+    reason = "the profiling harness measures a host thread pool and cannot run without one"
+)]
 fn host_parallel_verifier_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
         let num_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
         build_backend_pool("jolt-akita-verify-parallel", Some(num_threads))
+            .expect("the profiling harness needs a platform that spawns threads")
     })
 }
 
 #[cfg(feature = "profiling")]
+#[expect(
+    clippy::expect_used,
+    reason = "the profiling harness measures a host thread pool and cannot run without one"
+)]
 fn single_threaded_verifier_pool() -> &'static ThreadPool {
     static POOL: OnceLock<ThreadPool> = OnceLock::new();
-    POOL.get_or_init(|| build_backend_pool("jolt-akita-verify-single", Some(1)))
+    POOL.get_or_init(|| {
+        build_backend_pool("jolt-akita-verify-single", Some(1))
+            .expect("the profiling harness needs a platform that spawns threads")
+    })
 }
 
 #[cfg(feature = "profiling")]
@@ -340,6 +191,9 @@ pub fn host_parallel_verifier_threads() -> usize {
 /// default 2 MiB worker stacks nondeterministically — observed as SIGABRT in
 /// the Akita prover at trace-scale shapes. Every backend setup/commit/
 /// prove/verify entry funnels through this pool. Nested calls reuse it.
+///
+/// Where the platform cannot spawn threads (wasm32), no dedicated pool can
+/// exist: `f` runs on the caller's pool, whose embedder sizes worker stacks.
 pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
     #[cfg(feature = "profiling")]
     match PROFILE_BACKEND_POOL.with(Cell::get) {
@@ -349,17 +203,15 @@ pub(crate) fn with_backend_pool<R: Send>(f: impl FnOnce() -> R + Send) -> R {
         }
         ProfileBackendPool::Default => {}
     }
-    backend_pool().install(f)
+    match backend_pool() {
+        Some(pool) => pool.install(f),
+        None => f(),
+    }
 }
 
 /// Regenerable recipe for constructing an Akita setup.
 ///
-/// Its bincode representation is tied to the implementation version. The
-/// multi-chunk profile and expanded [`AkitaScheduleArtifacts`] make older
-/// serialized recipes incompatible; discard those caches and rerun preprocessing
-/// with the current code and compatible catalogs. Serde defaults do not provide
-/// bincode backward compatibility. The legacy `Single` [`AkitaVerifierSetup`]
-/// encoding is preserved separately.
+/// Its serialized representation is tied to the implementation version.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaSetupParams {
@@ -371,7 +223,6 @@ pub struct AkitaSetupParams {
     pub(crate) max_total_batch_polys: usize,
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
-    #[serde(default)]
     pub(crate) akita_chunk_profile: AkitaChunkProfile,
     pub(crate) flavor: AkitaSetupFlavor,
     /// Recipe for the dynamic grouped rows accepted by this setup.
@@ -404,7 +255,7 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            akita_chunk_profile: AkitaChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::new(1, 0),
             flavor: AkitaSetupFlavor::Both,
             grouped_schedule: None,
             schedule_artifacts,
@@ -427,7 +278,7 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k,
-            akita_chunk_profile: AkitaChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::new(1, 0),
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule: None,
             schedule_artifacts,
@@ -451,7 +302,7 @@ impl AkitaSetupParams {
             max_total_batch_polys,
             default_layout_digest,
             one_hot_k,
-            akita_chunk_profile: AkitaChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::new(1, 0),
             flavor: AkitaSetupFlavor::OneHot,
             grouped_schedule,
             schedule_artifacts,
@@ -472,7 +323,7 @@ impl AkitaSetupParams {
             max_total_batch_polys: max_num_polys_per_commitment_group,
             default_layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
-            akita_chunk_profile: AkitaChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::new(1, 0),
             flavor: AkitaSetupFlavor::Dense,
             grouped_schedule: None,
             schedule_artifacts,
@@ -483,8 +334,8 @@ impl AkitaSetupParams {
         self.one_hot_k
     }
 
-    /// Selects 1, 2, 4, or 8 witness chunks for the one-hot trace backend.
-    /// Constructors default to [`AkitaChunkProfile::Single`].
+    /// Selects the one-hot trace chunking policy, including runtime geometry.
+    /// Constructors default to one chunk with no chunked folds.
     pub fn with_akita_chunk_profile(mut self, profile: AkitaChunkProfile) -> Self {
         self.akita_chunk_profile = profile;
         self
@@ -602,20 +453,15 @@ pub struct AkitaVerifierSetup {
 #[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub(crate) enum AkitaVerifierScheduleArtifacts {
     Dense {
+        dense_profile: AkitaChunkProfile,
         dense: Vec<u8>,
     },
     OneHot {
-        one_hot: Vec<u8>,
-    },
-    Both {
-        dense: Vec<u8>,
-        one_hot: Vec<u8>,
-    },
-    OneHotChunked {
         profile: AkitaChunkProfile,
         one_hot: Vec<u8>,
     },
-    BothChunked {
+    Both {
+        dense_profile: AkitaChunkProfile,
         profile: AkitaChunkProfile,
         dense: Vec<u8>,
         one_hot: Vec<u8>,
@@ -623,31 +469,32 @@ pub(crate) enum AkitaVerifierScheduleArtifacts {
 }
 
 impl AkitaVerifierScheduleArtifacts {
-    fn dense(&self) -> Option<&[u8]> {
+    fn dense(&self) -> Option<(AkitaChunkProfile, &[u8])> {
         match self {
-            Self::Dense { dense } | Self::Both { dense, .. } | Self::BothChunked { dense, .. } => {
-                Some(dense)
+            Self::Dense {
+                dense_profile,
+                dense,
             }
-            Self::OneHot { .. } | Self::OneHotChunked { .. } => None,
+            | Self::Both {
+                dense_profile,
+                dense,
+                ..
+            } => Some((*dense_profile, dense)),
+            Self::OneHot { .. } => None,
         }
     }
 
     fn one_hot(&self) -> Option<&[u8]> {
         match self {
-            Self::OneHot { one_hot }
-            | Self::Both { one_hot, .. }
-            | Self::OneHotChunked { one_hot, .. }
-            | Self::BothChunked { one_hot, .. } => Some(one_hot),
+            Self::OneHot { one_hot, .. } | Self::Both { one_hot, .. } => Some(one_hot),
             Self::Dense { .. } => None,
         }
     }
 
     fn akita_chunk_profile(&self) -> AkitaChunkProfile {
         match self {
-            Self::OneHotChunked { profile, .. } | Self::BothChunked { profile, .. } => *profile,
-            Self::Dense { .. } | Self::OneHot { .. } | Self::Both { .. } => {
-                AkitaChunkProfile::Single
-            }
+            Self::OneHot { profile, .. } | Self::Both { profile, .. } => *profile,
+            Self::Dense { .. } => AkitaChunkProfile::default(),
         }
     }
 }
@@ -701,8 +548,8 @@ impl AkitaVerifierSetup {
             self.schedule_artifacts
                 .dense()
                 .ok_or_else(|| "Akita verifier setup has no dense schedule artifact".to_string())
-                .and_then(|bytes| {
-                    AkitaBackendScheme::from_schedule_artifact(bytes)
+                .and_then(|(profile, bytes)| {
+                    AkitaBackendScheme::from_schedule_artifact(bytes, profile.witness_cfg())
                         .map_err(|error| error.to_string())
                 })
         });
@@ -725,6 +572,16 @@ impl AkitaVerifierSetup {
         result
             .as_ref()
             .map_err(|error| OpeningsError::InvalidSetup(error.clone()))
+    }
+
+    /// The audited one-hot catalog carried by this verifier's preprocessing.
+    /// Prover backends use it to select exactly the rows admitted by the verifier.
+    pub fn one_hot_catalog(&self) -> Result<ValidatedScheduleCatalog, OpeningsError> {
+        Ok(
+            with_one_hot_family!(scheme self.one_hot_scheme()?, |scheme| {
+                scheme.schedules().catalog().clone()
+            }),
+        )
     }
 
     /// Variables the one-hot backend setup covers: the exact final arity, or
@@ -827,9 +684,11 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
     transcript.append(&U64Word(setup.max_total_batch_polys as u64));
     transcript.append(&U64Word(setup.one_hot_k as u64));
-    if flavor == AkitaBackendFlavor::OneHot && akita_chunk_profile != AkitaChunkProfile::Single {
+    if flavor == AkitaBackendFlavor::OneHot {
         transcript.append(&Label(b"akita_chunk_profile"));
-        transcript.append(&U64Word(akita_chunk_profile.num_chunks() as u64));
+        transcript.append(&U64Word(akita_chunk_profile.chunks as u64));
+        transcript.append(&Label(b"akita_chunked_levels"));
+        transcript.append(&U64Word(akita_chunk_profile.levels as u64));
     }
     transcript.append_bytes(&setup.default_layout_digest);
     let catalog_digest = match flavor {
@@ -939,6 +798,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
     fn one_hot_num_chunks(&self) -> usize {
         self.akita_chunk_profile().num_chunks()
     }
+
+    fn one_hot_num_chunked_levels(&self) -> usize {
+        self.akita_chunk_profile().levels
+    }
 }
 
 impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
@@ -964,6 +827,10 @@ impl jolt_openings::GroupSetupMetadata for AkitaProverSetup {
 
     fn one_hot_num_chunks(&self) -> usize {
         self.verifier.akita_chunk_profile().num_chunks()
+    }
+
+    fn one_hot_num_chunked_levels(&self) -> usize {
+        self.verifier.akita_chunk_profile().levels
     }
 }
 

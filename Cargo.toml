@@ -150,7 +150,7 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
-rand.workspace = true
+rand = { workspace = true, features = ["std", "std_rng"] }
 sysinfo.workspace = true
 syn.workspace = true
 toml_edit.workspace = true
@@ -296,7 +296,7 @@ blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "ef9741346a150039427d9e0c02d6b2d73e93ec81", default-features = false }
+spongefish = { version = "=0.8.0", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 dory = { package = "dory-pcs", version = "0.4.2", features = [
   "backends",
@@ -304,16 +304,15 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "cf95fd05b1d407083096ddf00752aea0048cd0b2", default-features = false }
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -397,9 +396,9 @@ object = { version = "0.40.0", features = [
   "elf",
 ], default-features = false }
 addr2line = "0.27.0"
-getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
+getrandom_v04 = { version = "0.4", package = "getrandom", default-features = false }
 
 # Build and Development
 ctor = { version = "0.6" }
@@ -430,10 +429,8 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.7", features = ["rayon", "serde"] }
-reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
-  "serde",
-] }
+reth-primitives-traits = { version = "0.7", features = ["rayon"] }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", default-features = false }
 secp256k1 = { version = "0.33", features = ["recovery", "rand"] }
 
 # Internal dependencies

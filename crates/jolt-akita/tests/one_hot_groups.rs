@@ -7,8 +7,8 @@
 mod support;
 
 use jolt_akita::{
-    AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatching, AkitaScheduleArtifacts,
-    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
+    AkitaChunkProfile, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatching,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial};
@@ -31,7 +31,7 @@ fn one_hot_setup(
         max_polys,
         layout(3),
         AKITA_ONE_HOT_K16,
-        AkitaScheduleArtifacts::shared_from_default_directory(),
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
     ))
     .expect("one-hot-only setup should build")
 }
