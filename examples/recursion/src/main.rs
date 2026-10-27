@@ -1127,7 +1127,9 @@ echo "$3"
 /// this build only (the inner guests keep the stock settings). With
 /// `RECURSION_GUEST_ELF_CACHE=<dir>` set, an ELF already built for the same
 /// content key is reused instead of running the guest build, and a fresh build
-/// is stored under its key; unset, the build runs as before.
+/// is stored under its key; unset, the build runs as before. With
+/// `RECURSION_GUEST_ELF_CACHE_PROBE` also set, the host logs the key and whether
+/// the lookup hits, then exits without building.
 fn build_recursion_guest(program: &mut Program, target_dir: &str) {
     let enabled = cfg!(feature = "guest-codegen")
         && !matches!(
@@ -1154,6 +1156,15 @@ fn build_recursion_guest(program: &mut Program, target_dir: &str) {
         info!("  guest ELF cache: no key (inputs unreadable); building");
     }
     let hit = cached.as_ref().filter(|path| path.is_file()).cloned();
+    if std::env::var_os("RECURSION_GUEST_ELF_CACHE_PROBE").is_some() {
+        // Key-only probe: report the key and the lookup, build nothing.
+        info!(
+            "  guest ELF cache probe key={} hit={}",
+            key.as_deref().unwrap_or("none"),
+            hit.is_some()
+        );
+        std::process::exit(0);
+    }
     match hit {
         Some(path) => {
             info!("  guest ELF cache hit {}", path.display());
