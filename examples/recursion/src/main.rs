@@ -1099,7 +1099,8 @@ const RECURSION_GUEST_CODEGEN: [(&str, &str); 3] = [
 /// diff, every file under `examples/recursion` (the generated guest sources
 /// included), the Cargo git checkouts, the toolchain (`rustc -Vv`, `cargo -V`,
 /// the jolt CLI binary), this host binary (its features and build code), the
-/// guest build environment (RUSTFLAGS, the guest-codegen variables) and the
+/// guest build environment (RUSTFLAGS, the guest-codegen variables), the
+/// bytes of the immutable recipe tables file (by content, not by path) and the
 /// target directory. `None` when any part cannot be read; the build then runs
 /// as usual. Tooling only: a hit reuses an ELF built from the same inputs.
 fn guest_elf_cache_key(target_dir: &str) -> Option<String> {
@@ -1116,6 +1117,7 @@ cargo -V
 sha256sum "$(command -v "${JOLT_PATH:-jolt}")"
 sha256sum "$2"
 env | grep -E '^(ZEROOS_GUEST_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]*|RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_[A-Z0-9_]*|RECURSION_GUEST_CODEGEN|JOLT_FUNC_NAME)=' | sort || true
+if [ -n "${JOLT_IMMUTABLE_RECIPES_RS:-}" ]; then echo immutable-recipes-tables; sha256sum < "$JOLT_IMMUTABLE_RECIPES_RS"; else echo immutable-recipes-tables-none; fi
 echo "$3"
 } | sha256sum | cut -c1-64
 "#;
