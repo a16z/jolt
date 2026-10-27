@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793129860368,
+  "lastUpdate": 1793136578802,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -201586,6 +201586,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 859480,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "taghi.badakhshan@layerzerolabs.org",
+            "name": "Taghi B.",
+            "username": "mtbadakhshan"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d1ea051026dfb3490812602228d538f363f21c68",
+          "message": "feat(jolt-akita): prepare shared verifier state ahead of proofs (#2136)\n\n* feat(jolt-akita): share verifier state across setups and prepare it ahead of proofs\n\nA deserialized verifier setup filled its serde-skipped cache on first use by\nrunning Akita's full prover setup, per setup value, with nothing shared.\nDerive verifier state from the public seed at verifier size instead and share\nit: unprepared setups attach to a process-wide state that grows on a miss, and\nhosts can build it before any proof with AkitaVerifierResources::prepare.\nGroupedCatalog classifies grouped requests and plans missing rows once.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* style(jolt-akita): import the commitment and proof types in verifier resource tests\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(jolt-akita): share verifier state only through prepared states\n\n- Remove lazy growth, the growth lock and state merging. `prepare` builds a\n  state once; a setup attaches to the smallest live state that covers it, or\n  builds unpublished verifier-sized state of its own with no lock held.\n- Reject a group wider than the batch before building anything.\n- Size every catalog in a state at the state's capacity, so each verifier holds\n  the prefix slots of every row it admits; take the slots from Akita's\n  `SetupRequirements::from_catalog`.\n- Restate why binding the setup dimensions and catalog digest suffices.\n- Drop `GroupedCatalog` and grouped admission; `schedule_registry` and\n  `one_hot_family` are unchanged from main.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(jolt-akita): tie prepared-state lifetime to its handle and coverage to its capacity\n\n- Drop the backend cache's owner reference: a state is attachable only while\n  an `AkitaVerifierResources` handle holds it, and ties go to the newest\n  state. Mark the handle `#[must_use]`.\n- A state covers a setup with identical catalog bytes that fits the state's\n  capacity, the capacity every catalog in it is provisioned at. Capacity is\n  computed once, over all setups, and a state keeps one setup per catalog.\n- Snapshot live states under the registry lock and compare catalogs after\n  releasing it, dimensions before bytes.\n- Test a proof whose selected row has a setup-prefix fold, through an\n  unprepared transported setup and one attached to a wider prepared state;\n  drop the transported/in-process key-equality assertion.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T13:39:30-07:00",
+          "tree_id": "67a5f86f6735fc967b05d65e4f91fc21ac04db5e",
+          "url": "https://github.com/a16z/jolt/commit/d1ea051026dfb3490812602228d538f363f21c68"
+        },
+        "date": 1793136572419,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.3226,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 784120,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.0097,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 426272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 426064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 428824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.67,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 426112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 997084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 0.5499,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 428144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.7901,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 428132,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 2.9333,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 227440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.2518,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 783100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5664,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 425936,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4243,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 425984,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 15.4409,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 426052,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.2237,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 425928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 25.6266,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1970268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 11.216,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 623356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 55.6644,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 1100472,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0806,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 425872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2328,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 425908,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 12.0762,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 783732,
             "unit": "KB",
             "extra": ""
           }
