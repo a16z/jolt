@@ -317,6 +317,18 @@ paper delta.
   The checked-in ZK fuzz bundles were already broken at base and were
   regenerated. Merged; combined bars are green, and Akita's dump identity is
   exactly the 5 known rows.
+- **M1 (prover memory; `specs/whiteout-m1-memory.md`).** One review, no
+  blocker: wiping holds on every path including unwind, the in-place fused
+  fold is parallel-safe (outputs `[s, 2s)` read only `[2s, 4s)`, blocks in
+  order) and field-identical, and nothing transcript-visible moved. Fix
+  round: the backend takes the prover setup's matrix, the allocator release
+  follows `drop(stage8)`, and the spec qualifies the single-unwiped-copy
+  claim (padded length ≥ 1024). Seeded proofs are byte-identical to post-O5
+  dev. Peak RSS, LOADED: 2.93 → 2.19, 4.9 → 3.44, 7.97 → 5.28 GiB for
+  muldiv / fib 2^16 / fib 2^20. Merged; combined bars green, dump identity
+  exactly the 5 known rows. Left: the committed `e` as `i8` (1 GiB → 64 MiB,
+  needs an A45 constant-time ruling) and streaming `A` (1 GiB, a kernel
+  rewrite).
 
 ## Not verified
 
