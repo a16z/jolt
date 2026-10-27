@@ -100,6 +100,83 @@ pub fn referenced_openings<F, O: Ord, D, C>(
     openings
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_symbolic_defaults {
+    () => {
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_shape_visit(
+            &self,
+            _family: u64,
+            _sink: &mut dyn $crate::immutable_recipes::KeySink,
+        ) -> bool {
+            false
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_shape_permit(&self) -> Option<$crate::immutable_recipes::BasePermit<Self>>
+        where
+            Self: Sized,
+        {
+            None
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe<F: ::jolt_field::Ring>(
+            &self,
+            _phase: $crate::immutable_recipes::Phase,
+        ) -> Result<
+            Option<
+                $crate::immutable_recipes::Recipe<
+                    '_,
+                    F,
+                    Self::OpeningId,
+                    Self::DerivedId,
+                    Self::ChallengeId,
+                >,
+            >,
+            $crate::immutable_recipes::RecipeError,
+        > {
+            Ok(None)
+        }
+        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        fn immutable_record_expression<F: ::jolt_field::Ring>(
+            &self,
+            _phase: $crate::immutable_recipes::Phase,
+            _expression: &$crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
+        ) {
+        }
+        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        fn immutable_record_support<F: ::jolt_field::Ring>(
+            &self,
+            _openings: &::std::collections::BTreeSet<Self::OpeningId>,
+        ) {
+        }
+    };
+}
+
+#[cfg(not(feature = "immutable-recipes"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_symbolic_recipe {
+    ($($unused:tt)*) => {};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_key_delegate {
+    ($family:literal; $($field:ident),+ $(,)?) => {
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_shape_permit(&self) -> Option<$crate::immutable_recipes::BasePermit<Self>> {
+            Some($crate::immutable_recipes::BasePermit::new())
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_shape_visit(&self, family: u64, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
+            if family != $family { return false; }
+            let Self { $($field),+ } = self;
+            true $(&& $crate::immutable_recipes::KeyVisit::visit($field, sink))+
+        }
+    };
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,81 +300,4 @@ mod tests {
         );
         assert_eq!(succeeded, Ok(resolve(&expr)));
     }
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! immutable_symbolic_defaults {
-    () => {
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_shape_visit(
-            &self,
-            _family: u64,
-            _sink: &mut dyn $crate::immutable_recipes::KeySink,
-        ) -> bool {
-            false
-        }
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_shape_permit(&self) -> Option<$crate::immutable_recipes::BasePermit<Self>>
-        where
-            Self: Sized,
-        {
-            None
-        }
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_recipe<F: ::jolt_field::Ring>(
-            &self,
-            _phase: $crate::immutable_recipes::Phase,
-        ) -> Result<
-            Option<
-                $crate::immutable_recipes::Recipe<
-                    '_,
-                    F,
-                    Self::OpeningId,
-                    Self::DerivedId,
-                    Self::ChallengeId,
-                >,
-            >,
-            $crate::immutable_recipes::RecipeError,
-        > {
-            Ok(None)
-        }
-        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
-        fn immutable_record_expression<F: ::jolt_field::Ring>(
-            &self,
-            _phase: $crate::immutable_recipes::Phase,
-            _expression: &$crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
-        ) {
-        }
-        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
-        fn immutable_record_support<F: ::jolt_field::Ring>(
-            &self,
-            _openings: &::std::collections::BTreeSet<Self::OpeningId>,
-        ) {
-        }
-    };
-}
-
-#[cfg(not(feature = "immutable-recipes"))]
-#[doc(hidden)]
-#[macro_export]
-macro_rules! immutable_symbolic_recipe {
-    ($($unused:tt)*) => {};
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! immutable_key_delegate {
-    ($family:literal; $($field:ident),+ $(,)?) => {
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_shape_permit(&self) -> Option<$crate::immutable_recipes::BasePermit<Self>> {
-            Some($crate::immutable_recipes::BasePermit::new())
-        }
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_shape_visit(&self, family: u64, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
-            if family != $family { return false; }
-            let Self { $($field),+ } = self;
-            true $(&& $crate::immutable_recipes::KeyVisit::visit($field, sink))+
-        }
-    };
 }

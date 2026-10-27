@@ -85,6 +85,11 @@ twist::instantiate_value_reduction! {
     eq_spartan = FieldRegistersClaimReductionPublic::EqSpartan,
 }
 
+macro_rules! immutable_twist_recipe {
+    (ClaimReduction) => { crate::immutable_symbolic_recipe!(5, FIELD, Field; shape); };
+}
+pub(crate) use immutable_twist_recipe;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,8 +117,3 @@ mod tests {
         assert_eq!(inputs.canonical_order(), claim_reduction_input_openings());
     }
 }
-
-macro_rules! immutable_twist_recipe {
-    (ClaimReduction) => { crate::immutable_symbolic_recipe!(5, FIELD, Field; shape); };
-}
-pub(crate) use immutable_twist_recipe;
