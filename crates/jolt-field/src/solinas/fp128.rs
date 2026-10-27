@@ -1312,7 +1312,7 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
+    #[rustfmt::skip] fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`, so a slice
         // of it, and a slice of such slices, have the limb slices' layout.
         let cast = |slice: &[Self]| -> &[[u64; 2]] {
@@ -1320,7 +1320,7 @@ impl<const P: u128> Fp128<P> {
         };
         let rows: &[&[[u64; 2]]] =
             unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
-        Self::from_inline_limbs(crate::field_inline::weighted_dot_rows(
+        #[cfg(feature = "field-inline-horner")] if pows.len() == 64 && rows.len() >= 5 { if let Some(alpha) = geometric::ratio(pows) { return Self::from_inline_limbs(crate::field_inline::horner::weighted(rows, cast(weights), &alpha.0, pows.len())); } } Self::from_inline_limbs(crate::field_inline::weighted_dot_rows(
             rows,
             cast(weights),
             cast(pows),
@@ -1526,3 +1526,6 @@ mod wide_tests {
         }
     }
 }
+
+#[cfg(all(feature = "field-inline-horner", any(test, target_arch = "riscv64")))]
+mod geometric;

@@ -66,6 +66,7 @@ ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 rowptr-registers = []
 # Structured setup sums of products (default on): structured-site sums of products in the Akita setup scan.
 setup-sop-structured = ["jolt-akita?/setup-sop-structured"]
+weighted-dot-horner = []
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }

@@ -344,7 +344,7 @@ mod guest {
 
     /// Horner ingress starts at zero, then accumulates limbs from most significant to least.
     #[inline(always)]
-    fn load<const N: usize>(dst: u32, limbs: &[u64; N]) {
+    pub(super) fn load<const N: usize>(dst: u32, limbs: &[u64; N]) {
         assert!(N > 0 && N <= 4, "supported field limb count");
         emit::clear(dst);
         for i in (0..N).rev() {
@@ -365,7 +365,7 @@ mod guest {
     /// Read all `N` limbs, then require the final quotient to vanish.
     /// The caller must reject integers at or above the active field modulus.
     #[inline(always)]
-    fn read_out<const N: usize>(src: u32) -> [u64; N] {
+    pub(super) fn read_out<const N: usize>(src: u32) -> [u64; N] {
         let mut limbs = [0u64; N];
         let mut current = src;
         for limb in limbs.iter_mut() {
@@ -659,3 +659,5 @@ pub use guest::{
 
 #[cfg(feature = "terminal-contraction")]
 pub use guest::signed_i16_dot;
+#[cfg(feature = "field-inline-horner")]
+pub(crate) mod horner;

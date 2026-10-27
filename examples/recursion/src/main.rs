@@ -933,6 +933,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("tensor-eq-runs");
     #[cfg(feature = "setup-sop-structured")]
     program.add_guest_feature("setup-sop-structured");
+    #[cfg(feature = "weighted-dot-horner")]
+    program.add_guest_feature("weighted-dot-horner");
     program.set_memory_config(memory_config);
     program
 }
