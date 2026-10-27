@@ -18,6 +18,10 @@ use std::thread::{self, ThreadId};
 const MAX_KEYS: usize = 4096;
 const MAX_FACTORS: usize = 1_000_000;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
+/// The compact recipe form admits at most this many factors in one term. A key
+/// with a wider term is not recorded; it stays canonical (pre-callback fallback,
+/// never truncation) and is listed in `Capture::fallbacks`.
+const MAX_TERM_FACTORS: usize = 12;
 
 // The reviewed23-owner coverage plus actual Expr output evaluators. The
 // factored Outer output stays canonical and is not recorded. Bytecode anchor21
@@ -175,6 +179,7 @@ struct State {
     id: u64,
     failure: Option<CaptureError>,
     records: Vec<Observed>,
+    fallbacks: Vec<Fallback>,
     logical_bytes: usize,
     factor_events: usize,
 }
@@ -212,6 +217,7 @@ impl Session {
             id,
             failure: None,
             records: Vec::new(),
+            fallbacks: Vec::new(),
             logical_bytes: 0,
             factor_events: 0,
         });
@@ -236,12 +242,15 @@ impl Session {
             !state.records.iter().any(|record| {
                 let (key, actual_phase) = record.record.identity();
                 key.get(1) == Some(tag) && actual_phase == *phase
+            }) && !state.fallbacks.iter().any(|listed| {
+                listed.key.get(1) == Some(tag) && listed.phase == phase_name(*phase)
             })
         }) {
             return Err(CaptureError::Coverage);
         }
         Ok(Capture {
             records: state.records,
+            fallbacks: state.fallbacks,
             logical_bytes: state.logical_bytes,
             factor_events: state.factor_events,
         })
@@ -263,6 +272,8 @@ impl Drop for Session {
 
 pub struct Capture {
     records: Vec<Observed>,
+    /// Keys left canonical because a term exceeds `MAX_TERM_FACTORS`.
+    pub fallbacks: Vec<Fallback>,
     pub logical_bytes: usize,
     pub factor_events: usize,
 }
@@ -505,11 +516,91 @@ pub(crate) fn expression<F: Ring, O: Copy + Eq, D: Copy + Eq, C: Copy + Eq>(
     let Some(_field) = F::immutable_recipe_native_field() else {
         return;
     };
+    let widest = expression
+        .terms
+        .iter()
+        .map(|term| term.factors.len())
+        .max()
+        .unwrap_or(0);
+    if widest > MAX_TERM_FACTORS {
+        fallback(phase, visit, widest);
+        return;
+    }
     capture(|budget| {
         let mut record = NativeRecord::new(phase, visit, budget)?;
         record.expression(expression, budget)?;
         Ok(wrap(record))
     });
+}
+
+/// One key left canonical: its complete key, phase, widest term and the number of
+/// observations. Repeated observations must report the same widest term.
+#[derive(serde::Serialize)]
+pub struct Fallback {
+    pub key: Vec<u64>,
+    pub phase: &'static str,
+    pub widest_term: usize,
+    pub observations: u64,
+}
+
+fn phase_name(phase: Phase) -> &'static str {
+    match phase {
+        Phase::Input => "input",
+        Phase::Output => "output",
+        Phase::Support => "support",
+    }
+}
+
+fn fallback(phase: Phase, visit: impl FnOnce(&mut dyn KeySink) -> bool, widest: usize) {
+    let Ok(mut global) = global() else {
+        return;
+    };
+    let Some(state) = &mut global.active else {
+        return;
+    };
+    if state.failure.is_some() {
+        return;
+    }
+    if state.owner != thread::current().id() {
+        state.failure = Some(CaptureError::Ownership);
+        return;
+    }
+    let mut budget = Budget {
+        bytes: state.logical_bytes,
+        factors: state.factor_events,
+    };
+    let name = phase_name(phase);
+    let result = NativeRecord::<(), (), ()>::new(phase, visit, &mut budget).and_then(|record| {
+        if let Some(previous) = state
+            .fallbacks
+            .iter_mut()
+            .find(|previous| previous.key == record.key && previous.phase == name)
+        {
+            if previous.widest_term != widest {
+                return Err(CaptureError::Conflict);
+            }
+            previous.observations = previous
+                .observations
+                .checked_add(1)
+                .ok_or(CaptureError::Capacity)?;
+        } else {
+            budget.push(
+                &mut state.fallbacks,
+                Fallback {
+                    key: record.key,
+                    phase: name,
+                    widest_term: widest,
+                    observations: 1,
+                },
+            )?;
+        }
+        state.logical_bytes = budget.bytes;
+        state.factor_events = budget.factors;
+        Ok(())
+    });
+    if let Err(error) = result {
+        state.failure = Some(error);
+    }
 }
 
 pub(crate) fn support<F: Ring, O: Copy + Ord, D: Copy + Eq, C: Copy + Eq>(

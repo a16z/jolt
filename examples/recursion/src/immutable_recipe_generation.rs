@@ -231,6 +231,7 @@ pub(crate) fn publish(pending: Option<Result<Ready>>, stream: &[u8]) -> Result<(
         "logical_capture_bytes": ready.capture.logical_bytes,
         "factor_events": ready.capture.factor_events,
         "records": identities,
+        "fallback_keys": &ready.capture.fallbacks,
         "serialized_stream_sha256": hash(stream),
         "source_sha256": hash(source.as_bytes()),
         "source_bytes": source.len(),
