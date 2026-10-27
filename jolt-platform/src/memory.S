@@ -1,6 +1,6 @@
+// Every routine here requires src + length and dst + length below 2^64.
 // The CLI wraps external calls and leaves the existing implementation as
 // __real_memcpy/__real_memmove. Small copies load completely before storing.
-// src + length and dst + length must stay below 2^64.
 .macro copy name, fallback
 .pushsection .text.\name,"ax",@progbits
 .globl \name
@@ -440,15 +440,13 @@ copy __wrap_memcpy, __real_memcpy
 copy __wrap_memmove, __real_memmove
 
 // Both wrappers reach this leaf only for differing offsets and length >= 544.
-// The bulk loops start without a length check; called directly, the leaf needs
-// length >= 143.
 // Aligned source words are combined into aligned destination words. Byte edges
-// keep every aligned load inside the original source range. If |src - dst| is
-// less than the source word offset, the first aligned source word already
-// holds copied bytes, which the combining shift discards.
+// keep every aligned load inside the original source range.
 .pushsection .text.__jolt_copy_misaligned,"ax",@progbits
 .hidden __jolt_copy_misaligned
 .type __jolt_copy_misaligned,@function
+// If |src - dst| is less than the source word offset, the first aligned source
+// word already holds copied bytes, which the combining shift discards.
 __jolt_copy_misaligned:
 .option push
 .option norelax
