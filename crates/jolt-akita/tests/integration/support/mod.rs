@@ -1,3 +1,5 @@
+#![expect(clippy::expect_used, reason = "fixtures assert successful proof setup")]
+
 use jolt_akita::{
     AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaNativeBatchPolynomials,
     AkitaNativeBatchStatement, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,

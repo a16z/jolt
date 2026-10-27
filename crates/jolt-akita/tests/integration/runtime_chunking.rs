@@ -1,6 +1,5 @@
 #![expect(
     clippy::unwrap_used,
-    clippy::expect_used,
     reason = "fixtures assert successful proof operations"
 )]
 
@@ -20,11 +19,7 @@ use jolt_transcript::{Blake2bTranscript, Transcript};
 use serde_json::Value;
 use std::{fs, sync::Arc};
 
-#[expect(
-    dead_code,
-    reason = "shared fixture helpers are compiled per integration target"
-)]
-mod support;
+use crate::support;
 
 const NUM_VARS: usize = 17;
 const DOMAIN: &[u8] = b"configured-chunk-folds";
