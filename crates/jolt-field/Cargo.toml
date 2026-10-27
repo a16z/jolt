@@ -47,6 +47,8 @@ fp64-proof-linkage = []
 field-inline-guest = ["dep:jolt-riscv"]
 field-inline-guest-bn254 = ["field-inline-guest"]
 field-inline-guest-fp128 = ["field-inline-guest"]
+# Row pointers (default off): hold the weighted-dot row base pointers in registers.
+field-inline-rowptr = ["field-inline-guest"]
 
 # Byte-preserving recursion experiments, default off.
 word-transcript = []

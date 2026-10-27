@@ -908,6 +908,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("ont-static-base");
     #[cfg(feature = "tensor-no-carry")]
     program.add_guest_feature("tensor-no-carry");
+    #[cfg(feature = "rowptr-registers")]
+    program.add_guest_feature("rowptr-registers");
     program.set_memory_config(memory_config);
     program
 }

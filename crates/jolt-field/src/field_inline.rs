@@ -495,7 +495,7 @@ mod guest {
         // field-inline word costs as much as the word itself, so the inner
         // loop is unrolled per block width and indexes without bounds checks.
         macro_rules! accumulate_block {
-            ($($row:ident => $k:literal),+) => {
+            ($($row:ident => $k:literal),+) => { $( #[cfg(feature = "field-inline-rowptr")] let $row: &[[u64; N]] = *$row; )+ // row pointers: see the note at the end of this file
                 for j in 0..len {
                     // SAFETY: `j < len`, and every row has `len` elements
                     // (asserted above).
@@ -648,3 +648,11 @@ pub use guest::{
     accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub,
     sum_of_products, weighted_dot_rows,
 };
+
+// Row pointers (`field-inline-rowptr`, default off; recursion guest feature `rowptr-registers`):
+// `weighted_dot_rows` copies the block's row slices into locals before its
+// element loop. The match bindings `r0..r4` point into `block_rows`, and every
+// field-inline `asm!` block may write memory, so without the copy each term
+// reloads its row base pointer from memory; locals stay in registers across
+// the asm. The statement sits on the macro's arm line and this note sits at the
+// end of the file, so the feature-off build keeps every source line number.

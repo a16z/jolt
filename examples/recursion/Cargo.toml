@@ -47,6 +47,8 @@ tensor-no-carry = ["jolt-akita?/tensor-no-carry"]
 # Each remaining arm is selected independently and forwarded to the guest.
 word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
+# Row pointers (default off): forwards `rowptr-registers` to the verifier guest.
+rowptr-registers = []
 
 [dependencies]
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }

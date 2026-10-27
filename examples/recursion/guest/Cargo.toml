@@ -34,6 +34,8 @@ word-transcript = ["akita", "jolt-akita/word-transcript"]
 word-decode = ["akita", "jolt-akita/word-decode"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 tensor-no-carry = ["akita", "jolt-akita/tensor-no-carry"]
+# Row pointers (default off): weighted-dot row pointers held in registers.
+rowptr-registers = ["jolt-field/field-inline-rowptr"]
 
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
