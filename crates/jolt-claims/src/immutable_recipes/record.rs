@@ -348,8 +348,10 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
         for term in &expression.terms {
             if term.factors.len() > 12 {
                 return Err(CaptureError::Representation(
-                    "term has more than 12 factors",
-                    detail(term.factors.len()),
+                    "term has more than 12 factors (detail: tag << 32 | phase << 16 | factors)",
+                    detail(term.factors.len())
+                        | (u64::from(self.phase.code()) << 16)
+                        | (self.key.get(1).copied().unwrap_or(0) << 32),
                 ));
             }
             budget.factors = budget
