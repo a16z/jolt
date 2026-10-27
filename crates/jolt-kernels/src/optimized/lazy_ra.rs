@@ -493,6 +493,16 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
     .collect()
 }
 
+/// Above this many bytes of branch tables, [`materialize_values`] gathers
+/// one polynomial at a time instead of filling every polynomial row by row:
+/// the row-major fill touches all tables per row, which only pays while they
+/// stay cache-resident.
+const ROW_MAJOR_FILL_MAX_TABLE_BYTES: usize = 1 << 20;
+
+/// Row-major fill ranges longer than this are split across rayon tasks.
+#[cfg(feature = "parallel")]
+const ROW_MAJOR_FILL_SPLIT_ROWS: usize = 1024;
+
 fn materialize_values<F: JoltField, S: ChunkIndexSource>(
     tables: &[Vec<F>],
     factors: usize,
@@ -513,7 +523,7 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
         };
         let len = first.len();
         #[cfg(feature = "parallel")]
-        if len > 1024 {
+        if len > ROW_MAJOR_FILL_SPLIT_ROWS {
             let mid = len / 2;
             let (left, right): (Vec<_>, Vec<_>) = columns
                 .into_iter()
@@ -537,7 +547,7 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
     }
 
     let table_bytes = tables.iter().map(Vec::len).sum::<usize>() * std::mem::size_of::<F>();
-    if table_bytes > 1 << 20 {
+    if table_bytes > ROW_MAJOR_FILL_MAX_TABLE_BYTES {
         return (0..tables.len() / factors)
             .map(|i| {
                 let eval = |j| gather_poly(tables, factors, branches, source, i, j);
