@@ -35,6 +35,9 @@ extend-exclude = [
 "unt" = "unt"
 # Canonical Akita schedule artifact extension.
 "aks" = "aks"
+# ELF relocations with addends (SHT_RELA), read by the copy-runtime proof's
+# extract.py.
+"rela" = "rela"
 
 [type.ocaml.extend-words]
 # HOL Light tactic identifiers.
@@ -48,4 +51,14 @@ extend-exclude = [
 [type.py.extend-words]
 # Proof checkers contain this x86 immediate and the HOL Light theorem type.
 "ba" = "ba"
+"thm" = "thm"
+
+[type.lean]
+extend-glob = ["*.lean"]
+
+[type.lean.extend-words]
+# Lean binder names in proofs/lean/copy-runtime: hypotheses (`hge`), a store
+# immediate (`ist`), and a theorem being built by a tactic (`thm`).
+"hge" = "hge"
+"ist" = "ist"
 "thm" = "thm"
