@@ -32,7 +32,9 @@ akita = [
 # -Cllvm-args=-enable-dfa-jump-thread, -Cllvm-args=-enable-ext-tsp-block-placement,
 # -Cllvm-args=-enable-tail-merge=false, -Cllvm-args=-split-spill-mode=size,
 # -Cllvm-args=-riscv-disable-cost-per-use=true,
-# -Cllvm-args=-phi-elim-split-all-critical-edges=true and one codegen unit (host side only;
+# -Cllvm-args=-phi-elim-split-all-critical-edges=true,
+# -Cllvm-args=-no-phi-elim-live-out-early-exit=true, -Cllvm-args=-enable-spill-copy-elim=true,
+# -Cllvm-args=-enable-post-misched=true and one codegen unit (host side only;
 # RECURSION_GUEST_CODEGEN=off restores the stock guest build).
 # tensor-no-carry: the verifier guest (and the host's Akita) separate dense
 # residual equality weights into a high-part sum and a no-carry low span; same
