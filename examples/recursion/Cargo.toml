@@ -49,7 +49,10 @@ akita = [
 # setup-sop-structured: the verifier guest (and the host's Akita) sum the cached
 # structured E, T and Z contractions of the setup scan as sums of products;
 # same field values. Default on; effective only with `akita`.
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers", "tensor-eq-runs", "setup-sop-structured"]
+# segment-setup: the verifier guest (and the host's Akita) evaluate the
+# ratio-one reduced setup scan once over its shared linear functional, segment
+# by segment; same field values. Default on; effective only with `akita`.
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers", "tensor-eq-runs", "setup-sop-structured", "segment-setup"]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
