@@ -52,7 +52,10 @@ akita = [
 # segment-setup: the verifier guest (and the host's Akita) evaluate the
 # ratio-one reduced setup scan once over its shared linear functional, segment
 # by segment; same field values. Default on; effective only with `akita`.
-default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers", "tensor-eq-runs", "setup-sop-structured", "segment-setup"]
+# weighted-dot-horner: the verifier guest evaluates each weighted dot whose 64
+# powers are geometric, with at least five rows, by a five-row reverse Horner
+# recurrence in field registers; same field values. Default on.
+default = ["l3-compression-weights", "l2-terminal-quotient", "word-decode", "word-memory", "guest-codegen", "tensor-no-carry", "rowptr-registers", "tensor-eq-runs", "setup-sop-structured", "segment-setup", "weighted-dot-horner"]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
 l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
