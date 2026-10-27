@@ -1241,7 +1241,7 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
     }
 
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
-    fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
+    #[cfg_attr(feature = "terminal-contraction", inline(always))] fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
         Self::inline_accumulators().then(|| Self::inline_weighted_dot_kernel(rows, weights, pows))
     }
 
@@ -1312,7 +1312,7 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    #[rustfmt::skip]    fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
+    #[rustfmt::skip]    #[cfg_attr(feature = "terminal-contraction", inline(always))] fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`, so a slice
         // of it, and a slice of such slices, have the limb slices' layout.
         let cast = |slice: &[Self]| -> &[[u64; 2]] {
