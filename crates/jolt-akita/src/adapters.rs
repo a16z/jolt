@@ -25,7 +25,7 @@ use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
-use rayon::{ThreadPool, ThreadPoolBuilder};
+use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
@@ -1125,7 +1125,7 @@ pub(crate) fn dense_polynomials(
 #[doc(hidden)]
 #[expect(
     clippy::indexing_slicing,
-    reason = "jolt_to_akita_index keeps num_vars bits of the reversal, so the index is < 2^num_vars = akita_evals.len()"
+    reason = "validated power-of-two lengths keep reversed indices and rectangular tile ranges within their respective slices"
 )]
 pub fn jolt_to_akita_evals(
     num_vars: usize,
@@ -1146,10 +1146,43 @@ pub fn jolt_to_akita_evals(
         return Ok(jolt_evals.to_vec());
     }
     let mut akita_evals = vec![AkitaField::zero(); jolt_evals.len()];
-    for (jolt_index, &eval) in jolt_evals.iter().enumerate() {
-        let akita_index = jolt_to_akita_index(num_vars, jolt_index);
-        akita_evals[akita_index] = eval;
+    if num_vars < 14 {
+        for (jolt_index, &eval) in jolt_evals.iter().enumerate() {
+            let akita_index = jolt_to_akita_index(num_vars, jolt_index);
+            akita_evals[akita_index] = eval;
+        }
+        return Ok(akita_evals);
     }
+
+    // Reversing the row references lets each task read four contiguous input
+    // values while writing into four 8 KiB output rows that fit in cache.
+    // Only the references are permuted; the output has a single owner.
+    const ROW_BITS: usize = 9;
+    const TILE: usize = 4;
+    let row_size = 1usize << ROW_BITS;
+    let num_rows = expected / row_size;
+    let mut rows: Vec<_> = akita_evals.chunks_exact_mut(row_size).collect();
+    for row in 0..num_rows {
+        let reversed = jolt_to_akita_index(num_vars - ROW_BITS, row);
+        if row < reversed {
+            rows.swap(row, reversed);
+        }
+    }
+    let offsets: Vec<_> = (0..row_size)
+        .map(|high| jolt_to_akita_index(ROW_BITS, high))
+        .collect();
+    rows.par_chunks_mut(TILE)
+        .enumerate()
+        .for_each(|(tile, rows)| {
+            let low = tile * TILE;
+            for (high, &out_low) in offsets.iter().enumerate() {
+                let start = high * num_rows + low;
+                let source = &jolt_evals[start..start + rows.len()];
+                for (row, &value) in rows.iter_mut().zip(source) {
+                    row[out_low] = value;
+                }
+            }
+        });
     Ok(akita_evals)
 }
 
@@ -1164,6 +1197,9 @@ where
     P: MultilinearPoly<AkitaField> + ?Sized,
 {
     let num_vars = polynomial.num_vars();
+    if let Some(evals) = polynomial.dense_evaluations() {
+        return jolt_to_akita_evals(num_vars, evals);
+    }
     let Some(len) = domain_size(num_vars) else {
         return Err(invalid_batch(format!(
             "Akita polynomial dimension {num_vars} exceeds usize bit width"
@@ -1305,6 +1341,36 @@ mod tests {
             jolt_to_akita_evals(0, &jolt).expect("constant polynomial converts"),
             vec![af(99)],
         );
+    }
+
+    #[test]
+    fn dense_ordering_preserves_boolean_assignments_across_tile_boundaries() {
+        for num_vars in [0, 1, 3, 9, 13, 14, 15, 18] {
+            // f(x) = 7 + sum_j 3^j x_j identifies each Boolean assignment.
+            // Jolt addresses x_j by the high-order bit, Akita by the low bit.
+            let weights: Vec<_> = (0..num_vars).map(|j| 3u64.pow(j as u32)).collect();
+            let value = |index: usize, little_endian: bool| {
+                af(7 + weights
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(j, weight)| {
+                        let bit = if little_endian { j } else { num_vars - 1 - j };
+                        ((index >> bit) & 1 == 1).then_some(*weight)
+                    })
+                    .sum::<u64>())
+            };
+            let polynomial =
+                Polynomial::new((0..1usize << num_vars).map(|i| value(i, false)).collect());
+            let ordered = akita_ordered_evaluations(&polynomial).unwrap();
+            assert_eq!(ordered.len(), 1usize << num_vars);
+            for (index, actual) in ordered.into_iter().enumerate() {
+                assert_eq!(
+                    actual,
+                    value(index, true),
+                    "dimension {num_vars}, index {index}"
+                );
+            }
+        }
     }
 
     #[test]
