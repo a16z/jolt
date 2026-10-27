@@ -22,7 +22,7 @@ pub mod emit {
         ChunkedWitnessCfg, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
     };
     use akita_pcs::AkitaError;
-    use akita_planner::emit::bounded_parallel_filter_map;
+    use akita_planner::emit::{bounded_parallel_filter_map, PreplannedSchedule};
     use akita_planner::{EmitSpec, PlannerPolicy};
     use jolt_claims::protocols::jolt::lattice::strategy::MAX_ONE_HOT_TRACE_COLUMNS;
     use jolt_claims::protocols::jolt::lattice::{one_hot_trace_columns, OneHotTraceShape};
@@ -198,7 +198,11 @@ pub mod emit {
                             self.spec.ring_challenge_config,
                         )
                         .map_err(|error| error.to_string())?;
-                        Ok(Some((lookup, planned.schedule)))
+                        Ok(Some(PreplannedSchedule {
+                            key: lookup,
+                            schedule: planned.schedule,
+                            planner_cost: Default::default(),
+                        }))
                     },
                 )?;
             }

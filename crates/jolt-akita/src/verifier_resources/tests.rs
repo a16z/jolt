@@ -208,7 +208,7 @@ fn prepared_resources_hold_every_required_prefix_and_only_the_verifier_matrix() 
     ));
     let requirements = AkitaVerifierRequirements::for_setups(std::slice::from_ref(&setup)).unwrap();
     assert!(!requirements.prefix_slots.is_empty());
-    assert!(requirements.generation_field_elements > requirements.retained_field_elements);
+    assert!(requirements.prefix_field_elements > requirements.retained_field_elements);
     let state = Prepared::new([Ok(setup)]).unwrap();
     let material = &state.material;
     assert_eq!(
