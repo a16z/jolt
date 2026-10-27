@@ -495,7 +495,7 @@ mod guest {
         // field-inline word costs as much as the word itself, so the inner
         // loop is unrolled per block width and indexes without bounds checks.
         macro_rules! accumulate_block {
-            ($($row:ident => $k:literal),+) => { $( #[cfg(feature = "field-inline-rowptr")] let $row: &[[u64; N]] = *$row; )+ // row pointers: see the note at the end of this file
+            ($($row:ident => $k:literal),+) => {{ $( #[cfg(feature = "field-inline-rowptr")] let $row: &[[u64; N]] = *$row; )+ // row pointers: see the note at the end of this file
                 for j in 0..len {
                     // SAFETY: `j < len`, and every row has `len` elements
                     // (asserted above).
@@ -508,7 +508,7 @@ mod guest {
                         )+
                     }
                 }
-            };
+            }};
         }
         const _: () = assert!(
             WEIGHTED_ROWS_BLOCK == 5,
