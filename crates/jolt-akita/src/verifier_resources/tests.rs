@@ -89,7 +89,7 @@ fn unprepared_setups_build_unpublished_state_shared_by_clones() {
     let clone = setup.clone();
     let other = metadata(&params(14));
     registry.attach(&other).unwrap();
-    assert!(registry.live().is_empty());
+    assert!(registry.states().is_empty());
     assert!(std::ptr::eq(
         setup.dense_verifier().unwrap(),
         clone.dense_verifier().unwrap()
@@ -126,7 +126,7 @@ fn setups_attach_to_the_smallest_covering_prepared_state() {
         wide.dense_verifier().unwrap().setup().expanded(),
         large.material.expanded()
     ));
-    assert_eq!(registry.live().len(), 2);
+    assert_eq!(registry.states().len(), 2);
 }
 
 #[test]
@@ -260,4 +260,137 @@ fn prepare_stops_at_the_first_error() {
         panic!("prepare read past the first error")
     }));
     assert!(AkitaVerifierResources::prepare(setups).is_err());
+}
+
+#[test]
+fn dropping_every_handle_stops_new_attachments() {
+    let registry = PreparedRegistry::new();
+    let state = prepared(&registry, vec![metadata(&params(15))]);
+    let attached = metadata(&params(14));
+    registry.attach(&attached).unwrap();
+    drop(state);
+    assert!(registry.states().is_empty());
+    let later = metadata(&params(14));
+    registry.attach(&later).unwrap();
+    assert!(!std::ptr::eq(
+        attached.dense_verifier().unwrap(),
+        later.dense_verifier().unwrap()
+    ));
+}
+
+#[test]
+fn the_newest_of_equal_states_is_attached() {
+    let registry = PreparedRegistry::new();
+    let _older = prepared(&registry, vec![metadata(&params(15))]);
+    let newer = prepared(&registry, vec![metadata(&params(15))]);
+    let setup = metadata(&params(14));
+    registry.attach(&setup).unwrap();
+    assert!(Arc::ptr_eq(
+        setup.dense_verifier().unwrap().setup().expanded(),
+        newer.material.expanded()
+    ));
+}
+
+#[test]
+fn setups_attach_up_to_the_state_capacity() {
+    let artifacts = params(14).schedule_artifacts;
+    let one_hot = |vars, polys| {
+        metadata(&AkitaSetupParams::one_hot_only(
+            vars,
+            polys,
+            [0; 32],
+            16,
+            Arc::clone(&artifacts),
+        ))
+    };
+    let registry = PreparedRegistry::new();
+    let dense = metadata(&AkitaSetupParams::dense_only(
+        30,
+        1,
+        [0; 32],
+        Arc::clone(&artifacts),
+    ));
+    let state = prepared(&registry, vec![one_hot(20, 1), dense]);
+    let wider = one_hot(25, 1);
+    registry.attach(&wider).unwrap();
+    assert!(std::ptr::eq(
+        wider.one_hot_verifier().unwrap(),
+        state.catalog(&wider).unwrap().one_hot_verifier().unwrap()
+    ));
+    let descriptor = state.material.expanded().descriptor();
+    assert!(state
+        .catalog(&one_hot(descriptor.max_num_vars + 1, 1))
+        .is_none());
+    assert!(state
+        .catalog(&one_hot(20, descriptor.max_num_batched_polys + 1))
+        .is_none());
+}
+
+#[test]
+fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
+    // One polynomial at 27 variables selects a shipped one-hot row that offloads a
+    // setup contribution; the assertion below checks it.
+    let artifacts = params(14).schedule_artifacts;
+    let request = AkitaSetupParams::one_hot_only(27, 1, [5; 32], 16, Arc::clone(&artifacts));
+    let (prover, verifier) = AkitaScheme::setup(request).unwrap();
+    let polynomial =
+        OneHotPolynomial::new(16, (0..1 << 23).map(|i| Some((i % 16) as u8)).collect());
+    let point = vec![AkitaField::from_u64(3); 27];
+    let evaluation = polynomial.evaluate(&point);
+    let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover).unwrap();
+    let proof = AkitaScheme::open(
+        &polynomial,
+        &point,
+        evaluation,
+        &prover,
+        Some(hint),
+        &mut Blake2bTranscript::new(b"prefix-fold"),
+    )
+    .unwrap();
+    drop((prover, polynomial));
+    assert!(
+        with_one_hot_family!(scheme verifier.one_hot_scheme().unwrap(), |scheme| {
+            scheme
+                .schedules()
+                .resolve_selection(proof.selection())
+                .unwrap()
+                .schedule()
+                .recursive_folds
+                .iter()
+                .any(|fold| fold.params.setup_prefix().is_some())
+        })
+    );
+    let transported = || -> AkitaVerifierSetup {
+        serde_json::from_str(&serde_json::to_string(&verifier).unwrap()).unwrap()
+    };
+    let verifies = |setup: &AkitaVerifierSetup, evaluation| {
+        AkitaScheme::verify(
+            &commitment,
+            &point,
+            evaluation,
+            &proof,
+            setup,
+            &mut Blake2bTranscript::new(b"prefix-fold"),
+        )
+        .is_ok()
+    };
+    let registry = PreparedRegistry::new();
+    let alone = transported();
+    registry.attach(&alone).unwrap();
+    assert!(verifies(&alone, evaluation));
+    assert!(!verifies(&alone, evaluation + AkitaField::from_u64(1)));
+    drop(alone);
+
+    // A wider state: the attached verifier has more capacity than the proof's setup.
+    let dense = metadata(&AkitaSetupParams::dense_only(30, 1, [0; 32], artifacts));
+    let state = prepared(&registry, vec![transported(), dense]);
+    assert!(state.material.expanded().descriptor().max_num_vars > 27);
+    let attached = transported();
+    registry.attach(&attached).unwrap();
+    let expanded = with_one_hot_family!(verifier attached.one_hot_verifier().unwrap(), |verifier| {
+        Arc::clone(verifier.setup().expanded())
+    });
+    assert!(Arc::ptr_eq(&expanded, state.material.expanded()));
+    assert!(verifies(&attached, evaluation));
+    assert!(!verifies(&attached, evaluation + AkitaField::from_u64(1)));
 }

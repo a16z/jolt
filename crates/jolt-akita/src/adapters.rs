@@ -35,7 +35,7 @@ use crate::one_hot_family::{
 pub use crate::one_hot_family::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 use crate::schedule_artifacts::AkitaScheduleArtifacts;
 use crate::schedule_registry::GroupedScheduleParams;
-use crate::verifier_resources::{Prepared, PREPARED_VERIFIER_RESOURCES};
+use crate::verifier_resources::PREPARED_VERIFIER_RESOURCES;
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = JoltDenseBounded;
@@ -639,16 +639,14 @@ impl AkitaVerifierSetup {
 }
 
 /// Backend verifiers (admitted rows plus their prepared terminal matrices),
-/// shared with every setup of the same catalog. Derived state: ignored by
-/// equality and skipped by serde; clones share the cache.
+/// shared with every setup attached to the same prepared state. Derived state:
+/// ignored by equality and skipped by serde; clones share the cache.
 #[derive(Clone, Default)]
 pub(crate) struct BackendVerifierCache {
     dense: Arc<OnceLock<Arc<AkitaVerifier<AkitaConfig>>>>,
     one_hot: Arc<OnceLock<Arc<AkitaOneHotBackendVerifier>>>,
     dense_scheme: Arc<OnceLock<Result<Arc<AkitaBackendScheme>, String>>>,
     one_hot_scheme: Arc<OnceLock<Result<Arc<AkitaOneHotBackendScheme>, String>>>,
-    /// Keeps the shared state that produced the verifiers alive and findable.
-    owner: Arc<OnceLock<Arc<Prepared>>>,
 }
 
 impl BackendVerifierCache {
@@ -669,14 +667,14 @@ impl BackendVerifierCache {
         self.one_hot_scheme.get()?.as_ref().ok().cloned()
     }
 
-    pub(crate) fn adopt(&self, prepared: &Self, owner: Arc<Prepared>) {
+    /// Take `prepared`'s verifiers, which own their matrix and prefix commitments.
+    pub(crate) fn adopt(&self, prepared: &Self) {
         if let Some(verifier) = prepared.dense.get() {
             let _ = self.dense.get_or_init(|| Arc::clone(verifier));
         }
         if let Some(verifier) = prepared.one_hot.get() {
             let _ = self.one_hot.get_or_init(|| Arc::clone(verifier));
         }
-        let _ = self.owner.get_or_init(|| owner);
     }
 }
 

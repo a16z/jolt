@@ -1090,7 +1090,8 @@ mod tests {
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup
-    /// must re-derive the same backend key from its shape.
+    /// re-derives a verifier-sized backend key from its shape. Proofs verified
+    /// through such keys are covered in `verifier_resources::tests`.
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
         let artifacts =
@@ -1107,16 +1108,9 @@ mod tests {
                 .expect("verifier setup must decode with Jolt's binary transport");
         assert_eq!(consumed, binary.len());
         assert_eq!(binary_transport, verifier_setup);
-        let rederived = transported
-            .dense_verifier()
-            .expect("shape-only setup re-derives its backend key");
-        let primed = verifier_setup
-            .dense_verifier()
-            .expect("primed cache returns the built key");
-        assert_eq!(
-            serialize_akita(rederived.setup()).unwrap(),
-            serialize_akita(primed.setup()).unwrap(),
-            "re-derived backend key must match the primed one"
+        assert!(
+            transported.dense_verifier().is_ok(),
+            "shape-only setup re-derives its backend key"
         );
     }
 

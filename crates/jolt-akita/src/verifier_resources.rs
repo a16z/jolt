@@ -3,7 +3,7 @@
 //! Everything is derived from the public seed; nothing is loaded from outside.
 
 use std::collections::BTreeSet;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_params::{
@@ -25,39 +25,6 @@ use crate::one_hot_family::with_one_hot_family;
 use crate::one_hot_family::AkitaOneHotBackendScheme;
 use crate::{AkitaField, AkitaVerifierSetup};
 
-#[derive(Clone)]
-struct CatalogDemand {
-    setup: AkitaVerifierSetup,
-    max_num_vars: usize,
-    max_total_batch_polys: usize,
-}
-
-impl CatalogDemand {
-    fn covers(&self, setup: &AkitaVerifierSetup) -> bool {
-        self.setup.same_catalog(setup)
-            && setup.max_num_vars <= self.max_num_vars
-            && setup.max_total_batch_polys <= self.max_total_batch_polys
-    }
-
-    fn merge(demands: &mut Vec<Self>, setup: AkitaVerifierSetup) {
-        if let Some(demand) = demands
-            .iter_mut()
-            .find(|demand| demand.setup.same_catalog(&setup))
-        {
-            demand.max_num_vars = demand.max_num_vars.max(setup.max_num_vars);
-            demand.max_total_batch_polys = demand
-                .max_total_batch_polys
-                .max(setup.max_total_batch_polys);
-        } else {
-            demands.push(Self {
-                max_num_vars: setup.max_num_vars,
-                max_total_batch_polys: setup.max_total_batch_polys,
-                setup,
-            });
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct AkitaVerifierRequirements {
     pub(crate) max_num_vars: usize,
@@ -68,17 +35,10 @@ pub(crate) struct AkitaVerifierRequirements {
 }
 
 impl AkitaVerifierRequirements {
-    #[cfg(test)]
+    /// One state's capacity, the per-field maximum over `setups` including each
+    /// one-hot catalog's backend arity, and what every distinct catalog needs at it.
     pub(crate) fn for_setups(setups: &[AkitaVerifierSetup]) -> Result<Self, OpeningsError> {
-        let mut demands = Vec::new();
-        for setup in setups {
-            CatalogDemand::merge(&mut demands, setup.clone());
-        }
-        Self::for_demands(&demands)
-    }
-
-    fn for_demands(demands: &[CatalogDemand]) -> Result<Self, OpeningsError> {
-        if demands.is_empty() {
+        if setups.is_empty() {
             return Err(invalid_setup("verifier provisioning requires a catalog"));
         }
         let mut requirements = Self {
@@ -88,20 +48,26 @@ impl AkitaVerifierRequirements {
             generation_field_elements: 1,
             prefix_slots: BTreeSet::new(),
         };
-        for demand in demands {
-            let mut max_num_vars = demand.max_num_vars;
-            if demand.setup.schedule_artifacts.one_hot().is_some() {
-                max_num_vars = max_num_vars.max(demand.setup.one_hot_backend_num_vars()?);
+        for setup in setups {
+            let mut max_num_vars = setup.max_num_vars;
+            if setup.schedule_artifacts.one_hot().is_some() {
+                max_num_vars = max_num_vars.max(setup.one_hot_backend_num_vars()?);
             }
             requirements.max_num_vars = requirements.max_num_vars.max(max_num_vars);
             requirements.max_total_batch_polys = requirements
                 .max_total_batch_polys
-                .max(demand.max_total_batch_polys);
+                .max(setup.max_total_batch_polys);
         }
         // Every catalog's verifier admits rows up to the state's descriptor, so each
         // is sized at that capacity and gets the prefix slots of every row it admits.
-        for demand in demands {
-            let setup = &demand.setup;
+        for (index, setup) in setups.iter().enumerate() {
+            if setups
+                .iter()
+                .take(index)
+                .any(|earlier| earlier.same_catalog(setup))
+            {
+                continue;
+            }
             if setup.schedule_artifacts.dense().is_some() {
                 requirements.include(setup.dense_scheme()?.schedules())?;
             }
@@ -204,50 +170,62 @@ fn generate_material(
 
 pub(crate) struct Prepared {
     material: AkitaBackendVerifierSetup,
-    catalogs: Vec<CatalogDemand>,
+    /// One setup per distinct catalog, holding that catalog's backend verifiers.
+    catalogs: Vec<AkitaVerifierSetup>,
 }
 
 impl Prepared {
     fn new(
         setups: impl IntoIterator<Item = Result<AkitaVerifierSetup, OpeningsError>>,
     ) -> Result<Self, OpeningsError> {
-        let mut demands = Vec::new();
+        let mut requested = Vec::new();
         for setup in setups {
             let setup = setup?;
             setup.check_group_width()?;
-            CatalogDemand::merge(&mut demands, setup);
+            requested.push(setup);
         }
-        let requirements = AkitaVerifierRequirements::for_demands(&demands)?;
+        let requirements = AkitaVerifierRequirements::for_setups(&requested)?;
         let material = with_backend_pool(|| generate_material(&requirements))?;
-        for demand in &mut demands {
-            demand.setup.backend_cache = demand.setup.backend_cache.decoded_only();
-            let artifacts = &demand.setup.schedule_artifacts;
+        let mut catalogs: Vec<AkitaVerifierSetup> = Vec::new();
+        for mut setup in requested {
+            if catalogs.iter().any(|catalog| catalog.same_catalog(&setup)) {
+                continue;
+            }
+            setup.backend_cache = setup.backend_cache.decoded_only();
+            let artifacts = &setup.schedule_artifacts;
             let dense = artifacts.dense().map(|_| material.clone());
             let one_hot = artifacts.one_hot().map(|_| material.clone());
-            demand.setup.prime_backend_cache(dense, one_hot)?;
+            setup.prime_backend_cache(dense, one_hot)?;
+            catalogs.push(setup);
         }
-        Ok(Self {
-            material,
-            catalogs: demands,
-        })
+        Ok(Self { material, catalogs })
     }
 
     fn size(&self) -> usize {
         self.material.expanded().descriptor().num_field_elements
     }
 
+    /// The prepared catalog serving `setup`: identical catalog bytes, within the
+    /// capacity every catalog of this state is provisioned at.
     fn catalog(&self, setup: &AkitaVerifierSetup) -> Option<&AkitaVerifierSetup> {
+        let descriptor = self.material.expanded().descriptor();
+        if setup.max_num_vars > descriptor.max_num_vars
+            || setup.max_total_batch_polys > descriptor.max_num_batched_polys
+        {
+            return None;
+        }
         self.catalogs
             .iter()
-            .find(|demand| demand.covers(setup))
-            .map(|demand| &demand.setup)
+            .find(|catalog| catalog.same_catalog(setup))
     }
 }
 
-/// Verifier state prepared ahead of proofs. While a value is alive, any setup of
-/// a covered catalog and capacity attaches to it on first use instead of building
-/// its own; an uncovered setup builds state for itself alone.
+/// Verifier state prepared ahead of proofs. While a value is alive, a setup with
+/// a prepared catalog's bytes that fits the state's capacity attaches to it on
+/// first use instead of building its own. Dropping every value stops new setups
+/// from attaching; setups already attached keep their verifiers.
 #[derive(Clone)]
+#[must_use = "setups attach to the prepared state only while it is alive"]
 pub struct AkitaVerifierResources {
     /// Holds the published state; the registry only keeps a weak reference.
     _prepared: Arc<Prepared>,
@@ -255,9 +233,14 @@ pub struct AkitaVerifierResources {
 
 impl AkitaVerifierResources {
     /// Decode and audit each distinct catalog, derive one matrix from the public
-    /// seed at the largest capacity any setup needs, compute the required prefix
-    /// commitments and build each catalog's backend verifier.
-    /// Fails on the first `Err` before generating or publishing anything.
+    /// seed, compute the required prefix commitments and build each catalog's
+    /// backend verifier. Fails on the first `Err` before generating or publishing
+    /// anything.
+    ///
+    /// Setups prepared together share one state at the per-field maximum of their
+    /// capacities, including each one-hot catalog's backend arity, and every
+    /// catalog in it is provisioned at that maximum. Prepare
+    /// very different shapes separately: together they can cost more than apart.
     pub fn prepare(
         setups: impl IntoIterator<Item = Result<AkitaVerifierSetup, OpeningsError>>,
     ) -> Result<Self, OpeningsError> {
@@ -269,7 +252,7 @@ impl AkitaVerifierResources {
     }
 }
 
-/// Live prepared states, held weakly so each dies with its last owner.
+/// Live prepared states, held weakly so each dies with its last handle.
 pub(crate) struct PreparedRegistry {
     live: Mutex<Vec<Weak<Prepared>>>,
 }
@@ -281,14 +264,19 @@ impl PreparedRegistry {
         }
     }
 
-    fn live(&self) -> MutexGuard<'_, Vec<Weak<Prepared>>> {
+    /// The live states, newest first. Matching runs after the lock is released:
+    /// comparing catalogs reads megabytes.
+    fn states(&self) -> Vec<Arc<Prepared>> {
         let mut live = self.live.lock().unwrap_or_else(PoisonError::into_inner);
         live.retain(|prepared| prepared.strong_count() > 0);
-        live
+        live.iter().rev().filter_map(Weak::upgrade).collect()
     }
 
     fn publish(&self, prepared: &Arc<Prepared>) {
-        self.live().push(Arc::downgrade(prepared));
+        self.live
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(Arc::downgrade(prepared));
     }
 
     /// A live prepared catalog with exactly `setup`'s bytes, already decoded and audited.
@@ -297,16 +285,13 @@ impl PreparedRegistry {
         setup: &AkitaVerifierSetup,
         decoded: impl Fn(&BackendVerifierCache) -> Option<T>,
     ) -> Option<T> {
-        self.live()
-            .iter()
-            .filter_map(Weak::upgrade)
-            .find_map(|state| {
-                state
-                    .catalogs
-                    .iter()
-                    .find(|demand| demand.setup.same_catalog(setup))
-                    .and_then(|demand| decoded(&demand.setup.backend_cache))
-            })
+        self.states().iter().find_map(|state| {
+            state
+                .catalogs
+                .iter()
+                .find(|catalog| catalog.same_catalog(setup))
+                .and_then(|catalog| decoded(&catalog.backend_cache))
+        })
     }
 
     pub(crate) fn decoded_dense(
@@ -323,28 +308,27 @@ impl PreparedRegistry {
         self.prepared_catalog(setup, BackendVerifierCache::decoded_one_hot)
     }
 
-    /// Attach `setup` to the smallest live state that covers it. Otherwise build
-    /// unpublished state for it alone, owned by `setup` and its clones. No lock is
-    /// held while building: the build runs on the backend's rayon pool, which may
-    /// run another verification on this thread while it waits.
+    /// Attach `setup` to the smallest live state that covers it, the newest among
+    /// equals. Otherwise build state for it alone; it is not published, and its
+    /// verifiers live in `setup` and its clones. No lock is held while building: the build runs on
+    /// the backend's rayon pool, which may run another verification on this
+    /// thread while it waits.
     pub(crate) fn attach(&self, setup: &AkitaVerifierSetup) -> Result<(), OpeningsError> {
         setup.check_group_width()?;
-        let covering = self
-            .live()
+        let states = self.states();
+        let covering = states
             .iter()
-            .filter_map(Weak::upgrade)
-            .filter(|state| state.catalog(setup).is_some())
-            .min_by_key(|state| state.size());
-        let prepared = match covering {
-            Some(prepared) => prepared,
-            None => Arc::new(Prepared::new([Ok(setup.clone())])?),
+            .filter_map(|state| state.catalog(setup).map(|catalog| (state.size(), catalog)))
+            .min_by_key(|(size, _)| *size);
+        let own;
+        let catalog = if let Some((_, catalog)) = covering {
+            catalog
+        } else {
+            own = Prepared::new([Ok(setup.clone())])?;
+            own.catalog(setup)
+                .ok_or_else(|| invalid_setup("verifier state does not cover its setup"))?
         };
-        let catalog = prepared
-            .catalog(setup)
-            .ok_or_else(|| invalid_setup("verifier state does not cover its setup"))?;
-        setup
-            .backend_cache
-            .adopt(&catalog.backend_cache, Arc::clone(&prepared));
+        setup.backend_cache.adopt(&catalog.backend_cache);
         Ok(())
     }
 }
@@ -353,7 +337,9 @@ pub(crate) static PREPARED_VERIFIER_RESOURCES: PreparedRegistry = PreparedRegist
 
 impl AkitaVerifierSetup {
     pub(crate) fn same_catalog(&self, other: &Self) -> bool {
-        self.one_hot_k == other.one_hot_k && self.schedule_artifacts == other.schedule_artifacts
+        self.one_hot_k == other.one_hot_k
+            && (Arc::ptr_eq(&self.schedule_artifacts, &other.schedule_artifacts)
+                || self.schedule_artifacts == other.schedule_artifacts)
     }
 
     fn check_group_width(&self) -> Result<(), OpeningsError> {
