@@ -137,8 +137,6 @@ macro_rules! for_each_instruction_kind {
                 VirtualAdvice => VirtualAdvice => "jolt.virtual.advice",
                 VirtualAdviceLoad => VirtualAdviceLoad => "jolt.virtual.advice_load",
                 VirtualAssertEQ => AssertEq => "jolt.virtual.assert_eq",
-                VirtualAssertHalfwordAlignment => AssertHalfwordAlignment => "jolt.virtual.assert_halfword_alignment",
-                VirtualAssertWordAlignment => AssertWordAlignment => "jolt.virtual.assert_word_alignment",
                 VirtualAssertLTE => AssertLte => "jolt.virtual.assert_lte",
                 VirtualHostIO => VirtualHostIO => "jolt.virtual.host_io",
                 VirtualAssertValidDiv0 => AssertValidDiv0 => "jolt.virtual.assert_valid_div0",
@@ -184,11 +182,16 @@ macro_rules! for_each_instruction_kind {
                 VirtualPext => Pext => "jolt.virtual.pext",
                 VirtualWindowMaskB => WindowMaskB => "jolt.virtual.windowmaskb",
                 VirtualWindowMaskH => WindowMaskH => "jolt.virtual.windowmaskh",
-                VirtualAlignAddr => AlignAddr => "jolt.virtual.alignaddr",
                 VirtualShiftDataB => ShiftDataB => "jolt.virtual.shiftdatab",
                 VirtualShiftDataH => ShiftDataH => "jolt.virtual.shiftdatah",
                 VirtualShiftDataW => ShiftDataW => "jolt.virtual.shiftdataw",
                 VirtualXORROTL1 => VirtualXorRotL1 => "jolt.virtual.xorrotl1",
+                VirtualLoadB => LoadB => "jolt.virtual.loadb",
+                VirtualLoadH => LoadH => "jolt.virtual.loadh",
+                VirtualLoadW => LoadW => "jolt.virtual.loadw",
+                VirtualStoreB => StoreB => "jolt.virtual.storeb",
+                VirtualStoreH => StoreH => "jolt.virtual.storeh",
+                VirtualStoreW => StoreW => "jolt.virtual.storew",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -252,8 +255,8 @@ macro_rules! for_each_jolt_instruction_kind {
                 // Tag 0x0062 is retired and must not be reused.
                 VirtualAdviceLoad => VirtualAdviceLoad => (0x0063, "jolt.virtual.advice_load"),
                 VirtualAssertEQ => AssertEq => (0x0064, "jolt.virtual.assert_eq"),
-                VirtualAssertHalfwordAlignment => AssertHalfwordAlignment => (0x0065, "jolt.virtual.assert_halfword_alignment"),
-                VirtualAssertWordAlignment => AssertWordAlignment => (0x0066, "jolt.virtual.assert_word_alignment"),
+                // Tag 0x0065 is retired and must not be reused.
+                // Tag 0x0066 is retired and must not be reused.
                 VirtualAssertLTE => AssertLte => (0x0067, "jolt.virtual.assert_lte"),
                 VirtualHostIO => VirtualHostIO => (0x0068, "jolt.virtual.host_io"),
                 VirtualAssertValidDiv0 => AssertValidDiv0 => (0x0069, "jolt.virtual.assert_valid_div0"),
@@ -300,7 +303,7 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualSRLIW => VirtualSrliw => (0x0093, "jolt.virtual.srliw"),
                 VirtualSRAW => VirtualSraw => (0x0094, "jolt.virtual.sraw"),
                 VirtualSRAIW => VirtualSraiw => (0x0095, "jolt.virtual.sraiw"),
-                VirtualAlignAddr => AlignAddr => (0x009a, "jolt.virtual.alignaddr"),
+                // Tag 0x009a is retired and must not be reused.
                 VirtualPext => Pext => (0x009b, "jolt.virtual.pext"),
                 VirtualWindowMaskB => WindowMaskB => (0x009c, "jolt.virtual.windowmaskb"),
                 VirtualWindowMaskH => WindowMaskH => (0x009d, "jolt.virtual.windowmaskh"),
@@ -308,6 +311,12 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualShiftDataH => ShiftDataH => (0x009f, "jolt.virtual.shiftdatah"),
                 VirtualShiftDataW => ShiftDataW => (0x00a0, "jolt.virtual.shiftdataw"),
                 VirtualXORROTL1 => VirtualXorRotL1 => (0x00a1, "jolt.virtual.xorrotl1"),
+                VirtualLoadB => LoadB => (0x00a2, "jolt.virtual.loadb"),
+                VirtualLoadH => LoadH => (0x00a3, "jolt.virtual.loadh"),
+                VirtualLoadW => LoadW => (0x00a4, "jolt.virtual.loadw"),
+                VirtualStoreB => StoreB => (0x00a5, "jolt.virtual.storeb"),
+                VirtualStoreH => StoreH => (0x00a6, "jolt.virtual.storeh"),
+                VirtualStoreW => StoreW => (0x00a7, "jolt.virtual.storew"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

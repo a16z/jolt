@@ -575,11 +575,12 @@ mod p256_tests {
     fn test_interop_multiple_messages() {
         use crate::sdk::{ecdsa_verify, P256Fr, P256Point};
         use p256::ecdsa::{signature::Signer, Signature, SigningKey};
+        use p256::elliptic_curve::Generate;
         use sha2::{Digest, Sha256};
 
-        let signing_key = SigningKey::random(&mut rand::thread_rng());
+        let signing_key = SigningKey::generate_from_rng(&mut rand::rng());
         let verifying_key = p256::ecdsa::VerifyingKey::from(&signing_key);
-        let pubkey_point = verifying_key.to_encoded_point(false);
+        let pubkey_point = verifying_key.to_sec1_point(false);
 
         let be_to_limbs = |bytes: &[u8]| -> [u64; 4] {
             let mut padded = [0u8; 32];
@@ -646,7 +647,7 @@ mod p256_tests {
         let z_bytes: [u8; 32] = Sha256::digest(message).into();
 
         let verifying_key = p256::ecdsa::VerifyingKey::from(&signing_key);
-        let pubkey_point = verifying_key.to_encoded_point(false);
+        let pubkey_point = verifying_key.to_sec1_point(false);
 
         let be_to_limbs = |bytes: &[u8]| -> [u64; 4] {
             let mut padded = [0u8; 32];
