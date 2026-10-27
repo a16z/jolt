@@ -4,9 +4,9 @@ Generate an inner Fibonacci proof, then execute its verifier as a RISC-V guest:
 
 ```bash
 export RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
   generate --example fibonacci --proofs 1 --workdir /tmp/jolt-recursion
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
   trace --example fibonacci --workdir /tmp/jolt-recursion
 ```
 

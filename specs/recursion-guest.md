@@ -301,9 +301,9 @@ represent that future merge.
 
 ```bash
 export RUST_LOG=info RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
   generate --example fibonacci --workdir /tmp/recursion
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
   trace --embed --example fibonacci --workdir /tmp/recursion
 ```
 
