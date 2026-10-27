@@ -45,11 +45,11 @@ fn square_word64(a: u64) -> u128 {
 
 /// Carry-less product of two words.
 ///
-/// This backend is compiled when the target enables neither PCLMULQDQ nor
-/// PMULL (`aes` on AArch64), which includes the default `x86_64` and
-/// `aarch64-unknown-linux-gnu` targets. Almost every CPU those targets run on
-/// has the instruction, so the CPU is asked at run time (std caches the
-/// answer); the shift loop is about ten times slower.
+/// Outside tests, this backend is compiled only when the target enables
+/// neither PCLMULQDQ nor PMULL (`aes` on AArch64). That includes the default
+/// `x86_64` and `aarch64-unknown-linux-gnu` targets, whose CPUs usually have
+/// the instruction anyway, so the CPU is asked at run time (std caches the
+/// answer). The shift loop is an order of magnitude slower.
 #[inline]
 pub(super) fn product64(a: u64, b: u64) -> Unreduced64 {
     #[cfg(target_arch = "x86_64")]
@@ -68,11 +68,14 @@ pub(super) fn product64(a: u64, b: u64) -> Unreduced64 {
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "pclmulqdq")]
 fn pclmulqdq(a: u64, b: u64) -> u128 {
-    use std::arch::x86_64::{__m128i, _mm_clmulepi64_si128, _mm_cvtsi64_si128};
+    use std::arch::x86_64::{
+        _mm_clmulepi64_si128, _mm_cvtsi128_si64, _mm_cvtsi64_si128, _mm_srli_si128,
+    };
     let product =
         _mm_clmulepi64_si128::<0x00>(_mm_cvtsi64_si128(a as i64), _mm_cvtsi64_si128(b as i64));
-    // SAFETY: both types have 128 bits, all bit patterns are valid, and x86_64 is little-endian.
-    unsafe { std::mem::transmute::<__m128i, u128>(product) }
+    let low = _mm_cvtsi128_si64(product) as u64;
+    let high = _mm_cvtsi128_si64(_mm_srli_si128::<8>(product)) as u64;
+    u128::from(low) | (u128::from(high) << 64)
 }
 
 #[cfg(target_arch = "aarch64")]
