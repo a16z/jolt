@@ -17,6 +17,6 @@ fn test_blake2b_known_vector() {
     // `u64` public message and one 52-byte challenge squeeze reduced mod r.
     assert_eq!(
         format!("{challenge:?}"),
-        "14920194216516765013403414582981910349784849177391089841728389970502116847106"
+        "9356779209320493234425964665725634890796037071057512197394342005071209638942"
     );
 }

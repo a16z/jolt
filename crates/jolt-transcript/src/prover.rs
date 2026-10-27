@@ -3,7 +3,7 @@
 use crate::codec::Units;
 #[cfg(feature = "prover-grinding")]
 use crate::pow::{Leb128, MessageSearch, SpongePow};
-use crate::{prover_transcript, SpongeUnit, Transcript};
+use crate::{prover_transcript, ProverState as JoltProverState, SpongeUnit, Transcript};
 #[cfg(feature = "prover-grinding")]
 use spongefish::VerificationError;
 use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
@@ -87,7 +87,7 @@ pub trait ProverInit: ProverTranscript + Sized {
     fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self;
 }
 
-impl<H> ProverInit for ProverState<H>
+impl<H> ProverInit for JoltProverState<H>
 where
     H: DuplexSpongeInit<U: SpongeUnit> + Sync,
 {

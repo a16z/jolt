@@ -8,9 +8,10 @@ use ark_ff::PrimeField;
 use jolt_field::{CanonicalBytes, Fr};
 use jolt_transcript::{
     prover_transcript, session_id, verifier_transcript, BytesMsg, ChallengeSponge, FieldTranscript,
-    FrUnit, PoseidonSponge, ProverTranscript, Transcript, VerifierTranscript, MAX_CHALLENGE_BYTES,
+    FrUnit, PoseidonSponge, ProverState, ProverTranscript, Transcript, VerifierTranscript,
+    MAX_CHALLENGE_BYTES,
 };
-use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, ProverState};
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
 const SESSION: &[u8] = b"jolt/poseidon/v1";
 const INSTANCE: [u8; 32] = [0x5a; 32];

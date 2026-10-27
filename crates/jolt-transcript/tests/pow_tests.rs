@@ -6,11 +6,10 @@ use jolt_field::{CanonicalBytes, F8};
 use jolt_transcript::FieldTranscript;
 use jolt_transcript::{
     prover_transcript, verifier_transcript, Blake2b512, BytesMsg, PoseidonSponge, Probe,
-    ProverTranscript, SpongeUnit, VerifierTranscript, MAX_POW_BITS,
+    ProverState, ProverTranscript, SpongeUnit, VerifierTranscript, MAX_POW_BITS,
 };
 use spongefish::{
-    instantiations::Keccak, DuplexSpongeInit, DuplexSpongeInterface, ProverState, Unit,
-    VerifierState,
+    instantiations::Keccak, DuplexSpongeInit, DuplexSpongeInterface, Unit, VerifierState,
 };
 use std::fmt::Debug;
 

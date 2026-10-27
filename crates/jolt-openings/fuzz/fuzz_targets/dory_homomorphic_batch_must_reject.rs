@@ -16,7 +16,7 @@ use jolt_openings::{
     ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};
-use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_NUM_VARS: usize = 4;
@@ -167,9 +167,9 @@ fuzz_target!(|data: &[u8]| {
             )
             .unwrap_or_else(|error| panic!("honest clear batch verification failed: {error}"));
             assert_eq!(
-        prover_state.verifier_message::<[u8; 32]>(),
-        verifier_transcript.verifier_message::<[u8; 32]>()
-    );
+                prover_state.verifier_message::<[u8; 32]>(),
+                verifier_transcript.verifier_message::<[u8; 32]>()
+            );
         }
         1 => {
             let (mut claims, hints) = commit_clear(&polynomials, &point, prover_setup);
@@ -304,9 +304,9 @@ fuzz_target!(|data: &[u8]| {
             .unwrap_or_else(|error| panic!("honest ZK batch verification failed: {error}"));
             assert_eq!(opening.hiding_commitment, verifier_hiding);
             assert_eq!(
-        prover_state.verifier_message::<[u8; 32]>(),
-        verifier_transcript.verifier_message::<[u8; 32]>()
-    );
+                prover_state.verifier_message::<[u8; 32]>(),
+                verifier_transcript.verifier_message::<[u8; 32]>()
+            );
         }
         8 => {
             let (commitments, mut hints, mut evaluations) =

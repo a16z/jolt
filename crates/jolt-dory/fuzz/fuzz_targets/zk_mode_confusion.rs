@@ -14,7 +14,7 @@ use jolt_dory::{DoryProverSetup, DoryScheme, DoryVerifierSetup};
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
 use jolt_poly::Polynomial;
-use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;

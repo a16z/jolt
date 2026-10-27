@@ -14,7 +14,7 @@ use jolt_dory::{DoryCommitment, DoryScheme};
 use jolt_field::{CanonicalEncoding, Fr, Ring};
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
-use jolt_transcript::{Keccak, ProverState, VerifierState};
+use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::{verify, JoltProof, JoltProofClaims, JoltVerifierPreprocessing, ZkConfig};
 use libfuzzer_sys::fuzz_target;
 

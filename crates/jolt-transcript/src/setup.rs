@@ -1,17 +1,21 @@
 //! Native spongefish transcript initialization.
 //!
-//! The session identifier is derived from [`PROTOCOL_ID`]. Each transcript
-//! absorbs one instance: the length-prefixed caller session followed by the
-//! length-prefixed encoding of the public statement.
+//! The session identifier is derived from [`PROTOCOL_ID`] with SHAKE128. Each
+//! transcript absorbs one instance: the length-prefixed caller session
+//! followed by the length-prefixed encoding of the public statement.
 
-use spongefish::instantiations::TurboShake128;
-use spongefish::{DuplexSpongeInit, Encoding, ProverState, SessionId, VerifierState};
+use spongefish::{DuplexSpongeInit, Encoding, SessionId, VerifierState};
+
+use crate::shake128::{ProverState, Shake128};
 
 use crate::codec::{SpongeUnit, Units};
 
 /// Crate-wide protocol identifier (ASCII left, zero-padded to 64 bytes).
 /// [`session_id`] derives the spongefish session identifier from it.
-pub const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/v1");
+///
+/// Version 2 derives the session identifier with SHAKE128 (FIPS 202) and
+/// draws full-width BN254 challenges.
+pub const PROTOCOL_ID: [u8; 64] = pad_id(b"a16z/jolt-transcript/v2");
 
 const fn pad_id(src: &[u8]) -> [u8; 64] {
     assert!(src.len() <= 64, "protocol id exceeds 64 bytes");
@@ -104,11 +108,11 @@ where
 }
 
 /// Derive the spongefish session identifier from [`PROTOCOL_ID`] using
-/// TurboSHAKE128. Callers with custom instance encodings can pass this
-/// identifier directly to spongefish's prover and verifier constructors.
+/// SHAKE128. Callers with custom instance encodings can pass this identifier
+/// directly to spongefish's prover and verifier constructors.
 #[must_use]
 pub fn session_id() -> SessionId {
-    spongefish::derive_session_id::<TurboShake128>(&PROTOCOL_ID)
+    spongefish::derive_session_id::<Shake128>(&PROTOCOL_ID)
 }
 
 #[cfg(test)]
@@ -118,7 +122,7 @@ mod tests {
     #[test]
     fn pad_id_left_aligns_and_zero_pads_to_64_bytes() {
         assert_eq!(
-            pad_id(b"a16z/jolt-transcript/v1"),
+            pad_id(b"a16z/jolt-transcript/v2"),
             PROTOCOL_ID,
             "PROTOCOL_ID must be the padded ASCII identifier"
         );
@@ -127,6 +131,21 @@ mod tests {
         assert!(short[2..].iter().all(|&byte| byte == 0));
         let full = [0x41u8; 64];
         assert_eq!(pad_id(&full), full, "a 64-byte id is passed through");
+    }
+
+    /// Known answer: the first 32 bytes of SHAKE128 over
+    /// `irtf-cfrg-fiat-shamir/session-id`, zeros to 168 bytes, then
+    /// [`PROTOCOL_ID`].
+    #[test]
+    fn session_id_is_shake128_of_the_protocol_id() {
+        assert_eq!(
+            session_id().as_bytes(),
+            &[
+                0x40, 0x47, 0xcd, 0xdd, 0x77, 0x27, 0xcd, 0x49, 0x52, 0xf2, 0xa5, 0xd4, 0x00, 0x03,
+                0x57, 0x54, 0x81, 0x80, 0x5c, 0x50, 0x8b, 0xd1, 0xa0, 0xdd, 0x9a, 0xbb, 0x56, 0x77,
+                0x11, 0xb4, 0x79, 0x76,
+            ]
+        );
     }
 
     #[test]

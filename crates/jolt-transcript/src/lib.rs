@@ -45,6 +45,7 @@ mod prover;
 #[cfg(feature = "test-utils")]
 mod scripted;
 mod setup;
+mod shake128;
 mod transcript;
 mod verifier;
 
@@ -62,7 +63,8 @@ pub use prover::{ProverInit, ProverTranscript};
 #[cfg(feature = "test-utils")]
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
-pub use spongefish::{Encoding, ProverState, Unit, VerificationError, VerifierState};
+pub use shake128::{ProverState, Shake128, Shake128Hasher};
+pub use spongefish::{Encoding, Unit, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
 pub use verifier::{VerifierInit, VerifierTranscript};
 

@@ -38,7 +38,7 @@ jolt-transcript = { path = "..", features = [
   "transcript-keccak",
   "transcript-poseidon",
 ] }
-spongefish = "=0.8.0"
+spongefish = { version = "=0.8.0", default-features = false }
 
 [[bin]]
 name = "transcript_determinism"
