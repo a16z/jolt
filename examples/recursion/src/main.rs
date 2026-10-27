@@ -1440,6 +1440,24 @@ fn main() {
     }
 }
 
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+mod immutable_recipe_generation;
+
+#[cfg(not(feature = "immutable-recipes"))]
+macro_rules! immutable_recursion_program {
+    ($program:ident) => {
+        $program
+    };
+}
+#[cfg(feature = "immutable-recipes")]
+macro_rules! immutable_recursion_program {
+    ($program:ident) => {{
+        $program.add_guest_feature("immutable-recipes");
+        $program
+    }};
+}
+pub(crate) use immutable_recursion_program;
+
 #[cfg(test)]
 mod tests {
     use super::decode_verifier_output;
@@ -1473,21 +1491,3 @@ mod tests {
         }
     }
 }
-
-#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
-mod immutable_recipe_generation;
-
-#[cfg(not(feature = "immutable-recipes"))]
-macro_rules! immutable_recursion_program {
-    ($program:ident) => {
-        $program
-    };
-}
-#[cfg(feature = "immutable-recipes")]
-macro_rules! immutable_recursion_program {
-    ($program:ident) => {{
-        $program.add_guest_feature("immutable-recipes");
-        $program
-    }};
-}
-pub(crate) use immutable_recursion_program;
