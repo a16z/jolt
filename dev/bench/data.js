@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793136578802,
+  "lastUpdate": 1793137362636,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -201850,6 +201850,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 783732,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "629b7d95913d38b4946443a8761d391350939ea8",
+          "message": "feat(memory)!: floor-addressed sub-word loads and stores (byte-addressable memory, Tier 1) (#2132)\n\n* fix(tracer): record sub-doubleword MMU accesses against the containing doubleword\n\ntrace_load recorded the 4-byte floor of the effective address with an\n8-byte value read from it, so a load in the upper half of a doubleword\nrecorded bytes of the next one. The byte and halfword store records merged\n32-bit masks into the 8-byte pre-value, zeroing its upper half, and\nstore_word recorded the raw value as the whole post-value. Every access now\nrecords its containing doubleword, the unit the RAM argument tracks, with\nonly the stored lane changed.\n\nThese records come only from the source-level reference execution, since\nsub-word sources always expand before tracing, so proofs are unaffected.\nThis closes the masked MMU defects listed in #2013's acceptance criteria.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(memory)!: floor-addressed sub-word loads and stores (byte-addressable memory, Tier 1)\n\nImplements Tier 1 of specs/byte-addressable-memory.md (#2013). The memory\nrow's otherwise idle lookup slot carries the intra-doubleword offset, so no\nsub-word access or word AMO materializes an aligned address or spends rows\non alignment asserts.\n\nProtocol\n- R1CS constraint 0 becomes (Load + Store)·(RamAddress − Rs1Value − Imm +\n  LookupOutput) = 0 (RamAddrEqRs1PlusImmMinusLookupIfLoadStore), and the\n  optimized Spartan outer kernel's hand-copied row gains the same term. LD\n  and SD look up no table, so their RamAddress is unchanged; a\n  floor-addressed row's RamAddress is the doubleword it accesses. RAF\n  evaluation, BlindFold, Akita and the opening set are untouched: the\n  offset enters this row instead of the spec's OffsetOrZero product wire.\n- New AddressOffset{B,H,W} tables output ea & 7, ea & 6 and ea & 4. A\n  misaligned access leaves a low bit in RamAddress, which RAF evaluation\n  rejects because every 8k + lowest_address is a multiple of 8; the\n  verifier now rejects a memory layout whose lowest_address is not\n  8-aligned. Unlike the spec's +2^32 marker, this needs no bound on guest\n  addresses.\n- AlignAddr, HalfwordAlignment and WordAlignment lose their last users and\n  are deleted, which renumbers the later LookupTableKind indices. The table\n  count (55) and the committed bytecode width (462 of 512 lanes) end where\n  main has them.\n\nInstructions and sequences\n- VirtualLoad{B,H,W} / VirtualStore{B,H,W} (tags 0x00a2-0x00a7) access the\n  doubleword containing rs1 + imm, keeping the signed immediate that\n  constraint 0 reads.\n- LB/LBU 4 -> 3 rows, LH/LHU/LW/LWU 5 -> 3, SB 8 -> 6, SH/SW 9 -> 6.\n  VirtualShiftData{B,H,W} read their effective address as rs2 + imm (both\n  right-operand flags), which drops the store's address ADDI.\n- Word AMOs use the same lane rows: AMOADD/AND/OR/XOR.W 19 -> 9 rows,\n  AMOSWAP.W 18 -> 8, AMOMIN[U]/AMOMAX[U].W 24 -> 13.\n- VirtualAlignAddr, VirtualAssertHalfwordAlignment and\n  VirtualAssertWordAlignment have no callers left; tags 0x009a, 0x0065 and\n  0x0066 are retired.\n- The tracer, x86 AOT backend, z3 model and Lean generator support the new\n  rows and drop VirtualAssertWordAlignment with its FormatAssert format; the\n  expansion builder's address-form template and the public\n  InlineExpansionBuilder::emit_align, which had no callers, go too. A\n  misaligned halfword or word access, word AMOs included, still aborts the\n  trace.\n\nMeasured at scale-20 inputs: btreemap -4.99% trace rows, sha2-chain -2.84%,\nsha3-chain -0.13%, fibonacci -0.01%; prover time is at parity within the\nunchanged 2^20 padded size.\n\nTests: the memory-ops guest covers every width at every aligned offset with\nnegative and non-negative immediates against a host byte-array model;\nmisaligned_memory.rs traces each misaligned LH/LHU/LW/LWU/SH/SW through a\ntest-utils tracer hook and checks that the witness satisfies R1CS but the\nstage-2 batch rejects it. z3 proves every word AMO sequence correct and\nconsistent against a lane-level model of the A extension. Registry tests pin which tables memory\nrows may use and each floor row's table to RISC-V natural alignment. The\nexpansion golden fixture (bless with JOLT_UPDATE_EXPANSION_FIXTURES=1) moved\nexactly the 129 sub-word, LR.W/SC.W and word-AMO cases; the verifier fuzz\nbundles are regenerated and FIXTURE_MAGIC is bumped.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(jolt-program): reject inline load and store offsets outside 12 bits\n\nR1CS constraint 0 forms RamAddress from the unwrapped Rs1Value + Imm,\nwhile the tracer wraps the effective address mod 2^64. Decoded loads\nand stores carry signed 12-bit offsets, so an access whose sum carries\nlands within 2 KiB of 0 or 2^64, outside the memory layout. The public\ninline builder takes i64 offsets, though, so an inline could wrap into\nmapped memory and leave an access the tracer runs unprovable: LBU with\nrs1 = u64::MAX and offset 0x8000_1001 reads 0x8000_1000. On main the\nnarrow widths formed the address with wrapping lookups (AlignAddr for\nloads, ADDI for stores), while carrying inline LD/SD were already\nunprovable.\n\nmaterialize_inline now rejects any Load- or Store-flagged row whose\noffset is outside [-2048, 2047], with\nExpansionError::InlineMemoryOffsetOutOfRange. The bound is static, so\nit also rejects wider offsets that do not carry, which main proved. No\nshipped inline uses one; the largest in-tree offset is 192. An inline\nthat needs a farther address computes it into an inline register.\n\nThe constraint-0 NOTE records the completeness argument and its one\nexception: a load that carries into the no-access zero doubleword runs,\nsince the tracer reads it as 0, but cannot be proven. The builder docs,\nthe spec and the book's inline guide state the limit.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(jolt-verifier): re-golden the muldiv BlindFold shape after main's guest memcpy\n\nmain's #2142 links an accelerated memcpy/memmove into every riscv64 guest.\nTogether with Tier 1's shorter sub-word load and store sequences, it takes\nthe muldiv guest below 512 cycles, so the ZK fixture's trace length halves\nto 512 and each of the six sumchecks over the cycle variables loses one\nround: 227 BlindFold coefficient rows become 221. ram_K and the other row\ncounts are unchanged.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T13:44:55-07:00",
+          "tree_id": "2c8a998c952f6e5384b629ffe05bde2a77f60519",
+          "url": "https://github.com/a16z/jolt/commit/629b7d95913d38b4946443a8761d391350939ea8"
+        },
+        "date": 1793137354651,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.7831,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 784060,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.4815,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 428232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 427760,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 426048,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.7883,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 425864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.6443,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425884,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0663,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 428136,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.0607,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 233524,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.8201,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 783436,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.7657,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 428496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5789,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 21.4267,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425728,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.4483,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 425512,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 35.25,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 1963584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 15.4694,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 611496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 53.5234,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 653648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.6046,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 426172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.8277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 428388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 16.7178,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 784364,
             "unit": "KB",
             "extra": ""
           }
