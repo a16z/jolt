@@ -306,21 +306,21 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-# Akita pin: commit f238e0e2, the previous pin 178e2f0f (a6a34dcf, that is 9db4ee25
-# plus the change in LayerZero-Labs/akita#272, plus the change in
-# LayerZero-Labs/akita#274 and line-neutral rustfmt skip attributes) plus the
-# change in LayerZero-Labs/akita#276, fetched from LayerZero-Labs/akita by hash.
-# Repin to the merge commit on markos/recursion-integration once those changes
-# land there.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita", rev = "f238e0e24e140603500aa62a6a2443c18bec5f40", default-features = false }
+# Akita pin: commit 334379a1, the previous pin f238e0e2 (178e2f0f, that is
+# a6a34dcf plus the change in LayerZero-Labs/akita#274 and line-neutral rustfmt
+# skip attributes, plus the change in LayerZero-Labs/akita#276) plus the optional
+# segment-setup and terminal-contraction scans, fetched from LayerZero-Labs/akita
+# by hash. Repin to the merge commit on markos/recursion-integration once those
+# changes land there.
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita", rev = "334379a114f33bef9fd10b58e5cff25607fc934e", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
