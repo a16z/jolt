@@ -26,6 +26,11 @@ fn fr_to_limbs(value: Fr) -> [u64; LIMBS] {
 }
 
 #[inline]
+pub(crate) fn fr_limbs(value: Fr) -> [u64; LIMBS] {
+    fr_to_limbs(value)
+}
+
+#[inline]
 fn limbs_to_fr(limbs: [u64; LIMBS]) -> Fr {
     Fr::from(ArkFr::new_unchecked(BigInt(limbs)))
 }
@@ -149,11 +154,6 @@ pub(crate) fn fill_staging(staging: &mut [u64], values: &[Fr]) {
     for (slot, &value) in staging.chunks_exact_mut(LIMBS).zip(values) {
         slot.copy_from_slice(&fr_to_limbs(value));
     }
-}
-
-#[inline]
-pub(crate) fn fr_limbs(value: Fr) -> [u64; LIMBS] {
-    fr_to_limbs(value)
 }
 
 pub(crate) fn require_fr_slice<F: JoltField>(values: &[F]) -> Result<&[Fr], CudaError> {

@@ -7,9 +7,8 @@
 //! partitions. `CycleWindow::residency` adds the next row needed by flag extraction
 //! without counting it in the work partition.
 
-use core::cmp::Reverse;
-
 use super::context::{device_count, enter_device};
+use core::cmp::Reverse;
 
 pub(crate) type DeviceTask<'a, T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'a>;
 

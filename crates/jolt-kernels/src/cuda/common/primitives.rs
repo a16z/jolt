@@ -3,10 +3,8 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, Ring};
 use jolt_poly::BindingOrder;
 
-use super::context::BLOCK;
-use super::context::{CudaKernelContext, BLOCK as BLOCK_SIZE};
-use super::device::DeviceFrVec;
-use super::device::LIMBS;
+use super::context::{CudaKernelContext, BLOCK, BLOCK as BLOCK_SIZE};
+use super::device::{DeviceFrVec, LIMBS};
 use super::error::CudaError;
 
 pub(crate) fn reduce_lanes(
