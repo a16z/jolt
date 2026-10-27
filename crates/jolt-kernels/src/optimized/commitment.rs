@@ -425,7 +425,7 @@ impl<F: JoltField, PCS: CommitmentScheme<Field = F> + ModeStreamingCommitment> S
     }
 }
 
-#[cfg(all(test, not(feature = "zk")))]
+#[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "test module")]
 
@@ -446,16 +446,28 @@ mod tests {
         assert_eq!(reference.len(), optimized.len());
         for (reference, optimized) in reference.iter().zip(optimized) {
             assert_eq!(reference.id, optimized.id);
+            // Under ZK each commitment draws a fresh tier-2 blind, so only the
+            // deterministic row commitments are comparable across runs.
+            #[cfg(feature = "zk")]
             assert_eq!(
-                reference.commitment, optimized.commitment,
-                "{:?} commitment diverged",
+                reference.hint.row_commitments(),
+                optimized.hint.row_commitments(),
+                "{:?} row commitments diverged",
                 reference.id
             );
-            assert_eq!(
-                reference.hint, optimized.hint,
-                "{:?} hint diverged",
-                reference.id
-            );
+            #[cfg(not(feature = "zk"))]
+            {
+                assert_eq!(
+                    reference.commitment, optimized.commitment,
+                    "{:?} commitment diverged",
+                    reference.id
+                );
+                assert_eq!(
+                    reference.hint, optimized.hint,
+                    "{:?} hint diverged",
+                    reference.id
+                );
+            }
         }
     }
 
@@ -465,7 +477,7 @@ mod tests {
     /// window (multi-delivery sequencing).
     #[test]
     fn optimized_commit_matches_reference() {
-        for prefix in [0, 1, 62, 63, 64, 254] {
+        for prefix in [0, 1, 62, 63, 64, 65, 254, 255] {
             assert_commit_matches_reference(prefix);
         }
     }

@@ -1917,7 +1917,13 @@ mod tests {
         let mut field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
         #[cfg(feature = "field-inline")]
         if let Some(prefix) = prefix {
-            field_rows.retain(|(cycle, _)| *cycle < prefix);
+            // Odd seeds keep field rows past the integer suffix boundary.
+            crate::optimized::testing::trim_field_rows(
+                &mut field_rows,
+                log_t,
+                prefix,
+                seed % 2 == 1,
+            );
         }
         let mut tau: Vec<Fr> = exceptional.map_or_else(
             || {

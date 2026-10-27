@@ -155,6 +155,12 @@ impl DoryHint {
             commit_blind,
         }
     }
+
+    /// Per-row tier-1 commitments. These are deterministic in the witness;
+    /// under ZK only the final tier-2 commitment carries the blind.
+    pub fn row_commitments(&self) -> &[Bn254G1] {
+        &self.row_commitments
+    }
 }
 
 #[derive(Clone)]
