@@ -74,9 +74,9 @@ use jolt_zk::whiteout::{
 #[cfg(feature = "zk-prover")]
 use rand_core::{CryptoRng, RngCore};
 
-use crate::adapters::{
-    AkitaBackend, AkitaBackendHint, AkitaBackendProverSetup, AkitaField, WhiteoutSource,
-};
+#[cfg(feature = "zk-prover")]
+use crate::adapters::AkitaBackendProverSetup;
+use crate::adapters::{AkitaBackend, AkitaBackendHint, AkitaField, WhiteoutSource};
 use crate::configs::{CatalogChunking, JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
 use crate::schedule_registry::GroupedScheduleParams;
 
@@ -407,29 +407,20 @@ impl From<WhiteoutPlanError> for ZkError {
 /// A setup's zero-knowledge catalog: one row per masked opening shape the
 /// setup admits (its trace group with each admitted combination of
 /// precommitted groups), the precommitted groups' hiding profiles, the Akita
-/// verifier, and the prover's setup and backend, built only on the first
-/// prover call (a verifier never builds prover state). One backend commits
-/// every hiding group and proves every opening: Akita cannot import a hiding
-/// commitment into another backend.
+/// verifier, and, for a prover, the prover's setup (the one the verifier's is
+/// derived from, so both share one public matrix) and its backend, built only
+/// on the first prover call (a verifier never builds a backend). One backend
+/// commits every hiding group and proves every opening: Akita cannot import a
+/// hiding commitment into another backend.
 pub struct WhiteoutCatalog {
     scheme: AkitaCommitmentScheme<WhiteoutOneHot>,
     verifier: AkitaVerifier<WhiteoutOneHot>,
     precommitted: BTreeMap<PrecommittedShape, PrecommittedRow>,
     num_vars: usize,
     num_polys: usize,
-    max_num_vars: usize,
-    max_batched_polys: usize,
-    prover: OnceLock<WhiteoutProver>,
-}
-
-/// The prover's half of a [`WhiteoutCatalog`].
-struct WhiteoutProver {
-    #[cfg_attr(
-        not(feature = "zk-prover"),
-        expect(dead_code, reason = "only the masked prover reads the setup")
-    )]
+    #[cfg(feature = "zk-prover")]
     setup: AkitaBackendProverSetup,
-    backend: AkitaBackend,
+    backend: OnceLock<AkitaBackend>,
 }
 
 impl WhiteoutCatalog {
@@ -565,20 +556,19 @@ impl WhiteoutCatalog {
             .keys()
             .map(|shape| shape.num_vars)
             .fold(num_vars, usize::max);
-        // Akita derives a verifier setup only from a prover setup; this one
-        // is dropped here.
-        let verifier = scheme.verifier(
-            scheme.setup_verifier(&scheme.setup_prover(max_num_vars, max_batched_polys)?)?,
-        )?;
+        // Akita derives a verifier setup only from a prover setup, which
+        // only a prover keeps.
+        let setup = scheme.setup_prover(max_num_vars, max_batched_polys)?;
+        let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
         Ok(Self {
             scheme,
             verifier,
             precommitted,
             num_vars,
             num_polys,
-            max_num_vars,
-            max_batched_polys,
-            prover: OnceLock::new(),
+            #[cfg(feature = "zk-prover")]
+            setup,
+            backend: OnceLock::new(),
         })
     }
 
@@ -596,28 +586,25 @@ impl WhiteoutCatalog {
         })
     }
 
-    /// The prover's setup and backend, built on first use.
-    fn prover(&self) -> Result<&WhiteoutProver, AkitaError> {
-        if let Some(prover) = self.prover.get() {
-            return Ok(prover);
-        }
-        let _span = tracing::info_span!("whiteout_catalog_prover_setup").entered();
-        let setup = self
-            .scheme
-            .setup_prover(self.max_num_vars, self.max_batched_polys)?;
-        let backend = AkitaBackend::new(Arc::clone(&setup.expanded))?;
-        Ok(self
-            .prover
-            .get_or_init(|| WhiteoutProver { setup, backend }))
-    }
-
-    /// The backend every hiding source is imported into.
+    /// The backend every hiding source is imported into, built on first
+    /// use.
     ///
     /// # Errors
     ///
-    /// [`AkitaError`] if the prover's setup cannot be built.
+    /// [`AkitaError`] if the backend cannot be built.
     pub fn backend(&self) -> Result<&AkitaBackend, AkitaError> {
-        Ok(&self.prover()?.backend)
+        if let Some(backend) = self.backend.get() {
+            return Ok(backend);
+        }
+        let _span = tracing::info_span!("whiteout_catalog_prover_setup").entered();
+        // The prover setup's matrix, which `prove_masked` pairs with that
+        // setup's descriptor and prefix slots.
+        #[cfg(feature = "zk-prover")]
+        let expanded = &self.setup.expanded;
+        #[cfg(not(feature = "zk-prover"))]
+        let expanded = self.verifier.setup().expanded();
+        let backend = AkitaBackend::new(Arc::clone(expanded))?;
+        Ok(self.backend.get_or_init(|| backend))
     }
 
     /// Commits `source`, one dense polynomial, hiding as a precommitted group
@@ -833,7 +820,8 @@ impl WhiteoutRow {
         transcript: &mut ProverTranscript<S>,
         compression: &dyn ImageCompression<F>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
-        let prover = self.catalog.prover()?;
+        let backend = self.catalog.backend()?;
+        let setup = &self.catalog.setup;
         let mut claims = Vec::with_capacity(groups.len());
         let mut handles = Vec::with_capacity(groups.len());
         for group in groups {
@@ -862,13 +850,11 @@ impl WhiteoutRow {
             resolved.schedule(),
             opening.opening_layout(),
         )?;
-        let prefixes = prover
-            .backend
-            .import_setup_prefixes(&prover.setup.prefix_slots, &prefix_ids)?;
+        let prefixes = backend.import_setup_prefixes(&setup.prefix_slots, &prefix_ids)?;
         prove_masked_prefix::<WhiteoutOneHot, _, _, _>(
-            prover.setup.expanded.descriptor(),
+            setup.expanded.descriptor(),
             schedules,
-            &prover.backend,
+            backend,
             &prefixes,
             opening,
             &forms.to_vec(),

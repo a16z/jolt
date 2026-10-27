@@ -831,7 +831,7 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
             product_x: random(shape.products),
             product_y: random(shape.products),
         };
-        let (a, b) = statement.weigh(&weights, alpha)?;
+        let (a, b) = statement.weigh(&weights, alpha, 0)?;
         let arbitrary: Vec<i8> = digits(&mut rng, witness.digits.len())
             .into_iter()
             .map(|digit| digit as i8)
@@ -889,7 +889,7 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
         ];
         let honest = statement.rows(&witness.digits, alpha)?;
         for family in families.iter().chain(std::iter::once(&weights)) {
-            let (a, b) = statement.weigh(family, alpha)?;
+            let (a, b) = statement.weigh(family, alpha, 0)?;
             assert!(a.iter().any(|a| !a.is_zero()));
             // The factored row at a point against the dense weights' MLE,
             // over one variable past `e`'s length.
