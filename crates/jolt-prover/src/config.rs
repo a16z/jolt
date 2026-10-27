@@ -368,6 +368,22 @@ mod dimension_tests {
         assert_eq!(derive((1 << 24) - 1, None, 0).one_hot_config.log_k_chunk, 4);
     }
 
+    /// Pins both widths across the `log_T = 25` threshold: Akita keeps 4/16
+    /// at every length, while the other PCS modes switch to 8/32.
+    #[test]
+    fn one_hot_defaults_across_chunk_threshold() {
+        for log_t in [24, 25, 26] {
+            let config = one_hot_config(log_t);
+            let widths = (config.log_k_chunk, config.lookups_ra_virtual_log_k_chunk);
+            let expected = if cfg!(feature = "akita") || log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+                (4, 16)
+            } else {
+                (8, 32)
+            };
+            assert_eq!(widths, expected, "log_T = {log_t}");
+        }
+    }
+
     #[test]
     fn invalid_execution_and_padded_domains_are_rejected() {
         let layout = MemoryLayout::new(&MemoryConfig {
