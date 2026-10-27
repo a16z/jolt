@@ -196,7 +196,8 @@ pub(crate) mod fixture_support {
     use rand::SeedableRng;
     use std::sync::Arc;
     use strum::IntoEnumIterator;
-    use tracer::instruction::Cycle;
+    use tracer::instruction::registers::InstructionRegisterState;
+    use tracer::instruction::{Cycle, Instruction, RISCVCycle, RISCVInstruction};
 
     pub(crate) const SLOTS: usize = 31;
 
@@ -282,6 +283,12 @@ pub(crate) mod fixture_support {
             .expect("every fixture palette cycle has a final Jolt instruction row")
     }
 
+    fn randomize_registers<T: RISCVInstruction>(cycle: &mut RISCVCycle<T>, rng: &mut StdRng) {
+        let instruction: Instruction = cycle.instruction.into();
+        cycle.register_state =
+            InstructionRegisterState::random(rng, &instruction.source_instruction().row().operands);
+    }
+
     pub(crate) fn with_witness<R>(
         log_t: usize,
         ram_k: usize,
@@ -297,20 +304,31 @@ pub(crate) mod fixture_support {
         let palette = palette();
         let mut rng = StdRng::seed_from_u64(seed);
 
-        let bytecode_rows: Vec<JoltInstructionRow> = (0..SLOTS)
+        let bytecode_cycles: Vec<Cycle> = (0..SLOTS)
             .map(|slot| {
                 let mut cycle = palette[slot % palette.len()].random(&mut rng);
                 set_address(&mut cycle, slot_address(slot));
-                jolt_row(&cycle)
+                cycle
             })
             .collect();
+        let bytecode_rows: Vec<JoltInstructionRow> = bytecode_cycles.iter().map(jolt_row).collect();
 
         let cycles = 1usize << log_t;
         let trace: Vec<Cycle> = (0..cycles)
             .map(|index| {
                 let slot = slot_for_cycle(index);
-                let mut cycle = palette[slot % palette.len()].random(&mut rng);
-                set_address(&mut cycle, slot_address(slot));
+                let mut cycle = bytecode_cycles[slot];
+                match &mut cycle {
+                    Cycle::ADD(inner) => randomize_registers(inner, &mut rng),
+                    Cycle::SUB(inner) => randomize_registers(inner, &mut rng),
+                    Cycle::XOR(inner) => randomize_registers(inner, &mut rng),
+                    Cycle::OR(inner) => randomize_registers(inner, &mut rng),
+                    Cycle::AND(inner) => randomize_registers(inner, &mut rng),
+                    Cycle::SLTU(inner) => randomize_registers(inner, &mut rng),
+                    Cycle::LD(inner) => randomize_registers(inner, &mut rng),
+                    Cycle::SD(inner) => randomize_registers(inner, &mut rng),
+                    other => panic!("the fixture palette has no register arm for {other:?}"),
+                }
                 let word = (index as u64)
                     .wrapping_mul(0x9E37_79B9_7F4A_7C15)
                     .wrapping_shr(11)
@@ -327,7 +345,7 @@ pub(crate) mod fixture_support {
         let rows: Vec<TraceRow> = trace
             .iter()
             .map(|cycle| {
-                tracer::cycle_to_trace_row(cycle, &bytecode.pc_map)
+                tracer::cycle_to_trace_row(cycle, &bytecode)
                     .expect("every fixture cycle converts to a modular trace row")
             })
             .collect();
