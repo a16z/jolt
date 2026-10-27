@@ -58,6 +58,24 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 attribution is meaningful relatively — while `optimized` is the performance
 tier, slotting into the same instrumented seams.
 
+For Dory, building with `--features profiling,cuda` also enables
+`profile --backend cuda`. Select the number of visible GPUs with `--gpus`
+(default: one); all requested devices must be usable:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 cargo run --release -p jolt-prover --features profiling,cuda -- \
+    profile --name sha2-chain --scale 22 --backend cuda --gpus 2
+```
+
+Building requires the CUDA toolkit (`nvcc`); running CUDA requires an NVIDIA
+driver and GPU. Enabling the feature keeps the default backend as `reference`.
+The GPU count overrides `JOLT_CUDA_GPUS`. CUDA uses the same proof verification
+and timing boundaries as the CPU backends, with device initialization before
+profiling. Clear Dory openings run on CUDA; ZK openings use the CPU implementation.
+CUDA artifacts append `_cuda`, and their backend label is `cuda`. GPU counts
+share that label and latest symlink, so keep the timestamped runs and their
+commands when comparing configurations.
+
 Artifacts are grouped by run: each invocation writes into
 `benchmark-runs/{timestamp}_{trace_name}/` (with `{trace_name}` =
 `modular_{workload}_{scale}` for Dory or
