@@ -22,6 +22,7 @@ const MAX_BYTES: usize = 32 * 1024 * 1024;
 /// with a wider term is not recorded; it stays canonical (pre-callback fallback,
 /// never truncation) and is listed in `Capture::fallbacks`.
 const MAX_TERM_FACTORS: usize = 12;
+const MAX_FALLBACK_KEYS: usize = MAX_KEYS;
 
 // The reviewed23-owner coverage plus actual Expr output evaluators. The
 // factored Outer output stays canonical and is not recorded. Bytecode anchor21
@@ -472,6 +473,16 @@ fn capture(make: impl FnOnce(&mut Budget) -> Result<Captured, CaptureError>) {
         factors: state.factor_events,
     };
     let result = make(&mut budget).and_then(|record| {
+        let (key, phase) = record.identity();
+        if state
+            .fallbacks
+            .iter()
+            .any(|listed| listed.key.as_slice() == key && listed.phase == phase_name(phase))
+        {
+            // The same key and phase was already seen over-wide: one table entry
+            // must never stand for observations that were not all recorded.
+            return Err(CaptureError::Conflict);
+        }
         if let Some(previous) = state
             .records
             .iter_mut()
@@ -571,6 +582,13 @@ fn fallback(phase: Phase, visit: impl FnOnce(&mut dyn KeySink) -> bool, widest: 
     };
     let name = phase_name(phase);
     let result = NativeRecord::<(), (), ()>::new(phase, visit, &mut budget).and_then(|record| {
+        if state.records.iter().any(|observed| {
+            let (key, actual_phase) = observed.record.identity();
+            key == record.key.as_slice() && actual_phase == phase
+        }) {
+            // The same key and phase was already recorded narrow.
+            return Err(CaptureError::Conflict);
+        }
         if let Some(previous) = state
             .fallbacks
             .iter_mut()
@@ -584,6 +602,9 @@ fn fallback(phase: Phase, visit: impl FnOnce(&mut dyn KeySink) -> bool, widest: 
                 .checked_add(1)
                 .ok_or(CaptureError::Capacity)?;
         } else {
+            if state.fallbacks.len() == MAX_FALLBACK_KEYS {
+                return Err(CaptureError::Capacity);
+            }
             budget.push(
                 &mut state.fallbacks,
                 Fallback {
