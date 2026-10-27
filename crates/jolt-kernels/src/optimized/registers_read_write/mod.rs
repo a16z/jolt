@@ -107,7 +107,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for Optimized
         );
 
         // Park the rd hot indices for the stage-5 val-evaluation kernel.
-        session.park(SharedRdIndices(rd_indices));
+        session.park(SharedRdIndices::new(rd_indices, cycles));
 
         Ok(Box::new(ReadWriteKernel {
             dimensions,

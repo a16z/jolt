@@ -26,6 +26,13 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_columns(&self) -> usize;
     fn fill_row(&self, row: usize, selected_rows: &mut [u8]);
 
+    /// All committed coefficients after this row are zero, including every
+    /// column's committed-zero mask. This bounds computation, not the logical
+    /// polynomial domain. Sources without this guarantee retain the full scan.
+    fn nonzero_prefix_len(&self) -> usize {
+        self.num_rows()
+    }
+
     /// Bit `i` is set when column `i` commits row zero in this trace row.
     fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
         0
@@ -108,6 +115,11 @@ impl TraceOneHotColumn {
             ));
         }
         let num_rows = rows.num_rows();
+        if rows.nonzero_prefix_len() > num_rows {
+            return Err(AkitaError::InvalidInput(
+                "trace one-hot nonzero prefix exceeds its logical row domain".into(),
+            ));
+        }
         let total_field_elems = num_rows.checked_mul(one_hot_k).ok_or_else(|| {
             AkitaError::InvalidInput("trace one-hot column domain overflow".to_string())
         })?;

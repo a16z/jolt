@@ -3,6 +3,7 @@
 //! stage-2-only values.
 
 use core::marker::PhantomData;
+use std::ops::Index;
 use std::sync::Arc;
 
 use jolt_field::JoltField;
@@ -16,6 +17,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::BundleAccess;
 use crate::{KernelError, ProofSession};
 
 const SPLIT_CHUNK: usize = 1 << 16;
@@ -26,13 +28,13 @@ const PAR_CHUNK: usize = 1 << 14;
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamValueBundle {
     pre_value: RamReadValue,
     post_value: RamWriteValue,
 }
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamAddressBundle {
     address: RemappedRamAddress,
 }
@@ -53,9 +55,61 @@ fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError
     }
 }
 
+/// A logical RAM address column with an implicit no-access suffix.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct RamAddresses {
+    values: Vec<u32>,
+    cycles: usize,
+}
+
+impl RamAddresses {
+    fn new(mut values: Vec<u32>, cycles: usize) -> Self {
+        assert!(values.len() <= cycles);
+        let prefix = values
+            .iter()
+            .rposition(|&address| address != NO_ACCESS)
+            .map_or(0, |i| i + 1);
+        values.truncate(prefix);
+        values.shrink_to_fit();
+        Self { values, cycles }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.cycles
+    }
+
+    pub(crate) fn prefix(&self) -> &[u32] {
+        &self.values
+    }
+
+    pub(crate) fn prefix_len(&self) -> usize {
+        self.values.len()
+    }
+}
+
+impl From<Vec<u32>> for RamAddresses {
+    fn from(values: Vec<u32>) -> Self {
+        let cycles = values.len();
+        Self::new(values, cycles)
+    }
+}
+
+impl Index<usize> for RamAddresses {
+    type Output = u32;
+
+    #[inline]
+    fn index(&self, index: usize) -> &u32 {
+        if let Some(value) = self.values.get(index) {
+            return value;
+        }
+        assert!(index < self.cycles);
+        &NO_ACCESS
+    }
+}
+
 /// Session-shared remapped addresses; [`NO_ACCESS`] marks absent accesses.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedRamAddresses(pub(crate) Arc<Vec<u32>>);
+pub(crate) struct SharedRamAddresses(pub(crate) Arc<RamAddresses>);
 
 impl SharedRamAddresses {
     /// Collect once, then return shared references.
@@ -67,14 +121,16 @@ impl SharedRamAddresses {
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
-    ) -> Result<Arc<Vec<u32>>, KernelError<F>> {
+    ) -> Result<Arc<RamAddresses>, KernelError<F>> {
         if session.state::<Self>().is_none() {
             let cycles = 1usize << log_t;
-            let [addresses] =
-                collect_split_columns::<F, RamAddressBundle, u32, 1>(witness, cycles, |bundle| {
-                    encode_address(bundle.address.0).map(|address| [address])
-                })?;
-            session.park(Self(Arc::new(addresses)));
+            let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
+                witness,
+                cycles,
+                [NO_ACCESS],
+                |bundle| encode_address(bundle.address.0).map(|address| [address]),
+            )?;
+            session.park(Self(Arc::new(RamAddresses::new(addresses, cycles))));
         }
         let addresses = Arc::clone(
             &session
@@ -97,18 +153,27 @@ impl SharedRamAddresses {
 fn collect_split_columns<F: JoltField, B, T, const N: usize>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
+    padding: [T; N],
     split: impl Fn(&B) -> Result<[T; N], KernelError<F>> + Send + Sync,
 ) -> Result<[Vec<T>; N], KernelError<F>>
 where
-    B: WitnessBundle + Copy + Send + Sync,
-    T: Copy + Send + Sync,
+    B: WitnessBundle + Copy + PartialEq + Send + Sync,
+    T: Copy + PartialEq + Send + Sync,
 {
-    #[cfg(feature = "parallel")]
+    let mut retained = cycles;
     if let Some(access) = witness.random_access() {
         if cycles <= access.cycles() {
-            return collect_split_columns_par(&access, cycles, &split);
+            let prefix = BundleAccess::<B>::View(&access).constant_suffix_start(cycles)?;
+            if prefix < cycles && split(&access.window::<B>(prefix)?)? == padding {
+                retained = prefix + 1;
+            }
+        }
+        #[cfg(feature = "parallel")]
+        if cycles <= access.cycles() {
+            return collect_split_columns_par(&access, retained, &split);
         }
     }
+    let cycles = retained;
     struct ColumnSplitter<F: JoltField, B, S, T, const N: usize> {
         columns: [Vec<T>; N],
         split: S,
@@ -223,7 +288,7 @@ where
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessColumns {
-    pub addresses: Arc<Vec<u32>>,
+    pub addresses: Arc<RamAddresses>,
     /// Pre-access value, or zero without an access.
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
@@ -245,15 +310,45 @@ impl RamAccessColumns {
     ) -> Result<Self, KernelError<F>> {
         let cycles = 1usize << log_t;
         let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        let [pre_values, post_values] =
-            collect_split_columns::<F, RamValueBundle, u64, 2>(witness, cycles, |bundle| {
-                Ok([bundle.pre_value.0, bundle.post_value.0])
-            })?;
+        let [mut pre_values, mut post_values] = collect_split_columns::<F, RamValueBundle, u64, 2>(
+            witness,
+            cycles,
+            [0, 0],
+            |bundle| Ok([bundle.pre_value.0, bundle.post_value.0]),
+        )?;
+        let prefix = pre_values
+            .iter()
+            .zip(&post_values)
+            .rposition(|(&pre, &post)| pre != 0 || post != 0)
+            .map_or(0, |i| i + 1);
+        pre_values.truncate(prefix);
+        post_values.truncate(prefix);
+        pre_values.shrink_to_fit();
+        post_values.shrink_to_fit();
         Ok(Self {
             addresses,
             pre_values,
             post_values,
         })
+    }
+
+    #[inline]
+    pub(crate) fn pre_value(&self, cycle: usize) -> u64 {
+        self.pre_values.get(cycle).copied().unwrap_or(0)
+    }
+
+    #[inline]
+    pub(crate) fn post_value(&self, cycle: usize) -> u64 {
+        self.post_values.get(cycle).copied().unwrap_or(0)
+    }
+
+    #[inline]
+    pub(crate) fn increment<F: JoltField>(&self, cycle: usize) -> F {
+        F::from_i128(self.post_value(cycle) as i128 - self.pre_value(cycle) as i128)
+    }
+
+    pub(crate) fn value_prefix_len(&self) -> usize {
+        self.pre_values.len().max(self.post_values.len())
     }
 
     /// Recover initial values from each address's first access; untouched
@@ -263,14 +358,14 @@ impl RamAccessColumns {
     pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];
-        for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values) {
+        for (cycle, &address) in self.addresses.prefix().iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
             }
             let address = address as usize;
             if !seen[address] {
                 seen[address] = true;
-                val_init[address] = F::from_u64(pre_value);
+                val_init[address] = F::from_u64(self.pre_value(cycle));
             }
         }
         val_init
@@ -278,10 +373,11 @@ impl RamAccessColumns {
 }
 
 pub(crate) fn validate_addresses<F: JoltField>(
-    addresses: &[u32],
+    addresses: &RamAddresses,
     ram_k: usize,
 ) -> Result<(), KernelError<F>> {
     if addresses
+        .prefix()
         .iter()
         .any(|&address| address != NO_ACCESS && address as usize >= ram_k)
     {
@@ -293,8 +389,9 @@ pub(crate) fn validate_addresses<F: JoltField>(
 }
 
 /// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
-pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) -> Vec<F> {
-    addresses
+pub(crate) fn fold_addresses<F: JoltField>(addresses: &RamAddresses, eq_address: &[F]) -> Vec<F> {
+    let mut values: Vec<F> = addresses
+        .prefix()
         .iter()
         .map(|&address| {
             if address == NO_ACCESS {
@@ -303,7 +400,9 @@ pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) 
                 eq_address[address as usize]
             }
         })
-        .collect()
+        .collect();
+    values.resize(addresses.len(), F::zero());
+    values
 }
 
 const FOLD_CYCLES_CHUNK: usize = 1 << 20;
@@ -311,7 +410,12 @@ const FOLD_CYCLES_CHUNK: usize = 1 << 20;
 /// Cycle fold of the one-hot `ra` grid:
 /// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
 /// Eq values are generated in chunks from `e_hi ⊗ e_lo`.
-pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k: usize) -> Vec<F> {
+pub(crate) fn fold_cycles<F: JoltField>(
+    addresses: &RamAddresses,
+    r_cycle: &[F],
+    ram_k: usize,
+) -> Vec<F> {
+    let addresses = addresses.prefix();
     let mid = r_cycle.len() / 2;
     let (r_hi, r_lo) = r_cycle.split_at(mid);
     let e_hi = EqPolynomial::<F>::evals(r_hi, None);
@@ -358,7 +462,7 @@ mod tests {
     fn rejects_session_carry_from_another_cycle_domain() {
         with_sample_backend(|witness| {
             let mut session = ProofSession::default();
-            session.park(SharedRamAddresses(Arc::new(vec![NO_ACCESS; 2])));
+            session.park(SharedRamAddresses(Arc::new(vec![NO_ACCESS; 2].into())));
 
             let error = match SharedRamAddresses::shared::<Fr>(&mut session, witness, 2) {
                 Ok(_) => panic!("wrong-domain RAM addresses were accepted"),

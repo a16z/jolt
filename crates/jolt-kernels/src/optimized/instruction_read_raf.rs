@@ -37,7 +37,7 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
     InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
@@ -47,7 +47,9 @@ use jolt_field::{Accumulator, JoltField};
 use jolt_lookup_tables::tables::prefixes::{PrefixEval, ALL_PREFIXES};
 use jolt_lookup_tables::tables::suffixes::{SuffixEval, Suffixes};
 use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly};
+use jolt_poly::{
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly,
+};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::SumcheckInputClaims;
 use jolt_verifier::stages::stage5::InstructionReadRaf;
@@ -60,10 +62,11 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::constant_suffix::ConstantSuffix;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
-    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
-    product_grid_scratch_len, scan_chunk_size, GruenRoundMessage, RoundProgress,
+    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
+    product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage, RoundProgress,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -89,7 +92,7 @@ const _: () = assert!(
 /// packed fused-inc sources used by later one-hot kernels. The lookup index
 /// is split into native limbs and the PC/table/flags share one word, keeping
 /// the retained row at 40 bytes in Akita mode.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct InstructionCycleRow {
     lookup_index_lo: u64,
@@ -197,7 +200,7 @@ const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 40);
 #[cfg(not(feature = "akita"))]
 const _: () = assert!(std::mem::size_of::<InstructionCycleRow>() == 32);
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct WideInstructionRow {
     lookup_index: LookupIndex,
     table_index: TableIndex,
@@ -234,10 +237,14 @@ impl InstructionCycleRow {
     pub(crate) fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
-    ) -> Result<Vec<Self>, KernelError<F>> {
+    ) -> Result<ConstantSuffix<Self>, KernelError<F>> {
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                let rows = collect_par_map(&access, cycles, |row: WideInstructionRow| {
+                let retained = BundleAccess::<WideInstructionRow>::View(&access)
+                    .constant_suffix_start(cycles)?
+                    .saturating_add(1)
+                    .min(cycles);
+                let rows = collect_par_map(&access, retained, |row: WideInstructionRow| {
                     Self::new(
                         row.lookup_index.0,
                         row.table_index.0,
@@ -248,14 +255,14 @@ impl InstructionCycleRow {
                         row.fused_inc,
                     )
                 })?;
-                return Ok(rows);
+                return Ok(ConstantSuffix::new(rows, cycles));
             }
         }
         let mut consumers = (PackRows {
             rows: Vec::with_capacity(cycles),
         },);
         stream_witnesses(witness, 0..cycles, 1 << 12, &mut consumers)?;
-        Ok(consumers.0.rows)
+        Ok(consumers.0.rows.into())
     }
 }
 
@@ -267,12 +274,12 @@ impl InstructionCycleRow {
 /// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
 /// carry back for the later stages.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedInstructionRows(pub(crate) Arc<Vec<InstructionCycleRow>>);
+pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<InstructionCycleRow>>);
 
 /// Weak cache for slice-backed rows; it does not keep a collection alive.
 /// A queued kernel drop can retain the last strong reference across stages.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedInstructionRowsWeak(pub(crate) std::sync::Weak<Vec<InstructionCycleRow>>);
+pub(crate) struct SharedInstructionRowsWeak(pub(crate) Weak<ConstantSuffix<InstructionCycleRow>>);
 
 impl InstructionCycleRow {
     /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
@@ -282,7 +289,7 @@ impl InstructionCycleRow {
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
-    ) -> Result<Arc<Vec<Self>>, KernelError<F>> {
+    ) -> Result<Arc<ConstantSuffix<Self>>, KernelError<F>> {
         // A parked strong carry is always honored (re-emulating sources, and
         // tests that inject rows a witness would not produce).
         let carried = match session.take::<SharedInstructionRows>() {
@@ -317,19 +324,22 @@ impl InstructionCycleRow {
 /// stage-5 rows.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct LookupIndexChunks {
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<ConstantSuffix<InstructionCycleRow>>,
+    prefix_len: usize,
     chunks: usize,
     chunk_bits: usize,
 }
 
 impl LookupIndexChunks {
     pub(crate) fn new(
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         chunks: usize,
         chunk_bits: usize,
     ) -> Self {
+        let prefix_len = rows.prefix_len();
         Self {
             rows,
+            prefix_len,
             chunks,
             chunk_bits,
         }
@@ -337,6 +347,9 @@ impl LookupIndexChunks {
 }
 
 impl ChunkIndexSource for LookupIndexChunks {
+    fn constant_suffix_start(&self) -> usize {
+        self.prefix_len
+    }
     fn num_columns(&self) -> usize {
         self.chunks
     }
@@ -356,9 +369,13 @@ impl ChunkIndexSource for LookupIndexChunks {
 /// Lazy-RA index source for the combined cycle value: the packed claim byte
 /// (see the kernel's `claim_columns`) keys a 256-entry value table.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-struct ClaimBytes(Arc<Vec<u8>>);
+struct ClaimBytes(Arc<ConstantSuffix<u8>>);
 
 impl ChunkIndexSource for ClaimBytes {
+    fn constant_suffix_start(&self) -> usize {
+        self.0.prefix_len()
+    }
+
     fn num_columns(&self) -> usize {
         1
     }
@@ -383,10 +400,9 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         inputs: ProverInputs<'_, F, InstructionReadRaf<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionReadRaf<F>>>, KernelError<F>> {
         let dimensions = inputs.relation.dimensions();
-        let rows: Arc<Vec<InstructionCycleRow>> = Arc::new(InstructionCycleRow::collect(
-            witness,
-            1 << dimensions.log_t(),
-        )?);
+        let rows: Arc<ConstantSuffix<InstructionCycleRow>> = Arc::new(
+            InstructionCycleRow::collect(witness, 1 << dimensions.log_t())?,
+        );
         if witness.random_access().is_some() {
             session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
         } else {
@@ -853,9 +869,10 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     r_reduction: Vec<F>,
-    rows: Arc<Vec<InstructionCycleRow>>,
+    rows: Arc<ConstantSuffix<InstructionCycleRow>>,
     blocks: Vec<ScanBlock>,
-    /// Condensed per-cycle eq weights (see the reference kernel).
+    /// The final weight aggregates the constant row suffix. Every address
+    /// phase is linear in these weights and condenses identical rows equally.
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -878,7 +895,7 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     /// 0 for none; bit 7: the RAF flag), snapped at the address/cycle
     /// handoff and shared with the combined value's index source — the
     /// final flag walk needs only this byte per cycle.
-    claim_columns: Arc<Vec<u8>>,
+    claim_columns: Arc<ConstantSuffix<u8>>,
     progress: RoundProgress,
 }
 
@@ -886,7 +903,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
     pub(crate) fn new(
         dimensions: InstructionReadRafDimensions,
         r_reduction: &[F],
-        rows: Arc<Vec<InstructionCycleRow>>,
+        rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         gamma: F,
     ) -> Result<Self, KernelError<F>> {
         let address_bits = dimensions.instruction_address_bits();
@@ -920,13 +937,15 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
+        let u_evals = prefix_cycle_weights(r_reduction, rows.prefix_len());
+        let scan_rows = &rows.representatives()[..u_evals.len()];
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
         let present_tables = map_reduce_chunks(
-            rows.len(),
-            scan_chunk_size(rows.len()),
+            scan_rows.len(),
+            scan_chunk_size(scan_rows.len()),
             |range| {
                 let mut present = 0u64;
-                for row in &rows[range] {
+                for row in &scan_rows[range] {
                     if let Some(table) = row.table_index() {
                         if table >= num_tables {
                             return Err(KernelError::InvariantViolation {
@@ -955,8 +974,10 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .filter_map(|(index, present)| present.then_some(index))
             .collect();
 
-        let blocks = map_indices(rows.len().div_ceil(SCAN_BLOCK), |block| {
-            ScanBlock::new(&rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(rows.len())])
+        let blocks = map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
+            ScanBlock::new(
+                &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
+            )
         });
         let mut kernel = Self {
             dimensions,
@@ -964,7 +985,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             r_reduction: r_reduction.to_vec(),
             rows,
             blocks,
-            u_evals: eq_table(r_reduction),
+            u_evals,
             prefix_checkpoints: ALL_PREFIXES
                 .iter()
                 .map(|prefix| prefix.default_checkpoint::<F>())
@@ -980,7 +1001,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             phase_challenges: Vec::new(),
             cycle_challenges: Vec::new(),
             cycle: None,
-            claim_columns: Arc::new(Vec::new()),
+            claim_columns: Arc::new(Vec::new().into()),
             progress: RoundProgress::new(dimensions.sumcheck_rounds()),
         };
         kernel.init_phase(0);
@@ -1015,7 +1036,11 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             upper_suffix_bits: suffix_len.saturating_sub(self.address_bits() / 2),
             tables: LookupTableKind::<RISCV_XLEN>::iter().collect(),
         };
-        let PhaseSums { raf, suffixes } = scan.run(&self.blocks, &self.rows, &mut self.u_evals);
+        let PhaseSums { raf, suffixes } = scan.run(
+            &self.blocks,
+            &self.rows.representatives()[..self.u_evals.len()],
+            &mut self.u_evals,
+        );
 
         let q_shift_half: Vec<F> = raf
             .shift_half
@@ -1209,7 +1234,21 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = cycle.gruen.par_fold_out_in(
+        let prefix_pairs = cycle
+            .combined_val
+            .prefix_len()
+            .max(cycle.ra.prefix_len())
+            .div_ceil(2);
+        let tail_mass = cycle.gruen.suffix_weight(prefix_pairs)
+            * cycle
+                .combined_val
+                .tail_values()
+                .first()
+                .copied()
+                .unwrap_or(F::zero())
+            * cycle.ra.tail_values().iter().copied().product::<F>();
+        let block_lanes = cycle.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || Scratch {
                 lanes: vec![F::Accumulator::default(); factors],
                 pairs: vec![(F::zero(), F::zero()); factors],
@@ -1253,29 +1292,34 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 a
             },
         );
-        let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        let mut q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
+        for value in &mut q_evals[..factors - 1] {
+            *value += tail_mass;
+        }
         cycle
             .gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                cycle.gruen.par_fold_out_in(
-                    || {
-                        (
-                            vec![(F::zero(), F::zero()); factors],
-                            F::Accumulator::default(),
-                        )
-                    },
-                    |(pairs, sum), row, _, weight| {
-                        let (val, ra) = pairs.split_at_mut(1);
-                        cycle.combined_val.lo_hi_all(row, val);
-                        cycle.ra.lo_hi_all(row, ra);
-                        let value = pairs
-                            .iter()
-                            .fold(F::one(), |product, pair| product * pair.0);
-                        sum.fmadd(weight, value);
-                    },
-                    |_, weight, (_, sum)| weight * sum.reduce(),
-                    |a, b| a + b,
-                )
+                tail_mass
+                    + cycle.gruen.par_fold_out_in_prefix(
+                        prefix_pairs,
+                        || {
+                            (
+                                vec![(F::zero(), F::zero()); factors],
+                                F::Accumulator::default(),
+                            )
+                        },
+                        |(pairs, sum), row, _, weight| {
+                            let (val, ra) = pairs.split_at_mut(1);
+                            cycle.combined_val.lo_hi_all(row, val);
+                            cycle.ra.lo_hi_all(row, ra);
+                            let value = pairs
+                                .iter()
+                                .fold(F::one(), |product, pair| product * pair.0);
+                            sum.fmadd(weight, value);
+                        },
+                        |_, weight, (_, sum)| weight * sum.reduce(),
+                        |a, b| a + b,
+                    )
             })
     }
 
@@ -1304,18 +1348,21 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
 
         // Snap the packed output-claim facts first: past this handoff the
         // final flag walk reads one byte per cycle, not the 40 B row.
-        let rows = self.rows.as_slice();
+        let rows = self.rows.representatives();
         const {
             assert!(
                 LookupTableKind::<RISCV_XLEN>::COUNT < 0x7f,
                 "table indices must fit the packed claim byte"
             );
         }
-        let claim_columns = Arc::new(map_indices(rows.len(), |j| {
-            let row = &rows[j];
-            let table = row.table_index().map_or(0, |index| index as u8 + 1);
-            table | (u8::from(row.raf_flag()) << 7)
-        }));
+        let claim_columns = Arc::new(ConstantSuffix::new(
+            map_indices(rows.len(), |j| {
+                let row = &rows[j];
+                let table = row.table_index().map_or(0, |index| index as u8 + 1);
+                table | (u8::from(row.raf_flag()) << 7)
+            }),
+            self.rows.len(),
+        ));
         self.claim_columns = Arc::clone(&claim_columns);
         let combined_table: Vec<F> = (0..=u8::MAX)
             .map(|packed| {
@@ -1349,7 +1396,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             }
             table
         });
-        let rows = std::mem::replace(&mut self.rows, Arc::new(Vec::new()));
+        let rows = std::mem::replace(&mut self.rows, Arc::new(Vec::new().into()));
         let chunks =
             LookupIndexChunks::new(rows, column_tables.len(), phases_per_column * CHUNK_LEN);
 
@@ -1488,8 +1535,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
         let r_cycle: Vec<F> = self.cycle_challenges.iter().rev().copied().collect();
         let eq_cycle = TensorEqTable::<F>::new(&r_cycle);
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
-        let claim_columns = self.claim_columns.as_slice();
-        let (lookup_table_flags, instruction_raf_flag) = eq_cycle.par_fold_out_in(
+        let claim_columns = &self.claim_columns;
+        let (mut lookup_table_flags, mut instruction_raf_flag) = eq_cycle.par_fold_out_in_prefix(
+            claim_columns.prefix_len(),
             || vec![F::Accumulator::default(); num_tables + 1],
             |accumulators, row_index, _x_in, e_in| {
                 let packed = claim_columns[row_index];
@@ -1515,6 +1563,15 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionReadRafKernel<F> {
                 (flags, raf_a + raf_b)
             },
         );
+
+        let tail = claim_columns[claim_columns.prefix_len()];
+        let tail_mass = EqPolynomial::suffix_sum(&r_cycle, claim_columns.prefix_len());
+        if tail & 0x7f != 0 {
+            lookup_table_flags[usize::from(tail & 0x7f) - 1] += tail_mass;
+        }
+        if tail & 0x80 != 0 {
+            instruction_raf_flag += tail_mass;
+        }
 
         Ok(InstructionReadRafOutputClaims {
             lookup_table_flags,
@@ -1680,12 +1737,44 @@ mod tests {
         seed: u64,
         exceptional: Option<ExceptionalEq>,
     ) {
+        assert_parity_prefix(log_t, num_virtual_ra_polys, seed, exceptional, None);
+    }
+
+    #[test]
+    fn constant_suffix_rounds_match_reference() {
+        for prefix in [0, 1, 15, 16, 17, 33, 63] {
+            for exceptional in [None].into_iter().chain(ExceptionalEq::ALL.map(Some)) {
+                for zero_tail in [true, false] {
+                    assert_parity_prefix(6, 8, 123, exceptional, Some((prefix, zero_tail)));
+                }
+            }
+        }
+    }
+
+    fn assert_parity_prefix(
+        log_t: usize,
+        num_virtual_ra_polys: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+        prefix: Option<(usize, bool)>,
+    ) {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
             NonZeroUsize::new(num_virtual_ra_polys).unwrap(),
         );
-        let rows = fixture_rows(log_t, seed);
+        let mut rows = fixture_rows(log_t, seed);
+        if let Some((prefix, zero_tail)) = prefix {
+            let mut tail = rows[rows.len() - 1];
+            if zero_tail {
+                tail.lookup_index = LookupIndex(0);
+                tail.table_index = TableIndex(None);
+                tail.raf_flag = InstructionRafFlag(false);
+            }
+            for row in &mut rows[prefix..] {
+                *row = tail;
+            }
+        }
         let r_reduction: Vec<Fr> = exceptional.map_or_else(
             || (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect(),
             |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),
@@ -1697,7 +1786,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(pack(&rows)),
+            Arc::new(pack(&rows).into()),
             gamma,
         )
         .unwrap();
@@ -1787,7 +1876,7 @@ mod tests {
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
             &r_reduction,
-            Arc::new(pack(&rows)),
+            Arc::new(pack(&rows).into()),
             gamma,
         )
         .unwrap();

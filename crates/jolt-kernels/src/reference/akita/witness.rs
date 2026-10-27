@@ -125,6 +125,13 @@ impl OneHotTraceRows {
 }
 
 impl TraceOneHotRows for OneHotTraceRows {
+    fn nonzero_prefix_len(&self) -> usize {
+        match &self.selected_rows {
+            SelectedRows::Extracted(rows) => rows.access.physical_cycles(),
+            SelectedRows::Packed { .. } => self.num_rows,
+        }
+    }
+
     fn num_rows(&self) -> usize {
         self.num_rows
     }

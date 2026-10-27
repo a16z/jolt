@@ -115,7 +115,7 @@ pub(super) fn visit_segment_ring_range<const D: usize>(
         let row_start = ring_start / rings_per_row;
         let row_end = ring_end.div_ceil(rings_per_row);
         let mut buckets = vec![Vec::new(); rings_per_row];
-        for row in row_start..row_end.min(source.rows.num_rows()) {
+        for row in row_start..row_end.min(source.rows.nonzero_prefix_len()) {
             source.rows.fill_row(row, &mut selected_rows);
             let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
             for bucket in &mut buckets {
@@ -143,11 +143,12 @@ pub(super) fn visit_segment_ring_range<const D: usize>(
     } else {
         let rows_per_ring = D / k;
         let mut contributions = Vec::with_capacity(num_columns * rows_per_ring);
+        let ring_end = ring_end.min(source.rows.nonzero_prefix_len().div_ceil(rows_per_ring));
         for ring in ring_start..ring_end {
             contributions.clear();
             for row_offset in 0..rows_per_ring {
                 let row = ring * rows_per_ring + row_offset;
-                if row >= source.rows.num_rows() {
+                if row >= source.rows.nonzero_prefix_len() {
                     break;
                 }
                 source.rows.fill_row(row, &mut selected_rows);
@@ -206,11 +207,12 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
     })?;
     let mut selected_rows = vec![NO_SELECTED_ROW; row_index_count];
     let mut committed_zero_masks = vec![0u64; rows_per_ring];
+    let ring_end = ring_end.min(source.rows.nonzero_prefix_len().div_ceil(rows_per_ring));
     for ring in ring_start..ring_end {
         let row_start = ring * rows_per_ring;
         let populated_rows = source
             .rows
-            .num_rows()
+            .nonzero_prefix_len()
             .saturating_sub(row_start)
             .min(rows_per_ring);
         let populated_indices = &mut selected_rows[..populated_rows * num_columns];

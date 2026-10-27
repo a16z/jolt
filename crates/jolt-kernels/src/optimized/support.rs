@@ -2,7 +2,8 @@ use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, TensorEqTable,
+    UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
@@ -429,6 +430,29 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     table.truncate(half);
 }
 
+/// Low-bit-first binding of a prefix, with the missing odd endpoint supplied
+/// by its implicit suffix. Small prefixes reuse their allocation.
+pub(crate) fn bind_prefix_pairs<F: JoltField>(table: &mut Vec<F>, r: F, boundary: F) {
+    let len = table.len().div_ceil(2);
+    #[cfg(feature = "parallel")]
+    if len >= 1024 {
+        *table = table
+            .par_chunks(2)
+            .map(|pair| {
+                let lo = pair[0];
+                lo + r * (pair.get(1).copied().unwrap_or(boundary) - lo)
+            })
+            .collect();
+        return;
+    }
+    for index in 0..len {
+        let lo = table[2 * index];
+        let hi = table.get(2 * index + 1).copied().unwrap_or(boundary);
+        table[index] = lo + r * (hi - lo);
+    }
+    table.truncate(len);
+}
+
 /// The drawn challenges of a kernel's bound rounds, tracked against the
 /// round total — one authority for both the challenge history and the
 /// bound-rounds invariant. Kernels that never revisit their challenges use
@@ -563,14 +587,6 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
         round: usize,
         q_at_zero: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
-
-    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F;
-
-    /// `(q(0), q(∞))` of the two-table product summand
-    /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
-    /// pairs — the endpoints `gruen_poly_deg_3` completes into the cubic
-    /// round message with the running claim.
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F);
 }
 
 impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
@@ -645,39 +661,6 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
                 expected: previous_claim,
                 actual,
             })
-    }
-
-    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F {
-        self.par_fold_out_in(
-            F::zero,
-            |sum, row, _, weight| {
-                *sum += weight * a.evals()[2 * row + 1] * b.evals()[2 * row + 1];
-            },
-            |_, weight, sum| weight * sum,
-            |left, right| left + right,
-        )
-    }
-
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {
-        let a = a.evals();
-        let b = b.evals();
-        debug_assert_eq!(
-            self.e_out_current_len() * self.e_in_current_len() * 2,
-            a.len()
-        );
-        debug_assert_eq!(a.len(), b.len());
-        let [zero, infinity] = self.par_fold_out_in(
-            || [F::zero(); 2],
-            |accumulator, row, _x_in, e| {
-                let (a_low, a_high) = (a[2 * row], a[2 * row + 1]);
-                let (b_low, b_high) = (b[2 * row], b[2 * row + 1]);
-                accumulator[0] += e * (a_low * b_low);
-                accumulator[1] += e * ((a_high - a_low) * (b_high - b_low));
-            },
-            |_x_out, e_out, accumulator| [e_out * accumulator[0], e_out * accumulator[1]],
-            |left, right| [left[0] + right[0], left[1] + right[1]],
-        );
-        (zero, infinity)
     }
 }
 
@@ -1042,6 +1025,43 @@ impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
     }
 }
 
+impl<B: WitnessBundle + Copy + PartialEq> BundleAccess<'_, B> {
+    pub(crate) fn constant_suffix_start(&self, cycles: usize) -> Result<usize, WitnessError> {
+        match self {
+            Self::View(view) => {
+                let prefix = view.physical_cycles().min(cycles);
+                // Only the final padding window lacks a next row. Compare it to
+                // the ordinary padding window before treating that suffix as constant.
+                if prefix < cycles && self.row(prefix)? != self.row(cycles - 1)? {
+                    Ok(cycles)
+                } else {
+                    Ok(prefix)
+                }
+            }
+            Self::Retained(rows) => {
+                let last = &rows[cycles - 1];
+                Ok(rows[..cycles]
+                    .iter()
+                    .rposition(|row| row != last)
+                    .map_or(0, |i| i + 1))
+            }
+        }
+    }
+}
+
+pub(crate) fn prefix_cycle_weights<F: JoltField>(point: &[F], prefix_cycles: usize) -> Vec<F> {
+    let prefix = prefix_cycles.min((1usize << point.len()) - 1);
+    let eq = TensorEqTable::new(point);
+    let tail_mass = EqPolynomial::suffix_sum(point, prefix);
+    map_indices(prefix + 1, |row| {
+        if row == prefix {
+            tail_mass
+        } else {
+            eq.evaluate_index(row)
+        }
+    })
+}
+
 #[inline(always)]
 pub(crate) fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
     if left.is_zero() || right.is_zero() {
@@ -1060,24 +1080,52 @@ pub(crate) fn bound_pair<F: JoltField>(raw: impl Fn(usize) -> F, r1: F, y: usize
     lo + mul_0_optimized(r1, hi - lo)
 }
 
-/// Two LSB binds of a raw `len`-entry column materialized directly at
-/// `len / 4`, skipping the half-size intermediate.
-pub(crate) fn bind_raw_twice<F: JoltField>(
-    raw: impl Fn(usize) -> F + Sync,
-    len: usize,
-    r1: F,
-    r2: F,
-) -> Polynomial<F> {
-    let pair = |z: usize| {
-        let lo = bound_pair(&raw, r1, 2 * z);
-        let hi = bound_pair(&raw, r1, 2 * z + 1);
-        lo + mul_0_optimized(r2, hi - lo)
-    };
-    #[cfg(feature = "parallel")]
-    let bound: Vec<F> = (0..len / 4).into_par_iter().map(pair).collect();
-    #[cfg(not(feature = "parallel"))]
-    let bound: Vec<F> = (0..len / 4).map(pair).collect();
-    Polynomial::new(bound)
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test fixture and extraction assertions")]
+mod bundle_access_tests {
+    use jolt_claims::protocols::jolt::JoltPolynomialId;
+    use jolt_witness::__private::TraceRow;
+    use jolt_witness::testing::with_sample_backend;
+    use jolt_witness::witnesses::WitnessEnv;
+
+    use super::{BundleAccess, RowSource, WitnessBundle, WitnessError};
+    use crate::optimized::instruction_input::InstructionInputRow;
+
+    #[derive(Clone, Copy, PartialEq)]
+    struct SuccessorPresent(bool);
+
+    impl WitnessBundle for SuccessorPresent {
+        fn from_row(
+            _row: &TraceRow,
+            next: Option<&TraceRow>,
+            _env: &WitnessEnv<'_>,
+        ) -> Result<Self, WitnessError> {
+            Ok(Self(next.is_some()))
+        }
+
+        fn annotated_ids() -> Vec<JoltPolynomialId> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn padding_suffix_keeps_terminal_lookahead_difference() {
+        with_sample_backend(|witness| {
+            let rows = witness.random_access().unwrap();
+            assert_eq!(
+                BundleAccess::<InstructionInputRow>::View(&rows)
+                    .constant_suffix_start(4)
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                BundleAccess::<SuccessorPresent>::View(&rows)
+                    .constant_suffix_start(4)
+                    .unwrap(),
+                4
+            );
+        });
+    }
 }
 
 #[cfg(test)]

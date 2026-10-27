@@ -4,12 +4,13 @@
 //! `eq(r_product, j) · ((is_rs2·rs2 + is_imm·imm) + γ·(is_rs1·rs1 + is_pc·upc))(j)`.
 //!
 //! Round 0 evaluates native integer rows. The first bind materializes all
-//! eight columns at `T/2`. The bound eq scalar is checked against the verifier.
+//! eight explicit prefixes; the constant suffix contributes its summed equality
+//! weight. The bound eq scalar is checked against the verifier.
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -22,7 +23,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
+use super::support::{
+    bind_prefix_pairs, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -39,7 +42,7 @@ const LATE_PURGE_ROUNDS: usize = 8;
 const MATERIALIZE_CHUNK: usize = 1 << 12;
 
 /// One cycle's eight operand/flag values as native scalars.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct InstructionInputRow {
     #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value))]
     pub is_rs1: InstructionFlag,
@@ -93,7 +96,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum InputState<F: JoltField> {
     Native(BundleStore<InstructionInputRow>),
-    Dense(Vec<Polynomial<F>>),
+    Dense(Vec<Vec<F>>),
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -102,6 +105,9 @@ pub struct OptimizedInstructionInputKernel<F: JoltField> {
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     state: InputState<F>,
+    prefix_len: usize,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    tail: [F; NUM_TABLES],
     gruen: GruenSplitEqPolynomial<F>,
 }
 
@@ -137,7 +143,11 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 });
             }
         }
+        let tail = rows.access().row((1 << log_t) - 1)?;
+        let prefix_len = rows.access().constant_suffix_start(1 << log_t)?;
         Ok(Self {
+            prefix_len,
+            tail: tail.field_values(),
             progress: RoundProgress::new(log_t),
             gamma,
             state: InputState::Native(rows),
@@ -158,12 +168,15 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         let e_in = self.gruen.e_in_current();
         let in_len = e_in.len();
         let gamma = self.gamma;
+        let pairs = self.prefix_len.div_ceil(2);
+        let outer_len = pairs.div_ceil(in_len);
 
         let block = |x_out: usize| -> Result<[F; POINTS], WitnessError> {
             let mut right_acc = [Accumulator::<F>::default(); POINTS];
             let mut right_high_acc = [Accumulator::<F>::default(); POINTS];
             let mut left_acc = [Accumulator::<F>::default(); POINTS];
-            for (x_in, &e_in) in e_in.iter().enumerate() {
+            let inner_len = (pairs - x_out * in_len).min(in_len);
+            for (x_in, &e_in) in e_in[..inner_len].iter().enumerate() {
                 let y = x_out * in_len + x_in;
                 let even = access.row(2 * y)?;
                 let odd = access.row(2 * y + 1)?;
@@ -219,7 +232,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
 
         #[cfg(feature = "parallel")]
         {
-            (0..e_out.len())
+            (0..outer_len)
                 .into_par_iter()
                 .map(block)
                 .try_reduce(|| [F::zero(); POINTS], |a, b| Ok(merge(a, b)))
@@ -227,16 +240,23 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         #[cfg(not(feature = "parallel"))]
         {
             let mut folded = [F::zero(); POINTS];
-            for x_out in 0..e_out.len() {
+            for x_out in 0..outer_len {
                 folded = merge(folded, block(x_out)?);
             }
             Ok(folded)
         }
     }
 
-    fn dense_q_evals(&self, tables: &[Polynomial<F>]) -> [F; 4] {
+    fn operand_product(&self, values: &[F; NUM_TABLES]) -> F {
+        let right = values[4] * values[5] + values[6] * values[7];
+        let left = values[0] * values[1] + values[2] * values[3];
+        right + self.gamma * left
+    }
+
+    fn dense_q_evals(&self, tables: &[Vec<F>]) -> [F; 4] {
         const POINTS: usize = 4;
-        self.gruen.par_fold_out_in(
+        self.gruen.par_fold_out_in_prefix(
+            self.prefix_len.div_ceil(2),
             || {
                 (
                     [F::zero(); POINTS],
@@ -245,18 +265,18 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 )
             },
             |(acc, evals, steps), row, _x_in, e_in| {
-                for ((table, eval), step) in
-                    tables.iter().zip(evals.iter_mut()).zip(steps.iter_mut())
+                for (i, ((table, eval), step)) in tables
+                    .iter()
+                    .zip(evals.iter_mut())
+                    .zip(steps.iter_mut())
+                    .enumerate()
                 {
-                    let table = table.evals();
                     let lo = table[2 * row];
                     *eval = lo;
-                    *step = table[2 * row + 1] - lo;
+                    *step = table.get(2 * row + 1).copied().unwrap_or(self.tail[i]) - lo;
                 }
                 for value in acc.iter_mut() {
-                    let right = evals[4] * evals[5] + evals[6] * evals[7];
-                    let left = evals[0] * evals[1] + evals[2] * evals[3];
-                    *value += e_in * (right + self.gamma * left);
+                    *value += e_in * self.operand_product(evals);
                     for (eval, step) in evals.iter_mut().zip(steps.iter()) {
                         *eval += *step;
                     }
@@ -286,6 +306,11 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             InputState::Native(rows) => self.native_q_evals(rows).map_err(row_extraction_error)?,
             InputState::Dense(tables) => self.dense_q_evals(tables),
         };
+        let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
+            * self.operand_product(&self.tail);
+        for value in &mut q_evals {
+            *value += suffix;
+        }
         self.gruen
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
@@ -294,7 +319,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         rows: &BundleStore<InstructionInputRow>,
         challenge: F,
         half: usize,
-    ) -> Result<Vec<Polynomial<F>>, WitnessError> {
+    ) -> Result<Vec<Vec<F>>, WitnessError> {
         let access = rows.access();
         let cell = |y: usize| -> Result<[F; NUM_TABLES], WitnessError> {
             let even = access.row(2 * y)?.field_values::<F>();
@@ -345,29 +370,28 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 table[y] = value;
             }
         }
-        Ok(tables.into_iter().map(Polynomial::new).collect())
+        Ok(tables.into_iter().collect())
     }
 
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         self.gruen.bind(challenge);
         match &mut self.state {
             InputState::Native(rows) => {
-                let tables =
-                    Self::materialize_half(rows, challenge, 1 << (self.progress.total() - 1))
-                        .map_err(row_extraction_error)?;
+                let tables = Self::materialize_half(rows, challenge, self.prefix_len.div_ceil(2))
+                    .map_err(row_extraction_error)?;
                 self.state = InputState::Dense(tables);
                 purge_retained_memory(self.progress.total());
             }
             InputState::Dense(tables) => {
-                // In-place binds avoid eight dead half-size generations.
-                for table in tables.iter_mut() {
-                    let _ = table.bind_low_to_high_in_place(challenge);
+                for (table, tail) in tables.iter_mut().zip(self.tail) {
+                    bind_prefix_pairs(table, challenge, tail);
                 }
                 if self.progress.bound() + 1 == LATE_PURGE_ROUNDS {
                     purge_retained_memory(self.progress.total());
                 }
             }
         }
+        self.prefix_len = self.prefix_len.div_ceil(2);
         self.progress.advance();
         Ok(())
     }
@@ -375,7 +399,9 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     fn final_values(&self) -> Result<[F; NUM_TABLES], WitnessError> {
         match &self.state {
             InputState::Native(rows) => Ok(rows.access().row(0)?.field_values()),
-            InputState::Dense(tables) => Ok(core::array::from_fn(|i| tables[i].evals()[0])),
+            InputState::Dense(tables) => Ok(core::array::from_fn(|i| {
+                tables[i].first().copied().unwrap_or(self.tail[i])
+            })),
         }
     }
 }
@@ -488,9 +514,9 @@ mod tests {
         z ^ (z >> 31)
     }
 
-    fn assert_parity(log_t: usize, seed: u64) {
+    fn assert_parity(log_t: usize, seed: u64, prefix: usize, boolean_challenges: bool) {
         let mut state = seed;
-        let rows: Vec<InstructionInputRow> = (0..1usize << log_t)
+        let mut rows: Vec<InstructionInputRow> = (0..1usize << log_t)
             .map(|index| {
                 let raw = splitmix(&mut state);
                 let wide = ((splitmix(&mut state) as i128) << 64) | splitmix(&mut state) as i128;
@@ -506,6 +532,15 @@ mod tests {
                 }
             })
             .collect();
+        let tail = rows[rows.len() - 1];
+        rows[prefix..].fill(tail);
+        let challenge = |round| {
+            if boolean_challenges {
+                fr((round % 2) as u64)
+            } else {
+                challenge(round)
+            }
+        };
         let tables: Vec<Vec<Fr>> = (0..8)
             .map(|table| {
                 rows.iter()
@@ -513,7 +548,15 @@ mod tests {
                     .collect()
             })
             .collect();
-        let r_product: Vec<Fr> = (0..log_t).map(|i| fr(900 + 53 * i as u64)).collect();
+        let r_product: Vec<Fr> = (0..log_t)
+            .map(|i| {
+                if boolean_challenges {
+                    fr((i % 2) as u64)
+                } else {
+                    fr(900 + 53 * i as u64)
+                }
+            })
+            .collect();
         let gamma = fr(0xDADA_CAFE);
         let relation = InstructionInput::<Fr>::new(TraceDimensions::new(log_t), r_product.clone());
 
@@ -602,21 +645,25 @@ mod tests {
 
     #[test]
     fn parity_even_log_t() {
-        assert_parity(4, 21);
+        for prefix in 0..=16 {
+            for boolean_challenges in [false, true] {
+                assert_parity(4, 21, prefix, boolean_challenges);
+            }
+        }
     }
 
     #[test]
     fn parity_odd_log_t() {
-        assert_parity(3, 8080);
+        assert_parity(3, 8080, 5, false);
     }
 
     #[test]
     fn parity_single_round() {
-        assert_parity(1, 4242);
+        assert_parity(1, 4242, 1, false);
     }
 
     #[test]
     fn parity_two_rounds() {
-        assert_parity(2, 1717);
+        assert_parity(2, 1717, 4, false);
     }
 }
