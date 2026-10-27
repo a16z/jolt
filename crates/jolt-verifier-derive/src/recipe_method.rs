@@ -294,9 +294,14 @@ mod tests {
         let implementation: syn::ItemImpl =
             syn::parse2(quote!(impl Fixture { #expanded })).expect("generated methods parse");
         assert_eq!(implementation.items.len(), 2);
-        let Some(syn::ImplItem::Fn(selected)) = implementation.items.last() else {
-            panic!("selected method missing");
-        };
+        let selected = implementation
+            .items
+            .last()
+            .and_then(|item| match item {
+                syn::ImplItem::Fn(selected) => Some(selected),
+                _ => None,
+            })
+            .expect("selected method missing");
         assert_eq!(selected.sig.ident, "expected_output_with_recipes");
         assert_eq!(selected.sig.inputs.len(), 2);
     }

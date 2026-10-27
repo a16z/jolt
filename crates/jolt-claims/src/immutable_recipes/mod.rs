@@ -64,10 +64,6 @@ pub struct Record<'a, O, D, C> {
 }
 
 impl<'a, O, D, C> Record<'a, O, D, C> {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one checked boundary for the closed generated record"
-    )]
     pub const fn new(
         key: &'a [u64],
         phase: Phase,
