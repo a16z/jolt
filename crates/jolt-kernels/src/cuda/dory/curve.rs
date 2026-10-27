@@ -6,11 +6,18 @@
 //! group serialization. Proof conversion resolves the remaining handles to
 //! shared host values and must run before the arena closes.
 
-use ark_bn254::{Fq, Fq12, Fq2, Fq6};
+use ark_bn254::Fq;
+use ark_bn254::Fq12;
+use ark_bn254::Fq2;
+use ark_bn254::Fq6;
 use ark_ff::BigInt;
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2, ArkGT, BN254};
-use dory::messages::{FirstReduceMessage, ScalarProductMessage, SecondReduceMessage, VMVMessage};
-use dory::primitives::arithmetic::{Group, PairingCurve};
+use dory::messages::FirstReduceMessage;
+use dory::messages::ScalarProductMessage;
+use dory::messages::SecondReduceMessage;
+use dory::messages::VMVMessage;
+use dory::primitives::arithmetic::Group;
+use dory::primitives::arithmetic::PairingCurve;
 use dory::primitives::transcript::Transcript as DoryTranscript;
 use dory::primitives::DorySerialize;
 use dory::proof::DoryProof;

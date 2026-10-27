@@ -13,7 +13,9 @@ use allocative::Key;
 #[cfg(feature = "allocative")]
 use allocative::Visitor;
 use jolt_program::preprocess::JoltProgramPreprocessing;
-use jolt_witness::{RowSource, WitnessBundle, WitnessError};
+use jolt_witness::RowSource;
+use jolt_witness::WitnessBundle;
+use jolt_witness::WitnessError;
 use std::sync::{Arc, OnceLock};
 
 use jolt_field::JoltField;

@@ -7,20 +7,18 @@
 //! Callers must keep handles within the owning arena's lifetime and thread;
 //! the offset representation does not enforce that contract.
 
-use ark_bn254::{Fq, G1Projective};
-use ark_bn254::{Fq2, G2Projective};
-use ark_ff::BigInt;
-use cudarc::driver::CudaSlice;
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 
+use ark_bn254::{Fq, Fq2, G1Projective, G2Projective};
+use ark_ff::BigInt;
+use cudarc::driver::CudaSlice;
 use jolt_field::Fr;
 
 use crate::cuda::common::context::{context_for, device_count, CudaKernelContext};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
-use crate::cuda::common::msm::ResidentAxpy;
-use crate::cuda::common::msm::FQ_LIMBS;
+use crate::cuda::common::msm::{ResidentAxpy, FQ_LIMBS};
 
 pub(super) const G1_WORDS: usize = 3 * FQ_LIMBS;
 
@@ -529,22 +527,36 @@ pub(super) fn g2_point(limbs: &[u64]) -> G2Projective {
     reason = "test module: device storage failures fail loudly"
 )]
 mod tests {
-    use ark_bn254::{Bn254, Fr, G1Affine, G1Projective, G2Affine, G2Projective};
-    use ark_ec::pairing::Pairing;
+    use ark_bn254::Fr;
+    use ark_bn254::G1Affine;
+    use ark_bn254::G1Projective;
+    use ark_bn254::G2Affine;
+    use ark_bn254::G2Projective;
     use ark_ec::PrimeGroup;
     use ark_ff::UniformRand;
-    use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
+    use dory::backends::arkworks::ArkFr;
     use dory::primitives::arithmetic::DoryRoutines;
-    use jolt_dory::{JoltG1Routines, JoltG2Routines};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    use std::ops::Range;
+
+    use ark_bn254::Bn254;
+    use ark_ec::pairing::Pairing;
+
+    use dory::backends::arkworks::{ArkG1, ArkG2};
+    use jolt_dory::{JoltG1Routines, JoltG2Routines};
 
     use super::super::curve::fq12;
     use super::super::handle::{span, span_g2, store_all, store_all_g2};
     use super::super::routines::{CudaG1Routines, CudaG2Routines};
-
-    use super::*;
-    use crate::cuda::common::context::shared_context;
+    use super::{
+        base_chunks, lane_chunks, mirrors, multi_miller_batch, open, poisoned, read_from, Family,
+        MILLER_SPLIT_PAIRS, MSM_SPLIT_LEN,
+    };
+    use super::{freeze, g1_limbs, g1_point, g2_limbs, g2_point, read, reserve, write};
+    use crate::cuda::common::context::{device_count, shared_context};
+    use crate::cuda::common::error::CudaError;
     use crate::cuda::common::pairing::FQ12_LIMBS;
 
     #[test]
