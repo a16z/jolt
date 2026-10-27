@@ -73,25 +73,25 @@ mod glv4_table {
 }
 
 use ark_bn254::Fr as ArkFr;
-use ark_ff::{BigInt, BigInteger, PrimeField};
-
+use ark_ff::BigInt;
+use ark_ff::BigInteger;
+use ark_ff::PrimeField;
+use cudarc::driver::CudaFunction;
+use glv4_table::POWER_OF_2_DECOMPOSITIONS;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
-use jolt_field::Fr;
-use jolt_witness::backend::cuda::EXTRA_WORDS;
-
-use glv4_table::POWER_OF_2_DECOMPOSITIONS;
-
-use cudarc::driver::CudaFunction;
 use cudarc::driver::{CudaSlice, CudaStream, CudaView, LaunchConfig, PushKernelArg};
 
 use super::context::{CudaKernelContext, BLOCK};
+use jolt_field::Fr;
+
 use super::device::DeviceFrVec;
 use super::error::CudaError;
 #[cfg(test)]
 use super::pack::COLD;
 use super::xfer_stats::{self, Phase};
+use jolt_witness::backend::cuda::EXTRA_WORDS;
 
 pub const FQ_LIMBS: usize = 4;
 
@@ -285,7 +285,11 @@ const BATCH_INVERSE_MAX_CHUNK: usize = 128;
 
 const POINT_BLOCK: u32 = 128;
 
+const FR_SCALAR_BITS: usize = 254;
+
 const MAX_BASE_INDEX: usize = 0x7fff_ffff;
+
+const MAX_WINDOW_BITS: usize = 16;
 
 const SMALL_SEGMENT_LIMIT: usize = 64;
 
@@ -297,19 +301,9 @@ const WARP_SEGMENT_FLOOR: usize = 2_048;
 
 const CLASS_FLOOR: usize = 1_024;
 
-const FR_SCALAR_BITS: usize = 254;
-
-const MAX_WINDOW_BITS: usize = 16;
-
 const TARGET_REDUCE_BLOCKS: usize = 1024;
 
 const G2_POINT_WORDS: usize = 6 * FQ_LIMBS;
-
-const G2_POINT_BLOCK: u32 = 64;
-
-const BATCHED_WINDOW_BYTES: usize = 64 << 20;
-
-const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
 
 const GLV_CONSTANTS: [u64; 14] = [
     0x163b_4843_cb4b_9a5e,
@@ -414,6 +408,18 @@ fn glv_frobenius_coefficients() -> &'static [u64] {
     })
 }
 
+fn glv_endomorphism_coefficient() -> [u64; FQ_LIMBS] {
+    <ark_bn254::g1::Config as ark_ec::scalar_mul::glv::GLVConfig>::ENDO_COEFFS[0]
+        .0
+         .0
+}
+
+const G2_POINT_BLOCK: u32 = 64;
+
+const BATCHED_WINDOW_BYTES: usize = 64 << 20;
+
+const MAX_G1_BATCHED_WINDOW_BYTES: usize = 4 << 30;
+
 const SHARED_WINDOW_BITS: usize = 4;
 
 const SHARED_WINDOWS: usize = GLV_SCALAR_BITS.div_ceil(SHARED_WINDOW_BITS);
@@ -423,12 +429,6 @@ const SHARED_WINDOW_BUCKETS: usize = 1 << SHARED_WINDOW_BITS;
 const SHARED_WINDOW_MIN_ROWS: usize = 128;
 
 const SHARED_WINDOW_MIN_TERMS: usize = 8;
-
-fn glv_endomorphism_coefficient() -> [u64; FQ_LIMBS] {
-    <ark_bn254::g1::Config as ark_ec::scalar_mul::glv::GLVConfig>::ENDO_COEFFS[0]
-        .0
-         .0
-}
 
 struct DeviceScalars<'a> {
     values: &'a CudaSlice<u64>,
@@ -669,7 +669,9 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         Ok(unflatten_jacobian(&self.download_u64(&output)?))
     }
+}
 
+impl CudaKernelContext {
     pub fn fq_add(
         &self,
         left: &[[u64; FQ_LIMBS]],
@@ -839,7 +841,9 @@ impl CudaKernelContext {
         self.stream().synchronize()?;
         Ok(unflatten_affine(&self.download_u64(&output)?))
     }
+}
 
+impl CudaKernelContext {
     pub fn msm_rows_fr(
         &self,
         bases: &DeviceG1Bases,
@@ -1102,462 +1106,6 @@ impl CudaKernelContext {
         // below `FR_SCALAR_BITS = 254`, so `bit >> 6 <= 3` is inside a scalar.
         // Threads with `i >= points` return first.
         let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
-        Ok(())
-    }
-
-    fn g2_reduce_and_fold(
-        &self,
-        bucket_points: &CudaSlice<u64>,
-        rows: usize,
-        buckets: usize,
-        windows: usize,
-        window_bits: usize,
-    ) -> Result<CudaSlice<u64>, CudaError> {
-        let lanes = windows * rows;
-        let chunks = Self::reduce_chunks(lanes, buckets);
-        let lanes_arg = Self::count_of(lanes)?;
-        let buckets_arg = Self::count_of(buckets)?;
-        let chunks_arg = Self::count_of(chunks)?;
-        let shared = G2_POINT_BLOCK * G2_POINT_WORDS as u32 * size_of::<u64>() as u32;
-        let mut window_points = self.alloc_u64(lanes * G2_POINT_WORDS)?;
-        let mut partials = self.alloc_u64(lanes * chunks * G2_POINT_WORDS)?;
-
-        let mut builder = self
-            .stream()
-            .launch_builder(self.msm_g2_bucket_reduce_chunked());
-        let _ = builder.arg(bucket_points);
-        let _ = builder.arg(&lanes_arg);
-        let _ = builder.arg(&buckets_arg);
-        let _ = builder.arg(&chunks_arg);
-        let _ = builder.arg(if chunks == 1 {
-            &mut window_points
-        } else {
-            &mut partials
-        });
-        // SAFETY: block `b < lanes * chunks` derives `lane = b / chunks`, returns
-        // when `lane >= lanes`, and reads only the `buckets` G2 points of its own
-        // lane inside the `lanes * buckets` point input, each thread walking a
-        // disjoint bucket sub-range of that block's chunk. The block reduces
-        // through `G2_POINT_BLOCK * G2_POINT_WORDS` u64s of dynamic shared
-        // memory, declared here and matching the kernel's `extern __shared__`,
-        // with `__syncthreads()` on both sides of every tree level. Only thread 0
-        // writes, to element `lane * chunks + chunk` of the output, which is a
-        // `lanes * chunks`-point buffer when `chunks > 1` and a `lanes`-point
-        // buffer when `chunks == 1` (then `chunk` is always 0), distinct from the
-        // input either way.
-        let _ = unsafe {
-            builder.launch(LaunchConfig {
-                grid_dim: (Self::count_of(lanes * chunks)?, 1, 1),
-                block_dim: (G2_POINT_BLOCK, 1, 1),
-                shared_mem_bytes: shared,
-            })
-        }?;
-
-        if chunks > 1 {
-            let mut builder = self.stream().launch_builder(self.msm_g2_point_rows_sum());
-            let _ = builder.arg(&partials);
-            let _ = builder.arg(&lanes_arg);
-            let _ = builder.arg(&chunks_arg);
-            let _ = builder.arg(&mut window_points);
-            // SAFETY: block `lane < lanes` reads only `partials[lane * chunks ..]`
-            // (`chunks` G2 points of a `lanes * chunks` point buffer), striding by
-            // `blockDim.x`, and reduces through the same shared-memory tree with
-            // `__syncthreads()` on both sides of every level. Only thread 0
-            // writes, to `out[lane]` of a `lanes`-point buffer distinct from
-            // `partials`.
-            let _ = unsafe {
-                builder.launch(LaunchConfig {
-                    grid_dim: (lanes_arg, 1, 1),
-                    block_dim: (G2_POINT_BLOCK, 1, 1),
-                    shared_mem_bytes: shared,
-                })
-            }?;
-        }
-
-        let rows_arg = Self::count_of(rows)?;
-        let windows_arg = Self::count_of(windows)?;
-        let window_bits_arg = Self::count_of(window_bits)?;
-        let mut accumulator = self.alloc_u64(rows * G2_POINT_WORDS)?;
-        let mut builder = self.stream().launch_builder(self.msm_g2_window_fold());
-        let _ = builder.arg(&window_points);
-        let _ = builder.arg(&rows_arg);
-        let _ = builder.arg(&windows_arg);
-        let _ = builder.arg(&window_bits_arg);
-        let _ = builder.arg(&mut accumulator);
-        // SAFETY: thread `row < rows` reads only `window_points[window * rows +
-        // row]` for each `window < windows` (one G2 point each of a
-        // `windows * rows` point buffer) and writes only `out[row]` of a `rows`
-        // point buffer distinct from the input. Threads with `row >= rows` return
-        // before any access.
-        let _ = unsafe { builder.launch(Self::launch_config(rows_arg)) }?;
-        Ok(accumulator)
-    }
-
-    pub(crate) fn g2_msm_in_place(
-        &self,
-        buffer: &mut CudaSlice<u64>,
-        base_offset: usize,
-        out_offset: usize,
-        count: usize,
-        scalars: &[Fr],
-    ) -> Result<(), CudaError> {
-        if count != scalars.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: count,
-                got: scalars.len(),
-            });
-        }
-        Self::resident_span_end(out_offset, 1, G2_POINT_WORDS, buffer)?;
-        if count == 0 {
-            let zero = vec![0u64; G2_POINT_WORDS];
-            return self.write_u64_range(buffer, out_offset * G2_POINT_WORDS, &zero);
-        }
-        Self::resident_span_end(base_offset, count, G2_POINT_WORDS, buffer)?;
-        if 4 * count > MAX_BASE_INDEX {
-            return Err(CudaError::InvariantViolation {
-                reason: "a G2 MSM row is wider than the signed-index encoding allows",
-            });
-        }
-
-        let terms = 4 * count;
-        let window_bits = window_bits(terms);
-        let buckets = 1usize << window_bits;
-        let windows = GLV4_SCALAR_BITS.div_ceil(window_bits);
-        let segments = windows * buckets;
-        if !Self::batched_windows_g2(buckets, windows, terms) {
-            return Err(CudaError::NotImplemented {
-                kernel: "msm_g2_unbatched_windows",
-            });
-        }
-
-        let mapped = self.g2_frobenius_span(buffer, base_offset, count)?;
-        let (split, signs) = {
-            let uploaded = self.upload(scalars)?;
-            let canonical = self.canonical_scalars(&uploaded)?;
-            self.glv_decompose_4d(&canonical, count)?
-        };
-        let mut lanes = Vec::with_capacity(signs.len() * windows);
-        for _ in 0..windows {
-            lanes.extend_from_slice(&signs);
-        }
-        let device_signs = self.upload_u8_slice(&lanes)?;
-        let shifts: Vec<usize> = (0..windows).map(|window| window * window_bits).collect();
-        let index = self.bucket_index_pass(IndexPlan {
-            scalars: &split,
-            scalar_limbs: FQ_LIMBS,
-            signs: &device_signs,
-            row_len: terms,
-            buckets,
-            segments,
-            lane: terms,
-            shifts: &shifts,
-        })?;
-        if index.widest > SMALL_SEGMENT_LIMIT {
-            return Err(CudaError::NotImplemented {
-                kernel: "msm_g2_wide_segments",
-            });
-        }
-
-        let bases = mapped.slice(0..terms * G2_POINT_WORDS);
-        let segments_arg = Self::count_of(segments)?;
-        let mut bucket_points = self.alloc_u64(segments * G2_POINT_WORDS)?;
-        let mut builder = self
-            .stream()
-            .launch_builder(self.msm_g2_segment_sum_small());
-        let _ = builder.arg(&bases);
-        let _ = builder.arg(&index.indices);
-        let _ = builder.arg(&index.offsets);
-        let _ = builder.arg(&index.counts);
-        let _ = builder.arg(&segments_arg);
-        let _ = builder.arg(&mut bucket_points);
-        // SAFETY: the scatter partitions `indices` into the ranges described by
-        // `offsets`/`counts`; masked indices are below `terms`, the mapped base
-        // count. Each segment has one writer: its own thread, or lane 0 of its
-        // warp after a cooperative reduction. BLOCK is a multiple of 32, and
-        // padded threads participate in every warp collective without accessing
-        // input metadata or writing output. The output is a fresh allocation.
-        let _ = unsafe { builder.launch(Self::launch_config(segments_arg)) }?;
-
-        let accumulator =
-            self.g2_reduce_and_fold(&bucket_points, 1, buckets, windows, window_bits)?;
-        let source = accumulator.slice(0..G2_POINT_WORDS);
-        let mut target =
-            buffer.slice_mut(out_offset * G2_POINT_WORDS..(out_offset + 1) * G2_POINT_WORDS);
-        self.stream().memcpy_dtod(&source, &mut target)?;
-        Ok(())
-    }
-
-    fn batched_windows_g2(buckets: usize, windows: usize, len: usize) -> bool {
-        let segments = windows.saturating_mul(buckets);
-        let bucket_bytes = segments.saturating_mul(G2_POINT_WORDS * size_of::<u64>());
-        let index_bytes = windows
-            .saturating_mul(len)
-            .saturating_mul(2 * size_of::<u32>());
-        bucket_bytes.saturating_add(index_bytes) <= BATCHED_WINDOW_BYTES
-    }
-
-    fn glv_decompose_4d(
-        &self,
-        scalars: &CudaSlice<u64>,
-        count: usize,
-    ) -> Result<(CudaSlice<u64>, Vec<u8>), CudaError> {
-        let mut out = self.alloc_u64(4 * count.max(1) * FQ_LIMBS)?;
-        if count == 0 {
-            return Ok((out, Vec::new()));
-        }
-        if scalars.len() < count * FQ_LIMBS {
-            return Err(CudaError::LengthMismatch {
-                expected: count * FQ_LIMBS,
-                got: scalars.len(),
-            });
-        }
-        let (magnitudes, table_signs) = glv_4d_table();
-        let device_table = self.upload_u64_slice(magnitudes)?;
-        let device_table_signs = self.upload_u8_slice(table_signs)?;
-        let mut signs = self.upload_u8_slice(&vec![0u8; 4 * count])?;
-        let count_arg = Self::count_of(count)?;
-        let mut builder = self.stream().launch_builder(self.msm_glv_decompose_4d());
-        let _ = builder.arg(scalars);
-        let _ = builder.arg(&device_table);
-        let _ = builder.arg(&device_table_signs);
-        let _ = builder.arg(&count_arg);
-        let _ = builder.arg(&mut out);
-        let _ = builder.arg(&mut signs);
-        // SAFETY: thread `i < count` reads only `scalars[i]` (4 limbs of a buffer
-        // holding at least `count * FQ_LIMBS`, checked above) and rows
-        // `0..254` of the two table buffers, whose lengths are `254 * 8` u64 and
-        // `254 * 4` u8 by construction in `glv_4d_table`. It writes elements
-        // `j * count + i` for `j < 4` of both a `4 * count * FQ_LIMBS` u64 output
-        // and a `4 * count` u8 sign array, so writes are four disjoint slots per
-        // thread in each and in bounds. Threads with `i >= count` return first.
-        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
-        let hosted = self.download_u8(&signs)?;
-        Ok((out, hosted))
-    }
-
-    fn g2_frobenius_span(
-        &self,
-        jacobian: &CudaSlice<u64>,
-        offset: usize,
-        count: usize,
-    ) -> Result<CudaSlice<u64>, CudaError> {
-        let end = offset
-            .checked_add(count)
-            .and_then(|last| last.checked_mul(G2_POINT_WORDS))
-            .ok_or(CudaError::InvariantViolation {
-                reason: "a G2 Frobenius span overflowed the buffer index space",
-            })?;
-        if end > jacobian.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: end,
-                got: jacobian.len(),
-            });
-        }
-        let mut out = self.alloc_u64(4 * count.max(1) * G2_POINT_WORDS)?;
-        if count == 0 {
-            return Ok(out);
-        }
-        let span = jacobian.slice(offset * G2_POINT_WORDS..end);
-        let coefficients = self.upload_u64_slice(glv_frobenius_coefficients())?;
-        let count_arg = Self::count_of(count)?;
-        let mut builder = self.stream().launch_builder(self.msm_g2_frobenius());
-        let _ = builder.arg(&span);
-        let _ = builder.arg(&coefficients);
-        let _ = builder.arg(&count_arg);
-        let _ = builder.arg(&mut out);
-        // SAFETY: thread `i < count` reads the 24 limbs of point `i` of the
-        // `count`-point view bounds-checked above plus the 48 coefficient limbs,
-        // and writes points `power * count + i` for `power < 4` (24 limbs each) of
-        // a `4 * count` point fresh allocation, so writes are four disjoint slots
-        // per thread and in bounds. Threads with `i >= count` return first.
-        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
-        Ok(out)
-    }
-
-    fn glv_decompose_2d(
-        &self,
-        scalars: &CudaSlice<u64>,
-        count: usize,
-    ) -> Result<(CudaSlice<u64>, Vec<u8>), CudaError> {
-        let mut out = self.alloc_u64(2 * count.max(1) * FQ_LIMBS)?;
-        if count == 0 {
-            return Ok((out, Vec::new()));
-        }
-        if scalars.len() < count * FQ_LIMBS {
-            return Err(CudaError::LengthMismatch {
-                expected: count * FQ_LIMBS,
-                got: scalars.len(),
-            });
-        }
-        let constants = self.upload_u64_slice(&GLV_CONSTANTS)?;
-        let mut signs = self.upload_u8_slice(&vec![0u8; 2 * count])?;
-        let count_arg = Self::count_of(count)?;
-        let mut builder = self.stream().launch_builder(self.msm_glv_decompose_2d());
-        let _ = builder.arg(scalars);
-        let _ = builder.arg(&constants);
-        let _ = builder.arg(&count_arg);
-        let _ = builder.arg(&mut out);
-        let _ = builder.arg(&mut signs);
-        // SAFETY: thread `i < count` reads only `scalars[i]` (4 limbs of a buffer
-        // holding at least `count * FQ_LIMBS`, checked above) and the 14 constant
-        // limbs, and writes elements `i` and `count + i` of both a
-        // `2 * count * FQ_LIMBS` u64 output and a `2 * count` u8 sign array, so
-        // writes are two disjoint slots per thread in each and in bounds. All
-        // wide arithmetic is in thread-local arrays. Threads with `i >= count`
-        // return before any access.
-        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
-        let hosted = self.download_u8(&signs)?;
-        Ok((out, hosted))
-    }
-
-    fn g1_endomorphism_span(
-        &self,
-        jacobian: &CudaSlice<u64>,
-        offset: usize,
-        count: usize,
-    ) -> Result<CudaSlice<u64>, CudaError> {
-        let words = 3 * FQ_LIMBS;
-        let end = offset
-            .checked_add(count)
-            .and_then(|last| last.checked_mul(words))
-            .ok_or(CudaError::InvariantViolation {
-                reason: "a G1 endomorphism span overflowed the buffer index space",
-            })?;
-        if end > jacobian.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: end,
-                got: jacobian.len(),
-            });
-        }
-        let mut out = self.alloc_u64(2 * count * words)?;
-        if count == 0 {
-            return Ok(out);
-        }
-        let span = jacobian.slice(offset * words..end);
-        let beta = self.upload_u64_slice(&glv_endomorphism_coefficient())?;
-        let count_arg = Self::count_of(count)?;
-        let mut builder = self.stream().launch_builder(self.msm_g1_endomorphism());
-        let _ = builder.arg(&span);
-        let _ = builder.arg(&beta);
-        let _ = builder.arg(&count_arg);
-        let _ = builder.arg(&mut out);
-        // SAFETY: thread `i < count` reads the 12 limbs of point `i` of the
-        // `count`-point view bounds-checked above plus the 4 limbs of `beta`, and
-        // writes points `i` and `count + i` (12 limbs each) of a `2 * count`
-        // point fresh allocation, so writes are two disjoint slots per thread and
-        // in bounds. Threads with `i >= count` return before any access.
-        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
-        Ok(out)
-    }
-
-    pub fn normalise_g1_span(
-        &self,
-        jacobian: &CudaSlice<u64>,
-        offset: usize,
-        count: usize,
-    ) -> Result<DeviceG1Bases, CudaError> {
-        if count == 0 {
-            return self.upload_g1_bases(&[]);
-        }
-        let words = 3 * FQ_LIMBS;
-        let end = offset
-            .checked_add(count)
-            .and_then(|last| last.checked_mul(words))
-            .ok_or(CudaError::InvariantViolation {
-                reason: "a G1 span to normalise overflowed the buffer index space",
-            })?;
-        if end > jacobian.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: end,
-                got: jacobian.len(),
-            });
-        }
-        let span = jacobian.slice(offset * words..end);
-        let count_arg = Self::count_of(count)?;
-
-        let mut packed = self.alloc_u64(count * FQ_LIMBS)?;
-        let mut builder = self.stream().launch_builder(self.msm_jacobian_z());
-        let _ = builder.arg(&span);
-        let _ = builder.arg(&count_arg);
-        let _ = builder.arg(&mut packed);
-        // SAFETY: thread `i < count` reads the `z` limbs of point `i` of the
-        // `count`-point view (12 limbs per point, bounds-checked above) and
-        // writes only `out[i]` (4 limbs) of a `count * FQ_LIMBS` u64 fresh
-        // allocation, one thread per element.
-        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
-
-        let mut inverses = self.alloc_u64(count * FQ_LIMBS)?;
-        self.launch_batch_inverse(&packed, &mut inverses, count)?;
-
-        let mut affine = self.alloc_u64(count * AFFINE_LIMBS)?;
-        let mut builder = self.stream().launch_builder(self.msm_jacobian_to_affine());
-        let _ = builder.arg(&span);
-        let _ = builder.arg(&inverses);
-        let _ = builder.arg(&count_arg);
-        let _ = builder.arg(&mut affine);
-        // SAFETY: thread `i < count` reads the 12 limbs of point `i` of the same
-        // bounds-checked view plus `inverses[i]` (4 limbs of a
-        // `count * FQ_LIMBS` buffer) and writes only the two limb groups of
-        // `out[i]` in a `count * AFFINE_LIMBS` u64 fresh allocation, one thread
-        // per point.
-        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
-
-        Ok(DeviceG1Bases {
-            stream: self.stream().clone(),
-            limbs: affine,
-            count,
-        })
-    }
-
-    pub(crate) fn g1_msm_in_place(
-        &self,
-        buffer: &mut CudaSlice<u64>,
-        base_offset: usize,
-        out_offset: usize,
-        count: usize,
-        scalars: &[Fr],
-    ) -> Result<(), CudaError> {
-        if count != scalars.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: count,
-                got: scalars.len(),
-            });
-        }
-        let words = 3 * FQ_LIMBS;
-        Self::resident_span_end(out_offset, 1, words, buffer)?;
-        if count == 0 {
-            let zero = vec![0u64; words];
-            return self.write_u64_range(buffer, out_offset * words, &zero);
-        }
-        let bases = {
-            let _span = tracing::info_span!("g1r_normalise", len = count).entered();
-            let mapped = self.g1_endomorphism_span(buffer, base_offset, count)?;
-            self.normalise_g1_span(&mapped, 0, 2 * count)?
-        };
-        let (split, signs) = {
-            let _span = tracing::info_span!("g1r_scalars", len = count).entered();
-            let uploaded = self.upload(scalars)?;
-            let canonical = self.canonical_scalars(&uploaded)?;
-            let (split, signs) = self.glv_decompose_2d(&canonical, count)?;
-            (split, self.upload_u8_slice(&signs)?)
-        };
-        let accumulator = {
-            let _span = tracing::info_span!("g1r_pippenger", len = count).entered();
-            self.pippenger_device(
-                &bases,
-                DeviceScalars {
-                    values: &split,
-                    limbs: FQ_LIMBS,
-                },
-                &signs,
-                2 * count,
-                2 * count,
-                GLV_SCALAR_BITS,
-            )?
-        };
-        let source = accumulator.slice(0..words);
-        let mut target = buffer.slice_mut(out_offset * words..(out_offset + 1) * words);
-        self.stream().memcpy_dtod(&source, &mut target)?;
         Ok(())
     }
 
@@ -2427,6 +1975,462 @@ impl CudaKernelContext {
                 shared_mem_bytes: shared,
             })
         }?;
+        Ok(())
+    }
+
+    fn g2_reduce_and_fold(
+        &self,
+        bucket_points: &CudaSlice<u64>,
+        rows: usize,
+        buckets: usize,
+        windows: usize,
+        window_bits: usize,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let lanes = windows * rows;
+        let chunks = Self::reduce_chunks(lanes, buckets);
+        let lanes_arg = Self::count_of(lanes)?;
+        let buckets_arg = Self::count_of(buckets)?;
+        let chunks_arg = Self::count_of(chunks)?;
+        let shared = G2_POINT_BLOCK * G2_POINT_WORDS as u32 * size_of::<u64>() as u32;
+        let mut window_points = self.alloc_u64(lanes * G2_POINT_WORDS)?;
+        let mut partials = self.alloc_u64(lanes * chunks * G2_POINT_WORDS)?;
+
+        let mut builder = self
+            .stream()
+            .launch_builder(self.msm_g2_bucket_reduce_chunked());
+        let _ = builder.arg(bucket_points);
+        let _ = builder.arg(&lanes_arg);
+        let _ = builder.arg(&buckets_arg);
+        let _ = builder.arg(&chunks_arg);
+        let _ = builder.arg(if chunks == 1 {
+            &mut window_points
+        } else {
+            &mut partials
+        });
+        // SAFETY: block `b < lanes * chunks` derives `lane = b / chunks`, returns
+        // when `lane >= lanes`, and reads only the `buckets` G2 points of its own
+        // lane inside the `lanes * buckets` point input, each thread walking a
+        // disjoint bucket sub-range of that block's chunk. The block reduces
+        // through `G2_POINT_BLOCK * G2_POINT_WORDS` u64s of dynamic shared
+        // memory, declared here and matching the kernel's `extern __shared__`,
+        // with `__syncthreads()` on both sides of every tree level. Only thread 0
+        // writes, to element `lane * chunks + chunk` of the output, which is a
+        // `lanes * chunks`-point buffer when `chunks > 1` and a `lanes`-point
+        // buffer when `chunks == 1` (then `chunk` is always 0), distinct from the
+        // input either way.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (Self::count_of(lanes * chunks)?, 1, 1),
+                block_dim: (G2_POINT_BLOCK, 1, 1),
+                shared_mem_bytes: shared,
+            })
+        }?;
+
+        if chunks > 1 {
+            let mut builder = self.stream().launch_builder(self.msm_g2_point_rows_sum());
+            let _ = builder.arg(&partials);
+            let _ = builder.arg(&lanes_arg);
+            let _ = builder.arg(&chunks_arg);
+            let _ = builder.arg(&mut window_points);
+            // SAFETY: block `lane < lanes` reads only `partials[lane * chunks ..]`
+            // (`chunks` G2 points of a `lanes * chunks` point buffer), striding by
+            // `blockDim.x`, and reduces through the same shared-memory tree with
+            // `__syncthreads()` on both sides of every level. Only thread 0
+            // writes, to `out[lane]` of a `lanes`-point buffer distinct from
+            // `partials`.
+            let _ = unsafe {
+                builder.launch(LaunchConfig {
+                    grid_dim: (lanes_arg, 1, 1),
+                    block_dim: (G2_POINT_BLOCK, 1, 1),
+                    shared_mem_bytes: shared,
+                })
+            }?;
+        }
+
+        let rows_arg = Self::count_of(rows)?;
+        let windows_arg = Self::count_of(windows)?;
+        let window_bits_arg = Self::count_of(window_bits)?;
+        let mut accumulator = self.alloc_u64(rows * G2_POINT_WORDS)?;
+        let mut builder = self.stream().launch_builder(self.msm_g2_window_fold());
+        let _ = builder.arg(&window_points);
+        let _ = builder.arg(&rows_arg);
+        let _ = builder.arg(&windows_arg);
+        let _ = builder.arg(&window_bits_arg);
+        let _ = builder.arg(&mut accumulator);
+        // SAFETY: thread `row < rows` reads only `window_points[window * rows +
+        // row]` for each `window < windows` (one G2 point each of a
+        // `windows * rows` point buffer) and writes only `out[row]` of a `rows`
+        // point buffer distinct from the input. Threads with `row >= rows` return
+        // before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(rows_arg)) }?;
+        Ok(accumulator)
+    }
+
+    pub(crate) fn g2_msm_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        base_offset: usize,
+        out_offset: usize,
+        count: usize,
+        scalars: &[Fr],
+    ) -> Result<(), CudaError> {
+        if count != scalars.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: count,
+                got: scalars.len(),
+            });
+        }
+        Self::resident_span_end(out_offset, 1, G2_POINT_WORDS, buffer)?;
+        if count == 0 {
+            let zero = vec![0u64; G2_POINT_WORDS];
+            return self.write_u64_range(buffer, out_offset * G2_POINT_WORDS, &zero);
+        }
+        Self::resident_span_end(base_offset, count, G2_POINT_WORDS, buffer)?;
+        if 4 * count > MAX_BASE_INDEX {
+            return Err(CudaError::InvariantViolation {
+                reason: "a G2 MSM row is wider than the signed-index encoding allows",
+            });
+        }
+
+        let terms = 4 * count;
+        let window_bits = window_bits(terms);
+        let buckets = 1usize << window_bits;
+        let windows = GLV4_SCALAR_BITS.div_ceil(window_bits);
+        let segments = windows * buckets;
+        if !Self::batched_windows_g2(buckets, windows, terms) {
+            return Err(CudaError::NotImplemented {
+                kernel: "msm_g2_unbatched_windows",
+            });
+        }
+
+        let mapped = self.g2_frobenius_span(buffer, base_offset, count)?;
+        let (split, signs) = {
+            let uploaded = self.upload(scalars)?;
+            let canonical = self.canonical_scalars(&uploaded)?;
+            self.glv_decompose_4d(&canonical, count)?
+        };
+        let mut lanes = Vec::with_capacity(signs.len() * windows);
+        for _ in 0..windows {
+            lanes.extend_from_slice(&signs);
+        }
+        let device_signs = self.upload_u8_slice(&lanes)?;
+        let shifts: Vec<usize> = (0..windows).map(|window| window * window_bits).collect();
+        let index = self.bucket_index_pass(IndexPlan {
+            scalars: &split,
+            scalar_limbs: FQ_LIMBS,
+            signs: &device_signs,
+            row_len: terms,
+            buckets,
+            segments,
+            lane: terms,
+            shifts: &shifts,
+        })?;
+        if index.widest > SMALL_SEGMENT_LIMIT {
+            return Err(CudaError::NotImplemented {
+                kernel: "msm_g2_wide_segments",
+            });
+        }
+
+        let bases = mapped.slice(0..terms * G2_POINT_WORDS);
+        let segments_arg = Self::count_of(segments)?;
+        let mut bucket_points = self.alloc_u64(segments * G2_POINT_WORDS)?;
+        let mut builder = self
+            .stream()
+            .launch_builder(self.msm_g2_segment_sum_small());
+        let _ = builder.arg(&bases);
+        let _ = builder.arg(&index.indices);
+        let _ = builder.arg(&index.offsets);
+        let _ = builder.arg(&index.counts);
+        let _ = builder.arg(&segments_arg);
+        let _ = builder.arg(&mut bucket_points);
+        // SAFETY: the scatter partitions `indices` into the ranges described by
+        // `offsets`/`counts`; masked indices are below `terms`, the mapped base
+        // count. Each segment has one writer: its own thread, or lane 0 of its
+        // warp after a cooperative reduction. BLOCK is a multiple of 32, and
+        // padded threads participate in every warp collective without accessing
+        // input metadata or writing output. The output is a fresh allocation.
+        let _ = unsafe { builder.launch(Self::launch_config(segments_arg)) }?;
+
+        let accumulator =
+            self.g2_reduce_and_fold(&bucket_points, 1, buckets, windows, window_bits)?;
+        let source = accumulator.slice(0..G2_POINT_WORDS);
+        let mut target =
+            buffer.slice_mut(out_offset * G2_POINT_WORDS..(out_offset + 1) * G2_POINT_WORDS);
+        self.stream().memcpy_dtod(&source, &mut target)?;
+        Ok(())
+    }
+
+    fn batched_windows_g2(buckets: usize, windows: usize, len: usize) -> bool {
+        let segments = windows.saturating_mul(buckets);
+        let bucket_bytes = segments.saturating_mul(G2_POINT_WORDS * size_of::<u64>());
+        let index_bytes = windows
+            .saturating_mul(len)
+            .saturating_mul(2 * size_of::<u32>());
+        bucket_bytes.saturating_add(index_bytes) <= BATCHED_WINDOW_BYTES
+    }
+
+    fn glv_decompose_4d(
+        &self,
+        scalars: &CudaSlice<u64>,
+        count: usize,
+    ) -> Result<(CudaSlice<u64>, Vec<u8>), CudaError> {
+        let mut out = self.alloc_u64(4 * count.max(1) * FQ_LIMBS)?;
+        if count == 0 {
+            return Ok((out, Vec::new()));
+        }
+        if scalars.len() < count * FQ_LIMBS {
+            return Err(CudaError::LengthMismatch {
+                expected: count * FQ_LIMBS,
+                got: scalars.len(),
+            });
+        }
+        let (magnitudes, table_signs) = glv_4d_table();
+        let device_table = self.upload_u64_slice(magnitudes)?;
+        let device_table_signs = self.upload_u8_slice(table_signs)?;
+        let mut signs = self.upload_u8_slice(&vec![0u8; 4 * count])?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_glv_decompose_4d());
+        let _ = builder.arg(scalars);
+        let _ = builder.arg(&device_table);
+        let _ = builder.arg(&device_table_signs);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        let _ = builder.arg(&mut signs);
+        // SAFETY: thread `i < count` reads only `scalars[i]` (4 limbs of a buffer
+        // holding at least `count * FQ_LIMBS`, checked above) and rows
+        // `0..254` of the two table buffers, whose lengths are `254 * 8` u64 and
+        // `254 * 4` u8 by construction in `glv_4d_table`. It writes elements
+        // `j * count + i` for `j < 4` of both a `4 * count * FQ_LIMBS` u64 output
+        // and a `4 * count` u8 sign array, so writes are four disjoint slots per
+        // thread in each and in bounds. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        let hosted = self.download_u8(&signs)?;
+        Ok((out, hosted))
+    }
+
+    fn g2_frobenius_span(
+        &self,
+        jacobian: &CudaSlice<u64>,
+        offset: usize,
+        count: usize,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(G2_POINT_WORDS))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a G2 Frobenius span overflowed the buffer index space",
+            })?;
+        if end > jacobian.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: end,
+                got: jacobian.len(),
+            });
+        }
+        let mut out = self.alloc_u64(4 * count.max(1) * G2_POINT_WORDS)?;
+        if count == 0 {
+            return Ok(out);
+        }
+        let span = jacobian.slice(offset * G2_POINT_WORDS..end);
+        let coefficients = self.upload_u64_slice(glv_frobenius_coefficients())?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_g2_frobenius());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&coefficients);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        // SAFETY: thread `i < count` reads the 24 limbs of point `i` of the
+        // `count`-point view bounds-checked above plus the 48 coefficient limbs,
+        // and writes points `power * count + i` for `power < 4` (24 limbs each) of
+        // a `4 * count` point fresh allocation, so writes are four disjoint slots
+        // per thread and in bounds. Threads with `i >= count` return first.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        Ok(out)
+    }
+
+    fn glv_decompose_2d(
+        &self,
+        scalars: &CudaSlice<u64>,
+        count: usize,
+    ) -> Result<(CudaSlice<u64>, Vec<u8>), CudaError> {
+        let mut out = self.alloc_u64(2 * count.max(1) * FQ_LIMBS)?;
+        if count == 0 {
+            return Ok((out, Vec::new()));
+        }
+        if scalars.len() < count * FQ_LIMBS {
+            return Err(CudaError::LengthMismatch {
+                expected: count * FQ_LIMBS,
+                got: scalars.len(),
+            });
+        }
+        let constants = self.upload_u64_slice(&GLV_CONSTANTS)?;
+        let mut signs = self.upload_u8_slice(&vec![0u8; 2 * count])?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_glv_decompose_2d());
+        let _ = builder.arg(scalars);
+        let _ = builder.arg(&constants);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        let _ = builder.arg(&mut signs);
+        // SAFETY: thread `i < count` reads only `scalars[i]` (4 limbs of a buffer
+        // holding at least `count * FQ_LIMBS`, checked above) and the 14 constant
+        // limbs, and writes elements `i` and `count + i` of both a
+        // `2 * count * FQ_LIMBS` u64 output and a `2 * count` u8 sign array, so
+        // writes are two disjoint slots per thread in each and in bounds. All
+        // wide arithmetic is in thread-local arrays. Threads with `i >= count`
+        // return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        let hosted = self.download_u8(&signs)?;
+        Ok((out, hosted))
+    }
+
+    fn g1_endomorphism_span(
+        &self,
+        jacobian: &CudaSlice<u64>,
+        offset: usize,
+        count: usize,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let words = 3 * FQ_LIMBS;
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(words))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a G1 endomorphism span overflowed the buffer index space",
+            })?;
+        if end > jacobian.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: end,
+                got: jacobian.len(),
+            });
+        }
+        let mut out = self.alloc_u64(2 * count * words)?;
+        if count == 0 {
+            return Ok(out);
+        }
+        let span = jacobian.slice(offset * words..end);
+        let beta = self.upload_u64_slice(&glv_endomorphism_coefficient())?;
+        let count_arg = Self::count_of(count)?;
+        let mut builder = self.stream().launch_builder(self.msm_g1_endomorphism());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&beta);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut out);
+        // SAFETY: thread `i < count` reads the 12 limbs of point `i` of the
+        // `count`-point view bounds-checked above plus the 4 limbs of `beta`, and
+        // writes points `i` and `count + i` (12 limbs each) of a `2 * count`
+        // point fresh allocation, so writes are two disjoint slots per thread and
+        // in bounds. Threads with `i >= count` return before any access.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+        Ok(out)
+    }
+
+    pub fn normalise_g1_span(
+        &self,
+        jacobian: &CudaSlice<u64>,
+        offset: usize,
+        count: usize,
+    ) -> Result<DeviceG1Bases, CudaError> {
+        if count == 0 {
+            return self.upload_g1_bases(&[]);
+        }
+        let words = 3 * FQ_LIMBS;
+        let end = offset
+            .checked_add(count)
+            .and_then(|last| last.checked_mul(words))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a G1 span to normalise overflowed the buffer index space",
+            })?;
+        if end > jacobian.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: end,
+                got: jacobian.len(),
+            });
+        }
+        let span = jacobian.slice(offset * words..end);
+        let count_arg = Self::count_of(count)?;
+
+        let mut packed = self.alloc_u64(count * FQ_LIMBS)?;
+        let mut builder = self.stream().launch_builder(self.msm_jacobian_z());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut packed);
+        // SAFETY: thread `i < count` reads the `z` limbs of point `i` of the
+        // `count`-point view (12 limbs per point, bounds-checked above) and
+        // writes only `out[i]` (4 limbs) of a `count * FQ_LIMBS` u64 fresh
+        // allocation, one thread per element.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+
+        let mut inverses = self.alloc_u64(count * FQ_LIMBS)?;
+        self.launch_batch_inverse(&packed, &mut inverses, count)?;
+
+        let mut affine = self.alloc_u64(count * AFFINE_LIMBS)?;
+        let mut builder = self.stream().launch_builder(self.msm_jacobian_to_affine());
+        let _ = builder.arg(&span);
+        let _ = builder.arg(&inverses);
+        let _ = builder.arg(&count_arg);
+        let _ = builder.arg(&mut affine);
+        // SAFETY: thread `i < count` reads the 12 limbs of point `i` of the same
+        // bounds-checked view plus `inverses[i]` (4 limbs of a
+        // `count * FQ_LIMBS` buffer) and writes only the two limb groups of
+        // `out[i]` in a `count * AFFINE_LIMBS` u64 fresh allocation, one thread
+        // per point.
+        let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
+
+        Ok(DeviceG1Bases {
+            stream: self.stream().clone(),
+            limbs: affine,
+            count,
+        })
+    }
+
+    pub(crate) fn g1_msm_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        base_offset: usize,
+        out_offset: usize,
+        count: usize,
+        scalars: &[Fr],
+    ) -> Result<(), CudaError> {
+        if count != scalars.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: count,
+                got: scalars.len(),
+            });
+        }
+        let words = 3 * FQ_LIMBS;
+        Self::resident_span_end(out_offset, 1, words, buffer)?;
+        if count == 0 {
+            let zero = vec![0u64; words];
+            return self.write_u64_range(buffer, out_offset * words, &zero);
+        }
+        let bases = {
+            let _span = tracing::info_span!("g1r_normalise", len = count).entered();
+            let mapped = self.g1_endomorphism_span(buffer, base_offset, count)?;
+            self.normalise_g1_span(&mapped, 0, 2 * count)?
+        };
+        let (split, signs) = {
+            let _span = tracing::info_span!("g1r_scalars", len = count).entered();
+            let uploaded = self.upload(scalars)?;
+            let canonical = self.canonical_scalars(&uploaded)?;
+            let (split, signs) = self.glv_decompose_2d(&canonical, count)?;
+            (split, self.upload_u8_slice(&signs)?)
+        };
+        let accumulator = {
+            let _span = tracing::info_span!("g1r_pippenger", len = count).entered();
+            self.pippenger_device(
+                &bases,
+                DeviceScalars {
+                    values: &split,
+                    limbs: FQ_LIMBS,
+                },
+                &signs,
+                2 * count,
+                2 * count,
+                GLV_SCALAR_BITS,
+            )?
+        };
+        let source = accumulator.slice(0..words);
+        let mut target = buffer.slice_mut(out_offset * words..(out_offset + 1) * words);
+        self.stream().memcpy_dtod(&source, &mut target)?;
         Ok(())
     }
 
