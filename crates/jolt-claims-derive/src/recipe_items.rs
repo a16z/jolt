@@ -12,7 +12,10 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
         match item {
             Item::Struct(item) => {
                 let index = named(&item.ident)?;
-                if structures[index] {
+                let seen = structures
+                    .get_mut(index)
+                    .ok_or_else(|| Error::new_spanned(&item.ident, "unknown recipe delegate"))?;
+                if *seen {
                     return Err(Error::new_spanned(item, "duplicate recipe structure"));
                 }
                 let Fields::Named(fields) = &item.fields else {
@@ -28,14 +31,17 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                 {
                     return Err(Error::new_spanned(item, "recipe delegate fields changed"));
                 }
-                structures[index] = true;
+                *seen = true;
             }
             Item::Impl(item) => {
                 let index = implementation(item)?;
-                if implementations[index] {
+                let seen = implementations
+                    .get_mut(index)
+                    .ok_or_else(|| Error::new_spanned(&*item, "unknown recipe delegate"))?;
+                if *seen {
                     return Err(Error::new_spanned(item, "duplicate recipe implementation"));
                 }
-                implementations[index] = true;
+                *seen = true;
                 item.items.push(match index {
                     0 => parse_quote!(crate::immutable_base_recipe!(3, COMPOSED, Composed);),
                     1 => parse_quote!(crate::immutable_base_recipe!(18, COMPOSED, Composed);),

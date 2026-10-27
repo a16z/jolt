@@ -53,8 +53,8 @@ pub fn expand(input: TokenStream) -> syn::Result<TokenStream> {
                     ));
                 }
                 let original = &initializer.expr;
-                initializer.expr = Box::new(
-                    parse_quote!(crate::immutable_recipe_generation::inputs(&__recipe_request, || #original)),
+                *initializer.expr = parse_quote!(
+                    crate::immutable_recipe_generation::inputs(&__recipe_request, || #original)
                 );
                 inputs += 1;
             }
