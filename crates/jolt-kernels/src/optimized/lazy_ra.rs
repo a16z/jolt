@@ -69,6 +69,35 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     /// `j`; `None` when the cycle is cold for that column.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
 
+    /// Visit paired categorical states for the first one or two cycle binds.
+    /// Cold rows occupy the final radix digit, distinct from hot address zero.
+    fn for_each_category_pair(
+        &self,
+        width: usize,
+        row: usize,
+        radix: usize,
+        columns: usize,
+        mut visit: impl FnMut(usize, usize, usize),
+    ) where
+        Self: Sized,
+    {
+        debug_assert!(width == 1 || width == 2);
+        for column in 0..columns {
+            let mut states = [0; 2];
+            let mut weight = 1;
+            for branch in 0..width {
+                for (side, state) in states.iter_mut().enumerate() {
+                    *state += weight
+                        * self
+                            .index(column, (2 * row + side) * width + branch)
+                            .unwrap_or(radix - 1);
+                }
+                weight *= radix;
+            }
+            visit(column, states[0], states[1]);
+        }
+    }
+
     fn gather_values<F: JoltField>(
         &self,
         tables: &[Vec<F>],

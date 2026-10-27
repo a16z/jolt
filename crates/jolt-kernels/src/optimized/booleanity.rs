@@ -555,6 +555,8 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for OptimizedBooleanityCycle 
                     prefix_len: rows.prefix_len(),
                     rows,
                     selectors: columns.selectors,
+                    instruction_chunks: dimensions.layout.instruction(),
+                    chunk_bits: dimensions.log_k_chunk,
                 },
             ),
             gamma_powers,
@@ -570,25 +572,11 @@ struct BooleanityChunks {
     prefix_len: usize,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     selectors: Vec<ColumnSelector>,
+    instruction_chunks: usize,
+    chunk_bits: usize,
 }
 
-impl ChunkIndexSource for BooleanityChunks {
-    fn constant_suffix_start(&self) -> usize {
-        self.prefix_len
-    }
-    fn num_columns(&self) -> usize {
-        self.selectors.len()
-    }
-
-    fn cycles(&self) -> usize {
-        self.rows.len()
-    }
-
-    #[inline]
-    fn index(&self, i: usize, j: usize) -> Option<usize> {
-        self.selectors[i].index(&self.rows[j])
-    }
-}
+mod bulk;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
@@ -710,16 +698,23 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
             prefix_pairs,
             || [F::Accumulator::default(); 2],
             |lanes, row, _, weight| {
-                let mut constant = F::zero();
-                let mut leading = F::zero();
-                for (family, (constants, squares)) in self.products.iter().enumerate() {
-                    let lo = self.state(family, 2 * row);
-                    let hi = self.state(family, 2 * row + 1);
-                    constant += constants[lo];
-                    leading += squares[lo * self.states + hi];
-                }
-                lanes[0].fmadd(weight, constant);
-                lanes[1].fmadd(weight, leading);
+                // These are sums of field elements, so defer reduction across
+                // the columns just as the outer lanes defer it across rows.
+                let mut constant = F::Accumulator::default();
+                let mut leading = F::Accumulator::default();
+                self.source.for_each_category_pair(
+                    self.width,
+                    row,
+                    self.radix,
+                    self.products.len(),
+                    |family, lo, hi| {
+                        let (constants, squares) = &self.products[family];
+                        constant.add(constants[lo]);
+                        leading.add(squares[lo * self.states + hi]);
+                    },
+                );
+                lanes[0].fmadd(weight, constant.reduce());
+                lanes[1].fmadd(weight, leading.reduce());
             },
             |_, weight, lanes| {
                 let mut out = [F::Accumulator::default(); 2];
