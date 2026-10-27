@@ -20,8 +20,8 @@
 //! Pre-scaling keeps the round-loop gathers multiplication-free — one table
 //! lookup and one addition per branch — because the eq weights are folded
 //! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
-//! instead of multiplied per cycle. Only the fourth bind materializes dense
-//! vectors, at `T/16` length, and drops the index source. Peak memory falls
+//! instead of multiplied per cycle. By default the fourth bind materializes
+//! dense vectors, at `T/16` length, and drops the index source. Peak memory falls
 //! from `N·T` field elements to the index source plus `N·T/16`. A consumer
 //! whose base tables are too large to stay cache-resident as they double
 //! materializes a bind earlier, at `T/8` (`max_width`). Large address domains
@@ -65,7 +65,8 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
 
 /// `N` address-folded selector polynomials bound `LowToHigh`, lazily until
 /// the bind past `max_width` branches (by default the fourth) materializes
-/// dense.
+/// dense, or earlier once doubling the branch tables would cost at least as
+/// many field elements as the dense tables.
 #[cfg_attr(
     feature = "allocative",
     derive(allocative::Allocative),
@@ -96,7 +97,8 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     /// One scale table per selector polynomial, in polynomial order; the
-    /// fourth bind materializes dense.
+    /// fourth bind materializes dense unless expanding the branch tables
+    /// would cost as much as the dense tables (see [`Self::bind`]).
     pub(crate) fn new(tables: Vec<Vec<F>>, source: S) -> Self {
         Self::factored(tables, 1, DEFAULT_MAX_WIDTH, source)
     }
