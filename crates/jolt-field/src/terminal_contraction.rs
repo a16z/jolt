@@ -24,6 +24,7 @@ pub(crate) use field_methods;
 
 macro_rules! fp128_methods {
     () => {
+        #[inline(always)]
         fn weighted_dot_product(rows: &[&[Self]], weights: &[Self], shared: &[Self]) -> Self {
             <Self as $crate::MulBaseUnreduced<Self>>::weighted_dot_base_rows(rows, weights, shared)
         }
