@@ -1,13 +1,18 @@
 //! End-to-end acceptance: one guest table per instruction profile, across all modes.
 //!
-//! Every case checks native expected output, proves with the optimized backend,
-//! and verifies through the public verifier API. Field-inline builds select the
+//! Every case checks native expected output, proves with the optimized backend
+//! (also CUDA when enabled), and verifies through the public verifier API.
+//! Field-inline builds select the
 //! active field-ops and field-limbs cases and the inactive muldiv case; ordinary
 //! builds select the general guest table. Specialized suites retain tampering, reference-backend parity,
 //! committed programs, and other mode-specific checks.
 
 #[cfg(feature = "prover-fixtures")]
 mod support;
+
+#[cfg(all(feature = "prover-fixtures", not(feature = "akita")))]
+#[path = "support/dory_backend.rs"]
+mod dory_backend;
 
 #[cfg(feature = "prover-fixtures")]
 #[expect(clippy::expect_used, reason = "end-to-end fixtures fail loudly")]
@@ -224,7 +229,7 @@ mod matrix {
         ($emit:ident) => {
             $emit! {
                 field_ops => crate::support::field_inline::field_ops();
-                field_limbs => super::field_limbs();
+                field_limbs => crate::matrix::field_limbs();
                 muldiv => crate::support::field_inline::muldiv();
             }
         };
@@ -241,11 +246,30 @@ mod matrix {
         };
     }
 
+    #[cfg(all(feature = "cuda", not(feature = "akita")))]
+    macro_rules! emit_cuda_tests {
+        ($($test:ident => $case:expr;)*) => {
+            $(
+                #[test]
+                fn $test() {
+                    crate::matrix::mode::prove_and_verify_cuda(&$case);
+                }
+            )*
+        };
+    }
+
     #[cfg(not(any(feature = "zk", feature = "akita")))]
     mod clear {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(feature = "cuda")]
+        mod cuda {
+            #[cfg(not(feature = "field-inline"))]
+            use super::super::*;
+            guests!(emit_cuda_tests);
+        }
     }
 
     #[cfg(all(feature = "zk", not(feature = "akita")))]
@@ -253,6 +277,13 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(feature = "cuda")]
+        mod cuda {
+            #[cfg(not(feature = "field-inline"))]
+            use super::super::*;
+            guests!(emit_cuda_tests);
+        }
     }
 
     #[cfg(feature = "akita")]
@@ -267,23 +298,35 @@ mod matrix {
         use jolt_crypto::{Bn254G1, Pedersen};
         use jolt_dory::DoryScheme;
         use jolt_field::Fr;
+        #[cfg(feature = "cuda")]
+        use jolt_kernels::cuda::CudaDoryScheme;
         use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
         use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
+        use crate::dory_backend::DoryBackend;
         use crate::support::{self, GuestCase};
 
         pub fn prove_and_verify(case: &GuestCase) {
+            prove_with_backend(case, JoltBackend::<Fr, DoryScheme>::optimized);
+        }
+
+        #[cfg(feature = "cuda")]
+        pub fn prove_and_verify_cuda(case: &GuestCase) {
+            prove_with_backend(case, JoltBackend::<Fr, CudaDoryScheme>::cuda);
+        }
+
+        fn prove_with_backend<B: DoryBackend>(case: &GuestCase, backend: fn() -> B) {
             #[cfg(feature = "zk")]
             {
                 let case = case.clone();
-                support::with_zk_stack(move || prove_case(&case));
+                support::with_zk_stack(move || prove_case(&case, backend()));
             }
             #[cfg(not(feature = "zk"))]
-            prove_case(case);
+            prove_case(case, backend());
         }
 
-        fn prove_case(case: &GuestCase) {
+        fn prove_case(case: &GuestCase, backend: impl DoryBackend) {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<Fr>(
                 prepared.trace.dimensions,
@@ -317,14 +360,15 @@ mod matrix {
                 .include_trusted_advice(trusted.is_some()),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                JoltBackend::optimized().with_witness(&witness),
-                &preprocessing,
-                &config,
-                trusted.as_ref(),
-                &public_io,
-            )
-            .expect("Dory proof");
+            let proof = backend
+                .prove(
+                    &witness,
+                    &preprocessing,
+                    &config,
+                    trusted.as_ref(),
+                    &public_io,
+                )
+                .expect("Dory proof");
             jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
                 &preprocessing.verifier,
                 &public_io,
@@ -407,6 +451,12 @@ mod matrix {
     }
     #[cfg(feature = "field-inline")]
     mod mode {
+        #[cfg(not(feature = "akita"))]
+        use jolt_dory::DoryScheme;
+        #[cfg(not(feature = "akita"))]
+        use jolt_field::Fr;
+        #[cfg(all(feature = "cuda", not(feature = "akita")))]
+        use jolt_kernels::cuda::CudaDoryScheme;
         #[cfg(feature = "akita")]
         use jolt_prover::JoltBackend;
         #[cfg(not(feature = "akita"))]
@@ -433,7 +483,8 @@ mod matrix {
         fn prove_case(case: &GuestCase) {
             #[cfg(not(feature = "akita"))]
             {
-                let (preprocessing, public_io, proof) = dory::prove(case, JoltBackend::optimized());
+                let (preprocessing, public_io, proof) =
+                    dory::prove(case, JoltBackend::<Fr, DoryScheme>::optimized());
                 dory::verify_full(&preprocessing, &public_io, &proof)
                     .expect("field-inline Dory proof must verify");
             }
@@ -447,6 +498,21 @@ mod matrix {
                 )
                 .expect("field-inline Akita proof must verify");
             }
+        }
+
+        #[cfg(all(feature = "cuda", not(feature = "akita")))]
+        pub fn prove_and_verify_cuda(case: &GuestCase) {
+            let case = case.clone();
+            let prove = move || {
+                let (preprocessing, public_io, proof) =
+                    dory::prove(&case, JoltBackend::<Fr, CudaDoryScheme>::cuda());
+                dory::verify_full(&preprocessing, &public_io, &proof)
+                    .expect("field-inline CUDA proof must verify");
+            };
+            #[cfg(feature = "zk")]
+            support::with_zk_stack(prove);
+            #[cfg(not(feature = "zk"))]
+            prove();
         }
     }
 }

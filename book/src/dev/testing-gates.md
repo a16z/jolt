@@ -33,6 +33,29 @@ cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E '
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
 ```
 
+With `cuda` enabled, the Dory matrix also runs each guest with CUDA kernels and
+`CudaDoryScheme`, in both clear and ZK builds. The existing optimized cases keep
+their names; CUDA cases appear under `matrix::clear::cuda` or `matrix::zk::cuda`.
+They require a usable CUDA device and fail if none is available. CUDA proofs
+are decoded and verified using the CPU Dory types.
+
+Run the CUDA cases on one GPU, serializing tests to bound device memory usage:
+
+```bash
+CUDA_VISIBLE_DEVICES=0 JOLT_CUDA_GPUS=1 cargo nextest run -p jolt-prover \
+  --features prover-fixtures,cuda --cargo-quiet \
+  -E 'binary(e2e_matrix) and test(::cuda::)' --test-threads 1
+
+# Field-inline acceptance and clear-mode proof equality against reference.
+CUDA_VISIBLE_DEVICES=0 JOLT_CUDA_GPUS=1 cargo nextest run -p jolt-prover \
+  --features prover-fixtures,field-inline,cuda --cargo-quiet \
+  -E '(binary(e2e_matrix) and test(::cuda::)) or (binary(field_inline_e2e) and test(reference_matches_cuda))' \
+  --test-threads 1
+```
+
+Add `zk` to either feature list to run ZK acceptance. Proof equality is checked
+only in clear mode because ZK proofs use fresh blinding randomness.
+
 Add a guest by appending a row to its profile table: the example crate name,
 its entry function when the crate has several, the `stack_size` from its
 `#[jolt::provable]` attribute when it exceeds the 4 KiB default, `std: true`
