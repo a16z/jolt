@@ -3470,470 +3470,14 @@ pub(crate) mod testing {
     reason = "test module: device operations fail loudly"
 )]
 mod tests {
-    mod resident_vector {
-        use ark_bn254::{Fr as ArkFr, G2Projective};
-        use ark_ec::AdditiveGroup;
-        use ark_ff::{Field, PrimeField};
-        use cudarc::driver::CudaSlice;
-        use jolt_field::Fr;
-
-        use super::{
-            device, flat_g2, flat_jacobian, g2_from_limbs, g2_span, jacobian_span, projectives,
-            unflatten_jacobian,
-        };
-        use crate::cuda::common::context::CudaKernelContext;
-        use crate::cuda::common::error::CudaError;
-        use crate::cuda::common::msm::{ResidentAxpy, FQ_LIMBS};
-
-        fn weights() -> [Fr; 4] {
-            [
-                ArkFr::ZERO,
-                ArkFr::ONE,
-                -ArkFr::ONE,
-                ArkFr::from_le_bytes_mod_order(&[0xa5; 32]),
-            ]
-            .map(Fr::from)
-        }
-
-        fn layouts(count: usize) -> [ResidentAxpy; 5] {
-            [
-                (2, count + 5, 2 * count + 8),
-                (2, count + 5, 2),
-                (2, count + 5, count + 5),
-                (2, 2, 2),
-                (2, 3, 2 * count + 8),
-            ]
-            .map(|(a_offset, b_offset, out_offset)| ResidentAxpy {
-                a_offset,
-                b_offset,
-                out_offset,
-                count,
-            })
-        }
-
-        #[test]
-        fn g1_axpy_matches_arkworks_with_aliases() {
-            let Some(context) = device() else { return };
-            for count in [1, 256, 257] {
-                let points = jacobian_span(3 * count + 11, 0);
-                let flat = flat_jacobian(&points);
-                for scalar in weights() {
-                    for span in layouts(count) {
-                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G1");
-                        context
-                            .g1_axpy_in_place(&mut buffer, span, scalar)
-                            .expect("G1 multiply-add");
-                        let raw = context
-                            .read_u64_range(&buffer, 0, buffer.len())
-                            .expect("read G1");
-                        let start = span.out_offset * 3 * FQ_LIMBS;
-                        let end = start + count * 3 * FQ_LIMBS;
-                        assert_eq!(raw[..start], flat[..start]);
-                        assert_eq!(raw[end..], flat[end..]);
-                        let got = projectives(&unflatten_jacobian(&raw[start..end]));
-                        let expected: Vec<_> = (0..count)
-                            .map(|i| {
-                                points[span.a_offset + i] * ArkFr::from(scalar)
-                                    + points[span.b_offset + i]
-                            })
-                            .collect();
-                        assert_eq!(got, expected, "{span:?}, scalar {scalar:?}");
-                    }
-                }
-            }
-        }
-
-        #[test]
-        fn g2_axpy_matches_arkworks_with_aliases() {
-            let Some(context) = device() else { return };
-            for count in [1, 256, 257] {
-                let points = g2_span(3 * count + 11, 0);
-                let flat = flat_g2(&points);
-                for scalar in weights() {
-                    for span in layouts(count) {
-                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
-                        context
-                            .g2_axpy_in_place(&mut buffer, span, scalar)
-                            .expect("G2 multiply-add");
-                        let raw = context
-                            .read_u64_range(&buffer, 0, buffer.len())
-                            .expect("read G2");
-                        let start = span.out_offset * 6 * FQ_LIMBS;
-                        let end = start + count * 6 * FQ_LIMBS;
-                        assert_eq!(raw[..start], flat[..start]);
-                        assert_eq!(raw[end..], flat[end..]);
-                        let got: Vec<_> = raw[start..end]
-                            .chunks_exact(6 * FQ_LIMBS)
-                            .map(g2_from_limbs)
-                            .collect();
-                        let expected: Vec<_> = (0..count)
-                            .map(|i| {
-                                points[span.a_offset + i] * ArkFr::from(scalar)
-                                    + points[span.b_offset + i]
-                            })
-                            .collect();
-                        assert_eq!(got, expected, "{span:?}, scalar {scalar:?}");
-                    }
-                }
-            }
-        }
-
-        #[test]
-        fn g2_fixed_base_matches_arkworks() {
-            let Some(context) = device() else { return };
-            for count in [1, 256, 257] {
-                for base in [g2_span(1, 7)[0], G2Projective::ZERO] {
-                    for (base_offset, out_offset) in [(2, 5), (count + 5, 2)] {
-                        let mut points = g2_span(count + 9, 11);
-                        points[base_offset] = base;
-                        let flat = flat_g2(&points);
-                        let scalars: Vec<_> =
-                            weights().into_iter().cycle().skip(3).take(count).collect();
-                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
-                        context
-                            .g2_fixed_base_in_place(&mut buffer, base_offset, out_offset, &scalars)
-                            .expect("G2 fixed-base scaling");
-                        let raw = context
-                            .read_u64_range(&buffer, 0, buffer.len())
-                            .expect("read G2");
-                        let start = out_offset * 6 * FQ_LIMBS;
-                        let end = start + count * 6 * FQ_LIMBS;
-                        assert_eq!(raw[..start], flat[..start]);
-                        assert_eq!(raw[end..], flat[end..]);
-                        let got: Vec<_> = raw[start..end]
-                            .chunks_exact(6 * FQ_LIMBS)
-                            .map(g2_from_limbs)
-                            .collect();
-                        let expected: Vec<_> = scalars
-                            .iter()
-                            .map(|&scalar| base * ArkFr::from(scalar))
-                            .collect();
-                        assert_eq!(got, expected, "count {count}, base offset {base_offset}");
-                    }
-                }
-            }
-        }
-
-        #[test]
-        fn axpy_rejects_partial_aliases_and_invalid_spans() {
-            type Axpy = fn(
-                &CudaKernelContext,
-                &mut CudaSlice<u64>,
-                ResidentAxpy,
-                Fr,
-            ) -> Result<(), CudaError>;
-            let Some(context) = device() else { return };
-            for (words, apply) in [
-                (3 * FQ_LIMBS, CudaKernelContext::g1_axpy_in_place as Axpy),
-                (6 * FQ_LIMBS, CudaKernelContext::g2_axpy_in_place as Axpy),
-            ] {
-                let flat = vec![0u64; 8 * words];
-                let mut buffer = context.upload_raw_u64(&flat).expect("upload points");
-                for (a_offset, b_offset, out_offset, count) in [
-                    (0, 4, 1, 2),
-                    (0, 4, 5, 2),
-                    (usize::MAX, 0, 4, 2),
-                    (0, 0, 0, usize::MAX),
-                ] {
-                    assert!(matches!(
-                        apply(
-                            context,
-                            &mut buffer,
-                            ResidentAxpy {
-                                a_offset,
-                                b_offset,
-                                out_offset,
-                                count
-                            },
-                            weights()[3],
-                        ),
-                        Err(CudaError::InvariantViolation { .. })
-                    ));
-                }
-                for (a_offset, b_offset, out_offset) in [(7, 0, 4), (0, 7, 4), (0, 4, 7)] {
-                    assert!(matches!(
-                        apply(
-                            context,
-                            &mut buffer,
-                            ResidentAxpy {
-                                a_offset,
-                                b_offset,
-                                out_offset,
-                                count: 2
-                            },
-                            weights()[3],
-                        ),
-                        Err(CudaError::LengthMismatch { .. })
-                    ));
-                }
-                apply(
-                    context,
-                    &mut buffer,
-                    ResidentAxpy {
-                        a_offset: usize::MAX,
-                        b_offset: usize::MAX,
-                        out_offset: usize::MAX,
-                        count: 0,
-                    },
-                    weights()[3],
-                )
-                .expect("empty multiply-add");
-                assert_eq!(
-                    context
-                        .read_u64_range(&buffer, 0, buffer.len())
-                        .expect("read points"),
-                    flat
-                );
-            }
-        }
-
-        #[test]
-        fn fixed_base_rejects_overwriting_its_base_and_invalid_spans() {
-            let Some(context) = device() else { return };
-            let flat = flat_g2(&g2_span(8, 1));
-            let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
-            for (base, out) in [(3, 3), (3, 2), (usize::MAX, 0), (0, usize::MAX)] {
-                assert!(matches!(
-                    context.g2_fixed_base_in_place(&mut buffer, base, out, &weights()),
-                    Err(CudaError::InvariantViolation { .. })
-                ));
-            }
-            for (base, out) in [(8, 0), (0, 7)] {
-                assert!(matches!(
-                    context.g2_fixed_base_in_place(&mut buffer, base, out, &weights()),
-                    Err(CudaError::LengthMismatch { .. })
-                ));
-            }
-            context
-                .g2_fixed_base_in_place(&mut buffer, usize::MAX, usize::MAX, &[])
-                .expect("empty fixed-base scaling");
-            assert_eq!(
-                context
-                    .read_u64_range(&buffer, 0, buffer.len())
-                    .expect("read G2"),
-                flat
-            );
-        }
-
-        #[test]
-        fn resident_readback_checks_ranges() {
-            let Some(context) = device() else { return };
-            let words: Vec<u64> = (0..17).collect();
-            let buffer = context.upload_raw_u64(&words).expect("upload words");
-            assert_eq!(
-                context
-                    .read_u64_range(&buffer, 3, 16)
-                    .expect("partial read"),
-                words[3..16]
-            );
-            assert!(context
-                .read_u64_range(&buffer, 17, 17)
-                .expect("empty read")
-                .is_empty());
-            for (start, end) in [(4, 3), (0, 18), (usize::MAX, usize::MAX)] {
-                assert!(matches!(
-                    context.read_u64_range(&buffer, start, end),
-                    Err(CudaError::LengthMismatch { .. })
-                ));
-            }
-        }
-    }
-
-    mod opening_layout {
-        use std::collections::BTreeMap;
-
-        use ark_bn254::Fr as ArkFr;
-        use ark_ff::PrimeField;
-        use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
-        use jolt_field::{Fr, Ring};
-
-        use super::device;
-        use crate::commitment::CommitmentGrid;
-        use crate::cuda::common::error::CudaError;
-        use crate::cuda::common::testing::advice_plane;
-        use crate::opening::JointOpeningPolynomials;
-        use crate::{ProofSession, ReferenceBackend};
-
-        fn values(len: usize) -> Vec<Fr> {
-            let wide = Fr::from(ArkFr::from_le_bytes_mod_order(&[0xa5; 32]));
-            (0..len)
-                .map(|index| match index {
-                    0 => wide,
-                    1 => Fr::from_u64(0),
-                    2 => Fr::from_u64(1),
-                    3 => -Fr::from_u64(1),
-                    _ => wide * Fr::from_u64(index as u64 + 1),
-                })
-                .collect()
-        }
-
-        fn reference_embedding(
-            table: Vec<Fr>,
-            id: JoltCommittedPolynomial,
-            grid: CommitmentGrid,
-        ) -> Vec<Fr> {
-            let fixture = advice_plane(8, 7);
-            ReferenceBackend
-                .prepare(
-                    &mut ProofSession::default(),
-                    &fixture.plane,
-                    &[id],
-                    Box::new(move || Ok(BTreeMap::from([(id, table)]))),
-                    grid,
-                )
-                .expect("reference opening")[0]
-                .to_dense()
-                .into_owned()
-        }
-
-        #[test]
-        fn block_embed_matches_reference_opening() {
-            let Some(context) = device() else {
-                return;
-            };
-            for (block_vars, total_vars) in [
-                (0, 0),
-                (0, 4),
-                (1, 4),
-                (2, 5),
-                (3, 6),
-                (4, 7),
-                (8, 10),
-                (9, 12),
-                (10, 10),
-            ] {
-                let table = values(1usize << block_vars);
-                let source = context.upload(&table).expect("upload block");
-                let grid = CommitmentGrid {
-                    total_vars,
-                    log_t: 0,
-                    log_k_chunk: 0,
-                    order: TracePolynomialOrder::CycleMajor,
-                };
-                let actual = context
-                    .block_embed(&source, block_vars, total_vars)
-                    .expect("embed block")
-                    .to_host()
-                    .expect("download grid");
-                assert_eq!(
-                    actual,
-                    reference_embedding(
-                        table.clone(),
-                        JoltCommittedPolynomial::TrustedAdvice,
-                        grid
-                    ),
-                    "block_vars={block_vars}, total_vars={total_vars}",
-                );
-                assert_eq!(source.to_host().expect("source unchanged"), table);
-            }
-            let empty = context.upload(&[]).expect("empty source");
-            assert_eq!(
-                context
-                    .block_embed(&empty, 0, 5)
-                    .expect("empty block")
-                    .to_host()
-                    .expect("download grid"),
-                vec![Fr::from_u64(0); 32],
-            );
-        }
-
-        #[test]
-        fn scatter_strided_matches_reference_opening() {
-            let Some(context) = device() else {
-                return;
-            };
-            for (log_t, log_k_chunk, total_vars) in [(0, 0, 0), (3, 2, 5), (4, 2, 8), (9, 1, 10)] {
-                let grid = CommitmentGrid {
-                    total_vars,
-                    log_t,
-                    log_k_chunk,
-                    order: TracePolynomialOrder::AddressMajor,
-                };
-                let cycles = 1usize << log_t;
-                let mut lengths = vec![0, 1, 255, 256, 257, cycles - 1, cycles];
-                lengths.sort_unstable();
-                lengths.dedup();
-                for len in lengths.into_iter().filter(|&len| len <= cycles) {
-                    let table = values(len);
-                    let source = context.upload(&table).expect("upload column");
-                    let actual = context
-                        .scatter_strided(&source, grid.cycle_stride(), 1usize << total_vars)
-                        .expect("scatter column")
-                        .to_host()
-                        .expect("download grid");
-                    assert_eq!(
-                        actual,
-                        reference_embedding(table.clone(), JoltCommittedPolynomial::RdInc, grid),
-                        "log_t={log_t}, total_vars={total_vars}, len={len}",
-                    );
-                    assert_eq!(source.to_host().expect("source unchanged"), table);
-                }
-            }
-            let source = context.upload(&values(3)).expect("upload column");
-            assert!(matches!(
-                context.scatter_strided(&source, 4, 8),
-                Err(CudaError::LengthMismatch {
-                    expected: 8,
-                    got: 9
-                })
-            ));
-        }
-
-        #[test]
-        fn scatter_one_hot_matches_reference_opening() {
-            let Some(context) = device() else {
-                return;
-            };
-            for (log_t, log_k_chunk, total_vars) in [(0, 0, 0), (1, 2, 3), (3, 2, 7), (8, 2, 12)] {
-                let grid = CommitmentGrid {
-                    total_vars,
-                    log_t,
-                    log_k_chunk,
-                    order: TracePolynomialOrder::AddressMajor,
-                };
-                let cycles = 1usize << log_t;
-                let max_k = 1usize << log_k_chunk;
-                let mut widths = vec![0, 1, max_k - 1, max_k];
-                widths.sort_unstable();
-                widths.dedup();
-                for width in widths {
-                    let table = values(width * cycles);
-                    let source = context.upload(&table).expect("upload table");
-                    let actual = context
-                        .scatter_one_hot(
-                            &source,
-                            cycles,
-                            grid.cycle_stride(),
-                            grid.one_hot_stride(),
-                            1usize << total_vars,
-                        )
-                        .expect("scatter one-hot grid")
-                        .to_host()
-                        .expect("download grid");
-                    assert_eq!(
-                        actual,
-                        reference_embedding(table.clone(), JoltCommittedPolynomial::RamRa(0), grid,),
-                        "log_t={log_t}, total_vars={total_vars}, width={width}",
-                    );
-                    assert_eq!(source.to_host().expect("source unchanged"), table);
-                }
-            }
-            let source = context.upload(&values(4)).expect("upload table");
-            for (cycles, len, expected, got) in [(0, 8, 0, 4), (3, 8, 3, 4), (2, 5, 5, 6)] {
-                assert!(matches!(
-                    context.scatter_one_hot(&source, cycles, 4, 1, len),
-                    Err(CudaError::LengthMismatch { expected: e, got: g })
-                        if e == expected && g == got
-                ));
-            }
-        }
-    }
-
+    use super::CLASS_FLOOR;
+    use super::COLD;
     use ark_bn254::{Fq, Fq2, Fr as ArkFr, G1Affine, G1Projective, G2Projective};
     use ark_ec::scalar_mul::glv::GLVConfig;
     use ark_ec::scalar_mul::variable_base::msm_i128;
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
-    use ark_ff::{BigInt, BigInteger};
+    use ark_ff::BigInt;
+    use ark_ff::BigInteger;
     use ark_ff::{Field, PrimeField, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
     use jolt_field::{Fr, Ring};
@@ -3946,7 +3490,7 @@ mod tests {
     };
     use super::{
         take_limbs, unflatten_jacobian, AffineLimbs, JacobianLimbs, OneHotMode, SegmentMode,
-        CLASS_FLOOR, COLD, FQ_LIMBS, GLV4_SCALAR_BITS, ONE_HOT_SHARED_SLOTS, SMALL_SEGMENT_LIMIT,
+        FQ_LIMBS, GLV4_SCALAR_BITS, ONE_HOT_SHARED_SLOTS, SMALL_SEGMENT_LIMIT,
     };
     use crate::cuda::common::context::{shared_context, CudaKernelContext};
 
@@ -3955,17 +3499,6 @@ mod tests {
     const MSM_ROW_LEN: usize = 8;
 
     const ONE_HOT_K: usize = 5;
-
-    const CSR_GEOMETRIES: [(usize, usize, usize); 4] =
-        [(16, 4, 5), (64, 16, 4), (4096, 2048, 8), (256, 256, 3)];
-
-    const SEGMENT_BASES: usize = 64;
-
-    const RESIDENT_MSM_LENS: [usize; 6] = [1, 2, 255, 256, 1024, 4096];
-
-    const GLV_LENS: [usize; 5] = [1, 2, 257, 1024, 4096];
-
-    const FROBENIUS_LENS: [usize; 4] = [1, 2, 257, 1024];
 
     fn device() -> Option<&'static CudaKernelContext> {
         shared_context()
@@ -3982,6 +3515,11 @@ mod tests {
     fn msm_bases() -> Vec<G1Affine> {
         (0..MSM_ROW_LEN).map(|i| affine(i as u64 + 3)).collect()
     }
+
+    const CSR_GEOMETRIES: [(usize, usize, usize); 4] =
+        [(16, 4, 5), (64, 16, 4), (4096, 2048, 8), (256, 256, 3)];
+
+    const SEGMENT_BASES: usize = 64;
 
     fn segment_shapes() -> Vec<Vec<u32>> {
         vec![
@@ -4469,122 +4007,6 @@ mod tests {
         }
 
         #[test]
-        fn classed_segment_sums_match_the_block_kernel(seed in any::<u64>()) {
-            let Some(context) = device() else { return Ok(()); };
-            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
-                .map(|column| affine_limbs(affine(column as u64 + 1)))
-                .collect();
-            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
-            let mut mixed = 0usize;
-            for (index, counts) in segment_shapes().into_iter().enumerate() {
-                let indices = segment_indices(&counts, seed ^ index as u64);
-                let plan = context
-                    .upload_segments(&device_bases, &indices, &counts)
-                    .expect("upload segment plan");
-                mixed += usize::from(plan.widest() > CLASS_FLOOR);
-                let expected = projectives(
-                    &context
-                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
-                        .expect("block segment sums"),
-                );
-                let got = projectives(
-                    &context
-                        .segment_sums(&device_bases, &plan, SegmentMode::Classes)
-                        .expect("classed segment sums"),
-                );
-                prop_assert_eq!(
-                    got,
-                    expected,
-                    "shape {} ({} segments, widest {}): the classed kernels diverged from the \
-                     block kernel",
-                    index,
-                    counts.len(),
-                    plan.widest()
-                );
-            }
-            prop_assert!(
-                mixed > 0,
-                "no shape exceeds CLASS_FLOOR, so the fat-class launch is untested"
-            );
-        }
-
-        #[test]
-        fn warp_segment_sums_match_the_block_kernels(seed in any::<u64>()) {
-            let Some(context) = device() else { return Ok(()); };
-            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
-                .map(|column| affine_limbs(affine(column as u64 + 1)))
-                .collect();
-            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
-            for (index, counts) in segment_shapes().into_iter().enumerate() {
-                let indices = segment_indices(&counts, seed ^ index as u64);
-                let plan = context
-                    .upload_segments(&device_bases, &indices, &counts)
-                    .expect("upload segment plan");
-                let expected = projectives(
-                    &context
-                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
-                        .expect("block segment sums"),
-                );
-                let got = projectives(
-                    &context
-                        .segment_sums(&device_bases, &plan, SegmentMode::Warp)
-                        .expect("warp segment sums"),
-                );
-                prop_assert_eq!(
-                    got,
-                    expected.clone(),
-                    "shape {} ({} segments, widest {}): the warp kernel diverged from the \
-                     block kernel",
-                    index,
-                    counts.len(),
-                    plan.widest()
-                );
-                if plan.widest() <= SMALL_SEGMENT_LIMIT {
-                    let small = projectives(
-                        &context
-                            .segment_sums(&device_bases, &plan, SegmentMode::Small)
-                            .expect("thread segment sums"),
-                    );
-                    prop_assert_eq!(
-                        small,
-                        expected,
-                        "shape {}: the thread-per-segment kernel diverged from the block kernel",
-                        index
-                    );
-                }
-            }
-        }
-
-        #[test]
-        fn one_hot_chunk_sums_matches_arkworks(offset in 1u64..1_000) {
-            let Some(context) = device() else { return Ok(()); };
-            let bases: Vec<G1Affine> =
-                (0..MSM_ROW_LEN).map(|i| affine(i as u64 + offset)).collect();
-            let hot = one_hot_chunk();
-            let rows = columns_per_row(&hot);
-            let expected: Vec<G1Projective> = batch_g1_additions_multi_affine(&bases, &rows)
-                .into_iter()
-                .zip(&rows)
-                .map(|(sum, columns)| {
-                    if columns.is_empty() {
-                        G1Projective::zero()
-                    } else {
-                        sum.into()
-                    }
-                })
-                .collect();
-            let device_bases = context
-                .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
-                .expect("upload bases");
-            let got = projectives(
-                &context
-                    .one_hot_chunk_sums(&device_bases, &hot, ONE_HOT_K)
-                    .expect("device one_hot_chunk_sums"),
-            );
-            prop_assert_eq!(got, expected);
-        }
-
-        #[test]
         fn msm_rows_fr_matches_arkworks(scalars in vec(arb_fr(), MSM_ROWS * MSM_ROW_LEN)) {
             let Some(context) = device() else { return Ok(()); };
             let bases = msm_bases();
@@ -4683,6 +4105,93 @@ mod tests {
                 expected,
                 "the batched row form must equal the per-chunk form transposed"
             );
+        }
+
+        #[test]
+        fn classed_segment_sums_match_the_block_kernel(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
+                .map(|column| affine_limbs(affine(column as u64 + 1)))
+                .collect();
+            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+            let mut mixed = 0usize;
+            for (index, counts) in segment_shapes().into_iter().enumerate() {
+                let indices = segment_indices(&counts, seed ^ index as u64);
+                let plan = context
+                    .upload_segments(&device_bases, &indices, &counts)
+                    .expect("upload segment plan");
+                mixed += usize::from(plan.widest() > CLASS_FLOOR);
+                let expected = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
+                        .expect("block segment sums"),
+                );
+                let got = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Classes)
+                        .expect("classed segment sums"),
+                );
+                prop_assert_eq!(
+                    got,
+                    expected,
+                    "shape {} ({} segments, widest {}): the classed kernels diverged from the \
+                     block kernel",
+                    index,
+                    counts.len(),
+                    plan.widest()
+                );
+            }
+            prop_assert!(
+                mixed > 0,
+                "no shape exceeds CLASS_FLOOR, so the fat-class launch is untested"
+            );
+        }
+
+        #[test]
+        fn warp_segment_sums_match_the_block_kernels(seed in any::<u64>()) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<AffineLimbs> = (0..SEGMENT_BASES)
+                .map(|column| affine_limbs(affine(column as u64 + 1)))
+                .collect();
+            let device_bases = context.upload_g1_bases(&bases).expect("upload bases");
+            for (index, counts) in segment_shapes().into_iter().enumerate() {
+                let indices = segment_indices(&counts, seed ^ index as u64);
+                let plan = context
+                    .upload_segments(&device_bases, &indices, &counts)
+                    .expect("upload segment plan");
+                let expected = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Heavy)
+                        .expect("block segment sums"),
+                );
+                let got = projectives(
+                    &context
+                        .segment_sums(&device_bases, &plan, SegmentMode::Warp)
+                        .expect("warp segment sums"),
+                );
+                prop_assert_eq!(
+                    got,
+                    expected.clone(),
+                    "shape {} ({} segments, widest {}): the warp kernel diverged from the \
+                     block kernel",
+                    index,
+                    counts.len(),
+                    plan.widest()
+                );
+                if plan.widest() <= SMALL_SEGMENT_LIMIT {
+                    let small = projectives(
+                        &context
+                            .segment_sums(&device_bases, &plan, SegmentMode::Small)
+                            .expect("thread segment sums"),
+                    );
+                    prop_assert_eq!(
+                        small,
+                        expected,
+                        "shape {}: the thread-per-segment kernel diverged from the block kernel",
+                        index
+                    );
+                }
+            }
         }
 
         #[test]
@@ -4856,6 +4365,35 @@ mod tests {
                  a cycle, so the commitment would silently omit it"
             );
         }
+
+        #[test]
+        fn one_hot_chunk_sums_matches_arkworks(offset in 1u64..1_000) {
+            let Some(context) = device() else { return Ok(()); };
+            let bases: Vec<G1Affine> =
+                (0..MSM_ROW_LEN).map(|i| affine(i as u64 + offset)).collect();
+            let hot = one_hot_chunk();
+            let rows = columns_per_row(&hot);
+            let expected: Vec<G1Projective> = batch_g1_additions_multi_affine(&bases, &rows)
+                .into_iter()
+                .zip(&rows)
+                .map(|(sum, columns)| {
+                    if columns.is_empty() {
+                        G1Projective::zero()
+                    } else {
+                        sum.into()
+                    }
+                })
+                .collect();
+            let device_bases = context
+                .upload_g1_bases(&bases.iter().copied().map(affine_limbs).collect::<Vec<_>>())
+                .expect("upload bases");
+            let got = projectives(
+                &context
+                    .one_hot_chunk_sums(&device_bases, &hot, ONE_HOT_K)
+                    .expect("device one_hot_chunk_sums"),
+            );
+            prop_assert_eq!(got, expected);
+        }
     }
 
     #[test]
@@ -5007,6 +4545,274 @@ mod tests {
         }
     }
 
+    #[test]
+    fn shared_scalar_rows_handle_empty_schedules_and_partial_blocks() {
+        let Some(context) = device() else { return };
+        let wide = Fr::from_u64(u64::MAX) * Fr::from_u64(u64::MAX);
+        let weights = [
+            Fr::from_u64(0),
+            Fr::from_u64(1),
+            -Fr::from_u64(1),
+            wide,
+            -wide,
+            wide + Fr::from_u64(7),
+            -wide - Fr::from_u64(11),
+            Fr::from_u64(13),
+        ];
+        for rows in [127usize, 128, 129] {
+            let coefficient = |term: usize, row: usize| {
+                if row.is_multiple_of(7) || (term + row).is_multiple_of(5) {
+                    0
+                } else {
+                    (term * rows + row + 1) as u64
+                }
+            };
+            let bases: Vec<JacobianLimbs> = (0..weights.len())
+                .flat_map(|term| {
+                    (0..rows).map(move |row| jacobian_limbs(point(coefficient(term, row))))
+                })
+                .collect();
+            for scalars in [weights, [Fr::from_u64(0); 8]] {
+                let expected: Vec<G1Projective> = (0..rows)
+                    .map(|row| {
+                        let scalar = scalars
+                            .iter()
+                            .enumerate()
+                            .map(|(term, &weight)| {
+                                ArkFr::from(coefficient(term, row)) * ark_fr(weight)
+                            })
+                            .sum::<ArkFr>();
+                        G1Projective::generator() * scalar
+                    })
+                    .collect();
+                let got = projectives(
+                    &context
+                        .msm_rows_shared_scalars(&bases, &scalars, rows)
+                        .expect("shared-scalar row MSM"),
+                );
+                assert_eq!(got, expected, "{rows} rows");
+            }
+        }
+    }
+
+    #[test]
+    fn batched_window_budget_reserves_device_headroom() {
+        let mib = 1usize << 20;
+        assert_eq!(CudaKernelContext::batched_window_budget(0), 64 * mib);
+        assert_eq!(
+            CudaKernelContext::batched_window_budget(1024 * mib),
+            128 * mib
+        );
+        assert_eq!(
+            CudaKernelContext::batched_window_budget(usize::MAX),
+            4096 * mib
+        );
+        let large = CudaKernelContext::batched_window_bytes(1024, 2048, 6, 1 << 24);
+        assert!(large > CudaKernelContext::batched_window_budget(8 << 30));
+        assert!(large < CudaKernelContext::batched_window_budget(32 << 30));
+        assert_eq!(
+            CudaKernelContext::batched_window_bytes(usize::MAX, 2, 2, 1),
+            usize::MAX
+        );
+    }
+
+    const RESIDENT_MSM_LENS: [usize; 6] = [1, 2, 255, 256, 1024, 4096];
+
+    const GLV_LENS: [usize; 5] = [1, 2, 257, 1024, 4096];
+
+    const FROBENIUS_LENS: [usize; 4] = [1, 2, 257, 1024];
+
+    fn glv_lambda() -> ArkFr {
+        <ark_bn254::g1::Config as GLVConfig>::LAMBDA
+    }
+
+    fn glv_bound() -> ArkFr {
+        ArkFr::from(u128::MAX) + ArkFr::ONE
+    }
+
+    fn limbs_to_ark(limbs: &[u64]) -> ArkFr {
+        ArkFr::from_bigint(BigInt(take_limbs(limbs))).expect("canonical limbs below Fr")
+    }
+
+    #[test]
+    fn g1_endomorphism_span_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = glv_lambda();
+        for count in GLV_LENS {
+            for offset in [0usize, 3] {
+                let lead = jacobian_span(offset, 7);
+                let points = jacobian_span(count, 13);
+                let mut flat = flat_jacobian(&lead);
+                flat.extend_from_slice(&flat_jacobian(&points));
+                let device_points = context.upload_raw_u64(&flat).expect("upload span");
+
+                let raw = context
+                    .g1_endomorphism_span(&device_points, offset, count)
+                    .expect("endomorphism");
+                let got = projectives(&unflatten_jacobian(
+                    &context.download_u64(&raw).expect("download endomorphism"),
+                ));
+
+                assert_eq!(
+                    got.len(),
+                    2 * count,
+                    "endomorphism should emit the original span then the mapped span"
+                );
+                let divergence = (0..count).position(|index| {
+                    got[index].into_affine() != points[index].into_affine()
+                        || got[count + index].into_affine()
+                            != (points[index] * lambda).into_affine()
+                });
+                assert_eq!(
+                    divergence, None,
+                    "endomorphism diverged at count {count}, offset {offset}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn glv_decompose_2d_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = glv_lambda();
+        let bound = glv_bound();
+        for count in GLV_LENS {
+            let scalars: Vec<Fr> = (0..count)
+                .map(|index| Fr::from_u64(index as u64 * 1_000_003 + 7))
+                .collect();
+            let uploaded = context.upload(&scalars).expect("upload scalars");
+            let canonical = context
+                .canonical_scalars(&uploaded)
+                .expect("canonical scalars");
+            let (split, signs) = context
+                .glv_decompose_2d(&canonical, count)
+                .expect("glv decompose");
+            let raw = context.download_u64(&split).expect("download split");
+
+            assert_eq!(signs.len(), 2 * count, "sign count at {count}");
+            for index in 0..count {
+                let first = limbs_to_ark(&raw[index * FQ_LIMBS..(index + 1) * FQ_LIMBS]);
+                let second =
+                    limbs_to_ark(&raw[(count + index) * FQ_LIMBS..(count + index + 1) * FQ_LIMBS]);
+                let signed = |value: ArkFr, sign: u8| if sign == 0 { value } else { -value };
+                let rebuilt =
+                    signed(first, signs[index]) + signed(second, signs[count + index]) * lambda;
+                assert_eq!(
+                    rebuilt,
+                    ark_fr(scalars[index]),
+                    "glv split failed to rebuild scalar {index} at count {count}"
+                );
+                assert!(
+                    first < bound && second < bound,
+                    "glv component exceeded 2^128 at scalar {index}, count {count}"
+                );
+            }
+        }
+    }
+
+    fn psi_eigenvalue() -> ArkFr {
+        ArkFr::from_le_bytes_mod_order(&BigInteger::to_bytes_le(&Fq::MODULUS))
+    }
+
+    #[test]
+    fn g2_frobenius_span_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = psi_eigenvalue();
+        for count in FROBENIUS_LENS {
+            for offset in [0usize, 3] {
+                let lead = g2_span(offset, 17);
+                let points = g2_span(count, 23);
+                let mut flat = flat_g2(&lead);
+                flat.extend_from_slice(&flat_g2(&points));
+                let device_points = context.upload_raw_u64(&flat).expect("upload span");
+
+                let raw = context
+                    .g2_frobenius_span(&device_points, offset, count)
+                    .expect("frobenius");
+                let hosted = context.download_u64(&raw).expect("download frobenius");
+                assert_eq!(
+                    hosted.len(),
+                    4 * count * 24,
+                    "frobenius should emit four spans at count {count}"
+                );
+
+                let mut power = ArkFr::ONE;
+                for step in 0..4usize {
+                    let got: Vec<G2Projective> = (0..count)
+                        .map(|index| {
+                            let slot = (step * count + index) * 24;
+                            g2_from_limbs(&hosted[slot..slot + 24])
+                        })
+                        .collect();
+                    let want: Vec<G2Projective> =
+                        (0..count).map(|index| points[index] * power).collect();
+                    let divergence = G2Projective::normalize_batch(&got)
+                        .into_iter()
+                        .zip(G2Projective::normalize_batch(&want))
+                        .position(|(got, want)| got != want);
+                    assert_eq!(
+                        divergence, None,
+                        "psi^{step} diverged at count {count}, offset {offset}"
+                    );
+                    power *= lambda;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn glv_decompose_4d_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        let lambda = psi_eigenvalue();
+        let bound = ArkFr::from(1u128 << (GLV4_SCALAR_BITS - 1));
+        for count in GLV_LENS {
+            let scalars: Vec<Fr> = (0..count)
+                .map(|index| Fr::from_u64(index as u64 * 7_654_321 + 13))
+                .collect();
+            let uploaded = context.upload(&scalars).expect("upload scalars");
+            let canonical = context
+                .canonical_scalars(&uploaded)
+                .expect("canonical scalars");
+            let (split, signs) = context
+                .glv_decompose_4d(&canonical, count)
+                .expect("glv decompose 4d");
+            let raw = context.download_u64(&split).expect("download split");
+
+            assert_eq!(signs.len(), 4 * count, "sign count at {count}");
+            for index in 0..count {
+                let mut rebuilt = ArkFr::ZERO;
+                let mut power = ArkFr::ONE;
+                for step in 0..4usize {
+                    let slot = (step * count + index) * FQ_LIMBS;
+                    let magnitude = limbs_to_ark(&raw[slot..slot + FQ_LIMBS]);
+                    assert!(
+                        magnitude < bound,
+                        "4d component {step} exceeded the GLV4_SCALAR_BITS bound at scalar {index}, count {count}"
+                    );
+                    if signs[step * count + index] == 0 {
+                        rebuilt += magnitude * power;
+                    } else {
+                        rebuilt -= magnitude * power;
+                    }
+                    power *= lambda;
+                }
+                assert_eq!(
+                    rebuilt,
+                    ark_fr(scalars[index]),
+                    "4d split failed to rebuild scalar {index} at count {count}"
+                );
+            }
+        }
+    }
+
     fn g2_span(count: usize, seed: u64) -> Vec<G2Projective> {
         let step = G2Projective::generator();
         let mut walk = step * ArkFr::from(seed + 1);
@@ -5124,6 +4930,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn resident_g2_msm_matches_arkworks() {
+        let Some(context) = device() else {
+            return;
+        };
+        for count in RESIDENT_MSM_LENS {
+            let points = g2_span(count, 5);
+            let scalars: Vec<Fr> = (0..count)
+                .map(|index| {
+                    if index.is_multiple_of(17) {
+                        Fr::from_u64(0)
+                    } else {
+                        Fr::from_u64(index as u64 * 1_000_003 + 7)
+                    }
+                })
+                .collect();
+            let expected = points
+                .iter()
+                .zip(&scalars)
+                .map(|(base, scalar)| *base * ark_fr(*scalar))
+                .sum::<G2Projective>();
+
+            let out_offset = count + 2;
+            let mut flat = flat_g2(&points);
+            flat.extend(std::iter::repeat_n(0u64, (out_offset + 1 - count) * 24));
+            let mut buffer = context.upload_raw_u64(&flat).expect("upload arena");
+            context
+                .g2_msm_in_place(&mut buffer, 0, out_offset, count, &scalars)
+                .expect("resident g2 msm");
+            let raw = context.download_u64(&buffer).expect("download arena");
+            let slot = out_offset * 24;
+            let got = g2_from_limbs(raw.get(slot..slot + 24).expect("output slot"));
+
+            assert_eq!(
+                got.into_affine(),
+                expected.into_affine(),
+                "resident g2 msm diverged at count {count}"
+            );
+        }
+    }
+
     fn jacobian_span(count: usize, seed: u64) -> Vec<G1Projective> {
         (0..count)
             .map(|index| {
@@ -5188,47 +5035,6 @@ mod tests {
     }
 
     #[test]
-    fn resident_g2_msm_matches_arkworks() {
-        let Some(context) = device() else {
-            return;
-        };
-        for count in RESIDENT_MSM_LENS {
-            let points = g2_span(count, 5);
-            let scalars: Vec<Fr> = (0..count)
-                .map(|index| {
-                    if index.is_multiple_of(17) {
-                        Fr::from_u64(0)
-                    } else {
-                        Fr::from_u64(index as u64 * 1_000_003 + 7)
-                    }
-                })
-                .collect();
-            let expected = points
-                .iter()
-                .zip(&scalars)
-                .map(|(base, scalar)| *base * ark_fr(*scalar))
-                .sum::<G2Projective>();
-
-            let out_offset = count + 2;
-            let mut flat = flat_g2(&points);
-            flat.extend(std::iter::repeat_n(0u64, (out_offset + 1 - count) * 24));
-            let mut buffer = context.upload_raw_u64(&flat).expect("upload arena");
-            context
-                .g2_msm_in_place(&mut buffer, 0, out_offset, count, &scalars)
-                .expect("resident g2 msm");
-            let raw = context.download_u64(&buffer).expect("download arena");
-            let slot = out_offset * 24;
-            let got = g2_from_limbs(raw.get(slot..slot + 24).expect("output slot"));
-
-            assert_eq!(
-                got.into_affine(),
-                expected.into_affine(),
-                "resident g2 msm diverged at count {count}"
-            );
-        }
-    }
-
-    #[test]
     fn resident_g1_msm_matches_arkworks() {
         let Some(context) = device() else {
             return;
@@ -5272,268 +5078,6 @@ mod tests {
                 "resident g1 msm diverged at count {count}"
             );
         }
-    }
-
-    fn glv_lambda() -> ArkFr {
-        <ark_bn254::g1::Config as GLVConfig>::LAMBDA
-    }
-
-    fn glv_bound() -> ArkFr {
-        ArkFr::from(u128::MAX) + ArkFr::ONE
-    }
-
-    fn psi_eigenvalue() -> ArkFr {
-        ArkFr::from_le_bytes_mod_order(&BigInteger::to_bytes_le(&Fq::MODULUS))
-    }
-
-    fn limbs_to_ark(limbs: &[u64]) -> ArkFr {
-        ArkFr::from_bigint(BigInt(take_limbs(limbs))).expect("canonical limbs below Fr")
-    }
-
-    #[test]
-    fn g1_endomorphism_span_matches_arkworks() {
-        let Some(context) = device() else {
-            return;
-        };
-        let lambda = glv_lambda();
-        for count in GLV_LENS {
-            for offset in [0usize, 3] {
-                let lead = jacobian_span(offset, 7);
-                let points = jacobian_span(count, 13);
-                let mut flat = flat_jacobian(&lead);
-                flat.extend_from_slice(&flat_jacobian(&points));
-                let device_points = context.upload_raw_u64(&flat).expect("upload span");
-
-                let raw = context
-                    .g1_endomorphism_span(&device_points, offset, count)
-                    .expect("endomorphism");
-                let got = projectives(&unflatten_jacobian(
-                    &context.download_u64(&raw).expect("download endomorphism"),
-                ));
-
-                assert_eq!(
-                    got.len(),
-                    2 * count,
-                    "endomorphism should emit the original span then the mapped span"
-                );
-                let divergence = (0..count).position(|index| {
-                    got[index].into_affine() != points[index].into_affine()
-                        || got[count + index].into_affine()
-                            != (points[index] * lambda).into_affine()
-                });
-                assert_eq!(
-                    divergence, None,
-                    "endomorphism diverged at count {count}, offset {offset}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn g2_frobenius_span_matches_arkworks() {
-        let Some(context) = device() else {
-            return;
-        };
-        let lambda = psi_eigenvalue();
-        for count in FROBENIUS_LENS {
-            for offset in [0usize, 3] {
-                let lead = g2_span(offset, 17);
-                let points = g2_span(count, 23);
-                let mut flat = flat_g2(&lead);
-                flat.extend_from_slice(&flat_g2(&points));
-                let device_points = context.upload_raw_u64(&flat).expect("upload span");
-
-                let raw = context
-                    .g2_frobenius_span(&device_points, offset, count)
-                    .expect("frobenius");
-                let hosted = context.download_u64(&raw).expect("download frobenius");
-                assert_eq!(
-                    hosted.len(),
-                    4 * count * 24,
-                    "frobenius should emit four spans at count {count}"
-                );
-
-                let mut power = ArkFr::ONE;
-                for step in 0..4usize {
-                    let got: Vec<G2Projective> = (0..count)
-                        .map(|index| {
-                            let slot = (step * count + index) * 24;
-                            g2_from_limbs(&hosted[slot..slot + 24])
-                        })
-                        .collect();
-                    let want: Vec<G2Projective> =
-                        (0..count).map(|index| points[index] * power).collect();
-                    let divergence = G2Projective::normalize_batch(&got)
-                        .into_iter()
-                        .zip(G2Projective::normalize_batch(&want))
-                        .position(|(got, want)| got != want);
-                    assert_eq!(
-                        divergence, None,
-                        "psi^{step} diverged at count {count}, offset {offset}"
-                    );
-                    power *= lambda;
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn glv_decompose_4d_matches_arkworks() {
-        let Some(context) = device() else {
-            return;
-        };
-        let lambda = psi_eigenvalue();
-        let bound = ArkFr::from(1u128 << (GLV4_SCALAR_BITS - 1));
-        for count in GLV_LENS {
-            let scalars: Vec<Fr> = (0..count)
-                .map(|index| Fr::from_u64(index as u64 * 7_654_321 + 13))
-                .collect();
-            let uploaded = context.upload(&scalars).expect("upload scalars");
-            let canonical = context
-                .canonical_scalars(&uploaded)
-                .expect("canonical scalars");
-            let (split, signs) = context
-                .glv_decompose_4d(&canonical, count)
-                .expect("glv decompose 4d");
-            let raw = context.download_u64(&split).expect("download split");
-
-            assert_eq!(signs.len(), 4 * count, "sign count at {count}");
-            for index in 0..count {
-                let mut rebuilt = ArkFr::ZERO;
-                let mut power = ArkFr::ONE;
-                for step in 0..4usize {
-                    let slot = (step * count + index) * FQ_LIMBS;
-                    let magnitude = limbs_to_ark(&raw[slot..slot + FQ_LIMBS]);
-                    assert!(
-                        magnitude < bound,
-                        "4d component {step} exceeded the GLV4_SCALAR_BITS bound at scalar {index}, count {count}"
-                    );
-                    if signs[step * count + index] == 0 {
-                        rebuilt += magnitude * power;
-                    } else {
-                        rebuilt -= magnitude * power;
-                    }
-                    power *= lambda;
-                }
-                assert_eq!(
-                    rebuilt,
-                    ark_fr(scalars[index]),
-                    "4d split failed to rebuild scalar {index} at count {count}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn glv_decompose_2d_matches_arkworks() {
-        let Some(context) = device() else {
-            return;
-        };
-        let lambda = glv_lambda();
-        let bound = glv_bound();
-        for count in GLV_LENS {
-            let scalars: Vec<Fr> = (0..count)
-                .map(|index| Fr::from_u64(index as u64 * 1_000_003 + 7))
-                .collect();
-            let uploaded = context.upload(&scalars).expect("upload scalars");
-            let canonical = context
-                .canonical_scalars(&uploaded)
-                .expect("canonical scalars");
-            let (split, signs) = context
-                .glv_decompose_2d(&canonical, count)
-                .expect("glv decompose");
-            let raw = context.download_u64(&split).expect("download split");
-
-            assert_eq!(signs.len(), 2 * count, "sign count at {count}");
-            for index in 0..count {
-                let first = limbs_to_ark(&raw[index * FQ_LIMBS..(index + 1) * FQ_LIMBS]);
-                let second =
-                    limbs_to_ark(&raw[(count + index) * FQ_LIMBS..(count + index + 1) * FQ_LIMBS]);
-                let signed = |value: ArkFr, sign: u8| if sign == 0 { value } else { -value };
-                let rebuilt =
-                    signed(first, signs[index]) + signed(second, signs[count + index]) * lambda;
-                assert_eq!(
-                    rebuilt,
-                    ark_fr(scalars[index]),
-                    "glv split failed to rebuild scalar {index} at count {count}"
-                );
-                assert!(
-                    first < bound && second < bound,
-                    "glv component exceeded 2^128 at scalar {index}, count {count}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn shared_scalar_rows_handle_empty_schedules_and_partial_blocks() {
-        let Some(context) = device() else { return };
-        let wide = Fr::from_u64(u64::MAX) * Fr::from_u64(u64::MAX);
-        let weights = [
-            Fr::from_u64(0),
-            Fr::from_u64(1),
-            -Fr::from_u64(1),
-            wide,
-            -wide,
-            wide + Fr::from_u64(7),
-            -wide - Fr::from_u64(11),
-            Fr::from_u64(13),
-        ];
-        for rows in [127usize, 128, 129] {
-            let coefficient = |term: usize, row: usize| {
-                if row.is_multiple_of(7) || (term + row).is_multiple_of(5) {
-                    0
-                } else {
-                    (term * rows + row + 1) as u64
-                }
-            };
-            let bases: Vec<JacobianLimbs> = (0..weights.len())
-                .flat_map(|term| {
-                    (0..rows).map(move |row| jacobian_limbs(point(coefficient(term, row))))
-                })
-                .collect();
-            for scalars in [weights, [Fr::from_u64(0); 8]] {
-                let expected: Vec<G1Projective> = (0..rows)
-                    .map(|row| {
-                        let scalar = scalars
-                            .iter()
-                            .enumerate()
-                            .map(|(term, &weight)| {
-                                ArkFr::from(coefficient(term, row)) * ark_fr(weight)
-                            })
-                            .sum::<ArkFr>();
-                        G1Projective::generator() * scalar
-                    })
-                    .collect();
-                let got = projectives(
-                    &context
-                        .msm_rows_shared_scalars(&bases, &scalars, rows)
-                        .expect("shared-scalar row MSM"),
-                );
-                assert_eq!(got, expected, "{rows} rows");
-            }
-        }
-    }
-
-    #[test]
-    fn batched_window_budget_reserves_device_headroom() {
-        let mib = 1usize << 20;
-        assert_eq!(CudaKernelContext::batched_window_budget(0), 64 * mib);
-        assert_eq!(
-            CudaKernelContext::batched_window_budget(1024 * mib),
-            128 * mib
-        );
-        assert_eq!(
-            CudaKernelContext::batched_window_budget(usize::MAX),
-            4096 * mib
-        );
-        let large = CudaKernelContext::batched_window_bytes(1024, 2048, 6, 1 << 24);
-        assert!(large > CudaKernelContext::batched_window_budget(8 << 30));
-        assert!(large < CudaKernelContext::batched_window_budget(32 << 30));
-        assert_eq!(
-            CudaKernelContext::batched_window_bytes(usize::MAX, 2, 2, 1),
-            usize::MAX
-        );
     }
 
     const FOLD_SHAPES: [(usize, usize, usize); 5] =
@@ -5655,6 +5199,465 @@ mod tests {
                 got, expected,
                 "chunked bucket reduce diverged at rows {rows}, buckets {buckets}, chunks {chunks}"
             );
+        }
+    }
+
+    mod resident_vector {
+        use ark_bn254::{Fr as ArkFr, G2Projective};
+        use ark_ec::AdditiveGroup;
+        use ark_ff::{Field, PrimeField};
+        use cudarc::driver::CudaSlice;
+        use jolt_field::Fr;
+
+        use super::{
+            device, flat_g2, flat_jacobian, g2_from_limbs, g2_span, jacobian_span, projectives,
+            unflatten_jacobian,
+        };
+        use crate::cuda::common::context::CudaKernelContext;
+        use crate::cuda::common::error::CudaError;
+        use crate::cuda::common::msm::{ResidentAxpy, FQ_LIMBS};
+
+        fn weights() -> [Fr; 4] {
+            [
+                ArkFr::ZERO,
+                ArkFr::ONE,
+                -ArkFr::ONE,
+                ArkFr::from_le_bytes_mod_order(&[0xa5; 32]),
+            ]
+            .map(Fr::from)
+        }
+
+        fn layouts(count: usize) -> [ResidentAxpy; 5] {
+            [
+                (2, count + 5, 2 * count + 8),
+                (2, count + 5, 2),
+                (2, count + 5, count + 5),
+                (2, 2, 2),
+                (2, 3, 2 * count + 8),
+            ]
+            .map(|(a_offset, b_offset, out_offset)| ResidentAxpy {
+                a_offset,
+                b_offset,
+                out_offset,
+                count,
+            })
+        }
+
+        #[test]
+        fn g1_axpy_matches_arkworks_with_aliases() {
+            let Some(context) = device() else { return };
+            for count in [1, 256, 257] {
+                let points = jacobian_span(3 * count + 11, 0);
+                let flat = flat_jacobian(&points);
+                for scalar in weights() {
+                    for span in layouts(count) {
+                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G1");
+                        context
+                            .g1_axpy_in_place(&mut buffer, span, scalar)
+                            .expect("G1 multiply-add");
+                        let raw = context
+                            .read_u64_range(&buffer, 0, buffer.len())
+                            .expect("read G1");
+                        let start = span.out_offset * 3 * FQ_LIMBS;
+                        let end = start + count * 3 * FQ_LIMBS;
+                        assert_eq!(raw[..start], flat[..start]);
+                        assert_eq!(raw[end..], flat[end..]);
+                        let got = projectives(&unflatten_jacobian(&raw[start..end]));
+                        let expected: Vec<_> = (0..count)
+                            .map(|i| {
+                                points[span.a_offset + i] * ArkFr::from(scalar)
+                                    + points[span.b_offset + i]
+                            })
+                            .collect();
+                        assert_eq!(got, expected, "{span:?}, scalar {scalar:?}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn g2_axpy_matches_arkworks_with_aliases() {
+            let Some(context) = device() else { return };
+            for count in [1, 256, 257] {
+                let points = g2_span(3 * count + 11, 0);
+                let flat = flat_g2(&points);
+                for scalar in weights() {
+                    for span in layouts(count) {
+                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
+                        context
+                            .g2_axpy_in_place(&mut buffer, span, scalar)
+                            .expect("G2 multiply-add");
+                        let raw = context
+                            .read_u64_range(&buffer, 0, buffer.len())
+                            .expect("read G2");
+                        let start = span.out_offset * 6 * FQ_LIMBS;
+                        let end = start + count * 6 * FQ_LIMBS;
+                        assert_eq!(raw[..start], flat[..start]);
+                        assert_eq!(raw[end..], flat[end..]);
+                        let got: Vec<_> = raw[start..end]
+                            .chunks_exact(6 * FQ_LIMBS)
+                            .map(g2_from_limbs)
+                            .collect();
+                        let expected: Vec<_> = (0..count)
+                            .map(|i| {
+                                points[span.a_offset + i] * ArkFr::from(scalar)
+                                    + points[span.b_offset + i]
+                            })
+                            .collect();
+                        assert_eq!(got, expected, "{span:?}, scalar {scalar:?}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn g2_fixed_base_matches_arkworks() {
+            let Some(context) = device() else { return };
+            for count in [1, 256, 257] {
+                for base in [g2_span(1, 7)[0], G2Projective::ZERO] {
+                    for (base_offset, out_offset) in [(2, 5), (count + 5, 2)] {
+                        let mut points = g2_span(count + 9, 11);
+                        points[base_offset] = base;
+                        let flat = flat_g2(&points);
+                        let scalars: Vec<_> =
+                            weights().into_iter().cycle().skip(3).take(count).collect();
+                        let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
+                        context
+                            .g2_fixed_base_in_place(&mut buffer, base_offset, out_offset, &scalars)
+                            .expect("G2 fixed-base scaling");
+                        let raw = context
+                            .read_u64_range(&buffer, 0, buffer.len())
+                            .expect("read G2");
+                        let start = out_offset * 6 * FQ_LIMBS;
+                        let end = start + count * 6 * FQ_LIMBS;
+                        assert_eq!(raw[..start], flat[..start]);
+                        assert_eq!(raw[end..], flat[end..]);
+                        let got: Vec<_> = raw[start..end]
+                            .chunks_exact(6 * FQ_LIMBS)
+                            .map(g2_from_limbs)
+                            .collect();
+                        let expected: Vec<_> = scalars
+                            .iter()
+                            .map(|&scalar| base * ArkFr::from(scalar))
+                            .collect();
+                        assert_eq!(got, expected, "count {count}, base offset {base_offset}");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn axpy_rejects_partial_aliases_and_invalid_spans() {
+            type Axpy = fn(
+                &CudaKernelContext,
+                &mut CudaSlice<u64>,
+                ResidentAxpy,
+                Fr,
+            ) -> Result<(), CudaError>;
+            let Some(context) = device() else { return };
+            for (words, apply) in [
+                (3 * FQ_LIMBS, CudaKernelContext::g1_axpy_in_place as Axpy),
+                (6 * FQ_LIMBS, CudaKernelContext::g2_axpy_in_place as Axpy),
+            ] {
+                let flat = vec![0u64; 8 * words];
+                let mut buffer = context.upload_raw_u64(&flat).expect("upload points");
+                for (a_offset, b_offset, out_offset, count) in [
+                    (0, 4, 1, 2),
+                    (0, 4, 5, 2),
+                    (usize::MAX, 0, 4, 2),
+                    (0, 0, 0, usize::MAX),
+                ] {
+                    assert!(matches!(
+                        apply(
+                            context,
+                            &mut buffer,
+                            ResidentAxpy {
+                                a_offset,
+                                b_offset,
+                                out_offset,
+                                count
+                            },
+                            weights()[3],
+                        ),
+                        Err(CudaError::InvariantViolation { .. })
+                    ));
+                }
+                for (a_offset, b_offset, out_offset) in [(7, 0, 4), (0, 7, 4), (0, 4, 7)] {
+                    assert!(matches!(
+                        apply(
+                            context,
+                            &mut buffer,
+                            ResidentAxpy {
+                                a_offset,
+                                b_offset,
+                                out_offset,
+                                count: 2
+                            },
+                            weights()[3],
+                        ),
+                        Err(CudaError::LengthMismatch { .. })
+                    ));
+                }
+                apply(
+                    context,
+                    &mut buffer,
+                    ResidentAxpy {
+                        a_offset: usize::MAX,
+                        b_offset: usize::MAX,
+                        out_offset: usize::MAX,
+                        count: 0,
+                    },
+                    weights()[3],
+                )
+                .expect("empty multiply-add");
+                assert_eq!(
+                    context
+                        .read_u64_range(&buffer, 0, buffer.len())
+                        .expect("read points"),
+                    flat
+                );
+            }
+        }
+
+        #[test]
+        fn fixed_base_rejects_overwriting_its_base_and_invalid_spans() {
+            let Some(context) = device() else { return };
+            let flat = flat_g2(&g2_span(8, 1));
+            let mut buffer = context.upload_raw_u64(&flat).expect("upload G2");
+            for (base, out) in [(3, 3), (3, 2), (usize::MAX, 0), (0, usize::MAX)] {
+                assert!(matches!(
+                    context.g2_fixed_base_in_place(&mut buffer, base, out, &weights()),
+                    Err(CudaError::InvariantViolation { .. })
+                ));
+            }
+            for (base, out) in [(8, 0), (0, 7)] {
+                assert!(matches!(
+                    context.g2_fixed_base_in_place(&mut buffer, base, out, &weights()),
+                    Err(CudaError::LengthMismatch { .. })
+                ));
+            }
+            context
+                .g2_fixed_base_in_place(&mut buffer, usize::MAX, usize::MAX, &[])
+                .expect("empty fixed-base scaling");
+            assert_eq!(
+                context
+                    .read_u64_range(&buffer, 0, buffer.len())
+                    .expect("read G2"),
+                flat
+            );
+        }
+
+        #[test]
+        fn resident_readback_checks_ranges() {
+            let Some(context) = device() else { return };
+            let words: Vec<u64> = (0..17).collect();
+            let buffer = context.upload_raw_u64(&words).expect("upload words");
+            assert_eq!(
+                context
+                    .read_u64_range(&buffer, 3, 16)
+                    .expect("partial read"),
+                words[3..16]
+            );
+            assert!(context
+                .read_u64_range(&buffer, 17, 17)
+                .expect("empty read")
+                .is_empty());
+            for (start, end) in [(4, 3), (0, 18), (usize::MAX, usize::MAX)] {
+                assert!(matches!(
+                    context.read_u64_range(&buffer, start, end),
+                    Err(CudaError::LengthMismatch { .. })
+                ));
+            }
+        }
+    }
+
+    mod opening_layout {
+        use std::collections::BTreeMap;
+
+        use ark_bn254::Fr as ArkFr;
+        use ark_ff::PrimeField;
+        use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+        use jolt_field::{Fr, Ring};
+
+        use super::device;
+        use crate::commitment::CommitmentGrid;
+        use crate::cuda::common::error::CudaError;
+        use crate::cuda::common::testing::advice_plane;
+        use crate::opening::JointOpeningPolynomials;
+        use crate::{ProofSession, ReferenceBackend};
+
+        fn values(len: usize) -> Vec<Fr> {
+            let wide = Fr::from(ArkFr::from_le_bytes_mod_order(&[0xa5; 32]));
+            (0..len)
+                .map(|index| match index {
+                    0 => wide,
+                    1 => Fr::from_u64(0),
+                    2 => Fr::from_u64(1),
+                    3 => -Fr::from_u64(1),
+                    _ => wide * Fr::from_u64(index as u64 + 1),
+                })
+                .collect()
+        }
+
+        fn reference_embedding(
+            table: Vec<Fr>,
+            id: JoltCommittedPolynomial,
+            grid: CommitmentGrid,
+        ) -> Vec<Fr> {
+            let fixture = advice_plane(8, 7);
+            ReferenceBackend
+                .prepare(
+                    &mut ProofSession::default(),
+                    &fixture.plane,
+                    &[id],
+                    Box::new(move || Ok(BTreeMap::from([(id, table)]))),
+                    grid,
+                )
+                .expect("reference opening")[0]
+                .to_dense()
+                .into_owned()
+        }
+
+        #[test]
+        fn block_embed_matches_reference_opening() {
+            let Some(context) = device() else {
+                return;
+            };
+            for (block_vars, total_vars) in [
+                (0, 0),
+                (0, 4),
+                (1, 4),
+                (2, 5),
+                (3, 6),
+                (4, 7),
+                (8, 10),
+                (9, 12),
+                (10, 10),
+            ] {
+                let table = values(1usize << block_vars);
+                let source = context.upload(&table).expect("upload block");
+                let grid = CommitmentGrid {
+                    total_vars,
+                    log_t: 0,
+                    log_k_chunk: 0,
+                    order: TracePolynomialOrder::CycleMajor,
+                };
+                let actual = context
+                    .block_embed(&source, block_vars, total_vars)
+                    .expect("embed block")
+                    .to_host()
+                    .expect("download grid");
+                assert_eq!(
+                    actual,
+                    reference_embedding(
+                        table.clone(),
+                        JoltCommittedPolynomial::TrustedAdvice,
+                        grid
+                    ),
+                    "block_vars={block_vars}, total_vars={total_vars}",
+                );
+                assert_eq!(source.to_host().expect("source unchanged"), table);
+            }
+            let empty = context.upload(&[]).expect("empty source");
+            assert_eq!(
+                context
+                    .block_embed(&empty, 0, 5)
+                    .expect("empty block")
+                    .to_host()
+                    .expect("download grid"),
+                vec![Fr::from_u64(0); 32],
+            );
+        }
+
+        #[test]
+        fn scatter_strided_matches_reference_opening() {
+            let Some(context) = device() else {
+                return;
+            };
+            for (log_t, log_k_chunk, total_vars) in [(0, 0, 0), (3, 2, 5), (4, 2, 8), (9, 1, 10)] {
+                let grid = CommitmentGrid {
+                    total_vars,
+                    log_t,
+                    log_k_chunk,
+                    order: TracePolynomialOrder::AddressMajor,
+                };
+                let cycles = 1usize << log_t;
+                let mut lengths = vec![0, 1, 255, 256, 257, cycles - 1, cycles];
+                lengths.sort_unstable();
+                lengths.dedup();
+                for len in lengths.into_iter().filter(|&len| len <= cycles) {
+                    let table = values(len);
+                    let source = context.upload(&table).expect("upload column");
+                    let actual = context
+                        .scatter_strided(&source, grid.cycle_stride(), 1usize << total_vars)
+                        .expect("scatter column")
+                        .to_host()
+                        .expect("download grid");
+                    assert_eq!(
+                        actual,
+                        reference_embedding(table.clone(), JoltCommittedPolynomial::RdInc, grid),
+                        "log_t={log_t}, total_vars={total_vars}, len={len}",
+                    );
+                    assert_eq!(source.to_host().expect("source unchanged"), table);
+                }
+            }
+            let source = context.upload(&values(3)).expect("upload column");
+            assert!(matches!(
+                context.scatter_strided(&source, 4, 8),
+                Err(CudaError::LengthMismatch {
+                    expected: 8,
+                    got: 9
+                })
+            ));
+        }
+
+        #[test]
+        fn scatter_one_hot_matches_reference_opening() {
+            let Some(context) = device() else {
+                return;
+            };
+            for (log_t, log_k_chunk, total_vars) in [(0, 0, 0), (1, 2, 3), (3, 2, 7), (8, 2, 12)] {
+                let grid = CommitmentGrid {
+                    total_vars,
+                    log_t,
+                    log_k_chunk,
+                    order: TracePolynomialOrder::AddressMajor,
+                };
+                let cycles = 1usize << log_t;
+                let max_k = 1usize << log_k_chunk;
+                let mut widths = vec![0, 1, max_k - 1, max_k];
+                widths.sort_unstable();
+                widths.dedup();
+                for width in widths {
+                    let table = values(width * cycles);
+                    let source = context.upload(&table).expect("upload table");
+                    let actual = context
+                        .scatter_one_hot(
+                            &source,
+                            cycles,
+                            grid.cycle_stride(),
+                            grid.one_hot_stride(),
+                            1usize << total_vars,
+                        )
+                        .expect("scatter one-hot grid")
+                        .to_host()
+                        .expect("download grid");
+                    assert_eq!(
+                        actual,
+                        reference_embedding(table.clone(), JoltCommittedPolynomial::RamRa(0), grid,),
+                        "log_t={log_t}, total_vars={total_vars}, width={width}",
+                    );
+                    assert_eq!(source.to_host().expect("source unchanged"), table);
+                }
+            }
+            let source = context.upload(&values(4)).expect("upload table");
+            for (cycles, len, expected, got) in [(0, 8, 0, 4), (3, 8, 3, 4), (2, 5, 5, 6)] {
+                assert!(matches!(
+                    context.scatter_one_hot(&source, cycles, 4, 1, len),
+                    Err(CudaError::LengthMismatch { expected: e, got: g })
+                        if e == expected && g == got
+                ));
+            }
         }
     }
 }
