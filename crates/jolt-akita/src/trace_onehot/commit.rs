@@ -6,6 +6,7 @@ use jolt_field::{Fp128x8i32, Zero};
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
+use super::ntt_commit::PreparedNttCommit;
 use super::source::TraceOneHotColumn;
 use super::traversal::{
     flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
@@ -72,6 +73,9 @@ pub(super) fn commit_columns<const D: usize>(
             blocks_per_column,
         );
         let num_columns = source.rows.num_columns();
+        let ntt_commit = a_rows
+            .first()
+            .and_then(|row| PreparedNttCommit::new(source, plan, row));
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate",
             num_blocks,
@@ -93,6 +97,15 @@ pub(super) fn commit_columns<const D: usize>(
                 let ring_end = block_ring_start + part_end;
                 if ring_start >= prefix_rings {
                     return Ok(None);
+                }
+                if let Some(ntt_commit) = &ntt_commit {
+                    return ntt_commit
+                        .commit_part(
+                            source,
+                            block_ring_start,
+                            ring_start..ring_end.min(prefix_rings),
+                        )
+                        .map(Some);
                 }
                 let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
