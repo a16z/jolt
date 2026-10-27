@@ -763,9 +763,19 @@ pub struct RecordIdentity<'a> {
     pub observations: u64,
     pub headers: &'a [u64],
     pub factors: &'a [u64],
+    #[serde(serialize_with = "decimal_strings")]
     pub coefficients: &'a [u128],
     pub sources: Vec<String>,
     pub support: Vec<String>,
+}
+
+/// Canonical coefficients are field elements up to 128 bits; JSON numbers cannot
+/// carry them exactly, so the capture receipt writes them as decimal strings.
+fn decimal_strings<S: serde::Serializer>(
+    values: &&[u128],
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.collect_seq(values.iter().map(u128::to_string))
 }
 
 impl<O: RenderId, D: RenderId, C: RenderId> NativeRecord<O, D, C> {
