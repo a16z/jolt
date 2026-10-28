@@ -5,7 +5,7 @@ pub mod analyze;
 pub mod field_inline;
 mod program;
 
-use std::io;
+use std::io::Result as IoResult;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -51,7 +51,7 @@ pub struct GuestElf {
 }
 
 impl GuestElf {
-    pub fn read(path: PathBuf) -> io::Result<Self> {
+    pub fn read(path: PathBuf) -> IoResult<Self> {
         let bytes = std::fs::read(&path)?.into();
         Ok(Self { path, bytes })
     }

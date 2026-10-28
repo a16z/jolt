@@ -19,6 +19,7 @@
 use std::any::Any;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use akita_config::proof_optimized::fp128::ResponseDigits;
@@ -76,7 +77,9 @@ use rand_core::{CryptoRng, RngCore};
 
 #[cfg(feature = "zk-prover")]
 use crate::adapters::AkitaBackendProverSetup;
-use crate::adapters::{AkitaBackend, AkitaBackendHint, AkitaField, WhiteoutSource};
+use crate::adapters::{
+    AkitaBackend, AkitaBackendHint, AkitaCommitment, AkitaField, WhiteoutSource,
+};
 use crate::configs::{CatalogChunking, JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
 use crate::schedule_registry::GroupedScheduleParams;
 
@@ -930,8 +933,8 @@ impl WhiteoutRow {
     /// profiles, in the row's group order.
     pub(crate) fn backend_commitments(
         &self,
-        precommitted: &[&crate::AkitaCommitment],
-        trace: &crate::AkitaCommitment,
+        precommitted: &[&AkitaCommitment],
+        trace: &AkitaCommitment,
     ) -> Result<(Vec<CommittedGroup<F>>, CommittedGroup<F>), AkitaError> {
         if precommitted.len() != self.key.precommitteds.len() {
             return Err(AkitaError::InvalidInput(format!(
@@ -1470,8 +1473,8 @@ impl PlannedSetup {
     }
 }
 
-impl std::fmt::Debug for WhiteoutSetup {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for WhiteoutSetup {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("WhiteoutSetup")
             .field("grouped", &self.grouped)
             .finish_non_exhaustive()

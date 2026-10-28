@@ -508,7 +508,13 @@ pub(crate) use prover::{prove_sigma_with, SelfChecks};
 
 #[cfg(feature = "whiteout-prover")]
 mod prover {
+    #[cfg(test)]
+    use std::cell::Cell;
     use std::ops::Range;
+    #[cfg(test)]
+    use std::sync::Mutex;
+    #[cfg(test)]
+    use std::thread::ThreadId;
 
     use jolt_algebra::{CyclotomicRing, JoltField};
     use jolt_crypto::challenge::{sample_challenge_ct, SparseChallenge};
@@ -549,14 +555,12 @@ mod prover {
     /// `prove_sigma_with`: the attempts run on the DIT pool's workers, and
     /// tests may share the process.
     #[cfg(test)]
-    static REJECTED: std::sync::Mutex<Vec<(std::thread::ThreadId, Rejected)>> =
-        std::sync::Mutex::new(Vec::new());
+    static REJECTED: Mutex<Vec<(ThreadId, Rejected)>> = Mutex::new(Vec::new());
 
     #[cfg(test)]
     thread_local! {
         /// On the worker running a proof: the thread that called it.
-        static CALLER: std::cell::Cell<Option<std::thread::ThreadId>> =
-            const { std::cell::Cell::new(None) };
+        static CALLER: Cell<Option<ThreadId>> = const { Cell::new(None) };
     }
 
     /// The rejected attempts of this thread's proofs, cleared.

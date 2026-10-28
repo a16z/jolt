@@ -17,11 +17,14 @@ pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafCyclePhaseChallenges, BytecodeReadRafCyclePhaseCommittedChallenges,
     BytecodeReadRafInputClaims, BytecodeReadRafOutputClaims,
 };
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::BytecodeReadRafPublic;
 use jolt_claims::protocols::jolt::{
     geometry::{
         bytecode::{
-            self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafDimensions,
-            BytecodeReadRafPublicValues, BytecodeReadRafStageValueInputs,
+            self, BytecodeReadRafCommittedEvaluationInputs, BytecodeReadRafCommittedPublicValues,
+            BytecodeReadRafDimensions, BytecodeReadRafPublicValues,
+            BytecodeReadRafStageValueInputs,
         },
         claim_reductions::bytecode::{bytecode_val_stage_opening, NUM_BYTECODE_VAL_STAGES},
         dimensions::committed_address_chunks,
@@ -327,7 +330,7 @@ impl<F: JoltField> CyclePublics<F> {
             return Err(missing());
         };
         #[cfg(feature = "akita")]
-        if let jolt_claims::protocols::jolt::BytecodeReadRafPublic::StageValue(stage) = public_id {
+        if let BytecodeReadRafPublic::StageValue(stage) = public_id {
             if let Some(fused) = stage.checked_sub(NUM_BYTECODE_VAL_STAGES - 1) {
                 return self.fused.get(fused).copied().ok_or_else(missing);
             }
@@ -856,7 +859,7 @@ impl<F: JoltField> BytecodeReadRafCommitted<F> {
     fn committed_publics(
         &self,
         output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
-    ) -> Result<bytecode::BytecodeReadRafCommittedPublicValues<F>, VerifierError> {
+    ) -> Result<BytecodeReadRafCommittedPublicValues<F>, VerifierError> {
         let opening_point = output_points
             .bytecode_ra()
             .first()
@@ -875,7 +878,7 @@ impl<F: JoltField> BytecodeReadRafCommitted<F> {
 }
 
 fn committed_public_value<F: JoltField>(
-    public_values: &bytecode::BytecodeReadRafCommittedPublicValues<F>,
+    public_values: &BytecodeReadRafCommittedPublicValues<F>,
     id: &JoltDerivedId,
 ) -> Result<F, VerifierError> {
     let missing = || VerifierError::MissingStageClaimDerived { id: (*id).into() };

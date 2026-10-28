@@ -553,6 +553,7 @@ mod whiteout {
 mod whiteout_field_inline {
     use jolt_prover::JoltBackend;
 
+    use crate::support::field_inline::akita::Proof;
     use crate::support::field_inline::{akita, field_ops};
 
     /// The field increments open as a full-field hiding precommitted group
@@ -564,7 +565,7 @@ mod whiteout_field_inline {
         let mut case = field_ops();
         case.untrusted_advice = vec![1, 2, 3, 4, 5, 6, 7, 8];
         let (output, ()) = akita::prove(&case, JoltBackend::optimized(), |_, _, _| ());
-        let verify = |proof: &akita::Proof| {
+        let verify = |proof: &Proof| {
             akita::verify_full(&output.verifier_preprocessing, &output.public_io, proof)
         };
         verify(&output.proof).expect("an honest Whiteout field-inline proof verifies");

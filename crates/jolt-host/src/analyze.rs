@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    error::Error,
     fs::File,
     io::{BufWriter, Write},
     path::PathBuf,
@@ -43,7 +44,7 @@ impl ProgramSummary {
         counts
     }
 
-    pub fn write_to_file(self, path: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn write_to_file(self, path: PathBuf) -> Result<(), Box<dyn Error>> {
         let mut file = BufWriter::new(File::create(path)?);
         let _ =
             bincode::serde::encode_into_std_write(&self, &mut file, bincode::config::standard())?;

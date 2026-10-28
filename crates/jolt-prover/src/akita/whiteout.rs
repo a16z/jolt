@@ -21,6 +21,8 @@ use jolt_verifier::whiteout::{
     pad_layout, whiteout_prefix, whiteout_relation, whiteout_stages, WhiteoutScheme,
 };
 use jolt_verifier::{jolt_protocol_id, JOLT_SESSION};
+#[cfg(feature = "prover-fixtures")]
+use jolt_zk::masking::ZkError;
 use rand_core::{CryptoRng, OsRng, RngCore};
 
 use super::spine::{mark_region, prove_stages_1_to_7};
@@ -235,9 +237,7 @@ where
     mark_region("akita_masked_prefix", &transcript);
     #[cfg(feature = "prover-fixtures")]
     if faults::abort(transcript.narg()) {
-        return Err(ProverError::Zk(jolt_zk::masking::ZkError::FoldOverflow {
-            level: 0,
-        }));
+        return Err(ProverError::Zk(ZkError::FoldOverflow { level: 0 }));
     }
     let checkpoint = transcript.challenge_bytes::<32>();
 

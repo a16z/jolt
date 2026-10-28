@@ -1,4 +1,19 @@
+use jolt_claims::protocols::jolt::geometry::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
+use jolt_claims::protocols::jolt::relations::booleanity::BooleanityCyclePhase;
+use jolt_claims::protocols::jolt::relations::bytecode::{
+    ReadRafCyclePhase, ReadRafCyclePhaseCommitted,
+};
+use jolt_claims::protocols::jolt::relations::claim_reductions::advice::{
+    TrustedCyclePhase, UntrustedCyclePhase,
+};
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::CyclePhase as BytecodeCyclePhase;
+use jolt_claims::protocols::jolt::relations::claim_reductions::increments::ClaimReduction as IncClaimReduction;
+use jolt_claims::protocols::jolt::relations::claim_reductions::program_image::CyclePhase as ProgramImageCyclePhase;
+use jolt_claims::protocols::jolt::relations::instruction::RaVirtualization as InstructionRaVirtualization;
+use jolt_claims::protocols::jolt::relations::ram::{
+    HammingBooleanity, RaVirtualization as RamRaVirtualization,
+};
+use jolt_claims::protocols::jolt::TraceDimensions;
 
 use super::*;
 
@@ -12,7 +27,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
-    let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+    let trace_dimensions = TraceDimensions::new(log_t);
     let formula_dimensions = formula_dimensions(input)?;
     let bytecode_reduction_layout = input.checked.precommitted.bytecode.clone();
     let program_image_reduction_layout = input.checked.precommitted.program_image.clone();
@@ -21,41 +36,39 @@ where
         log_t,
         input.checked.one_hot_config.committed_chunk_bits(),
     );
-    let booleanity_claims = relations::booleanity::BooleanityCyclePhase::new(booleanity_dimensions);
-    let ram_hamming_claims = relations::ram::HammingBooleanity::new(trace_dimensions);
-    let ram_ra_claims =
-        relations::ram::RaVirtualization::new(formula_dimensions.ram_ra_virtualization);
-    let instruction_ra_claims = relations::instruction::RaVirtualization::new(
-        formula_dimensions.instruction_ra_virtualization,
-    );
-    let inc_claims = relations::claim_reductions::increments::ClaimReduction::new(trace_dimensions);
+    let booleanity_claims = BooleanityCyclePhase::new(booleanity_dimensions);
+    let ram_hamming_claims = HammingBooleanity::new(trace_dimensions);
+    let ram_ra_claims = RamRaVirtualization::new(formula_dimensions.ram_ra_virtualization);
+    let instruction_ra_claims =
+        InstructionRaVirtualization::new(formula_dimensions.instruction_ra_virtualization);
+    let inc_claims = IncClaimReduction::new(trace_dimensions);
     #[cfg(feature = "field-inline")]
     let field_registers_inc_claims = super::field_inline::stage6b_inc_relation(log_t);
     let trusted_layout = advice_layout(input, JoltAdviceKind::Trusted);
-    let trusted_claims = trusted_layout.as_ref().map(|layout| {
-        relations::claim_reductions::advice::TrustedCyclePhase::new(layout.dimensions())
-    });
+    let trusted_claims = trusted_layout
+        .as_ref()
+        .map(|layout| TrustedCyclePhase::new(layout.dimensions()));
     let untrusted_layout = advice_layout(input, JoltAdviceKind::Untrusted);
-    let untrusted_claims = untrusted_layout.as_ref().map(|layout| {
-        relations::claim_reductions::advice::UntrustedCyclePhase::new(layout.dimensions())
-    });
+    let untrusted_claims = untrusted_layout
+        .as_ref()
+        .map(|layout| UntrustedCyclePhase::new(layout.dimensions()));
     let bytecode_reduction_claims = bytecode_reduction_layout
         .as_ref()
         .map(|layout| BytecodeCyclePhase::new(layout.dimensions()));
-    let program_image_reduction_claims = program_image_reduction_layout.as_ref().map(|layout| {
-        relations::claim_reductions::program_image::CyclePhase::new(layout.dimensions())
-    });
+    let program_image_reduction_claims = program_image_reduction_layout
+        .as_ref()
+        .map(|layout| ProgramImageCyclePhase::new(layout.dimensions()));
 
     let (bytecode_domain, bytecode_claim) = if bytecode_reduction_layout.is_some() {
-        let claims = relations::bytecode::ReadRafCyclePhaseCommitted::new((
+        let claims = ReadRafCyclePhaseCommitted::new((
             formula_dimensions.bytecode_read_raf,
-            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+            NUM_BYTECODE_VAL_STAGES,
         ));
         (claims.domain(), relation_claim(&claims))
     } else {
-        let claims = relations::bytecode::ReadRafCyclePhase::new((
+        let claims = ReadRafCyclePhase::new((
             formula_dimensions.bytecode_read_raf,
-            bytecode_reduction::NUM_BYTECODE_VAL_STAGES,
+            NUM_BYTECODE_VAL_STAGES,
         ));
         (claims.domain(), relation_claim(&claims))
     };

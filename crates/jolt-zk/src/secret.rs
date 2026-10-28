@@ -1,6 +1,7 @@
 //! Heap buffers of secret values that are zeroed when freed.
 
 use std::ops::{Deref, DerefMut};
+use std::slice::Iter;
 
 use rayon::prelude::*;
 use zeroize::Zeroize;
@@ -49,7 +50,7 @@ impl<T> DerefMut for SecretVec<T> {
 
 impl<'a, T> IntoIterator for &'a SecretVec<T> {
     type Item = &'a T;
-    type IntoIter = std::slice::Iter<'a, T>;
+    type IntoIter = Iter<'a, T>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.values.iter()

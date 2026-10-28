@@ -9,6 +9,8 @@
 //! plan schedules.
 
 use std::collections::hash_map::Entry;
+#[cfg(feature = "zk")]
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 
 use akita_config::{policy_of, CommitmentConfig};
@@ -20,6 +22,8 @@ use akita_pcs::AkitaError;
 use akita_planner::emit::{GroupedGenerationRequest, PrecommittedProducer};
 use akita_planner::find_adapted_schedule;
 use akita_schedules::{ResolvedScheduleRow, ValidatedScheduleCatalog};
+#[cfg(feature = "zk")]
+use jolt_zk::whiteout::{DenseSource, PrecommittedShape};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, CatalogChunking, JoltDenseBounded, JoltDenseFull};
@@ -102,11 +106,7 @@ impl GroupedScheduleParams {
     /// parameters may fold, in canonical order: each combination of the
     /// optional advice groups, then the mandatory groups.
     #[cfg(feature = "zk")]
-    pub(crate) fn whiteout_admitted(
-        &self,
-    ) -> std::collections::BTreeSet<Vec<jolt_zk::whiteout::PrecommittedShape>> {
-        use jolt_zk::whiteout::{DenseSource, PrecommittedShape};
-
+    pub(crate) fn whiteout_admitted(&self) -> BTreeSet<Vec<PrecommittedShape>> {
         let bounded = |num_vars| PrecommittedShape {
             num_vars,
             source: DenseSource::Bounded,

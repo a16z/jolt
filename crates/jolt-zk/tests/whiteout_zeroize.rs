@@ -21,7 +21,7 @@ use jolt_crypto::lattice::{
 use jolt_crypto::sample::{GaussianSampler, GaussianWidth};
 use jolt_zk::masking::PadLayout;
 use jolt_zk::whiteout::{LatticePadCommitment, PadPlacement};
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, Error, RngCore};
 
 type F = Prime128OffsetA7F7;
 
@@ -95,7 +95,7 @@ impl RngCore for MarkerRng {
         }
     }
 
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core::Error> {
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), Error> {
         self.fill_bytes(dest);
         Ok(())
     }

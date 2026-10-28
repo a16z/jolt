@@ -1,3 +1,4 @@
+use cc::{Build, Tool};
 use std::env;
 use std::error::Error;
 use std::io::{Error as IoError, ErrorKind};
@@ -5,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn compile_asm(
-    compiler: &cc::Tool,
+    compiler: &Tool,
     source: &Path,
     object: &Path,
     asm_dir: &Path,
@@ -156,7 +157,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let target = env::var("TARGET")?;
     let host = env::var("HOST")?;
-    let compiler = cc::Build::new()
+    let compiler = Build::new()
         .host(&host)
         .target(&target)
         .try_get_compiler()?;

@@ -146,10 +146,9 @@ pub fn whiteout_committed_case() -> &'static AkitaFixtureCase {
 /// masked levels (HT3), and that attempt's argument string.
 #[cfg(feature = "zk")]
 pub fn whiteout_rerun_case() -> (AkitaFixtureCase, Vec<u8>) {
-    jolt_prover::akita::whiteout_faults::abort_next_attempt();
+    akita::whiteout_faults::abort_next_attempt();
     let case = generate_whiteout_muldiv();
-    let aborted =
-        jolt_prover::akita::whiteout_faults::take_aborted().expect("the first attempt aborted");
+    let aborted = akita::whiteout_faults::take_aborted().expect("the first attempt aborted");
     (case, aborted)
 }
 
@@ -214,7 +213,7 @@ fn prove_prepared(
         proof,
         trusted_advice_commitment: trusted.map(|object| object.commitment),
         #[cfg(feature = "zk")]
-        pads: jolt_prover::akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
+        pads: akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
     }
 }
 
@@ -325,7 +324,7 @@ mod field_inline {
         )
         .expect("derive config");
         let log_t = config.trace_length.ilog2() as usize;
-        let prover_preprocessing = jolt_prover::akita::preprocessing::preprocess_full(
+        let prover_preprocessing = akita::preprocessing::preprocess_full(
             &AkitaScheduleArtifacts::shared_from_default_directory(),
             program_preprocessing,
             &config,
@@ -356,7 +355,7 @@ mod field_inline {
             proof,
             trusted_advice_commitment: None,
             #[cfg(feature = "zk")]
-            pads: jolt_prover::akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
+            pads: akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
         }
     }
 }
