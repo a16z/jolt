@@ -61,4 +61,4 @@ pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 #[doc(hidden)]
 pub use adapters::{jolt_to_akita_evals, jolt_to_akita_index, reverse_point};
 
-pub use verifier_resources::AkitaVerifierResources;
+pub use verifier_resources::{AkitaSetupPrefixCommitments, AkitaVerifierResources};

@@ -8,6 +8,7 @@ use crate::{
     AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaScheduleArtifacts, AkitaScheme,
     AkitaSetupParams,
 };
+use akita_types::{AkitaSetupSeed, RingVec};
 use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
@@ -75,7 +76,7 @@ impl DenseFixture {
 }
 
 fn prepared(registry: &PreparedRegistry, setups: Vec<AkitaVerifierSetup>) -> Arc<Prepared> {
-    let prepared = Arc::new(Prepared::new(setups.into_iter().map(Ok)).unwrap());
+    let prepared = Arc::new(Prepared::new(setups.into_iter().map(Ok), None).unwrap());
     registry.publish(&prepared);
     prepared
 }
@@ -199,17 +200,11 @@ fn one_hot_proofs_use_the_same_warm_backend_at_different_arities() {
 
 #[test]
 fn prepared_resources_hold_every_required_prefix_and_only_the_verifier_matrix() {
-    let setup = metadata(&AkitaSetupParams::one_hot_only(
-        25,
-        51,
-        [0; 32],
-        16,
-        params(14).schedule_artifacts,
-    ));
+    let setup = offloading_setup();
     let requirements = AkitaVerifierRequirements::for_setups(std::slice::from_ref(&setup)).unwrap();
     assert!(!requirements.prefix_slots.is_empty());
     assert!(requirements.prefix_field_elements > requirements.retained_field_elements);
-    let state = Prepared::new([Ok(setup)]).unwrap();
+    let state = Prepared::new([Ok(setup)], None).unwrap();
     let material = &state.material;
     assert_eq!(
         material.expanded().descriptor().num_field_elements,
@@ -232,7 +227,7 @@ fn every_catalog_holds_the_prefixes_of_the_rows_its_state_admits() {
         Arc::clone(&artifacts),
     ));
     let dense = metadata(&AkitaSetupParams::dense_only(30, 1, [0; 32], artifacts));
-    let state = Prepared::new([Ok(one_hot.clone()), Ok(dense)]).unwrap();
+    let state = Prepared::new([Ok(one_hot.clone()), Ok(dense)], None).unwrap();
     let descriptor = state.material.expanded().descriptor();
     with_one_hot_family!(scheme one_hot.one_hot_scheme().unwrap(), |scheme| {
         let admitted = SetupRequirements::from_catalog(
@@ -393,4 +388,99 @@ fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
     assert!(Arc::ptr_eq(&expanded, state.material.expanded()));
     assert!(verifies(&attached, evaluation));
     assert!(!verifies(&attached, evaluation + AkitaField::from_u64(1)));
+    drop((attached, state));
+
+    let exported = AkitaVerifierResources::prepare([Ok(transported())])
+        .unwrap()
+        .setup_prefix_commitments()
+        .unwrap();
+    let received: AkitaSetupPrefixCommitments =
+        serde_json::from_str(&serde_json::to_string(&exported).unwrap()).unwrap();
+    let verifies_with = |commitments: &AkitaSetupPrefixCommitments| {
+        let _resources = AkitaVerifierResources::prepare_with_trusted_prefix_commitments(
+            [Ok(transported())],
+            commitments,
+        )
+        .unwrap();
+        verifies(&transported(), evaluation)
+    };
+    let trusted = received.decode().unwrap();
+    assert!(!trusted.is_empty());
+    assert!(verifies_with(&received));
+
+    // Trusted commitments are not recomputed, so a substituted one must fail the proof.
+    let mut substituted = SetupPrefixVerifierRegistry::new(trusted.setup_seed().clone());
+    for (_, slot) in trusted.iter() {
+        let mut slot = slot.clone();
+        let row = slot.commitment.rows.first_mut().unwrap();
+        let mut coeffs = row.coeffs().to_vec();
+        *coeffs.first_mut().unwrap() += AkitaField::from_u64(1);
+        *row = RingVec::from_coeffs(coeffs);
+        substituted.insert(slot).unwrap();
+    }
+    assert!(!verifies_with(
+        &AkitaSetupPrefixCommitments::encode(&substituted).unwrap()
+    ));
+}
+
+fn offloading_setup() -> AkitaVerifierSetup {
+    metadata(&AkitaSetupParams::one_hot_only(
+        25,
+        51,
+        [0; 32],
+        16,
+        params(14).schedule_artifacts,
+    ))
+}
+
+#[test]
+fn commitments_from_a_wider_state_install_only_the_required_slots() {
+    let artifacts = params(14).schedule_artifacts;
+    let dense = metadata(&AkitaSetupParams::dense_only(30, 1, [0; 32], artifacts));
+    let wide = AkitaVerifierResources::prepare([Ok(offloading_setup()), Ok(dense)])
+        .unwrap()
+        .setup_prefix_commitments()
+        .unwrap()
+        .decode()
+        .unwrap();
+    let derived = Prepared::new([Ok(offloading_setup())], None).unwrap();
+    let installed = Prepared::new([Ok(offloading_setup())], Some(&wide)).unwrap();
+    assert!(wide.len() > derived.material.prefix_slots().len());
+    assert_eq!(
+        installed.material.prefix_slots(),
+        derived.material.prefix_slots()
+    );
+}
+
+#[test]
+fn trusted_prefix_commitments_must_hold_every_required_slot() {
+    let empty = SetupPrefixVerifierRegistry::new(sample_akita_setup_seed());
+    let error = Prepared::new([Ok(offloading_setup())], Some(&empty))
+        .err()
+        .unwrap();
+    assert!(
+        error.to_string().contains("lack a required slot"),
+        "{error}"
+    );
+}
+
+#[test]
+fn trusted_prefix_commitments_must_name_the_public_seed() {
+    let other = SetupPrefixVerifierRegistry::new(AkitaSetupSeed::shake256_paged_v1([1; 32]));
+    let error = Prepared::new([Ok(offloading_setup())], Some(&other))
+        .err()
+        .unwrap();
+    assert!(error.to_string().contains("another public seed"), "{error}");
+}
+
+#[test]
+fn setups_without_prefix_slots_prepare_with_no_trusted_commitments() {
+    let fixture = DenseFixture::new(14);
+    let empty = SetupPrefixVerifierRegistry::new(sample_akita_setup_seed());
+    let registry = PreparedRegistry::new();
+    let state = Arc::new(Prepared::new([Ok(metadata(&params(14)))], Some(&empty)).unwrap());
+    registry.publish(&state);
+    let setup = metadata(&params(14));
+    registry.attach(&setup).unwrap();
+    assert!(fixture.verify(&setup, fixture.evaluation));
 }
