@@ -28,12 +28,16 @@ fn all_kinds_operands(kind: JoltInstructionKind, slot: usize) -> NormalizedOpera
     } else {
         magnitude
     };
+    let flags = JoltInstruction::from(JoltInstructionRow {
+        instruction_kind: kind,
+        ..JoltInstructionRow::default()
+    })
+    .circuit_flags();
     let (rd, rs1, rs2) = match kind {
-        JoltInstructionKind::SD
-        | JoltInstructionKind::BEQ
-        | JoltInstructionKind::VirtualAssertEQ => (None, Some(2), Some(3)),
-        JoltInstructionKind::LD
-        | JoltInstructionKind::ADDI
+        _ if flags[CircuitFlags::Store] => (None, Some(2), Some(3)),
+        _ if flags[CircuitFlags::Load] => (Some(1), Some(2), None),
+        JoltInstructionKind::BEQ | JoltInstructionKind::VirtualAssertEQ => (None, Some(2), Some(3)),
+        JoltInstructionKind::ADDI
         | JoltInstructionKind::VirtualMULI
         | JoltInstructionKind::VirtualMovsign => (Some(1), Some(2), None),
         JoltInstructionKind::LUI | JoltInstructionKind::JAL => (Some(1), None, None),

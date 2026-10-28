@@ -70,7 +70,7 @@ pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
             output: 30,
             index: 0,
         },
-        JoltInstruction::AssertHalfwordAlignment(_) => KindDescriptor {
+        JoltInstruction::LoadH(_) | JoltInstruction::StoreH(_) => KindDescriptor {
             input: 10,
             operand: 2,
             output: 1,
@@ -100,7 +100,7 @@ pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
             output: 9,
             index: 0,
         },
-        JoltInstruction::AssertWordAlignment(_) => KindDescriptor {
+        JoltInstruction::LoadW(_) | JoltInstruction::StoreW(_) => KindDescriptor {
             input: 10,
             operand: 2,
             output: 2,
@@ -526,26 +526,26 @@ pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
             output: 65,
             index: 1,
         },
-        JoltInstruction::AlignAddr(_) => KindDescriptor {
-            input: 9,
-            operand: 6,
+        JoltInstruction::LoadB(_) | JoltInstruction::StoreB(_) => KindDescriptor {
+            input: 10,
+            operand: 2,
             output: 66,
             index: 1,
         },
         JoltInstruction::ShiftDataB(_) => KindDescriptor {
-            input: 2,
+            input: 12,
             operand: 1,
             output: 67,
             index: 0,
         },
         JoltInstruction::ShiftDataH(_) => KindDescriptor {
-            input: 2,
+            input: 12,
             operand: 1,
             output: 68,
             index: 0,
         },
         JoltInstruction::ShiftDataW(_) => KindDescriptor {
-            input: 2,
+            input: 12,
             operand: 1,
             output: 69,
             index: 0,

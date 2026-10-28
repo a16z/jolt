@@ -210,9 +210,7 @@ __device__ unsigned long long sfx_eval(unsigned int suffix, sfx_bits b) {
             unsigned long long xv = sfx_u64(x) & ~sfx_u64(y);
             return sfx_shl_u64(xv, sfx_leading_ones(y));
         }
-        case 25:  // TwoLsb
-            return (b.len == 0 || sfx_ctz128(b.bits, 128) >= 2) ? 1ULL : 0ULL;
-        case 26: {  // SignExtensionUpperHalf
+        case 25: {  // SignExtensionUpperHalf
             unsigned int half = SFX_XLEN / 2;
             if (b.len >= half) {
                 unsigned long long sign = (unsigned long long)((b.bits >> (half - 1)) & 1);
@@ -223,7 +221,7 @@ __device__ unsigned long long sfx_eval(unsigned int suffix, sfx_bits b) {
             }
             return 1ULL;
         }
-        case 27: {  // SignExtensionRightOperand
+        case 26: {  // SignExtensionRightOperand
             if (b.len >= SFX_XLEN) {
                 unsigned long long sign =
                     (unsigned long long)((b.bits >> (SFX_XLEN - 2)) & 1);
@@ -236,23 +234,23 @@ __device__ unsigned long long sfx_eval(unsigned int suffix, sfx_bits b) {
             }
             return 1ULL;
         }
-        case 28: {  // RightShiftW
+        case 27: {  // RightShiftW
             sfx_uninterleave(b, &x, &y);
             unsigned int tz = sfx_trailing_zeros(y);
             unsigned int limit = SFX_XLEN / 2;
             unsigned int shift = tz < limit ? tz : limit;
             return (unsigned long long)sfx_shr_u32((unsigned int)sfx_u64(x), shift);
         }
-        case 29: {  // RightShiftWHelper
+        case 28: {  // RightShiftWHelper
             sfx_uninterleave(b, &x, &y);
             unsigned int y_len = y.len < (SFX_XLEN / 2) ? y.len : (SFX_XLEN / 2);
             sfx_bits y_trunc = sfx_new(y.bits, y_len);
             return sfx_shl_u64(1ULL, sfx_leading_ones(y_trunc));
         }
-        case 30:  // LeftShiftWHelper
+        case 29:  // LeftShiftWHelper
             sfx_uninterleave(b, &x, &y);
             return (unsigned long long)sfx_shl_u32(1u, sfx_leading_ones(y));
-        case 31: {  // LeftShiftW
+        case 30: {  // LeftShiftW
             sfx_uninterleave(b, &x, &y);
             unsigned int y_len = y.len < (SFX_XLEN / 2) ? y.len : (SFX_XLEN / 2);
             sfx_bits y_trunc = sfx_new(y.bits, y_len);
@@ -261,31 +259,31 @@ __device__ unsigned long long sfx_eval(unsigned int suffix, sfx_bits b) {
             xv &= ~yv;
             return (unsigned long long)sfx_shl_u32(xv, sfx_leading_ones(y_trunc));
         }
-        case 32:  // OverflowBitsZero
+        case 31:  // OverflowBitsZero
             return ((b.bits >> SFX_XLEN) == 0) ? 1ULL : 0ULL;
+        case 32:
         case 33:
         case 34:
-        case 35:
-        case 36: {  // XorRot16 / 24 / 32 / 63
+        case 35: {  // XorRot16 / 24 / 32 / 63
             const unsigned int rots[4] = {16u, 24u, 32u, 63u};
             sfx_uninterleave(b, &x, &y);
             unsigned long long xr = sfx_u64(x) ^ sfx_u64(y);
             unsigned long long out;
-            sfx_rotr_u64(xr, rots[suffix - 33], &out);
+            sfx_rotr_u64(xr, rots[suffix - 32], &out);
             return out;
         }
+        case 36:
         case 37:
         case 38:
-        case 39:
-        case 40: {  // XorRotW16 / W12 / W8 / W7
+        case 39: {  // XorRotW16 / W12 / W8 / W7
             const unsigned int rots[4] = {16u, 12u, 8u, 7u};
             sfx_uninterleave(b, &x, &y);
             unsigned int xr = (unsigned int)sfx_u64(x) ^ (unsigned int)sfx_u64(y);
-            return (unsigned long long)sfx_rotr_u32(xr, rots[suffix - 37]);
+            return (unsigned long long)sfx_rotr_u32(xr, rots[suffix - 36]);
         }
-        case 41:  // Pow2OffsetW
+        case 40:  // Pow2OffsetW
             return b.len < 3 ? 1ULL : 1ULL << (32u * ((sfx_u64(b) >> 2) & 1u));
-        case 42: {  // Pext
+        case 41: {  // Pext
             sfx_uninterleave(b, &x, &y);
             unsigned long long mask = sfx_u64(y), value = sfx_u64(x), out = 0ULL;
             unsigned int count = 0;
@@ -296,24 +294,24 @@ __device__ unsigned long long sfx_eval(unsigned int suffix, sfx_bits b) {
             }
             return out;
         }
-        case 43:  // PextHelper
+        case 42:  // PextHelper
             sfx_uninterleave(b, &x, &y);
             return sfx_shl_u64(1ULL, __popcll(sfx_u64(y)));
-        case 44:  // WindowSign
-        case 45: {  // WindowSignPow2
+        case 43:  // WindowSign
+        case 44: {  // WindowSignPow2
             sfx_uninterleave(b, &x, &y);
             unsigned long long mask = sfx_u64(y);
             unsigned long long sign = mask == 0ULL ? 0ULL : ((sfx_u64(x) >> (63 - __clzll(mask))) & 1ULL);
-            return suffix == 44 ? sign : sfx_shl_u64(sign, __popcll(mask));
+            return suffix == 43 ? sign : sfx_shl_u64(sign, __popcll(mask));
         }
+        case 45:
         case 46:
-        case 47:
-        case 48: {  // XorRotW22 / W19 / W6
+        case 47: {  // XorRotW22 / W19 / W6
             const unsigned int rots[3] = {22u, 19u, 6u};
             sfx_uninterleave(b, &x, &y);
-            return sfx_rotr_u32((unsigned int)sfx_u64(x) ^ (unsigned int)sfx_u64(y), rots[suffix - 46]);
+            return sfx_rotr_u32((unsigned int)sfx_u64(x) ^ (unsigned int)sfx_u64(y), rots[suffix - 45]);
         }
-        case 49: {  // SignExtensionW
+        case 48: {  // SignExtensionW
             if (b.len == 0) return 0ULL;
             sfx_uninterleave(b, &x, &y);
             unsigned long long fill = 0ULL;
@@ -328,42 +326,44 @@ __device__ unsigned long long sfx_eval(unsigned int suffix, sfx_bits b) {
             }
             return fill;
         }
-        case 50:  // X31Y0
+        case 49:  // X31Y0
             if (b.len < 64) return 0ULL;
             sfx_uninterleave(b, &x, &y);
             return ((sfx_u64(x) >> 31) & 1ULL) * (sfx_u64(y) & 1ULL);
-        case 51: return 1ULL << (8u * (sfx_u64(b) & 7u));  // Pow2OffsetB
-        case 52: return 1ULL << (8u * (sfx_u64(b) & 6u));  // Pow2OffsetH
-        case 53: return sfx_u64(b) & ~7ULL;  // AlignAddr
-        case 54:
-        case 55:
-        case 56: {  // ShiftDataB / H / W
-            unsigned int eighths = 1u << (suffix - 54);
+        case 50: return 1ULL << (8u * (sfx_u64(b) & 7u));  // Pow2OffsetB
+        case 51: return 1ULL << (8u * (sfx_u64(b) & 6u));  // Pow2OffsetH
+        case 52:
+        case 53:
+        case 54: {  // ShiftDataB / H / W
+            unsigned int eighths = 1u << (suffix - 52);
             sfx_uninterleave(b, &x, &y);
             unsigned long long lane = sfx_u64(x) & ((1ULL << (8u * eighths)) - 1ULL);
             return lane << (8u * (sfx_u64(y) & (8u - eighths)));
         }
-        case 57:
-        case 58:
-        case 59: {  // OffsetScaleB / H / W
-            unsigned int mask = 8u - (1u << (suffix - 57));
+        case 55:
+        case 56:
+        case 57: {  // OffsetScaleB / H / W
+            unsigned int mask = 8u - (1u << (suffix - 55));
             sfx_uninterleave(b, &x, &y);
             return 1ULL << (8u * (sfx_u64(y) & mask));
         }
-        case 60: {  // XorRotL1Pairs
+        case 58: {  // XorRotL1Pairs
             unsigned int pairs = b.len / 2;
             sfx_uninterleave(b, &x, &y);
             unsigned long long value = sfx_u64(x) ^ (sfx_u64(y) << 1);
             if (pairs == 64) return value ^ (sfx_u64(y) >> 63);
             return value & ((1ULL << pairs) - 1ULL) & ~1ULL;
         }
-        case 61:  // TopYBit
+        case 59:  // TopYBit
             if (b.len < 2) return 0ULL;
             sfx_uninterleave(b, &x, &y);
             return (sfx_u64(y) >> (b.len / 2 - 1)) & 1ULL;
-        case 62:  // BottomXBit
+        case 60:  // BottomXBit
             sfx_uninterleave(b, &x, &y);
             return sfx_u64(x) & 1ULL;
+        case 61: return sfx_u64(b) & 7ULL;  // AddressOffsetB
+        case 62: return sfx_u64(b) & 6ULL;  // AddressOffsetH
+        case 63: return sfx_u64(b) & 4ULL;  // AddressOffsetW
         default:
             return 0ULL;
     }

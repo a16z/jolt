@@ -51,6 +51,7 @@ __device__ __forceinline__ void inputs_of(u32 mode, u64 rs1, u64 rs2, i128 imm, 
     case 8:  *x = rs1;      *y = (i128)rs2; break;
     case 9:  *x = rs1;      *y = (i128)(u64)imm; break;
     case 10: *x = rs1;      *y = imm; break;
+    case 12: *x = rs1;      *y = (i128)rs2 + imm; break;
     default: *x = rs1;      *y = 0; break;
   }
 }
@@ -85,8 +86,8 @@ __device__ __forceinline__ u64 output_of(u32 op, u64 x, i128 y, u128 index, u128
   u64 yl = (u64)y;
   switch (op) {
     case 0: return 0ull;
-    case 1: return (index % 2u == 0) ? 1ull : 0ull;
-    case 2: return (index % 4u == 0) ? 1ull : 0ull;
+    case 1: return (u64)index & 6ull;
+    case 2: return (u64)index & 4ull;
     case 3: {
       u64 lower = (u64)right & 0xFFFFFFFFull;
       return ((lower >> 31) & 1ull) ? (lower | 0xFFFFFFFF00000000ull) : lower;
@@ -196,7 +197,7 @@ __device__ __forceinline__ u64 output_of(u32 op, u64 x, i128 y, u128 index, u128
     case 63: return 0xffull << (8u * (index & 7u));
     case 64: return 0xffffull << (8u * (index & 6u));
     case 65: return 0xffffffffull << (8u * (index & 4u));
-    case 66: return (x + yl) & ~7ull;
+    case 66: return (u64)index & 7ull;
     case 67: return (x & 0xffull) << (8u * (yl & 7u));
     case 68: return (x & 0xffffull) << (8u * (yl & 6u));
     case 69: return (x & 0xffffffffull) << (8u * (yl & 4u));

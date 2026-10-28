@@ -73,7 +73,7 @@ mod tests {
 
     const SPLIT_SUFFIXES: [usize; 3] = [17, 18, 20];
 
-    const SHIFT_BOUNDED_SUFFIXES: [usize; 6] = [16, 22, 29, 30, 43, 45];
+    const SHIFT_BOUNDED_SUFFIXES: [usize; 6] = [16, 22, 28, 29, 42, 44];
 
     fn min_len_for(index: usize) -> u8 {
         match index {
@@ -85,7 +85,7 @@ mod tests {
 
     fn max_len_for(index: usize) -> u8 {
         match index {
-            30 => 62,
+            29 => 62,
             index if SHIFT_BOUNDED_SUFFIXES.contains(&index) => 126,
             _ => 128,
         }
@@ -139,7 +139,6 @@ mod tests {
             Suffixes::RightShiftHelper,
             Suffixes::SignExtension,
             Suffixes::LeftShift,
-            Suffixes::TwoLsb,
             Suffixes::SignExtensionUpperHalf,
             Suffixes::SignExtensionRightOperand,
             Suffixes::RightShiftW,
@@ -167,7 +166,6 @@ mod tests {
             Suffixes::X31Y0,
             Suffixes::Pow2OffsetB,
             Suffixes::Pow2OffsetH,
-            Suffixes::AlignAddr,
             Suffixes::ShiftDataB,
             Suffixes::ShiftDataH,
             Suffixes::ShiftDataW,
@@ -177,6 +175,9 @@ mod tests {
             Suffixes::XorRotL1Pairs,
             Suffixes::TopYBit,
             Suffixes::BottomXBit,
+            Suffixes::AddressOffsetB,
+            Suffixes::AddressOffsetH,
+            Suffixes::AddressOffsetW,
         ];
         suffixes.to_vec()
     }

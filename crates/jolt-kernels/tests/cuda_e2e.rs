@@ -343,7 +343,16 @@ fn fibonacci() {
 fn memory_ops() {
     run(
         GuestCase {
-            expected_output: Some(encode(&(0x12i32, 0u32, 0x3456i32, 0u32))),
+            func: Some("memory_ops"),
+            // Frozen output of the byte-array model in the prover acceptance matrix.
+            expected_output: Some(encode(&(
+                0x94a2_fdd2_d3f7_e573u64,
+                [
+                    0xdb7b_da33_648d_38dfu64,
+                    0xe571_1528_d851_877a,
+                    0xbc92_62b3_4fa5_20bb,
+                ],
+            ))),
             ..GuestCase::new("memory-ops-guest")
         },
         false,
