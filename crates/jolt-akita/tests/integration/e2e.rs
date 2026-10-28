@@ -4,13 +4,11 @@
     reason = "benchmarks and tests unwrap successful PCS operations"
 )]
 
-pub mod support;
-
+use crate::support::{f, layout, polynomial, setup_for};
 use jolt_akita::{AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{f, layout, polynomial, setup_for};
 
 #[test]
 fn akita_single_opening_roundtrips_across_dimensions() {

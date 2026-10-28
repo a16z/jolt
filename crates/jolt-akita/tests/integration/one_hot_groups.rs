@@ -1,11 +1,6 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-#[expect(
-    dead_code,
-    reason = "shared integration-test support is compiled independently per test file"
-)]
-mod support;
-
+use crate::support::{f, layout, native_statement};
 use jolt_akita::{
     AkitaChunkProfile, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatching,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
@@ -13,7 +8,6 @@ use jolt_akita::{
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{f, layout, native_statement};
 
 /// `log2(K) + 8`: the smallest K=16 one-hot dimension the folded-only
 /// planner schedules (mirrors the scheme unit tests' roundtrip size).

@@ -1,9 +1,11 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-pub mod support;
-
 use std::sync::Arc;
 
+use crate::support::{
+    batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
+    single_statement,
+};
 use akita_params::PolynomialGroupLayout;
 use jolt_akita::{
     AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
@@ -16,10 +18,6 @@ use jolt_openings::{
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{
-    batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
-    single_statement,
-};
 
 struct TraceRows {
     indices: Vec<[u8; 2]>,
