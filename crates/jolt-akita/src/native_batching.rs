@@ -278,7 +278,7 @@ impl AkitaNativeBatching {
             })?;
             group_claims.push(
                 PolynomialGroupClaims::new(
-                    entry.claim.point.clone(),
+                    reverse_point(&entry.claim.point),
                     entry.claim.evaluations.clone(),
                     backend_commitment,
                 )
@@ -378,7 +378,7 @@ impl AkitaNativeBatching {
         for (entry, backend) in auxiliary_groups.iter().zip(&auxiliary_backend) {
             group_claims.push(
                 PolynomialGroupClaims::new(
-                    entry.claim.point.clone(),
+                    reverse_point(&entry.claim.point),
                     entry.claim.evaluations.clone(),
                     backend,
                 )
@@ -549,14 +549,18 @@ fn single_group_batch<'a, Cfg>(
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
-    let group =
-        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), backend_commitment)?;
+    // All source tables retain Jolt's order; Akita reads coordinates low-bit first.
+    let group = PolynomialGroupClaims::new(
+        reverse_point(point),
+        evaluations.to_vec(),
+        backend_commitment,
+    )?;
     let claims = OpeningClaims::from_groups(vec![group])?;
     SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, vec![backend_hint], schedules)
 }
 
-/// The one-hot backend consumes the point in reversed variable order and uses
-/// the dedicated one-hot setup pair.
+/// Uses the dedicated one-hot setup pair. The shared opening builder converts
+/// coordinates for both dense and one-hot sources.
 fn prove_one_hot(
     setup: &AkitaProverSetup,
     point: &[AkitaField],
@@ -565,11 +569,10 @@ fn prove_one_hot(
     backend_hint: AkitaBackendHint,
     session: &[u8],
 ) -> Result<(OpeningScheduleSelection, Vec<u8>), OpeningsError> {
-    let backend_point = reverse_point(point);
     let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
         single_group_batch::<Cfg>(
             scheme.schedules(),
-            &backend_point,
+            point,
             evaluations,
             backend_commitment,
             backend_hint,
@@ -685,10 +688,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_polys_per_commitment_group,
             setup.one_hot_k,
         )?;
-        let backend_point = match commitment.backend_flavor {
-            AkitaBackendFlavor::Dense => point.to_vec(),
-            AkitaBackendFlavor::OneHot => reverse_point(point),
-        };
+        let backend_point = reverse_point(point);
         // Deserializes the proof-controlled backend commitment only after its
         // shape is validated against the trusted schedule, so a malformed
         // proof cannot drive shape-backed allocations (see `shape_guard`).
