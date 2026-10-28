@@ -98,7 +98,8 @@ mod emit {
             }
         };
     }
-    #[cfg(feature = "terminal-contraction")] include!("field_inline/terminal_emit.rs");
+    #[cfg(feature = "terminal-contraction")]
+    include!("field_inline/terminal_emit.rs");
     /// Accumulate one word into a destination previously cleared by `clear`.
     #[inline(always)]
     pub fn load_accumulate(dst: u32, offset: usize, base: *const u64) {
@@ -315,7 +316,8 @@ mod emit {
 
 mod guest {
     use super::*;
-    #[cfg(feature = "terminal-contraction")] include!("field_inline/terminal_guest.rs");
+    #[cfg(feature = "terminal-contraction")]
+    include!("field_inline/terminal_guest.rs");
     static READY: AtomicBool = AtomicBool::new(false);
 
     /// Prove that the unit computes modulo `modulus`. Accumulating the
