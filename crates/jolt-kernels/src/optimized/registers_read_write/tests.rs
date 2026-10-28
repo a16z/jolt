@@ -163,3 +163,10 @@ fn parity_exceptional_eq_across_sparse_layouts_and_orders() {
         }
     }
 }
+
+#[test]
+fn constant_suffix_boundaries_match_reference_in_both_orders() {
+    for prefix in [1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32] {
+        run_parity(structured_fixture(prefix), 5, 601 + prefix as u64);
+    }
+}

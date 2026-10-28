@@ -7,8 +7,9 @@
     reason = "benchmarks and tests unwrap successful PCS operations"
 )]
 
-pub mod support;
-
+use crate::support::{
+    batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
+};
 use jolt_akita::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaNativeBatchStatement,
     AkitaNativeBatching, AkitaScheme,
@@ -19,7 +20,6 @@ use jolt_openings::{
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Point, Polynomial, HIGH_TO_LOW};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 use serde_json::{json, Value};
-use support::{batch_polynomials, f, layout, native_setup, polynomial, setup_for};
 
 type VerifierSetup = <AkitaScheme as CommitmentScheme>::VerifierSetup;
 
@@ -249,7 +249,7 @@ fn native_proof_fixture(
     let (commitment, hint) =
         AkitaScheme::commit_group(&prover_setup, layout(7), &[poly_a.clone(), poly_b.clone()])
             .expect("grouped commit should succeed");
-    let statement = support::native_statement(commitment, &point, [eval_a, eval_b]);
+    let statement = native_statement(commitment, &point, [eval_a, eval_b]);
 
     let mut transcript = Blake2bTranscript::new(label);
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(

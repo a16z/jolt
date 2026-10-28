@@ -4,12 +4,7 @@
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-#[expect(
-    dead_code,
-    reason = "shared integration-test support is compiled independently per test file"
-)]
-mod support;
-
+use crate::support::{f, layout, polynomial, setup_for};
 use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_akita::{
     AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts,
@@ -17,7 +12,6 @@ use jolt_akita::{
 };
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{f, layout, polynomial, setup_for};
 
 struct ProofFixture {
     verifier_setup: <AkitaScheme as CommitmentScheme>::VerifierSetup,

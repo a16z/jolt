@@ -4,15 +4,10 @@
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-#[expect(
-    dead_code,
-    reason = "shared integration-test support is compiled independently per test file"
-)]
-mod support;
-
 use akita_params::PolynomialGroupLayout;
 use std::sync::Arc;
 
+use crate::support::{f, layout, polynomial};
 use jolt_akita::{
     AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
     GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
@@ -23,7 +18,6 @@ use jolt_openings::{
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
-use support::{f, layout, polynomial};
 
 /// The smallest one-column K=16 Single arity whose scalar guide has a
 /// recursive child fold, which bounded grouped provisioning requires.

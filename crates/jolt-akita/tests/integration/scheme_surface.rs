@@ -1,11 +1,6 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-#[expect(
-    dead_code,
-    reason = "shared integration-test support is compiled independently per test file"
-)]
-mod support;
-
+use crate::support::{f, layout, polynomial, setup_for};
 use jolt_akita::{
     AkitaBackendFlavor, AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
     AkitaSetupParams, AKITA_ONE_HOT_K16,
@@ -13,7 +8,6 @@ use jolt_akita::{
 use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
-use support::{f, layout, polynomial, setup_for};
 
 /// The smallest dense dimension the checked-in catalog schedules.
 const DENSE_VARS: usize = 14;

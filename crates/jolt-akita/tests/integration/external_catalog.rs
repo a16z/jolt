@@ -19,11 +19,7 @@ use jolt_openings::{BatchOpeningScheme, CommitmentScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
 use jolt_transcript::{Blake2bTranscript, Transcript};
 
-#[expect(
-    dead_code,
-    reason = "shared fixture support is compiled per integration binary"
-)]
-mod support;
+use crate::support;
 
 const TRANSPORT: &str = "JOLT_EXTERNAL_CATALOG_TEST_TRANSPORT";
 const NUM_VARS: usize = 17;
@@ -161,21 +157,30 @@ fn external_multichunk_catalog_survives_transport() {
     fs::create_dir(&directory).expect("create verification input directory");
     let transport = directory.join("public.json");
     fs::write(&transport, inputs).expect("publish public verification inputs");
+    // libtest names a test by its module path without the crate name.
+    let test_name = format!(
+        "{}::external_multichunk_catalog_survives_transport",
+        module_path!()
+            .split_once("::")
+            .expect("integration test module")
+            .1
+    );
     let result = Command::new(std::env::current_exe().expect("integration binary"))
-        .args([
-            "--exact",
-            "external_multichunk_catalog_survives_transport",
-            "--nocapture",
-        ])
+        .args(["--exact", &test_name, "--nocapture"])
         .env(TRANSPORT, &transport)
         .env("JOLT_AKITA_SCHEDULE_DIR", directory.join("absent-catalogs"))
         .output()
         .expect("run independent upstream verifier process");
     fs::remove_dir_all(directory).expect("remove verification inputs");
+    let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
         result.status.success(),
-        "{}\n{}",
-        String::from_utf8_lossy(&result.stdout),
+        "{stdout}\n{}",
         String::from_utf8_lossy(&result.stderr)
+    );
+    // An `--exact` filter that matches nothing also exits successfully.
+    assert!(
+        stdout.contains("1 passed"),
+        "the verifier process must run the transport test:\n{stdout}"
     );
 }
