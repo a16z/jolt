@@ -386,6 +386,19 @@ paper delta.
   proof bytes flat. fib 2^20's residual share is now 40% < 50%, so
   d = 256 and P9 do not run. Merged (Akita 9c6c7273f, jolt 2d68df80c);
   bars green, dump has exactly the 5 known omissions.
+- **M2 (prover memory; `specs/whiteout-m2-memory.md`).** The committed `e`
+  is held as i8 digits and the fused sumcheck streams its row weights.
+  Peak RSS 1.72 → 1.24, 2.75 → 1.78, 4.47 → 2.59 GiB (muldiv / fib 2^16 /
+  fib 2^20); prover time within ±3% at load 8–20. An independent
+  constant-time review found no blocker: every lift is `lift_ct`, the
+  extrema branches are constant over every honest `e`, and every new
+  digit buffer is wiped. Fix round: the scratch-growth and constructor
+  error paths wipe, `source_coefficients` carries a WARNING, and A45
+  lists the inherited `DigitMontLut` digit-indexed read. A runtime probe
+  showed it is not reached on M4 (i32 NEON); it is reached on x86_64 at
+  D < 64 and with i16 primes, which is unverified. Merged (Akita
+  f0de039e2, jolt 3bc688951); bars green, and the dump has the 5 known
+  omissions.
 
 ## Not verified
 
