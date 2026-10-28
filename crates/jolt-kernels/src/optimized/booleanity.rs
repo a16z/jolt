@@ -63,13 +63,6 @@ use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::relations::booleanity::{
-    lattice_booleanity_output_openings, LatticeBooleanityDimensions,
-};
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::BalancedIncChunking;
-#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
 use jolt_claims::OutputClaims;
@@ -87,8 +80,6 @@ use jolt_verifier::stages::stage6a::booleanity::{
     BooleanityAddressPhase, BooleanityAddressPhaseChallenges, BooleanityAddressPhaseOutputClaims,
 };
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
-#[cfg(feature = "akita")]
-use jolt_witness::witnesses::BalancedIncColumn;
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
@@ -109,8 +100,6 @@ enum ColumnSelector {
     Instruction(RaChunkSelector),
     Bytecode(RaChunkSelector),
     Ram(RaChunkSelector),
-    #[cfg(feature = "akita")]
-    UnsignedInc(BalancedIncColumn),
 }
 
 impl ColumnSelector {
@@ -126,8 +115,6 @@ impl ColumnSelector {
             Self::Ram(selector) => row
                 .remapped_ram_address()
                 .map(|address| selector.chunk_usize(address as usize)),
-            #[cfg(feature = "akita")]
-            Self::UnsignedInc(column) => Some(row.fused_inc_row(*column)),
         }
     }
 }
@@ -138,28 +125,6 @@ struct BooleanityColumns {
 }
 
 impl BooleanityColumns {
-    fn openings<F: JoltField>(
-        dimensions: BooleanityDimensions,
-    ) -> Result<Vec<JoltOpeningId>, KernelError<F>> {
-        #[cfg(not(feature = "akita"))]
-        {
-            Ok(dimensions
-                .layout
-                .openings(JoltRelationId::Booleanity)
-                .collect())
-        }
-        #[cfg(feature = "akita")]
-        {
-            let lattice_dimensions =
-                LatticeBooleanityDimensions::new(dimensions).map_err(|_| {
-                    KernelError::InvariantViolation {
-                        reason: "the packed shape requires a lattice-compatible chunk width",
-                    }
-                })?;
-            Ok(lattice_booleanity_output_openings(lattice_dimensions))
-        }
-    }
-
     fn new<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         dimensions: BooleanityDimensions,
@@ -167,7 +132,9 @@ impl BooleanityColumns {
         let log_t = dimensions.log_t;
         let log_k_chunk = dimensions.log_k_chunk;
         let layout = dimensions.layout;
-        let openings = Self::openings(dimensions)?;
+        let openings = layout
+            .openings(JoltRelationId::Booleanity)
+            .collect::<Vec<_>>();
         for opening in &openings {
             let shape = witness.shape(opening.polynomial_id())?;
             if shape.log_rows != log_k_chunk + log_t {
@@ -194,25 +161,6 @@ impl BooleanityColumns {
                 })
             })
             .collect::<Result<Vec<_>, KernelError<F>>>()?;
-        #[cfg(feature = "akita")]
-        let mut selectors = selectors;
-        #[cfg(feature = "akita")]
-        {
-            let chunking = BalancedIncChunking::new(log_k_chunk).map_err(|_| {
-                KernelError::InvariantViolation {
-                    reason: "the packed shape requires a lattice-compatible chunk width",
-                }
-            })?;
-            selectors.extend((0..chunking.chunk_count()).map(|index| {
-                ColumnSelector::UnsignedInc(BalancedIncColumn::Digit {
-                    width: log_k_chunk,
-                    index,
-                })
-            }));
-            selectors.push(ColumnSelector::UnsignedInc(BalancedIncColumn::Carry {
-                width: log_k_chunk,
-            }));
-        }
         debug_assert_eq!(openings.len(), selectors.len());
         Ok(Self {
             openings,
@@ -1239,8 +1187,6 @@ mod tests {
         reference_address: Vec<Fr>,
         reference_cycle: Vec<Fr>,
     ) -> Booleanity<Fr> {
-        #[cfg(feature = "akita")]
-        let dimensions = LatticeBooleanityDimensions::new(dimensions).unwrap();
         Booleanity::new(dimensions, r_address, reference_address, reference_cycle)
     }
 
@@ -1262,7 +1208,7 @@ mod tests {
         let gamma_sqr = gamma * gamma;
         let mut total = Fr::from_u64(0);
         let mut weight = Fr::from_u64(1);
-        for opening in BooleanityColumns::openings::<Fr>(dimensions).unwrap() {
+        for opening in dimensions.layout.openings(JoltRelationId::Booleanity) {
             let grid: Vec<Fr> = backend.oracle_table(opening.polynomial_id()).unwrap();
             for (j, eq_cycle) in eq_cycle.iter().enumerate() {
                 let x: Fr = eq_address

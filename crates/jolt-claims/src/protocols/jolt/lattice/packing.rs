@@ -16,23 +16,17 @@ use jolt_poly::eq_index_msb;
 use super::super::geometry::claim_reductions::bytecode::bytecode_total_vars;
 use super::super::geometry::ra::JoltRaPolynomialLayout;
 use super::super::{JoltAdviceKind, JoltCommittedPolynomial, TracePolynomialOrder};
-use super::geometry::{BalancedIncChunking, LatticeGeometryError};
+use super::geometry::LatticeGeometryError;
 
 pub use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
-/// Shape of the per-proof `OneHotTrace`: the canonical committed Jolt data —
-/// `Ra` families, balanced increment chunks, and signed carry as semantic
-/// columns of one native commitment batch. Instruction, bytecode, and increment
-/// columns omit row zero; RAM commits every row.
-/// Advice word columns are their own commitment objects
-/// ([`advice_packing_plan`]).
+/// The per-proof RA columns of one native Akita commitment batch.
+/// Instruction and bytecode omit row zero; RAM commits every selected row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OneHotTraceShape {
     pub ra_layout: JoltRaPolynomialLayout,
     pub log_t: usize,
-    /// Shared one-hot chunk size: the address bits of each `Ra` family and
-    /// the width of each increment digit (equal by the shared-final-point
-    /// convention).
+    /// Shared address chunk size for the RA families.
     pub log_k_chunk: usize,
 }
 
@@ -57,7 +51,6 @@ pub struct PrecommittedPackingPlan {
 pub fn one_hot_trace_columns(
     shape: &OneHotTraceShape,
 ) -> Result<Vec<JoltCommittedPolynomial>, LatticeGeometryError> {
-    let chunking = BalancedIncChunking::new(shape.log_k_chunk)?;
     if !matches!(shape.log_k_chunk, 4 | 8) {
         return Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth {
             chunk_width: shape.log_k_chunk,
@@ -76,8 +69,6 @@ pub fn one_hot_trace_columns(
     let mut polynomials = (0..instruction_columns)
         .map(JoltCommittedPolynomial::InstructionRa)
         .collect::<Vec<_>>();
-    polynomials.extend((0..chunking.chunk_count()).map(JoltCommittedPolynomial::BalancedIncDigit));
-    polynomials.push(JoltCommittedPolynomial::BalancedIncCarry);
     polynomials.extend((0..shape.ra_layout.bytecode()).map(JoltCommittedPolynomial::BytecodeRa));
     polynomials.extend((0..shape.ra_layout.ram()).map(JoltCommittedPolynomial::RamRa));
     Ok(polynomials)
@@ -396,15 +387,12 @@ mod tests {
     }
 
     #[test]
-    fn one_hot_trace_columns_cover_every_committed_lattice_polynomial() {
+    fn one_hot_trace_columns_cover_the_ra_families() {
         let columns = one_hot_trace_columns(&one_hot_trace_shape()).unwrap();
 
-        assert_eq!(columns.len(), 16 + 8 + 1 + 2);
+        assert_eq!(columns.len(), 16 + 2);
         assert_eq!(columns[0], JoltCommittedPolynomial::InstructionRa(0));
-        assert!(columns.contains(&JoltCommittedPolynomial::BalancedIncDigit(7)));
-        assert_eq!(columns[16], JoltCommittedPolynomial::BalancedIncDigit(0));
-        assert_eq!(columns[24], JoltCommittedPolynomial::BalancedIncCarry);
-        assert_eq!(columns[25], JoltCommittedPolynomial::BytecodeRa(0));
+        assert_eq!(columns[16], JoltCommittedPolynomial::BytecodeRa(0));
         assert_eq!(columns.last(), Some(&JoltCommittedPolynomial::RamRa(0)));
     }
 
@@ -483,7 +471,7 @@ mod tests {
         };
         assert_eq!(
             one_hot_trace_columns(&shape),
-            Err(LatticeGeometryError::ChunkWidthMisaligned { chunk_width: 7 })
+            Err(LatticeGeometryError::UnsupportedOneHotTraceChunkWidth { chunk_width: 7 })
         );
     }
 

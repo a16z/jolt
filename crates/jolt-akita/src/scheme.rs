@@ -1119,8 +1119,8 @@ mod tests {
         use crate::schedule_registry::{GroupedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
-        // The narrowest production trace at the cutover; one-column scalar
-        // rows at this arity stay direct.
+        // This admitted width exercises setup offloading; narrower groups at
+        // the same arity may remain direct under the planner's cost objective.
         let final_group =
             PolynomialGroupLayout::new(RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES, 51);
         let grouped_schedule = GroupedScheduleParams::new(
