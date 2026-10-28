@@ -1,3 +1,4 @@
+use jolt_claims::protocols::jolt::relations::booleanity::BooleanityOutputClaims;
 use std::collections::BTreeSet;
 
 #[cfg(feature = "field-inline")]
@@ -1127,36 +1128,12 @@ pub const AKITA_TARGETS: &[TamperTarget] = &[
         "the lattice read-raf cycle output fold rejects an offset fused-inc opening",
     ),
     checked_standard(
-        "stage6.claims.booleanity.balanced_inc_digits",
-        "claims.stage6b.booleanity.balanced_inc_digits",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
+        "proof.fused_inc_commitment",
+        "proof.fused_inc_commitment",
+        VerifierPhase::Stage8Openings,
+        MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
-        "the lattice booleanity output fold covers every chunk cell",
-    ),
-    checked_standard(
-        "stage6.claims.booleanity.balanced_inc_carry",
-        "claims.stage6b.booleanity.balanced_inc_carry",
-        VerifierPhase::Stage6,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the lattice booleanity output fold covers the carry cell",
-    ),
-    checked_standard(
-        "stage7.claims.hamming_weight_claim_reduction.balanced_inc_digits",
-        "claims.stage7.hamming_weight_claim_reduction.balanced_inc_digits",
-        VerifierPhase::Stage7,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the hamming-weight reduction final-claim fold covers every increment chunk",
-    ),
-    checked_standard(
-        "stage7.claims.hamming_weight_claim_reduction.balanced_inc_carry",
-        "claims.stage7.hamming_weight_claim_reduction.balanced_inc_carry",
-        VerifierPhase::Stage7,
-        MutationStrategy::OffsetScalar,
-        TamperCoverage::Active,
-        "the hamming-weight reduction final-claim fold covers the increment carry",
+        "the dense increment commitment is required and its wire leaves are covered by the Akita commitment sweep",
     ),
     #[cfg(feature = "field-inline")]
     checked_standard(
@@ -1239,6 +1216,8 @@ pub fn proof_field_paths() -> &'static [&'static str] {
         "proof.commitments[*]",
         "proof.joint_opening_proof",
         "proof.untrusted_advice_commitment",
+        #[cfg(feature = "akita")]
+        "proof.fused_inc_commitment",
         #[cfg(all(feature = "akita", feature = "field-inline"))]
         "proof.field_inc_commitment",
         "proof.claims",
@@ -1407,7 +1386,9 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
         VerifierError::MissingProofPayload { field } => match *field {
-            "commitments.field_inline" | "field_inc_commitment" => Some(VerifierPhase::Preamble),
+            "commitments.field_inline" | "field_inc_commitment" | "fused_inc_commitment" => {
+                Some(VerifierPhase::Preamble)
+            }
             _ => None,
         },
         VerifierError::StageClaimSumcheckFailed { stage, .. }
@@ -1798,21 +1779,11 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     bytecode_ra: vec![zero],
                     fused_inc: zero,
                 },
-            #[cfg(not(feature = "akita"))]
-            booleanity: stage6b::outputs::BooleanityOutputClaims {
+            booleanity: BooleanityOutputClaims {
                 instruction_ra: vec![zero],
                 bytecode_ra: vec![zero],
                 ram_ra: vec![zero],
             },
-            #[cfg(feature = "akita")]
-            booleanity:
-                jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
-                    instruction_ra: vec![zero],
-                    bytecode_ra: vec![zero],
-                    ram_ra: vec![zero],
-                    balanced_inc_digits: vec![zero],
-                    balanced_inc_carry: zero,
-                },
             ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                 ram_hamming_weight: zero,
             },
@@ -1856,10 +1827,8 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                     instruction_ra: vec![zero],
                     bytecode_ra: vec![zero],
                     ram_ra: vec![zero],
-                    #[cfg(feature = "akita")]
-                    balanced_inc_digits: vec![zero],
-                    #[cfg(feature = "akita")]
-                    balanced_inc_carry: zero,
+
+
                 },
             #[cfg(not(feature = "akita"))]
             trusted_advice: fill_optionals.then_some(
