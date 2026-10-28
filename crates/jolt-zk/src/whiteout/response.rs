@@ -33,7 +33,7 @@ use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
 
 use super::challenge::{challenge_ring, challenge_times_ring, challenge_times_ring_transpose};
 use super::compression::ImageCompression;
-use super::lift::{ChallengeRing, LiftedRelation, ProductAdjointWeights};
+use super::lift::{AggregatedRelation, ChallengeRing, LiftedRelation, ProductAdjointWeights};
 use super::linear::BlockTarget;
 use super::params::RESPONSE_LOG_BASIS;
 use super::segments::{balanced_range, lift_ct};
@@ -311,6 +311,9 @@ pub struct ResponseStatement<'a, F: JoltField, const D: usize> {
     pub(crate) challenge: SparseChallenge,
     /// The aggregation challenges; `μ` follows from the relation's labels.
     pub(crate) rho: Vec<F>,
+    /// The relation aggregated under `rho`, which the rows, their constant
+    /// and their weight at a point all read.
+    pub(crate) aggregated: AggregatedRelation<'a, F>,
     /// `cm(t_D)`.
     pub(crate) v_payload: Vec<F>,
 }
@@ -343,6 +346,33 @@ pub trait ResponseProver<F: JoltField, const D: usize> {
         statement: &ResponseStatement<'_, F, D>,
         transcript: &mut VerifierTranscript<'_, H>,
     ) -> Result<(), ZkError>;
+}
+
+impl<'a, F: JoltField, const D: usize> ResponseStatement<'a, F, D> {
+    /// The statement of `relation` under the aggregation challenges `rho`.
+    ///
+    /// # Errors
+    ///
+    /// [`WhiteoutError`] if `rho` does not match the relation's labels.
+    pub(crate) fn new(
+        setup: &'a SigmaSetup<F, D>,
+        relation: &'a LiftedRelation<F>,
+        compression: &'a dyn ImageCompression<F>,
+        challenge: SparseChallenge,
+        rho: Vec<F>,
+        v_payload: Vec<F>,
+    ) -> Result<Self, WhiteoutError> {
+        let aggregated = relation.aggregate(&rho)?;
+        Ok(Self {
+            setup,
+            relation,
+            compression,
+            challenge,
+            rho,
+            aggregated,
+            v_payload,
+        })
+    }
 }
 
 impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
@@ -454,7 +484,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             return Err(WhiteoutError::ResponseRejected("ct(h)"));
         }
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
-        let aggregated = self.relation.aggregate(&self.rho)?;
+        let aggregated = &self.aggregated;
         let tables = self.relation.claim_tables()?;
         let parts = aggregated.linear_parts(&tables, &z[..], false)?;
         let lhs = aggregated.quadratic(&c_ring, &parts) + self.setup.l_row().apply(z, bound)?;
@@ -517,7 +547,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 
         let [e0, e1, h] = self.v_tail(v)?;
         let c_ring: ChallengeRing<F> = challenge_ring(&c);
-        let aggregated = self.relation.aggregate(&self.rho)?;
+        let aggregated = &self.aggregated;
         let tables = self.relation.claim_tables()?;
         let parts = aggregated.linear_parts(&tables, &z[..], false)?;
         let operands = aggregated.product_operands(&c_ring, &parts);
@@ -652,7 +682,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             *dst += theta_scale * *power;
         }
         self.setup.l_row().adjoint(&(-target), &mut z)?;
-        let aggregated = self.relation.aggregate(&self.rho)?;
+        let aggregated = &self.aggregated;
         let tables = self.relation.claim_tables()?;
         let x: Vec<ChallengeRing<F>> = weights.product_x.iter().map(|w| powers.scale(w)).collect();
         let y: Vec<ChallengeRing<F>> = weights.product_y.iter().map(|w| powers.scale(w)).collect();

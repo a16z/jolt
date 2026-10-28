@@ -8,13 +8,15 @@
 //! scalar times one common ring, and `N`, `L` and the lifted forms apply to
 //! it with one column combination and one ring product per row.
 
+use std::collections::BTreeMap;
+
 use jolt_algebra::{CyclotomicRing, JoltField};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_poly::EqPolynomial;
 use rayon::prelude::*;
 
 use super::challenge::{challenge_ring, challenge_times_ring, challenge_times_ring_transpose};
-use super::lift::{ChallengeRing, ClaimTable, SValues, WitnessShape};
+use super::lift::{ChallengeRing, ClaimTable, DenseTerm, SValues, WitnessShape};
 use super::linear::BlockTarget;
 use super::params::RESPONSE_LOG_BASIS;
 use super::response::{
@@ -91,6 +93,61 @@ impl<F: JoltField, const D: usize> SValues<F> for FactoredS<F, D> {
         Ok(CyclotomicRing::from_coefficients(std::array::from_fn(
             |index| self.value(start + index * stride),
         )))
+    }
+
+    /// A ring inside one native element `E` is `S_E` times the ring
+    /// `lo[o + i·stride]`, which depends only on `(o, stride)`. So the sum
+    /// takes one scalar multiple per term and one ring product per distinct
+    /// `(o, stride)`; a ring that straddles two elements is multiplied
+    /// directly.
+    fn dense_sum(
+        &self,
+        table: &SegmentTable,
+        dense: &[DenseTerm<F>],
+    ) -> Result<ChallengeRing<F>, WhiteoutError> {
+        type Groups<F> = (BTreeMap<(usize, usize), ChallengeRing<F>>, ChallengeRing<F>);
+        let (groups, direct) = dense
+            .par_iter()
+            .try_fold(
+                || (BTreeMap::new(), CyclotomicRing::zero()),
+                |(mut groups, mut direct): Groups<F>, (ring, _, weights)| {
+                    let (start, stride) = table.ring_position(*ring)?;
+                    let offset = start % D;
+                    if offset + (CHALLENGE_RING_DIM - 1) * stride < D {
+                        let scale = self.scales.get(start / D).copied().unwrap_or_default();
+                        weights.scale_accumulate_into(
+                            groups
+                                .entry((offset, stride))
+                                .or_insert_with(CyclotomicRing::zero),
+                            scale,
+                        );
+                    } else {
+                        weights.mul_accumulate_into(&self.ring(table, *ring)?, &mut direct);
+                    }
+                    Ok::<_, WhiteoutError>((groups, direct))
+                },
+            )
+            .try_reduce(
+                || (BTreeMap::new(), CyclotomicRing::zero()),
+                |(mut groups, direct), (other, other_direct)| {
+                    for (key, ring) in other {
+                        *groups.entry(key).or_insert_with(CyclotomicRing::zero) += ring;
+                    }
+                    Ok((groups, direct + other_direct))
+                },
+            )?;
+        Ok(groups
+            .into_iter()
+            .fold(direct, |sum, ((offset, stride), weights)| {
+                let lo = CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+                    self.lo
+                        .coefficients()
+                        .get(offset + index * stride)
+                        .copied()
+                        .unwrap_or_default()
+                }));
+                sum + weights * lo
+            }))
     }
 
     fn claim_sum(
@@ -284,7 +341,7 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 
         // Item 4 at α.
         let _lifted_span = tracing::info_span!("whiteout_weight_lifted_rows").entered();
-        let aggregated = self.relation.aggregate(&self.rho)?;
+        let aggregated = &self.aggregated;
         let tables = self.relation.claim_tables()?;
         let parts = aggregated.linear_parts(&tables, &dual.z, false)?;
         let l_z = self
@@ -337,13 +394,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                 }
             }
         }
-        let aggregated = self.relation.aggregate(&self.rho)?;
-        let zero = aggregated.zero_parts();
-        let operands = aggregated.product_operands(&c_ring, &zero);
-        let reduced = operands
-            .iter()
-            .fold(ChallengeRing::<F>::zero(), |sum, (x, y)| sum + *x * *y);
-        let h_e = reduced - aggregated.quadratic(&c_ring, &zero);
+        let aggregated = &self.aggregated;
+        let operands = aggregated.product_operands(&c_ring, &aggregated.zero_parts());
+        let h_e = aggregated.target_at_zero(&c_ring)?;
         let powers = alpha_powers(alpha);
         total += weights.product_target * h_e.coefficient_inner_product(&powers);
         for ((x, y), (wx, wy)) in operands
@@ -451,5 +504,77 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
             offset += segment.num_digits();
         }
         Ok(dual)
+    }
+}
+
+#[cfg(all(test, feature = "whiteout-prover"))]
+#[expect(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "tests should fail loudly"
+)]
+mod tests {
+    use jolt_algebra::{CyclotomicRing, Field};
+    use jolt_crypto::lattice::CHALLENGE_RING_DIM;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    use super::super::fixture::F;
+    use super::super::lift::{ChallengeRing, DenseTerm, SValues};
+    use super::super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
+    use super::super::SegmentTable;
+    use super::FactoredS;
+
+    /// `dense_sum` on a factored vector against `Σ_k σ(ℓ̂_k)·x_k` over the
+    /// vector written out coefficient by coefficient. With `D = 64`, the
+    /// 64-wide segments' rings lie in one native element (the grouped path)
+    /// and the 128-wide segment's rings straddle two (the direct path).
+    #[test]
+    fn factored_dense_sum_matches_the_written_out_vector() {
+        const D: usize = 64;
+        let mut rng = ChaCha20Rng::seed_from_u64(0x0_3b);
+        let segment = |native_dim, len| Segment {
+            role: SegmentRole::Witness,
+            len,
+            native_dim,
+            log_basis: 4,
+            shape: SegmentShape::Dense,
+            mask: SegmentMask::Gaussian,
+        };
+        let table =
+            SegmentTable::new(vec![segment(64, 3), segment(128, 4), segment(64, 2)]).unwrap();
+        let len = table.num_coefficients();
+        let x = FactoredS::<F, D> {
+            scales: (0..len / D).map(|_| F::random(&mut rng)).collect(),
+            lo: CyclotomicRing::from_coefficients(std::array::from_fn(|_| F::random(&mut rng))),
+        };
+        let written: Vec<F> = (0..len)
+            .map(|p| x.scales[p / D] * x.lo.coefficients()[p % D])
+            .collect();
+        let rings = len / CHALLENGE_RING_DIM;
+        let straddling = (0..rings)
+            .filter(|&ring| {
+                let (start, stride) = table.ring_position(ring).unwrap();
+                start % D + (CHALLENGE_RING_DIM - 1) * stride >= D
+            })
+            .count();
+        assert_eq!(straddling, 4);
+
+        let dense: Vec<DenseTerm<F>> = (0..rings)
+            .map(|ring| {
+                let hat: [F; CHALLENGE_RING_DIM] = std::array::from_fn(|_| F::random(&mut rng));
+                (ring, hat, CyclotomicRing::from_coefficients(hat).sigma_m1())
+            })
+            .collect();
+        let expected = dense
+            .iter()
+            .fold(ChallengeRing::<F>::zero(), |sum, (ring, _, sigma)| {
+                let (start, stride) = table.ring_position(*ring).unwrap();
+                sum + *sigma
+                    * CyclotomicRing::from_coefficients(std::array::from_fn(|i| {
+                        written[start + i * stride]
+                    }))
+            });
+        assert_eq!(x.dense_sum(&table, &dense).unwrap(), expected);
     }
 }

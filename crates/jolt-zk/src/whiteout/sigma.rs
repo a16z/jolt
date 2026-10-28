@@ -488,14 +488,8 @@ pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F
     .into_iter()
     .next()
     .ok_or(WhiteoutError::ResponseRejected("no challenge sampled"))?;
-    let statement = ResponseStatement {
-        setup,
-        relation,
-        compression,
-        challenge,
-        rho,
-        v_payload,
-    };
+    let statement =
+        ResponseStatement::new(setup, relation, compression, challenge, rho, v_payload)?;
     response.verify_response(&statement, transcript)
 }
 
@@ -807,14 +801,14 @@ mod prover {
             // proof, the prover's largest step.
             let compression = prover.compression;
             drop(prover);
-            let statement = ResponseStatement {
+            let statement = ResponseStatement::new(
                 setup,
                 relation,
                 compression,
-                challenge: accepted.challenge,
+                accepted.challenge,
                 rho,
-                v_payload: accepted.t_d.payload,
-            };
+                accepted.t_d.payload,
+            )?;
             response.prove_response(&statement, &witness, transcript)?;
             return Ok(attempt);
         }
