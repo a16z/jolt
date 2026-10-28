@@ -64,6 +64,7 @@ so the authors can fold it into the paper.
 | D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
 | D32 | Persisted plans: the ZK catalog (planned at setup) and exported response schedules enter a setup only at construction, are re-audited and re-admitted on load, and the pads absorb the masked catalog's, selected row's and response schedule's digests | extension (public parameters), transcript change | implemented (O1) |
 | D34 | Small byte items (O5): compressed images take the fewest balanced chunks under the chain's SIS bound (884 coefficients, the paper's `FCHAIN_MAX_IMAGE`), so t_p and cm(u_a) take 2 chunks, not 3; a repeated intermediate product takes one auxiliary slot (Whiteout and BlindFold committed proofs). One-chunk t_p is impossible at R_Σ | departure narrowed (D9), slot sharing (D12, D26) | implemented (O5) |
+| D35 | The residual commitment (and the pad commitment, which shares the Σ ring) over `R_128`: rank 9–10 instead of 18–19 over `R_64`, same `R_Σ`; the planner's dimension ceiling is lifted at the after-cut level only | parameter change (follows `06_evaluation.tex:124-133`) | implemented (O6, d = 128); d = 256 gated on a rerun |
 
 ## D1. Constant-time Σ attempt
 
@@ -1746,3 +1747,67 @@ per chunk either way.
 
 **For the paper.** None for the chunk bound (it is the paper's). For the
 auxiliary count: say that a product repeated across terms is one gate.
+
+## D35. The residual commitment over `R_128` (O6)
+
+**Paper says.** The three matrices that commit to s (`A_a`,
+`[B_a | B′_a]`, `A_p`) are sized coefficientwise at their collision radii,
+each over the ring dimension Akita supports that minimizes the verifier's
+work. Security tracks `rank · d`, so a larger ring with a smaller rank is
+cheaper (`06_evaluation.tex:124-133`). Several ring dimensions are handled
+by restricting scalars to the challenge ring (`02_preliminaries.tex:69-77`).
+
+**Before O6.** All three were over `R_64` (D29: rank 19 for the residual,
+18–19 for `A_p`). Akita's planner never gives a level a larger ring than
+its predecessor (the monotone dimension ceiling), and the cut level's B and
+D rings are 64 on every row.
+
+**Implementation** (Akita `wo/akita-o6`, §5.5.3; jolt `wo/o6-d128`,
+`specs/whiteout-o6-d128.md`).
+
+- The zero-knowledge planner gives the level after the cut the ring
+  dimension 128 (`RESIDUAL_RING_DIMENSION`) and exempts that one level from
+  the ceiling. Clear searches never reach the after-cut level, so no clear
+  catalog changes.
+- The residual is rank 9–10 over `R_128` on every row (rank 19 over `R_64`
+  before). u_a is 1,280 coefficients instead of 1,216 (1,152 on a rank-9
+  row) and is still sent as 2 chunks of `cm(u_a)`. r_a is 321 `R_128`
+  columns instead of 610 `R_64` columns.
+- `A_p` follows, since jolt's Σ setup has one ring: rank 9 (rank 10 above
+  1,231 columns) over `R_128`. t_p is 1,152 or 1,280 coefficients, still 2
+  chunks.
+- The planner re-selects rows under the cheaper residual. Akita's 36:1
+  headline now offloads its root's setup at the cut (a masked Stage 3,
+  from 35 variables on instead of 37).
+
+**Argument.**
+
+- *Binding.* `R_Σ = 8κ₁·B(10) ≈ 2^47.82` is unchanged: multiplication by a
+  challenge `c ∈ R_64` acts on `R_128` as `c(Y²)`, with the same ℓ1 norm,
+  so `Γ_Δ = 2κ₁` holds verbatim. The reduction of `05_security.tex:31-46`
+  then needs Module-SIS over `R_128` at `R_Σ`. Akita's estimator gives
+  128.79 bits for `A_a` at rank 9 × 1,024, 138.07 bits for the widest
+  rank-10 cell (`[B_a | B′_a]`, 10 × 11,841), and 128.26 bits at `A_p`'s
+  largest rank-9 width (1,231). The chain's first map on a 640-coefficient
+  chunk is 139.13 bits (140.98 at 608).
+- *Knowledge soundness.* Thm `wo:thm:knowledge` is unchanged in its
+  statement and its error terms. ℓ, `|𝓒|` and the radius do not depend on
+  the residual's ring. D27's ledger depends on ν, which does not grow on
+  any measured statement (the Akita single-group statement goes from 24 to
+  23), so it stays 310/q ≈ 2^−119.7.
+- *Zero knowledge.* r_a and r_p are sized by the same entropy rule (image
+  plus 264 bits). Every hypothesis of Thm `wo:thm:zk` is checked as before,
+  and the statistical total stays 2^−129.1 (O7 §7.4).
+- *Why the ceiling may lift there.* It is a planner search rule, not a
+  protocol constraint. No check compares adjacent levels' rings. The
+  interface between levels is a flat coefficient vector, zero-padded to the
+  successor's ring. In zero knowledge the after-cut level is never folded:
+  its parameters are only the residual commitment.
+
+**Measured.** See `specs/whiteout-o6-d128.md` § Results.
+
+**For the paper.** The evaluation's choice of a larger ring for the
+residual is now implemented at d = 128. The text could say that the
+residual's ring may exceed the cut level's ring, since the after-cut level
+is never folded.
+
