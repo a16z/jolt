@@ -161,6 +161,45 @@ pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
+    /// `Σ a[i]·b[i]` over the shorter of the two slices.
+    #[inline]
+    fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        a.iter()
+            .zip(b)
+            .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
+    }
+
+    /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
+    /// otherwise.
+    #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        terms
+            .into_iter()
+            .fold(<Self as Zero>::zero(), |acc, (term, negative)| {
+                if negative {
+                    acc - *term
+                } else {
+                    acc + *term
+                }
+            })
+    }
+
+    /// `Σ_i Π_k terms[i][k]`, an empty product being one.
+    #[inline]
+    fn sum_of_products<const K: usize>(terms: &[[Self; K]]) -> Self {
+        terms.iter().fold(<Self as Zero>::zero(), |acc, factors| {
+            acc + match factors.split_first() {
+                Some((first, rest)) => rest
+                    .iter()
+                    .fold(*first, |product, factor| product * *factor),
+                None => <Self as One>::one(),
+            }
+        })
+    }
+
     /// Multiplicative inverse with zero mapped to zero.
     #[inline]
     fn inv_or_zero(self) -> Self {
