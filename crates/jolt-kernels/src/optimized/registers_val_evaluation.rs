@@ -136,24 +136,25 @@ pub struct OptimizedRegistersValEvaluation;
 
 impl OptimizedRegistersValEvaluation {
     /// Peak bytes over `2^log_t >= 2^8` cycles whose first `prefix_cycles`
-    /// precede the trace's constant suffix: the first bind's fallible collect
-    /// of the `⌈prefix_cycles / 2⌉`-entry increment table
-    /// (`fallible_collect_bytes`) beside the `rd` indices taken over from stage
-    /// 4 (moved, not copied, at most `prefix_cycles`), the `K`-entry address eq
-    /// table and the split LT tables. The write table that replaces the
-    /// indices, the bound halves later binds collect beside the tables and the
-    /// split tables' later dense switch hold less. Not counted: the increment
-    /// row store, a handle on the witness's rows when it has one, and the row
-    /// collect `prepare` falls back to when stage 4 parked no indices.
-    pub fn peak_bytes<F: JoltField>(log_t: usize, prefix_cycles: usize) -> usize {
+    /// precede the trace's constant suffix, or `None` past `usize::MAX`: the
+    /// first bind's fallible collect of the `⌈prefix_cycles / 2⌉`-entry
+    /// increment table (`fallible_collect_bytes`) beside the `rd` indices
+    /// taken over from stage 4 (moved, not copied, at most `prefix_cycles`),
+    /// the `K`-entry address eq table and the split LT tables. The write table
+    /// that replaces the indices, the bound halves later binds collect beside
+    /// the tables and the split tables' later dense switch hold less. Not
+    /// counted: the increment row store, a handle on the witness's rows when
+    /// it has one, and the row collect `prepare` falls back to when stage 4
+    /// parked no indices.
+    pub fn peak_bytes<F: JoltField>(log_t: usize, prefix_cycles: usize) -> Option<usize> {
         [
-            prefix_cycles.saturating_mul(size_of::<Option<u8>>()),
+            prefix_cycles.checked_mul(size_of::<Option<u8>>())?,
             (1usize << REGISTER_ADDRESS_BITS) * size_of::<F>(),
-            SplitLt::<F>::split_bytes(log_t),
-            fallible_collect_bytes::<F>(prefix_cycles.div_ceil(2)),
+            SplitLt::<F>::split_bytes(log_t)?,
+            fallible_collect_bytes::<F>(prefix_cycles.div_ceil(2))?,
         ]
         .into_iter()
-        .fold(0usize, usize::saturating_add)
+        .try_fold(0usize, usize::checked_add)
     }
 }
 
@@ -555,7 +556,7 @@ mod tests {
     fn peak_bytes_holds_the_parked_rd_indices_once() {
         assert_eq!(
             OptimizedRegistersValEvaluation::peak_bytes::<Fr>(13, 5000),
-            10_000 + 4_096 + 10_240 + 500_000
+            Some(10_000 + 4_096 + 10_240 + 500_000)
         );
     }
 }

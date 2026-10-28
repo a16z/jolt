@@ -95,22 +95,22 @@ impl InstructionInputRow {
 pub struct OptimizedInstructionInput;
 
 impl OptimizedInstructionInput {
-    /// Peak bytes of the kernel over `prefix_cycles` cycles before the trace's
-    /// constant suffix. The first bind builds the four operand tables and the
-    /// packed flag words at `⌈prefix_cycles / 2⌉` entries each. Each later bind
-    /// halves the operand tables, the first one's bound half
-    /// (`bind_prefix_pairs_buffer_len`) beside all four, then repacks the words
-    /// beside the old ones and squares the flag lookup table beside the old
-    /// one; once the table saturates, the bind instead materializes four flag
-    /// tables beside the words and the table. An operand table bound in place
-    /// keeps its capacity; the dense binds after the switch hold less. Not
-    /// counted: the row store, a handle on the witness's rows when it has one;
-    /// the split-eq tables.
-    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> usize {
+    /// Peak bytes of the kernel over `prefix_cycles` cycles before the
+    /// trace's constant suffix, or `None` past `usize::MAX`. The first bind
+    /// builds the four operand tables and the packed flag words at
+    /// `⌈prefix_cycles / 2⌉` entries each. Each later bind halves the operand
+    /// tables, the first one's bound half (`bind_prefix_pairs_buffer_len`)
+    /// beside all four, then repacks the words beside the old ones and squares
+    /// the flag lookup table beside the old one; once the table saturates, the
+    /// bind instead materializes four flag tables beside the words and the
+    /// table. An operand table bound in place keeps its capacity; the dense
+    /// binds after the switch hold less. Not counted: the row store, a handle
+    /// on the witness's rows when it has one; the split-eq tables.
+    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
         let bytes = |field: usize, words: usize| {
             field
-                .saturating_mul(size_of::<F>())
-                .saturating_add(words.saturating_mul(size_of::<u64>()))
+                .checked_mul(size_of::<F>())?
+                .checked_add(words.checked_mul(size_of::<u64>())?)
         };
         let mut len = prefix_cycles.div_ceil(2);
         let mut capacity = len;
@@ -120,24 +120,18 @@ impl OptimizedInstructionInput {
             let lut = 1usize << bits;
             let bound = len.div_ceil(2);
             let buffer = bind_prefix_pairs_buffer_len(len);
-            let operands = capacity.saturating_mul(NUM_TABLES / 2);
-            peak = peak.max(bytes(
-                operands.saturating_add(buffer).saturating_add(lut),
-                len,
-            ));
+            let operands = capacity.checked_mul(NUM_TABLES / 2)?;
+            peak = peak.max(bytes(operands.checked_add(buffer)?.checked_add(lut)?, len)?);
             if buffer > 0 {
                 capacity = bound;
             }
-            let operands = capacity.saturating_mul(NUM_TABLES / 2);
+            let operands = capacity.checked_mul(NUM_TABLES / 2)?;
             if bits == PackedFlags::<F>::SATURATED_BITS {
-                let flags = bound.saturating_mul(NUM_TABLES / 2);
-                return peak.max(bytes(
-                    operands.saturating_add(flags).saturating_add(lut),
-                    len,
-                ));
+                let flags = bound.checked_mul(NUM_TABLES / 2)?;
+                return Some(peak.max(bytes(operands.checked_add(flags)?.checked_add(lut)?, len)?));
             }
-            let words = len.saturating_add(bound);
-            peak = peak.max(bytes(operands.saturating_add(lut + lut * lut), words));
+            let words = len.checked_add(bound)?;
+            peak = peak.max(bytes(operands.checked_add(lut + lut * lut)?, words)?);
             len = bound;
             bits *= 2;
         }

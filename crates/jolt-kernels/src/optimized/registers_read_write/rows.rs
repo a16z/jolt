@@ -131,12 +131,12 @@ impl StreamConsumer for CollectRegisterEntries {
 
 impl CollectRegisterEntries {
     /// Bytes of the parallel collect's bookkeeping over `cycles` cycles, live
-    /// while the entries scatter: a count, an offset and an output window per
-    /// chunk.
-    pub(super) fn chunk_bytes(cycles: usize) -> usize {
+    /// while the entries scatter, or `None` past `usize::MAX`: a count, an
+    /// offset and an output window per chunk.
+    pub(super) fn chunk_bytes(cycles: usize) -> Option<usize> {
         cycles
             .div_ceil(COLLECT_PAR_CHUNK)
-            .saturating_mul(2 * size_of::<usize>() + size_of::<&mut [MaybeUninit<SeedEntry>]>())
+            .checked_mul(2 * size_of::<usize>() + size_of::<&mut [MaybeUninit<SeedEntry>]>())
     }
 
     pub(super) fn collect<F: JoltField>(

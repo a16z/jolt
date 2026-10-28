@@ -53,30 +53,30 @@ pub struct OptimizedRegistersReadWrite;
 
 impl OptimizedRegistersReadWrite {
     /// Peak bytes of the kernel `prepare` builds for `dimensions` over the
-    /// `prefix_cycles` cycles before the trace's constant suffix, under the
-    /// same `ReadWriteOrder` dispatch, with the per-cycle `rd` indices it parks
-    /// for stage 5: the cycle-first sparse state (`CycleState::peak_bytes`)
-    /// beside the `rs1` and `rs2` index columns, or the address-first tables
-    /// (`AddressFirstKernel::peak_bytes`); none for a phase split `prepare`
-    /// rejects before allocating. The parked indices' truncated copy is less
-    /// than the increments' copy in the cycle-first preparation and than the
-    /// address-first handoff. Not counted: the Gruen split-eq tables, the round
-    /// challenges, and the collects without random-access rows, which keep
-    /// every cycle, or without `parallel`, with their per-chunk extraction
-    /// buffers.
+    /// `prefix_cycles` cycles before the trace's constant suffix, or `None`
+    /// past `usize::MAX`, under the same `ReadWriteOrder` dispatch, with the
+    /// per-cycle `rd` indices it parks for stage 5: the cycle-first sparse
+    /// state (`CycleState::peak_bytes`) beside the `rs1` and `rs2` index
+    /// columns, or the address-first tables (`AddressFirstKernel::peak_bytes`);
+    /// none for a phase split `prepare` rejects before allocating. The parked
+    /// indices' truncated copy is less than the increments' copy in the
+    /// cycle-first preparation and than the address-first handoff. Not
+    /// counted: the Gruen split-eq tables, the round challenges, and the
+    /// collects without random-access rows, which keep every cycle, or without
+    /// `parallel`, with their per-chunk extraction buffers.
     pub fn peak_bytes<F: JoltField>(
         dimensions: ReadWriteDimensions,
         prefix_cycles: usize,
-    ) -> usize {
-        let column = prefix_cycles.saturating_mul(size_of::<Option<u8>>());
+    ) -> Option<usize> {
+        let column = prefix_cycles.checked_mul(size_of::<Option<u8>>())?;
         match ReadWriteOrder::new::<F>(dimensions) {
             Ok(ReadWriteOrder::CycleFirst) => column
-                .saturating_mul(3)
-                .saturating_add(CycleState::<F>::peak_bytes(prefix_cycles)),
+                .checked_mul(3)?
+                .checked_add(CycleState::<F>::peak_bytes(prefix_cycles)?),
             Ok(ReadWriteOrder::AddressFirst) => {
-                column.saturating_add(AddressFirstKernel::<F>::peak_bytes(prefix_cycles))
+                column.checked_add(AddressFirstKernel::<F>::peak_bytes(prefix_cycles)?)
             }
-            Err(_) => 0,
+            Err(_) => Some(0),
         }
     }
 }

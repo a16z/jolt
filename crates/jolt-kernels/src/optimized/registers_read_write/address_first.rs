@@ -91,36 +91,39 @@ pub(super) struct AddressFirstKernel<F: JoltField> {
 
 impl<F: JoltField> AddressFirstKernel<F> {
     /// Peak bytes over the `prefix_cycles` cycles before the trace's constant
-    /// suffix that `prepare` keeps: the most of the access rows' fallible
-    /// collect (`fallible_collect_bytes`), the handoff to the cycle rounds and
-    /// the cycle rounds. The handoff holds the rows, the increment checkpoints,
-    /// the final register values and the `K` bound address weights while it
-    /// fills the five `prefix_cycles`-entry cycle tables (`rs1` in the address
-    /// eq table's allocation) through one checkpoint value per chunk task; the
-    /// cycle rounds hold the five tables and the bound half the first bind
-    /// collects (`bind_prefix_pairs_buffer_len`). Preparation after the collect
-    /// and the address rounds hold the rows, the checkpoints, the eq table and
-    /// at most `K` checkpoint values per chunk task, less than the handoff.
-    pub(super) fn peak_bytes(prefix_cycles: usize) -> usize {
-        let field = |count: usize| count.saturating_mul(size_of::<F>());
+    /// suffix that `prepare` keeps, or `None` past `usize::MAX`: the most of
+    /// the access rows' fallible collect (`fallible_collect_bytes`), the
+    /// handoff to the cycle rounds and the cycle rounds. The handoff holds the
+    /// rows, the increment checkpoints, the final register values and the `K`
+    /// bound address weights while it fills the five `prefix_cycles`-entry
+    /// cycle tables (`rs1` in the address eq table's allocation) through one
+    /// checkpoint value per chunk task; the cycle rounds hold the five tables
+    /// and the bound half the first bind collects
+    /// (`bind_prefix_pairs_buffer_len`). Preparation after the collect and
+    /// the address rounds hold the rows, the checkpoints, the eq table and at
+    /// most `K` checkpoint values per chunk task, less than the handoff.
+    pub(super) fn peak_bytes(prefix_cycles: usize) -> Option<usize> {
+        let field = |count: usize| count.checked_mul(size_of::<F>());
         let checkpoint = size_of::<[i128; 1 << REGISTER_ADDRESS_BITS]>();
         let chunks = prefix_cycles.div_ceil(CHUNK);
-        let tables = field(prefix_cycles.saturating_mul(5));
+        let tables = field(prefix_cycles.checked_mul(5)?)?;
         let handoff = [
-            prefix_cycles.saturating_mul(size_of::<Access>()),
-            chunks.saturating_mul(checkpoint),
+            prefix_cycles.checked_mul(size_of::<Access>())?,
+            chunks.checked_mul(checkpoint)?,
             checkpoint,
-            field(1 << REGISTER_ADDRESS_BITS),
+            field(1 << REGISTER_ADDRESS_BITS)?,
             tables,
-            field(pool_workers().min(chunks)),
+            field(pool_workers().min(chunks))?,
         ]
         .into_iter()
-        .fold(0usize, usize::saturating_add);
+        .try_fold(0usize, usize::checked_add)?;
         let cycle_rounds =
-            tables.saturating_add(field(bind_prefix_pairs_buffer_len(prefix_cycles)));
-        fallible_collect_bytes::<Access>(prefix_cycles)
-            .max(handoff)
-            .max(cycle_rounds)
+            tables.checked_add(field(bind_prefix_pairs_buffer_len(prefix_cycles))?)?;
+        Some(
+            fallible_collect_bytes::<Access>(prefix_cycles)?
+                .max(handoff)
+                .max(cycle_rounds),
+        )
     }
 
     pub(super) fn prepare(

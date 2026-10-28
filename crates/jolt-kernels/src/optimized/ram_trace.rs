@@ -55,28 +55,27 @@ fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError
     }
 }
 
-/// Bytes `value_generations` collected generations of RAM access columns hold
-/// over `prefix_cycles` cycles before the trace's constant suffix: the `u32`
-/// address column once, one backing however many handles and generations share
-/// it, and the two `u64` value columns of each
-/// [`RamAccessColumns::collect_full`] call, each truncated to at most
-/// `prefix_cycles` entries. Excludes allocator slack.
-pub fn ram_access_columns_bytes(prefix_cycles: usize, value_generations: usize) -> usize {
+/// Bytes `value_generations` collected generations of RAM access columns
+/// hold over `prefix_cycles` cycles before the trace's constant suffix, or
+/// `None` past `usize::MAX`: the `u32` address column once, one backing
+/// however many handles and generations share it, and the two `u64` value
+/// columns of each [`RamAccessColumns::collect_full`] call, each truncated to
+/// at most `prefix_cycles` entries. Excludes allocator slack.
+pub fn ram_access_columns_bytes(prefix_cycles: usize, value_generations: usize) -> Option<usize> {
     let row_bytes = value_generations
-        .saturating_mul(2 * size_of::<u64>())
-        .saturating_add(size_of::<u32>());
-    prefix_cycles.saturating_mul(row_bytes)
+        .checked_mul(2 * size_of::<u64>())?
+        .checked_add(size_of::<u32>())?;
+    prefix_cycles.checked_mul(row_bytes)
 }
 
 /// Bytes a [`RamAccessColumns::collect_full`] call holds while it collects,
-/// beyond its generation's share of [`ram_access_columns_bytes`]: each value
-/// column's row at the constant suffix, collected before the truncation, and
-/// the copy one column's `shrink_to_fit` may allocate beside the other.
-/// Excludes collector bookkeeping.
-pub fn ram_value_collection_bytes(prefix_cycles: usize) -> usize {
-    prefix_cycles
-        .saturating_add(2)
-        .saturating_mul(size_of::<u64>())
+/// beyond its generation's share of [`ram_access_columns_bytes`], or `None`
+/// past `usize::MAX`: each value column's row at the constant suffix,
+/// collected before the truncation, and the copy one column's
+/// `shrink_to_fit` may allocate beside the other. Excludes collector
+/// bookkeeping.
+pub fn ram_value_collection_bytes(prefix_cycles: usize) -> Option<usize> {
+    prefix_cycles.checked_add(2)?.checked_mul(size_of::<u64>())
 }
 
 /// A logical RAM address column with an implicit no-access suffix.
@@ -519,7 +518,7 @@ mod tests {
             assert!(Arc::ptr_eq(&stage2.addresses, &addresses));
             assert_eq!(
                 requested_bytes(&addresses.values) + values(&stage2),
-                ram_access_columns_bytes(prefix_cycles, 1)
+                ram_access_columns_bytes(prefix_cycles, 1).unwrap()
             );
 
             let stage4 =
@@ -527,7 +526,7 @@ mod tests {
             assert!(Arc::ptr_eq(&stage4.addresses, &addresses));
             assert_eq!(
                 requested_bytes(&addresses.values) + values(&stage2) + values(&stage4),
-                ram_access_columns_bytes(prefix_cycles, 2)
+                ram_access_columns_bytes(prefix_cycles, 2).unwrap()
             );
         });
     }

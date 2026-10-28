@@ -61,7 +61,8 @@ tier, slotting into the same instrumented seams.
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
 A budget below the optimized prover's known eager reservation fails after
-tracing, before proving. The reservation counts the trace buffer at its
+tracing, before proving, and so does every budget when that reservation
+exceeds the address space. The reservation counts the trace buffer at its
 reserved capacity and the largest stage-1–5 envelope of the Spartan,
 instruction-input and register (claim reduction, read/write checking and value
 evaluation) tables over the trace's rows before its constant padding suffix,

@@ -20,9 +20,9 @@ use crate::{ProverConfig, ProverError};
 
 /// One batch member's peak bytes under the kernel
 /// [`JoltBackend::optimized`](crate::JoltBackend::optimized) installs in its
-/// slot, over `$prefix` cycles before the trace's constant suffix. Every
-/// member of the priced batches has an arm, so a member added to one of them
-/// fails to compile here until it is classified.
+/// slot, over `$prefix` cycles before the trace's constant suffix, or `None`
+/// past `usize::MAX`. Every member of the priced batches has an arm, so a
+/// member added to one of them fails to compile here until it is classified.
 macro_rules! member_peak_bytes {
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, outer_remainder) => {
         OptimizedOuterRemainder::peak_bytes::<$F>($prefix)
@@ -48,39 +48,40 @@ macro_rules! member_peak_bytes {
     // Not priced yet: the reservation omits these members' own allocations
     // (the RAM access columns some of them hold are added per stage).
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_read_write) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, instruction_claim_reduction) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, field_registers_claim_reduction) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_raf_evaluation) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_output_check) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, field_registers_read_write) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_val_check) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, instruction_read_raf) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_ra_claim_reduction) => {
-        0
+        Some(0)
     };
     ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, field_registers_val_evaluation) => {
-        0
+        Some(0)
     };
 }
 
-/// One stage batch's priced bytes, folded over the verifier's member list: the
-/// sum of the members' peaks, which bounds what they hold at once.
+/// One stage batch's priced bytes, folded over the verifier's member list, or
+/// `None` past `usize::MAX`: the sum of the members' peaks, which bounds what
+/// they hold at once.
 macro_rules! batch_peak_bytes {
     (
         $F:ty, $log_t:ident, $prefix:ident, $registers:ident;
@@ -90,7 +91,9 @@ macro_rules! batch_peak_bytes {
         shape = $shape:ident,
         members = [$({ name: $name:ident, $($member:tt)* },)+]
     ) => {
-        0usize $(.saturating_add(member_peak_bytes!($F, $log_t, $prefix, $registers, $name)))+
+        [$(member_peak_bytes!($F, $log_t, $prefix, $registers, $name)),+]
+            .into_iter()
+            .try_fold(0usize, |sum, member| sum.checked_add(member?))
     };
 }
 
@@ -111,12 +114,15 @@ impl MemoryBudget {
         self.bytes
     }
 
-    /// Rejects this budget with [`ProverError::MemoryBudgetExceeded`] when it
-    /// is below the bytes reserved for a named subset of the eager
-    /// allocations of an optimized proof of `trace` under `config`, which
-    /// must be the canonical configuration derived from `trace`; the check
-    /// does not validate it. The SDK and profile callers run it after tracing
-    /// and before building the witness.
+    /// Rejects this budget when it is below the bytes reserved for a named
+    /// subset of the eager allocations of an optimized proof of `trace` under
+    /// `config`, which must be the canonical configuration derived from
+    /// `trace`; the check does not validate it. A reservation within
+    /// `usize::MAX` above the budget fails with
+    /// [`ProverError::MemoryBudgetExceeded`]; one past `usize::MAX` fails
+    /// every budget with [`ProverError::MemoryReservationOverflow`]. The SDK
+    /// and profile callers run it after tracing and before building the
+    /// witness.
     ///
     /// The reservation is the trace buffers at their reserved capacity
     /// ([`TraceData::heap_bytes`]) plus the largest stage-1–5 envelope over
@@ -166,43 +172,60 @@ impl MemoryBudget {
         config: &ProverConfig,
         trace: &TraceData,
     ) -> Result<(), ProverError<F>> {
-        let stages = stage_reservations::<F>(config, trace.proof_len().min(config.trace_length));
-        let required = trace
-            .heap_bytes()
-            .saturating_add(stages.into_iter().fold(0, usize::max));
-        if self.bytes < required {
-            return Err(ProverError::MemoryBudgetExceeded {
+        self.check_reservation(
+            config,
+            trace.proof_len().min(config.trace_length),
+            trace.heap_bytes(),
+        )
+    }
+
+    /// [`Self::check_known_eager`] over `prefix_cycles` cycles before the
+    /// trace's constant suffix and `trace_bytes` of trace buffers.
+    fn check_reservation<F: JoltField>(
+        self,
+        config: &ProverConfig,
+        prefix_cycles: usize,
+        trace_bytes: usize,
+    ) -> Result<(), ProverError<F>> {
+        let required = stage_reservations::<F>(config, prefix_cycles)
+            .and_then(|stages| trace_bytes.checked_add(stages.into_iter().max()?));
+        match required {
+            Some(required) if self.bytes >= required => Ok(()),
+            Some(required) => Err(ProverError::MemoryBudgetExceeded {
                 budget: self.bytes,
                 required,
-            });
+            }),
+            None => Err(ProverError::MemoryReservationOverflow { budget: self.bytes }),
         }
-        Ok(())
     }
 }
 
 /// The stage-1–5 envelopes [`MemoryBudget::check_known_eager`] reserves beside
 /// the trace for `config` over `prefix_cycles` cycles before the trace's
-/// constant suffix.
-fn stage_reservations<F: JoltField>(config: &ProverConfig, prefix_cycles: usize) -> [usize; 5] {
+/// constant suffix, or `None` past `usize::MAX`.
+fn stage_reservations<F: JoltField>(
+    config: &ProverConfig,
+    prefix_cycles: usize,
+) -> Option<[usize; 5]> {
     let log_t = config.trace_length.ilog2() as usize;
     let registers = config
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
-    let held = ram_access_columns_bytes(prefix_cycles, 1);
-    let collected = ram_value_collection_bytes(prefix_cycles);
-    [
-        jolt_verifier::stage1_batch_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;),
-        jolt_verifier::stage2_batch_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
-            .saturating_add(held)
-            .saturating_add(collected),
-        jolt_verifier::stage3_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
-            .saturating_add(held),
-        jolt_verifier::stage4_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
-            .saturating_add(ram_access_columns_bytes(prefix_cycles, 2))
-            .saturating_add(collected),
-        jolt_verifier::stage5_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
-            .saturating_add(held),
-    ]
+    let held = ram_access_columns_bytes(prefix_cycles, 1)?;
+    let collected = ram_value_collection_bytes(prefix_cycles)?;
+    Some([
+        jolt_verifier::stage1_batch_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)?,
+        jolt_verifier::stage2_batch_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)?
+            .checked_add(held)?
+            .checked_add(collected)?,
+        jolt_verifier::stage3_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)?
+            .checked_add(held)?,
+        jolt_verifier::stage4_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)?
+            .checked_add(ram_access_columns_bytes(prefix_cycles, 2)?)?
+            .checked_add(collected)?,
+        jolt_verifier::stage5_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)?
+            .checked_add(held)?,
+    ])
 }
 
 #[cfg(test)]
@@ -236,7 +259,7 @@ mod tests {
     }
 
     fn stages<F: JoltField>(config: &ProverConfig) -> [usize; 5] {
-        stage_reservations::<F>(config, PREFIX)
+        stage_reservations::<F>(config, PREFIX).unwrap()
     }
 
     /// `PREFIX` jump rows, then canonical padding to `2^LOG_T` rows, in a
@@ -449,5 +472,30 @@ mod tests {
             check::<Fr>(required - 1, &config, &trace),
             Err(ProverError::MemoryBudgetExceeded { required: same, .. }) if same == required
         ));
+    }
+
+    /// The address-space boundary, allocation-free: over `2^(usize::BITS - 7)`
+    /// cycles (2^25 on wasm32) all before the constant suffix, stage 1's `Az`
+    /// and `Bz` alone hold `2 · 2^(BITS - 6)` Fr elements, `2^BITS` bytes. That
+    /// reservation exceeds `usize::MAX`, so even a `usize::MAX` budget fails.
+    /// A prefix whose reservation is representable still passes at exactly
+    /// the reported requirement.
+    #[test]
+    fn reservation_past_the_address_space_rejects_every_budget() {
+        let log_t = usize::BITS as usize - 7;
+        let config = config::<Fr>(log_t);
+        let check = |budget: usize, prefix_cycles: usize| {
+            MemoryBudget::from_bytes(budget).check_reservation::<Fr>(&config, prefix_cycles, 0)
+        };
+        assert!(matches!(
+            check(usize::MAX, 1 << log_t),
+            Err(ProverError::MemoryReservationOverflow { budget: usize::MAX })
+        ));
+        let prefix_cycles = 1 << (log_t - 13);
+        let Err(ProverError::MemoryBudgetExceeded { required, .. }) = check(0, prefix_cycles)
+        else {
+            panic!("an empty budget passed");
+        };
+        assert!(check(required, prefix_cycles).is_ok());
     }
 }

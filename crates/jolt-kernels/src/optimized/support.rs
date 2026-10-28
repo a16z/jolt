@@ -558,14 +558,14 @@ pub(crate) fn bind_prefix_pairs_buffer_len(len: usize) -> usize {
     }
 }
 
-/// Bytes a Rayon fallible `collect::<Result<Vec<T>, _>>()` of `len` entries may
-/// hold at once. The collect is unindexed: it folds each split into its own
-/// vector on a linked list, then appends them into one table reserved at `len`.
-/// Split sizes have no lower bound, so each entry is priced at its worst: its
-/// table slot, four vector slots (a one-entry split reserves four) and a list
-/// node.
-pub(crate) fn fallible_collect_bytes<T>(len: usize) -> usize {
-    len.saturating_mul(5 * size_of::<T>() + size_of::<Vec<T>>() + 2 * size_of::<usize>())
+/// Bytes a Rayon fallible `collect::<Result<Vec<T>, _>>()` of `len` entries
+/// may hold at once, or `None` past `usize::MAX`. The collect is unindexed:
+/// it folds each split into its own vector on a linked list, then appends
+/// them into one table reserved at `len`. Split sizes have no lower bound, so
+/// each entry is priced at its worst: its table slot, four vector slots (a
+/// one-entry split reserves four) and a list node.
+pub(crate) fn fallible_collect_bytes<T>(len: usize) -> Option<usize> {
+    len.checked_mul(5 * size_of::<T>() + size_of::<Vec<T>>() + 2 * size_of::<usize>())
 }
 
 /// The drawn challenges of a kernel's bound rounds, tracked against the
@@ -1018,12 +1018,13 @@ impl<F: JoltField> SplitLt<F> {
         vars / 2
     }
 
-    /// Bytes of the three split tables over `vars >= 2` variables.
-    pub(crate) fn split_bytes(vars: usize) -> usize {
+    /// Bytes of the three split tables over `vars >= 2` variables, or `None`
+    /// past `usize::MAX`.
+    pub(crate) fn split_bytes(vars: usize) -> Option<usize> {
         let hi = 1usize << (vars - Self::lo_vars(vars));
         (1usize << Self::lo_vars(vars))
-            .saturating_add(hi.saturating_mul(2))
-            .saturating_mul(size_of::<F>())
+            .checked_add(hi.checked_mul(2)?)?
+            .checked_mul(size_of::<F>())
     }
 
     pub(crate) fn new(r_cycle: &[F]) -> Self {

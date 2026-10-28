@@ -1061,19 +1061,20 @@ pub struct OptimizedOuterRemainder;
 
 impl OptimizedOuterRemainder {
     /// Peak bytes of the remainder over `prefix_cycles` cycles before the
-    /// trace's constant suffix: `Az` and `Bz` at their `2 · prefix_cycles`
-    /// allocated entries each, which binding never grows, plus the larger of
-    /// the bound half the first bind of `Az` collects beside both
-    /// (`bind_prefix_pairs_buffer_len`) and the closing opening walk's
-    /// `prefix_cycles + 1` cycle weights. Not counted: the row store, a handle
-    /// on the witness's rows when it has one; the uni-skip carry; the split-eq
-    /// tables; the opening walk's per-block sums; the field-inline rows.
-    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> usize {
-        let len = prefix_cycles.saturating_mul(2);
-        let transient = bind_prefix_pairs_buffer_len(len).max(prefix_cycles.saturating_add(1));
-        len.saturating_mul(2)
-            .saturating_add(transient)
-            .saturating_mul(size_of::<F>())
+    /// trace's constant suffix, or `None` past `usize::MAX`: `Az` and `Bz` at
+    /// their `2 · prefix_cycles` allocated entries each, which binding never
+    /// grows, plus the larger of the bound half the first bind of `Az`
+    /// collects beside both (`bind_prefix_pairs_buffer_len`) and the
+    /// closing opening walk's `prefix_cycles + 1` cycle weights. Not counted:
+    /// the row store, a handle on the witness's rows when it has one; the
+    /// uni-skip carry; the split-eq tables; the opening walk's per-block sums;
+    /// the field-inline rows.
+    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
+        let len = prefix_cycles.checked_mul(2)?;
+        let transient = bind_prefix_pairs_buffer_len(len).max(prefix_cycles.checked_add(1)?);
+        len.checked_mul(2)?
+            .checked_add(transient)?
+            .checked_mul(size_of::<F>())
     }
 }
 

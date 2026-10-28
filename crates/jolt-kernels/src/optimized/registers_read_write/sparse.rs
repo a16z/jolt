@@ -238,10 +238,11 @@ impl<F: JoltField> CycleState<F> {
         })
     }
 
-    /// Peak bytes of the cycle-first state over the `cycles` cycles before the
-    /// trace's constant suffix that the collect retains: the most any phase
-    /// holds at once, with every entry generation at [`MAX_ENTRIES_PER_CYCLE`]
-    /// entries per cycle (`R`; binding only merges rows):
+    /// Peak bytes of the cycle-first state over the `cycles` cycles before
+    /// the trace's constant suffix that the collect retains, or `None` past
+    /// `usize::MAX`: the most any phase holds at once, with every entry
+    /// generation at [`MAX_ENTRIES_PER_CYCLE`] entries per cycle (`R`; binding
+    /// only merges rows):
     ///
     /// - preparation: the `R` seed entries and raw increments, with the
     ///   parallel collect's chunk bookkeeping, then the truncated copy of the
@@ -267,65 +268,62 @@ impl<F: JoltField> CycleState<F> {
     /// table, which only the third bind's copy adds to that allocation. The
     /// collapse to the `K`-entry address tables, the address rounds and the
     /// output eq tables hold less than the fourth bind.
-    pub(super) fn peak_bytes(cycles: usize) -> usize {
+    pub(super) fn peak_bytes(cycles: usize) -> Option<usize> {
         let sum = |terms: &[usize]| {
             terms
                 .iter()
-                .fold(0usize, |total, &term| total.saturating_add(term))
+                .try_fold(0usize, |total, &term| total.checked_add(term))
         };
-        let field = |count: usize| count.saturating_mul(size_of::<F>());
+        let field = |count: usize| count.checked_mul(size_of::<F>());
         let read = |binds: u32| lut_len(READ_SEED_VALUES, binds);
         let write = |binds: u32| lut_len(WRITE_SEED_VALUES, binds);
         let lut = |binds: u32| field(read(binds) + write(binds));
         // The read LUT squares first, then the write LUT.
         let squaring =
             |binds: u32| field(read(binds + 1) + write(binds) + read(binds).max(write(binds + 1)));
-        let entries = cycles.saturating_mul(MAX_ENTRIES_PER_CYCLE);
-        let increments = field(cycles.div_ceil(4));
-        let increment_copy = field(bind_prefix_pairs_buffer_len(cycles.div_ceil(4)));
+        let entries = cycles.checked_mul(MAX_ENTRIES_PER_CYCLE)?;
+        let increments = field(cycles.div_ceil(4))?;
+        let increment_copy = field(bind_prefix_pairs_buffer_len(cycles.div_ceil(4)))?;
         let blocks = block_count(entries);
         let block_pass = |task_scratch: usize| {
             let bookkeeping = 2 * size_of::<usize>() + 2 * size_of::<&mut [F]>();
             sum(&[
-                blocks.saturating_add(1).saturating_mul(bookkeeping),
-                pool_workers().min(blocks).saturating_mul(task_scratch),
+                blocks.checked_add(1)?.checked_mul(bookkeeping)?,
+                pool_workers().min(blocks).checked_mul(task_scratch)?,
             ])
         };
-        let raw_increments = cycles.saturating_mul(size_of::<i128>());
-        let seeds = sum(&[
-            entries.saturating_mul(size_of::<SeedEntry>()),
-            raw_increments,
-        ]);
-        let indexed = entries.saturating_mul(size_of::<F>() + size_of::<IndexedMeta>());
-        let direct = entries.saturating_mul(size_of::<SparseEntry<F, F>>());
+        let raw_increments = cycles.checked_mul(size_of::<i128>())?;
+        let seeds = sum(&[entries.checked_mul(size_of::<SeedEntry>())?, raw_increments])?;
+        let indexed = entries.checked_mul(size_of::<F>() + size_of::<IndexedMeta>())?;
+        let direct = entries.checked_mul(size_of::<SparseEntry<F, F>>())?;
         let fused = 2 * FUSED_SCRATCH_LEN * size_of::<SparseEntry<F, LutIndex>>();
         let soa_scratch = IN_PLACE_SCRATCH_LEN * (size_of::<F>() + size_of::<IndexedMeta>());
         let direct_scratch = IN_PLACE_SCRATCH_LEN * size_of::<SparseEntry<F, F>>();
         [
             sum(&[
                 seeds,
-                CollectRegisterEntries::chunk_bytes(cycles).max(raw_increments),
+                CollectRegisterEntries::chunk_bytes(cycles)?.max(raw_increments),
             ]),
-            sum(&[seeds, lut(0), lut(1), pool_workers().saturating_mul(fused)]),
+            sum(&[seeds, lut(0)?, lut(1)?, pool_workers().checked_mul(fused)?]),
             sum(&[
                 seeds,
                 indexed,
-                lut(0),
-                sum(&[lut(1), block_pass(fused)])
-                    .max(squaring(1))
-                    .max(sum(&[lut(2), increments])),
+                lut(0)?,
+                sum(&[lut(1)?, block_pass(fused)?])?
+                    .max(squaring(1)?)
+                    .max(sum(&[lut(2)?, increments])?),
             ]),
             sum(&[
                 indexed,
-                sum(&[lut(2), increments, block_pass(soa_scratch)])
-                    .max(sum(&[squaring(2), increments]))
-                    .max(sum(&[lut(3), increments, increment_copy])),
+                sum(&[lut(2)?, increments, block_pass(soa_scratch)?])?
+                    .max(sum(&[squaring(2)?, increments])?)
+                    .max(sum(&[lut(3)?, increments, increment_copy])?),
             ]),
-            sum(&[indexed, direct, lut(3), increments, block_pass(0)]),
-            sum(&[direct, increments, block_pass(direct_scratch)]),
+            sum(&[indexed, direct, lut(3)?, increments, block_pass(0)?]),
+            sum(&[direct, increments, block_pass(direct_scratch)?]),
         ]
         .into_iter()
-        .fold(0, usize::max)
+        .try_fold(0usize, |peak, phase| Some(peak.max(phase?)))
     }
 
     pub(super) fn unused_lut() -> CoeffLut<F> {
