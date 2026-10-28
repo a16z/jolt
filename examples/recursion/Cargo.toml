@@ -77,6 +77,12 @@ akita = [
 # weighted-dot-horner-triplet: inside each full five-row block of 64 two-limb
 # elements, the verifier guest's Horner weighted dot advances every row by three
 # coefficients per pointer and branch group; same field values. Default on.
+# lazy-scan-errors, digest-nozero, golomb-word, bytecode-fold, fill-ingress: the
+# verifier guest (and the host's Akita) build the setup-scan InvalidProof error
+# only on the failure path, copy the prevalidated row digests without a zero
+# fill, decode the terminal z Golomb-Rice stream by doubleword, index the stage
+# 6b bytecode fold by flag class directly and scale each bounded equality-fill
+# run once; same field values. Default on; effective only with `akita`.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -92,6 +98,11 @@ default = [
   "terminal-contraction",
   "prevalidated-catalog",
   "weighted-dot-horner-triplet",
+  "lazy-scan-errors",
+  "digest-nozero",
+  "golomb-word",
+  "bytecode-fold",
+  "fill-ingress",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
