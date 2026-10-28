@@ -70,7 +70,7 @@ pub use placement::{
 };
 pub use response::{
     CompressedTarget, ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows,
-    ResponseSegment, ResponseStatement, ResponseWitness, FIELD_LEVELS,
+    ResponseSegment, ResponseStatement, ResponseWeights, ResponseWitness, FIELD_LEVELS,
 };
 pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
