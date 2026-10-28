@@ -44,7 +44,7 @@ use jolt_claims::{
     protocols::jolt::{
         geometry::{
             dimensions::REGISTER_ADDRESS_BITS,
-            ram,
+            ram::{RamValCheckInit, RamValCheckInitContribution},
             spartan::{SpartanOuterDimensions, SpartanProductDimensions},
         },
         InstructionClaimReductionChallenge, InstructionClaimReductionPublic,
@@ -67,7 +67,8 @@ use jolt_claims::protocols::jolt::{
         claim_reductions::{
             advice,
             bytecode::{self as bytecode_reduction},
-            hamming_weight, program_image,
+            hamming_weight::{self, HammingWeightClaimReductionDimensions},
+            program_image,
         },
         dimensions::JoltFormulaDimensions,
     },
@@ -79,7 +80,7 @@ use jolt_claims::protocols::jolt::{
     InstructionReadRafChallenge, InstructionReadRafPublic, PrecommittedReductionLayout,
     ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic, RamHammingBooleanityPublic,
     RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-    RegistersValEvaluationPublic,
+    RegistersValEvaluationPublic, TraceDimensions,
 };
 #[cfg(any(
     feature = "fuzzing",
@@ -98,7 +99,9 @@ use jolt_poly::{
 #[cfg(not(feature = "akita"))]
 use jolt_poly::{OperandPolynomial, OperandSide};
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_sumcheck::{BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec};
+use jolt_sumcheck::{
+    BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec, SumcheckError,
+};
 use jolt_transcript::ClaimDomain;
 use jolt_zk::masking::{
     lower_factored, sumcheck_rows, AffineRow, LoweringDomain, MaskedOperand, OperandRule,
@@ -837,7 +840,7 @@ where
 // recognize the side-effect-free field negations in the body.
 fn ram_val_check_init<F, PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
-) -> Result<ram::RamValCheckInit<F>, VerifierError>
+) -> Result<RamValCheckInit<F>, VerifierError>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -848,17 +851,17 @@ where
     // clear-path decomposition in stage4/verify.rs.
     let mut contributions = Vec::new();
     if input.checked.precommitted.program_image.is_some() {
-        contributions.push(ram::RamValCheckInitContribution::program_image(-F::one()));
+        contributions.push(RamValCheckInitContribution::program_image(-F::one()));
     }
     if input.checked.untrusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
-        contributions.push(ram::RamValCheckInitContribution::untrusted(-selector.0));
+        contributions.push(RamValCheckInitContribution::untrusted(-selector.0));
     }
     if input.checked.trusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Trusted, &r_address)?;
-        contributions.push(ram::RamValCheckInitContribution::trusted(-selector.0));
+        contributions.push(RamValCheckInitContribution::trusted(-selector.0));
     }
-    Ok(ram::RamValCheckInit::decomposed(
+    Ok(RamValCheckInit::decomposed(
         input.stage4.ram_val_check_public_eval,
         contributions,
     ))
@@ -986,7 +989,7 @@ where
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let log_k = crate::num::ilog2(input.checked.ram_K);
-    let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+    let trace_dimensions = TraceDimensions::new(log_t);
 
     let bytecode_challenges = &input.stage6a.challenges.bytecode_read_raf;
     let challenge_publics: [(JoltChallengeId, PCS::Field); 9] = [
@@ -1593,7 +1596,7 @@ where
 #[cfg(not(feature = "akita"))]
 fn stage6_virtualization_points<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
-    dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+    dimensions: HammingWeightClaimReductionDimensions,
 ) -> Result<Vec<Vec<PCS::Field>>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1650,7 +1653,7 @@ impl<F: JoltField> SourceValues<F> {
 
 fn stage_sumcheck_error<F: JoltField>(
     stage: JoltRelationId,
-    error: jolt_sumcheck::SumcheckError<F>,
+    error: SumcheckError<F>,
 ) -> VerifierError {
     VerifierError::StageClaimSumcheckFailed {
         stage: format!("{stage:?}"),

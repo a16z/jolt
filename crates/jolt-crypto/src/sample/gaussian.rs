@@ -319,9 +319,11 @@ mod tests {
     #[cfg(feature = "parallel")]
     #[test]
     fn parallel_fill_is_independent_of_the_thread_count() {
+        use rayon::ThreadPoolBuilder;
+
         let sampler = GaussianSampler::new(GaussianWidth::from_multiplier(58_642_511_897).unwrap());
         let run = |threads: usize| {
-            let pool = rayon::ThreadPoolBuilder::new()
+            let pool = ThreadPoolBuilder::new()
                 .num_threads(threads)
                 .build()
                 .unwrap();

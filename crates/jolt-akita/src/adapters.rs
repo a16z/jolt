@@ -25,6 +25,8 @@ use jolt_algebra::{CanonicalBytes, CanonicalDecode, Zero};
 use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
+#[cfg(feature = "zk")]
+use jolt_zk::whiteout::PrecommittedShape;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -1250,7 +1252,7 @@ pub(crate) enum AkitaHintSource {
     /// Whiteout backend, as a precommitted group of `shape`.
     #[cfg(feature = "zk")]
     WhiteoutPrecommitted {
-        shape: jolt_zk::whiteout::PrecommittedShape,
+        shape: PrecommittedShape,
     },
 }
 

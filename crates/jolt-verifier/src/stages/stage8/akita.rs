@@ -25,6 +25,7 @@ use jolt_poly::Point;
 use jolt_transcript::{Channel, Sponge, VerifierTranscript};
 
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
+use crate::preprocessing::JoltVerifierPreprocessing;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
 #[cfg(all(feature = "akita", feature = "zk"))]
@@ -240,7 +241,7 @@ pub fn field_inc_claim<F: JoltField, C: Clone>(
 pub fn verify<PCS, VC, H>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
-    preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
@@ -464,7 +465,7 @@ impl<C> WhiteoutOpeningPlan<C> {
 pub fn whiteout_opening_plan<PCS, VC>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
-    preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
+    preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,

@@ -11,8 +11,12 @@ use jolt_openings::{
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+#[cfg(feature = "zk-prover")]
+use jolt_zk::masking::{AffineRow, CommittedPads, PadLayout, ResidualRelation, ZkError};
+#[cfg(feature = "zk-prover")]
+use jolt_zk::whiteout::WhiteoutPadOpening;
 #[cfg(feature = "zk")]
-use jolt_zk::whiteout::PrecommittedShape;
+use jolt_zk::whiteout::{DenseSource, MaskedOpeningShape, PrecommittedShape};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -35,6 +39,8 @@ use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
 use crate::trace_onehot::{TraceOneHotColumn, TraceOneHotRows};
 #[cfg(feature = "zk")]
 use crate::whiteout::WhiteoutSetup;
+#[cfg(feature = "zk-prover")]
+use crate::whiteout::{ProverGroup, WhiteoutResidual};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -122,11 +128,11 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     #[cfg(feature = "zk-prover")]
     fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
-        shape: &jolt_zk::whiteout::MaskedOpeningShape,
-        layout: jolt_zk::masking::PadLayout,
+        shape: &MaskedOpeningShape,
+        layout: PadLayout,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
-    ) -> Result<WhiteoutPads<Self::Field>, jolt_zk::masking::ZkError>;
+    ) -> Result<WhiteoutPads<Self::Field>, ZkError>;
 
     /// Whiteout: proves the masked levels of the opening of `shape` through
     /// the cut: the `precommitted` groups in canonical order, then `trace`,
@@ -140,33 +146,32 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     )]
     fn whiteout_prove_masked<H: Sponge>(
         setup: &Self::ProverSetup,
-        shape: &jolt_zk::whiteout::MaskedOpeningShape,
+        shape: &MaskedOpeningShape,
         precommitted: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         trace: GroupOpeningClaim<Self::Field, Self::Output>,
         hint: Self::OpeningHint,
-        forms: &[jolt_zk::masking::AffineRow<Self::Field>],
+        forms: &[AffineRow<Self::Field>],
         pads: &mut WhiteoutPads<Self::Field>,
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<(crate::whiteout::WhiteoutResidual, Vec<Self::Field>), jolt_zk::masking::ZkError>;
+    ) -> Result<(WhiteoutResidual, Vec<Self::Field>), ZkError>;
 
     /// Whiteout: proves `relation` by the Σ-protocol and the response proof
     /// (spec §2, rows 7 and 8).
     #[cfg(feature = "zk-prover")]
     fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
-        shape: &jolt_zk::whiteout::MaskedOpeningShape,
-        relation: &jolt_zk::masking::ResidualRelation<Self::Field>,
-        residual: &crate::whiteout::WhiteoutResidual,
+        shape: &MaskedOpeningShape,
+        relation: &ResidualRelation<Self::Field>,
+        residual: &WhiteoutResidual,
         pads: &WhiteoutPads<Self::Field>,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
-    ) -> Result<(), jolt_zk::masking::ZkError>;
+    ) -> Result<(), ZkError>;
 }
 
 /// Whiteout's committed pads.
 #[cfg(feature = "zk-prover")]
-pub type WhiteoutPads<F> =
-    jolt_zk::masking::CommittedPads<F, jolt_zk::whiteout::WhiteoutPadOpening<F>>;
+pub type WhiteoutPads<F> = CommittedPads<F, WhiteoutPadOpening<F>>;
 
 /// Strictly ascending roles make the ordered commitment group list
 /// unambiguous and forbid duplicate or permuted groups.
@@ -335,7 +340,7 @@ impl AkitaScheme {
                 .collect::<Result<Vec<_>, _>>()?;
             let shape = crate::whiteout::opening_shape(
                 &setup.verifier,
-                &jolt_zk::whiteout::MaskedOpeningShape {
+                &MaskedOpeningShape {
                     precommitted,
                     num_vars,
                     num_polys: poly_count,
@@ -660,11 +665,11 @@ impl TraceOneHotCommitment for AkitaScheme {
     #[cfg(feature = "zk-prover")]
     fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
-        shape: &jolt_zk::whiteout::MaskedOpeningShape,
-        layout: jolt_zk::masking::PadLayout,
+        shape: &MaskedOpeningShape,
+        layout: PadLayout,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
-    ) -> Result<WhiteoutPads<AkitaField>, jolt_zk::masking::ZkError> {
+    ) -> Result<WhiteoutPads<AkitaField>, ZkError> {
         let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;
         shape.tail().commit_pads(layout, transcript, rng)
     }
@@ -672,15 +677,14 @@ impl TraceOneHotCommitment for AkitaScheme {
     #[cfg(feature = "zk-prover")]
     fn whiteout_prove_masked<H: Sponge>(
         setup: &Self::ProverSetup,
-        shape: &jolt_zk::whiteout::MaskedOpeningShape,
+        shape: &MaskedOpeningShape,
         precommitted: Vec<GroupOpeningWithHint<AkitaField, AkitaCommitment, AkitaProverHint>>,
         trace: GroupOpeningClaim<AkitaField, AkitaCommitment>,
         hint: AkitaProverHint,
-        forms: &[jolt_zk::masking::AffineRow<AkitaField>],
+        forms: &[AffineRow<AkitaField>],
         pads: &mut WhiteoutPads<AkitaField>,
         transcript: &mut ProverTranscript<H>,
-    ) -> Result<(crate::whiteout::WhiteoutResidual, Vec<AkitaField>), jolt_zk::masking::ZkError>
-    {
+    ) -> Result<(WhiteoutResidual, Vec<AkitaField>), ZkError> {
         if precommitted.len() != shape.precommitted.len() {
             return Err(AkitaError::InvalidInput(
                 "the precommitted groups disagree with the opening's shape".into(),
@@ -703,7 +707,7 @@ impl TraceOneHotCommitment for AkitaScheme {
             let (commitment, handle) = hint.backend.ok_or_else(|| {
                 AkitaError::InvalidInput("a precommitted hint has no backend payload".into())
             })?;
-            groups.push(crate::whiteout::ProverGroup {
+            groups.push(ProverGroup {
                 commitment,
                 handle,
                 point: entry.claim.point,
@@ -713,7 +717,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         let (commitment, handle) = hint.backend.ok_or_else(|| {
             AkitaError::InvalidInput("the trace hint has no backend payload".into())
         })?;
-        groups.push(crate::whiteout::ProverGroup {
+        groups.push(ProverGroup {
             commitment,
             handle,
             point: crate::adapters::reverse_point(&trace.point),
@@ -724,19 +728,19 @@ impl TraceOneHotCommitment for AkitaScheme {
             opening
                 .row()
                 .prove_masked(groups, forms, pads, transcript, compression.as_ref())?;
-        Ok((crate::whiteout::WhiteoutResidual { opening }, auxiliary))
+        Ok((WhiteoutResidual { opening }, auxiliary))
     }
 
     #[cfg(feature = "zk-prover")]
     fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
-        shape: &jolt_zk::whiteout::MaskedOpeningShape,
-        relation: &jolt_zk::masking::ResidualRelation<AkitaField>,
-        residual: &crate::whiteout::WhiteoutResidual,
+        shape: &MaskedOpeningShape,
+        relation: &ResidualRelation<AkitaField>,
+        residual: &WhiteoutResidual,
         pads: &WhiteoutPads<AkitaField>,
         transcript: &mut ProverTranscript<H>,
         rng: &mut R,
-    ) -> Result<(), jolt_zk::masking::ZkError> {
+    ) -> Result<(), ZkError> {
         let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;
         shape
             .tail()
@@ -1147,7 +1151,7 @@ impl TransparentObjectSetup for AkitaScheme {
                 setup,
                 PrecommittedShape {
                     num_vars,
-                    source: jolt_zk::whiteout::DenseSource::FullField,
+                    source: DenseSource::FullField,
                 },
                 poly,
                 layout_digest,

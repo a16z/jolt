@@ -65,10 +65,10 @@ use jolt_transcript::Keccak;
 #[cfg(feature = "transcript-poseidon")]
 use jolt_transcript::PoseidonSponge;
 
-#[cfg(all(feature = "akita", not(feature = "zk")))]
-use crate::stages::stage8::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage8::Stage8Output;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
+use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 
 /// The sponge Jolt proofs run on: Poseidon under `transcript-poseidon`, else
 /// Keccak under `transcript-keccak`, else Blake2b. Every prover and verifier
@@ -640,7 +640,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     PCS::Output: Clone + OneHotTraceCommitmentMetadata,
-    PCS::VerifierSetup: stage8::OneHotTraceSetupMetadata,
+    PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Copy + CanonicalDecode,
     H: Sponge,

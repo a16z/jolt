@@ -9,6 +9,7 @@
 )]
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use akita_params::transcript_site::{
     SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
@@ -608,7 +609,7 @@ fn whiteout_tamper_per_census_class_with_precommitted_groups() {
 
 fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
     let (case, trace) = honest_of(case);
-    let mut groups: BTreeMap<(Region, Class, bool), Vec<std::ops::Range<usize>>> = BTreeMap::new();
+    let mut groups: BTreeMap<(Region, Class, bool), Vec<Range<usize>>> = BTreeMap::new();
     for item in classify(&trace) {
         if let (Some(class), Some(range)) = (item.class, trace.events[item.index].narg.clone()) {
             groups
