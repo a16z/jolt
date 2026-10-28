@@ -215,10 +215,11 @@ impl<const D: usize> NttCommitScratch<D> {
                     }
                     windows_loaded = true;
                 }
-                for slot in 0..self.buffered {
-                    self.windows[slot]
-                        .accumulate(&mut self.digit_accumulators[column], &self.shifts[slot]);
-                }
+                DigitWindows::accumulate_slots(
+                    &self.windows[..self.buffered],
+                    &mut self.digit_accumulators[column],
+                    &self.shifts[..self.buffered],
+                );
                 continue;
             }
             for slot in 0..self.buffered {
