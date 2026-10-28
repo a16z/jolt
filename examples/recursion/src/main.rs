@@ -950,6 +950,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("bytecode-fold");
     #[cfg(all(feature = "akita", feature = "fill-ingress"))]
     program.add_guest_feature("fill-ingress");
+    #[cfg(all(feature = "akita", feature = "setup-lane-streams"))]
+    program.add_guest_feature("setup-lane-streams");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
 }

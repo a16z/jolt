@@ -59,6 +59,7 @@ digest-nozero = ["prevalidated-catalog", "jolt-akita/digest-nozero"]
 golomb-word = ["akita", "jolt-akita/golomb-word"]
 bytecode-fold = ["akita", "jolt-akita/bytecode-fold"]
 fill-ingress = ["akita", "jolt-akita/fill-ingress"]
+setup-lane-streams = ["akita", "jolt-akita/setup-lane-streams"]
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
 # embedded_bytecode.rs imports jolt-riscv types when the host prepares an

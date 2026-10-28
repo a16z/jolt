@@ -142,6 +142,9 @@ golomb-word = ["jolt-akita?/golomb-word"]
 bytecode-fold = ["jolt-akita?/bytecode-fold"]
 # fill-ingress: one scale ingress per bounded run in the Akita equality fill.
 fill-ingress = ["jolt-akita?/fill-ingress"]
+# setup-lane-streams: the root setup scan streams each lane with its row
+# scales hoisted.
+setup-lane-streams = ["jolt-akita?/setup-lane-streams"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }
