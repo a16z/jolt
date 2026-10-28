@@ -14,6 +14,10 @@
 )]
 mod support;
 
+#[cfg(feature = "field-inline")]
+#[path = "../../jolt-prover/tests/support/dory_backend.rs"]
+mod dory_backend;
+
 use cudarc::driver::CudaContext;
 use dory::stages::stage0::TrustedAdviceCommitment;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;

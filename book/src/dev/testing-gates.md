@@ -64,6 +64,38 @@ inputs that keep the trace under the row's padded bound (2^16 by default),
 and the postcard-encoded output computed natively in the test. Field cases
 that execute field instructions must also set `field_inline_active: true`.
 
+### CUDA CI runner
+
+`.github/workflows/cuda.yml` uses a GitHub-hosted larger runner named
+`jolt-cuda-t4`. An organization administrator must create it and grant this
+repository access through its runner group:
+
+- Linux x64, NVIDIA GPU-Optimized VMI based on Ubuntu 22.04.
+- The single-T4 size: 4 vCPUs, 28 GB host RAM, and 16 GB GPU memory.
+- NVIDIA driver 550.54.15 or newer, compatible with CUDA 12.4.
+
+The runner name supplies the workflow label; it is not a standard label that
+GitHub provisions automatically. For public repositories, the runner group's
+access policy must also allow public repositories. See GitHub's
+[larger-runner setup](https://docs.github.com/en/actions/how-tos/manage-runners/larger-runners/manage-larger-runners)
+and [GPU runner specifications](https://docs.github.com/en/actions/reference/runners/larger-runners).
+The image's installed software is listed in NVIDIA's
+[Azure VMI documentation](https://docs.nvidia.com/ngc/ngc-deploy-public-cloud/ngc-azure/index.html).
+
+The workflow installs the CUDA 12.4 compiler and NVRTC without replacing the
+image's driver, compiles kernels for `sm_75`, and runs with one visible GPU and
+poisoned scratch buffers. It checks isolated serial library builds, then lints
+and tests the kernels, witness, Dory, and prover crates in clear/ZK and
+ordinary/field-inline configurations. Tests run serially to limit memory use.
+The CPU reference profiling smoke is excluded; `cuda_profile` verifies the
+CUDA profiling entry point instead.
+
+A final SHA-2-chain profile produces and verifies a proof at scale 18 and
+uploads the profiling artifacts. Manual dispatch permits scales 18, 20, 22,
+or 24; these larger choices are capacity checks and can exceed the runner's
+host or device memory. The default stays below the agreed scale-24 ceiling.
+Two-GPU runs belong to local benchmarking rather than this CI lane.
+
 ## Tamper rejection phases
 
 The tamper harness asserts *where* a rejection fires: each manifest target in

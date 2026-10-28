@@ -26,9 +26,9 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(feature = "field-inline")]
 use jolt_witness::JoltWitnessPlane;
-use jolt_witness::{
-    stream_witnesses, JoltWitnessOracle, RandomAccessRows, RowSource, StreamConsumer, WitnessError,
-};
+use jolt_witness::{stream_witnesses, JoltWitnessOracle, RowSource, StreamConsumer};
+#[cfg(feature = "parallel")]
+use jolt_witness::{RandomAccessRows, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 

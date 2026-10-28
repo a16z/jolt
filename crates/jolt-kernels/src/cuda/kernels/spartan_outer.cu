@@ -343,7 +343,9 @@ extern "C" __global__ void so_claims_kernel(
         u64 weight[LIMBS];
         so_split_eq(e_in, e_out, in_bits, t, weight);
 
-        for (unsigned int lane = 0; lane < lanes; lane++) {
+        // NVCC 12.4 miscompiles this accumulator loop with a dynamic upper bound.
+        for (unsigned int lane = 0; lane < SO_CLAIM_LANES; lane++) {
+            if (lane >= lanes) continue;
             unsigned int term = layout[first + lane];
             unsigned int slot = term & 0xFFu;
             unsigned int kind = (term >> 8) & 3u;
