@@ -319,7 +319,7 @@ impl AkitaScheme {
         Self::validate_commit_shape(setup, num_vars, poly_count)?;
         let one_hot_k = setup.one_hot_k();
         #[cfg(feature = "zk")]
-        if setup.verifier.whiteout.is_some() {
+        if setup.verifier.whiteout().is_some() {
             // Whiteout commits the trace group hiding, under the
             // zero-knowledge row keyed on its precommitted groups.
             let precommitted = group_hints
@@ -835,22 +835,13 @@ impl CommitmentScheme for AkitaScheme {
                 dense: dense_schedule_artifact()?,
             },
         };
-        let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
-            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
-        let verifier = AkitaVerifierSetup {
-            max_num_vars: params.max_num_vars,
-            max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
-            max_total_batch_polys: params.max_total_batch_polys,
-            default_layout_digest: params.default_layout_digest,
-            one_hot_k: params.one_hot_k,
-            schedule_artifacts,
-            backend_cache: BackendVerifierCache::default(),
-            #[cfg(feature = "zk")]
-            whiteout: params
-                .whiteout
-                .clone()
-                .map(|source| {
-                    WhiteoutSetup::new(
+        #[cfg(feature = "zk")]
+        let schedule_artifacts = match (schedule_artifacts, params.whiteout.clone()) {
+            (schedule_artifacts, None) => schedule_artifacts,
+            (AkitaVerifierScheduleArtifacts::OneHot { one_hot }, Some(source)) => {
+                AkitaVerifierScheduleArtifacts::OneHotWhiteout {
+                    one_hot,
+                    whiteout: WhiteoutSetup::new(
                         params.grouped_schedule.clone(),
                         source,
                         crate::whiteout::opens_whiteout(
@@ -862,9 +853,32 @@ impl CommitmentScheme for AkitaScheme {
                             params.max_num_polys_per_commitment_group,
                         )),
                     )
-                })
-                .transpose()
-                .map_err(invalid_setup)?,
+                    .map_err(invalid_setup)?,
+                }
+            }
+            (
+                AkitaVerifierScheduleArtifacts::Dense { .. }
+                | AkitaVerifierScheduleArtifacts::Both { .. }
+                | AkitaVerifierScheduleArtifacts::OneHotChunked { .. }
+                | AkitaVerifierScheduleArtifacts::BothChunked { .. }
+                | AkitaVerifierScheduleArtifacts::OneHotWhiteout { .. },
+                Some(_),
+            ) => {
+                return Err(invalid_setup(
+                    "Whiteout commits one single-chunk one-hot trace group",
+                ))
+            }
+        };
+        let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
+            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
+        let verifier = AkitaVerifierSetup {
+            max_num_vars: params.max_num_vars,
+            max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
+            max_total_batch_polys: params.max_total_batch_polys,
+            default_layout_digest: params.default_layout_digest,
+            one_hot_k: params.one_hot_k,
+            schedule_artifacts,
+            backend_cache: BackendVerifierCache::default(),
         };
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
             if params.flavor == AkitaSetupFlavor::OneHot {
@@ -1128,7 +1142,7 @@ impl TransparentObjectSetup for AkitaScheme {
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let num_vars = poly.num_vars();
         #[cfg(feature = "zk")]
-        if setup.verifier.whiteout.is_some() {
+        if setup.verifier.whiteout().is_some() {
             return Self::commit_whiteout_precommitted(
                 setup,
                 PrecommittedShape {
@@ -1320,6 +1334,10 @@ mod tests {
                 | AkitaVerifierScheduleArtifacts::BothChunked { .. } => {
                     panic!("one-hot fixture must carry a one-hot-only catalog")
                 }
+                #[cfg(feature = "zk")]
+                AkitaVerifierScheduleArtifacts::OneHotWhiteout { .. } => {
+                    panic!("one-hot fixture must carry a one-hot-only catalog")
+                }
             };
             let wrong_profile = if profile == AkitaChunkProfile::Four {
                 AkitaChunkProfile::Eight
@@ -1492,6 +1510,10 @@ mod tests {
             | AkitaVerifierScheduleArtifacts::Both { .. }
             | AkitaVerifierScheduleArtifacts::OneHotChunked { .. }
             | AkitaVerifierScheduleArtifacts::BothChunked { .. } => {
+                panic!("single-profile one-hot setup must use the legacy artifact variant")
+            }
+            #[cfg(feature = "zk")]
+            AkitaVerifierScheduleArtifacts::OneHotWhiteout { .. } => {
                 panic!("single-profile one-hot setup must use the legacy artifact variant")
             }
         };
