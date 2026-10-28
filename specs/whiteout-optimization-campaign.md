@@ -365,6 +365,23 @@ paper delta.
   explained. LOADED response plan 13.6 → 2.1, 23.4 → 7.6, 14.2 → 2.1 s;
   plans and `artifacts/schedules` are unchanged. Merged (Akita 8c22267ed);
   Akita and jolt bars green, and the proof dump equals O2b's verified dump.
+- **O6 (residual at d = 128; `specs/whiteout-o6-d128.md`, D35).** An
+  independent security review found no blocker. The ceiling exemption is
+  reachable only by a ZK search at `cut + 1`, the ring is bound through
+  the row and catalog digests, and the SIS cells were re-estimated (A_p
+  steps to rank 10 at 1,232 columns, 127.995 bits at rank 9). The
+  LHL margin stays 512 bits, and the cut level's Stage-2 round count is
+  unchanged for L ≥ 128, so D27 is unchanged. Its N3 coverage probe then
+  found that the priced search offloaded into the cut level from 35
+  variables, so the 36:1 headline's `e` needed ν = 29 > 27 (fail-closed
+  `ResponseTooLarge`). Fix: the priced ZK search keeps the edge into the
+  cut level direct, and `every_checked_in_zk_row_fits_the_response_bound`
+  guards every ZK row through jolt-zk's own layout. The final 36:1 row
+  proves, verifies and rejects a tamper (verify 75 ms, 10.1 GiB). A/B,
+  load < 6: 1-thread verify −15 / −19 / −25%, 16-thread −4 / −4 / −9%,
+  proof bytes flat. fib 2^20's residual share is now 40% < 50%, so
+  d = 256 and P9 do not run. Merged (Akita 9c6c7273f, jolt 2d68df80c);
+  bars green, dump has exactly the 5 known omissions.
 
 ## Not verified
 
