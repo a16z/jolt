@@ -1757,7 +1757,7 @@ work. Security tracks `rank · d`, so a larger ring with a smaller rank is
 cheaper (`06_evaluation.tex:124-133`). Several ring dimensions are handled
 by restricting scalars to the challenge ring (`02_preliminaries.tex:69-77`).
 
-**Before O6.** All three were over `R_64` (D29: rank 19 for the residual,
+**Before O6.** All three were over `R_64` (D29: rank 18–19 for the residual,
 18–19 for `A_p`). Akita's planner never gives a level a larger ring than
 its predecessor (the monotone dimension ceiling), and the cut level's B and
 D rings are 64 on every row.
@@ -1769,8 +1769,8 @@ D rings are 64 on every row.
   dimension 128 (`RESIDUAL_RING_DIMENSION`) and exempts that one level from
   the ceiling. Clear searches never reach the after-cut level, so no clear
   catalog changes.
-- The residual is rank 9–10 over `R_128` on every row (rank 19 over `R_64`
-  before). u_a is 1,280 coefficients instead of 1,216 (1,152 on a rank-9
+- The residual is rank 9–10 over `R_128` on every row (rank 18–19 over
+  `R_64` before; `A_a` was 18 on dense 14:1). u_a is 1,280 coefficients instead of 1,216 (1,152 on a rank-9
   row) and is still sent as 2 chunks of `cm(u_a)`. r_a is 321 `R_128`
   columns instead of 610 `R_64` columns.
 - `A_p` follows, since jolt's Σ setup has one ring: rank 9 (rank 10 above
@@ -1804,7 +1804,11 @@ D rings are 64 on every row.
   successor's ring. In zero knowledge the after-cut level is never folded:
   its parameters are only the residual commitment.
 
-**Measured.** See `specs/whiteout-o6-d128.md` § Results.
+**Measured** (`specs/whiteout-o6-d128.md` § Results; 7 interleaved runs,
+load < 6). Proof bytes are unchanged within noise. The residual `N·z`
+products are 0.56–0.57×. Steady verify is −15% / −19% / −25% on one thread
+and −4% / −4% / −9% on 16 (muldiv / fib 2^16 / fib 2^20). First verify is
+−19% to −21%, and the prover tail −3% to −5%.
 
 **For the paper.** The evaluation's choice of a larger ring for the
 residual is now implemented at d = 128. The text could say that the

@@ -131,14 +131,15 @@ goes from 24 to 23, and muldiv, fib 2^16 and fib 2^20 keep theirs. The
 ledger stays **310/q ≈ 2^−119.7** at the headline bound (ν ≤ 27, enforced
 by `MAX_RESPONSE_NUM_VARS`).
 
-The masked prefix's own error ε_{≤k} can move only through the cut level's
-Stage 2 point. Its variable count follows the successor's padded witness
-domain. Padding to whole `R_128` elements instead of `R_64` adds at most 64
-coefficients, so it adds a Stage-2 round only where the padded length
-crosses a power of two, at an extra `deg/q` for that sumcheck's degree. Rows
-differ anyway, because the planner re-selects them. Akita prices each
-level's error per row, and none of it is in D27's ledger. Whether any
-measured row gained a round was not checked.
+The masked prefix's own error ε_{≤k} does not move either. The only
+input O6 could change is the cut level's Stage 2 point, whose variable
+count follows the successor's padded witness domain
+`witness_commitment_domain_len(L, d) = next_pow2(⌈L/d⌉)·d`. For a power of
+two d this equals `max(d, next_pow2(L))`. So for any live length
+`L ≥ 128` the domain, and with it the Stage-2 round count, is the same at
+d = 64 and d = 128. The cut levels' live lengths are 486,080, 2,976,576
+and 36,857,344 on Akita's rows, and every witness here is far above 128
+coefficients. No row gains a round, and no `deg/q` term enters the budget.
 
 ## Evidence
 
@@ -177,61 +178,90 @@ then this note and D35. Akita `wo/akita-o6`: `[pin]` a95033eab, 2472555de
   zk-prover whiteout tests 5/5. jolt-zk and its siblings 345/345.
 
 **Verifier and prover, A/B.** Base is whiteout/dev 48b4db315 with Akita
-6ca22bd57; O6 is this branch. Release, `profiling,akita,zk`,
-`scripts/whiteout_verify_profile.py`'s harness (`--backend optimized`),
-base and O6 interleaved with the first build alternating, 7 runs. The
-machine was shared and heavily loaded: 1-minute loads of 4.0–114.6 at
-launch, against the < 2 of P0b. Each cell is median [min–max].
+6ca22bd57; O6 is this branch. Release, `profiling,akita,zk`, run through
+`scripts/whiteout_verify_profile.py`'s harness (`--backend optimized`).
+Base and O6 ran interleaved, the first build alternating by round, 7 runs.
+The machine was shared. In the gated pass below, each binary waited (up to
+30 min) for a 1-minute load below 6 and then ran under `/usr/bin/time -l`.
+The harness's launch loads were 4.9–41.5, with a median of 6.0–6.8 per
+cell. Each cell is median [min–max].
 
 | | muldiv base → O6 | fib 2^16 base → O6 | fib 2^20 base → O6 |
 |---|---|---|---|
-| proof bytes | 93,353 [93,340–93,391] → 93,375 [93,339–93,418] | 95,611 [95,546–95,643] → 95,569 [95,546–95,630] | 97,909 [97,885–97,961] → 97,929 [97,865–97,961] |
-| residual products `A_a + [B_a\|B′_a]`, 1 thread (ms) | 46.2 [41.3–55.1] → 30.2 [23.3–205.1] | 76.2 [68.2–184.7] → 46.2 [39.2–285.8] | 167.1 [151.0–179.0] → 99.7 [85.3–105.6] |
-| their share of the 1-thread verify | 28.5% → 19.1% | 38.9% → 25.6% | 52.8% → 39.8% |
-| `N·z`, 1 thread (ms) | 58.1 → 38.8 | 87.8 → 54.9 | 179.7 → 108.2 |
-| steady verify, 1 thread (ms) | 169.7 [144.8–192.1] → 151.8 [121.6–890.2] | 205.1 [183.7–339.4] → 180.0 [150.9–1,118.3] | 314.9 [282.8–344.7] → 253.1 [211.7–270.2] |
-| steady verify, 16 threads (ms) | 232.5 [79.4–494.9] → 227.8 [75.5–689.8] | 229.4 [85.8–619.8] → 333.9 [81.0–526.6] | 220.3 [104.0–524.2] → 376.8 [98.0–565.7] |
-| first verify, transported (ms) | 410.0 → 371.9 | 307.8 → 363.0 | 332.7 → 419.2 |
-| prover tail `whiteout_prove_tail` (ms) | 4,359 → 4,429 | 4,954 → 6,365 | 5,135 → 9,790 |
+| proof bytes | 93,364 [93,329–93,374] → 93,344 [93,314–93,369] | 95,573 [95,544–95,622] → 95,572 [95,541–95,622] | 97,906 [97,870–97,995] → 97,916 [97,894–97,944] |
+| steady verify, 16 threads (ms) | 81.1 [78.9–83.7] → 78.2 [74.6–80.1] | 87.7 [85.0–208.0] → 84.0 [81.6–407.1] | 104.9 [103.8–112.6] → 95.3 [92.7–225.9] |
+| steady verify, 1 thread (ms) | 144.8 [143.6–149.3] → 122.4 [121.9–124.0] | 180.6 [178.7–250.2] → 146.9 [145.1–198.1] | 274.5 [273.2–310.3] → 206.1 [205.7–288.7] |
+| first verify, transported (ms) | 122.9 [118.2–129.7] → 99.4 [96.3–101.5] | 137.2 [134.8–237.6] → 112.1 [108.8–714.9] | 168.4 [165.5–186.2] → 133.5 [127.2–301.6] |
+| residual products `A_a + [B_a\|B′_a]`, 1 thread (ms) | 40.9 [40.8–42.4] → 23.4 [23.2–23.6] | 67.4 [66.6–102.1] → 38.0 [37.8–57.0] | 144.9 [144.3–173.1] → 82.9 [82.5–119.8] |
+| their share of the 1-thread verify | 28.3% → 19.1% | 37.6% → 26.1% | 52.8% → 40.2% |
+| `N·z` (residual + pad), 1 thread (ms) | 51.3 → 30.4 | 77.9 → 45.3 | 155.7 → 90.1 |
+| prover tail `whiteout_prove_tail` (ms) | 1,027 [1,017–1,234] → 992 [988–999] | 1,430 [1,402–4,303] → 1,382 [1,368–7,862] | 2,205 [2,187–2,519] → 2,101 [2,078–6,143] |
+| — response proof (ms) | 733 → 705 | 1,008 → 978 | 1,573 → 1,507 |
 | ν (`whiteout_plan_response`) | 24 → 24 | 25 → 25 | 26 → 26 |
 
-The 16-thread, first-verify and prover medians track load, not the build:
-their ranges span 5–10×, and the same build's runs differ more than the
-two builds do. The one round in which all six runs started at load ≤ 6
-(round 4) gives:
-
-| round 4 (loads 4.0–5.8) | muldiv base → O6 | fib 2^16 base → O6 | fib 2^20 base → O6 |
-|---|---|---|---|
-| steady verify, 16 threads (ms) | 82.0 → 75.5 | 85.8 → 81.0 | 105.5 → 98.0 |
-| steady verify, 1 thread (ms) | 147.2 → 125.1 | 191.2 → 150.9 | 286.7 → 211.7 |
-| first verify (ms) | 128.7 → 98.6 | 151.2 → 113.6 | 170.2 → 139.2 |
-| prover tail (ms) | 1,118 → 1,007 | 1,553 → 1,449 | 2,342 → 2,415 |
-
-The base's round-4 numbers match P0b's idle medians (80.1 / 143.0 / 119.1
-ms at muldiv, 105.0 / 275.1 / 167.0 at fib 2^20), so that round is close to
-idle. One round is not a distribution.
+The base column reproduces P0b's idle medians to within 2–3%: muldiv
+80.1 / 143.0 / 119.1 ms and fib 2^20 105.0 / 275.1 / 167.0 ms (16 threads /
+1 thread / first verify).
 
 **Reading.**
 
 - *Bytes.* Unchanged within the response proof's run-to-run spread
   (about 100 B). u_a and t_p keep 2 chunks each, and ν is unchanged.
-- *Residual products.* 0.60–0.65× on one thread on every workload, against
-  about 0.54× modeled (Akita §5.5.2: `n` 1,216 → 1,280, work ∝ `n × input /
-  d`). These are CPU sums inside the verify, so they are the least
-  load-sensitive measure here.
-- *1-thread steady verify.* −10% (muldiv) to −20% (fib 2^20) by median,
-  and −15% to −26% in round 4.
-- *16-thread verify, first verify, prover tail.* No conclusion from the
-  medians. Round 4 shows −5% to −7% (16 threads), −18% to −25% (first
-  verify), and −10% to +3% (tail).
+- *Residual products.* 0.56–0.57× on every workload. Modeled was about
+  0.54× (`n` 1,216 → 1,280 at about half the input ring columns).
+- *1-thread steady verify.* −15% (muldiv), −19% (fib 2^16), −25%
+  (fib 2^20).
+- *16-thread steady verify.* −4%, −4%, −9%. The residual was 11–19% of the
+  16-thread wall time (P0b), and the rest of that verify (the lifted rows,
+  the pad-layout replay, the row batch) is unchanged.
+- *First verify.* −19% to −21%: the residual and pad matrices built on
+  first use are half the size.
+- *Prover tail.* −3% to −5%, mostly the response proof.
+
+A first, ungated 7-run pass at loads of 4–115 gave the same direction on
+one thread (residual products 0.60–0.65×, 1-thread verify −10% to −20% by
+median). Its 16-thread, first-verify and prover medians tracked load, not
+the build, and are not used.
+
+## Open issue: Akita's 36:1 headline row is unprovable under O6
+
+Found during review follow-up (N3). It does not affect soundness, since
+the code refuses the row. It does affect completeness, and it needs a
+decision before merge.
+
+- **What happens.** The checked-in 36:1 ZK row now offloads the root's
+  setup at the cut (§ What changed). That grows w_k from 8.4M to 36.86M
+  coefficients, so the response vector `e` needs ν = 29.
+  `MAX_RESPONSE_NUM_VARS = 27` (D27's enforced bound) then refuses the
+  proof (`ResponseTooLarge { num_vars: 29 }`). The prover fails closed.
+- **Base.** The same one-off prove and verify on Akita dev 8c22267ed
+  (36:1 with the cut direct) passes: prove 30.3 s, Akita-side proof
+  79,572 B, a cold verify of 1.40 s, peak RSS 11.1 GiB.
+- **Cause.** The planner's objective is setup first, and it does not price
+  the Σ vector or ν. The cheaper `R_128` residual made the cut offload win
+  on setup at 35 variables and up. The pre-O6 planner already had the same
+  exposure from 37 variables.
+- **Candidate fix, tried but not committed.** Keep the edge into the cut
+  level direct in the priced zero-knowledge search: drop the offloaded
+  successor into `cut_level` unless `CutOffload::Forced`. On the 36:1 key
+  with the residual at d = 128, the cut is direct and w_k is 8.4M. The row
+  proves and verifies, a tamper is rejected, and it gives prove 26.2 s,
+  79,531 B, a cold verify of 0.34 s and peak RSS 10.4 GiB. That run used
+  `find_zk_schedule` with a one-off environment switch in a scratch
+  worktree. Adopting it would change the ZK rows again (the headline's
+  cut becomes direct), invert `the_cut_level_offloads_…`, and leave the
+  masked Stage 3 at the cut to `find_zk_schedule_offloading_at_cut_for_test`
+  only, as before O6. The other option, raising ν's bound to 29, changes
+  D27's ledger to ≈ 322/q ≈ 2^−119.6.
+- Jolt's rows are not affected: their cut stays direct, and ν is 24 / 25 /
+  26.
 
 ## d = 256 outlook
 
 - *The gate.* P0b's rule starts d = 256 only if fib 2^20 still spends at
   least 50% of a 1-thread verify in the residual products. After O6 it is
-  39.8% by median (40.3% in round 4, against 53.6% for base in that
-  round), so the rule does not start d = 256. A clean idle rerun should
-  confirm this before the decision is closed (§ Not verified).
+  40.2% in the gated pass (52.8% for base), so the rule does not start
+  d = 256.
 - *What d = 256 would cost.* Blocker (3): the fp128 presets search B only
   over {64, 128}. That is not a problem in itself here, since the after-cut
   domain is a separate constant (`RESIDUAL_RING_DIMENSION`), and `256` is
@@ -252,14 +282,11 @@ idle. One round is not a distribution.
 
 ## Not verified
 
-- **Idle A/B.** The 7-run A/B ran at loads of 4–115, so its 16-thread,
-  first-verify and prover-tail medians are not attributable to O6. A second,
-  load-gated pass (each run waits up to 30 min for load < 6) was started;
-  see its addendum below if present.
-- **Prover tail at d = 128.** Round 4 shows +3% at fib 2^20 (one sample).
-  Not resolved.
-- **Stage-2 rounds at the cut.** Whether any row gained a round
-  (§ (c)) was not checked row by row.
+- **Idle machine.** The gated A/B ran at load < 6 for most runs, not at
+  P0b's < 2. A few runs launched at loads up to 41 and show as range
+  outliers. Base matches P0b's idle medians to within 2–3%.
+- **Peak RSS.** It was recorded (`/usr/bin/time -l`, in the scratch run
+  directory) but not tabulated.
 - **The certified Σ-binding cells.** Only the cells listed in (b) were
   re-estimated exhaustively. The rest of the d = 128 cells are trusted from
   the checked-in certified CSV (`cells_match_the_certified_csv_and_the_current_radius`).
