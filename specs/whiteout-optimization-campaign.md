@@ -255,6 +255,17 @@ paper delta.
   check, so it blocks upstreaming. It is mechanical; run it after O0, O1 and O4
   merge, since they touch the same files. Merge bars check new lines against
   the pre-merge dev head.
+- **S2. Legacy setup bytes under `zk`.** `jolt-akita`'s
+  `legacy_single_setup_keeps_its_transcript` fails with `--features
+  zk-prover` (`UnexpectedEnd`). Since W6b, a `zk` build's
+  `AkitaVerifierSetup` ends with `#[serde(default)] whiteout:
+  Option<WhiteoutSetup>`; bincode is not self-describing and ignores
+  `serde(default)`, so pre-Whiteout setup bytes no longer decode once any
+  crate unifies `zk` on. The wire format therefore depends on a feature.
+  Fix before upstreaming: carry the Whiteout setup outside the clear setup's
+  encoding (e.g. a wrapper or an appended artifact variant) so clear bytes
+  are identical in every build. The merge bars only run that suite's
+  `whiteout` subset, which is why they did not catch it.
 
 ## Review log
 
