@@ -1102,13 +1102,6 @@ pub(crate) fn one_hot_setup_verifier(
     })
 }
 
-/// Dense evaluations retain Jolt's row-major order, just like one-hot sources.
-/// Opening adapters reverse the coordinates to match Akita's variable order.
-#[doc(hidden)]
-pub fn jolt_to_akita_index(_num_vars: usize, index: usize) -> usize {
-    index
-}
-
 pub(crate) fn dense_polynomials(
     polynomials: &[Polynomial<AkitaField>],
 ) -> Result<Vec<AkitaBackendDensePoly>, OpeningsError> {
@@ -1121,6 +1114,8 @@ pub(crate) fn dense_polynomials(
         .collect()
 }
 
+/// Dense evaluations retain Jolt's row-major order, just like one-hot sources.
+/// Opening adapters reverse the coordinates to match Akita's variable order.
 #[doc(hidden)]
 pub fn jolt_to_akita_evals(
     num_vars: usize,
@@ -1255,15 +1250,6 @@ mod tests {
 
     fn af(value: u64) -> AkitaField {
         AkitaField::from_u64(value)
-    }
-
-    #[test]
-    fn jolt_to_akita_index_preserves_row_major_order() {
-        for num_vars in 0..=5 {
-            for index in 0..1usize << num_vars {
-                assert_eq!(jolt_to_akita_index(num_vars, index), index);
-            }
-        }
     }
 
     #[test]
