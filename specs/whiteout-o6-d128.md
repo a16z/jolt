@@ -19,12 +19,17 @@ with the numbers below; nothing in the D27 ledger gets worse.
 - **Akita** (`wo/akita-o6`).
   - `opening_work_domain`: at the `AfterCut` level the dimension domain is
     `{uniform(128)}`, with no ceiling.
+  - The priced zero-knowledge search never offloads into the cut level
+    (`CutOffload::Direct`; § Resolved below).
   - The three ZK rows are regenerated, and so is the response-digits key
     for the single-group statement (ν 24 → 23).
-  - Tests: `checked_in_zk_rows_commit_the_residual_at_its_sigma_binding_ranks`
-    pins d = 128 and that every row uses the exception, and
-    `the_cut_level_offloads_the_root_setup_from_35_variables` replaces the
-    37-variable test.
+  - Tests:
+    - `checked_in_zk_rows_commit_the_residual_at_its_sigma_binding_ranks`
+      pins d = 128 and that every row uses the exception.
+    - `the_priced_search_never_offloads_into_the_cut_level` replaces the
+      37-variable offload test.
+    - `every_checked_in_zk_row_fits_the_response_bound` checks ν ≤ 27 for
+      every checked-in ZK row.
 - **jolt** (`wo/o6-d128`). No production code changes: `jolt-akita` already
   dispatches the Σ setup on the residual's ring dimension (`with_ring_dim!`
   over 64, 128, 256), and the pad commitment's rank is priced at that ring
@@ -85,7 +90,7 @@ tamper and census suites) prove and verify through the exception.
 | matrix | d | rank × width | n = rank·d | bits | note |
 |---|---|---|---|---|---|
 | `A_a`, dense 14:1 | 128 | 9 × 1,024 | 1,152 | 128.79 (β 486) | the only rank-9 residual |
-| `[B_a \| B′_a]`, 36:1 (widest) | 128 | 10 × 11,841 | 1,280 | 138.07 (β 521) | every other rank-10 residual cell is narrower, so harder |
+| `[B_a \| B′_a]`, 36:1 before the cut fix | 128 | 10 × 11,841 | 1,280 | 138.07 (β 521) | a bound for every rank-10 cell: the widest final cell is 10 × 10,881, and narrower cells are harder |
 | `A_p`, rank-9 bracket edge | 128 | 9 × 1,231 | 1,152 | 128.26 (β 484) | the Σ-binding table's certified cell, the largest width at rank 9 |
 | `A_p`, muldiv fixture | 128 | 9 × 449 | 1,152 | 132.24 (β 499) | |
 | before: `[B_a \| B′_a]`, 36:1 | 64 | 19 × 13,378 | 1,216 | 130.91 (β 494) | for comparison |
@@ -223,38 +228,62 @@ one thread (residual products 0.60–0.65×, 1-thread verify −10% to −20% by
 median). Its 16-thread, first-verify and prover medians tracked load, not
 the build, and are not used.
 
-## Open issue: Akita's 36:1 headline row is unprovable under O6
+## Resolved: the cut level is never offloaded (review N3)
 
-Found during review follow-up (N3). It does not affect soundness, since
-the code refuses the row. It does affect completeness, and it needs a
-decision before merge.
+**Finding.** A one-off prove of Akita's 36:1 headline ZK row under the
+first O6 rows failed with `ResponseTooLarge { num_vars: 29 }`. The
+`R_128` residual had made the planner offload the root's setup into the
+cut level from 35 variables on, which grew w_k from 8.4M to 36.86M
+coefficients. w_k is the residual commitment's input, so it is part of the
+Σ vector `s` and of the response vector `e`, and `e` needed ν = 29 against
+D27's enforced bound of 27. The prover failed closed, so nothing unsound
+was accepted, but the row could not be proved. The pre-O6 planner had the
+same exposure from 37 variables. The cause is that the planner's
+objective (setup first) does not price `s` or ν.
 
-- **What happens.** The checked-in 36:1 ZK row now offloads the root's
-  setup at the cut (§ What changed). That grows w_k from 8.4M to 36.86M
-  coefficients, so the response vector `e` needs ν = 29.
-  `MAX_RESPONSE_NUM_VARS = 27` (D27's enforced bound) then refuses the
-  proof (`ResponseTooLarge { num_vars: 29 }`). The prover fails closed.
-- **Base.** The same one-off prove and verify on Akita dev 8c22267ed
-  (36:1 with the cut direct) passes: prove 30.3 s, Akita-side proof
-  79,572 B, a cold verify of 1.40 s, peak RSS 11.1 GiB.
-- **Cause.** The planner's objective is setup first, and it does not price
-  the Σ vector or ν. The cheaper `R_128` residual made the cut offload win
-  on setup at 35 variables and up. The pre-O6 planner already had the same
-  exposure from 37 variables.
-- **Candidate fix, tried but not committed.** Keep the edge into the cut
-  level direct in the priced zero-knowledge search: drop the offloaded
-  successor into `cut_level` unless `CutOffload::Forced`. On the 36:1 key
-  with the residual at d = 128, the cut is direct and w_k is 8.4M. The row
-  proves and verifies, a tamper is rejected, and it gives prove 26.2 s,
-  79,531 B, a cold verify of 0.34 s and peak RSS 10.4 GiB. That run used
-  `find_zk_schedule` with a one-off environment switch in a scratch
-  worktree. Adopting it would change the ZK rows again (the headline's
-  cut becomes direct), invert `the_cut_level_offloads_…`, and leave the
-  masked Stage 3 at the cut to `find_zk_schedule_offloading_at_cut_for_test`
-  only, as before O6. The other option, raising ν's bound to 29, changes
-  D27's ledger to ≈ 322/q ≈ 2^−119.6.
-- Jolt's rows are not affected: their cut stays direct, and ν is 24 / 25 /
-  26.
+**Decision (coordinator, option 1).** The priced zero-knowledge search
+keeps the edge into the cut level direct. `CutOffload::Priced` became
+`CutOffload::Direct`, and the offloaded successor into `cut_level` is
+dropped. `CutOffload::Forced` (test support) still plans the masked
+Stage 3 at the cut, and admission still accepts such a row. D27 is
+unchanged and needs no new delta.
+
+**Why not reject at plan time.** ν depends on the statement: the pad
+layout counts the masked claims, the prefix's messages and the auxiliary
+block. The planner sees only the schedule. So the bound is checked by a
+permanent test over the checked-in rows instead.
+`every_checked_in_zk_row_fits_the_response_bound` builds each row's Σ
+setup from public data (zero commitments of the row's profile shapes,
+since the counting replay reads only shapes) and runs jolt-zk's own
+`SigmaSetup::response_layout` and the response prover's `num_vars`. It
+fails on the offloading 36:1 row (`ResponseTooLarge { num_vars: 29 }`)
+and passes on the final rows. Its statement uses the Akita harness's pad
+and `V` ranks (2 and 1), not Jolt's. Jolt's own rows are checked by
+`whiteout_e2e`, which proves them.
+
+**Final 36:1 row.** The cut level is direct with dims (128, 64, 64), w_k
+is 8.40M coefficients, and the residual is `A_a` 10 × 2,048 and
+`[B_a | B′_a]` 10 × 10,881 over `R_128`. Only this row changed, in both
+artifact sets.
+
+**Manual re-prove of the final 36:1 row.** A one-off run of Akita's
+end-to-end harness, not committed: fresh randomness, no seed, release
+build, 1-minute load about 15. Prove and verify pass, and a flipped proof
+byte is rejected.
+
+| | value |
+|---|---|
+| setup + commit | 57.2 s |
+| prove (masked prefix, Σ, response proof) | 5.6 s |
+| proof (Akita side) | 79,540 B |
+| verify | 74.8 ms |
+| wall, whole run | 63.6 s |
+| peak RSS | 10.1 GiB (`/usr/bin/time -l`) |
+
+The exploratory runs behind the decision ran at loads above 40: the
+direct-cut variant proved in 26.2 s with a cold verify of 0.34 s (10.4 GiB),
+and base 8c22267ed in 30.3 s with 1.40 s (11.1 GiB). They are not
+comparable with this table, only with each other.
 
 ## d = 256 outlook
 
@@ -275,10 +304,10 @@ decision before merge.
   1-thread verify. The 16-thread verify is spread over the lifted rows, the
   pad-layout replay and the row batch (P0b), which O3b is working on, so
   d = 256 matters there only after those.
-- *Side effect to watch.* Every cheaper residual makes the planner offload
-  the root's setup at the cut on more rows. On Akita's 36:1 headline that
-  already happened at d = 128, and w_k grew 3.4×. Jolt's rows stay direct
-  today.
+- *Side effect, closed.* A cheaper residual would make the setup-first
+  planner offload into the cut level on more rows. The search no longer
+  does that (§ Resolved), and the response-bound test guards every
+  checked-in row.
 
 ## Not verified
 

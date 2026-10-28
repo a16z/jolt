@@ -64,7 +64,7 @@ so the authors can fold it into the paper.
 | D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
 | D32 | Persisted plans: the ZK catalog (planned at setup) and exported response schedules enter a setup only at construction, are re-audited and re-admitted on load, and the pads absorb the masked catalog's, selected row's and response schedule's digests | extension (public parameters), transcript change | implemented (O1) |
 | D34 | Small byte items (O5): compressed images take the fewest balanced chunks under the chain's SIS bound (884 coefficients, the paper's `FCHAIN_MAX_IMAGE`), so t_p and cm(u_a) take 2 chunks, not 3; a repeated intermediate product takes one auxiliary slot (Whiteout and BlindFold committed proofs). One-chunk t_p is impossible at R_Σ | departure narrowed (D9), slot sharing (D12, D26) | implemented (O5) |
-| D35 | The residual commitment (and the pad commitment, which shares the Σ ring) over `R_128`: rank 9–10 instead of 18–19 over `R_64`, same `R_Σ`; the planner's dimension ceiling is lifted at the after-cut level only | parameter change (follows `06_evaluation.tex:124-133`) | implemented (O6, d = 128); d = 256 gated on a rerun |
+| D35 | The residual commitment (and the pad commitment, which shares the Σ ring) over `R_128`: rank 9–10 instead of 18–19 over `R_64`, same `R_Σ`; the planner's dimension ceiling is lifted at the after-cut level only, and it never offloads into the cut level | parameter change (follows `06_evaluation.tex:124-133`) | implemented (O6, d = 128); d = 256 gated on a rerun |
 
 ## D1. Constant-time Σ attempt
 
@@ -1776,9 +1776,16 @@ D rings are 64 on every row.
 - `A_p` follows, since jolt's Σ setup has one ring: rank 9 (rank 10 above
   1,231 columns) over `R_128`. t_p is 1,152 or 1,280 coefficients, still 2
   chunks.
-- The planner re-selects rows under the cheaper residual. Akita's 36:1
-  headline now offloads its root's setup at the cut (a masked Stage 3,
-  from 35 variables on instead of 37).
+- The zero-knowledge planner never offloads a setup into the cut level.
+  A setup prefix there puts the parent's response and inner digits into
+  w_k, hence into `s` and `e`, and the planner's setup-first objective
+  does not price them. With the cheaper `R_128` residual it chose that
+  offload from 35 variables, and Akita's 36:1 headline row then needed
+  ν = 29 > 27 (refused: unprovable, not unsound). The narrowing concerns
+  only the cut level; offloading at earlier folds (D5's "k = 2 with
+  offloading") is unchanged, and admission still accepts a cut-level
+  setup prefix (used by tests). A test checks that every checked-in ZK
+  row's `e` fits the bound.
 
 **Argument.**
 
@@ -1786,8 +1793,9 @@ D rings are 64 on every row.
   challenge `c ∈ R_64` acts on `R_128` as `c(Y²)`, with the same ℓ1 norm,
   so `Γ_Δ = 2κ₁` holds verbatim. The reduction of `05_security.tex:31-46`
   then needs Module-SIS over `R_128` at `R_Σ`. Akita's estimator gives
-  128.79 bits for `A_a` at rank 9 × 1,024, 138.07 bits for the widest
-  rank-10 cell (`[B_a | B′_a]`, 10 × 11,841), and 128.26 bits at `A_p`'s
+  128.79 bits for `A_a` at rank 9 × 1,024, at least 138.07 bits for every
+  rank-10 cell (138.07 at 10 × 11,841; the widest checked-in cell is
+  10 × 10,881), and 128.26 bits at `A_p`'s
   largest rank-9 width (1,231). The chain's first map on a 640-coefficient
   chunk is 139.13 bits (140.98 at 608).
 - *Knowledge soundness.* Thm `wo:thm:knowledge` is unchanged in its
