@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError, Weak};
 
 use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_params::{
-    setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule, FlatMatrix,
+    setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule,
     SetupPrefixSlotId,
 };
 use akita_pcs::CpuBackend;
@@ -30,7 +30,7 @@ pub(crate) struct AkitaVerifierRequirements {
     pub(crate) max_num_vars: usize,
     pub(crate) max_total_batch_polys: usize,
     pub(crate) retained_field_elements: usize,
-    pub(crate) generation_field_elements: usize,
+    pub(crate) prefix_field_elements: usize,
     pub(crate) prefix_slots: BTreeSet<SetupPrefixSlotId>,
 }
 
@@ -45,7 +45,7 @@ impl AkitaVerifierRequirements {
             max_num_vars: 0,
             max_total_batch_polys: 0,
             retained_field_elements: 1,
-            generation_field_elements: 1,
+            prefix_field_elements: 1,
             prefix_slots: BTreeSet::new(),
         };
         for setup in setups {
@@ -77,9 +77,6 @@ impl AkitaVerifierRequirements {
                 })?;
             }
         }
-        requirements.generation_field_elements = requirements
-            .generation_field_elements
-            .max(requirements.retained_field_elements);
         Ok(requirements)
     }
 
@@ -107,8 +104,8 @@ impl AkitaVerifierRequirements {
             SetupRequirements::from_catalog(catalog, self.max_num_vars, self.max_total_batch_polys)
                 .map_err(invalid_setup)?;
         for id in akita.prefix_slot_ids() {
-            self.generation_field_elements = self
-                .generation_field_elements
+            self.prefix_field_elements = self
+                .prefix_field_elements
                 .max(setup_prefix_slot_field_elements(id).map_err(invalid_setup)?);
             let _ = self.prefix_slots.insert(id.clone());
         }
@@ -116,8 +113,6 @@ impl AkitaVerifierRequirements {
     }
 }
 
-/// Derive the matrix and the required prefix commitments from the public seed.
-/// The generation matrix is truncated to the verifier's need afterwards.
 fn generate_material(
     requirements: &AkitaVerifierRequirements,
 ) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
@@ -128,14 +123,6 @@ fn generate_material(
         num_field_elements,
         setup_seed: seed.clone(),
     };
-    let generation_fields = requirements.generation_field_elements;
-    let retained_fields = requirements.retained_field_elements;
-    let mut expanded = Arc::new(
-        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            descriptor(generation_fields),
-            derive_public_matrix_prefix(generation_fields, &seed),
-        ),
-    );
     let mut prefixes = SetupPrefixVerifierRegistry::new(seed.clone());
     if !requirements.prefix_slots.is_empty() {
         let slots = requirements
@@ -143,28 +130,22 @@ fn generate_material(
             .iter()
             .cloned()
             .collect::<Vec<_>>();
-        let backend = CpuBackend::<AkitaField, AkitaField>::new(Arc::clone(&expanded))
-            .map_err(invalid_setup)?;
-        let generated = backend
-            .export_setup_prefixes(&slots)
-            .map_err(invalid_setup)?;
+        let generated = CpuBackend::<AkitaField, AkitaField>::export_setup_prefixes_from_seed(
+            &descriptor(requirements.prefix_field_elements),
+            &slots,
+        )
+        .map_err(invalid_setup)?;
         for slot in generated.verifier_slots() {
             prefixes.insert(slot).map_err(invalid_setup)?;
         }
     }
-    if generation_fields > retained_fields {
-        let coefficients = expanded
-            .shared_matrix()
-            .as_field_slice()
-            .get(..retained_fields)
-            .ok_or_else(|| invalid_setup("generated verifier matrix is too short"))?;
-        expanded = Arc::new(
-            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-                descriptor(retained_fields),
-                FlatMatrix::from_flat_data(coefficients.to_vec()),
-            ),
-        );
-    }
+    let retained_fields = requirements.retained_field_elements;
+    let expanded = Arc::new(
+        AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+            descriptor(retained_fields),
+            derive_public_matrix_prefix(retained_fields, &seed),
+        ),
+    );
     AkitaBackendVerifierSetup::from_parts(expanded, prefixes).map_err(invalid_setup)
 }
 
