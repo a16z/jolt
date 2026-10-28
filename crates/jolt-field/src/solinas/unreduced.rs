@@ -226,6 +226,11 @@ impl<const P: u32> Unreduced for Fp32<P> {
     type SmallProduct = Fp32ProductAccum;
     type Wide = Fp32x2i32;
 
+    // The product accumulator holds every term without loss, so a batch
+    // within its documented headroom reduces to the per-term sum
+    // (`base_field_suite` checks this against an integer oracle).
+    const SUM_IS_EXACT: bool = true;
+
     #[inline]
     fn mul_unreduced(self, other: Self) -> Fp32ProductAccum {
         Fp32ProductAccum([self.mul_wide(other) as u128, 0])
@@ -267,6 +272,11 @@ impl<const P: u64> Unreduced for Fp64<P> {
     type SmallProduct = Fp64ProductAccum;
     type Wide = Fp64x4i32;
 
+    // The product accumulator holds every term without loss, so a batch
+    // within its documented headroom reduces to the per-term sum
+    // (`base_field_suite` checks this against an integer oracle).
+    const SUM_IS_EXACT: bool = true;
+
     #[inline]
     fn mul_unreduced(self, other: Self) -> Fp64ProductAccum {
         let wide = self.mul_wide(other);
@@ -306,6 +316,11 @@ impl<const P: u128> Unreduced for Fp128<P> {
     type Product = Fp128ProductAccum;
     type SmallProduct = Fp128MulU64Accum;
     type Wide = Fp128x8i32;
+
+    // The product accumulator holds every term without loss, so a batch
+    // within its documented headroom reduces to the per-term sum
+    // (`base_field_suite` checks this against an integer oracle).
+    const SUM_IS_EXACT: bool = true;
 
     #[inline]
     fn mul_unreduced(self, other: Self) -> Fp128ProductAccum {

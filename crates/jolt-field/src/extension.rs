@@ -76,8 +76,9 @@ pub trait ExtField<F: Field>: Field {
 ///
 /// Scales `self` by a base scalar `x` into [`Unreduced::Product`] without
 /// reducing, so a batch of `E × F` products can be summed and reduced once.
-/// When [`Unreduced::SUM_IS_EXACT`] holds, the reduced sum equals the
-/// per-term [`ExtField::mul_base`] sum within the accumulator's headroom.
+/// The reduced sum equals the per-term [`ExtField::mul_base`] sum for any
+/// batch within the accumulator's headroom: either [`Unreduced::SUM_IS_EXACT`]
+/// holds, or `Product = Self` and every term is already reduced.
 ///
 /// `E × F` has no cross terms, so the default body (lift `x` and reuse
 /// [`Unreduced::mul_unreduced`]) is correct everywhere; extensions whose

@@ -165,7 +165,7 @@ macro_rules! base_field_suite {
             let f2 = |v: u128| <$F2 as CanonicalEncoding>::from_u128_checked(v).unwrap();
             let val2 = |x: &$F2| x.to_u128_checked().unwrap();
 
-            assert!(!<$F2 as Unreduced>::SUM_IS_EXACT);
+            assert!(<$F2 as Unreduced>::SUM_IS_EXACT);
 
             let check_products = |pairs: &[(u128, u128)]| {
                 let expect = pairs

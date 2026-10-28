@@ -71,6 +71,8 @@ Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order
 | SECP256K1_*   | 0x0B   | 0x05   | 0x00–0x07 | secp256k1 field ops + GLV advice        |
 | GRUMPKIN_*    | 0x0B   | 0x06   | 0x00–0x01 | grumpkin field division advice           |
 | P256_*        | 0x0B   | 0x07   | 0x00–0x07 | P-256 field ops + Fake GLV advice       |
+| NTT64_I32_FORWARD | 0x0B | 0x08 | 0x00 | 64-point negacyclic i32 Montgomery NTT |
+| NTT64_I32_POINTWISE_DOT6 | 0x0B | 0x09 | 0x00 | Six-product pointwise dot of NTT rows |
 
 ```rust
 unsafe {
