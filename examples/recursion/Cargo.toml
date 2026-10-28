@@ -83,6 +83,9 @@ akita = [
 # fill, decode the terminal z Golomb-Rice stream by doubleword, index the stage
 # 6b bytecode fold by flag class directly and scale each bounded equality-fill
 # run once; same field values. Default on; effective only with `akita`.
+# setup-lane-streams: the verifier guest (and the host's Akita) stream each lane
+# of the root setup scan with its row scales hoisted; same field values. Default
+# on; effective only with `akita`.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -103,6 +106,7 @@ default = [
   "golomb-word",
   "bytecode-fold",
   "fill-ingress",
+  "setup-lane-streams",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
