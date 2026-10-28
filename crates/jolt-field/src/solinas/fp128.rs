@@ -1081,7 +1081,7 @@ impl<const P: u128> Field for Fp128<P> {
     crate::terminal_contraction::fp128_methods!();
     #[cfg(feature = "fill-ingress")]
     fn scale_slice_into(scale: Self, src: &[Self], dst: &mut [Self]) {
-        Self::fill_ingress_scale(scale, src, dst)
+        Self::fill_ingress_scale(scale, src, dst);
     }
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
