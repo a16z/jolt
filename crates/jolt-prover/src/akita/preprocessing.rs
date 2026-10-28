@@ -1,4 +1,5 @@
 use akita_params::PolynomialGroupLayout;
+use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
@@ -108,7 +109,7 @@ pub(crate) fn grouped_setup_params(
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Trusted))
         .transpose()?;
     let mut mandatory_dense_layouts = Vec::with_capacity(
-        usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
+        1 + usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
     );
     #[cfg(feature = "field-inline")]
     mandatory_dense_layouts.push(DenseGroupLayout::FullWidth {
@@ -119,6 +120,9 @@ pub(crate) fn grouped_setup_params(
             .iter()
             .map(|&num_vars| DenseGroupLayout::Bounded { num_vars }),
     );
+    mandatory_dense_layouts.push(DenseGroupLayout::Bounded {
+        num_vars: FusedIncLayout::new(config.trace_length.ilog2() as usize).num_vars(),
+    });
     let group_count = usize::from(untrusted_physical_vars.is_some())
         + usize::from(trusted_physical_vars.is_some())
         + mandatory_dense_layouts.len();

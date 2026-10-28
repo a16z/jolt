@@ -37,9 +37,7 @@ impl JoltProgramPreprocessing {
     /// Bytes the bytecode table, its PC map and the RAM program image hold on
     /// the heap, at capacity.
     pub fn heap_bytes(&self) -> usize {
-        self.bytecode.bytecode.capacity() * size_of::<JoltInstructionRow>()
-            + self.bytecode.pc_map.heap_bytes()
-            + self.ram.bytecode_words.capacity() * size_of::<u64>()
+        self.bytecode.heap_bytes() + self.ram.bytecode_words.capacity() * size_of::<u64>()
     }
 
     pub fn metadata(&self) -> Option<ProgramMetadata> {

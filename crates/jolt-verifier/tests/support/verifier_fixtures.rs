@@ -29,9 +29,9 @@ use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError}
 use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
-// Program digests derive from the serde encoding (`ProgramPreprocessing::digest`);
-// fixtures carrying the legacy digest layout must regenerate.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0006";
+// Bump whenever cached proofs stop verifying: cached ZK fixtures load without an
+// acceptance check.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0008";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -574,12 +574,9 @@ fn generate_fibonacci_medium() -> GeneratedVerifierFixture {
 
 #[cfg(not(feature = "zk"))]
 fn generate_memory_ops() -> GeneratedVerifierFixture {
-    generate_verifier_fixture(
-        Program::new("memory-ops-guest"),
-        Vec::new(),
-        Vec::new(),
-        Vec::new(),
-    )
+    let mut program = Program::new("memory-ops-guest");
+    program.set_func("memory_ops");
+    generate_verifier_fixture(program, Vec::new(), Vec::new(), Vec::new())
 }
 
 #[cfg(not(feature = "zk"))]

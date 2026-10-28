@@ -1,7 +1,7 @@
 # Digit-zero virtualization for the packed one-hot trace
 
-Scope 2026-08-16: digit-zero virtualization applies to the instruction,
-bytecode, and balanced-increment families only. RAM stays on the base treatment
+Digit-zero virtualization applies to the instruction and bytecode families.
+RV64 fused increments are committed directly as a bounded-dense polynomial. RAM stays on the base treatment
 (all rows committed, `RamHammingBooleanity`, and the Hamming-weight leg) so it
 can be reviewed in a separate change. This document makes no claim about the
 note's nonconstant-activation RAM construction. Source: "Digit-Zero
@@ -26,8 +26,7 @@ and `r̃a_i` denotes the multilinear extension. `ẽq` is the multilinear equali
 polynomial; evaluation points are written `(r_address, r_cycle)`.
 
 The technique applies here to the committed coordinate read-address
-polynomials of the **instruction and bytecode** memories, and (an extension
-beyond the note, §6) to the balanced-increment value columns. Each has public
+polynomials of the **instruction and bytecode** memories. Each has public
 unit activation (§2). **RAM and registers are excluded from this change**: RAM
 requires the note's separate nonconstant activation treatment, while
 `Rs1Ra`, `Rs2Ra`, and `RdWa` are full-domain virtual polynomials already bound
@@ -49,12 +48,10 @@ padding rows are free):
 |---|---|
 | `InstructionRa` | `≡ 1` (one lookup per cycle) |
 | `BytecodeRa` | `≡ 1` (one fetch per cycle) |
-| `BalancedIncDigit/Carry` | `≡ 1` (every cycle has a possibly-zero fused increment) |
 
 Because every virtualized family has `M_µ ≡ 1`, reconstruction forces
 `Σ_{k_i} ra_i(k_i,j) = 1` identically. Booleanity then gives an exactly-one-hot
-column per cycle without a Hamming-weight leg. For balanced increments, read
-`ra_i` as the corresponding digit or carry one-hot column. Public unit
+column per cycle without a Hamming-weight leg. Public unit
 activation is what lets this change avoid the additional RAM-specific proof
 obligations.
 
@@ -102,9 +99,7 @@ base mode does, and keeps:
 
 So RAM's stage-7 legs are the base 3-leg form (Hamming, Booleanity,
 virtualization) with **no digit-zero recentering**; the virtualized families
-use the 2-leg recentered form (Booleanity, virtualization) plus, for the
-increment columns, the decode leg. The stage-7 reduction is therefore
-per-family hybrid.
+use the 2-leg recentered form (Booleanity, virtualization).
 
 ## 5. Proof obligations
 
@@ -112,9 +107,7 @@ per-family hybrid.
 
 For instruction and bytecode, the note's theorem applies directly. Given
 Booleanity of the reconstructed rows, their sum is one by definition, so each
-`ra_i(·,j)` is a unit vector and `ra(·,j)` encodes a unique address. The same
-argument applies column-by-column to the balanced-increment extension because
-each digit and carry column also has public activation one.
+`ra_i(·,j)` is a unit vector and `ra(·,j)` encodes a unique address.
 
 ### RAM is deferred
 
@@ -128,20 +121,9 @@ For now `RamRa` commits every row and follows the existing base protocol:
 virtualization. This is a scope boundary, not a conclusion about whether a
 later implementation of the note's RAM construction is possible.
 
-## 6. The balanced-increment columns (extension beyond the note)
+## 6. Delta versus base mode / prior drafts
 
-The balanced-increment value columns (`BalancedIncDigit(j)`,
-`BalancedIncCarry`) are virtualized with `M ≡ 1`; the balanced encoding puts a
-zero fused increment on the digit-zero row for every digit and the carry, so
-padding rows are free. Their *decode* leg —
-`Σ_j 2^{8j}·value(digit_j) + 2^64·value(carry) = FusedInc` at the 6b point — is
-not a weight check and is unaffected: same γ placement, same `FusedInc` input
-from the read-RAF cycle phase, same range caveat (one-hotness pins the
-per-digit values only to `[−K/2, K/2)`; `specs/lattice-claims.md`, relation 3).
-
-## 7. Delta versus base mode / prior drafts
-
-- Instruction/bytecode/increment: digit-zero-virtualized (omit the digit-zero
+- Instruction/bytecode: digit-zero-virtualized (omit the digit-zero
   row, two reconstructed stage-7 legs, no Hamming leg).
 - RAM: unchanged from base (all rows committed, `RamHammingBooleanity` + base
   Hamming leg, three-leg stage-7 reduction). The `Load+Store` construction is
@@ -153,7 +135,7 @@ per-digit values only to `[−K/2, K/2)`; `specs/lattice-claims.md`, relation 3)
   kept (base mode still performs a genuine Hamming-weight reduction under them,
   and now so does RAM on the packed path).
 
-## 8. Gates
+## 7. Gates
 
 - `muldiv` both modes (base bit-identical); the four akita e2e tests;
   `jolt-claims` lattice-semantics + claim-graph; `jolt-verifier` tamper suites

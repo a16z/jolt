@@ -135,7 +135,7 @@ impl<T: Copy> Polynomial<T> {
         for i in 0..half {
             let lo: F = self.evals[i].into();
             let hi: F = self.evals[i + half].into();
-            result.push(lo + scalar * (hi - lo));
+            result.push(scalar.mul_add(hi - lo, lo));
         }
         Polynomial {
             evals: result,
@@ -188,14 +188,17 @@ impl<F: JoltField> Polynomial<F> {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
                 let (lo, hi) = self.evals.split_at_mut(half);
-                lo.par_iter_mut().zip(hi.par_iter()).for_each(|(a, b)| {
-                    *a = *a + scalar * (*b - *a);
-                });
+                lo.par_iter_mut()
+                    .zip(hi.par_iter())
+                    .with_min_len(PAR_THRESHOLD)
+                    .for_each(|(a, b)| {
+                        *a = scalar.mul_add(*b - *a, *a);
+                    });
             } else {
                 for i in 0..half {
                     let lo = self.evals[i];
                     let hi = self.evals[i + half];
-                    self.evals[i] = lo + scalar * (hi - lo);
+                    self.evals[i] = scalar.mul_add(hi - lo, lo);
                 }
             }
         }
@@ -205,7 +208,7 @@ impl<F: JoltField> Polynomial<F> {
             for i in 0..half {
                 let lo = self.evals[i];
                 let hi = self.evals[i + half];
-                self.evals[i] = lo + scalar * (hi - lo);
+                self.evals[i] = scalar.mul_add(hi - lo, lo);
             }
         }
 
@@ -226,10 +229,11 @@ impl<F: JoltField> Polynomial<F> {
                 let coeffs = &self.evals;
                 let new: Vec<F> = (0..half)
                     .into_par_iter()
+                    .with_min_len(PAR_THRESHOLD)
                     .map(|i| {
                         let lo = coeffs[2 * i];
                         let hi = coeffs[2 * i + 1];
-                        lo + scalar * (hi - lo)
+                        scalar.mul_add(hi - lo, lo)
                     })
                     .collect();
                 self.evals = new;
@@ -237,7 +241,7 @@ impl<F: JoltField> Polynomial<F> {
                 for i in 0..half {
                     let lo = self.evals[2 * i];
                     let hi = self.evals[2 * i + 1];
-                    self.evals[i] = lo + scalar * (hi - lo);
+                    self.evals[i] = scalar.mul_add(hi - lo, lo);
                 }
                 self.evals.truncate(half);
             }
@@ -248,7 +252,7 @@ impl<F: JoltField> Polynomial<F> {
             for i in 0..half {
                 let lo = self.evals[2 * i];
                 let hi = self.evals[2 * i + 1];
-                self.evals[i] = lo + scalar * (hi - lo);
+                self.evals[i] = scalar.mul_add(hi - lo, lo);
             }
             self.evals.truncate(half);
         }
@@ -280,7 +284,7 @@ impl<F: JoltField> Polynomial<F> {
         let half = self.evals.len() / 2;
 
         let (lo, hi) = (self.evals[0], self.evals[1]);
-        self.evals[0] = lo + scalar * (hi - lo);
+        self.evals[0] = scalar.mul_add(hi - lo, lo);
         let mut e = 2;
         while e <= half {
             let (head, tail) = self.evals.split_at_mut(e);
@@ -288,7 +292,7 @@ impl<F: JoltField> Polynomial<F> {
             let src = &tail[..e];
             let write = |(k, out): (usize, &mut F)| {
                 let lo = src[2 * k];
-                *out = lo + scalar * (src[2 * k + 1] - lo);
+                *out = scalar.mul_add(src[2 * k + 1] - lo, lo);
             };
             #[cfg(feature = "parallel")]
             {
@@ -337,7 +341,7 @@ impl<F: JoltField> Polynomial<F> {
                     .into_par_iter()
                     .with_min_len(PAR_THRESHOLD)
                     .for_each(|(dest, pair)| {
-                        let _ = dest.write(pair[0] + scalar * (pair[1] - pair[0]));
+                        let _ = dest.write(scalar.mul_add(pair[1] - pair[0], pair[0]));
                     });
                 // SAFETY: every spare slot in `0..half` is written exactly once above.
                 unsafe { scratch.set_len(half) };
@@ -348,7 +352,7 @@ impl<F: JoltField> Polynomial<F> {
         }
 
         for pair in self.evals.chunks_exact(2) {
-            scratch.push(pair[0] + scalar * (pair[1] - pair[0]));
+            scratch.push(scalar.mul_add(pair[1] - pair[0], pair[0]));
         }
         std::mem::swap(&mut self.evals, scratch);
         self.num_vars -= 1;

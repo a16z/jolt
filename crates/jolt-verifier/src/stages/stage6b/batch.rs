@@ -427,15 +427,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             })?
         };
 
-        #[cfg(feature = "akita")]
-        let booleanity_dimensions =
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                booleanity_dimensions,
-            )
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::Booleanity,
-                reason: error.to_string(),
-            })?;
         // The little-endian reference cycle is construction geometry (the
         // reversed stage-5 instruction cycle, no draw of its own), so it is
         // rederived from the stage-5 point rather than carried with the

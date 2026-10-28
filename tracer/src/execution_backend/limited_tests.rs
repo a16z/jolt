@@ -10,7 +10,7 @@ use jolt_program::expand::{
 use jolt_riscv::RV64IMAC_JOLT;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::{FieldInlineOp, RV64IMAC_JOLT_FIELD_INLINE};
-use jolt_riscv::{InlineExtension, JoltInstructionKind as Kind};
+use jolt_riscv::{InlineExtension, JoltInstructionKind as Kind, JoltInstructionProfile};
 
 use super::*;
 use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
@@ -22,16 +22,17 @@ use crate::instruction::inline::{
 use crate::instruction::{Instruction, RISCVInstruction};
 use crate::TracerInlineExpansionProvider;
 
+#[cfg(feature = "field-inline")]
+const PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
+#[cfg(not(feature = "field-inline"))]
+const PROFILE: JoltInstructionProfile = RV64IMAC_JOLT;
+
 fn guest(words: &[u32]) -> (JoltProgram, TraceInputs) {
     let elf = build_elf64(words, &[], StrtabOrder::GnuLd);
-    #[cfg(feature = "field-inline")]
-    let profile = RV64IMAC_JOLT_FIELD_INLINE;
-    #[cfg(not(feature = "field-inline"))]
-    let profile = RV64IMAC_JOLT;
     let program = jolt_program::build_jolt_program_with_inline_provider(
         &elf,
         &mut TracerInlineExpansionProvider::new(),
-        profile,
+        PROFILE,
     )
     .unwrap();
     let inputs = TraceInputs {
@@ -176,7 +177,7 @@ fn pending_window_holds_the_longest_tick_without_growing() {
 fn conversion_growth_is_checked_before_it_is_made() {
     let row = size_of::<JoltTraceRow>();
     let chunk = size_of::<ConvertedChunk>();
-    let bytecode = BytecodePCMapper::try_new(&[]).unwrap();
+    let bytecode = BytecodePreprocessing::preprocess(Vec::new(), 0x8000_0000, PROFILE).unwrap();
     let cycles = vec![Cycle::NoOp; 12];
     let pending = heap_bytes(&cycles);
 
@@ -224,15 +225,19 @@ fn conversion_growth_is_checked_before_it_is_made() {
 
 /// `len` cycles with a field-inline event at each of `positions`.
 #[cfg(feature = "field-inline")]
-fn field_inline_cycles(positions: &[usize], len: usize) -> (Vec<Cycle>, BytecodePCMapper) {
+fn field_inline_cycles(positions: &[usize], len: usize) -> (Vec<Cycle>, BytecodePreprocessing) {
     let instruction = Instruction::decode(
         super::tests::field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 2, 5, 0),
         0x8000_0000,
         false,
     )
     .unwrap();
-    let bytecode =
-        BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
+    let bytecode = BytecodePreprocessing::preprocess(
+        vec![instruction.try_jolt_instruction_row().unwrap()],
+        0x8000_0000,
+        PROFILE,
+    )
+    .unwrap();
     let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
     cpu.write_register(5, 11);
     let mut cycles = vec![Cycle::NoOp; len];

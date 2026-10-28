@@ -48,7 +48,11 @@ pub fn decode_elf(
         .filter(|section| section.address() >= RAM_START_ADDRESS)
     {
         let start = section.address();
-        let end = start + section.size();
+        let end = start
+            .checked_add(section.size())
+            .ok_or(ProgramError::MalformedImage(
+                "section extent overflows address space",
+            ))?;
         program_end = program_end.max(end);
 
         let raw_data = section
@@ -153,9 +157,9 @@ fn decode_text_section(
 )]
 mod tests {
     use super::{decode_elf, merge_ranges};
-    use crate::ProgramError;
+    use crate::{ProgramError, RV64I};
     use common::constants::RAM_START_ADDRESS;
-    use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT};
+    use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT, RV64IM_JOLT};
 
     const SHSTRTAB: &[u8] = b"\0.text\0.data\0.shstrtab\0";
     const TEXT_NAME: u32 = 1;
@@ -166,9 +170,11 @@ mod tests {
     const SHF_EXECINSTR: u64 = 0x4;
     const SHT_PROGBITS: u32 = 1;
     const SHT_STRTAB: u32 = 3;
+    const SHT_NOBITS: u32 = 8;
 
     struct TestSection {
         name_offset: u32,
+        section_type: u32,
         flags: u64,
         address: u64,
         data: Vec<u8>,
@@ -178,6 +184,7 @@ mod tests {
     fn text_section(address: u64, data: &[u8]) -> TestSection {
         TestSection {
             name_offset: TEXT_NAME,
+            section_type: SHT_PROGBITS,
             flags: SHF_ALLOC | SHF_EXECINSTR,
             address,
             data: data.to_vec(),
@@ -188,6 +195,7 @@ mod tests {
     fn data_section(address: u64, data: &[u8]) -> TestSection {
         TestSection {
             name_offset: DATA_NAME,
+            section_type: SHT_PROGBITS,
             flags: SHF_ALLOC | SHF_WRITE,
             address,
             data: data.to_vec(),
@@ -258,7 +266,7 @@ mod tests {
             push_section_header(
                 &mut out,
                 section.name_offset,
-                SHT_PROGBITS,
+                section.section_type,
                 section.flags,
                 section.address,
                 data_offset,
@@ -360,6 +368,22 @@ mod tests {
     }
 
     #[test]
+    fn decode_elf_rejects_overflowing_section_extent() {
+        let elf = build_elf64(&[TestSection {
+            name_offset: DATA_NAME,
+            section_type: SHT_NOBITS,
+            flags: SHF_ALLOC,
+            address: 0xffff_ffff_ffff_fffc,
+            data: Vec::new(),
+            size_override: Some(8),
+        }]);
+        assert!(matches!(
+            decode_elf(&elf, RV64IMAC_JOLT),
+            Err(ProgramError::MalformedImage(message)) if message.contains("section extent")
+        ));
+    }
+
+    #[test]
     fn decode_elf_rejects_odd_length_text_section() {
         // c.nop followed by a dangling byte
         let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &[0x01, 0x00, 0x13])]);
@@ -448,5 +472,47 @@ mod tests {
         assert!(image.instructions.is_empty());
         assert!(image.memory_init.is_empty());
         assert_eq!(image.program_end, RAM_START_ADDRESS);
+    }
+
+    #[test]
+    fn decode_elf_rejects_compressed_instructions_without_rv64c() {
+        let c_addi_x1_1 = 0x0085u16;
+        let elf = build_elf64(&[text_section(RAM_START_ADDRESS, &c_addi_x1_1.to_le_bytes())]);
+        for profile in [RV64I, RV64IM_JOLT] {
+            assert!(matches!(
+                decode_elf(&elf, profile),
+                Err(ProgramError::IllegalCompressedInstruction { address }) if address == RAM_START_ADDRESS
+            ));
+        }
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("compressed profile accepts c.addi");
+        assert_eq!(image.instructions.len(), 1);
+        let instruction = &image.instructions[0];
+        assert_eq!(instruction.kind(), SourceInstructionKind::ADDI);
+        assert_eq!(instruction.row().address, RAM_START_ADDRESS as usize);
+        assert!(instruction.row().is_compressed);
+        assert_eq!(instruction.row().operands.rd, Some(1));
+        assert_eq!(instruction.row().operands.rs1, Some(1));
+        assert_eq!(instruction.row().operands.imm, 1);
+    }
+
+    #[test]
+    fn decode_elf_checks_alignment_only_without_rv64c() {
+        let nop = 0x0000_0013u32;
+        let address = RAM_START_ADDRESS + 2;
+        let elf = build_elf64(&[text_section(address, &nop.to_le_bytes())]);
+        for profile in [RV64I, RV64IM_JOLT] {
+            assert!(matches!(
+                decode_elf(&elf, profile),
+                Err(ProgramError::MalformedImage(
+                    "instruction address is not 4-byte aligned"
+                ))
+            ));
+        }
+        let image =
+            decode_elf(&elf, RV64IMAC_JOLT).expect("compressed profile permits 2-byte alignment");
+        assert_eq!(image.instructions.len(), 1);
+        assert_eq!(image.instructions[0].kind(), SourceInstructionKind::ADDI);
+        assert_eq!(image.instructions[0].row().address, address as usize);
+        assert!(!image.instructions[0].row().is_compressed);
     }
 }

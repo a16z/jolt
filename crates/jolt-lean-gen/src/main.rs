@@ -76,10 +76,6 @@ fn operand(reg: Option<u8>) -> String {
     }
 }
 
-fn regidx(reg: Option<u8>) -> String {
-    reg.map_or_else(|| "?".to_string(), reg_symbol)
-}
-
 fn imm_is_nat(name: &str) -> bool {
     matches!(
         name,
@@ -144,16 +140,18 @@ fn lean_instr(
         "ADD" | "ADDW" | "SUB" | "SUBW" | "MUL" | "MULW" | "MULHU" | "MULHSU" | "OR" | "XOR"
         | "AND" | "SLT" | "SLTU" | "ANDN" | "VirtualNegateIf" | "VirtualSRL" | "VirtualSRA"
         | "VirtualSRLW" | "VirtualSRAW" | "VirtualPext" | "VirtualPextSigned"
-        | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "VirtualXORROT32"
-        | "VirtualXORROT24" | "VirtualXORROT16" | "VirtualXORROT63" | "VirtualXORROTW16"
-        | "VirtualXORROTW12" | "VirtualXORROTW8" | "VirtualXORROTW7" | "VirtualXORROTW22"
-        | "VirtualXORROTW19" | "VirtualXORROTW6" => {
+        | "VirtualXORROT32" | "VirtualXORROT24" | "VirtualXORROT16" | "VirtualXORROT63"
+        | "VirtualXORROTW16" | "VirtualXORROTW12" | "VirtualXORROTW8" | "VirtualXORROTW7"
+        | "VirtualXORROTW22" | "VirtualXORROTW19" | "VirtualXORROTW6" => {
             format!("{rd} {rs1} {rs2}")
+        }
+        "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" => {
+            format!("{rd} {rs1} {rs2} {imm}")
         }
         "ADDI" | "ADDIW" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "VirtualMULI"
         | "VirtualMULIW" | "VirtualSRLI" | "VirtualSRAI" | "VirtualSRLIW" | "VirtualSRAIW"
-        | "VirtualROTRI" | "VirtualROTRIW" | "VirtualAlignAddr" | "VirtualWindowMaskB"
-        | "VirtualWindowMaskH" | "VirtualWindowMaskW" => {
+        | "VirtualROTRI" | "VirtualROTRIW" | "VirtualWindowMaskB" | "VirtualWindowMaskH"
+        | "VirtualWindowMaskW" => {
             format!("{rd} {rs1} {imm}")
         }
         "VirtualPow2"
@@ -165,8 +163,11 @@ fn lean_instr(
         | "VirtualMovsign"
         | "VirtualRev8W" => format!("{rd} {rs1}"),
         "LD" => format!(".{load_class} {rd} {rs1} {imm}"),
-        "VirtualAssertWordAlignment" | "VirtualAssertHalfwordAlignment" => {
-            format!("{} {imm} {align_fault}", regidx(o.rs1))
+        "VirtualLoadB" | "VirtualLoadH" | "VirtualLoadW" => {
+            format!(".{load_class} {rd} {rs1} {imm} {align_fault}")
+        }
+        "VirtualStoreB" | "VirtualStoreH" | "VirtualStoreW" => {
+            format!("{rs1} {rs2} {imm} {align_fault}")
         }
         "SD" | "SB" | "SH" | "SW" => format!("{rs1} {rs2} {imm}"),
         "VirtualAdvice" | "VirtualAdviceLoad" => format!("{rd} {imm}"),

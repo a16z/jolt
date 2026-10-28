@@ -7,7 +7,7 @@ use jolt_program::execution::{
     TraceError, TraceInputs, TraceOutput,
 };
 use jolt_program::expand::MAX_EXPANDED_ROWS_PER_SOURCE;
-use jolt_program::preprocess::BytecodePCMapper;
+use jolt_program::preprocess::BytecodePreprocessing;
 #[cfg(feature = "field-inline")]
 use jolt_program::{execution::FieldEvent, field_inline::FieldInlineTraceData};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
@@ -68,13 +68,14 @@ impl TracerBackend {
     /// limit: the cycle vector's growth past `R0`, which holds the old and new
     /// backings together (by itself above `D` when a field-inline run fills
     /// a domain larger than `R0`), the final memory image, the pristine
-    /// emulator clone, flat guest memory and the PC map.
+    /// emulator clone, flat guest memory and the bytecode preprocessing.
     ///
     /// The limited trace checks before each covered request that the covered
     /// buffers at observed capacity plus the request stay within
     /// `limit_bytes`; otherwise it returns [`TraceError::TraceAllocation`] and
-    /// no output. Covered: the bytecode PC map, flat guest memory, the ELF copy
-    /// made during emulator setup, the caller's input and advice buffers and
+    /// no output. Covered: the bytecode preprocessing (its copy of the expanded
+    /// bytecode and the PC map), flat guest memory, the ELF copy made during
+    /// emulator setup, the caller's input and advice buffers and
     /// the device's copies, the output reserve, the `R0`-row reserve and its
     /// growth, a pending window of one full tick past the batch, converted-chunk
     /// metadata and field events and their merge, the advice tape at its
@@ -151,7 +152,11 @@ impl TracerBackend {
             return Err(TraceError::UnsupportedTraceAllocationMode);
         }
         let setup = LimitedSetup::admit(limit, program, &inputs, batch_rows)?;
-        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )?;
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
@@ -208,7 +213,11 @@ impl ExecutionBackend for TracerBackend {
         if let Some(limit) = self.trace_allocation_limit {
             return self.trace_limited(program, inputs, limit, SERIAL_BATCH_ROWS);
         }
-        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )?;
         let execution = self.trace_execution(program, inputs)?;
         let (data, dimensions) = collect_rows(&execution.cycles, &bytecode)?;
         Ok(TraceOutput::with_dimensions(
@@ -262,7 +271,7 @@ impl ConvertedChunk {
         first: usize,
         slots: &mut [MaybeUninit<JoltTraceRow>],
         cycles: &[Cycle],
-        bytecode: &BytecodePCMapper,
+        bytecode: &BytecodePreprocessing,
     ) -> Result<(), TraceError> {
         #[cfg(not(feature = "field-inline"))]
         let _ = first;
@@ -286,7 +295,7 @@ impl ConvertedChunk {
 
 fn collect_rows(
     cycles: &[Cycle],
-    bytecode: &BytecodePCMapper,
+    bytecode: &BytecodePreprocessing,
 ) -> Result<(TraceData, ExecutionDimensions), TraceError> {
     let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
     let _span = tracing::info_span!(
@@ -375,9 +384,11 @@ struct LimitedSetup {
 }
 
 impl LimitedSetup {
-    /// Checks the device's input copies and output reserve, the PC map, flat
-    /// guest memory, the ELF copy setup makes, the initial row reserve and the
-    /// pending window beside the caller's buffers and advice tape.
+    /// Checks the device's input copies and output reserve, the bytecode
+    /// preprocessing, flat guest memory, the ELF copy setup makes, the initial
+    /// row reserve and the pending window beside the caller's buffers and
+    /// advice tape, and the preprocessing's peak with its bytecode copy beside
+    /// those buffers alone.
     fn admit(
         limit: usize,
         program: &JoltProgram,
@@ -409,7 +420,7 @@ impl LimitedSetup {
                 inputs.untrusted_advice.len(),
                 inputs.trusted_advice.len(),
                 output_bytes,
-                BytecodePCMapper::required_allocation_bytes(&program.expanded_bytecode)?,
+                BytecodePreprocessing::retained_bytes(&program.expanded_bytecode)?,
                 bytes_of::<u64>(usize::try_from(memory_words).map_err(|_| overflow)?, phase)?,
                 // `ElfAnalyzer` copies the ELF for the length of setup.
                 program.elf_bytes().len(),
@@ -418,8 +429,16 @@ impl LimitedSetup {
             ],
             phase,
         )?;
+        // `preprocess` frees its copy of the bytecode before any other setup
+        // request, so the copy needs room only beside the caller's buffers.
+        let preprocess =
+            BytecodePreprocessing::required_allocation_bytes(&program.expanded_bytecode)?;
         let held = caller_bytes.saturating_add(tape_bytes);
-        TraceAllocationAllowance::new(limit, 0).check_request(phase, held, requests)?;
+        TraceAllocationAllowance::new(limit, 0).check_request(
+            phase,
+            held,
+            requests.max(preprocess),
+        )?;
         Ok(Self {
             limit,
             rows,
@@ -435,7 +454,7 @@ impl LimitedSetup {
     fn reserve(
         self,
         emulator: &mut Emulator,
-        bytecode: &BytecodePCMapper,
+        bytecode: &BytecodePreprocessing,
     ) -> Result<LimitedTrace, TraceAllocationError> {
         let phase = TraceAllocationPhase::Initial;
         let cpu = emulator.get_mut_cpu();
@@ -474,8 +493,9 @@ impl LimitedSetup {
 /// A limited trace's storage, every buffer counted at its observed capacity.
 struct LimitedTrace {
     limit: usize,
-    /// The PC map, the caller's buffers, the device's input copies and output
-    /// reserve, and flat guest memory, none of which grows after setup.
+    /// The bytecode preprocessing, the caller's buffers, the device's input
+    /// copies and output reserve, and flat guest memory, none of which grows
+    /// after setup.
     resident: usize,
     /// The pending cycles, in a window that holds one full tick past the
     /// batch.
@@ -503,7 +523,7 @@ impl LimitedTrace {
     /// slice's field events, which the slices' workers reserve exactly.
     fn convert_pending(
         &mut self,
-        bytecode: &BytecodePCMapper,
+        bytecode: &BytecodePreprocessing,
         tape: usize,
     ) -> Result<(), TraceError> {
         let others = self.others(tape);
@@ -663,7 +683,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
-    bytecode: BytecodePCMapper,
+    bytecode: BytecodePreprocessing,
 }
 
 /// Boundary checkpoints are captured at chunk-mark crossings, but at most
@@ -695,7 +715,11 @@ impl TracerBackend {
             return Err(TraceError::Backend("chunk_size must be nonzero"));
         }
 
-        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )?;
         let emulator = crate::create_emulator(
             program.elf_bytes(),
             self.elf_path.as_ref(),
@@ -865,6 +889,33 @@ mod chunked_tests {
         let program = build_jolt_program(&elf).expect("failed to build Jolt program");
         let inputs = TraceInputs::new(INPUTS.to_vec(), Vec::new(), Vec::new(), memory_config);
         (program, inputs)
+    }
+
+    #[test]
+    fn eager_and_replay_reject_bytecode_mismatches() {
+        let (mut program, inputs) = muldiv_setup();
+        let mut backend = TracerBackend::new();
+        let eager = backend
+            .trace(&program, inputs.clone())
+            .expect("eager trace failed");
+        let executed = eager.trace.rows()[0].instruction();
+        let instruction = program
+            .expanded_bytecode
+            .iter_mut()
+            .find(|instruction| **instruction == executed)
+            .expect("executed instruction in program");
+        instruction.operands.imm ^= 1;
+        assert!(matches!(
+            backend.trace(&program, inputs.clone()),
+            Err(TraceError::BytecodeInstructionMismatch { .. })
+        ));
+        let summary = backend
+            .execute(&program, inputs, 100)
+            .expect("execute failed");
+        assert!(matches!(
+            backend.replay_chunk(&summary.checkpoints[0]),
+            Err(TraceError::BytecodeInstructionMismatch { .. })
+        ));
     }
 
     /// Invariant 3 of `specs/x86-tracer-backend.md` for the reference backend:
@@ -1060,7 +1111,7 @@ mod tests {
         ));
     }
     #[cfg(feature = "field-inline")]
-    use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
+    use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE, RV64IMAC_JOLT_FIELD_INLINE};
 
     #[cfg(feature = "field-inline")]
     pub(super) fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
@@ -1087,8 +1138,12 @@ mod tests {
             false,
         )
         .unwrap();
-        let bytecode =
-            BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
+        let bytecode = BytecodePreprocessing::preprocess(
+            vec![instruction.try_jolt_instruction_row().unwrap()],
+            0x8000_0000,
+            RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap();
         let positions = [
             0,
             PARALLEL_ROW_CONVERSION_THRESHOLD - 1,
@@ -1125,7 +1180,7 @@ mod tests {
 mod conversion_tests {
     use super::*;
     use crate::instruction::{ld::LD, sd::SD, RISCVCycle};
-    use jolt_riscv::{RamRead, RamWrite};
+    use jolt_riscv::{RamRead, RamWrite, RV64IMAC_JOLT};
 
     #[test]
     fn conversion_preserves_rows_and_reduces_bounds() {
@@ -1164,7 +1219,9 @@ mod conversion_tests {
                     .iter()
                     .map(|cycle| cycle.instruction().try_jolt_instruction_row().unwrap())
                     .collect::<Vec<_>>();
-                let bytecode = BytecodePCMapper::try_new(&instructions).unwrap();
+                let bytecode =
+                    BytecodePreprocessing::preprocess(instructions, 0x8000_0000, RV64IMAC_JOLT)
+                        .unwrap();
                 let (data, dimensions) = collect_rows(&cycles, &bytecode).unwrap();
                 assert_eq!(data.len(), length);
                 assert_eq!(data.rows()[1].ram_address(), read);
@@ -1188,7 +1245,15 @@ mod conversion_tests {
                         .filter(|address| *address != 0)
                         .max()
                 );
-                let empty_bytecode = BytecodePCMapper::try_new(&[]).unwrap();
+                let mut mismatched_bytecode = bytecode.clone();
+                mismatched_bytecode.bytecode[1].operands.imm = 8;
+                assert!(matches!(
+                    collect_rows(&cycles, &mismatched_bytecode),
+                    Err(TraceError::BytecodeInstructionMismatch { pc: 1, .. })
+                ));
+                let empty_bytecode =
+                    BytecodePreprocessing::preprocess(Vec::new(), 0x8000_0000, RV64IMAC_JOLT)
+                        .unwrap();
                 assert!(matches!(
                     collect_rows(&cycles, &empty_bytecode),
                     Err(TraceError::MissingBytecodePc { .. })

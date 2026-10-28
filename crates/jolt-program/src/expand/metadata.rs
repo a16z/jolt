@@ -55,20 +55,13 @@ fn stamp_sequence_metadata(
 
 #[cfg(test)]
 mod tests {
-    use jolt_riscv::{
-        JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
-        SourceExtension,
-    };
+    use crate::RV64I;
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands};
 
     use super::*;
 
     #[test]
     fn rejects_profile_illegal_rows_before_stamping() {
-        const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
-            source_extensions: &[SourceExtension::Rv64I],
-            inline_extensions: &[],
-        };
-
         let rows = vec![JoltInstructionRow {
             instruction_kind: JoltInstructionKind::MUL,
             address: 0x8000_0000,
@@ -84,7 +77,7 @@ mod tests {
         }];
 
         assert!(matches!(
-            stamp_instruction_sequence(rows, false, RV64I_ONLY),
+            stamp_instruction_sequence(rows, false, RV64I),
             Err(ExpansionError::IllegalTargetInstruction(
                 JoltInstructionKind::MUL
             ))

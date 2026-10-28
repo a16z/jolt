@@ -7,7 +7,7 @@ use jolt_field::Field;
 use jolt_openings::OpeningsError;
 
 use super::super::JoltCommittedPolynomial;
-use super::geometry::{LatticeGeometryError, FUSED_INC_BITS};
+use super::geometry::LatticeGeometryError;
 use super::packing::{one_hot_trace_columns, OneHotTraceShape};
 
 /// `OneHotTrace` is committed as one native commitment group.
@@ -26,8 +26,6 @@ pub struct OneHotTraceColumnRanges {
     pub instruction: Range<usize>,
     pub bytecode: Range<usize>,
     pub ram: Range<usize>,
-    pub balanced_inc: Range<usize>,
-    pub balanced_inc_carry: usize,
 }
 
 /// Canonical column order and logical geometry for one proof.
@@ -59,9 +57,7 @@ impl OneHotTraceLayout {
             ));
         }
         let instruction_end = shape.ra_layout.instruction();
-        let balanced_inc_end = instruction_end + FUSED_INC_BITS / shape.log_k_chunk;
-        let balanced_inc_carry = balanced_inc_end;
-        let bytecode_start = balanced_inc_carry + 1;
+        let bytecode_start = instruction_end;
         let bytecode_end = bytecode_start + shape.ra_layout.bytecode();
         let ram_end = bytecode_end + shape.ra_layout.ram();
         debug_assert_eq!(ram_end, columns.len());
@@ -81,8 +77,6 @@ impl OneHotTraceLayout {
                 instruction: 0..instruction_end,
                 bytecode: bytecode_start..bytecode_end,
                 ram: bytecode_end..ram_end,
-                balanced_inc: instruction_end..balanced_inc_end,
-                balanced_inc_carry,
             },
             layout_digest,
         })
@@ -118,8 +112,6 @@ impl OneHotTraceLayout {
             JoltCommittedPolynomial::InstructionRa(_)
                 | JoltCommittedPolynomial::BytecodeRa(_)
                 | JoltCommittedPolynomial::RamRa(_)
-                | JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry
         ) {
             return Err(invalid(format!(
                 "polynomial {polynomial:?} is not a OneHotTrace column"
@@ -166,7 +158,7 @@ fn layout_digest(
     columns: &[JoltCommittedPolynomial],
 ) -> Result<[u8; 32], OpeningsError> {
     let mut hasher = Blake2b::<U32>::new();
-    hasher.update(b"jolt/akita/one_hot_trace/native-batch/v8");
+    hasher.update(b"jolt/akita/one_hot_trace/native-batch/v9");
     append_usize(&mut hasher, num_vars);
     append_usize(&mut hasher, columns.len());
     append_usize(&mut hasher, shape.log_t);
@@ -188,11 +180,6 @@ fn layout_digest(
                 hasher.update([2]);
                 append_usize(&mut hasher, *index);
             }
-            JoltCommittedPolynomial::BalancedIncDigit(index) => {
-                hasher.update([3]);
-                append_usize(&mut hasher, *index);
-            }
-            JoltCommittedPolynomial::BalancedIncCarry => hasher.update([4]),
             other => {
                 return Err(OpeningsError::InvalidBatch(format!(
                     "non-OneHotTrace polynomial {other:?} in native one-hot layout"
@@ -226,18 +213,16 @@ mod tests {
     fn native_layout_has_actual_batch_shape_and_is_digest_bound() {
         let plan = ONE_HOT_TRACE_LAYOUT.plan(&shape(5)).unwrap();
         assert_eq!(plan.num_vars(), 13);
-        assert_eq!(plan.ids().len(), 27);
+        assert_eq!(plan.ids().len(), 18);
         assert_eq!(plan.ranges().instruction, 0..16);
-        assert_eq!(plan.ranges().balanced_inc, 16..24);
-        assert_eq!(plan.ranges().balanced_inc_carry, 24);
-        assert_eq!(plan.ranges().bytecode, 25..26);
-        assert_eq!(plan.ranges().ram, 26..27);
+        assert_eq!(plan.ranges().bytecode, 16..17);
+        assert_eq!(plan.ranges().ram, 17..18);
         assert_eq!(plan.ids().last(), Some(&JoltCommittedPolynomial::RamRa(0)));
         assert_eq!(
             ONE_HOT_TRACE_LAYOUT.setup_shape(&shape(5)).unwrap(),
             OneHotTraceSetupShape {
                 num_vars: 13,
-                num_polys: 27,
+                num_polys: 18,
             }
         );
 
@@ -252,7 +237,7 @@ mod tests {
     #[test]
     fn native_layout_enforces_the_row_mask_capacity() {
         let mut shape = OneHotTraceShape {
-            ra_layout: JoltRaPolynomialLayout::new(32, 7, 8).unwrap(),
+            ra_layout: JoltRaPolynomialLayout::new(32, 16, 16).unwrap(),
             log_t: 12,
             log_k_chunk: 4,
         };
@@ -260,7 +245,7 @@ mod tests {
         assert_eq!(plan.ids().len(), 64);
         assert_eq!(plan.ranges().ram.end, 64);
 
-        shape.ra_layout = JoltRaPolynomialLayout::new(32, 8, 8).unwrap();
+        shape.ra_layout = JoltRaPolynomialLayout::new(32, 16, 17).unwrap();
         assert_eq!(
             ONE_HOT_TRACE_LAYOUT.plan(&shape),
             Err(OpeningsError::InvalidBatch(
@@ -284,8 +269,6 @@ mod tests {
             JoltCommittedPolynomial::InstructionRa(0),
             JoltCommittedPolynomial::BytecodeRa(0),
             JoltCommittedPolynomial::RamRa(0),
-            JoltCommittedPolynomial::BalancedIncDigit(0),
-            JoltCommittedPolynomial::BalancedIncCarry,
         ] {
             assert_eq!(
                 ONE_HOT_TRACE_LAYOUT
