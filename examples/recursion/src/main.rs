@@ -1137,19 +1137,60 @@ echo "$3"
     (output.status.success() && key.len() == 64).then_some(key)
 }
 
+/// Symbols the verifier guest's link places first in `.text` (an lld symbol
+/// ordering file). ZeroOS's weak `__main_entry` stub sits at the start of
+/// `.text` and reaches `__default_main_entry` with `j`, whose reach is 1 MiB;
+/// the verifier guest can place more than 1 MiB of code between the two. With
+/// this order the target's section sits next to the stub. The code is
+/// unchanged; only the position of that function in the image moves.
+const RECURSION_GUEST_LINK_ORDER: &str = "__default_main_entry\n";
+
+/// Linker flag that applies `RECURSION_GUEST_LINK_ORDER` to the verifier guest
+/// build. The ordering file is written into the guest target directory (only
+/// when its bytes differ). `RECURSION_GUEST_LINK_ORDER=off` links without it.
+fn recursion_guest_link_order_flag(target_dir: &str) -> Option<String> {
+    if matches!(
+        std::env::var("RECURSION_GUEST_LINK_ORDER").as_deref(),
+        Ok("off")
+    ) {
+        return None;
+    }
+    std::fs::create_dir_all(target_dir).expect("create the guest target directory");
+    let dir = std::fs::canonicalize(target_dir).expect("resolve the guest target directory");
+    let path = dir.join("recursion-guest-link-order.txt");
+    if !std::fs::read(&path).is_ok_and(|existing| existing == RECURSION_GUEST_LINK_ORDER.as_bytes())
+    {
+        let tmp = dir.join(format!(
+            "recursion-guest-link-order.{}.tmp",
+            std::process::id()
+        ));
+        std::fs::write(&tmp, RECURSION_GUEST_LINK_ORDER).expect("write the guest link order");
+        std::fs::rename(&tmp, &path).expect("install the guest link order");
+    }
+    let path = path.to_str().expect("UTF-8 guest link order path");
+    // ZEROOS_GUEST_RUSTFLAGS is split on whitespace.
+    assert!(
+        !path.contains(char::is_whitespace),
+        "guest link order path contains whitespace: {path}"
+    );
+    Some(format!("-Clink-arg=--symbol-ordering-file={path}"))
+}
+
 /// Builds the verifier guest, applying the default guest build settings to
-/// this build only (the inner guests keep the stock settings). With
-/// `RECURSION_GUEST_ELF_CACHE=<dir>` set, an ELF already built for the same
-/// content key is reused instead of running the guest build, and a fresh build
-/// is stored under its key; unset, the build runs as before. With
-/// `RECURSION_GUEST_ELF_CACHE_PROBE` also set, the host logs the key and whether
-/// the lookup hits, then exits without building.
+/// this build only (the inner guests keep the stock settings), together with
+/// the link order `RECURSION_GUEST_LINK_ORDER`, which applies with or without
+/// those settings. With `RECURSION_GUEST_ELF_CACHE=<dir>` set, an ELF already
+/// built for the same content key is reused instead of running the guest build,
+/// and a fresh build is stored under its key; unset, the build runs as before.
+/// With `RECURSION_GUEST_ELF_CACHE_PROBE` also set, the host logs the key and
+/// whether the lookup hits, then exits without building.
 fn build_recursion_guest(program: &mut Program, target_dir: &str) {
     let enabled = cfg!(feature = "guest-codegen")
         && !matches!(
             std::env::var("RECURSION_GUEST_CODEGEN").as_deref(),
             Ok("off")
         );
+    let caller_guest_rustflags = std::env::var_os("ZEROOS_GUEST_RUSTFLAGS");
     let mut applied = Vec::new();
     if enabled {
         for (key, value) in RECURSION_GUEST_CODEGEN {
@@ -1159,7 +1200,15 @@ fn build_recursion_guest(program: &mut Program, target_dir: &str) {
             }
         }
     }
-    info!("  recursion guest build settings: {applied:?}");
+    let link_order = recursion_guest_link_order_flag(target_dir);
+    if let Some(flag) = &link_order {
+        let flags = match std::env::var("ZEROOS_GUEST_RUSTFLAGS") {
+            Ok(flags) if !flags.trim().is_empty() => format!("{flags} {flag}"),
+            _ => flag.clone(),
+        };
+        std::env::set_var("ZEROOS_GUEST_RUSTFLAGS", flags);
+    }
+    info!("  recursion guest build settings: {applied:?}, link order: {link_order:?}");
     let cache = std::env::var_os("RECURSION_GUEST_ELF_CACHE").map(PathBuf::from);
     let key = cache.as_ref().and_then(|_| guest_elf_cache_key(target_dir));
     let cached = match (&cache, &key) {
@@ -1203,6 +1252,10 @@ fn build_recursion_guest(program: &mut Program, target_dir: &str) {
     }
     for key in applied {
         std::env::remove_var(key);
+    }
+    match caller_guest_rustflags {
+        Some(flags) => std::env::set_var("ZEROOS_GUEST_RUSTFLAGS", flags),
+        None => std::env::remove_var("ZEROOS_GUEST_RUSTFLAGS"),
     }
 }
 
