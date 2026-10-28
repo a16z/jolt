@@ -49,7 +49,9 @@ impl<F: JoltField> JointOpeningPolynomials<F> for ReferenceBackend {
                     });
                 }
                 let embedded = match polynomial {
-                    JoltCommittedPolynomial::Reserved4(retired) => match retired {},
+                    JoltCommittedPolynomial::Reserved4(retired)
+                    | JoltCommittedPolynomial::Reserved9(retired)
+                    | JoltCommittedPolynomial::Reserved10(retired) => match retired {},
                     JoltCommittedPolynomial::TrustedAdvice
                     | JoltCommittedPolynomial::UntrustedAdvice
                     | JoltCommittedPolynomial::ProgramBytecode
