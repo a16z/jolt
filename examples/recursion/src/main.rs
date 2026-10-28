@@ -936,7 +936,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("setup-sop-structured");
     #[cfg(feature = "weighted-dot-horner")]
     program.add_guest_feature("weighted-dot-horner");
-    #[cfg(feature = "prevalidated-catalog")]
+    #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
     program.add_guest_feature("prevalidated-catalog");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
@@ -1379,7 +1379,7 @@ fn verify_proofs(
         immutable_recipe_tables::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
     // Prevalidated catalog: the embedded setup's one-hot catalog view, loaded
     // canonically here and recorded for the guest (setup section only).
-    #[cfg(feature = "prevalidated-catalog")]
+    #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
     let prevalidated_catalog = prevalidated_catalog::prepare(
         &all_groups_data[..layout.setup_len],
         "/tmp/jolt-guest-targets",
@@ -1393,7 +1393,7 @@ fn verify_proofs(
     );
     #[cfg(feature = "immutable-recipes")]
     immutable_recipe_tables::release(recipe_tables);
-    #[cfg(feature = "prevalidated-catalog")]
+    #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
     prevalidated_catalog::release(prevalidated_catalog);
 }
 
@@ -1519,7 +1519,7 @@ fn main() {
 mod immutable_recipe_generation;
 #[cfg(feature = "immutable-recipes")]
 mod immutable_recipe_tables;
-#[cfg(feature = "prevalidated-catalog")]
+#[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
 mod prevalidated_catalog;
 
 #[cfg(not(feature = "immutable-recipes"))]
