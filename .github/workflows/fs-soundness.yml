@@ -35,7 +35,9 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
-  cancel-in-progress: true
+  # Only PR runs cancel each other: a main run is the one that saves caches,
+  # so back-to-back merges must not cancel it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fs-obligations:
@@ -49,6 +51,7 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           shared-key: fs-obligations
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:

@@ -13,12 +13,12 @@ use jolt_riscv::{
     RV64IMAC_JOLT,
 };
 #[cfg(feature = "serialization")]
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(feature = "serialization")]
 use sha2::{Digest, Sha256};
 
 #[cfg(feature = "serialization")]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct ExpansionParityCase {
     name: String,
     input: SourceInstruction,
@@ -316,6 +316,62 @@ fn inline_provider_output_is_validated_and_stamped() {
 }
 
 #[test]
+fn inline_provider_memory_offsets_must_fit_twelve_bits() -> Result<(), ExpansionError> {
+    struct MemoryProvider {
+        kind: SourceInstructionKind,
+        offset: i64,
+    }
+
+    impl InlineExpansionProvider for MemoryProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &SourceInstruction,
+            _profile: JoltInstructionProfile,
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+            let mut builder = InlineExpansionBuilder::new(*instruction.row());
+            let register = builder.allocate_for_inline()?;
+            if self.kind == SourceInstructionKind::SD {
+                builder.emit_s(self.kind, 10, *register, self.offset);
+            } else {
+                builder.emit_ld(self.kind, *register, 10, self.offset);
+            }
+            builder.release(register);
+            builder.finalize()
+        }
+    }
+
+    let input = instruction(SourceInstructionKind::Inline, Some(3), false);
+    let expand = |kind, offset| {
+        expand_instruction_with_provider(
+            &input,
+            &mut ExpansionAllocator::new(),
+            &mut MemoryProvider { kind, offset },
+            RV64IMAC_JOLT,
+        )
+    };
+
+    for (kind, offset) in [
+        (SourceInstructionKind::LBU, 2047),
+        (SourceInstructionKind::SD, -2048),
+    ] {
+        let memory_row = rows(expand(kind, offset)?)[0];
+        assert_eq!(memory_row.operands.imm, i128::from(offset));
+    }
+    for (kind, offset) in [
+        (SourceInstructionKind::LBU, 0x8000_1001),
+        (SourceInstructionKind::SD, 2048),
+        (SourceInstructionKind::SD, -2049),
+    ] {
+        assert!(matches!(
+            expand(kind, offset),
+            Err(ExpansionError::InlineMemoryOffsetOutOfRange { offset: rejected })
+                if rejected == i128::from(offset)
+        ));
+    }
+    Ok(())
+}
+
+#[test]
 fn inline_provider_allocator_resets_are_appended() -> Result<(), ExpansionError> {
     struct AllocatingProvider;
 
@@ -479,35 +535,18 @@ fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), Expansi
 #[test]
 #[cfg(feature = "serialization")]
 fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Error>> {
-    // Expected hashes generated from baseline main commit 51d81a36e. This catches
-    // recursive expansion order and virtual-register reuse regressions without
-    // checking a giant expanded-row fixture into the repository.
-    //
-    // 16 of the 360 hashes were re-baselined when `emit_address` began wrapping
-    // its offset through `format_i_imm`: exactly the `imm = -8` cases for LH/LHU/
-    // LW/LWU/SH/SW, the accesses that emit an alignment assert. Byte accesses
-    // (no assert) and non-negative offsets (wrap is the identity) are unchanged.
-    //
-    // 18 hashes were re-baselined when LW moved to the fused
-    // VirtualWindowMaskW + VirtualPextSigned extraction: all LW cases, plus
-    // LRW/SCW, which recursively embed the word-load expansion. A further 60
-    // (LB/LBU/LH/LHU/LWU, 12 each) were re-baselined when the remaining loads
-    // moved to their window-mask + parallel-extract sequences.
-    // A further 78 (all six loads, 12 each, plus LRW/SCW) were re-baselined
-    // when VirtualAlignAddr fused the ADDI + ANDI pair and the window masks
-    // began taking the immediate directly, and again when the fused-load
-    // virtual opcodes moved to 0x009a-0x009d after the W-shift tags took
-    // 0x0091-0x0099 (kinds serialize as tags, so renumbering shifts hashes).
-    // A further 27 (SB/SH/SW, 8 each, plus 3 SCW) were re-baselined when the
-    // narrow stores moved to the window-mask + ANDN + shift-data sequences
-    // at tags 0x009e-0x00a0. The six SCW/SCD cases were re-baselined when
-    // success advice was replaced by a deterministic reservation comparison.
+    // Pins expansion order, virtual-register reuse and emitted tags (kinds
+    // serialize as tags) without checking the expanded rows in. Re-baseline with
+    // `JOLT_UPDATE_EXPANSION_FIXTURES=1 cargo nextest run -p jolt-program -E
+    // 'test(expansion_matches_main_golden_fixture)'` and review which cases moved.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a
     // filtering rewrite of the fixture must not drop unchanged entries).
     assert_eq!(cases.len(), 360);
 
+    let bless = std::env::var_os("JOLT_UPDATE_EXPANSION_FIXTURES").is_some();
+    let mut blessed = Vec::with_capacity(cases.len());
     for case in cases {
         let mut allocator = ExpansionAllocator::new();
         let expanded = rows(expand_instruction(
@@ -518,7 +557,23 @@ fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Err
         let encoded = serde_json::to_vec(&expanded)?;
         let output_sha256 = hex::encode(Sha256::digest(encoded));
 
-        assert_eq!(output_sha256, case.output_sha256, "{}", case.name);
+        if bless {
+            blessed.push(ExpansionParityCase {
+                output_sha256,
+                ..case
+            });
+        } else {
+            assert_eq!(output_sha256, case.output_sha256, "{}", case.name);
+        }
+    }
+    if bless {
+        std::fs::write(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/expand/fixtures/main_expand_parity_hashes.json"
+            ),
+            serde_json::to_string(&blessed)?,
+        )?;
     }
 
     Ok(())

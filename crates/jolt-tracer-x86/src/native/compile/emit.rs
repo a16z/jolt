@@ -348,6 +348,26 @@ fn link_value(row: &JoltInstructionRow) -> i64 {
     row.address as i64 + if row.is_compressed { 2 } else { 4 }
 }
 
+/// Alignment class of a floor-addressed row (`VirtualLoad*`/`VirtualStore*`).
+#[derive(Clone, Copy)]
+enum FloorAlignment {
+    Byte,
+    Halfword,
+    Word,
+}
+
+impl FloorAlignment {
+    /// The effective-address bits that must be zero, and the `assert_failed`
+    /// code reported when they are not.
+    fn check(self) -> Option<(i8, u64)> {
+        match self {
+            Self::Byte => None,
+            Self::Halfword => Some((1, 0)),
+            Self::Word => Some((3, 1)),
+        }
+    }
+}
+
 impl DynasmEmitter {
     /// `Ld`: fast path hits the RAM plane; device/unaligned/OOB funnel to the
     /// slow helper. Clobbers rax/rcx/rdx (+ helper scratch on the cold path).
@@ -356,9 +376,21 @@ impl DynasmEmitter {
         let offset = row.operands.imm as i32;
         e.load_reg(RAX, row.operands.rs1);
         dynasm!(e.ops ; .arch x64 ; add rax, offset);
+        Self::emit_load_at(e, row);
+    }
+
+    /// `VirtualLoad*`: loads the doubleword containing the effective
+    /// address after the alignment check.
+    fn emit_floor_load(e: &mut Emitter, row: &JoltInstructionRow, alignment: FloorAlignment) {
+        Self::emit_floor_address(e, row, alignment);
+        Self::emit_load_at(e, row);
+    }
+
+    /// Loads the doubleword at the address in rax into `rd`.
+    fn emit_load_at(e: &mut Emitter, row: &JoltInstructionRow) {
         if e.mode == EmitMode::Record {
-            // The effective address is 8-aligned on the success path, so the
-            // reference's word-aligned floor equals it.
+            // The address is 8-aligned on the success path, so it is the
+            // doubleword address the reference records.
             e.obs_reload();
             dynasm!(e.ops ; .arch x64 ; mov QWORD [r10 + OBS_RAM_ADDRESS], rax);
         }
@@ -393,10 +425,22 @@ impl DynasmEmitter {
         // EA = x[rs1].wrapping_add(imm) as u64 — imm used as full i64 here.
         e.load_reg(RAX, row.operands.rs1);
         e.load_imm(RCX, row.operands.imm as i64);
-        e.load_reg(RDX, row.operands.rs2);
         dynasm!(e.ops ; .arch x64 ; add rax, rcx);
+        Self::emit_store_at(e, row);
+    }
+
+    /// `VirtualStore*`: stores `rs2` to the doubleword containing the
+    /// effective address after the alignment check.
+    fn emit_floor_store(e: &mut Emitter, row: &JoltInstructionRow, alignment: FloorAlignment) {
+        Self::emit_floor_address(e, row, alignment);
+        Self::emit_store_at(e, row);
+    }
+
+    /// Stores `rs2` to the doubleword at the address in rax.
+    fn emit_store_at(e: &mut Emitter, row: &JoltInstructionRow) {
+        e.load_reg(RDX, row.operands.rs2);
         if e.mode == EmitMode::Record {
-            // The reference records the raw effective address and the stored
+            // The reference records the doubleword address and the stored
             // value; the pre-value is captured on whichever path performs the
             // write (fast path below, helper for the device region).
             e.obs_reload();
@@ -445,20 +489,33 @@ impl DynasmEmitter {
         dynasm!(e.ops ; .arch x64 ; done:);
     }
 
-    fn emit_assert_alignment(e: &mut Emitter, row: &JoltInstructionRow, mask: i8, code: u64) {
+    /// Leaves the address of the doubleword containing `x[rs1] + imm` in rax,
+    /// first failing like the reference's floor rows when the effective
+    /// address is misaligned for `alignment`.
+    fn emit_floor_address(e: &mut Emitter, row: &JoltInstructionRow, alignment: FloorAlignment) {
+        // EA = (x[rs1] as u64).wrapping_add(imm as u64), the full i64 offset.
         e.load_reg(RAX, row.operands.rs1);
         e.load_imm(RCX, row.operands.imm as i64);
-        dynasm!(e.ops
-            ; .arch x64
-            ; add rax, rcx
-            ; test al, mask
-            ; jz >ok
-            ; mov rsi, code as i32
-            ; mov rdx, rax
-        );
-        e.call_helper(helpers::assert_failed as *const () as usize);
-        // assert_failed always sets the exit flag, so call_helper's check exits.
-        dynasm!(e.ops ; .arch x64 ; ok:);
+        dynasm!(e.ops ; .arch x64 ; add rax, rcx);
+        if let Some((mask, code)) = alignment.check() {
+            dynasm!(e.ops
+                ; .arch x64
+                ; test al, mask
+                ; jz >aligned
+                ; mov rsi, code as i32
+                ; mov rdx, rax
+            );
+            e.call_helper(helpers::assert_failed as *const () as usize);
+            dynasm!(e.ops ; .arch x64 ; aligned:);
+        }
+        dynasm!(e.ops ; .arch x64 ; and rax, -8);
+    }
+
+    /// Leaves a store-data shifter's effective address `x[rs2] + imm` in rcx.
+    fn emit_shift_data_address(e: &mut Emitter, row: &JoltInstructionRow) {
+        e.load_reg(RCX, row.operands.rs2);
+        e.load_imm(RAX, row.operands.imm as i64);
+        dynasm!(e.ops ; .arch x64 ; add rcx, rax);
     }
 }
 
@@ -789,8 +846,8 @@ impl DynasmEmitter {
             K::WindowMaskH(_) => {
                 // rd = 0xFFFF << (8 * ((x[rs1] + imm) & 6)): byte mask of the
                 // addressed halfword's lane within its containing doubleword.
-                // Bit 0 is ignored; the surrounding sequence asserts halfword
-                // alignment.
+                // Bit 0 is ignored; the sequence's floor-addressed rows reject
+                // an odd address.
                 e.load_reg(RCX, row.operands.rs1);
                 e.load_imm(RAX, row.operands.imm as i64);
                 dynasm!(e.ops
@@ -803,17 +860,11 @@ impl DynasmEmitter {
                 );
                 e.store_rd(RAX, row.operands.rd);
             }
-            K::AlignAddr(_) => {
-                e.load_reg(RAX, row.operands.rs1);
-                e.load_imm(RCX, row.operands.imm as i64);
-                dynasm!(e.ops ; .arch x64 ; add rax, rcx ; and rax, -8);
-                e.store_rd(RAX, row.operands.rd);
-            }
             K::ShiftDataB(_) => {
-                // rd = (x[rs1] & 0xFF) << (8 * (x[rs2] & 7)): the store byte
-                // moved into its lane within the containing doubleword (rs1
-                // holds the store value, rs2 the effective address).
-                e.load_reg(RCX, row.operands.rs2);
+                // rd = (x[rs1] & 0xFF) << (8 * (ea & 7)): the store byte moved
+                // into its lane within the containing doubleword (rs1 holds
+                // the store value, ea = x[rs2] + imm).
+                Self::emit_shift_data_address(e, row);
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops
                     ; .arch x64
@@ -825,11 +876,10 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::ShiftDataH(_) => {
-                // rd = (x[rs1] & 0xFFFF) << (8 * (x[rs2] & 6)): the store
-                // halfword moved into its lane. Bit 0 of the address is
-                // ignored; the surrounding sequence asserts halfword
-                // alignment.
-                e.load_reg(RCX, row.operands.rs2);
+                // rd = (x[rs1] & 0xFFFF) << (8 * (ea & 6)): the store halfword
+                // moved into its lane. Bit 0 of the address is ignored; the
+                // sequence's floor-addressed rows reject an odd address.
+                Self::emit_shift_data_address(e, row);
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops
                     ; .arch x64
@@ -841,10 +891,10 @@ impl DynasmEmitter {
                 e.store_rd(RAX, row.operands.rd);
             }
             K::ShiftDataW(_) => {
-                // rd = (x[rs1] & 0xFFFFFFFF) << (8 * (x[rs2] & 4)): the store
-                // word moved into its lane. Bits 0-1 of the address are
-                // ignored; the surrounding sequence asserts word alignment.
-                e.load_reg(RCX, row.operands.rs2);
+                // rd = (x[rs1] & 0xFFFFFFFF) << (8 * (ea & 4)): the store word
+                // moved into its lane. Bits 0-1 of the address are ignored;
+                // the sequence's floor-addressed rows reject a misaligned one.
+                Self::emit_shift_data_address(e, row);
                 e.load_reg(RAX, row.operands.rs1);
                 dynasm!(e.ops
                     ; .arch x64
@@ -919,9 +969,13 @@ impl DynasmEmitter {
 
             K::Ld(_) => Self::emit_load_doubleword(e, row),
             K::Sd(_) => Self::emit_store_doubleword(e, row),
+            K::LoadB(_) => Self::emit_floor_load(e, row, FloorAlignment::Byte),
+            K::LoadH(_) => Self::emit_floor_load(e, row, FloorAlignment::Halfword),
+            K::LoadW(_) => Self::emit_floor_load(e, row, FloorAlignment::Word),
+            K::StoreB(_) => Self::emit_floor_store(e, row, FloorAlignment::Byte),
+            K::StoreH(_) => Self::emit_floor_store(e, row, FloorAlignment::Halfword),
+            K::StoreW(_) => Self::emit_floor_store(e, row, FloorAlignment::Word),
 
-            K::AssertHalfwordAlignment(_) => Self::emit_assert_alignment(e, row, 1, 0),
-            K::AssertWordAlignment(_) => Self::emit_assert_alignment(e, row, 3, 1),
             K::AssertLte(_) => {
                 e.load_reg(RAX, row.operands.rs1);
                 e.load_reg(RCX, row.operands.rs2);
