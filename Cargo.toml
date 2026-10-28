@@ -276,7 +276,13 @@ expect_used = "deny"
 unused_results = "warn"
 
 [workspace.dependencies]
-cudarc = { version = "0.19.8", default-features = false, features = ["std", "driver", "nvrtc", "cuda-version-from-build-system", "dynamic-loading"] }
+cudarc = { version = "0.19.8", default-features = false, features = [
+  "std",
+  "driver",
+  "nvrtc",
+  "cuda-version-from-build-system",
+  "dynamic-loading",
+] }
 proptest = "1.11.0"
 # Cryptography and Math
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }

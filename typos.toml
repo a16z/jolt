@@ -13,6 +13,8 @@ extend-exclude = [
 
 [default.extend-words]
 "groth" = "groth"
+# Elliptic-curve points in projective coordinates.
+"projectives" = "projectives"
 "fle" = "fle"
 "sie" = "sie"
 "stip" = "stip"
