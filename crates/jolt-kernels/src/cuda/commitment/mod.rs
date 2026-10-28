@@ -15,6 +15,9 @@
 //! fallback uses each column's logical extent.
 //! Advice also uses GPU row MSMs after an oracle-table upload.
 //! Field-inline witness commitments delegate to optimized.
+//! CUDA computes rows for every padding window. Optimized's parallel streaming
+//! path reuses one-hot commitments for identical whole padding windows and
+//! advances zero increments through the PCS zero-feed path.
 
 #[cfg(feature = "field-inline")]
 use crate::commitment::FieldInlineWitnessCommitment;

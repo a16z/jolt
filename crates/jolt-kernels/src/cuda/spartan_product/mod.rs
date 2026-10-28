@@ -10,6 +10,9 @@
 //! with that round. Split-eq rounds fold these tables locally before
 //! gathering the short tail onto GPU 0. Native columns are retained separately
 //! to evaluate the individual output claims.
+//! These CUDA tables include padding cycles. Optimized instead retains a
+//! nonconstant prefix and adds the constant suffix using its equality weight
+//! in uni-skip, remainder rounds, and the final opening walk.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

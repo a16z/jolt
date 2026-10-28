@@ -7,6 +7,9 @@
 //! from the active instruction profile. Unsupported descriptors are rejected
 //! by the upload path.
 //!
+//! Packed windows include the logical padding rows. Optimized kernels can
+//! instead retain a nonconstant prefix and one representative padding row.
+//!
 //! This is an extraction interface, not a second `JoltWitnessPlane`: program
 //! metadata and non-trace oracles remain with the host witness. Packing uses
 //! a fixed CUDA ABI rather than Rust enum discriminants or field elements.

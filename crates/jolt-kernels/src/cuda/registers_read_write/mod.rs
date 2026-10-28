@@ -11,6 +11,9 @@
 //! the shared RAM-style sparse address engine on GPU 0; optimized uses register
 //! checkpoint chunks for that schedule. Final read claims are evaluated from
 //! the original register indices.
+//! Optimized omits trailing zero increments and, in address-first mode, keeps
+//! inactive selectors and final register values as implicit cycle-table tails.
+//! CUDA retains full increment columns and materializes those cycle tails.
 
 use crate::cuda::common::address_first::AddressFirst;
 #[cfg(feature = "allocative")]

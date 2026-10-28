@@ -8,6 +8,12 @@
 //! per-chunk equality tables for four binds before gathering dense values.
 //! Window-local rounds remain on their source devices; the short tail runs on
 //! GPU 0. Output claims remove the batching scales from the individual chunks.
+//! Optimized can materialize earlier when dense storage is cheaper, and keeps
+//! constant padding implicit. For four-chunk virtual RAs with small alphabets,
+//! it also precomputes selector-pair products for the first round; CUDA evaluates
+//! those products per cycle.
+//! CUDA gathers dense values by selector column, while optimized can decode
+//! all instruction chunks from each packed row together.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

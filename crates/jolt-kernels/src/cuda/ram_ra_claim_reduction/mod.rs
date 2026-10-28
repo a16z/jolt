@@ -8,6 +8,8 @@
 //! device and retains it until the suffix handoff. Optimized instead derives
 //! both folds from packed hot indices without retaining a full `H` table.
 //! Device-local folds are combined on GPU 0, where the reduced rounds run.
+//! Optimized limits the address scans to the prefix ending at the last access;
+//! CUDA's dense `H` also stores and folds the trailing no-access zeros.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

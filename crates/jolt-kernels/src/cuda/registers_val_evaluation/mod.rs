@@ -8,6 +8,8 @@
 //! the third bind. Optimized instead materializes both factors at the first
 //! bind. Product rounds run over resident cycle windows before gathering their
 //! remaining factors onto GPU 0.
+//! Optimized materializes only nonconstant prefixes and keeps their suffixes
+//! implicit; CUDA's increment and write-RA tables span the padded cycle domain.
 
 use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;

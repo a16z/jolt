@@ -9,6 +9,9 @@
 //! optimized's usual lazy-RA path collapses after four. Construction reports a
 //! capability error if the chunks exceed the packed address or message-lane
 //! capacity. Remaining window factors are gathered onto GPU 0.
+//! Optimized may collapse earlier when dense storage is cheaper and omits the
+//! trailing no-access cycles. CUDA retains those zero-valued rows in its windows
+//! and dense tables.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

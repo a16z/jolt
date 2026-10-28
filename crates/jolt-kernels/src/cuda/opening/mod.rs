@@ -12,6 +12,9 @@
 //! The field-inline increment view delegates to optimized. Initial-RAM advice
 //! evaluation uploads the oracle table and reduces it on the GPU, while
 //! program-image evaluation uses the canonical host helper.
+//! CUDA's compact sources still include padding cycles. Optimized retains only
+//! the nonconstant source prefix and handles its constant suffix separately in
+//! evaluation and row folds.
 
 #[cfg(feature = "field-inline")]
 use crate::optimized::OptimizedBackend;

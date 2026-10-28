@@ -8,6 +8,9 @@
 //! GPU 0, and keeps both the weight-table binds and quadratic round reductions
 //! on that device. Only the reduced message lanes and final claims return to
 //! the host.
+//! CUDA's pushforward uses a full cycle-equality table per window. Optimized
+//! accumulates inner tensor weights into small histograms before applying each
+//! outer weight, and adds constant padding through one suffix weight.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

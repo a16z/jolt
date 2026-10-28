@@ -12,6 +12,9 @@
 //! cycle columns. The separate read/write columns differ from optimized's RAM
 //! tail, which shares its access indicator. Mixed address/cycle schedules are
 //! rejected during preparation.
+//! Optimized omits trailing no-access increments and, in address-first mode,
+//! materializes cycle tables only through the last access, retaining final
+//! values as an implicit suffix. CUDA keeps full increment and handoff tables.
 
 use crate::cuda::common::address_first::AddressFirst;
 use crate::cuda::common::devices::CycleWindow;

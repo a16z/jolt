@@ -10,6 +10,13 @@
 //! through its early cycle rounds. Both use split-eq cycle reductions and
 //! evaluate final table/RAF flags from the original rows; CUDA reads those
 //! flags from the resident packed columns.
+//!
+//! CUDA scans and binds the padded cycle domain. Optimized condenses identical
+//! trailing rows into one weighted representative during address phases and
+//! retains implicit constant tails during cycle rounds. Its cycle evaluator
+//! also caches constant-factor products and aggregates low-degree rows before
+//! extending the evaluation grid; CUDA multiplies the factors per cycle and
+//! evaluation point.
 
 pub(super) mod address_driver;
 pub(super) mod address_phase;

@@ -1,3 +1,9 @@
+//! Device products evaluated independently at each round sample.
+//!
+//! Optimized's product-grid helper uses balanced subproducts and finite
+//! differences, including specialized five- and nine-factor forms. The dense
+//! device evaluator multiplies the interpolated factors at each sample.
+
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 #[cfg(feature = "allocative")]

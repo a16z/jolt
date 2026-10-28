@@ -8,6 +8,9 @@
 //! The shared device RA helper materializes after three binds, versus four in
 //! optimized's usual lazy-RA path. Device windows contribute local product
 //! messages before the short remaining tables are gathered onto GPU 0.
+//! Optimized can switch its lazy RA to dense storage earlier when that is
+//! cheaper, and omits the zero suffix of its access and increment columns.
+//! CUDA retains those rows throughout its full-window binds.
 
 use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations::ram::{

@@ -9,6 +9,10 @@
 //! collapse. Window-local cycle rounds are reduced on the host and the short
 //! tail runs on GPU 0. Field-inline bytecode checking is dispatched to optimized
 //! by the backend registry.
+//! Optimized may collapse earlier when dense storage is cheaper. It keeps
+//! constant padding implicit in the RA factors and represents the coefficient
+//! suffix as a linear combination of equality polynomials; CUDA materializes
+//! and binds the full coefficient column and scans padding in its pushforwards.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

@@ -4,6 +4,8 @@
 //! device kernels evaluate them against native-width input columns and reduce
 //! the extended-node sums. Unlike optimized's integer row evaluator and finite
 //! differences, CUDA applies those uploaded field coefficients directly.
+//! Optimized also groups repeated guard patterns before extending the sums;
+//! CUDA evaluates the linear forms separately for each cycle.
 //!
 //! The proof session carries the input columns across uni-skip. Once its
 //! challenge is known, CUDA materializes both stream lanes of `Az` and `Bz`
@@ -11,6 +13,8 @@
 //! with round zero. Remainder rounds use split-eq reductions over cycle windows,
 //! then gather the remaining factors onto GPU 0. Original input columns remain
 //! available for the final witness claims.
+//! Padding remains explicit in CUDA's input and remainder tables; optimized
+//! retains a nonconstant prefix and accounts for its stream tails analytically.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

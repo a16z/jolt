@@ -9,6 +9,11 @@
 //! cycle values. Optimized usually collapses after four and has a categorical
 //! startup for small alphabets; CUDA uses the packed device evaluator for those
 //! rounds. Local window states are gathered onto GPU 0 for the remaining tail.
+//! Optimized can also collapse earlier when dense storage is cheaper, and
+//! handles a constant padding suffix through its aggregate equality weight.
+//! CUDA keeps that suffix in the packed windows and subsequent dense tables.
+//! Dense gathering is launched by selector column; optimized decodes a row's
+//! instruction chunks together before filling the columns.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

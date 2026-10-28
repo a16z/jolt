@@ -4,6 +4,9 @@
 //! branches for a cycle without materializing its full one-hot grid. The third
 //! bind materializes `T/8` field values and releases the indices and lookup
 //! tables. Optimized's shared lazy-RA path normally waits until `T/16`.
+//! Optimized can switch earlier when branch tables would cost as much as dense
+//! storage, and retains only a nonconstant prefix when its source establishes
+//! one. This device helper uses the fixed bind threshold and full cycle domain.
 //! Both binding orders use the same representation with different gather strides.
 
 #[cfg(test)]

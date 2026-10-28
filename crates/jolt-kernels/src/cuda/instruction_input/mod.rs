@@ -1,8 +1,11 @@
 //! CUDA instruction-input checking.
 //!
 //! Like optimized, round zero reads eight native columns: four flag bits,
-//! register values, the signed immediate, and the unexpanded PC. The first
-//! bind produces half-sized field tables. CUDA describes the batched relation
+//! register values, the signed immediate, and the unexpanded PC. CUDA's first
+//! bind produces eight half-sized field tables; optimized keeps the flags as
+//! packed Boolean patterns through four binds and materializes only operands.
+//! CUDA retains padding rows, while optimized folds their constant contribution
+//! through a summed equality weight. CUDA describes the batched relation
 //! to the shared device sum-of-products evaluator and uses split-eq endpoint
 //! reductions; the host reconstructs each round polynomial.
 //!
