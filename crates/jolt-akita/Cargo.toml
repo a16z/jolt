@@ -44,7 +44,10 @@ tensor-eq-runs = ["akita-algebra/tensor-eq-runs"]
 setup-sop-structured = ["akita-pcs/setup-sop-structured"]
 # Prevalidated catalog (default off): the recursion guest rebuilds its one-hot catalog view
 # from a build-time prevalidated record when the view bytes are equal.
-prevalidated-catalog = ["akita-config/prevalidated-catalog", "akita-schedules/prevalidated-catalog"]
+prevalidated-catalog = [
+  "akita-config/prevalidated-catalog",
+  "akita-schedules/prevalidated-catalog",
+]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.

@@ -106,7 +106,11 @@ weighted-dot-horner = []
 # Prevalidated catalog: the host prevalidates the embedded one-hot catalog view
 # and the guest rebuilds it from that record when its bytes are equal. Effective
 # only with `akita`.
-prevalidated-catalog = ["jolt-akita?/prevalidated-catalog", "dep:sha2", "dep:hex"]
+prevalidated-catalog = [
+  "jolt-akita?/prevalidated-catalog",
+  "dep:sha2",
+  "dep:hex",
+]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }
