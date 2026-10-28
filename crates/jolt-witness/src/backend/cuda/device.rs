@@ -759,3 +759,11 @@ impl DeviceTrace {
         Ok((out, span))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cuda_source_compiles_without_device() -> Result<(), String> {
+        super::extract_ptx().map(|_| ()).map_err(Clone::clone)
+    }
+}

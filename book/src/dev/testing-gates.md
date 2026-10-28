@@ -64,11 +64,24 @@ inputs that keep the trace under the row's padded bound (2^16 by default),
 and the postcard-encoded output computed natively in the test. Field cases
 that execute field instructions must also set `field_inline_active: true`.
 
-### CUDA CI runner
+### CUDA CI
 
-`.github/workflows/cuda.yml` uses a GitHub-hosted larger runner named
-`jolt-cuda-t4`. An organization administrator must create it and grant this
-repository access through its runner group:
+`.github/workflows/cuda.yml` runs compilation, Clippy, and documentation checks
+on standard `ubuntu-22.04` runners without a GPU or NVIDIA driver. Its matrix
+covers clear/ZK and ordinary/field-inline configurations for the kernels,
+witness, Dory, and prover crates, including test binaries. The clear job also
+checks isolated serial CUDA libraries.
+
+These jobs install the CUDA 12.4 compiler and NVRTC. `JOLT_CUDA_ARCH=sm_75`
+lets the kernels build script compile every shared `.cu` source without
+detecting a local GPU. Witness `.cu` sources normally compile at runtime;
+`cuda_source_compiles_without_device` invokes their production NVRTC compiler
+without creating a CUDA context. These checks do not execute GPU kernels or
+validate CUDA proofs.
+
+The separate `CUDA (T4)` job is disabled by `if: ${{ false }}`, pending the
+creation of a GitHub-hosted larger GPU runner. The job expects the runner to be
+named `jolt-cuda-t4` and to have the following:
 
 - Linux x64, NVIDIA GPU-Optimized VMI based on Ubuntu 22.04.
 - The single-T4 size: 4 vCPUs, 28 GB host RAM, and 16 GB GPU memory.
@@ -82,13 +95,12 @@ and [GPU runner specifications](https://docs.github.com/en/actions/reference/run
 The image's installed software is listed in NVIDIA's
 [Azure VMI documentation](https://docs.nvidia.com/ngc/ngc-deploy-public-cloud/ngc-azure/index.html).
 
-The workflow installs the CUDA 12.4 compiler and NVRTC without replacing the
-image's driver, compiles kernels for `sm_75`, and runs with one visible GPU and
-poisoned scratch buffers. It checks isolated serial library builds, then lints
-and tests the kernels, witness, Dory, and prover crates in clear/ZK and
-ordinary/field-inline configurations. Tests run serially to limit memory use.
-The CPU reference profiling smoke is excluded; `cuda_profile` verifies the
-CUDA profiling entry point instead.
+When enabled, the GPU job installs the CUDA 12.4 compiler and NVRTC without
+replacing the image's driver, and runs with one visible GPU and poisoned
+scratch buffers. It tests the same crates in all four configurations, including
+prover acceptance and backend equivalence. Tests run serially to limit memory
+use. The CPU reference profiling smoke is excluded; `cuda_profile` verifies
+the CUDA profiling entry point instead.
 
 A final SHA-2-chain profile produces and verifies a proof at scale 18 and
 uploads the profiling artifacts. Manual dispatch permits scales 18, 20, 22,
