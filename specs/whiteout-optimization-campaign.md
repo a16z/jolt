@@ -266,6 +266,10 @@ paper delta.
   encoding (e.g. a wrapper or an appended artifact variant) so clear bytes
   are identical in every build. The merge bars only run that suite's
   `whiteout` subset, which is why they did not catch it.
+  **Resolved (S2, `specs/whiteout-s2-setup-encoding.md`):** the Whiteout
+  setup is the appended `OneHotWhiteout` artifact variant; the transcript
+  absorbs the same values; the legacy test passes with and without
+  `zk-prover`. Merged at da0a7aecb; jolt bar green.
 
 ## Review log
 
