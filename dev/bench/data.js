@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793164988365,
+  "lastUpdate": 1793206538207,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -205018,6 +205018,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 866388,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "83fcab4937c492615b068dc852ad848c3b20cde0",
+          "message": "feat(field,inlines): Akita guest-verifier prerequisites (break the jolt-akita pin cycle) (#2163)\n\n* feat(field): batched dot products and row kernels\n\nAdd the batched sums Akita's verifier routes its dot products through:\n`Field::{dot_product, signed_sum, sum_of_products<K>}` and\n`MulBaseUnreduced::{dot_base, dot_base_rows, weighted_dot_base_rows}`.\nThe defaults are the software folds; `dot_base` and `Fp128::dot_product`\naccumulate unreduced and reduce once. The row kernels check row shapes on\nevery path.\n\nExtracted from the fast-recursion branch (#1911) without its field-inline\nguest overrides, which stay there.\n\nCo-Authored-By: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(inlines): Blake2b digest adapter and variable output length\n\nAdd `Blake2b::new_with_output_len`, `Blake2b::finalize_into`, a `Clone`\nderive, and a `digest` feature exposing `digest_adapter::Blake2b<OutSize>`,\na `digest::Digest` implementation over the inline compress that matches\nthe `blake2` crate byte for byte (tested under `host`). Akita's\nBlake2b transcript sponge and parameter-descriptor hash use these on\nRISC-V guests.\n\nExtracted from the fast-recursion branch (#1911); its word-packing\nrewrite of the hasher stays there.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(inlines): 64-point i32 NTT inline\n\nAdd `jolt-inlines-ntt`: a twisted forward 64-point Montgomery NTT and a\nsix-product pointwise dot, each expanded into existing proved integer\ninstructions (no advice, no new constraints). Register it under a new\n`InlineExtension::Ntt` (appended, code 9) and pin its expansions in the\ninline parity fixture. Akita's `ntt-inline` feature calls\n`forward_ntt64` and `pointwise_dot64` on RISC-V guests.\n\nTaken from the fast-recursion branch (#1911).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(field,inlines): address review of the Akita prerequisites\n\n- jolt-field: base-field accumulators declare SUM_IS_EXACT, which the\n  batched dot paths rely on; MulBaseUnreduced states the actual precondition.\n- jolt-inlines-blake2: the hasher records its digest length, and finalize /\n  finalize_into reject a buffer that would truncate a different hash.\n- jolt-inlines-ntt: riscv64 alignment checks pass clippy on the guest target;\n  the doc no longer claims Montgomery-form output for any input.\n- book: list the NTT inlines in the encoding table.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(inlines): re-bless NTT forward expansion hashes for floor-addressed LW\n\nmain's #2132 changed the LW expansion; NTT64_I32_FORWARD's four parity\nrows move with it. No other inline row changes.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(field): keep SUM_IS_EXACT conservative; document dot_base exactness\n\nSUM_IS_EXACT gates batched prover paths in Akita, so flipping it for the\nbase fields changed Jolt's in-workspace Akita prover path. Restore main's\nvalue and state on MulBaseUnreduced that the batched methods are exact\nfor every implementor independently of that opt-in.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-28T11:42:25-04:00",
+          "tree_id": "e64e2bab2f802147accd7c3955c0abc7e9487934",
+          "url": "https://github.com/a16z/jolt/commit/83fcab4937c492615b068dc852ad848c3b20cde0"
+        },
+        "date": 1793206523705,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.3096,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 781988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.6965,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 428260,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 425704,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 428648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8441,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 428440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8915,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425780,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.8069,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 428240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.3915,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 120244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9999,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 781756,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8051,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 426188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6022,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428424,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.0943,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425680,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.3022,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 428204,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.372,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 726820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.2105,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 617196,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 63.2047,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 716852,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8345,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 428352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1154,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 425496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 18.3202,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 781920,
             "unit": "KB",
             "extra": ""
           }
