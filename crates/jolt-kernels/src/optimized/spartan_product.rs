@@ -423,7 +423,7 @@ impl OptimizedProductRemainder {
     /// (`bind_prefix_pairs_buffer_len`) and the closing opening walk's
     /// `prefix_cycles + 1` cycle weights. Not counted: the row store, a
     /// handle on the witness's rows when it has one; the split-eq tables; the
-    /// opening walk's per-block sums; the field-inline rows.
+    /// opening walk's eq factors and per-block sums; the field-inline rows.
     pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
         let len = prefix_cycles.div_ceil(2).checked_mul(2)?;
         let transient = bind_prefix_pairs_buffer_len(len).max(prefix_cycles.checked_add(1)?);

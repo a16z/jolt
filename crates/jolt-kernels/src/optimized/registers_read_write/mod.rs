@@ -61,9 +61,10 @@ impl OptimizedRegistersReadWrite {
     /// none for a phase split `prepare` rejects before allocating. The parked
     /// indices' truncated copy is less than the increments' copy in the
     /// cycle-first preparation and than the address-first handoff. Not
-    /// counted: the Gruen split-eq tables, the round challenges, and the
-    /// collects without random-access rows, which keep every cycle, or without
-    /// `parallel`, with their per-chunk extraction buffers.
+    /// counted: the Gruen split-eq tables, the operand eq tables the output
+    /// claims build, the round challenges, and the collects without
+    /// random-access rows, which keep every cycle, or without `parallel`, with
+    /// their per-chunk extraction buffers.
     pub fn peak_bytes<F: JoltField>(
         dimensions: ReadWriteDimensions,
         prefix_cycles: usize,

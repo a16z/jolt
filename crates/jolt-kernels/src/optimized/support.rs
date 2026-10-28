@@ -1018,12 +1018,13 @@ impl<F: JoltField> SplitLt<F> {
         vars / 2
     }
 
-    /// Bytes of the three split tables over `vars >= 2` variables, or `None`
-    /// past `usize::MAX`.
-    pub(crate) fn split_bytes(vars: usize) -> Option<usize> {
+    /// Bytes the tables hold at their largest over `vars >= 2` variables, or
+    /// `None` past `usize::MAX`: the three split tables, then the dense table
+    /// the last `lt_lo` bind builds beside them, `lt_lo` keeping its capacity.
+    pub(crate) fn peak_bytes(vars: usize) -> Option<usize> {
         let hi = 1usize << (vars - Self::lo_vars(vars));
         (1usize << Self::lo_vars(vars))
-            .checked_add(hi.checked_mul(2)?)?
+            .checked_add(hi.checked_mul(3)?)?
             .checked_mul(size_of::<F>())
     }
 

@@ -101,7 +101,8 @@ impl<F: JoltField> AddressFirstKernel<F> {
     /// and the bound half the first bind collects
     /// (`bind_prefix_pairs_buffer_len`). Preparation after the collect and
     /// the address rounds hold the rows, the checkpoints, the eq table and at
-    /// most `K` checkpoint values per chunk task, less than the handoff.
+    /// most `K` checkpoint values per chunk task, less than the handoff; the
+    /// eq table's tensor factors, live while it fills, are not counted.
     pub(super) fn peak_bytes(prefix_cycles: usize) -> Option<usize> {
         let field = |count: usize| count.checked_mul(size_of::<F>());
         let checkpoint = size_of::<[i128; 1 << REGISTER_ADDRESS_BITS]>();

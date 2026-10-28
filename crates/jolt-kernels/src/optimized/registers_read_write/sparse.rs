@@ -266,8 +266,8 @@ impl<F: JoltField> CycleState<F> {
     /// `⌈cycles / 4⌉` entries: a bound prefix keeps its capacity in place or
     /// collects its bound half (`bind_prefix_pairs_buffer_len`) beside the old
     /// table, which only the third bind's copy adds to that allocation. The
-    /// collapse to the `K`-entry address tables, the address rounds and the
-    /// output eq tables hold less than the fourth bind.
+    /// collapse to the `K`-entry address tables and the address rounds hold
+    /// less than the fourth bind.
     pub(super) fn peak_bytes(cycles: usize) -> Option<usize> {
         let sum = |terms: &[usize]| {
             terms

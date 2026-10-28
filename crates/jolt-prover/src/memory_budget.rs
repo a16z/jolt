@@ -151,22 +151,24 @@ impl MemoryBudget {
     /// reject a request even when the drop has already run.
     ///
     /// Passing does not mean the proof fits, and the reservation is neither a
-    /// lower bound on the memory a proof needs nor an allocator or RSS
-    /// figure. Not reserved: the unpriced batch members' own tables (among
-    /// them the RAM read-write, RAF, output-check, value-check and RA
-    /// claim-reduction kernels', the instruction claim reduction and
-    /// read-RAF, and the field-register kernels) and stages 6–8; storage
-    /// queued for a background drop other than the RAM value columns above,
-    /// such as each kernel released at its stage's end, the eq and split-eq
-    /// tables the RAM read-write kernel retires and the register seed entries
-    /// after the second cycle bind; split-eq tables, round challenges,
-    /// streamed-collect extraction buffers and the row collects that kernels
-    /// fall back to without random-access rows, which keep every cycle, or
-    /// without parked `rd` indices; uni-skip and field-inline carries, stage
-    /// outputs and the recorder; preprocessing and PCS setup, commitment and
-    /// opening state, and BlindFold; allocator state and retention; the trace
-    /// output's final memory image, I/O device and advice tape; and the
-    /// tracer, which has already run.
+    /// lower bound on the memory a proof needs nor an allocator or RSS figure.
+    /// Not reserved: the unpriced batch members' own tables (among them the RAM
+    /// read-write, RAF, output-check, value-check and RA claim-reduction
+    /// kernels', the instruction claim reduction and read-RAF, and the
+    /// field-register kernels) and stages 6–8; storage queued for a background
+    /// drop other than the RAM value columns above, such as each kernel
+    /// released at its stage's end, the eq and split-eq tables the RAM
+    /// read-write kernel retires and the register seed entries after the second
+    /// cycle bind; split-eq tables and the other eq factor tables kernels build
+    /// from their points (about `√T` entries each, or `√(K·T)` for the register
+    /// operand claims) unless a kernel's own `peak_bytes` names them; round
+    /// challenges, streamed-collect extraction buffers and the row collects
+    /// that kernels fall back to without random-access rows, which keep every
+    /// cycle, or without parked `rd` indices; uni-skip and field-inline
+    /// carries, stage outputs and the recorder; preprocessing and PCS setup,
+    /// commitment and opening state, and BlindFold; allocator state and
+    /// retention; the trace output's final memory image, I/O device and advice
+    /// tape; and the tracer, which has already run.
     pub fn check_known_eager<F: JoltField>(
         self,
         config: &ProverConfig,

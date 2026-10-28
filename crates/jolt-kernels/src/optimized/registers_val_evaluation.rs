@@ -140,9 +140,9 @@ impl OptimizedRegistersValEvaluation {
     /// first bind's fallible collect of the `⌈prefix_cycles / 2⌉`-entry
     /// increment table (`fallible_collect_bytes`) beside the `rd` indices
     /// taken over from stage 4 (moved, not copied, at most `prefix_cycles`),
-    /// the `K`-entry address eq table and the split LT tables. The write table
-    /// that replaces the indices, the bound halves later binds collect beside
-    /// the tables and the split tables' later dense switch hold less. Not
+    /// the `K`-entry address eq table and the LT tables at their largest
+    /// (`SplitLt::peak_bytes`). The write table that replaces the indices and
+    /// the bound halves later binds collect beside the tables hold less. Not
     /// counted: the increment row store, a handle on the witness's rows when
     /// it has one, and the row collect `prepare` falls back to when stage 4
     /// parked no indices.
@@ -150,7 +150,7 @@ impl OptimizedRegistersValEvaluation {
         [
             prefix_cycles.checked_mul(size_of::<Option<u8>>())?,
             (1usize << REGISTER_ADDRESS_BITS) * size_of::<F>(),
-            SplitLt::<F>::split_bytes(log_t)?,
+            SplitLt::<F>::peak_bytes(log_t)?,
             fallible_collect_bytes::<F>(prefix_cycles.div_ceil(2))?,
         ]
         .into_iter()
@@ -549,14 +549,15 @@ mod tests {
     /// Stage 5's side of the `rd` handoff, at 2^13 cycles with Fr, the first
     /// 5000 before the constant suffix: the indices stage 4 parked, moved in
     /// and counted once (10000 bytes), the 128-entry address eq table (4096),
-    /// the split LT tables of 2^6 and twice 2^7 entries (10240), and 2500
+    /// the split LT tables of 2^6 and twice 2^7 entries with the 2^7-entry
+    /// dense table their switch builds beside them (14336), and 2500
     /// increments collected at 200 bytes each: a 32-byte table slot, four in
     /// a one-entry split and a 40-byte list node.
     #[test]
     fn peak_bytes_holds_the_parked_rd_indices_once() {
         assert_eq!(
             OptimizedRegistersValEvaluation::peak_bytes::<Fr>(13, 5000),
-            Some(10_000 + 4_096 + 10_240 + 500_000)
+            Some(10_000 + 4_096 + 14_336 + 500_000)
         );
     }
 }
