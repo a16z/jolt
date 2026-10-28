@@ -113,12 +113,11 @@ pub trait BuildRoundScheduler<F: JoltField> {
 /// hand for [`JoltBackend`]: `#[derive(KernelSlots)]` emits one impl per
 /// `Box<dyn PrepareKernel<F, R>>` field, delegating to that field, so the
 /// field's own type is the relation→slot mapping and registry and resolution
-/// cannot diverge. A relation with no slot is a missing-`PrepareKernel`
-/// bound error at the consuming stage impl, and so is a slot mis-declared
-/// past the derive's syntactic match (a non-`Box<dyn PrepareKernel<..>>`
-/// field yields no impl). That match is single-bound: a `Box<dyn
-/// PrepareKernel<F, R> + Send>` (any extra bound) is silently skipped and
-/// surfaces the same distant way.
+/// cannot diverge. A field that names `PrepareKernel` in any other shape
+/// (an extra bound such as `+ Send`, a wrapper, a wrong argument count) is a
+/// derive error at that field. A relation with no slot, or a slot spelled
+/// through a type alias, is a missing-`PrepareKernel` bound error at the
+/// consuming stage impl.
 // No claim-trait where-clauses: `R: ConcreteSumcheck<F>` already implies them
 // (the ConcreteSumcheck where-clauses are elaborated at every use site), and
 // the relation-family-generic spellings would restate them for nothing.

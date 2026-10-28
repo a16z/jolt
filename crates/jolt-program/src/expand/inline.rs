@@ -216,6 +216,10 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit or expand a load-shaped I-format row with a signed byte offset.
+    ///
+    /// Materialization rejects an offset outside RISC-V's signed 12-bit range;
+    /// for a wider one, compute the address into an inline register and use
+    /// that as the base.
     pub fn emit_ld(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -244,6 +248,10 @@ impl InlineExpansionBuilder {
     }
 
     /// Emit or expand an S-format row with a signed byte offset.
+    ///
+    /// Materialization rejects an offset outside RISC-V's signed 12-bit range;
+    /// for a wider one, compute the address into an inline register and use
+    /// that as the base.
     pub fn emit_s(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
@@ -273,17 +281,6 @@ impl InlineExpansionBuilder {
             Self::register_operand(rs2),
             imm as i128,
         );
-    }
-
-    /// Emit an address-form alignment assertion with a signed byte offset.
-    pub fn emit_align(
-        &mut self,
-        instruction_kind: impl Into<SourceInstructionKind>,
-        rs1: u8,
-        imm: i64,
-    ) {
-        self.inner
-            .emit_address(instruction_kind, Self::register_operand(rs1), imm as i128);
     }
 
     /// Emit or constant-fold a binary operation.

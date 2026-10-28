@@ -3,8 +3,8 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has nine cases: muldiv, fibonacci, memory-ops,
-stdlib, sha2, sha3 through both its unaligned and aligned entry points,
+profile. The ordinary profile has ten cases: muldiv, fibonacci, memory-ops,
+stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned entry points,
 advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`,
 `field_limbs`, and `muldiv`, covering active field operations, the SDK's
 checked limb conversions, and an ordinary guest proved under the field-inline

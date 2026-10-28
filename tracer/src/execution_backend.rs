@@ -5,7 +5,7 @@ use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
     MemoryImage, RamAddressBounds, TraceData, TraceError, TraceInputs, TraceOutput,
 };
-use jolt_program::preprocess::BytecodePCMapper;
+use jolt_program::preprocess::BytecodePreprocessing;
 #[cfg(feature = "field-inline")]
 use jolt_program::{execution::FieldEvent, field_inline::FieldInlineTraceData};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
@@ -81,7 +81,11 @@ impl ExecutionBackend for TracerBackend {
         program: &JoltProgram,
         inputs: TraceInputs,
     ) -> Result<TraceOutput, TraceError> {
-        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )?;
         let execution = self.trace_execution(program, inputs)?;
         let (data, dimensions) = collect_rows(&execution.cycles, &bytecode)?;
         Ok(TraceOutput::with_dimensions(
@@ -104,7 +108,7 @@ struct ConvertedChunk {
 
 fn collect_rows(
     cycles: &[Cycle],
-    bytecode: &BytecodePCMapper,
+    bytecode: &BytecodePreprocessing,
 ) -> Result<(TraceData, ExecutionDimensions), TraceError> {
     let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
     let _span = tracing::info_span!(
@@ -196,7 +200,7 @@ pub struct TracerChunkCheckpoint {
 struct WorkerSeed {
     device: Option<JoltDevice>,
     decode: DecodeCache,
-    bytecode: BytecodePCMapper,
+    bytecode: BytecodePreprocessing,
 }
 
 /// Boundary checkpoints are captured at chunk-mark crossings, but at most
@@ -225,7 +229,11 @@ impl TracerBackend {
             return Err(TraceError::Backend("chunk_size must be nonzero"));
         }
 
-        let bytecode = BytecodePCMapper::try_new(&program.expanded_bytecode)?;
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )?;
         let emulator = crate::create_emulator(
             program.elf_bytes(),
             self.elf_path.as_ref(),
@@ -395,6 +403,33 @@ mod chunked_tests {
         let program = build_jolt_program(&elf).expect("failed to build Jolt program");
         let inputs = TraceInputs::new(INPUTS.to_vec(), Vec::new(), Vec::new(), memory_config);
         (program, inputs)
+    }
+
+    #[test]
+    fn eager_and_replay_reject_bytecode_mismatches() {
+        let (mut program, inputs) = muldiv_setup();
+        let mut backend = TracerBackend::new();
+        let eager = backend
+            .trace(&program, inputs.clone())
+            .expect("eager trace failed");
+        let executed = eager.trace.rows()[0].instruction();
+        let instruction = program
+            .expanded_bytecode
+            .iter_mut()
+            .find(|instruction| **instruction == executed)
+            .expect("executed instruction in program");
+        instruction.operands.imm ^= 1;
+        assert!(matches!(
+            backend.trace(&program, inputs.clone()),
+            Err(TraceError::BytecodeInstructionMismatch { .. })
+        ));
+        let summary = backend
+            .execute(&program, inputs, 100)
+            .expect("execute failed");
+        assert!(matches!(
+            backend.replay_chunk(&summary.checkpoints[0]),
+            Err(TraceError::BytecodeInstructionMismatch { .. })
+        ));
     }
 
     /// Invariant 3 of `specs/x86-tracer-backend.md` for the reference backend:
@@ -590,7 +625,7 @@ mod tests {
         ));
     }
     #[cfg(feature = "field-inline")]
-    use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE};
+    use jolt_riscv::{FieldInlineOp, FIELD_INLINE_OPCODE, RV64IMAC_JOLT_FIELD_INLINE};
 
     #[cfg(feature = "field-inline")]
     fn field_inline_word(op: FieldInlineOp, rd: u8, rs1: u8, rs2_or_imm: u16) -> u32 {
@@ -617,8 +652,12 @@ mod tests {
             false,
         )
         .unwrap();
-        let bytecode =
-            BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
+        let bytecode = BytecodePreprocessing::preprocess(
+            vec![instruction.try_jolt_instruction_row().unwrap()],
+            0x8000_0000,
+            RV64IMAC_JOLT_FIELD_INLINE,
+        )
+        .unwrap();
         let positions = [
             0,
             PARALLEL_ROW_CONVERSION_THRESHOLD - 1,
@@ -655,7 +694,7 @@ mod tests {
 mod conversion_tests {
     use super::*;
     use crate::instruction::{ld::LD, sd::SD, RISCVCycle};
-    use jolt_riscv::{RamRead, RamWrite};
+    use jolt_riscv::{RamRead, RamWrite, RV64IMAC_JOLT};
 
     #[test]
     fn conversion_preserves_rows_and_reduces_bounds() {
@@ -694,7 +733,9 @@ mod conversion_tests {
                     .iter()
                     .map(|cycle| cycle.instruction().try_jolt_instruction_row().unwrap())
                     .collect::<Vec<_>>();
-                let bytecode = BytecodePCMapper::try_new(&instructions).unwrap();
+                let bytecode =
+                    BytecodePreprocessing::preprocess(instructions, 0x8000_0000, RV64IMAC_JOLT)
+                        .unwrap();
                 let (data, dimensions) = collect_rows(&cycles, &bytecode).unwrap();
                 assert_eq!(data.len(), length);
                 assert_eq!(data.rows()[1].ram_address(), read);
@@ -718,7 +759,15 @@ mod conversion_tests {
                         .filter(|address| *address != 0)
                         .max()
                 );
-                let empty_bytecode = BytecodePCMapper::try_new(&[]).unwrap();
+                let mut mismatched_bytecode = bytecode.clone();
+                mismatched_bytecode.bytecode[1].operands.imm = 8;
+                assert!(matches!(
+                    collect_rows(&cycles, &mismatched_bytecode),
+                    Err(TraceError::BytecodeInstructionMismatch { pc: 1, .. })
+                ));
+                let empty_bytecode =
+                    BytecodePreprocessing::preprocess(Vec::new(), 0x8000_0000, RV64IMAC_JOLT)
+                        .unwrap();
                 assert!(matches!(
                     collect_rows(&cycles, &empty_bytecode),
                     Err(TraceError::MissingBytecodePc { .. })

@@ -1,5 +1,5 @@
 use crate::AkitaScheduleArtifacts;
-use akita_params::{PolynomialGroupLayout, PrecommittedGroupProfiles};
+use akita_params::PrecommittedGroupProfiles;
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
 use jolt_crypto::Commitment;
@@ -24,12 +24,12 @@ use crate::adapters::{
     AkitaBackendCommitment, AkitaBackendDensePoly, AkitaBackendExtField, AkitaBackendFlavor,
     AkitaBackendHint, AkitaBackendOneHotPoly, AkitaBatchProof, AkitaCommitment, AkitaField,
     AkitaHidingCommitment, AkitaHintSource, AkitaLayoutDigest, AkitaProverHint, AkitaProverSetup,
-    AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierScheduleArtifacts, AkitaVerifierSetup,
-    BackendVerifierCache, FullWidthBackendSetup, AKITA_SOURCE_RING_DIMENSION,
+    AkitaSetupFlavor, AkitaSetupParams, AkitaVerifierSetup, FullWidthBackendSetup,
+    AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
-use crate::one_hot_family::{with_one_hot_family, OneHotFamily};
+use crate::one_hot_family::with_one_hot_family;
 use crate::trace_onehot::{TraceOneHotColumn, TraceOneHotRows};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -421,14 +421,13 @@ impl Commitment for AkitaScheme {
 impl AkitaScheme {
     /// [`CommitmentScheme::setup`] that rejects, with
     /// [`OpeningsError::InvalidSetup`] and before allocating the one-hot
-    /// backend setup, a request whose flat public matrix and setup-prefix
-    /// sources need more than `remaining_bytes` at once. Only the one-hot
-    /// single-chunk setup without grouped rows is priced; every other shape
-    /// is rejected before any setup work.
+    /// backend setup, a request whose flat public matrix needs more than
+    /// `remaining_bytes`. Only the one-hot single-chunk setup without grouped
+    /// rows is priced; every other shape is rejected before any setup work.
     ///
-    /// Passing prices only those buffers, not the complete setup: schedule
-    /// catalogs, backend caches, the export's commitment workspaces and
-    /// verifier preparation are not counted.
+    /// Passing prices only that matrix, not the complete setup: schedule
+    /// catalogs, backend caches, the setup-prefix export's buffers,
+    /// commitments and hints, and verifier preparation are not counted.
     pub fn setup_with_known_source_limit(
         params: AkitaSetupParams,
         remaining_bytes: usize,
@@ -448,87 +447,9 @@ impl AkitaScheme {
         params: AkitaSetupParams,
         known_source_limit: Option<usize>,
     ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
-        if params.flavor == AkitaSetupFlavor::Dense
-            && params.akita_chunk_profile != AkitaChunkProfile::default()
-        {
-            return Err(OpeningsError::InvalidSetup(
-                "dense-only Akita setup cannot select one-hot witness chunking".to_owned(),
-            ));
-        }
-        if params.flavor != AkitaSetupFlavor::Dense {
-            OneHotFamily::from_parts(params.one_hot_k, params.akita_chunk_profile)
-                .and_then(|family| {
-                    family.validate_num_vars(
-                        params.max_num_vars,
-                        params.max_num_polys_per_commitment_group,
-                    )
-                })
-                .map_err(invalid_setup)?;
-        }
-        if params.grouped_schedule.as_ref().is_some_and(|request| {
-            request.final_group()
-                != PolynomialGroupLayout::new(
-                    params.max_num_vars,
-                    params.max_num_polys_per_commitment_group,
-                )
-        }) {
-            return Err(OpeningsError::InvalidSetup(
-                "the grouped schedule request final shape must equal setup shape".to_owned(),
-            ));
-        }
+        let verifier = Self::verifier_setup_from_params(&params)?;
         let artifacts = &params.schedule_artifacts;
-        let dense_catalog = artifacts.dense_catalog().map_err(invalid_setup)?;
-        let dense_schedule_artifact = || dense_catalog.to_artifact_bytes().map_err(invalid_setup);
-        let one_hot_schedule_artifact = || {
-            let base = artifacts
-                .one_hot_catalog_for_profile(params.one_hot_k, params.akita_chunk_profile)
-                .map_err(invalid_setup)?;
-            let catalog = params
-                .grouped_schedule
-                .as_ref()
-                .map_or_else(
-                    || Ok(base.clone()),
-                    |grouped_schedule| {
-                        grouped_schedule.extend_catalog(
-                            &dense_catalog,
-                            &artifacts.full_dense_catalog()?,
-                            &base,
-                            params.one_hot_k,
-                            params.akita_chunk_profile,
-                        )
-                    },
-                )
-                .map_err(invalid_setup)?;
-            catalog.to_artifact_bytes().map_err(invalid_setup)
-        };
-        let profile = params.akita_chunk_profile;
-        let schedule_artifacts = match params.flavor {
-            AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
-                dense_profile: artifacts.dense_profile(),
-                profile,
-                dense: dense_schedule_artifact()?,
-                one_hot: one_hot_schedule_artifact()?,
-            },
-            AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
-                profile,
-                one_hot: one_hot_schedule_artifact()?,
-            },
-            AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
-                dense_profile: artifacts.dense_profile(),
-                dense: dense_schedule_artifact()?,
-            },
-        };
-        let one_hot_log_k = validate_one_hot_k(params.one_hot_k)
-            .map_err(|err| OpeningsError::InvalidSetup(err.to_string()))?;
-        let verifier = AkitaVerifierSetup {
-            max_num_vars: params.max_num_vars,
-            max_num_polys_per_commitment_group: params.max_num_polys_per_commitment_group,
-            max_total_batch_polys: params.max_total_batch_polys,
-            default_layout_digest: params.default_layout_digest,
-            one_hot_k: params.one_hot_k,
-            schedule_artifacts,
-            backend_cache: BackendVerifierCache::default(),
-        };
+        let one_hot_log_k = validate_one_hot_k(params.one_hot_k).map_err(invalid_setup)?;
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
             if params.flavor == AkitaSetupFlavor::OneHot {
                 (None, None, None)
@@ -930,12 +851,15 @@ mod tests {
     #![expect(clippy::panic, reason = "tests reject impossible fixture variants")]
 
     use super::*;
+    use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::adapters::{
         append_verifier_setup, AkitaBackendFlavor, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
     };
     use crate::configs::JoltDenseBounded;
+    use crate::one_hot_family::OneHotFamily;
     use crate::AkitaOneHotScheduleArtifact;
     use akita_config::CommitmentConfig;
+    use akita_params::PolynomialGroupLayout;
     use akita_schedules::ValidatedScheduleCatalog;
     use jolt_field::Ring;
     use jolt_transcript::Blake2bTranscript;
@@ -984,7 +908,8 @@ mod tests {
                     .unwrap()
                     .to_artifact_bytes()
                     .unwrap(),
-            },
+            }
+            .into(),
             backend_cache: Default::default(),
         };
         let mut baseline = Blake2bTranscript::<AkitaField>::new(b"akita-setup-key-test");
@@ -1116,7 +1041,7 @@ mod tests {
         assert_eq!(prover_transcript.state(), verifier_transcript.state());
 
         if num_vars == 16 && num_polys == 1 {
-            let one_hot = match &verifier_setup.schedule_artifacts {
+            let one_hot = match verifier_setup.schedule_artifacts.as_ref() {
                 AkitaVerifierScheduleArtifacts::OneHot { one_hot, .. } => one_hot.clone(),
                 AkitaVerifierScheduleArtifacts::Dense { .. }
                 | AkitaVerifierScheduleArtifacts::Both { .. } => {
@@ -1138,11 +1063,11 @@ mod tests {
                     one_hot,
                 },
             ] {
-                if schedule_artifacts == verifier_setup.schedule_artifacts {
+                if &schedule_artifacts == verifier_setup.schedule_artifacts.as_ref() {
                     continue;
                 }
                 let mut tampered = verifier_setup.clone();
-                tampered.schedule_artifacts = schedule_artifacts;
+                tampered.schedule_artifacts = schedule_artifacts.into();
                 // Transport drops the honest setup's primed backend caches.
                 let bytes = serde_json::to_vec(&tampered).unwrap();
                 let transported: AkitaVerifierSetup = serde_json::from_slice(&bytes).unwrap();
@@ -1199,7 +1124,8 @@ mod tests {
     }
 
     /// A serde roundtrip drops the primed key cache; the transported setup
-    /// must re-derive the same backend key from its shape.
+    /// re-derives a verifier-sized backend key from its shape. Proofs verified
+    /// through such keys are covered in `verifier_resources::tests`.
     #[test]
     fn serde_transported_setup_rederives_the_backend_key() {
         let artifacts =
@@ -1216,16 +1142,9 @@ mod tests {
                 .expect("verifier setup must decode with Jolt's binary transport");
         assert_eq!(consumed, binary.len());
         assert_eq!(binary_transport, verifier_setup);
-        let rederived = transported
-            .dense_verifier()
-            .expect("shape-only setup re-derives its backend key");
-        let primed = verifier_setup
-            .dense_verifier()
-            .expect("primed cache returns the built key");
-        assert_eq!(
-            serialize_akita(rederived.setup()).unwrap(),
-            serialize_akita(primed.setup()).unwrap(),
-            "re-derived backend key must match the primed one"
+        assert!(
+            transported.dense_verifier().is_ok(),
+            "shape-only setup re-derives its backend key"
         );
     }
 
@@ -1234,8 +1153,8 @@ mod tests {
         use crate::schedule_registry::{GroupedScheduleParams, FIXTURE_TRUSTED_ADVICE_GROUP};
         use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
-        // The narrowest production trace at the cutover; one-column scalar
-        // rows at this arity stay direct.
+        // This admitted width exercises setup offloading; narrower groups at
+        // the same arity may remain direct under the planner's cost objective.
         let final_group =
             PolynomialGroupLayout::new(RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES, 51);
         let grouped_schedule = GroupedScheduleParams::new(
@@ -1479,13 +1398,13 @@ mod tests {
         .expect_err("direct commitment layout must not be accepted through setup default");
     }
 
-    /// The flat public matrix and setup-prefix sources an unbudgeted setup
-    /// generates bound the known-source limit exactly: one byte less is
-    /// rejected, and the admitted setup equals the unbudgeted one. The shape
-    /// is the narrowest K=16 trace at the recursive cutover, whose Single row
-    /// offloads setup contributions, so it exports prefix sources.
+    /// The flat public matrix an unbudgeted setup generates bounds the
+    /// known-source limit exactly: one byte less is rejected, and the
+    /// admitted setup equals the unbudgeted one. The shape is the narrowest
+    /// K=16 trace at the recursive cutover, whose Single row offloads setup
+    /// contributions, so the admitted setup also exports prefix slots.
     #[test]
-    fn known_source_limit_admits_exactly_the_generated_setup_sources() {
+    fn known_source_limit_admits_exactly_the_generated_matrix() {
         use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
         let params = || {
@@ -1499,17 +1418,12 @@ mod tests {
         };
         let (unbudgeted, unbudgeted_verifier) = AkitaScheme::setup(params()).unwrap();
         let generated = unbudgeted.one_hot_backend_prover_setup.unwrap();
-        let source_elements: usize = generated
-            .prefix_slots
-            .iter()
-            .map(|(id, _)| id.n_prefix().unwrap())
-            .sum();
         assert!(
-            source_elements > 0,
-            "the fixture must export prefix sources"
+            !generated.prefix_slots.is_empty(),
+            "the fixture must export prefix slots"
         );
-        let required = (generated.expanded.shared_matrix().num_field_elements() + source_elements)
-            * size_of::<AkitaField>();
+        let required =
+            generated.expanded.shared_matrix().num_field_elements() * size_of::<AkitaField>();
 
         assert!(matches!(
             AkitaScheme::setup_with_known_source_limit(params(), required - 1),

@@ -336,7 +336,7 @@ impl Mmu {
     /// * `value`
     pub fn store(&mut self, v_address: u64, value: u8) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
-        let memory_write = self.trace_store_byte(effective_address, value as u64);
+        let memory_write = self.trace_store(effective_address, value as u64, 1);
         match self.translate_address(v_address, &MemoryAccessType::Write) {
             Ok(p_address) => {
                 self.store_raw(p_address, value);
@@ -401,7 +401,7 @@ impl Mmu {
     pub fn store_halfword(&mut self, v_address: u64, value: u16) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 2, 0, "Unaligned store_halfword");
-        let memory_write = self.trace_store_halfword(effective_address, value as u64);
+        let memory_write = self.trace_store(effective_address, value as u64, 2);
         self.store_bytes(v_address, value as u64, 2)?;
         Ok(memory_write)
     }
@@ -415,7 +415,7 @@ impl Mmu {
     pub fn store_word(&mut self, v_address: u64, value: u32) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 4, 0, "Unaligned store_word");
-        let memory_write = self.trace_store(effective_address, value as u64);
+        let memory_write = self.trace_store(effective_address, value as u64, 4);
         self.store_bytes(v_address, value as u64, 4)?;
         Ok(memory_write)
     }
@@ -429,7 +429,7 @@ impl Mmu {
     pub fn store_doubleword(&mut self, v_address: u64, value: u64) -> Result<RamWrite, Trap> {
         let effective_address = self.get_effective_address(v_address);
         assert_eq!(effective_address % 8, 0, "Unaligned store_doubleword");
-        let memory_write = self.trace_store(effective_address, value);
+        let memory_write = self.trace_store(effective_address, value, 8);
         self.store_bytes(v_address, value, 8)?;
         Ok(memory_write)
     }
@@ -469,22 +469,43 @@ impl Mmu {
         }
     }
 
+    /// Records a load at `effective_address` as a read of its containing
+    /// doubleword, the unit the RAM argument tracks.
     fn trace_load(&mut self, effective_address: u64) -> RamRead {
-        let word_address = (effective_address >> 2) << 2;
-        if word_address < DRAM_BASE {
-            RamRead {
-                address: word_address,
-                value: self.device_doubleword(word_address),
-            }
-        } else {
-            RamRead {
-                address: word_address,
-                value: self.memory.read_doubleword(word_address),
-            }
+        let address = effective_address & !7;
+        RamRead {
+            address,
+            value: self.traced_doubleword(address),
         }
     }
 
-    /// Read a (4-byte-aligned) doubleword from the memory-mapped device region.
+    /// Records a `width`-byte store of `value` at `effective_address` as a
+    /// write of its containing doubleword in which only the stored lane
+    /// changes. Callers enforce natural alignment, so the lane never crosses
+    /// into the next doubleword.
+    fn trace_store(&mut self, effective_address: u64, value: u64, width: u64) -> RamWrite {
+        self.assert_effective_store_address(effective_address);
+        let offset = effective_address & 7;
+        debug_assert!(offset + width <= 8, "store crosses a doubleword");
+        let address = effective_address & !7;
+        let pre_value = self.traced_doubleword(address);
+        let lane = (u64::MAX >> (64 - 8 * width)) << (8 * offset);
+        RamWrite {
+            address,
+            pre_value,
+            post_value: (pre_value & !lane) | ((value << (8 * offset)) & lane),
+        }
+    }
+
+    fn traced_doubleword(&mut self, address: u64) -> u64 {
+        if address < DRAM_BASE {
+            self.device_doubleword(address)
+        } else {
+            self.memory.read_doubleword(address)
+        }
+    }
+
+    /// Read a doubleword from the memory-mapped device region.
     #[expect(clippy::expect_used)]
     fn device_doubleword(&self, address: u64) -> u64 {
         let jolt_device = self.jolt_device.as_ref().expect("JoltDevice not set");
@@ -493,71 +514,6 @@ impl Mmu {
             *byte = jolt_device.load(address + i as u64);
         }
         u64::from_le_bytes(value_bytes)
-    }
-
-    fn trace_store_byte(&mut self, effective_address: u64, value: u64) -> RamWrite {
-        self.assert_effective_store_address(effective_address);
-        let word_address = (effective_address >> 2) << 2;
-
-        let pre_value = if effective_address < DRAM_BASE {
-            self.device_doubleword(word_address)
-        } else {
-            self.memory.read_doubleword(word_address)
-        };
-
-        let post_value = match effective_address % 4 {
-            0 => value | (pre_value & 0xffffff00),
-            1 => (value << 8) | (pre_value & 0xffff00ff),
-            2 => (value << 16) | (pre_value & 0xff00ffff),
-            3 => (value << 24) | (pre_value & 0x00ffffff),
-            _ => unreachable!(),
-        };
-
-        RamWrite {
-            address: word_address,
-            pre_value,
-            post_value,
-        }
-    }
-
-    fn trace_store_halfword(&mut self, effective_address: u64, value: u64) -> RamWrite {
-        self.assert_effective_store_address(effective_address);
-        let word_address = (effective_address >> 2) << 2;
-
-        let pre_value = if effective_address < DRAM_BASE {
-            self.device_doubleword(word_address)
-        } else {
-            self.memory.read_doubleword(word_address)
-        };
-
-        let post_value = if effective_address % 4 == 2 {
-            (value << 16) | (pre_value & 0xffff)
-        } else if effective_address.is_multiple_of(4) {
-            value | (pre_value & 0xffff0000)
-        } else {
-            panic!("Unaligned store {effective_address:x}");
-        };
-
-        RamWrite {
-            address: word_address,
-            pre_value,
-            post_value,
-        }
-    }
-
-    fn trace_store(&mut self, effective_address: u64, value: u64) -> RamWrite {
-        self.assert_effective_store_address(effective_address);
-
-        let pre_value = if effective_address < DRAM_BASE {
-            self.device_doubleword(effective_address)
-        } else {
-            self.memory.read_doubleword(effective_address)
-        };
-        RamWrite {
-            address: effective_address,
-            pre_value,
-            post_value: value,
-        }
     }
 
     fn load_halfword_raw(&mut self, p_address: u64) -> u16 {
@@ -1061,7 +1017,7 @@ mod test_mmu {
         let mut mmu = setup_mmu();
 
         let overflow_address = mmu.jolt_device.as_ref().unwrap().memory_layout.heap_end + 1;
-        mmu.trace_store(overflow_address, 0xc50513);
+        mmu.trace_store(overflow_address, 0x13, 1);
     }
 
     /// The canary occupies `[stack_end, stack_end + STACK_CANARY_SIZE)` (the
@@ -1073,7 +1029,7 @@ mod test_mmu {
         let mut mmu = setup_mmu();
 
         let stack_end = mmu.jolt_device.as_ref().unwrap().memory_layout.stack_end;
-        mmu.trace_store(stack_end, 0xc50513);
+        mmu.trace_store(stack_end, 0x13, 1);
     }
 
     #[test]
@@ -1174,42 +1130,45 @@ mod test_mmu {
         assert_eq!(mmu.load(addr + 24).unwrap().0, 0xab);
     }
 
+    /// Every sub-doubleword access is recorded against its containing
+    /// doubleword: loads read the whole doubleword, and a store's record
+    /// changes only its lane, as a byte-array model of the store predicts.
     #[test]
-    fn trace_store_byte_masks_the_byte_into_its_word_by_offset() {
-        let mut mmu = setup_mmu();
-        let word_addr = DRAM_BASE + 0x40;
-        mmu.store_word(word_addr, 0x8877_6655).unwrap();
+    fn sub_doubleword_accesses_trace_the_containing_doubleword() {
+        const OLD: u64 = 0x8877_6655_4433_2211;
+        const VALUE: u64 = 0xF1E2_D3C4_B5A6_9788;
+        let doubleword = DRAM_BASE + 0x40;
+        for width in [1u64, 2, 4] {
+            for offset in (0..8).step_by(width as usize) {
+                let mut mmu = setup_mmu();
+                mmu.store_doubleword(doubleword, OLD).unwrap();
+                let address = doubleword + offset;
 
-        for (offset, expected) in [
-            (0, 0x8877_66AA_u64),
-            (1, 0x8877_AA55),
-            (2, 0x88AA_6655),
-            (3, 0xAA77_6655),
-        ] {
-            let write = mmu.trace_store_byte(word_addr + offset, 0xAA);
-            assert_eq!(write.address, word_addr, "offset {offset}");
-            assert_eq!(write.pre_value, 0x8877_6655, "offset {offset}");
-            assert_eq!(write.post_value, expected, "offset {offset}");
+                let read = match width {
+                    1 => mmu.load(address).unwrap().1,
+                    2 => mmu.load_halfword(address).unwrap().1,
+                    _ => mmu.load_word(address).unwrap().1,
+                };
+                assert_eq!((read.address, read.value), (doubleword, OLD));
+
+                let write = match width {
+                    1 => mmu.store(address, VALUE as u8),
+                    2 => mmu.store_halfword(address, VALUE as u16),
+                    _ => mmu.store_word(address, VALUE as u32),
+                }
+                .unwrap();
+                let mut expected = OLD.to_le_bytes();
+                let lane = offset as usize..(offset + width) as usize;
+                expected[lane.clone()].copy_from_slice(&VALUE.to_le_bytes()[..lane.len()]);
+                let expected = u64::from_le_bytes(expected);
+                assert_eq!(
+                    (write.address, write.pre_value, write.post_value),
+                    (doubleword, OLD, expected),
+                    "width {width}, offset {offset}"
+                );
+                assert_eq!(mmu.load_doubleword(doubleword).unwrap().0, expected);
+            }
         }
-    }
-
-    #[test]
-    fn trace_store_halfword_covers_both_word_halves() {
-        let mut mmu = setup_mmu();
-        let word_addr = DRAM_BASE + 0x48;
-        mmu.store_word(word_addr, 0x8877_6655).unwrap();
-
-        let low = mmu.trace_store_halfword(word_addr, 0xBBBB);
-        assert_eq!(low.post_value, 0x8877_BBBB);
-        let high = mmu.trace_store_halfword(word_addr + 2, 0xCCCC);
-        assert_eq!(high.post_value, 0xCCCC_6655);
-    }
-
-    #[test]
-    #[should_panic(expected = "Unaligned store")]
-    fn trace_store_halfword_rejects_odd_offsets() {
-        let mut mmu = setup_mmu();
-        let _ = mmu.trace_store_halfword(DRAM_BASE + 1, 0xBBBB);
     }
 
     #[test]
@@ -1274,7 +1233,7 @@ mod test_mmu {
 
         let (byte, read) = mmu.load(input_start).unwrap();
         assert_eq!(byte, 0x11);
-        assert_eq!(read.address, input_start & !3);
+        assert_eq!(read.address, input_start & !7);
         assert_eq!(read.value & 0xff, 0x11);
     }
 
@@ -1303,7 +1262,7 @@ mod test_mmu {
         );
 
         let write = mmu.store(output_start + 16, 0x5A).unwrap();
-        assert_eq!(write.address, (output_start + 16) & !3);
+        assert_eq!(write.address, (output_start + 16) & !7);
         assert_eq!(mmu.jolt_device.as_ref().unwrap().outputs[16], 0x5A);
     }
 

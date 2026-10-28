@@ -85,29 +85,29 @@ const fn suffix_vars(log_t: usize) -> usize {
 }
 
 impl OptimizedRegistersClaimReduction {
-    /// Peak bytes of the kernel over `2^log_t` cycles, with `P` prefix and
-    /// `S` suffix entries ([`suffix_vars`]). Preparation holds the `P`-entry
-    /// prefix eq table, the `S`-entry suffix eq table and the `P`-entry Q
-    /// table while the pool's Q blocks fold. The dense transition holds the
-    /// prefix and Q tables at their `2P` capacity, the `2P` prefix eq tables
-    /// and the `3S` folds beside the four `S`-entry dense tables. Not
-    /// counted: transients inside `jolt-poly` evaluations and the parallel
-    /// collect's partial buffers.
-    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
+    /// Peak bytes of the kernel over `2^log_t` cycles, or `None` past
+    /// `usize::MAX`, with `P` prefix and `S` suffix entries ([`suffix_vars`]).
+    /// Preparation holds the `P`-entry prefix eq table, the `S`-entry suffix
+    /// eq table and the `P`-entry Q table while the pool's Q blocks fold. The
+    /// dense transition holds the prefix and Q tables at their `2P` capacity,
+    /// the `2P` prefix eq tables and the `3S` folds beside the four `S`-entry
+    /// dense tables. Not counted: transients inside `jolt-poly` evaluations
+    /// and the parallel collect's partial buffers.
+    pub fn peak_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
         let (p, s) = (
             1usize << (log_t - suffix_vars(log_t)),
             1usize << suffix_vars(log_t),
         );
         let blocks = pool_workers().min(p.div_ceil(BLOCK));
         let scratch = blocks
-            .saturating_mul(BLOCK.min(p))
-            .saturating_mul(3 * size_of::<F::SmallScalarAccumulator>());
+            .checked_mul(BLOCK.min(p))?
+            .checked_mul(3 * size_of::<F::SmallScalarAccumulator>())?;
         let bytes = |p_tables: usize, s_tables: usize| {
-            p.saturating_mul(p_tables)
-                .saturating_add(s.saturating_mul(s_tables))
-                .saturating_mul(size_of::<F>())
+            p.checked_mul(p_tables)?
+                .checked_add(s.checked_mul(s_tables)?)?
+                .checked_mul(size_of::<F>())
         };
-        bytes(2, 1).saturating_add(scratch).max(bytes(4, 7))
+        Some(bytes(2, 1)?.checked_add(scratch)?.max(bytes(4, 7)?))
     }
 }
 

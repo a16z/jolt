@@ -562,6 +562,13 @@ where
         });
     }
 
+    #[cfg(feature = "akita")]
+    if proof.fused_inc_commitment.is_none() {
+        return Err(VerifierError::MissingProofPayload {
+            field: "fused_inc_commitment",
+        });
+    }
+
     let stage_proofs = [
         (
             &proof.stages.stage1_uni_skip_first_round_proof,
@@ -736,6 +743,7 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     #[cfg(feature = "akita")]
     absorb_akita_commitments(
         &proof.commitments,
+        proof.fused_inc_commitment.as_ref(),
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
@@ -750,12 +758,13 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     );
 }
 
-/// Absorbs the Akita commitment objects in canonical object order: `OneHotTrace`, untrusted
-/// advice, trusted advice, the field-increment commitment (field-inline builds), then the whole
+/// Absorbs the Akita commitment objects in canonical object order: `OneHotTrace`, `FusedInc`,
+/// untrusted advice, trusted advice, the field-increment commitment (field-inline builds), then the whole
 /// bytecode and program image. Shared verbatim by the Akita prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_akita_commitments<C, T>(
     one_hot_trace: &C,
+    fused_inc_commitment: Option<&C>,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&C>,
@@ -766,6 +775,9 @@ pub fn absorb_akita_commitments<C, T>(
     T: Transcript,
 {
     append_length_prefixed(transcript, b"commitment", one_hot_trace);
+    if let Some(commitment) = fused_inc_commitment {
+        append_length_prefixed(transcript, b"fused_inc", commitment);
+    }
     if let Some(commitment) = untrusted_advice_commitment {
         append_length_prefixed(transcript, b"untrusted_advice", commitment);
     }
@@ -990,12 +1002,14 @@ fn validate_trace_length(
     Ok(())
 }
 
-/// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
-/// `8k + lowest_address`, and the lattice digit-zero reconstruction relies on
-/// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
-/// access at remapped word zero (see "Where the RAM activation is pinned" in
-/// `specs/lattice-claims.md`). Mirrors the prover-side
-/// `UnmapRamAddressPolynomial::new` assertion (`start_address > 8`).
+/// Fail closed on a RAM remap base that RAF evaluation cannot rely on. Stage
+/// 2's RAF-evaluation unmap is `8k + lowest_address`:
+/// - `lowest_address > 8` keeps `unmap(0) ≠ 0`, which the lattice digit-zero
+///   reconstruction relies on to distinguish "no RAM access" from an access
+///   at remapped word zero;
+/// - `lowest_address ≡ 0 (mod 8)` makes every admissible `RamAddress` a
+///   multiple of 8, which is how RAF evaluation rejects a memory access
+///   misaligned for its width (see R1CS constraint 0 in `jolt-claims`).
 fn validate_ram_remap_base(
     memory_layout: &common::jolt_device::MemoryLayout,
 ) -> Result<(), VerifierError> {
@@ -1005,6 +1019,14 @@ fn validate_ram_remap_base(
             reason: format!(
                 "lowest remapped RAM address {lowest_address:#x} must exceed 8 so the RAF \
                  unmap constant stays clear of the null-address range"
+            ),
+        });
+    }
+    if !lowest_address.is_multiple_of(8) {
+        return Err(VerifierError::InvalidMemoryLayout {
+            reason: format!(
+                "lowest remapped RAM address {lowest_address:#x} must be doubleword-aligned so \
+                 RAF evaluation rejects misaligned memory accesses"
             ),
         });
     }
@@ -1210,6 +1232,7 @@ fn absorb_labeled_u64<T: Transcript>(transcript: &mut T, label: &'static [u8], v
     )
 )]
 mod tests {
+    use jolt_claims::protocols::jolt::relations::booleanity::BooleanityOutputClaims;
     use std::sync::Arc;
 
     use common::constants::RAM_START_ADDRESS;
@@ -1450,6 +1473,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_inputs_rejects_misaligned_ram_remap_base() {
+        let mut memory_layout = test_memory_layout();
+        memory_layout.trusted_advice_start -= 4;
+        memory_layout.untrusted_advice_start -= 4;
+        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidMemoryLayout { reason })
+                if reason.contains("doubleword-aligned")
+        ));
+    }
+
+    #[test]
     fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -1586,6 +1628,8 @@ mod tests {
             #[cfg(feature = "akita")]
             joint_opening_proof: (),
             untrusted_advice_commitment: None,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: Some(TestCommitment),
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc_commitment: Some(TestCommitment),
             claims,
@@ -1763,21 +1807,11 @@ mod tests {
                         bytecode_ra: Vec::new(),
                         fused_inc: zero,
                     },
-                #[cfg(not(feature = "akita"))]
-                booleanity: stage6b::outputs::BooleanityOutputClaims {
+                booleanity: BooleanityOutputClaims {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                #[cfg(feature = "akita")]
-                booleanity:
-                    jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
-                        instruction_ra: Vec::new(),
-                        bytecode_ra: Vec::new(),
-                        ram_ra: Vec::new(),
-                        balanced_inc_digits: Vec::new(),
-                        balanced_inc_carry: zero,
-                    },
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
                 },
@@ -1809,10 +1843,6 @@ mod tests {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
-                        #[cfg(feature = "akita")]
-                        balanced_inc_digits: Vec::new(),
-                        #[cfg(feature = "akita")]
-                        balanced_inc_carry: zero,
                     },
                 #[cfg(not(feature = "akita"))]
                 trusted_advice: None,

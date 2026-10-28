@@ -1,11 +1,10 @@
+use super::shared::AccessWidth;
 use super::*;
 
-/// Lowers signed word load `LW` through the shared containing-doubleword load.
-///
-/// The helper builds the word lane's byte mask and extracts + sign-extends
-/// that lane into `rd` with a single fused lookup.
+/// Lowers signed word load `LW` through the shared floor-addressed load, which
+/// extracts the addressed lane and sign-extends it.
 pub(in crate::expand) fn expand_lw(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    super::shared::expand_word_load(instruction, true)
+    super::shared::expand_narrow_load(instruction, AccessWidth::Word, true)
 }

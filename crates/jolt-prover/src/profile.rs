@@ -311,11 +311,10 @@ pub struct ProfileArgs {
     /// reservation, which covers named eager tables only, fails after
     /// tracing, before proving. Under Akita, a budget that cannot hold the
     /// trace output, program and program preprocessing buffers plus the
-    /// one-hot setup's flat public matrix and setup-prefix sources fails
-    /// before PCS setup allocates them, and any budget fails for multi-chunk
-    /// or field-inline setups, which that check does not price. Passing does
-    /// not mean the whole proof fits, and the budget does not cap process
-    /// memory.
+    /// one-hot setup's flat public matrix fails before PCS setup allocates
+    /// it, and any budget fails for multi-chunk or field-inline setups, which
+    /// that check does not price. Passing does not mean the whole proof fits,
+    /// and the budget does not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }

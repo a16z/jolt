@@ -8,8 +8,8 @@
 //! macro arguments (the `u64` width has a fold-entirely-in-`u64` product
 //! path for sub-word primes, with a BMI2 variant on x86-64).
 
-use crate::PseudoMersenne;
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
+use crate::{Ext2Config, Ext2NonResidueKind, PseudoMersenne};
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
 use rand_core::RngCore;
@@ -450,6 +450,72 @@ define_solinas_prime!(
 
 impl<const P: u64> PseudoMersenne for Fp64<P> {
     const OFFSET: u128 = Self::C as u128;
+
+    /// Four raw products and one reduction per coordinate (instead of three
+    /// reduced Karatsuba products) for `NR ∈ {2, −1}`; see
+    /// [`ext2_product_sums`] for the integer bounds. Canonical outputs, so
+    /// the result is identical to the Karatsuba default.
+    #[inline(always)]
+    fn ext2_mul<C: Ext2Config<Self>>(a: [Self; 2], b: [Self; 2]) -> [Self; 2] {
+        match ext2_product_sums::<P, C>(a, b) {
+            Some(sums) if Self::EXT2_FUSION_SAFE => {
+                sums.map(|(low, carry)| Self(Self::reduce_three_products(low, carry)))
+            }
+            _ => crate::schedules::ext2_mul_coeffs::<Self, C>(a, b),
+        }
+    }
+
+    #[inline(always)]
+    fn ext2_square<C: Ext2Config<Self>>(a: [Self; 2]) -> [Self; 2] {
+        match ext2_product_sums::<P, C>(a, a) {
+            Some(sums) if Self::EXT2_FUSION_SAFE => {
+                sums.map(|(low, carry)| Self(Self::reduce_three_products(low, carry)))
+            }
+            _ => crate::schedules::ext2_square_coeffs::<Self, C>(a),
+        }
+    }
+}
+
+/// The coordinates of the quadratic-extension product `a·b` in
+/// `Fp64[u]/(u² − NR)` as exact integers `low + carry·2^128`, before any
+/// reduction: `[a0·b0 + NR·a1·b1, a0·b1 + a1·b0]`. `None` for a non-residue
+/// without a fused schedule.
+///
+/// With canonical inputs every product `pᵢⱼ ≤ (P−1)²`, so:
+/// - `NR = 2`: `c0 = p00 + 2·p11 < 3P²`, carry ≤ 2.
+/// - `NR = −1`: `c0 = p00 + P² − p11 ∈ [0, 2P²)`. The `P²` bias keeps it
+///   non-negative and vanishes mod `p`. The add carry is at least the
+///   subtract borrow (a borrow without a carry would need
+///   `p00 + P² < p11 < P²`), so carry ∈ {0, 1}.
+/// - `c1 = p01 + p10 < 2P²`, carry ≤ 1.
+///
+/// Every coordinate is below `3P²`, the input range of
+/// [`Fp64::reduce_three_products`].
+#[inline(always)]
+pub(super) fn ext2_product_sums<const P: u64, C: Ext2Config<Fp64<P>>>(
+    a: [Fp64<P>; 2],
+    b: [Fp64<P>; 2],
+) -> Option<[(u128, u64); 2]> {
+    let subtract_p11 = match C::NON_RESIDUE_KIND {
+        Ext2NonResidueKind::Generic => return None,
+        Ext2NonResidueKind::NegOne => true,
+        Ext2NonResidueKind::Two => false,
+    };
+    let p00 = a[0].mul_wide(b[0]);
+    let p11 = a[1].mul_wide(b[1]);
+    let p01 = a[0].mul_wide(b[1]);
+    let p10 = a[1].mul_wide(b[0]);
+    let c0 = if subtract_p11 {
+        let (sum, carry) = p00.overflowing_add((P as u128) * (P as u128));
+        let (difference, borrow) = sum.overflowing_sub(p11);
+        (difference, u64::from(carry) - u64::from(borrow))
+    } else {
+        let (sum, carry1) = p00.overflowing_add(p11);
+        let (sum, carry2) = sum.overflowing_add(p11);
+        (sum, u64::from(carry1) + u64::from(carry2))
+    };
+    let (sum, carry) = p01.overflowing_add(p10);
+    Some([c0, (sum, u64::from(carry))])
 }
 
 // Byte views for device buffers (`jolt-metal`), as for `Fp128`. Upload is a
@@ -484,6 +550,39 @@ impl<const P: u64> Fp64<P> {
     } else {
         u64::MAX
     };
+
+    /// Whether [`reduce_three_products`](Self::reduce_three_products) is
+    /// exact for every integer below `3P²`.
+    ///
+    /// - Sub-word primes (`BITS < 64`): `3P² < 2^128`, and two folds plus one
+    ///   subtraction suffice when `3C(C+1) < P`.
+    /// - Full-word primes: the integer is `low + carry·2^128`, `carry ≤ 2`.
+    ///   The first fold (`2^64 ≡ C`, `2^128 ≡ C²`) leaves
+    ///   `f < (C+1)·2^64 + 2C²`, so with `2C² < 2^64` the second fold leaves
+    ///   `s < 2^64 + C(C+1)`. That is below `2P = 2^65 − 2C` when
+    ///   `C² + 3C < 2^64`. Both hold when `2C² + 3C < 2^64`.
+    pub(crate) const EXT2_FUSION_SAFE: bool = if Self::BITS < 64 {
+        3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128
+    } else {
+        2 * (Self::C as u128) * (Self::C as u128) + 3 * (Self::C as u128) < 1u128 << 64
+    };
+
+    /// Reduces `low + carry·2^128`, an integer below `3P²` (a sum of at most
+    /// three products of canonical residues), to a canonical residue.
+    /// Requires [`EXT2_FUSION_SAFE`](Self::EXT2_FUSION_SAFE).
+    #[inline(always)]
+    pub(crate) fn reduce_three_products(low: u128, carry: u64) -> u64 {
+        debug_assert!(Self::EXT2_FUSION_SAFE);
+        if Self::BITS < 64 {
+            debug_assert_eq!(carry, 0);
+            let hi = (low >> 64) as u64;
+            Self::reduce_sub_word_wide(low as u64, hi, hi >> Self::BITS)
+        } else {
+            let c = Self::C as u128;
+            let folded = (low >> 64) * c + u128::from(low as u64) + u128::from(carry) * c * c;
+            Self::canonicalize_folded((folded >> 64) * c + u128::from(folded as u64))
+        }
+    }
 
     /// Whether both product folds stay in a single word.
     pub(crate) const FOLD_IN_U64: bool =

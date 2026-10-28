@@ -4,6 +4,8 @@ use std::ops::Range;
 
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::JoltField;
+#[cfg(not(feature = "akita"))]
+use jolt_poly::EqPolynomial;
 #[cfg(feature = "field-inline")]
 use jolt_poly::{MultilinearPoly, TensorEqTable};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -50,6 +52,70 @@ impl TracePlacement {
     #[inline(always)]
     pub(crate) const fn index(self, cycle: usize, address: usize) -> usize {
         cycle * self.t_stride + address * self.k_stride
+    }
+
+    #[cfg(not(feature = "akita"))]
+    pub(crate) fn suffix_evaluation<F: JoltField>(
+        self,
+        point: &[F],
+        prefix: usize,
+        cycles: usize,
+        address: usize,
+    ) -> F {
+        let low_bits = self.t_stride.trailing_zeros() as usize;
+        let cycle_bits = cycles.trailing_zeros() as usize;
+        let start = self.total_vars - low_bits - cycle_bits;
+        let end = self.total_vars - low_bits;
+        let index = self.index(0, address);
+        let fixed = point
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !(start..end).contains(i))
+            .fold(F::one(), |product, (i, &coordinate)| {
+                product
+                    * if index & (1 << (self.total_vars - 1 - i)) == 0 {
+                        F::one() - coordinate
+                    } else {
+                        coordinate
+                    }
+            });
+        fixed * EqPolynomial::suffix_sum(&point[start..end], prefix)
+    }
+
+    /// An aligned dyadic cycle block maps to a Cartesian product of row and
+    /// column indices. Sum its left weights once, then scatter that sum into
+    /// its columns; no per-padding-cycle multiplication is needed.
+    #[cfg(not(feature = "akita"))]
+    pub(crate) fn fold_suffix<F: JoltField>(
+        self,
+        left: &[F],
+        sigma: usize,
+        cycles: Range<usize>,
+        address: usize,
+        value: F,
+        result: &mut [F],
+    ) {
+        let mut prefix = cycles.start;
+        let cycles = cycles.end;
+        let stride_bits = self.t_stride.trailing_zeros() as usize;
+        let row_stride = 1usize << stride_bits.saturating_sub(sigma);
+        let mask = (1usize << sigma) - 1;
+        while prefix < cycles {
+            let bits = (prefix.trailing_zeros() as usize).min((cycles - prefix).ilog2() as usize);
+            let column_bits = bits.min(sigma.saturating_sub(stride_bits));
+            let row_bits = bits - column_bits;
+            let index = self.index(prefix, address);
+            let row = index >> sigma;
+            let column = index & mask;
+            let weight: F = (0..1usize << row_bits)
+                .map(|offset| left[row + offset * row_stride])
+                .sum();
+            let contribution = value * weight;
+            for offset in 0..1usize << column_bits {
+                result[column + offset * self.t_stride] += contribution;
+            }
+            prefix += 1usize << bits;
+        }
     }
 }
 
