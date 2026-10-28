@@ -71,6 +71,20 @@ fn rebuild_one<Cfg: CommitmentConfig>(
     TrustedScheduleCatalog::<Cfg>::from_prevalidated_verifier_view(view, prevalidated).map(variant)
 }
 
+/// The generated file's view bytes, aligned to 8 bytes. The setup section
+/// embeds the same bytes 8-aligned, and the run-time comparison of the two
+/// copies takes its word loop only when both addresses agree modulo 8, so the
+/// alignment keeps that comparison independent of the guest's data layout.
+#[cfg_attr(
+    all(not(target_arch = "riscv64"), not(test)),
+    expect(
+        dead_code,
+        reason = "only the generated guest file and the tests name it"
+    )
+)]
+#[repr(C, align(8))]
+struct AlignedViewBytes<const N: usize>([u8; N]);
+
 #[cfg(target_arch = "riscv64")]
 mod compiled {
     include!(env!("JOLT_PREVALIDATED_CATALOG_RS"));
@@ -153,15 +167,60 @@ pub(crate) fn render(family: OneHotFamily, view: &[u8]) -> Result<String, AkitaE
         .map(|digest| format!("[{}]", bytes(digest)))
         .collect::<Vec<_>>()
         .join(",");
-    Ok(format!(
-        "static VIEW: akita_schedules::PrevalidatedVerifierView<'static> = akita_schedules::PrevalidatedVerifierView {{\nview: &[{}],\npolicy_digest: [{}],\ncatalog_digest: [{}],\ncarried_row_digests: &[{}],\n}};\npub(super) fn rebuild(family: super::OneHotFamily, view: &[u8]) -> Option<super::AkitaOneHotBackendScheme> {{\nsuper::rebuild_one::<cfg_of!({variant})>(family, super::OneHotFamily::{variant}, |catalog| super::AkitaOneHotBackendScheme::{variant}(akita_pcs::AkitaCommitmentScheme::new(catalog)), view, &VIEW)\n}}\n",
-        bytes(view),
-        bytes(&record.policy_digest),
-        bytes(&record.catalog_digest),
-        rows,
+    Ok(source(
+        variant,
+        view.len(),
+        &bytes(view),
+        &bytes(&record.policy_digest),
+        &bytes(&record.catalog_digest),
+        &rows,
     ))
+}
+
+/// Host: the generated file's text from its rendered parts. The view bytes
+/// go into an `AlignedViewBytes` static that the view borrows.
+#[cfg(not(target_arch = "riscv64"))]
+fn source(
+    variant: &str,
+    view_len: usize,
+    view: &str,
+    policy_digest: &str,
+    catalog_digest: &str,
+    rows: &str,
+) -> String {
+    format!(
+        "static VIEW_BYTES: super::AlignedViewBytes<{view_len}> = super::AlignedViewBytes([{view}]);\nstatic VIEW: akita_schedules::PrevalidatedVerifierView<'static> = akita_schedules::PrevalidatedVerifierView {{\nview: &VIEW_BYTES.0,\npolicy_digest: [{policy_digest}],\ncatalog_digest: [{catalog_digest}],\ncarried_row_digests: &[{rows}],\n}};\npub(super) fn rebuild(family: super::OneHotFamily, view: &[u8]) -> Option<super::AkitaOneHotBackendScheme> {{\nsuper::rebuild_one::<cfg_of!({variant})>(family, super::OneHotFamily::{variant}, |catalog| super::AkitaOneHotBackendScheme::{variant}(akita_pcs::AkitaCommitmentScheme::new(catalog)), view, &VIEW)\n}}\n",
+    )
 }
 
 /// Host: the generated file's source with no prevalidated view (every
 /// lookup misses and the canonical path runs).
 pub const EMPTY_PREVALIDATED_CATALOG_SOURCE: &str = "pub(super) fn rebuild(_family: super::OneHotFamily, _view: &[u8]) -> Option<super::AkitaOneHotBackendScheme> {\nNone\n}\n";
+
+#[cfg(all(test, not(target_arch = "riscv64")))]
+mod tests {
+    use super::{source, AlignedViewBytes};
+
+    #[test]
+    fn view_bytes_static_is_8_aligned() {
+        static BYTES: AlignedViewBytes<11> = AlignedViewBytes([7; 11]);
+        assert_eq!(core::mem::align_of::<AlignedViewBytes<11>>(), 8);
+        assert_eq!(BYTES.0.as_ptr().addr() % 8, 0);
+        let view: &'static [u8] = &BYTES.0;
+        assert_eq!(view, &[7; 11]);
+    }
+
+    #[test]
+    fn generated_source_borrows_the_aligned_view_bytes() {
+        let text = source("K16Single", 3, "1,2,3", "4", "5", "[6]");
+        assert!(text.starts_with(
+            "static VIEW_BYTES: super::AlignedViewBytes<3> = super::AlignedViewBytes([1,2,3]);\n"
+        ));
+        assert!(text.contains("\nview: &VIEW_BYTES.0,\npolicy_digest: [4],\ncatalog_digest: [5],\ncarried_row_digests: &[[6]],\n};\n"));
+        assert!(text.contains(
+            "super::rebuild_one::<cfg_of!(K16Single)>(family, super::OneHotFamily::K16Single,"
+        ));
+        assert_eq!(text.matches("1,2,3").count(), 1);
+        assert_eq!(text.matches("static ").count(), 2);
+    }
+}
