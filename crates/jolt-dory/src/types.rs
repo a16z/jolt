@@ -157,12 +157,6 @@ impl DoryHint {
         Self::new(row_commitments, commit_blind)
     }
 
-    /// Row commitments in the order paired with the setup's G2 bases.
-    #[cfg(feature = "cuda")]
-    pub fn row_commitments(&self) -> &[Bn254G1] {
-        &self.row_commitments
-    }
-
     /// The commitment blind, zero for a transparent commitment.
     #[cfg(feature = "cuda")]
     pub fn commit_blind(&self) -> Fr {
