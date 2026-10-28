@@ -342,10 +342,13 @@ mod tests {
         stage_three_reserves_its_state::<AkitaField>();
     }
 
-    /// The RAM access columns stage 4 may hold: the session's `u32` address
-    /// column and two pairs of `u64` value columns, the value check's own and
-    /// stage 2's awaiting its background drop.
-    const STAGE_FOUR_RAM_COLUMNS: usize = PREFIX * (size_of::<u32>() + 2 * 2 * size_of::<u64>());
+    /// The RAM bytes stage 4 reserves: the session's `u32` address column, two
+    /// pairs of `u64` value columns (the value check's own and stage 2's
+    /// awaiting its background drop), and what the value check's collection
+    /// holds until it truncates, a suffix row per value column and one
+    /// column's `shrink_to_fit` copy.
+    const STAGE_FOUR_RAM: usize =
+        PREFIX * (size_of::<u32>() + 2 * 2 * size_of::<u64>()) + (PREFIX + 2) * size_of::<u64>();
 
     /// The cycle-first stage-4 state while the fourth bind dereferences the
     /// indexed generation into direct entries, with every entry generation
@@ -355,10 +358,10 @@ mod tests {
     /// values and 25-byte packed metadata, the direct entries, the read LUT
     /// at 2^16 values and the write LUT at 2^8, and the increments'
     /// `PREFIX / 4`-entry allocation, which they keep because a prefix of
-    /// 1024 entries binds in place; plus the RAM access columns.
+    /// 1024 entries binds in place; plus stage 4's RAM bytes.
     fn cycle_first_transition_floor<F: JoltField>(direct_entry_bytes: usize) -> usize {
         let f = size_of::<F>();
-        STAGE_FOUR_RAM_COLUMNS
+        STAGE_FOUR_RAM
             + 3 * 2 * PREFIX
             + 3 * PREFIX * (f + 25 + direct_entry_bytes)
             + ((1 << 16) + (1 << 8)) * f
@@ -369,10 +372,10 @@ mod tests {
     /// rows, a 2048-byte increment checkpoint per 4096 cycles and the
     /// 2048-byte final register values, the 2-byte `rd` indices parked for
     /// stage 5, 128 bound address weights and five `PREFIX`-entry cycle
-    /// tables; plus the RAM access columns.
+    /// tables; plus stage 4's RAM bytes.
     fn address_first_handoff_floor<F: JoltField>() -> usize {
         let f = size_of::<F>();
-        STAGE_FOUR_RAM_COLUMNS
+        STAGE_FOUR_RAM
             + 32 * PREFIX
             + PREFIX.div_ceil(4096) * 2048
             + 2048
