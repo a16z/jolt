@@ -199,6 +199,8 @@ pub trait Field: Ring {
     }
     #[cfg(feature = "terminal-contraction")]
     crate::terminal_contraction::field_methods!();
+    #[cfg(feature = "fill-ingress")]
+    crate::algebra::fill_ingress_field_method!();
     /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
     /// otherwise. Fields with a batched guest path (a register-resident sum
     /// read out once) override this.
@@ -639,3 +641,24 @@ pub(crate) fn signed_i16_dot_fold<F: Field>(
             sum + weight * F::from_i64(i64::from(value))
         })
 }
+
+// `fill-ingress` (default off): `Field::scale_slice_into`, the
+// slice product `dst[i] = src[i] * scale` over the shorter of the two slices.
+// The default multiplies in software; a field with a field-inline guest path
+// overrides it to load the scale once per call. The trait gains the method
+// from this macro, invoked inside the trait next to the terminal-contraction
+// methods.
+#[cfg(feature = "fill-ingress")]
+macro_rules! fill_ingress_field_method {
+    () => {
+        /// `dst[i] = src[i] * scale` over the shorter of the two slices.
+        #[inline]
+        fn scale_slice_into(scale: Self, src: &[Self], dst: &mut [Self]) {
+            dst.iter_mut()
+                .zip(src)
+                .for_each(|(value, &low_value)| *value = low_value * scale);
+        }
+    };
+}
+#[cfg(feature = "fill-ingress")]
+pub(crate) use fill_ingress_field_method;

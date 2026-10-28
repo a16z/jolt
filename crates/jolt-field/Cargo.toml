@@ -57,6 +57,9 @@ field-inline-horner-triplet = ["field-inline-horner"]
 word-transcript = []
 word-decode = []
 immutable-recipes = []
+# Fill ingress (default off): `Field::scale_slice_into`, with a
+# field-inline Fp128 kernel that loads the scale once per slice. Same values.
+fill-ingress = []
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires

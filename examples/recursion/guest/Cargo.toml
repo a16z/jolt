@@ -54,6 +54,11 @@ weighted-dot-horner-triplet = [
 tensor-eq-runs = ["akita", "jolt-akita/tensor-eq-runs"]
 setup-sop-structured = ["akita", "jolt-akita/setup-sop-structured"]
 prevalidated-catalog = ["akita", "jolt-akita/prevalidated-catalog"]
+lazy-scan-errors = ["akita", "jolt-akita/lazy-scan-errors"]
+digest-nozero = ["prevalidated-catalog", "jolt-akita/digest-nozero"]
+golomb-word = ["akita", "jolt-akita/golomb-word"]
+bytecode-fold = ["akita", "jolt-akita/bytecode-fold"]
+fill-ingress = ["akita", "jolt-akita/fill-ingress"]
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
 # embedded_bytecode.rs imports jolt-riscv types when the host prepares an

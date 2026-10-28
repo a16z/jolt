@@ -116,6 +116,21 @@ prevalidated-catalog = [
   "dep:sha2",
   "dep:hex",
 ]
+# Verifier features (effective only with `akita`), each forwarded to the
+# verifier guest and to the host's Akita; same field values, proofs and
+# transcripts.
+# lazy-scan-errors: the setup-scan kernels build InvalidProof only on failure.
+lazy-scan-errors = ["jolt-akita?/lazy-scan-errors"]
+# digest-nozero: the prevalidated catalog rebuild copies its row digests
+# directly instead of zero-filling first (needs prevalidated-catalog).
+digest-nozero = ["prevalidated-catalog", "jolt-akita?/digest-nozero"]
+# golomb-word: doubleword trailing-ones table and packed doubleword stores in
+# the terminal z Golomb-Rice decoder.
+golomb-word = ["jolt-akita?/golomb-word"]
+# bytecode-fold: direct flag-class index in the stage 6b bytecode fold.
+bytecode-fold = ["jolt-akita?/bytecode-fold"]
+# fill-ingress: one scale ingress per bounded run in the Akita equality fill.
+fill-ingress = ["jolt-akita?/fill-ingress"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }

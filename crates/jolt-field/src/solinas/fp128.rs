@@ -1079,6 +1079,10 @@ impl<const P: u128> Field for Fp128<P> {
     }
     #[cfg(feature = "terminal-contraction")]
     crate::terminal_contraction::fp128_methods!();
+    #[cfg(feature = "fill-ingress")]
+    fn scale_slice_into(scale: Self, src: &[Self], dst: &mut [Self]) {
+        Self::fill_ingress_scale(scale, src, dst)
+    }
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
     fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
@@ -1479,6 +1483,35 @@ impl<const P: u128> Fp128<P> {
             )));
         }
         Some(a.inv_or_zero())
+    }
+}
+
+// `fill-ingress` (default off): on a guest whose field-inline
+// unit computes in this field, the slice product loads `scale` into a field
+// register once and each element costs its own ingress, one multiply and one
+// canonical readout (range checked as every field-inline result is). The
+// kernel uses only the operand, output and readout scratch registers, never
+// the accumulators that `signed_sum` lends out, and runs no caller code while
+// the scale is resident. Elsewhere, the software product.
+#[cfg(feature = "fill-ingress")]
+impl<const P: u128> Fp128<P> {
+    #[inline]
+    fn fill_ingress_scale(scale: Self, src: &[Self], dst: &mut [Self]) {
+        let len = src.len().min(dst.len());
+        #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+        if Self::FIELD_INLINE && len >= 2 {
+            // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
+            let src: &[[u64; 2]] = unsafe { core::slice::from_raw_parts(src.as_ptr().cast(), len) };
+            let dst = &mut dst[..len];
+            crate::field_inline::scale::scale_into(&scale.0, src, |index, limbs| {
+                dst[index] = Self::from_inline_limbs(limbs);
+            });
+            return;
+        }
+        dst[..len]
+            .iter_mut()
+            .zip(&src[..len])
+            .for_each(|(value, &low_value)| *value = low_value * scale);
     }
 }
 

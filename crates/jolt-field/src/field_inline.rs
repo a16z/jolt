@@ -663,3 +663,29 @@ pub use guest::{
 pub use guest::signed_i16_dot;
 #[cfg(feature = "field-inline-horner")]
 pub(crate) mod horner;
+
+// `fill-ingress` (default off): `out(i, src[i] * scale)` with
+// `scale` loaded into `REG_B` once. Each element is loaded into `REG_A`,
+// multiplied into `REG_OUT` and read out canonically (the caller range checks
+// the limbs). Only the operand, output and readout scratch registers are
+// written; no caller code but `out` (integer work on the readout) runs while
+// the scale is resident. Canonical limbs.
+#[cfg(feature = "fill-ingress")]
+pub(crate) mod scale {
+    use super::guest::{load, read_out};
+    use super::{emit, REG_A, REG_B, REG_OUT};
+
+    #[inline(always)]
+    pub(crate) fn scale_into<const N: usize>(
+        scale: &[u64; N],
+        src: &[[u64; N]],
+        mut out: impl FnMut(usize, [u64; N]),
+    ) {
+        load(REG_B, scale);
+        for (index, value) in src.iter().enumerate() {
+            load(REG_A, value);
+            emit::mul_out();
+            out(index, read_out(REG_OUT));
+        }
+    }
+}

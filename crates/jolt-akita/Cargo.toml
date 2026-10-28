@@ -14,6 +14,11 @@ terminal-contraction = [
   "jolt-field/terminal-contraction",
 ]
 segment-setup = ["akita-pcs/segment-setup"]
+# Verifier features (default off): setup-scan errors built only on failure,
+# prevalidated row digests copied without a zero fill, packed terminal z decode.
+lazy-scan-errors = ["akita-pcs/lazy-scan-errors"]
+digest-nozero = ["akita-schedules/digest-nozero"]
+golomb-word = ["akita-types/golomb-word", "akita-params/golomb-word"]
 default = ["parallel"]
 # Akita's rayon-backed kernels and backend thread pool. A single-core zkVM
 # guest builds without it; Jolt's own prover kernels in this crate still link
@@ -48,6 +53,11 @@ prevalidated-catalog = [
   "akita-config/prevalidated-catalog",
   "akita-schedules/prevalidated-catalog",
 ]
+# Verifier features (default off): direct flag-class index in the bytecode
+# fold (Jolt), one scale ingress per bounded run in the Akita equality-window
+# fill.
+bytecode-fold = ["jolt-claims/bytecode-fold"]
+fill-ingress = ["akita-algebra/fill-ingress", "jolt-field/fill-ingress"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.

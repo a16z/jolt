@@ -940,6 +940,16 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("weighted-dot-horner-triplet");
     #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
     program.add_guest_feature("prevalidated-catalog");
+    #[cfg(all(feature = "akita", feature = "lazy-scan-errors"))]
+    program.add_guest_feature("lazy-scan-errors");
+    #[cfg(all(feature = "akita", feature = "digest-nozero"))]
+    program.add_guest_feature("digest-nozero");
+    #[cfg(all(feature = "akita", feature = "golomb-word"))]
+    program.add_guest_feature("golomb-word");
+    #[cfg(all(feature = "akita", feature = "bytecode-fold"))]
+    program.add_guest_feature("bytecode-fold");
+    #[cfg(all(feature = "akita", feature = "fill-ingress"))]
+    program.add_guest_feature("fill-ingress");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
 }
