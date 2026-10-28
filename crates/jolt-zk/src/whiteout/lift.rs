@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_algebra::{CyclotomicRing, JoltField};
+use jolt_algebra::{lift_ct, CyclotomicRing, JoltField};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_poly::EqPolynomial;
 use rayon::prelude::*;
@@ -30,7 +30,7 @@ use super::labels::RowLabels;
 use super::placement::{
     PadPlace, PadPlacement, OPERAND_LEVELS, OPERAND_LOG_BASIS, PAD_LEVELS, PAD_LOG_BASIS,
 };
-use super::segments::{lift_ct, Placed, SegmentMask, SegmentRole, SegmentTable};
+use super::segments::{Placed, SegmentMask, SegmentRole, SegmentTable};
 use super::WhiteoutError;
 use crate::masking::{AffineRow, ResidualRelation, ResidualVar};
 use crate::secret::SecretVec;

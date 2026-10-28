@@ -26,7 +26,7 @@ use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use rayon::prelude::*;
 use std::ops::Range;
 
-use jolt_algebra::{CyclotomicRing, JoltField};
+use jolt_algebra::{lift_ct, CyclotomicRing, JoltField};
 use jolt_crypto::challenge::SparseChallenge;
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
@@ -36,7 +36,7 @@ use super::compression::ImageCompression;
 use super::lift::{AggregatedRelation, ChallengeRing, LiftedRelation, ProductAdjointWeights};
 use super::linear::BlockTarget;
 use super::params::RESPONSE_LOG_BASIS;
-use super::segments::{balanced_range, lift_ct};
+use super::segments::balanced_range;
 use super::sigma::SigmaSetup;
 use super::WhiteoutError;
 use crate::masking::ZkError;

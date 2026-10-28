@@ -625,3 +625,13 @@ impl<
     > JoltField for T
 {
 }
+
+/// `x` as a field element, from its magnitude and sign by arithmetic: no
+/// branch on `x`, unlike [`Field::from_i64`]. The lift for secret values
+/// (Whiteout's response digits).
+#[inline]
+pub fn lift_ct<F: Field>(x: i64) -> F {
+    let sign = x >> 63;
+    let magnitude = F::from_u64(((x ^ sign).wrapping_sub(sign)) as u64);
+    magnitude - (magnitude + magnitude) * F::from_u64((sign & 1) as u64)
+}

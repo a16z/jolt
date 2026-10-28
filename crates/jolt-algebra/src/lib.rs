@@ -145,7 +145,7 @@ pub use ring::{
 
 pub use algebra::narg;
 pub use algebra::{
-    Accumulator, AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field,
+    lift_ct, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field,
     JoltField, MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "binary")]

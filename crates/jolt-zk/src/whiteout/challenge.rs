@@ -6,10 +6,9 @@
 //! only as a dense coefficient vector, so neither its time nor its addresses
 //! depend on `c` (a rejected attempt's `c` is secret).
 
-use jolt_algebra::{CyclotomicRing, Field};
+use jolt_algebra::{lift_ct, CyclotomicRing, Field};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 
-use super::segments::lift_ct;
 use super::WhiteoutError;
 use rayon::prelude::*;
 

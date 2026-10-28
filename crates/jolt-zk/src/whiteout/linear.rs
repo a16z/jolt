@@ -11,12 +11,11 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use jolt_algebra::{CanonicalEncoding, CyclotomicRing, Field};
+use jolt_algebra::{lift_ct, CanonicalEncoding, CyclotomicRing, Field};
 use jolt_crypto::lattice::{PreparedMatrix, CHALLENGE_RING_DIM};
 
 use rayon::prelude::*;
 
-use super::segments::lift_ct;
 use super::WhiteoutError;
 use crate::secret::SecretVec;
 
