@@ -352,6 +352,19 @@ paper delta.
   wiped buffers; no transcript change. Fix round: a straddling-ring test,
   the `target_at_zero` owner note. A/B (load ~16): 16-thread steady verify
   82 → 47, 92 → 55, 111 → 73 ms; nothing cached. Merged; jolt bars green.
+- **O2b (response planning; `specs/whiteout-o2b-planner.md`).** One review,
+  no blocker: prunes are strict against a sound lower bound, ties break on
+  the full schedule descriptor, no lock is held across parallel work, and
+  errors are never memoized, so the chosen plan is byte-identical in every
+  visit order *whenever the search returns a plan*. Errors raised after a
+  prune decision (`child_choice`, `PendingQueryEdge::new`, a successor's
+  suffix derivation) may depend on visit order; by inspection they are
+  unreachable for well-formed input, and the doc and spec say so. Fix
+  round: the split replay is keyed on the request's opening, the
+  live-length test covers chunked levels, and the memo-pressure `<=` is
+  explained. LOADED response plan 13.6 → 2.1, 23.4 → 7.6, 14.2 → 2.1 s;
+  plans and `artifacts/schedules` are unchanged. Merged (Akita 8c22267ed);
+  Akita and jolt bars green, and the proof dump equals O2b's verified dump.
 
 ## Not verified
 
