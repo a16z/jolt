@@ -150,6 +150,7 @@ where
         preprocessing,
         &stage0.commitment,
         stage0.hint,
+        &stage0.fused_inc,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
         #[cfg(feature = "field-inline")]
@@ -169,6 +170,7 @@ where
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
         commitments: stage0.commitment,
+        fused_inc_commitment: Some(stage0.fused_inc.commitment),
         stages: JoltStageProofs {
             stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
             stage1_sumcheck_proof: stage1.sumcheck_proof,

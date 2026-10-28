@@ -4,20 +4,22 @@
 # packages or on whatever z3-src happens to be current.
 #
 # SCOPE — this suite is narrower than "the expansion pipeline". The main step
-# runs 86 of the crate's 106 tests:
-#   * 34 virtual-sequence proofs (17 mnemonics x correctness+consistency):
-#     ADDIW ADDW LW MULW SUBW and the twelve shifts. Exhaustive over register
-#     values, but at one fixed operand assignment (rd=x1, rs1=x2, rs2=x3,
-#     imm=1234), so immediate-form sequences are proved at a single shift
-#     amount and the rd=x0 expansion path is never taken.
-#   * 52 per-instruction R1CS/product-constraint determinism checks.
+# runs 126 of the crate's 146 tests:
+#   * 70 virtual-sequence proofs: 34 mnemonics x correctness+consistency
+#     (ADDIW ADDW MULW SUBW, the sub-word loads and stores LB LBU LH LHU LW
+#     LWU SB SH SW, the nine word AMOs, and the twelve shifts) plus two
+#     negative-immediate checks. Exhaustive over register values, but at one
+#     fixed operand assignment (rd=x1, rs1=x2, rs2=x3, imm=1234), so
+#     immediate-form sequences are proved at a single shift amount and the
+#     rd=x0 expansion path is never taken.
+#   * 56 per-instruction R1CS/product-constraint determinism checks.
 # A second step runs the signed DIV/REM/DIVW/REMW proofs (8 of the 20
 # #[ignore]d div/rem/mulh tests) at Z3_VERIFIER_BV_BITS=8: non-terminating
 # under the 64-bit model, but at 8 bits they discharge in milliseconds and
 # still prove that arbitrary advice cannot yield a wrong or non-unique result.
 # NOT covered: the div/rem family at 64-bit width, the unsigned div/rem and
-# mulh sequences at any width, all memory/atomic/LR-SC/CSR/trap expansions
-# (except LW), and the registered inlines.
+# mulh sequences at any width, the doubleword AMOs, LR/SC, the advice loads,
+# the CSR/trap expansions, and the registered inlines.
 #
 # Nightly-only by design: the vendored Z3 build is too slow for the PR-blocking
 # path, and the obligations only move when expansions or the z3 model change.

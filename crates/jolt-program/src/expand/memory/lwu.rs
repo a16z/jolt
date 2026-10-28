@@ -1,11 +1,10 @@
+use super::shared::AccessWidth;
 use super::*;
 
-/// Lowers unsigned word load `LWU` through the shared containing-doubleword load.
-///
-/// The helper builds the word lane's byte mask and extracts that lane into
-/// `rd` zero-extended with a single fused lookup.
+/// Lowers unsigned word load `LWU` through the shared floor-addressed load, which
+/// extracts the addressed lane and zero-extends it.
 pub(in crate::expand) fn expand_lwu(
     instruction: &SourceInstructionRow,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    super::shared::expand_word_load(instruction, false)
+    super::shared::expand_narrow_load(instruction, AccessWidth::Word, false)
 }

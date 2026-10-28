@@ -10,11 +10,14 @@ const INITIAL_STATE: [u64; STATE_VECTOR_LEN] = {
     h
 };
 
+#[derive(Clone)]
 pub struct Blake2b {
     h: [u64; STATE_VECTOR_LEN],
     buffer: [u8; BLOCK_INPUT_SIZE_IN_BYTES],
     buffer_len: usize,
     counter: u64,
+    /// Digest length folded into the IV; the finalize paths must emit exactly this many bytes.
+    output_len: usize,
 }
 
 impl Blake2b {
@@ -25,6 +28,30 @@ impl Blake2b {
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
+            output_len: OUTPUT_SIZE,
+        }
+    }
+
+    /// Blake2b with an `output_len`-byte digest (1..=64). The digest length is
+    /// part of the parameter block folded into the IV, so a shorter digest is
+    /// its own hash function, not a truncation of the 64-byte one.
+    ///
+    /// # Panics
+    /// Panics if `output_len` is not in `1..=64`.
+    #[inline(always)]
+    pub fn new_with_output_len(output_len: usize) -> Self {
+        assert!(
+            (1..=OUTPUT_SIZE).contains(&output_len),
+            "Blake2b digest length must be 1..=64 bytes"
+        );
+        let mut h = IV;
+        h[0] ^= 0x01010000 ^ (output_len as u64);
+        Self {
+            h,
+            buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
+            buffer_len: 0,
+            counter: 0,
+            output_len,
         }
     }
 
@@ -42,6 +69,7 @@ impl Blake2b {
             buffer: [0; BLOCK_INPUT_SIZE_IN_BYTES],
             buffer_len: 0,
             counter: 0,
+            output_len: OUTPUT_SIZE,
         }
     }
 
@@ -108,37 +136,44 @@ impl Blake2b {
         }
     }
 
+    /// Compresses the buffered bytes, zero-padded, as the final block.
+    #[inline(always)]
+    fn compress_final(&mut self) {
+        self.counter += self.buffer_len as u64;
+        self.buffer[self.buffer_len..].fill(0);
+        compression_caller(&mut self.h, &self.buffer, self.counter, true);
+    }
+
+    /// Finalize a 64-byte-digest hasher.
+    ///
+    /// # Panics
+    /// Panics if this hasher was created with a shorter digest length; use
+    /// [`Self::finalize_into`] for those.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
-        self.counter += self.buffer_len as u64;
+        assert_eq!(
+            self.output_len, OUTPUT_SIZE,
+            "Blake2b::finalize needs a 64-byte digest; use finalize_into"
+        );
+        self.compress_final();
+        to_bytes(self.h)
+    }
 
-        if self.buffer_len < BLOCK_INPUT_SIZE_IN_BYTES {
-            unsafe {
-                core::ptr::write_bytes(
-                    self.buffer.as_mut_ptr().add(self.buffer_len),
-                    0,
-                    BLOCK_INPUT_SIZE_IN_BYTES - self.buffer_len,
-                );
-            }
-        }
-
-        compression_caller(&mut self.h, &self.buffer, self.counter, true);
-
-        #[cfg(target_endian = "little")]
-        {
-            // Safety: [u64; 8] and [u8; 64] have identical size (64 bytes)
-            unsafe { core::mem::transmute::<[u64; STATE_VECTOR_LEN], [u8; OUTPUT_SIZE]>(self.h) }
-        }
-
-        #[cfg(target_endian = "big")]
-        {
-            let mut hash = [0u8; OUTPUT_SIZE];
-            for i in 0..STATE_VECTOR_LEN {
-                let bytes = self.h[i].to_le_bytes();
-                hash[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
-            }
-            hash
-        }
+    /// Finalize into `out`, which must be exactly the digest length this
+    /// hasher was created with (the leading bytes of the state).
+    ///
+    /// # Panics
+    /// Panics if `out.len()` differs from that digest length. A shorter
+    /// digest is its own hash function, so truncating is never correct.
+    #[inline(always)]
+    pub fn finalize_into(mut self, out: &mut [u8]) {
+        assert_eq!(
+            out.len(),
+            self.output_len,
+            "Blake2b::finalize_into buffer must match the digest length"
+        );
+        self.compress_final();
+        out.copy_from_slice(&to_bytes(self.h)[..out.len()]);
     }
 
     /// Computes BLAKE2b hash in one call.
@@ -600,6 +635,18 @@ mod params_tests {
     #[should_panic(expected = "persona must be at most 16 bytes")]
     fn test_blake2b_oversized_persona_panics() {
         let _ = Blake2b::digest_with_params(b"", b"01234567890123456", b"");
+    }
+
+    #[test]
+    #[should_panic(expected = "buffer must match the digest length")]
+    fn test_blake2b_finalize_into_rejects_truncation() {
+        Blake2b::new().finalize_into(&mut [0u8; 32]);
+    }
+
+    #[test]
+    #[should_panic(expected = "needs a 64-byte digest")]
+    fn test_blake2b_finalize_rejects_short_digest() {
+        let _ = Blake2b::new_with_output_len(32).finalize();
     }
 }
 

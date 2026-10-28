@@ -10,7 +10,6 @@ use super::RISCVInstruction;
 
 pub mod advice_load_i;
 pub mod amo;
-pub mod assert_align;
 pub mod b;
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
@@ -21,6 +20,7 @@ pub mod load;
 pub mod no_operands;
 pub mod r;
 pub mod s;
+pub mod shift_data;
 pub mod t;
 pub mod u;
 pub mod virtual_right_shift_i;

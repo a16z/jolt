@@ -137,7 +137,7 @@ pub const RV64_VARIABLE_NAMES: [&str; NUM_VARS_PER_CYCLE] = {
 };
 
 pub const RV64_CONSTRAINT_NAMES: [&str; NUM_CONSTRAINTS_PER_CYCLE] = [
-    "RamAddrEqRs1PlusImmIfLoadStore",
+    "RamAddrEqRs1PlusImmMinusLookupIfLoadStore",
     "RamAddrEqZeroIfNotLoadStore",
     "RamReadEqRamWriteIfLoad",
     "RamReadEqRdWriteIfLoad",
@@ -210,11 +210,47 @@ fn rv64_eq_constraint_rows<F: Field>() -> ConstraintRows<F> {
 
     let empty = || Vec::new();
 
+    // 0: RamAddrEqRs1PlusImmMinusLookupIfLoadStore
+    //    guard = Load + Store
+    //    left  = RamAddress
+    //    right = Rs1Value + Imm − LookupOutput
+    //
+    // NOTE: a memory row's lookup output is an intra-doubleword offset.
+    // `LD`/`SD` look up no table, so instruction read-RAF forces it to 0 and
+    // `RamAddress` is the effective address. The floor-addressed
+    // `VirtualLoad*`/`VirtualStore*` rows look up `AddressOffset{B,H,W}`,
+    // i.e. `ea & 7`, `ea & 6` or `ea & 4`, on the `AddOperands` path, whose
+    // index rows 5 and 7 pin to the integer `Rs1Value + Imm` (on Akita, whose
+    // modulus is below 2^128, instruction read-RAF also pins it to its
+    // canonical representative). `RamAddress` is then `ea` with the offset
+    // bits its access width allows cleared. RAM RAF evaluation admits only
+    // `RamAddress = Σ_k ra(k)·(8k + lowest_address)` with boolean `ra`, a
+    // multiple of 8 because the verifier rejects a layout whose
+    // `lowest_address` is not (`validate_ram_remap_base`). Every quantity is
+    // far below either field modulus, so that identity holds over the
+    // integers, and an access misaligned for its width (any misaligned
+    // `LD`/`SD`; `LH`/`LW`/`SH`/`SW` whose `ea` is not a multiple of the width)
+    // has no satisfying RAM address. jolt-lookup-tables pins that a memory row
+    // looks up no table or an `AddressOffset` table; any other table would
+    // shift its RAM address.
+    //
+    // `Rs1Value + Imm` is the unwrapped sum, while the tracer wraps `ea` mod
+    // 2^64, so an access whose sum carries has no satisfying RAM address on
+    // any layout the tracer can allocate. Load and store immediates are signed
+    // 12-bit (decoded rows by encoding, inline rows by jolt-program's
+    // `materialize_inline`), so such an access lands within 2 KiB of 0 or
+    // 2^64: past that RAM, or below `lowest_address`, which is at least 2^30
+    // because `MemoryLayout::try_new` pads I/O below `RAM_START_ADDRESS` = 2^31
+    // to a power of two and rejects a region reaching 0. The tracer faults
+    // there, except that it reads loads below `lowest_address` as 0. Those are
+    // unprovable unwrapped too, except in the no-access zero doubleword: a
+    // load that carries into it runs but cannot be proven.
     a_rows.push(row::<F>(&[(V_FLAG_LOAD, 1), (V_FLAG_STORE, 1)]));
     b_rows.push(row::<F>(&[
         (V_RAM_ADDRESS, 1),
         (V_RS1_VALUE, -1),
         (V_IMM, -1),
+        (V_LOOKUP_OUTPUT, 1),
     ]));
     c_rows.push(empty());
 
@@ -539,7 +575,7 @@ mod execution_witness_tests {
 
     // Constraint row indices, matching the push order in
     // `rv64_eq_constraint_rows` and `append_product_constraints`.
-    const RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE: usize = 0;
+    const RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE: usize = 0;
     const RAM_READ_EQ_RAM_WRITE_IF_LOAD: usize = 2;
     const RAM_READ_EQ_RD_WRITE_IF_LOAD: usize = 3;
     const RS2_EQ_RAM_WRITE_IF_STORE: usize = 4;
@@ -681,6 +717,45 @@ mod execution_witness_tests {
         w[V_RAM_READ_VALUE] = Fr::from_u64(OLD_VALUE);
         w[V_RAM_WRITE_VALUE] = Fr::from_u64(STORED);
         w[V_FLAG_STORE] = Fr::from_u64(1);
+        w
+    }
+
+    /// `VirtualLoadH` opening the `LH` sequence for `ea = 0x8000_1010 − 6`,
+    /// loading the doubleword at 0x8000_1008.
+    ///
+    /// Circuit flags [Load, AddOperands] plus the sequence-head flags; inputs
+    /// rs1 and the signed immediate (virt/load_h.rs). The `AddressOffsetH`
+    /// lookup over `ea = 0x8000_100A` returns `ea & 6 = 2`, which constraint 0
+    /// subtracts.
+    fn load_h_witness() -> Vec<Fr> {
+        const BASE: u64 = 0x8000_1010;
+        const IMM: i64 = -6;
+        const EA: u64 = 0x8000_100A;
+        const LOADED: u64 = 0x0123_4567_89AB_CDEF;
+        const UNEXPANDED_PC: u64 = 0x8000_0038;
+
+        let mut w = cycle_witness();
+        w[V_LEFT_INSTRUCTION_INPUT] = Fr::from_u64(BASE);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_i64(IMM);
+        w[V_PRODUCT] = Fr::from_u64(BASE) * Fr::from_i64(IMM);
+        w[V_PC] = Fr::from_u64(13);
+        w[V_NEXT_PC] = Fr::from_u64(14);
+        w[V_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_NEXT_UNEXPANDED_PC] = Fr::from_u64(UNEXPANDED_PC);
+        w[V_IMM] = Fr::from_i64(IMM);
+        w[V_RAM_ADDRESS] = Fr::from_u64(0x8000_1008);
+        w[V_RS1_VALUE] = Fr::from_u64(BASE);
+        w[V_RD_WRITE_VALUE] = Fr::from_u64(LOADED);
+        w[V_RAM_READ_VALUE] = Fr::from_u64(LOADED);
+        w[V_RAM_WRITE_VALUE] = Fr::from_u64(LOADED);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(EA);
+        w[V_LOOKUP_OUTPUT] = Fr::from_u64(2);
+        w[V_NEXT_IS_VIRTUAL] = Fr::from_u64(1);
+        w[V_FLAG_ADD_OPERANDS] = Fr::from_u64(1);
+        w[V_FLAG_LOAD] = Fr::from_u64(1);
+        w[V_FLAG_VIRTUAL_INSTRUCTION] = Fr::from_u64(1);
+        w[V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC] = Fr::from_u64(1);
+        w[V_FLAG_IS_FIRST_IN_SEQUENCE] = Fr::from_u64(1);
         w
     }
 
@@ -893,7 +968,10 @@ mod execution_witness_tests {
     #[test]
     fn ld_rejects_wrong_ram_address() {
         let w = with_cell(&ld_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_1000));
-        assert_eq!(check(&w), Err(RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE));
+        assert_eq!(
+            check(&w),
+            Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
+        );
     }
 
     #[test]
@@ -914,7 +992,33 @@ mod execution_witness_tests {
     #[test]
     fn sd_rejects_sign_error_in_address() {
         let w = with_cell(&sd_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_2008));
-        assert_eq!(check(&w), Err(RAM_ADDR_EQ_RS1_PLUS_IMM_IF_LOAD_STORE));
+        assert_eq!(
+            check(&w),
+            Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
+        );
+    }
+
+    #[test]
+    fn load_h_execution_witness_satisfies_constraints() {
+        assert_eq!(check(&load_h_witness()), Ok(()));
+    }
+
+    #[test]
+    fn load_h_rejects_unfloored_ram_address() {
+        let w = with_cell(&load_h_witness(), V_RAM_ADDRESS, Fr::from_u64(0x8000_100A));
+        assert_eq!(
+            check(&w),
+            Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
+        );
+    }
+
+    #[test]
+    fn load_h_rejects_dropped_offset() {
+        let w = with_cell(&load_h_witness(), V_LOOKUP_OUTPUT, Fr::from_u64(0));
+        assert_eq!(
+            check(&w),
+            Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
+        );
     }
 
     #[test]
