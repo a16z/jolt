@@ -1,5 +1,8 @@
 // The CLI wraps external calls and leaves the existing implementation as
 // __real_memcpy/__real_memmove. Small copies load completely before storing.
+// Differing-offset copies of at least this many bytes use
+// __jolt_copy_misaligned, whose guard bounds this cutoff from below.
+.set .Ljolt_copy_misaligned_cutoff, 544
 .macro copy name, fallback
 .pushsection .text.\name,"ax",@progbits
 .globl \name
@@ -426,7 +429,7 @@
 .Lmismatched_\name:
     li t0, 11
     bgeu t0, a2, .Lsmall_bytes_\name
-    li t0, 544
+    li t0, .Ljolt_copy_misaligned_cutoff
     bgeu a2, t0, __jolt_copy_misaligned
 .Lfallback_\name:
     tail \fallback
@@ -438,9 +441,20 @@
 copy __wrap_memcpy, __real_memcpy
 copy __wrap_memmove, __real_memmove
 
-// Both wrappers reach this leaf only for differing offsets and length >= 544.
-// Aligned source words are combined into aligned destination words. Byte edges
-// keep every aligned load inside the original source range.
+// Both wrappers reach this leaf only for differing offsets and at least
+// .Ljolt_copy_misaligned_cutoff bytes. Aligned source words are combined into
+// aligned destination words. Byte edges keep every aligned load inside the
+// original source range.
+//
+// The first 128-byte block runs before any length test, and its last load
+// fetches the next block's first source word. After the byte edges, a forward
+// copy therefore needs 136 bytes plus the distance from src up to an 8-byte
+// boundary, and a backward copy 136 plus the distance from src + len down to
+// one: at most 143. Shorter copies over-read the source; below 142 the length
+// underflows and stores run past the destination.
+.if .Ljolt_copy_misaligned_cutoff < 143
+.error "__jolt_copy_misaligned needs at least 143 bytes"
+.endif
 .pushsection .text.__jolt_copy_misaligned,"ax",@progbits
 .hidden __jolt_copy_misaligned
 .type __jolt_copy_misaligned,@function
