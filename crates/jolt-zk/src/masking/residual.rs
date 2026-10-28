@@ -2,6 +2,7 @@
 //! and product rows over the pads and the residual witness (Whiteout
 //! Definition `wo:def:residual`).
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use jolt_algebra::Field;
@@ -64,8 +65,13 @@ impl<F: Field> AffineRow<F> {
         }
     }
 
-    /// `self + scale · other`, with like terms merged.
+    /// `self + scale · other`, with like terms merged, in variable order.
+    /// Terms whose coefficients cancel are kept, with a zero coefficient.
     pub fn add_scaled(&self, other: &Self, scale: F) -> Self {
+        let ordered = |terms: &[(ResidualVar, F)]| terms.is_sorted_by(|a, b| a.0 < b.0);
+        if ordered(&self.terms) && ordered(&other.terms) {
+            return self.merge_ordered(other, scale);
+        }
         let mut merged: BTreeMap<ResidualVar, F> = BTreeMap::new();
         for &(variable, coefficient) in &self.terms {
             *merged.entry(variable).or_insert_with(F::zero) += coefficient;
@@ -75,6 +81,33 @@ impl<F: Field> AffineRow<F> {
         }
         Self {
             terms: merged.into_iter().collect(),
+            constant: self.constant + other.constant * scale,
+        }
+    }
+
+    /// [`Self::add_scaled`] for terms already strictly ordered by variable,
+    /// as every row it builds is: one linear merge, no map.
+    fn merge_ordered(&self, other: &Self, scale: F) -> Self {
+        let mut terms = Vec::with_capacity(self.terms.len() + other.terms.len());
+        let (mut lhs, mut rhs) = (self.terms.iter().peekable(), other.terms.iter().peekable());
+        loop {
+            let order = match (lhs.peek(), rhs.peek()) {
+                (None, None) => break,
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(a), Some(b)) => a.0.cmp(&b.0),
+            };
+            terms.extend(match order {
+                Ordering::Less => lhs.next().copied(),
+                Ordering::Greater => rhs.next().map(|&(b, y)| (b, y * scale)),
+                Ordering::Equal => lhs
+                    .next()
+                    .zip(rhs.next())
+                    .map(|(&(a, x), &(_, y))| (a, x + y * scale)),
+            });
+        }
+        Self {
+            terms,
             constant: self.constant + other.constant * scale,
         }
     }

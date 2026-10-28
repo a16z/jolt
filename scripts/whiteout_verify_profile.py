@@ -5,6 +5,7 @@
 three workloads, clear Akita and Whiteout interleaved, recording the 1-minute
 load average before every run, and appends one JSON line per run. `report`
 prints the median [min-max] of each verify time and of each span bucket.
+`run --base-bin` instead interleaves two Whiteout builds, for an A/B.
 
 Spans are attributed to the harness's verify-mode spans
 (`profile_verifier_{parallel,single_threaded,transported}`) by time window,
@@ -84,10 +85,13 @@ def run(args):
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     log = out / "runs.jsonl"
-    binaries = {"akita": args.clear_bin, "whiteout": args.zk_bin}
+    # With --base-bin, an A/B of two Whiteout builds: `base` against
+    # `whiteout`, both writing Whiteout run directories.
+    first = "base" if args.base_bin else "akita"
+    binaries = {first: args.base_bin or args.clear_bin, "whiteout": args.zk_bin}
     for index in range(args.runs):
         # Alternate which build goes first, so neither always runs warm.
-        order = ["akita", "whiteout"] if index % 2 == 0 else ["whiteout", "akita"]
+        order = [first, "whiteout"] if index % 2 == 0 else ["whiteout", first]
         for name, scale in WORKLOADS:
             for build in order:
                 load = load_average()
@@ -101,7 +105,8 @@ def run(args):
                 parallel = LINE.search(stdout)
                 transported = TRANSPORTED.search(stdout)
                 run_dir = Path(
-                    f"benchmark-runs/latest_modular_{name}_{build}_{scale}_optimized"
+                    f"benchmark-runs/latest_modular_{name}_"
+                    f"{'whiteout' if build == 'base' else build}_{scale}_optimized"
                 ).resolve()
                 record = {
                     "run": index,
@@ -282,7 +287,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
     runner = sub.add_parser("run")
-    runner.add_argument("--clear-bin", required=True)
+    builds = runner.add_mutually_exclusive_group(required=True)
+    builds.add_argument("--clear-bin")
+    builds.add_argument("--base-bin", help="a Whiteout build to A/B against --zk-bin")
     runner.add_argument("--zk-bin", required=True)
     runner.add_argument("--runs", type=int, default=7)
     runner.add_argument("--out", required=True)

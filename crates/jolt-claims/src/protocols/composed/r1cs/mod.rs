@@ -187,7 +187,7 @@ pub fn spartan_outer_opening_columns() -> Vec<usize> {
     columns
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum JoltSpartanOuterPublic {
     TauKernel,
     AzWeight(usize),

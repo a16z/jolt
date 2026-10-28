@@ -146,36 +146,26 @@ impl<F: JoltField> Weights<F> {
     }
 }
 
+/// A form's dense term `(ring, ℓ̂, σ(ℓ̂))`.
+pub(crate) type DenseTerm<F> = (usize, [F; CHALLENGE_RING_DIM], ChallengeRing<F>);
+
 /// `L(u, s) = Σ_k σ(ℓ̂_k)·s_k + Σ_j a_j·σ(Ê_j)·S_j(s) + u·b`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Form<F: JoltField> {
-    /// `(ring, ℓ̂, σ(ℓ̂))`.
-    dense: Vec<(usize, [F; CHALLENGE_RING_DIM], ChallengeRing<F>)>,
+    dense: Vec<DenseTerm<F>>,
     claims: Vec<(usize, F)>,
     constant: F,
 }
 
 impl<F: JoltField> Form<F> {
     /// The `s`-part on `x`, given the claim terms `T_j = σ(Ê_j)·S_j(x)`.
-    ///
-    /// WARNING: `mul_accumulate_into` skips zero coefficients of its
-    /// receiver, so the public weights `σ(ℓ̂)` must stay on that side: with
-    /// the secret ring there, the time would depend on its zeros.
     fn linear<X: SValues<F> + ?Sized>(
         &self,
         table: &SegmentTable,
         x: &X,
         claims: &[ChallengeRing<F>],
     ) -> Result<ChallengeRing<F>, WhiteoutError> {
-        let mut out = self
-            .dense
-            .par_iter()
-            .map(|(ring, _, weights)| {
-                let mut product = CyclotomicRing::zero();
-                weights.mul_accumulate_into(&x.ring(table, *ring)?, &mut product);
-                Ok::<_, WhiteoutError>(product)
-            })
-            .try_reduce(CyclotomicRing::zero, |a, b| Ok(a + b))?;
+        let mut out = x.dense_sum(table, &self.dense)?;
         for (claim, coefficient) in &self.claims {
             claims
                 .get(*claim)
@@ -438,14 +428,21 @@ impl<F: JoltField> LiftedRelation<F> {
             lambda.add_scaled(row, self.labels.weight(self.labels.affine(index), rho)?);
         }
         // Scalarity rows: coefficient r ∈ [1, 63] of P_x vanishes. Their sum
-        // over r puts weight Σ_r μ_{64o+r} 256^j X^r on digit ring j.
+        // over r puts weight Σ_r μ_{64o+r} 256^j X^r on digit ring j. The
+        // labels 64o and r < 64 have disjoint bits, so μ_{64o+r} = μ_{64o}·μ_r.
         let radix = F::from_u64(1 << OPERAND_LOG_BASIS);
+        let low = (0..CHALLENGE_RING_DIM)
+            .map(|r| self.labels.weight(r, rho))
+            .collect::<Result<Vec<_>, _>>()?;
         for (operand, rings) in self.operand_rings.iter().enumerate() {
-            let mut power = F::one();
+            let mut power = self.labels.weight(RowLabels::scalarity(operand, 0), rho)?;
             for &ring in rings {
-                for r in 1..CHALLENGE_RING_DIM {
-                    let weight = self.labels.weight(RowLabels::scalarity(operand, r), rho)?;
-                    lambda.add(ring, r, weight * power)?;
+                let slot = lambda
+                    .rings
+                    .entry(ring)
+                    .or_insert([F::zero(); CHALLENGE_RING_DIM]);
+                for (dst, weight) in slot.iter_mut().zip(&low).skip(1) {
+                    *dst += *weight * power;
                 }
                 power *= radix;
             }
@@ -531,6 +528,26 @@ impl<F: JoltField> LiftedRelation<F> {
 pub(crate) trait SValues<F: JoltField>: Sync {
     /// Challenge-ring element `ring` ([`SegmentTable::ring`]).
     fn ring(&self, table: &SegmentTable, ring: usize) -> Result<ChallengeRing<F>, WhiteoutError>;
+
+    /// `Σ_k σ(ℓ̂_k)·x_k` over a form's dense terms `(k, ℓ̂_k, σ(ℓ̂_k))`.
+    ///
+    /// WARNING: `mul_accumulate_into` skips zero coefficients of its
+    /// receiver, so the public weights `σ(ℓ̂)` must stay on that side: with
+    /// the secret ring there, the time would depend on its zeros.
+    fn dense_sum(
+        &self,
+        table: &SegmentTable,
+        dense: &[DenseTerm<F>],
+    ) -> Result<ChallengeRing<F>, WhiteoutError> {
+        dense
+            .par_iter()
+            .map(|(ring, _, weights)| {
+                let mut product = CyclotomicRing::zero();
+                weights.mul_accumulate_into(&self.ring(table, *ring)?, &mut product);
+                Ok::<_, WhiteoutError>(product)
+            })
+            .try_reduce(CyclotomicRing::zero, |a, b| Ok(a + b))
+    }
 
     /// `S(x) = Σ_{E,k} eq(r_E,E) eq(r_k,k) x_{E,k}` for one claim, over the
     /// witness segments; public segments are skipped when `skip_public` (a
@@ -809,20 +826,24 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
         let table = &self.relation.table;
         let claims = SecretVec::from(tables.terms(x, skip_public)?);
         let products = self.relation.products.len();
-        let (mut parts_x, mut parts_y, mut parts_z) = (
-            Vec::with_capacity(products),
-            Vec::with_capacity(products),
-            Vec::with_capacity(products),
-        );
-        for product in &self.relation.products {
-            parts_x.push(-self.relation.operand(product.operand)?.evaluate(table, x)?);
-            parts_y.push(product.y_form.linear(table, x, &claims)?);
-            parts_z.push(product.z_form.linear(table, x, &claims)?);
-        }
+        let zeros = || SecretVec::from(vec![CyclotomicRing::zero(); products]);
+        let (mut parts_x, mut parts_y, mut parts_z) = (zeros(), zeros(), zeros());
+        self.relation
+            .products
+            .par_iter()
+            .zip(parts_x.par_iter_mut())
+            .zip(parts_y.par_iter_mut())
+            .zip(parts_z.par_iter_mut())
+            .try_for_each(|(((product, px), py), pz)| {
+                *px = -self.relation.operand(product.operand)?.evaluate(table, x)?;
+                *py = product.y_form.linear(table, x, &claims)?;
+                *pz = product.z_form.linear(table, x, &claims)?;
+                Ok::<_, WhiteoutError>(())
+            })?;
         Ok(LinearParts {
-            x: parts_x.into(),
-            y: parts_y.into(),
-            z: parts_z.into(),
+            x: parts_x,
+            y: parts_y,
+            z: parts_z,
             lambda: self.lambda.linear(table, x, &claims)?,
             g: self.relation.g.evaluate(table, x)?,
         })
@@ -946,6 +967,27 @@ impl<F: JoltField> AggregatedRelation<'_, F> {
             part.scale_accumulate_into(&mut sum, weight);
         }
         Ok(*u * sum)
+    }
+
+    /// `reduce(Σ μ_i X_i Y_i) − Q_μ(u, 0)`, the batched row's constant term.
+    ///
+    /// [`Self::quadratic`] owns `Q_μ`, and [`Self::product_operands`] the
+    /// operands; at the zero vector their forms reduce to the constants at
+    /// `u`: `X_i = u·m̂_i`, `Y_i = u·ŷ_i`, `Z_i = u·ẑ_i`, `λ = u·λ̂`, `g = 0`.
+    /// The products `X_i·Y_i` appear in both terms and cancel, as
+    /// [`Self::target_linear`] states for any vector, so
+    /// `h = u·(Σ μ_i·u·ẑ_i − u·λ̂)`: [`Self::target_linear`] over those
+    /// constants.
+    pub(crate) fn target_at_zero(
+        &self,
+        u: &ChallengeRing<F>,
+    ) -> Result<ChallengeRing<F>, WhiteoutError> {
+        let mut at_zero = self.zero_parts();
+        for (z, product) in at_zero.z.iter_mut().zip(&self.relation.products) {
+            *z = u.scale(&product.z.constant);
+        }
+        at_zero.lambda = u.scale(&self.lambda.constant);
+        self.target_linear(u, &at_zero)
     }
 
     /// The terms of `Σ μ_i Z_i − λ − g` with their weights, which
