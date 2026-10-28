@@ -119,6 +119,27 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
     }
 }
 
+/// [`ResponseStatement::weigh`]'s `a` written out, read in uneven ranges
+/// that cross segment and plane boundaries, and `b`. The ranges must agree
+/// with one fill of the whole table.
+#[expect(clippy::panic_in_result_fn, reason = "the checks are the test")]
+fn dense_weights<const D: usize>(
+    statement: &ResponseStatement<'_, F, D>,
+    weights: &ResponseRows<F>,
+    alpha: F,
+) -> Result<(Vec<F>, F), WhiteoutError> {
+    let (factored, b) = statement.weigh(weights, alpha)?;
+    let mut a = vec![F::zero(); factored.len()];
+    factored.fill(0, &mut a)?;
+    let mut ranged = vec![F::zero(); factored.len()];
+    for (index, chunk) in ranged.chunks_mut(1013).enumerate() {
+        factored.fill(index * 1013, chunk)?;
+    }
+    assert_eq!(a, ranged);
+    assert!(factored.fill(1, &mut a).is_err());
+    Ok((a, b))
+}
+
 /// A pair's operand, which the fixture states as a masked slot.
 #[expect(clippy::panic, reason = "tests fail loudly")]
 fn masked(pair: &mut ProductPair<F>) -> &mut MaskedOperand<F> {
@@ -831,7 +852,7 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
             product_x: random(shape.products),
             product_y: random(shape.products),
         };
-        let (a, b) = statement.weigh(&weights, alpha, 0)?;
+        let (a, b) = dense_weights(statement, &weights, alpha)?;
         let arbitrary: Vec<i8> = digits(&mut rng, witness.digits.len())
             .into_iter()
             .map(|digit| digit as i8)
@@ -889,7 +910,7 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
         ];
         let honest = statement.rows(&witness.digits, alpha)?;
         for family in families.iter().chain(std::iter::once(&weights)) {
-            let (a, b) = statement.weigh(family, alpha, 0)?;
+            let (a, b) = dense_weights(statement, family, alpha)?;
             assert!(a.iter().any(|a| !a.is_zero()));
             // The factored row at a point against the dense weights' MLE,
             // over one variable past `e`'s length.

@@ -26,7 +26,7 @@ use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use rayon::prelude::*;
 use std::ops::Range;
 
-use jolt_algebra::{CyclotomicRing, JoltField};
+use jolt_algebra::{lift_ct, CyclotomicRing, JoltField};
 use jolt_crypto::challenge::SparseChallenge;
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
@@ -36,7 +36,7 @@ use super::compression::ImageCompression;
 use super::lift::{AggregatedRelation, ChallengeRing, LiftedRelation, ProductAdjointWeights};
 use super::linear::BlockTarget;
 use super::params::RESPONSE_LOG_BASIS;
-use super::segments::{balanced_range, lift_ct};
+use super::segments::balanced_range;
 use super::sigma::SigmaSetup;
 use super::WhiteoutError;
 use crate::masking::ZkError;
@@ -271,6 +271,137 @@ impl PlaneLayout {
 
 /// Digits per parallel task when reading or writing a plane.
 const PLANE_GRAIN: usize = 1 << 14;
+
+/// [`ResponseStatement::weigh`]'s `a`, one weight per digit of `e` in
+/// layout order, held factored: a response segment of `n` coefficients
+/// keeps its `n` coefficient weights `w` once, digit `p·n + k` weighing
+/// `16^p·w_k` ([`PlaneLayout::transpose`] with one block); every other
+/// segment is held densely. [`Self::fill`] writes any range of `a`.
+pub struct ResponseWeights<F> {
+    /// Each segment's first digit and weights, in layout order.
+    segments: Vec<(usize, SegmentWeights<F>)>,
+    /// `16^p` for every digit plane of the planar segments.
+    powers: Vec<F>,
+    len: usize,
+}
+
+enum SegmentWeights<F> {
+    /// Digit `p·weights.len() + k` weighs `16^p·weights[k]`, for `p` below
+    /// `planes`.
+    Planar {
+        weights: Vec<F>,
+        planes: usize,
+    },
+    Dense(Vec<F>),
+}
+
+impl<F> SegmentWeights<F> {
+    /// The segment of `planes`, a single block, with coefficient weights
+    /// `weights`.
+    fn planar(planes: PlaneLayout, weights: Vec<F>) -> Result<Self, WhiteoutError> {
+        if planes.width != planes.coefficients || weights.len() != planes.coefficients {
+            return Err(WhiteoutError::InvalidRelation("plane weights length"));
+        }
+        Ok(Self::Planar {
+            weights,
+            planes: planes.planes,
+        })
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Planar { weights, planes } => weights.len() * planes,
+            Self::Dense(values) => values.len(),
+        }
+    }
+}
+
+impl<F: JoltField> ResponseWeights<F> {
+    fn new(weights: Vec<SegmentWeights<F>>) -> Result<Self, WhiteoutError> {
+        let mut segments = Vec::with_capacity(weights.len());
+        let mut len = 0usize;
+        let mut planes = 0;
+        for segment in weights {
+            if let SegmentWeights::Planar { planes: count, .. } = segment {
+                planes = planes.max(count);
+            }
+            let start = len;
+            len = len
+                .checked_add(segment.len())
+                .ok_or(WhiteoutError::Overflow)?;
+            segments.push((start, segment));
+        }
+        let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
+        let powers = std::iter::successors(Some(F::one()), |power| Some(*power * radix))
+            .take(planes)
+            .collect();
+        Ok(Self {
+            segments,
+            powers,
+            len,
+        })
+    }
+
+    /// The number of digits of `e`.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether `e` has no digits.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Writes `a[start..start + out.len()]`, each weight equal to the one
+    /// [`PlaneLayout::transpose`] writes.
+    pub fn fill(&self, start: usize, out: &mut [F]) -> Result<(), WhiteoutError> {
+        let end = start
+            .checked_add(out.len())
+            .filter(|&end| end <= self.len)
+            .ok_or(WhiteoutError::InvalidRelation("row weights range"))?;
+        for (offset, segment) in &self.segments {
+            let (lo, hi) = (start.max(*offset), end.min(offset + segment.len()));
+            if lo >= hi {
+                continue;
+            }
+            let dst = out
+                .get_mut(lo - start..hi - start)
+                .ok_or(WhiteoutError::InvariantViolation("row weights range"))?;
+            match segment {
+                SegmentWeights::Dense(values) => dst.copy_from_slice(
+                    values
+                        .get(lo - offset..hi - offset)
+                        .ok_or(WhiteoutError::InvariantViolation("row weights range"))?,
+                ),
+                SegmentWeights::Planar { weights, .. } => {
+                    // Digits `lo..hi` of the segment, run by run: run `p`
+                    // is plane `p`, `weights.len()` digits long.
+                    let n = weights.len();
+                    let mut digit = lo - offset;
+                    let mut dst = dst;
+                    while !dst.is_empty() {
+                        let (plane, k) = (digit / n, digit % n);
+                        let power = *self
+                            .powers
+                            .get(plane)
+                            .ok_or(WhiteoutError::InvariantViolation("digit plane"))?;
+                        let run = (n - k).min(dst.len());
+                        let (head, tail) = dst.split_at_mut(run);
+                        let weights = weights
+                            .get(k..k + run)
+                            .ok_or(WhiteoutError::InvariantViolation("plane weights"))?;
+                        for (dst, weight) in head.iter_mut().zip(weights) {
+                            *dst = *weight * power;
+                        }
+                        dst = tail;
+                        digit += run;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
 
 /// The logical layout of `e`, from the public setup.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -586,15 +717,14 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
     /// `weights`: returns `a`, one coefficient per digit of `e` in layout
     /// order, and `b = Σ_l w_l · row_l(0)`. `a` is the transpose of the rows'
     /// maps applied to `weights`, so the response matrix `H` is never built
-    /// (Whiteout §4.3, "Evaluating the public weights"). `a`'s buffer has
-    /// room for at least `capacity` entries, so a caller that pads it does
-    /// not reallocate it.
+    /// (Whiteout §4.3, "Evaluating the public weights"); it is returned
+    /// factored ([`ResponseWeights`]), so no table of `e`'s length is built
+    /// either.
     pub fn weigh(
         &self,
         weights: &ResponseRows<F>,
         alpha: F,
-        capacity: usize,
-    ) -> Result<(Vec<F>, F), WhiteoutError> {
+    ) -> Result<(ResponseWeights<F>, F), WhiteoutError> {
         if weights.shape() != self.row_shape() {
             return Err(WhiteoutError::InvalidRelation(
                 "row weights differ from the statement's rows",
@@ -698,26 +828,25 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         )?;
 
         // Back through the digit reconstruction to e.
-        let mut a = Vec::with_capacity(capacity.max(layout.len()));
-        a.resize(layout.len(), F::zero());
+        let mut segments = Vec::with_capacity(layout.segments.len());
         let mut z_rest = z.as_slice();
-        let mut offset = 0;
         for segment in &layout.segments {
-            let out = a
-                .get_mut(offset..offset + segment.num_digits())
-                .ok_or(WhiteoutError::InvariantViolation("row weights length"))?;
-            offset += segment.num_digits();
-            match (*segment, segment.planes()) {
+            let dense = |planes: PlaneLayout, values: &[F]| -> Result<Vec<F>, WhiteoutError> {
+                let mut out = vec![F::zero(); segment.num_digits()];
+                planes.transpose(values, &mut out)?;
+                Ok(out)
+            };
+            segments.push(match (*segment, segment.planes()) {
                 (ResponseSegment::Response { coefficients, .. }, Some(planes)) => {
                     let (values, tail) = z_rest.split_at(coefficients.min(z_rest.len()));
                     z_rest = tail;
-                    planes.transpose(values, out)?;
+                    SegmentWeights::planar(planes, values.to_vec())?
                 }
                 (ResponseSegment::V { coefficients }, Some(planes)) => {
-                    planes.transpose(
+                    let mut out = dense(
+                        planes,
                         v.get(..coefficients)
                             .ok_or(WhiteoutError::InvalidRelation("V weights too short"))?,
-                        out,
                     )?;
                     // A_D reads V's digits in e's order, one ring per column.
                     for (column, dst) in v_digit_columns
@@ -728,8 +857,11 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                             *dst += *w;
                         }
                     }
+                    SegmentWeights::Dense(out)
                 }
-                (ResponseSegment::Theta, Some(planes)) => planes.transpose(&theta, out)?,
+                (ResponseSegment::Theta, Some(planes)) => {
+                    SegmentWeights::Dense(dense(planes, &theta)?)
+                }
                 (
                     ResponseSegment::Compression {
                         image,
@@ -737,8 +869,8 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                         ..
                     },
                     _,
-                ) => out.copy_from_slice(
-                    &self.compression.reconstruct_transpose(
+                ) => SegmentWeights::Dense(
+                    self.compression.reconstruct_transpose(
                         coefficients,
                         images
                             .get(image)
@@ -750,8 +882,9 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                         "a planar segment without planes",
                     ))
                 }
-            }
+            });
         }
+        let a = ResponseWeights::new(segments)?;
         if a.len() != layout.len() {
             return Err(WhiteoutError::InvariantViolation("row weights length"));
         }

@@ -7,7 +7,7 @@
 
 use std::ops::Range;
 
-use jolt_algebra::{CyclotomicRing, Field};
+use jolt_algebra::{lift_ct, CyclotomicRing, Field};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 
 use super::WhiteoutError;
@@ -320,12 +320,4 @@ impl SegmentTable {
             Ok(())
         }
     }
-}
-
-/// `x` as a field element, from its magnitude and sign by arithmetic: no
-/// branch on `x`, unlike `Field::from_i64`. The lift for secret digits.
-pub fn lift_ct<F: Field>(x: i64) -> F {
-    let sign = x >> 63;
-    let magnitude = F::from_u64(((x ^ sign).wrapping_sub(sign)) as u64);
-    magnitude - (magnitude + magnitude) * F::from_u64((sign & 1) as u64)
 }
