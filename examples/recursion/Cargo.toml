@@ -74,6 +74,9 @@ akita = [
 # view and the verifier guest rebuilds a byte-equal view from that record
 # instead of validating it again; same field values. Default on; effective only
 # with `akita`.
+# weighted-dot-horner-triplet: inside each full five-row block of 64 two-limb
+# elements, the verifier guest's Horner weighted dot advances every row by three
+# coefficients per pointer and branch group; same field values. Default on.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -88,6 +91,7 @@ default = [
   "weighted-dot-horner",
   "terminal-contraction",
   "prevalidated-catalog",
+  "weighted-dot-horner-triplet",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
