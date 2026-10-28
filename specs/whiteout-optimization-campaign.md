@@ -329,6 +329,18 @@ paper delta.
   exactly the 5 known rows. Left: the committed `e` as `i8` (1 GiB → 64 MiB,
   needs an A45 constant-time ruling) and streaming `A` (1 GiB, a kernel
   rewrite).
+- **P0b (idle rerun; `specs/whiteout-p0b-idle-rerun.md`).** Idle steady
+  verify 80 / 88 / 105 ms (16 threads); the LOADED 0.53 s was load. The
+  residual is 29 / 37 / 53% of 1-thread verify, so O6 runs at d = 128 and
+  d = 256 (with P9) waits for a post-O6 rerun.
+- **O3b (verifier serial paths; `specs/whiteout-o3b-verifier.md`).** One
+  review, no blocker: every rewrite is an exact identity for all inputs
+  (the row-batch constant's cancellation, `μ_{64o+r} = μ_{64o}·μ_r`, a
+  sorted merge that falls back when inputs are not strictly sorted,
+  first-wins public sources); the parallel `linear_parts` writes only into
+  wiped buffers; no transcript change. Fix round: a straddling-ring test,
+  the `target_at_zero` owner note. A/B (load ~16): 16-thread steady verify
+  82 → 47, 92 → 55, 111 → 73 ms; nothing cached. Merged; jolt bars green.
 
 ## Not verified
 
