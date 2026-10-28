@@ -767,8 +767,6 @@ mod tests {
                 one_hot: Vec::new(),
             },
             backend_cache: Default::default(),
-            #[cfg(feature = "zk")]
-            whiteout: None,
         };
         let mut serialized = serde_json::to_value(setup).unwrap();
         *serialized.get_mut("one_hot_k").unwrap() = serde_json::json!(8);
@@ -802,8 +800,6 @@ mod tests {
                 one_hot: Vec::new(),
             },
             backend_cache: Default::default(),
-            #[cfg(feature = "zk")]
-            whiteout: None,
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
         let auxiliary_groups = (0_u64..259)

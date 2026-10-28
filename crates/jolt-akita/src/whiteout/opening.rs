@@ -10,7 +10,7 @@ use crate::{AkitaChunkProfile, AkitaCommitment, AkitaScheme, AkitaVerifierSetup}
 
 /// The Whiteout parameters of `setup`.
 pub(crate) fn whiteout(setup: &AkitaVerifierSetup) -> Result<&WhiteoutSetup, ZkError> {
-    setup.whiteout.as_ref().ok_or_else(|| {
+    setup.whiteout().ok_or_else(|| {
         AkitaError::InvalidSetup("the Akita setup has no Whiteout parameters".into()).into()
     })
 }

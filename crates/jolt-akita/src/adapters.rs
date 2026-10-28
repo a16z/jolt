@@ -651,10 +651,6 @@ pub struct AkitaVerifierSetup {
     pub(crate) schedule_artifacts: AkitaVerifierScheduleArtifacts,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
-    /// Whiteout: the masked opening's parameters and its per-shape setups.
-    #[cfg(feature = "zk")]
-    #[serde(default)]
-    pub(crate) whiteout: Option<WhiteoutSetup>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -679,6 +675,15 @@ pub(crate) enum AkitaVerifierScheduleArtifacts {
         dense: Vec<u8>,
         one_hot: Vec<u8>,
     },
+    /// Whiteout: a single-chunk one-hot setup with the masked opening's
+    /// parameters and plans. Last, so the `zk` feature leaves the clear
+    /// variants' discriminants, and hence every clear setup's bytes, as
+    /// they are without it.
+    #[cfg(feature = "zk")]
+    OneHotWhiteout {
+        one_hot: Vec<u8>,
+        whiteout: WhiteoutSetup,
+    },
 }
 
 impl AkitaVerifierScheduleArtifacts {
@@ -688,6 +693,8 @@ impl AkitaVerifierScheduleArtifacts {
                 Some(dense)
             }
             Self::OneHot { .. } | Self::OneHotChunked { .. } => None,
+            #[cfg(feature = "zk")]
+            Self::OneHotWhiteout { .. } => None,
         }
     }
 
@@ -697,6 +704,8 @@ impl AkitaVerifierScheduleArtifacts {
             | Self::Both { one_hot, .. }
             | Self::OneHotChunked { one_hot, .. }
             | Self::BothChunked { one_hot, .. } => Some(one_hot),
+            #[cfg(feature = "zk")]
+            Self::OneHotWhiteout { one_hot, .. } => Some(one_hot),
             Self::Dense { .. } => None,
         }
     }
@@ -707,6 +716,8 @@ impl AkitaVerifierScheduleArtifacts {
             Self::Dense { .. } | Self::OneHot { .. } | Self::Both { .. } => {
                 AkitaChunkProfile::Single
             }
+            #[cfg(feature = "zk")]
+            Self::OneHotWhiteout { .. } => AkitaChunkProfile::Single,
         }
     }
 }
@@ -742,7 +753,20 @@ impl AkitaVerifierSetup {
     /// without Whiteout or not yet planned.
     #[cfg(feature = "zk")]
     pub fn whiteout_plans(&self) -> Option<WhiteoutPlans> {
-        self.whiteout.as_ref().and_then(WhiteoutSetup::export)
+        self.whiteout().and_then(WhiteoutSetup::export)
+    }
+
+    /// Whiteout: the masked opening's parameters; `None` for a clear setup.
+    #[cfg(feature = "zk")]
+    pub(crate) fn whiteout(&self) -> Option<&WhiteoutSetup> {
+        match &self.schedule_artifacts {
+            AkitaVerifierScheduleArtifacts::OneHotWhiteout { whiteout, .. } => Some(whiteout),
+            AkitaVerifierScheduleArtifacts::Dense { .. }
+            | AkitaVerifierScheduleArtifacts::OneHot { .. }
+            | AkitaVerifierScheduleArtifacts::Both { .. }
+            | AkitaVerifierScheduleArtifacts::OneHotChunked { .. }
+            | AkitaVerifierScheduleArtifacts::BothChunked { .. } => None,
+        }
     }
 
     /// Primes the lazy verifier cache from freshly built backend keys, so
