@@ -16,6 +16,7 @@ use jolt_witness::{
 use rayon::prelude::*;
 
 use super::sparse::{SeedEntry, MAX_ENTRIES_PER_CYCLE};
+use crate::optimized::support::BundleAccess;
 use crate::KernelError;
 
 /// Operand indices and raw values for one cycle.
@@ -72,7 +73,23 @@ impl WitnessBundle for RegisterCycleRow {
 
 /// Per-cycle `rd` indices shared with stage 5.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedRdIndices(pub Vec<Option<u8>>);
+pub(crate) struct SharedRdIndices {
+    pub(crate) indices: Vec<Option<u8>>,
+    pub(crate) cycles: usize,
+}
+
+impl SharedRdIndices {
+    pub(crate) fn new(mut indices: Vec<Option<u8>>, cycles: usize) -> Self {
+        assert!(indices.len() <= cycles);
+        let prefix = indices
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |i| i + 1);
+        indices.truncate(prefix);
+        indices.shrink_to_fit();
+        Self { indices, cycles }
+    }
+}
 
 const COLLECT_CHUNK: usize = 1 << 16;
 
@@ -113,9 +130,9 @@ impl StreamConsumer for CollectRegisterEntries {
 }
 
 impl CollectRegisterEntries {
-    /// Bytes of the parallel collect's bookkeeping over `cycles` cycles,
-    /// live while the entries scatter: a count, an offset and an output
-    /// window per chunk.
+    /// Bytes of the parallel collect's bookkeeping over `cycles` cycles, live
+    /// while the entries scatter: a count, an offset and an output window per
+    /// chunk.
     pub(super) fn chunk_bytes(cycles: usize) -> usize {
         cycles
             .div_ceil(COLLECT_PAR_CHUNK)
@@ -131,12 +148,23 @@ impl CollectRegisterEntries {
                 reason: "cycle count exceeds the seed entries' packed u32 row domain",
             });
         }
-        #[cfg(feature = "parallel")]
+        let mut retained = cycles;
         if let Some(access) = witness.random_access() {
             if cycles <= access.cycles() {
-                return Self::collect_par(&access, cycles);
+                let prefix = BundleAccess::<RegisterCycleRow>::View(&access)
+                    .constant_suffix_start(cycles)?;
+                if prefix < cycles
+                    && access.window::<RegisterCycleRow>(prefix)? == RegisterCycleRow::default()
+                {
+                    retained = prefix;
+                }
+            }
+            #[cfg(feature = "parallel")]
+            if cycles <= access.cycles() {
+                return Self::collect_par(&access, retained);
             }
         }
+        let cycles = retained;
         let mut consumers = (CollectRegisterEntries {
             entries: Vec::with_capacity(cycles * MAX_ENTRIES_PER_CYCLE),
             rs1_indices: Vec::with_capacity(cycles),

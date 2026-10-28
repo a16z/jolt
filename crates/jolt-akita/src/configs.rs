@@ -147,7 +147,7 @@ impl AkitaChunkProfile {
 }
 
 delegate_preset!(
-    /// Dense config for `u64`-bounded advice and committed-program objects.
+    /// Dense config for `u64`-bounded advice, RV64 increments, and committed-program objects.
     JoltDenseBounded,
     DenseBounded,
     <DenseBounded as CommitmentConfig>::committed_source_class(),

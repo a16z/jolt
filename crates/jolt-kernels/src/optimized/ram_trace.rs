@@ -3,6 +3,7 @@
 //! one generation of values, collected in stage 2 and again in stage 4.
 
 use core::marker::PhantomData;
+use std::ops::Index;
 use std::sync::Arc;
 
 use jolt_field::JoltField;
@@ -16,6 +17,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::support::BundleAccess;
 use crate::{KernelError, ProofSession};
 
 const SPLIT_CHUNK: usize = 1 << 16;
@@ -26,13 +28,13 @@ const PAR_CHUNK: usize = 1 << 14;
 /// `addresses` sentinel for cycles with no (remappable) RAM access.
 pub(crate) const NO_ACCESS: u32 = u32::MAX;
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamValueBundle {
     pre_value: RamReadValue,
     post_value: RamWriteValue,
 }
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RamAddressBundle {
     address: RemappedRamAddress,
 }
@@ -53,26 +55,85 @@ fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError
     }
 }
 
-/// Rows each RAM access column requests over `2^log_t` cycles: one per cycle.
-fn access_column_rows(log_t: usize) -> usize {
-    1usize << log_t
-}
-
-/// Bytes `value_generations` generations of RAM access columns request over
-/// `2^log_t` cycles, at [`access_column_rows`] each: the `u32` address
-/// column once, one backing however many handles and generations share it,
-/// and the two `u64` value columns each [`RamAccessColumns::collect_full`]
-/// call collects. Excludes allocator slack and collector bookkeeping.
-pub fn ram_access_columns_bytes(log_t: usize, value_generations: usize) -> usize {
+/// Bytes `value_generations` collected generations of RAM access columns hold
+/// over `prefix_cycles` cycles before the trace's constant suffix: the `u32`
+/// address column once, one backing however many handles and generations share
+/// it, and the two `u64` value columns of each
+/// [`RamAccessColumns::collect_full`] call, each truncated to at most
+/// `prefix_cycles` entries. Excludes allocator slack.
+pub fn ram_access_columns_bytes(prefix_cycles: usize, value_generations: usize) -> usize {
     let row_bytes = value_generations
         .saturating_mul(2 * size_of::<u64>())
         .saturating_add(size_of::<u32>());
-    access_column_rows(log_t).saturating_mul(row_bytes)
+    prefix_cycles.saturating_mul(row_bytes)
+}
+
+/// Bytes a [`RamAccessColumns::collect_full`] call holds while it collects,
+/// beyond its generation's share of [`ram_access_columns_bytes`]: each value
+/// column's row at the constant suffix, collected before the truncation, and
+/// the copy one column's `shrink_to_fit` may allocate beside the other.
+/// Excludes collector bookkeeping.
+pub fn ram_value_collection_bytes(prefix_cycles: usize) -> usize {
+    prefix_cycles
+        .saturating_add(2)
+        .saturating_mul(size_of::<u64>())
+}
+
+/// A logical RAM address column with an implicit no-access suffix.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct RamAddresses {
+    values: Vec<u32>,
+    cycles: usize,
+}
+
+impl RamAddresses {
+    fn new(mut values: Vec<u32>, cycles: usize) -> Self {
+        assert!(values.len() <= cycles);
+        let prefix = values
+            .iter()
+            .rposition(|&address| address != NO_ACCESS)
+            .map_or(0, |i| i + 1);
+        values.truncate(prefix);
+        values.shrink_to_fit();
+        Self { values, cycles }
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.cycles
+    }
+
+    pub(crate) fn prefix(&self) -> &[u32] {
+        &self.values
+    }
+
+    pub(crate) fn prefix_len(&self) -> usize {
+        self.values.len()
+    }
+}
+
+impl From<Vec<u32>> for RamAddresses {
+    fn from(values: Vec<u32>) -> Self {
+        let cycles = values.len();
+        Self::new(values, cycles)
+    }
+}
+
+impl Index<usize> for RamAddresses {
+    type Output = u32;
+
+    #[inline]
+    fn index(&self, index: usize) -> &u32 {
+        if let Some(value) = self.values.get(index) {
+            return value;
+        }
+        assert!(index < self.cycles);
+        &NO_ACCESS
+    }
 }
 
 /// Session-shared remapped addresses; [`NO_ACCESS`] marks absent accesses.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(crate) struct SharedRamAddresses(pub(crate) Arc<Vec<u32>>);
+pub(crate) struct SharedRamAddresses(pub(crate) Arc<RamAddresses>);
 
 impl SharedRamAddresses {
     /// Collect once, then return shared references.
@@ -84,14 +145,16 @@ impl SharedRamAddresses {
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
-    ) -> Result<Arc<Vec<u32>>, KernelError<F>> {
-        let rows = access_column_rows(log_t);
+    ) -> Result<Arc<RamAddresses>, KernelError<F>> {
         if session.state::<Self>().is_none() {
-            let [addresses] =
-                collect_split_columns::<F, RamAddressBundle, u32, 1>(witness, rows, |bundle| {
-                    encode_address(bundle.address.0).map(|address| [address])
-                })?;
-            session.park(Self(Arc::new(addresses)));
+            let cycles = 1usize << log_t;
+            let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
+                witness,
+                cycles,
+                [NO_ACCESS],
+                |bundle| encode_address(bundle.address.0).map(|address| [address]),
+            )?;
+            session.park(Self(Arc::new(RamAddresses::new(addresses, cycles))));
         }
         let addresses = Arc::clone(
             &session
@@ -100,10 +163,10 @@ impl SharedRamAddresses {
                 .0,
         );
         // Reuse by type must not cross trace domains.
-        if addresses.len() != rows {
+        if addresses.len() != 1usize << log_t {
             return Err(KernelError::TableSizeMismatch {
                 table: "session-shared RAM address column".to_owned(),
-                expected: rows,
+                expected: 1usize << log_t,
                 got: addresses.len(),
             });
         }
@@ -114,18 +177,27 @@ impl SharedRamAddresses {
 fn collect_split_columns<F: JoltField, B, T, const N: usize>(
     witness: &dyn JoltWitnessPlane<F>,
     cycles: usize,
+    padding: [T; N],
     split: impl Fn(&B) -> Result<[T; N], KernelError<F>> + Send + Sync,
 ) -> Result<[Vec<T>; N], KernelError<F>>
 where
-    B: WitnessBundle + Copy + Send + Sync,
-    T: Copy + Send + Sync,
+    B: WitnessBundle + Copy + PartialEq + Send + Sync,
+    T: Copy + PartialEq + Send + Sync,
 {
-    #[cfg(feature = "parallel")]
+    let mut retained = cycles;
     if let Some(access) = witness.random_access() {
         if cycles <= access.cycles() {
-            return collect_split_columns_par(&access, cycles, &split);
+            let prefix = BundleAccess::<B>::View(&access).constant_suffix_start(cycles)?;
+            if prefix < cycles && split(&access.window::<B>(prefix)?)? == padding {
+                retained = prefix + 1;
+            }
+        }
+        #[cfg(feature = "parallel")]
+        if cycles <= access.cycles() {
+            return collect_split_columns_par(&access, retained, &split);
         }
     }
+    let cycles = retained;
     struct ColumnSplitter<F: JoltField, B, S, T, const N: usize> {
         columns: [Vec<T>; N],
         split: S,
@@ -240,7 +312,7 @@ where
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamAccessColumns {
-    pub addresses: Arc<Vec<u32>>,
+    pub addresses: Arc<RamAddresses>,
     /// Pre-access value, or zero without an access.
     pub pre_values: Vec<u64>,
     /// Post-access word value per cycle (equals the pre-value for reads).
@@ -260,17 +332,47 @@ impl RamAccessColumns {
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
     ) -> Result<Self, KernelError<F>> {
-        let cycles = access_column_rows(log_t);
+        let cycles = 1usize << log_t;
         let addresses = SharedRamAddresses::shared(session, witness, log_t)?;
-        let [pre_values, post_values] =
-            collect_split_columns::<F, RamValueBundle, u64, 2>(witness, cycles, |bundle| {
-                Ok([bundle.pre_value.0, bundle.post_value.0])
-            })?;
+        let [mut pre_values, mut post_values] = collect_split_columns::<F, RamValueBundle, u64, 2>(
+            witness,
+            cycles,
+            [0, 0],
+            |bundle| Ok([bundle.pre_value.0, bundle.post_value.0]),
+        )?;
+        let prefix = pre_values
+            .iter()
+            .zip(&post_values)
+            .rposition(|(&pre, &post)| pre != 0 || post != 0)
+            .map_or(0, |i| i + 1);
+        pre_values.truncate(prefix);
+        post_values.truncate(prefix);
+        pre_values.shrink_to_fit();
+        post_values.shrink_to_fit();
         Ok(Self {
             addresses,
             pre_values,
             post_values,
         })
+    }
+
+    #[inline]
+    pub(crate) fn pre_value(&self, cycle: usize) -> u64 {
+        self.pre_values.get(cycle).copied().unwrap_or(0)
+    }
+
+    #[inline]
+    pub(crate) fn post_value(&self, cycle: usize) -> u64 {
+        self.post_values.get(cycle).copied().unwrap_or(0)
+    }
+
+    #[inline]
+    pub(crate) fn increment<F: JoltField>(&self, cycle: usize) -> F {
+        F::from_i128(self.post_value(cycle) as i128 - self.pre_value(cycle) as i128)
+    }
+
+    pub(crate) fn value_prefix_len(&self) -> usize {
+        self.pre_values.len().max(self.post_values.len())
     }
 
     /// Recover initial values from each address's first access; untouched
@@ -280,14 +382,14 @@ impl RamAccessColumns {
     pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
         let mut val_init = val_final;
         let mut seen = vec![false; val_init.len()];
-        for (&address, &pre_value) in self.addresses.iter().zip(&self.pre_values) {
+        for (cycle, &address) in self.addresses.prefix().iter().enumerate() {
             if address == NO_ACCESS {
                 continue;
             }
             let address = address as usize;
             if !seen[address] {
                 seen[address] = true;
-                val_init[address] = F::from_u64(pre_value);
+                val_init[address] = F::from_u64(self.pre_value(cycle));
             }
         }
         val_init
@@ -295,10 +397,11 @@ impl RamAccessColumns {
 }
 
 pub(crate) fn validate_addresses<F: JoltField>(
-    addresses: &[u32],
+    addresses: &RamAddresses,
     ram_k: usize,
 ) -> Result<(), KernelError<F>> {
     if addresses
+        .prefix()
         .iter()
         .any(|&address| address != NO_ACCESS && address as usize >= ram_k)
     {
@@ -310,8 +413,9 @@ pub(crate) fn validate_addresses<F: JoltField>(
 }
 
 /// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
-pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) -> Vec<F> {
-    addresses
+pub(crate) fn fold_addresses<F: JoltField>(addresses: &RamAddresses, eq_address: &[F]) -> Vec<F> {
+    let mut values: Vec<F> = addresses
+        .prefix()
         .iter()
         .map(|&address| {
             if address == NO_ACCESS {
@@ -320,7 +424,9 @@ pub(crate) fn fold_addresses<F: JoltField>(addresses: &[u32], eq_address: &[F]) 
                 eq_address[address as usize]
             }
         })
-        .collect()
+        .collect();
+    values.resize(addresses.len(), F::zero());
+    values
 }
 
 const FOLD_CYCLES_CHUNK: usize = 1 << 20;
@@ -328,7 +434,12 @@ const FOLD_CYCLES_CHUNK: usize = 1 << 20;
 /// Cycle fold of the one-hot `ra` grid:
 /// `out[k] = Σ_j eq(r_cycle, j) · ra(k, j) = Σ_{j : addresses[j] = k} eq_cycle[j]`.
 /// Eq values are generated in chunks from `e_hi ⊗ e_lo`.
-pub(crate) fn fold_cycles<F: JoltField>(addresses: &[u32], r_cycle: &[F], ram_k: usize) -> Vec<F> {
+pub(crate) fn fold_cycles<F: JoltField>(
+    addresses: &RamAddresses,
+    r_cycle: &[F],
+    ram_k: usize,
+) -> Vec<F> {
+    let addresses = addresses.prefix();
     let mid = r_cycle.len() / 2;
     let (r_hi, r_lo) = r_cycle.split_at(mid);
     let e_hi = EqPolynomial::<F>::evals(r_hi, None);
@@ -377,10 +488,11 @@ mod tests {
     }
 
     /// Collected RAM access columns request exactly the bytes
-    /// `ram_access_columns_bytes` reserves, for stage 2's generation alone and
-    /// with stage 4's beside it, as while stage 2's awaits its background
-    /// drop: every collection shares the parked address backing, counted
-    /// once, and brings two value columns of its own.
+    /// `ram_access_columns_bytes` reserves over the fixture's proof rows, whose
+    /// last row (the termination write) accesses RAM: stage 2's generation
+    /// alone and with stage 4's beside it, as while stage 2's awaits its
+    /// background drop. Every collection shares the parked address backing,
+    /// counted once, and brings two value columns of its own.
     #[test]
     fn access_column_generations_request_the_reserved_bytes() {
         let shape = FixtureShape {
@@ -394,6 +506,8 @@ mod tests {
             RamOp::Write { word: 3, post: 9 },
         ];
         with_ram_fixture(shape, ops, |witness| {
+            let prefix_cycles = witness.random_access().unwrap().physical_cycles();
+            assert!(prefix_cycles < 1 << shape.log_t);
             let mut session = ProofSession::default();
             let stage2 =
                 RamAccessColumns::collect_full::<Fr>(&mut session, witness, shape.log_t).unwrap();
@@ -404,16 +518,16 @@ mod tests {
             };
             assert!(Arc::ptr_eq(&stage2.addresses, &addresses));
             assert_eq!(
-                requested_bytes(&addresses) + values(&stage2),
-                ram_access_columns_bytes(shape.log_t, 1)
+                requested_bytes(&addresses.values) + values(&stage2),
+                ram_access_columns_bytes(prefix_cycles, 1)
             );
 
             let stage4 =
                 RamAccessColumns::collect_full::<Fr>(&mut session, witness, shape.log_t).unwrap();
             assert!(Arc::ptr_eq(&stage4.addresses, &addresses));
             assert_eq!(
-                requested_bytes(&addresses) + values(&stage2) + values(&stage4),
-                ram_access_columns_bytes(shape.log_t, 2)
+                requested_bytes(&addresses.values) + values(&stage2) + values(&stage4),
+                ram_access_columns_bytes(prefix_cycles, 2)
             );
         });
     }
@@ -422,7 +536,7 @@ mod tests {
     fn rejects_session_carry_from_another_cycle_domain() {
         with_sample_backend(|witness| {
             let mut session = ProofSession::default();
-            session.park(SharedRamAddresses(Arc::new(vec![NO_ACCESS; 2])));
+            session.park(SharedRamAddresses(Arc::new(vec![NO_ACCESS; 2].into())));
 
             let error = match SharedRamAddresses::shared::<Fr>(&mut session, witness, 2) {
                 Ok(_) => panic!("wrong-domain RAM addresses were accepted"),

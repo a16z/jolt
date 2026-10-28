@@ -7,73 +7,74 @@
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::JoltField;
 use jolt_kernels::optimized::instruction_input::OptimizedInstructionInput;
-use jolt_kernels::optimized::ram_access_columns_bytes;
 use jolt_kernels::optimized::registers_claim_reduction::OptimizedRegistersClaimReduction;
 use jolt_kernels::optimized::registers_read_write::OptimizedRegistersReadWrite;
 use jolt_kernels::optimized::registers_val_evaluation::OptimizedRegistersValEvaluation;
 use jolt_kernels::optimized::spartan_outer::OptimizedOuterRemainder;
 use jolt_kernels::optimized::spartan_product::OptimizedProductRemainder;
 use jolt_kernels::optimized::spartan_shift::OptimizedSpartanShift;
+use jolt_kernels::optimized::{ram_access_columns_bytes, ram_value_collection_bytes};
 use jolt_program::execution::TraceData;
 
 use crate::{ProverConfig, ProverError};
 
 /// One batch member's peak bytes under the kernel
 /// [`JoltBackend::optimized`](crate::JoltBackend::optimized) installs in its
-/// slot. Every member of the priced batches has an arm, so a member added to
-/// one of them fails to compile here until it is classified.
+/// slot, over `$prefix` cycles before the trace's constant suffix. Every
+/// member of the priced batches has an arm, so a member added to one of them
+/// fails to compile here until it is classified.
 macro_rules! member_peak_bytes {
-    ($F:ty, $log_t:ident, $registers:ident, outer_remainder) => {
-        OptimizedOuterRemainder::peak_bytes::<$F>($log_t)
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, outer_remainder) => {
+        OptimizedOuterRemainder::peak_bytes::<$F>($prefix)
     };
-    ($F:ty, $log_t:ident, $registers:ident, product_remainder) => {
-        OptimizedProductRemainder::peak_bytes::<$F>($log_t)
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, product_remainder) => {
+        OptimizedProductRemainder::peak_bytes::<$F>($prefix)
     };
-    ($F:ty, $log_t:ident, $registers:ident, shift) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, shift) => {
         OptimizedSpartanShift::peak_bytes::<$F>($log_t)
     };
-    ($F:ty, $log_t:ident, $registers:ident, instruction_input) => {
-        OptimizedInstructionInput::peak_bytes::<$F>($log_t)
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, instruction_input) => {
+        OptimizedInstructionInput::peak_bytes::<$F>($prefix)
     };
-    ($F:ty, $log_t:ident, $registers:ident, registers_claim_reduction) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, registers_claim_reduction) => {
         OptimizedRegistersClaimReduction::peak_bytes::<$F>($log_t)
     };
-    ($F:ty, $log_t:ident, $registers:ident, registers_read_write) => {
-        OptimizedRegistersReadWrite::peak_bytes::<$F>($registers)
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, registers_read_write) => {
+        OptimizedRegistersReadWrite::peak_bytes::<$F>($registers, $prefix)
     };
-    ($F:ty, $log_t:ident, $registers:ident, registers_val_evaluation) => {
-        OptimizedRegistersValEvaluation::peak_bytes::<$F>($log_t)
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, registers_val_evaluation) => {
+        OptimizedRegistersValEvaluation::peak_bytes::<$F>($log_t, $prefix)
     };
     // Not priced yet: the reservation omits these members' own allocations
     // (the RAM access columns some of them hold are added per stage).
-    ($F:ty, $log_t:ident, $registers:ident, ram_read_write) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_read_write) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, instruction_claim_reduction) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, instruction_claim_reduction) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, field_registers_claim_reduction) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, field_registers_claim_reduction) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, ram_raf_evaluation) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_raf_evaluation) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, ram_output_check) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_output_check) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, field_registers_read_write) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, field_registers_read_write) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, ram_val_check) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_val_check) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, instruction_read_raf) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, instruction_read_raf) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, ram_ra_claim_reduction) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, ram_ra_claim_reduction) => {
         0
     };
-    ($F:ty, $log_t:ident, $registers:ident, field_registers_val_evaluation) => {
+    ($F:ty, $log_t:ident, $prefix:ident, $registers:ident, field_registers_val_evaluation) => {
         0
     };
 }
@@ -82,14 +83,14 @@ macro_rules! member_peak_bytes {
 /// sum of the members' peaks, which bounds what they hold at once.
 macro_rules! batch_peak_bytes {
     (
-        $F:ty, $log_t:ident, $registers:ident;
+        $F:ty, $log_t:ident, $prefix:ident, $registers:ident;
         batch = $batch:ident,
         label = $label:literal,
         aggregates = $aggregates:tt,
         shape = $shape:ident,
         members = [$({ name: $name:ident, $($member:tt)* },)+]
     ) => {
-        0usize $(.saturating_add(member_peak_bytes!($F, $log_t, $registers, $name)))+
+        0usize $(.saturating_add(member_peak_bytes!($F, $log_t, $prefix, $registers, $name)))+
     };
 }
 
@@ -118,14 +119,17 @@ impl MemoryBudget {
     /// and before building the witness.
     ///
     /// The reservation is the trace buffers at their reserved capacity
-    /// ([`TraceData::heap_bytes`]) plus the largest stage-1–5 envelope: the
-    /// sum of the batch members' priced peaks, each the member kernel's own
-    /// `peak_bytes`, and in stages 2–5 the RAM access columns that may still
-    /// be held ([`ram_access_columns_bytes`]). Stage 4 prices the register
-    /// read/write kernel of the configured phase order with the `rd` indices
-    /// it parks, stage 5 the value evaluation that takes them over. Summing
-    /// peaks exceeds the batch's true simultaneous maximum by at most the
-    /// members' transients that do not coincide, `O(√T)` in stage 3.
+    /// ([`TraceData::heap_bytes`]) plus the largest stage-1–5 envelope over
+    /// the trace's proof rows ([`TraceData::proof_len`]), the cycles before
+    /// its constant padding suffix, which the optimized kernels store
+    /// explicitly over random-access rows: the sum of the batch members'
+    /// priced peaks, each the member kernel's own `peak_bytes`, and in stages
+    /// 2–5 the RAM access columns that may still be held
+    /// ([`ram_access_columns_bytes`]). Stage 4 prices the register read/write
+    /// kernel of the configured phase order with the `rd` indices it parks,
+    /// stage 5 the value evaluation that takes them over. Summing peaks
+    /// exceeds the batch's true simultaneous maximum by at most the members'
+    /// transients that do not coincide.
     ///
     /// Stage 2 collects one generation of RAM access columns, and its address
     /// column stays parked in the session, one backing that every later
@@ -134,9 +138,11 @@ impl MemoryBudget {
     /// at its first bind (cycle-first); no stage boundary waits for that drop.
     /// Stages 3 and 5 therefore still reserve that generation, and stage 4
     /// adds the second pair of value columns its value check collects, which
-    /// that kernel drops at its second bind, before stage 5. These allowances
-    /// cover storage a queued drop may still hold, not observed co-liveness,
-    /// so they can reject a request even when the drop has already run.
+    /// that kernel drops at its second bind, before stage 5. Stages 2 and 4
+    /// also reserve what their collection holds until it truncates
+    /// ([`ram_value_collection_bytes`]). These allowances cover storage a
+    /// queued drop may still hold, not observed co-liveness, so they can
+    /// reject a request even when the drop has already run.
     ///
     /// Passing does not mean the proof fits, and the reservation is neither a
     /// lower bound on the memory a proof needs nor an allocator or RSS
@@ -149,39 +155,21 @@ impl MemoryBudget {
     /// tables the RAM read-write kernel retires and the register seed entries
     /// after the second cycle bind; split-eq tables, round challenges,
     /// streamed-collect extraction buffers and the row collects that kernels
-    /// fall back to without random-access rows or parked `rd` indices;
-    /// uni-skip and field-inline carries, stage outputs and the recorder;
-    /// preprocessing and PCS setup, commitment and opening state, and
-    /// BlindFold; allocator state and retention; the trace output's final
-    /// memory image, I/O device and advice tape; and the tracer, which has
-    /// already run.
+    /// fall back to without random-access rows, which keep every cycle, or
+    /// without parked `rd` indices; uni-skip and field-inline carries, stage
+    /// outputs and the recorder; preprocessing and PCS setup, commitment and
+    /// opening state, and BlindFold; allocator state and retention; the trace
+    /// output's final memory image, I/O device and advice tape; and the
+    /// tracer, which has already run.
     pub fn check_known_eager<F: JoltField>(
         self,
         config: &ProverConfig,
         trace: &TraceData,
     ) -> Result<(), ProverError<F>> {
-        let log_t = config.trace_length.ilog2() as usize;
-        let registers = config
-            .rw_config
-            .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
-        let ram_columns = ram_access_columns_bytes(log_t, 1);
-        let stage1 =
-            jolt_verifier::stage1_batch_sumchecks_members!(batch_peak_bytes F, log_t, registers;);
-        let stage2 =
-            jolt_verifier::stage2_batch_sumchecks_members!(batch_peak_bytes F, log_t, registers;)
-                .saturating_add(ram_columns);
-        let stage3 =
-            jolt_verifier::stage3_sumchecks_members!(batch_peak_bytes F, log_t, registers;)
-                .saturating_add(ram_columns);
-        let stage4 =
-            jolt_verifier::stage4_sumchecks_members!(batch_peak_bytes F, log_t, registers;)
-                .saturating_add(ram_access_columns_bytes(log_t, 2));
-        let stage5 =
-            jolt_verifier::stage5_sumchecks_members!(batch_peak_bytes F, log_t, registers;)
-                .saturating_add(ram_columns);
+        let stages = stage_reservations::<F>(config, trace.proof_len().min(config.trace_length));
         let required = trace
             .heap_bytes()
-            .saturating_add(stage1.max(stage2).max(stage3).max(stage4).max(stage5));
+            .saturating_add(stages.into_iter().fold(0, usize::max));
         if self.bytes < required {
             return Err(ProverError::MemoryBudgetExceeded {
                 budget: self.bytes,
@@ -192,35 +180,54 @@ impl MemoryBudget {
     }
 }
 
+/// The stage-1–5 envelopes [`MemoryBudget::check_known_eager`] reserves beside
+/// the trace for `config` over `prefix_cycles` cycles before the trace's
+/// constant suffix.
+fn stage_reservations<F: JoltField>(config: &ProverConfig, prefix_cycles: usize) -> [usize; 5] {
+    let log_t = config.trace_length.ilog2() as usize;
+    let registers = config
+        .rw_config
+        .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
+    let held = ram_access_columns_bytes(prefix_cycles, 1);
+    let collected = ram_value_collection_bytes(prefix_cycles);
+    [
+        jolt_verifier::stage1_batch_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;),
+        jolt_verifier::stage2_batch_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
+            .saturating_add(held)
+            .saturating_add(collected),
+        jolt_verifier::stage3_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
+            .saturating_add(held),
+        jolt_verifier::stage4_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
+            .saturating_add(ram_access_columns_bytes(prefix_cycles, 2))
+            .saturating_add(collected),
+        jolt_verifier::stage5_sumchecks_members!(batch_peak_bytes F, log_t, prefix_cycles, registers;)
+            .saturating_add(held),
+    ]
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, clippy::panic, reason = "test module")]
 mod tests {
-    use std::sync::Arc;
-
-    use common::jolt_device::JoltDevice;
     #[cfg(feature = "akita")]
     use jolt_akita::AkitaField;
     use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
     use jolt_field::{Fr, JoltField};
-    use jolt_poly::{BindingOrder, Polynomial};
+    use jolt_program::execution::TraceData;
     #[cfg(feature = "field-inline")]
     use jolt_program::execution::{FieldEvent, FieldInlineTraceData};
-    use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
-    use jolt_program::preprocess::{
-        BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing,
-    };
-    use jolt_riscv::JoltTraceRow;
-    use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, JoltTraceRow, RamAccess};
 
-    use super::MemoryBudget;
+    use super::{stage_reservations, MemoryBudget};
     use crate::{ProverConfig, ProverError};
 
     const LOG_T: usize = 13;
     const CYCLES: usize = 1 << LOG_T;
-    /// Rows the fixture's trace buffer reserves beyond its `2^log_t` rows, so
+    /// Cycles before the constant suffix, in the stage floors and the trace.
+    const PREFIX: usize = 1 << 12;
+    /// Rows the fixture's trace buffer reserves beyond its `2^LOG_T` rows, so
     /// a check that counted rows by length instead of capacity would pass
     /// requests below the trace's actual allocation.
-    const RESERVED_ROWS: usize = 1 << 24;
+    const RESERVED_ROWS: usize = 1 << 14;
     const TRACE_BYTES: usize = RESERVED_ROWS * size_of::<JoltTraceRow>();
 
     fn config<F: JoltField>(log_t: usize) -> ProverConfig {
@@ -228,39 +235,24 @@ mod tests {
         ProverConfig::from_padded_dimensions::<F>(cycles, 64, cycles).unwrap()
     }
 
-    /// `2^log_t` default rows in a buffer reserved at `RESERVED_ROWS`.
-    fn rows(log_t: usize) -> Vec<JoltTraceRow> {
-        let mut rows = Vec::with_capacity(RESERVED_ROWS);
-        rows.resize(1 << log_t, JoltTraceRow::default());
-        rows
+    fn stages<F: JoltField>(config: &ProverConfig) -> [usize; 5] {
+        stage_reservations::<F>(config, PREFIX)
     }
 
-    /// A real witness over [`rows`], and its proof shape.
-    fn witness<F: JoltField>(log_t: usize) -> (ProverConfig, TraceBackend) {
-        let config = config::<F>(log_t);
-        let preprocessing = JoltProgramPreprocessing {
-            bytecode: BytecodePreprocessing {
-                code_size: 32,
-                ..Default::default()
-            },
-            ram: RAMPreprocessing::default(),
-            memory_layout: Default::default(),
-            max_padded_trace_length: 1 << log_t,
+    /// `PREFIX` jump rows, then canonical padding to `2^LOG_T` rows, in a
+    /// buffer reserved at `RESERVED_ROWS`.
+    fn rows() -> Vec<JoltTraceRow> {
+        let jump = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::JAL,
+            ..Default::default()
         };
-        let witness = TraceBackend::new(
-            JoltVmWitnessConfig::new(log_t, config.ram_K, config.one_hot_config),
-            JoltVmWitnessInputs::new(
-                &Arc::new(JoltProgram::default()),
-                &Arc::new(preprocessing),
-                TraceOutput::new(
-                    TraceData::new(rows(log_t)),
-                    JoltDevice::default(),
-                    None,
-                    None,
-                ),
-            ),
+        let mut rows = Vec::with_capacity(RESERVED_ROWS);
+        rows.resize(
+            PREFIX,
+            JoltTraceRow::new(jump, Default::default(), RamAccess::NoOp, 1).unwrap(),
         );
-        (config, witness)
+        rows.resize(CYCLES, JoltTraceRow::default());
+        rows
     }
 
     fn check<F: JoltField>(
@@ -271,154 +263,124 @@ mod tests {
         MemoryBudget::from_bytes(budget).check_known_eager::<F>(config, trace)
     }
 
-    /// S1-01 regression through the production request boundary: the
-    /// unchanged stage-1 Spartan outer remainder allocates `az` and `bz`, two
-    /// tables of `2T` field elements, beside the trace buffer, so a request
-    /// below that independently counted floor must fail typed.
-    fn rejects_below_the_stage_one_floor<F: JoltField>() {
-        let (config, witness) = witness::<F>(LOG_T);
-        let floor = TRACE_BYTES + 2 * (2 * CYCLES) * size_of::<F>();
-        let budget = floor - 1;
-        let result = check::<F>(budget, &config, &witness.trace.trace);
+    /// S1-01 regression, on stage 1's own reservation so that a larger stage
+    /// cannot mask it: the stage-1 outer remainder allocates `Az` and `Bz`,
+    /// two tables of `2 · PREFIX` field elements.
+    fn stage_one_reserves_its_tables<F: JoltField>() {
+        let floor = 2 * (2 * PREFIX) * size_of::<F>();
+        let stage1 = stages::<F>(&config::<F>(LOG_T))[0];
         assert!(
-            matches!(result, Err(ProverError::MemoryBudgetExceeded { .. })),
-            "budget {budget} below the stage-1 floor {floor} was admitted"
+            stage1 >= floor,
+            "stage 1 reserves {stage1} bytes, below its {floor}-byte tables"
         );
     }
 
     #[test]
     fn s1_01_stage_one_floor_fr() {
-        rejects_below_the_stage_one_floor::<Fr>();
+        stage_one_reserves_its_tables::<Fr>();
     }
 
     #[cfg(feature = "akita")]
     #[test]
     fn s1_01_stage_one_floor_akita_field() {
-        rejects_below_the_stage_one_floor::<AkitaField>();
+        stage_one_reserves_its_tables::<AkitaField>();
     }
 
-    /// The stage-3 state a request must cover beside the trace: after stage
-    /// 3's first bind the instruction input holds eight `T/2`-entry tables
-    /// while the shift keeps its eight prefix–suffix tables and the register
-    /// claim reduction its two, `2^ceil(log_t/2)` entries each. The session
-    /// keeps the `u32` RAM address column, and the two `u64` value columns
-    /// stage 2 queued for a background drop stay reserved as an outstanding
-    /// generation.
-    fn stage_three_floor<F: JoltField>() -> usize {
-        let prefix = 1usize << LOG_T.div_ceil(2);
-        let tables = 8 * (CYCLES / 2) + 8 * prefix + 2 * prefix;
-        let ram_columns = CYCLES * (size_of::<u32>() + 2 * size_of::<u64>());
-        tables * size_of::<F>() + ram_columns
-    }
-
-    /// The stage-3 state exceeds the stage-1 peak, so a request below it
-    /// must fail.
-    fn rejects_below_the_stage_three_floor<F: JoltField>() {
-        let (config, witness) = witness::<F>(LOG_T);
-        let floor = TRACE_BYTES + stage_three_floor::<F>();
-        let stage_one_peak = TRACE_BYTES + (4 * CYCLES + CYCLES / 4) * size_of::<F>();
-        assert!(floor > stage_one_peak);
-        assert!(matches!(
-            check::<F>(floor - 1, &config, &witness.trace.trace),
-            Err(ProverError::MemoryBudgetExceeded { .. })
-        ));
+    /// The stage-3 state after the first bind: the instruction input's four
+    /// operand tables and packed flag words at `PREFIX / 2` entries each and
+    /// its four-value flag table, beside the shift's eight prefix–suffix
+    /// tables and the register claim reduction's two, `2^ceil(log_t/2)`
+    /// entries each. The session keeps the `u32` RAM address column, and the
+    /// two `u64` value columns stage 2 queued for a background drop stay
+    /// reserved as an outstanding generation, `PREFIX` entries each when the
+    /// last proof row accesses RAM.
+    fn stage_three_reserves_its_state<F: JoltField>() {
+        let (half, prefix) = (PREFIX / 2, 1usize << LOG_T.div_ceil(2));
+        let floor = (4 * half + 4 + 8 * prefix + 2 * prefix) * size_of::<F>()
+            + half * size_of::<u64>()
+            + PREFIX * (size_of::<u32>() + 2 * size_of::<u64>());
+        let stage3 = stages::<F>(&config::<F>(LOG_T))[2];
+        assert!(
+            stage3 >= floor,
+            "stage 3 reserves {stage3} bytes, below its {floor}-byte state"
+        );
     }
 
     #[test]
     fn stage_three_simultaneous_state_fr() {
-        rejects_below_the_stage_three_floor::<Fr>();
+        stage_three_reserves_its_state::<Fr>();
     }
 
     #[cfg(feature = "akita")]
     #[test]
     fn stage_three_simultaneous_state_akita_field() {
-        rejects_below_the_stage_three_floor::<AkitaField>();
+        stage_three_reserves_its_state::<AkitaField>();
     }
 
-    /// Entries the stage-4 increment table's storage holds while the fourth
-    /// bind builds the direct generation, as `Polynomial` stores it in this
-    /// build: the second bind's `T/4`-entry table after the third bind binds
-    /// it once.
-    fn retained_increments<F: JoltField>(cycles: usize) -> usize {
-        let mut increments = Polynomial::new(vec![F::zero(); cycles / 4]);
-        increments.bind_with_order(F::one(), BindingOrder::LowToHigh);
-        increments.into_evals().capacity()
-    }
+    /// The RAM access columns stage 4 may hold: the session's `u32` address
+    /// column and two pairs of `u64` value columns, the value check's own and
+    /// stage 2's awaiting its background drop.
+    const STAGE_FOUR_RAM_COLUMNS: usize = PREFIX * (size_of::<u32>() + 2 * 2 * size_of::<u64>());
 
-    /// The RAM access columns stage 4 may hold over `cycles` cycles: the
-    /// session's `u32` address column and two pairs of `u64` value columns,
-    /// the value check's own and stage 2's awaiting its background drop.
-    fn stage_four_ram_columns(cycles: usize) -> usize {
-        cycles * (size_of::<u32>() + 2 * 2 * size_of::<u64>())
-    }
-
-    /// The cycle-first stage-4 state over `2^log_t` cycles while the fourth
-    /// bind dereferences the indexed generation into direct entries, with
-    /// every entry generation at its source bound of three entries per cycle
-    /// (`rs1`, `rs2`, `rd`; binding only merges rows): the three 2-byte
-    /// register index columns (`rs1`, `rs2`, and `rd` parked for stage 5),
-    /// the indexed generation's values and 25-byte packed metadata, the
-    /// direct entries, the read LUT at 2^16 values and the write LUT at 2^8,
-    /// and the increments' storage; plus the RAM access columns and the trace.
-    fn cycle_first_transition_floor<F: JoltField>(
-        log_t: usize,
-        direct_entry_bytes: usize,
-    ) -> usize {
-        let (f, cycles) = (size_of::<F>(), 1usize << log_t);
-        TRACE_BYTES
-            + stage_four_ram_columns(cycles)
-            + 3 * 2 * cycles
-            + 3 * cycles * (f + 25 + direct_entry_bytes)
+    /// The cycle-first stage-4 state while the fourth bind dereferences the
+    /// indexed generation into direct entries, with every entry generation
+    /// at its source bound of three entries per cycle (`rs1`, `rs2`, `rd`;
+    /// binding only merges rows): the three 2-byte register index columns
+    /// (`rs1`, `rs2`, and `rd` parked for stage 5), the indexed generation's
+    /// values and 25-byte packed metadata, the direct entries, the read LUT
+    /// at 2^16 values and the write LUT at 2^8, and the increments'
+    /// `PREFIX / 4`-entry allocation, which they keep because a prefix of
+    /// 1024 entries binds in place; plus the RAM access columns.
+    fn cycle_first_transition_floor<F: JoltField>(direct_entry_bytes: usize) -> usize {
+        let f = size_of::<F>();
+        STAGE_FOUR_RAM_COLUMNS
+            + 3 * 2 * PREFIX
+            + 3 * PREFIX * (f + 25 + direct_entry_bytes)
             + ((1 << 16) + (1 << 8)) * f
-            + retained_increments::<F>(cycles) * f
+            + PREFIX / 4 * f
     }
 
     /// The address-first stage-4 handoff to the cycle rounds: 32-byte access
-    /// rows, a 2048-byte increment checkpoint per 4096 cycles, the 2-byte `rd`
-    /// indices parked for stage 5, 128 bound address weights and five
-    /// `T`-entry cycle tables; plus the RAM access columns and the trace.
+    /// rows, a 2048-byte increment checkpoint per 4096 cycles and the
+    /// 2048-byte final register values, the 2-byte `rd` indices parked for
+    /// stage 5, 128 bound address weights and five `PREFIX`-entry cycle
+    /// tables; plus the RAM access columns.
     fn address_first_handoff_floor<F: JoltField>() -> usize {
         let f = size_of::<F>();
-        TRACE_BYTES
-            + stage_four_ram_columns(CYCLES)
-            + 32 * CYCLES
-            + CYCLES.div_ceil(4096) * 2048
-            + 2 * CYCLES
+        STAGE_FOUR_RAM_COLUMNS
+            + 32 * PREFIX
+            + PREFIX.div_ceil(4096) * 2048
+            + 2048
+            + 2 * PREFIX
             + 128 * f
-            + 5 * CYCLES * f
+            + 5 * PREFIX * f
     }
 
     /// Stage 4 reserves the register read/write state of the configured
     /// order. Cycle-first, the fourth bind holds the indexed and direct
-    /// generations at once beside the columns preparation built; a request
-    /// below that floor fails. Address-first, a request below its own handoff
-    /// fails, and one the cycle-first floor rejects passes.
+    /// generations at once beside the columns preparation built.
+    /// Address-first, stage 4 covers its own handoff and stays below the
+    /// cycle-first floor.
     fn register_read_write_floors<F: JoltField>(direct_entry_bytes: usize) {
-        let (mut config, witness) = witness::<F>(LOG_T);
-        let trace = &witness.trace.trace;
-        let cycle_first = cycle_first_transition_floor::<F>(LOG_T, direct_entry_bytes);
+        let mut config = config::<F>(LOG_T);
+        let cycle_first = cycle_first_transition_floor::<F>(direct_entry_bytes);
+        let stage4 = stages::<F>(&config)[3];
         assert!(
-            matches!(
-                check::<F>(cycle_first - 1, &config, trace),
-                Err(ProverError::MemoryBudgetExceeded { .. })
-            ),
-            "cycle-first: budget below the fourth-bind floor {cycle_first} was admitted"
+            stage4 >= cycle_first,
+            "cycle-first: stage 4 reserves {stage4} bytes, below the fourth-bind floor {cycle_first}"
         );
 
         config.rw_config.registers_rw_phase1_num_rounds = 0;
         config.rw_config.registers_rw_phase2_num_rounds =
             u8::try_from(REGISTER_ADDRESS_BITS).unwrap();
         let address_first = address_first_handoff_floor::<F>();
-        assert!(address_first < cycle_first);
+        let stage4 = stages::<F>(&config)[3];
         assert!(
-            matches!(
-                check::<F>(address_first - 1, &config, trace),
-                Err(ProverError::MemoryBudgetExceeded { .. })
-            ),
-            "address-first: budget below the handoff floor {address_first} was admitted"
+            stage4 >= address_first,
+            "address-first: stage 4 reserves {stage4} bytes, below the handoff floor {address_first}"
         );
         assert!(
-            check::<F>(cycle_first - 1, &config, trace).is_ok(),
+            stage4 < cycle_first,
             "address-first request priced as cycle-first"
         );
     }
@@ -437,48 +399,7 @@ mod tests {
         register_read_write_floors::<AkitaField>(80);
     }
 
-    /// Padded trace sizes this build accepts (at least 2^12 cycles under
-    /// Akita) at which the third and fourth increment binds run in place:
-    /// `Polynomial`'s parallel path copies only tables of at least 2^11
-    /// entries.
-    const IN_PLACE_LOG_TS: &[usize] = if cfg!(feature = "akita") {
-        &[12]
-    } else {
-        &[10, 12]
-    };
-
-    /// At these sizes the increment table keeps the second bind's `T/4`-entry
-    /// allocation while the fourth bind builds the direct generation, so a
-    /// request below the floor holding that observed storage must fail.
-    fn rejects_below_the_retained_increment_floor<F: JoltField>(direct_entry_bytes: usize) {
-        for &log_t in IN_PLACE_LOG_TS {
-            let (config, witness) = witness::<F>(log_t);
-            let floor = cycle_first_transition_floor::<F>(log_t, direct_entry_bytes);
-            assert!(
-                matches!(
-                    check::<F>(floor - 1, &config, &witness.trace.trace),
-                    Err(ProverError::MemoryBudgetExceeded { .. })
-                ),
-                "2^{log_t} cycles: budget below the floor {floor} with {} retained increment \
-                 entries was admitted",
-                retained_increments::<F>(1 << log_t)
-            );
-        }
-    }
-
-    #[test]
-    fn retained_increment_floor_fr() {
-        rejects_below_the_retained_increment_floor::<Fr>(128);
-    }
-
-    #[cfg(feature = "akita")]
-    #[test]
-    fn retained_increment_floor_akita_field() {
-        rejects_below_the_retained_increment_floor::<AkitaField>(80);
-    }
-
-    /// Field events count at their reserved capacity beside the rows: a
-    /// request below the rows, the events and the stage-3 floor fails.
+    /// Field events count at their reserved capacity beside the rows.
     #[cfg(feature = "field-inline")]
     #[test]
     fn field_event_capacity_is_reserved() {
@@ -492,32 +413,40 @@ mod tests {
                 rd: None,
             },
         });
-        let trace = TraceData::from_parts(rows(LOG_T), events).unwrap();
-        let floor =
-            TRACE_BYTES + FIELD_EVENTS * size_of::<FieldEvent>() + stage_three_floor::<Fr>();
+        let config = config::<Fr>(LOG_T);
+        let trace = TraceData::from_parts(rows(), events).unwrap();
+        let required = TRACE_BYTES
+            + FIELD_EVENTS * size_of::<FieldEvent>()
+            + stages::<Fr>(&config).into_iter().max().unwrap();
         assert!(matches!(
-            check::<Fr>(floor - 1, &config::<Fr>(LOG_T), &trace),
-            Err(ProverError::MemoryBudgetExceeded { .. })
+            check::<Fr>(required - 1, &config, &trace),
+            Err(ProverError::MemoryBudgetExceeded { required: reported, .. }) if reported == required
         ));
     }
 
-    /// A budget at the reported requirement passes and one byte less fails
-    /// with the same requirement; an unbounded budget passes.
+    /// The requirement is the trace buffer at its reserved capacity plus the
+    /// largest stage reservation over the trace's proof rows. A budget at it
+    /// passes and one byte less fails with the same requirement; an
+    /// unbounded budget passes.
     #[test]
     fn budget_at_the_reported_requirement_passes() {
-        let (config, witness) = witness::<Fr>(LOG_T);
-        let trace = &witness.trace.trace;
-        assert!(check::<Fr>(usize::MAX, &config, trace).is_ok());
+        let (config, trace) = (config::<Fr>(LOG_T), TraceData::new(rows()));
+        assert_eq!(trace.proof_len(), PREFIX);
+        assert!(check::<Fr>(usize::MAX, &config, &trace).is_ok());
         let Err(ProverError::MemoryBudgetExceeded {
             budget: 0,
             required,
-        }) = check::<Fr>(0, &config, trace)
+        }) = check::<Fr>(0, &config, &trace)
         else {
             panic!("an empty budget passed");
         };
-        assert!(check::<Fr>(required, &config, trace).is_ok());
+        assert_eq!(
+            required,
+            TRACE_BYTES + stages::<Fr>(&config).into_iter().max().unwrap()
+        );
+        assert!(check::<Fr>(required, &config, &trace).is_ok());
         assert!(matches!(
-            check::<Fr>(required - 1, &config, trace),
+            check::<Fr>(required - 1, &config, &trace),
             Err(ProverError::MemoryBudgetExceeded { required: same, .. }) if same == required
         ));
     }

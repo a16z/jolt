@@ -8,7 +8,7 @@
 //! [`MulBaseUnreduced`] is the deferred ext×base multiply, stated in terms
 //! of [`Unreduced::Product`].
 
-use crate::{Field, PseudoMersenne, Ring, Unreduced};
+use crate::{Field, PseudoMersenne, Ring, Unreduced, Zero};
 use std::ops::{Add, Mul, Sub};
 
 /// An algebraic extension of the base field `F`.
@@ -76,8 +76,12 @@ pub trait ExtField<F: Field>: Field {
 ///
 /// Scales `self` by a base scalar `x` into [`Unreduced::Product`] without
 /// reducing, so a batch of `E × F` products can be summed and reduced once.
-/// When [`Unreduced::SUM_IS_EXACT`] holds, the reduced sum equals the
-/// per-term [`ExtField::mul_base`] sum within the accumulator's headroom.
+/// The reduced sum equals the per-term [`ExtField::mul_base`] sum for any
+/// batch within the accumulator's headroom; every implementor's `Product`
+/// either holds terms without loss or reduces each term (`Product = Self`).
+/// [`Unreduced::SUM_IS_EXACT`] is a separate, conservative opt-in that
+/// downstream callers use to choose batched paths; it does not gate these
+/// methods.
 ///
 /// `E × F` has no cross terms, so the default body (lift `x` and reuse
 /// [`Unreduced::mul_unreduced`]) is correct everywhere; extensions whose
@@ -88,6 +92,60 @@ pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
     fn mul_base_unreduced(self, x: F) -> Self::Product {
         self.mul_unreduced(Self::lift_base(x))
     }
+
+    /// `Σ pows[i]·coeffs[i]` (extension times base) over the shorter of the
+    /// two slices, reduced once.
+    #[inline]
+    fn dot_base(pows: &[Self], coeffs: &[F]) -> Self {
+        let accum = pows
+            .iter()
+            .zip(coeffs)
+            .fold(<Self::Product as Zero>::zero(), |acc, (pow, coeff)| {
+                acc + pow.mul_base_unreduced(*coeff)
+            });
+        Self::reduce_product(accum)
+    }
+
+    /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]`: each row's dot product with
+    /// the shared powers, weighted and summed.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `rows` and `weights` have equal lengths and every row is
+    /// as long as `pows`.
+    #[inline]
+    fn weighted_dot_base_rows(rows: &[&[F]], weights: &[Self], pows: &[Self]) -> Self {
+        assert_row_shapes(rows, weights.len(), pows.len());
+        rows.iter()
+            .zip(weights)
+            .fold(<Self as Zero>::zero(), |acc, (row, weight)| {
+                acc + *weight * Self::dot_base(pows, row)
+            })
+    }
+
+    /// `out[i] = Σ_j pows[j]·rows[i][j]`: each row's dot product with the
+    /// shared powers. `out` has one slot per row.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless `out` and `rows` have equal lengths and every row is as
+    /// long as `pows`.
+    #[inline]
+    fn dot_base_rows(pows: &[Self], rows: &[&[F]], out: &mut [Self]) {
+        assert_row_shapes(rows, out.len(), pows.len());
+        for (slot, row) in out.iter_mut().zip(rows) {
+            *slot = Self::dot_base(pows, row);
+        }
+    }
+}
+
+/// Checks the row shapes [`MulBaseUnreduced`]'s row kernels require.
+fn assert_row_shapes<F>(rows: &[&[F]], per_row: usize, width: usize) {
+    assert_eq!(rows.len(), per_row, "one weight or output slot per row");
+    assert!(
+        rows.iter().all(|row| row.len() == width),
+        "every row matches the powers"
+    );
 }
 
 /// A base field is its own degree-1 extension; the default body is exact.

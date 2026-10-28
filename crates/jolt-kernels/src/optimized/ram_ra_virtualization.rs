@@ -34,7 +34,7 @@ use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
+use super::ram_trace::{RamAddresses, SharedRamAddresses, NO_ACCESS};
 use super::support::{
     accumulate_product_grid, pin_derived_term, product_grid_scratch_len, GruenRoundMessage,
     RoundProgress, MAX_GRID_FACTORS,
@@ -111,12 +111,16 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
-    addresses: Arc<Vec<u32>>,
+    addresses: Arc<RamAddresses>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
 
 impl ChunkIndexSource for RamAddressChunks {
+    fn constant_suffix_start(&self) -> usize {
+        self.addresses.prefix_len()
+    }
+
     fn num_columns(&self) -> usize {
         self.num_committed
     }
@@ -166,6 +170,7 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
             return self.message_few_factors(round, previous_claim);
         }
         let folded_ra = &self.folded_ra;
+        let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
 
         struct Scratch<F: JoltField> {
             lanes: Vec<F::Accumulator>,
@@ -175,7 +180,8 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
             grid: Vec<F>,
         }
 
-        let block_lanes = self.gruen.par_fold_out_in(
+        let block_lanes = self.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || Scratch {
                 lanes: vec![F::Accumulator::default(); num_committed],
                 pairs: vec![(F::zero(), F::zero()); num_committed],
@@ -221,7 +227,8 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         self.gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                self.gruen.par_fold_out_in(
+                self.gruen.par_fold_out_in_prefix(
+                    prefix_pairs,
                     || {
                         (
                             vec![(F::zero(), F::zero()); num_committed],
@@ -250,8 +257,14 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
+        let prefix_pairs = if num_committed == 0 {
+            self.gruen.e_out_current_len() * self.gruen.e_in_current_len()
+        } else {
+            self.folded_ra.prefix_len().div_ceil(2)
+        };
 
-        let mut q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || vec![F::zero(); points],
             |acc, row, _x_in, e_in| {
                 if num_committed == 0 {

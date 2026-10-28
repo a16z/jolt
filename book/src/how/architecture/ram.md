@@ -25,7 +25,25 @@ For the purposes of the memory checking argument, we remap the memory address to
 
 where `lowest_address` is the left-most address depicted in the diagram above.
 The division by eight reflects the fact that we treat guest memory as "doubleword-addressable" for the purposes of memory-checking.
-Any load or store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) that use the `LD` or `SD` instead.
+
+### Sub-doubleword accesses
+
+Load and store instructions that access less than a full doubleword (e.g. `LB`, `SH`, `LW`) are expanded into [inline sequences](./emulation.md#virtual-instructions-and-sequences) around a *floor-addressed* doubleword access: `VirtualLoad{B,H,W}` reads, and `VirtualStore{B,H,W}` writes, the doubleword containing the effective address `ea = rs1 + imm`.
+A sub-word load takes three cycles (the doubleword load, a lane mask, and a parallel extract), and a sub-word store six (a read-modify-write of the containing doubleword).
+
+A floor-addressed row carries the intra-doubleword offset in its lookup slot, which a memory row otherwise leaves unused: its `AddressOffset{B,H,W}` table returns `ea & 7`, `ea & 6` or `ea & 4`, keeping only the offset bits its access width allows.
+The R1CS constraint for memory rows subtracts the lookup output:
+
+$$
+\textsf{RamAddress} = \textsf{Rs1Value} + \textsf{Imm} - \textsf{LookupOutput}
+$$
+
+`LD` and `SD` look up no table, so their lookup output is 0 and `RamAddress` is the effective address.
+For a floor-addressed row, `RamAddress` is the address of the doubleword it accesses.
+
+RAF evaluation ties `RamAddress` to the one-hot address: on each cycle it must equal $8k + \texttt{lowest\_address}$ for the accessed cell $k$, or 0 on a cycle without a RAM access.
+The verifier requires `lowest_address` to be a multiple of 8, so every admissible `RamAddress` is a multiple of 8.
+An access misaligned for its width, such as an `LH` at an odd address or any misaligned `LD`, leaves a low bit set in `RamAddress` and cannot be proven.
 
 ## Deviations from the Twist algorithm as described in the paper
 

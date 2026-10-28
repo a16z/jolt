@@ -10,7 +10,7 @@ use core::mem::MaybeUninit;
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::{JoltDerivedId, JoltPolynomialId, RegistersReadWritePublic};
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, TensorEqTable, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -25,14 +25,16 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::rows::{raw_rd_inc, RegisterCycleRow, SharedRdIndices};
+use crate::optimized::prefix_product::PrefixColumn;
 use crate::optimized::support::{
-    collect_rows, pin_derived_term, pool_workers, GruenRoundMessage, RoundProgress,
+    bind_prefix_pairs_buffer_len, fallible_collect_bytes, map_indices, pin_derived_term,
+    pool_workers, BundleStore, GruenRoundMessage, RoundProgress,
 };
 use crate::{KernelError, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
 const CHUNK: usize = 1 << 12;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct Access {
     rs1: Option<u8>,
@@ -67,13 +69,14 @@ enum Phase<F: JoltField> {
         checkpoints: Vec<[i128; 1 << REGISTER_ADDRESS_BITS]>,
         weights: Vec<F>,
         eq: Vec<F>,
+        final_values: Box<[i128; 1 << REGISTER_ADDRESS_BITS]>,
     },
     Cycle {
-        rs1: Polynomial<F>,
-        rs2: Polynomial<F>,
-        wa: Polynomial<F>,
-        val: Polynomial<F>,
-        inc: Polynomial<F>,
+        rs1: PrefixColumn<F>,
+        rs2: PrefixColumn<F>,
+        wa: PrefixColumn<F>,
+        val: PrefixColumn<F>,
+        inc: PrefixColumn<F>,
     },
 }
 
@@ -87,31 +90,37 @@ pub(super) struct AddressFirstKernel<F: JoltField> {
 }
 
 impl<F: JoltField> AddressFirstKernel<F> {
-    /// Peak bytes over `2^log_t >= 2^8` cycles. The handoff to the cycle rounds
-    /// holds the access rows, the increment checkpoints and the `K` bound
-    /// address weights while it fills the five `T`-entry cycle tables (`rs1`
-    /// in the address eq table's allocation) through one checkpoint value per
-    /// chunk task; the cycle rounds then hold the five tables and the first
-    /// in-place release's buffer. Preparation and the address rounds hold the
-    /// rows, the checkpoints, the `T`-entry eq table and at most `K`
-    /// checkpoint values per chunk task, less than the handoff.
-    pub(super) fn peak_bytes(log_t: usize) -> usize {
-        let cycles = 1usize << log_t;
+    /// Peak bytes over the `prefix_cycles` cycles before the trace's constant
+    /// suffix that `prepare` keeps: the most of the access rows' fallible
+    /// collect (`fallible_collect_bytes`), the handoff to the cycle rounds and
+    /// the cycle rounds. The handoff holds the rows, the increment checkpoints,
+    /// the final register values and the `K` bound address weights while it
+    /// fills the five `prefix_cycles`-entry cycle tables (`rs1` in the address
+    /// eq table's allocation) through one checkpoint value per chunk task; the
+    /// cycle rounds hold the five tables and the bound half the first bind
+    /// collects (`bind_prefix_pairs_buffer_len`). Preparation after the collect
+    /// and the address rounds hold the rows, the checkpoints, the eq table and
+    /// at most `K` checkpoint values per chunk task, less than the handoff.
+    pub(super) fn peak_bytes(prefix_cycles: usize) -> usize {
         let field = |count: usize| count.saturating_mul(size_of::<F>());
-        let chunks = cycles.div_ceil(CHUNK);
-        let tables = field(cycles.saturating_mul(5));
+        let checkpoint = size_of::<[i128; 1 << REGISTER_ADDRESS_BITS]>();
+        let chunks = prefix_cycles.div_ceil(CHUNK);
+        let tables = field(prefix_cycles.saturating_mul(5));
         let handoff = [
-            cycles.saturating_mul(size_of::<Access>()),
-            chunks.saturating_mul(size_of::<[i128; 1 << REGISTER_ADDRESS_BITS]>()),
+            prefix_cycles.saturating_mul(size_of::<Access>()),
+            chunks.saturating_mul(checkpoint),
+            checkpoint,
             field(1 << REGISTER_ADDRESS_BITS),
             tables,
             field(pool_workers().min(chunks)),
         ]
         .into_iter()
-        .fold(0, usize::saturating_add);
+        .fold(0usize, usize::saturating_add);
         let cycle_rounds =
-            tables.saturating_add(field(Polynomial::<F>::in_place_shrink_len(cycles)));
-        handoff.max(cycle_rounds)
+            tables.saturating_add(field(bind_prefix_pairs_buffer_len(prefix_cycles)));
+        fallible_collect_bytes::<Access>(prefix_cycles)
+            .max(handoff)
+            .max(cycle_rounds)
     }
 
     pub(super) fn prepare(
@@ -120,7 +129,23 @@ impl<F: JoltField> AddressFirstKernel<F> {
         inputs: &ProverInputs<'_, F, RegistersReadWriteChecking<F>>,
     ) -> Result<Self, KernelError<F>> {
         let dimensions = inputs.relation.register_dimensions();
-        let rows = collect_rows::<Access>(witness, 1usize << dimensions.log_t())?;
+        let cycles = 1usize << dimensions.log_t();
+        let store = BundleStore::<Access>::resolve(witness, cycles)?;
+        let access = store.access();
+        let prefix = if access.row(cycles - 1)? == Access::default() {
+            access.constant_suffix_start(cycles)?
+        } else {
+            cycles
+        };
+        #[cfg(feature = "parallel")]
+        let rows: Vec<Access> = (0..prefix)
+            .into_par_iter()
+            .map(|row| access.row(row))
+            .collect::<Result<_, _>>()?;
+        #[cfg(not(feature = "parallel"))]
+        let rows: Vec<Access> = (0..prefix)
+            .map(|row| access.row(row))
+            .collect::<Result<_, _>>()?;
         let mut checkpoints = Vec::with_capacity(rows.len().div_ceil(CHUNK));
         let mut values = [0i128; 1 << REGISTER_ADDRESS_BITS];
         let rd_indices = rows
@@ -136,7 +161,7 @@ impl<F: JoltField> AddressFirstKernel<F> {
                 row.rd
             })
             .collect();
-        session.park(SharedRdIndices(rd_indices));
+        session.park(SharedRdIndices::new(rd_indices, cycles));
         let gruen =
             GruenSplitEqPolynomial::new(&inputs.points.rd_write_value, BindingOrder::LowToHigh);
         Ok(Self {
@@ -144,7 +169,11 @@ impl<F: JoltField> AddressFirstKernel<F> {
                 rows,
                 checkpoints,
                 weights: vec![F::one()],
-                eq: gruen.merge().into_evals(),
+                eq: {
+                    let eq = TensorEqTable::new(&inputs.points.rd_write_value);
+                    map_indices(prefix, |row| eq.evaluate_index(row))
+                },
+                final_values: Box::new(values),
             },
             gruen,
             progress: RoundProgress::new(dimensions.read_write_rounds()),
@@ -231,6 +260,7 @@ impl<F: JoltField> AddressFirstKernel<F> {
                 checkpoints,
                 weights,
                 eq,
+                final_values,
             } => {
                 let n = weights.len();
                 for i in 0..n {
@@ -297,11 +327,26 @@ impl<F: JoltField> AddressFirstKernel<F> {
                         inc.set_len(rows.len());
                     }
                     self.phase = Phase::Cycle {
-                        rs1: Polynomial::new(rs1),
-                        rs2: Polynomial::new(rs2),
-                        wa: Polynomial::new(wa),
-                        val: Polynomial::new(val),
-                        inc: Polynomial::new(inc),
+                        rs1: PrefixColumn {
+                            values: rs1,
+                            tail: [F::zero(); 2],
+                        },
+                        rs2: PrefixColumn {
+                            values: rs2,
+                            tail: [F::zero(); 2],
+                        },
+                        wa: PrefixColumn {
+                            values: wa,
+                            tail: [F::zero(); 2],
+                        },
+                        val: PrefixColumn {
+                            values: val,
+                            tail: [checkpoint_values(final_values, weights)[0]; 2],
+                        },
+                        inc: PrefixColumn {
+                            values: inc,
+                            tail: [F::zero(); 2],
+                        },
                     };
                 }
             }
@@ -313,7 +358,7 @@ impl<F: JoltField> AddressFirstKernel<F> {
                 inc,
             } => {
                 for table in [rs1, rs2, wa, val, inc] {
-                    let _ = table.bind_low_to_high_in_place(r);
+                    let _ = table.bind(r);
                 }
                 self.gruen.bind(r);
             }
@@ -341,6 +386,7 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
                 checkpoints,
                 weights,
                 eq,
+                ..
             } => Ok(self.address_message(rows, checkpoints, weights, eq, claim)),
             Phase::Cycle {
                 rs1,
@@ -352,12 +398,13 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
                 let summand = |rs1: F, rs2: F, wa: F, val: F, inc: F| {
                     wa * (val + inc) + self.gamma * (rs1 + self.gamma * rs2) * val
                 };
-                let q = self.gruen.par_fold_out_in(
+                let q = self.gruen.par_fold_out_in_prefix(
+                    rs1.values.len().div_ceil(2),
                     || [F::zero(); 2],
                     |acc, row, _x_in, e_in| {
-                        let pair = |table: &Polynomial<F>| {
-                            let lo = table.evals()[2 * row];
-                            [lo, table.evals()[2 * row + 1] - lo]
+                        let pair = |table: &PrefixColumn<F>| {
+                            let (lo, hi) = table.pair(row);
+                            [lo, hi - lo]
                         };
                         let (rs1, rs2, wa, val, inc) =
                             (pair(rs1), pair(rs2), pair(wa), pair(val), pair(inc));
@@ -369,17 +416,18 @@ impl<F: JoltField> ProveRounds<F> for AddressFirstKernel<F> {
                     |a, b| [a[0] + b[0], a[1] + b[1]],
                 );
                 self.gruen.checked_cubic(q[0], q[1], claim, round, || {
-                    self.gruen.par_fold_out_in(
+                    self.gruen.par_fold_out_in_prefix(
+                        rs1.values.len().div_ceil(2),
                         F::zero,
                         |sum, pair, _, weight| {
                             let row = 2 * pair + 1;
                             *sum += weight
                                 * summand(
-                                    rs1.evals()[row],
-                                    rs2.evals()[row],
-                                    wa.evals()[row],
-                                    val.evals()[row],
-                                    inc.evals()[row],
+                                    rs1.value(row),
+                                    rs2.value(row),
+                                    wa.value(row),
+                                    val.value(row),
+                                    inc.value(row),
                                 );
                         },
                         |_, weight, sum| weight * sum,
@@ -433,11 +481,11 @@ impl<F: JoltField> SumcheckKernel<F> for AddressFirstKernel<F> {
             });
         };
         Ok(RegistersReadWriteOutputClaims {
-            registers_val: val.evals()[0],
-            rs1_ra: rs1.evals()[0],
-            rs2_ra: rs2.evals()[0],
-            rd_wa: wa.evals()[0],
-            rd_inc: inc.evals()[0],
+            registers_val: val.value(0),
+            rs1_ra: rs1.value(0),
+            rs2_ra: rs2.value(0),
+            rd_wa: wa.value(0),
+            rd_inc: inc.value(0),
         })
     }
     fn validate_derived_tables(

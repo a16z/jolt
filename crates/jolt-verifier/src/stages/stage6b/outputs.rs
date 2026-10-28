@@ -40,8 +40,6 @@ use super::inc_claim_reduction::IncClaimReduction;
 use super::instruction_ra_virtualization::InstructionRaVirtualization;
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims;
 
 /// Source-of-truth for stage 6b's cycle-phase sumcheck batch, in canonical
 /// Fiat-Shamir batch order. `#[derive(SumcheckBatch)]` generates the
@@ -117,16 +115,11 @@ impl<F: JoltField> Stage6bOutputPoints<F> {
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).
     pub fn booleanity_opening_point(&self) -> Option<&[F]> {
-        #[cfg(not(feature = "akita"))]
-        let chunk_fallback = None;
-        #[cfg(feature = "akita")]
-        let chunk_fallback = self.booleanity.balanced_inc_digits.first();
         self.booleanity
             .instruction_ra
             .first()
             .or_else(|| self.booleanity.bytecode_ra.first())
             .or_else(|| self.booleanity.ram_ra.first())
-            .or(chunk_fallback)
             .map(Vec::as_slice)
     }
 
@@ -283,7 +276,7 @@ impl<F: JoltField> Stage6bOutputClaims<F> {
     #[cfg(feature = "akita")]
     pub fn new(
         bytecode_read_raf: LatticeBytecodeReadRafOutputClaims<F>,
-        booleanity: LatticeBooleanityOutputClaims<F>,
+        booleanity: BooleanityOutputClaims<F>,
         ram_hamming_booleanity: RamHammingBooleanityOutputClaims<F>,
         ram_ra_virtualization: RamRaVirtualizationOutputClaims<F>,
         instruction_ra_virtualization: InstructionRaVirtualizationOutputClaims<F>,

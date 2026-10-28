@@ -49,6 +49,12 @@ struct PreparedSparseClass {
 
 pub(super) struct PreparedSparseChallenge {
     classes: Vec<PreparedSparseClass>,
+    binary: Option<Box<PreparedBinaryChallenge>>,
+}
+
+struct PreparedBinaryChallenge {
+    doubled: [i8; 1024],
+    weight: usize,
 }
 
 impl PreparedSparseChallenge {
@@ -93,7 +99,79 @@ impl PreparedSparseChallenge {
                 }
             })
             .collect();
-        Ok(Self { classes })
+        let binary = if D == 512
+            && (16..=127).contains(&challenge.positions.len())
+            && challenge
+                .coeffs
+                .iter()
+                .all(|&coefficient| coefficient == 1 || coefficient == -1)
+        {
+            let mut binary = Box::new(PreparedBinaryChallenge {
+                doubled: [0; 1024],
+                weight: challenge.positions.len(),
+            });
+            for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
+                binary.doubled[position as usize] = -coefficient;
+                binary.doubled[D + position as usize] = coefficient;
+            }
+            Some(binary)
+        } else {
+            None
+        };
+        Ok(Self { classes, binary })
+    }
+
+    #[inline(always)]
+    fn try_add_binary_rows<const D: usize>(
+        &self,
+        dst: &mut [i32; D],
+        coefficients: &[usize],
+    ) -> bool {
+        if D != 512 || coefficients.len() < 4 {
+            return false;
+        }
+        let Some(binary) = &self.binary else {
+            return false;
+        };
+        // The row visitor validates digits into disjoint one-hot blocks. Choose
+        // the convolution direction with fewer rotations; unit challenges and
+        // at most 127 rotations bound every byte partial to [-127, 127].
+        let mut partial = [0i8; 512];
+        if coefficients.len() <= binary.weight {
+            for &coefficient in coefficients {
+                let window = &binary.doubled[D - coefficient..][..D];
+                for (dst, &value) in partial.iter_mut().zip(window) {
+                    *dst += value;
+                }
+            }
+        } else {
+            let mut input = [0i8; 1024];
+            for &coefficient in coefficients {
+                input[coefficient] = -1;
+                input[D + coefficient] = 1;
+            }
+            for class in &self.classes {
+                if class.coefficient > 0 {
+                    for &position in &class.positions {
+                        let window = &input[D - usize::from(position)..][..D];
+                        for (dst, &value) in partial.iter_mut().zip(window) {
+                            *dst += value;
+                        }
+                    }
+                } else {
+                    for &position in &class.positions {
+                        let window = &input[D - usize::from(position)..][..D];
+                        for (dst, &value) in partial.iter_mut().zip(window) {
+                            *dst -= value;
+                        }
+                    }
+                }
+            }
+        }
+        for (dst, value) in dst.iter_mut().zip(partial) {
+            *dst += i32::from(value);
+        }
+        true
     }
 }
 
@@ -434,8 +512,10 @@ fn add_rotated_rows<const D: usize>(
         }
         PreparedRotations::Sparse(challenges) => {
             let challenge = &challenges[prepared_block];
-            for &coefficient in coefficients {
-                add_rotated_sparse(dst, challenge, coefficient);
+            if !challenge.try_add_binary_rows(dst, coefficients) {
+                for &coefficient in coefficients {
+                    add_rotated_sparse(dst, challenge, coefficient);
+                }
             }
         }
     }
@@ -778,4 +858,75 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         .into_iter()
         .map(DecomposeFoldWitness::from_centered_rows::<D>)
         .collect())
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod binary_convolution_tests {
+    use super::*;
+
+    #[test]
+    fn binary_rows_match_integer_negacyclic_convolution() {
+        const D: usize = 512;
+        for weight in [0, 1, 15, 16, 19, 127, 128] {
+            for pattern in [0, 1, 2, 3] {
+                let challenge = SparseChallenge {
+                    positions: (0..weight).map(|i| ((i * 73 + 11) % D) as u32).collect(),
+                    coeffs: (0..weight)
+                        .map(|i| match pattern {
+                            0 => 1,
+                            1 => -1,
+                            2 => {
+                                if i % 2 == 0 {
+                                    1
+                                } else {
+                                    -1
+                                }
+                            }
+                            _ => {
+                                if i % 2 == 0 {
+                                    2
+                                } else {
+                                    -2
+                                }
+                            }
+                        })
+                        .collect(),
+                };
+                challenge.validate::<D>().unwrap();
+                let prepared =
+                    PreparedRotations::Sparse(vec![
+                        PreparedSparseChallenge::new::<D>(&challenge).unwrap()
+                    ]);
+                for count in [0, 1, 3, 4, 7, 8, 16, 19, 20, 32, 127, D] {
+                    let coefficients: Vec<_> = if count == weight {
+                        challenge
+                            .positions
+                            .iter()
+                            .map(|&position| D - 1 - position as usize)
+                            .collect()
+                    } else {
+                        (0..count).map(|i| (i * 31 + 7) % D).collect()
+                    };
+                    let mut expected = [17i32; D];
+                    for &x in &coefficients {
+                        for (&y, &value) in challenge.positions.iter().zip(&challenge.coeffs) {
+                            let degree = x + y as usize;
+                            expected[degree % D] += if degree < D {
+                                i32::from(value)
+                            } else {
+                                -i32::from(value)
+                            };
+                        }
+                    }
+                    let mut actual = [17i32; D];
+                    add_rotated_rows(&mut actual, &prepared, 0, &coefficients);
+                    assert_eq!(
+                        actual, expected,
+                        "weight={weight}, pattern={pattern}, count={count}"
+                    );
+                }
+            }
+        }
+    }
 }
