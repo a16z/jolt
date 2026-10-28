@@ -105,6 +105,7 @@ use jolt_zk::masking::{
     OperandShapeDomain, PadLayout, ProductMemo, ProductSum, ResidualRelation, ResidualRows,
     RoundFormat, RowsDomain, ValuesDomain, ZkError,
 };
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use crate::preprocessing::JoltVerifierPreprocessing;
@@ -151,7 +152,7 @@ type VerifierExpr<F> = Expr<F, ComposedOpeningId, VerifierPublicId>;
 type VerifierFactored<F> = FactoredExpr<F, ComposedOpeningId, VerifierPublicId>;
 
 /// A public source of the residual's claim formulas.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum VerifierPublicId {
     Jolt(JoltDerivedId),
     SpartanOuter(JoltSpartanOuterPublic),
@@ -203,7 +204,7 @@ impl From<FieldInlineChallengeId> for VerifierPublicId {
 
 #[derive(Default)]
 struct SourceValues<F: JoltField> {
-    publics: Vec<(VerifierPublicId, F)>,
+    publics: BTreeMap<VerifierPublicId, F>,
 }
 
 /// The masked stage outputs the residual relation is built from.
@@ -1628,23 +1629,22 @@ fn hamming_virtualization_address_point<F: JoltField>(
 impl<F: JoltField> SourceValues<F> {
     fn public(&mut self, id: impl Into<VerifierPublicId>, value: F) -> Result<(), VerifierError> {
         let id = id.into();
-        if let Some((_, existing)) = self.publics.iter().find(|(candidate, _)| *candidate == id) {
-            if *existing != value {
-                return Err(VerifierError::ResidualConstructionFailed {
+        match self.publics.entry(id) {
+            Entry::Occupied(existing) if *existing.get() != value => {
+                Err(VerifierError::ResidualConstructionFailed {
                     reason: format!("public source {id:?} was assigned inconsistent values"),
-                });
+                })
             }
-            return Ok(());
+            Entry::Occupied(_) => Ok(()),
+            Entry::Vacant(slot) => {
+                let _ = slot.insert(value);
+                Ok(())
+            }
         }
-        self.publics.push((id, value));
-        Ok(())
     }
 
     fn value(&self, id: VerifierPublicId) -> Option<F> {
-        self.publics
-            .iter()
-            .find(|(candidate, _)| *candidate == id)
-            .map(|(_, value)| *value)
+        self.publics.get(&id).copied()
     }
 }
 
@@ -1774,14 +1774,7 @@ mod field_inline_relation_parity {
         let lowered_input_expr = claim.input.expand();
         let lowered_output_expr = claim.output.expand();
         let publics = assemble_publics(&output_points);
-        let resolve_challenge = |id: &VerifierPublicId| {
-            publics
-                .publics
-                .iter()
-                .find(|(candidate, _)| candidate == id)
-                .unwrap()
-                .1
-        };
+        let resolve_challenge = |id: &VerifierPublicId| publics.value(*id).unwrap();
         let lowered_input = lowered_input_expr.evaluate(
             |id| match id {
                 ComposedOpeningId::FieldInline(id) => inputs.resolve_input(id).unwrap(),
