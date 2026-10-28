@@ -51,6 +51,7 @@ field-inline-guest-fp128 = ["field-inline-guest"]
 # Row pointers (default off): hold the weighted-dot row base pointers in registers.
 field-inline-rowptr = ["field-inline-guest"]
 field-inline-horner = ["field-inline-guest"]
+field-inline-horner-triplet = ["field-inline-horner"]
 
 # Byte-preserving recursion experiments, default off.
 word-transcript = []

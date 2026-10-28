@@ -47,6 +47,10 @@ tensor-no-carry = ["akita", "jolt-akita/tensor-no-carry"]
 # Row pointers (default off): weighted-dot row pointers held in registers.
 rowptr-registers = ["jolt-field/field-inline-rowptr"]
 weighted-dot-horner = ["jolt-field/field-inline-horner"]
+weighted-dot-horner-triplet = [
+  "weighted-dot-horner",
+  "jolt-field/field-inline-horner-triplet",
+]
 tensor-eq-runs = ["akita", "jolt-akita/tensor-eq-runs"]
 setup-sop-structured = ["akita", "jolt-akita/setup-sop-structured"]
 prevalidated-catalog = ["akita", "jolt-akita/prevalidated-catalog"]

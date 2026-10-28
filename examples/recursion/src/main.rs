@@ -936,6 +936,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("setup-sop-structured");
     #[cfg(feature = "weighted-dot-horner")]
     program.add_guest_feature("weighted-dot-horner");
+    #[cfg(feature = "weighted-dot-horner-triplet")]
+    program.add_guest_feature("weighted-dot-horner-triplet");
     #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
     program.add_guest_feature("prevalidated-catalog");
     program.set_memory_config(memory_config);
