@@ -77,10 +77,9 @@ mod compiled {
 }
 #[cfg(not(target_arch = "riscv64"))]
 mod compiled {
-    pub(super) fn rebuild(
-        _family: super::OneHotFamily,
-        _view: &[u8],
-    ) -> Option<super::AkitaOneHotBackendScheme> {
+    use super::{AkitaOneHotBackendScheme, OneHotFamily};
+
+    pub(super) fn rebuild(_family: OneHotFamily, _view: &[u8]) -> Option<AkitaOneHotBackendScheme> {
         None
     }
 }
