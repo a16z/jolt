@@ -1,5 +1,5 @@
 //! Prevalidated one-hot catalog view for the verifier-guest build (feature
-//! `prevalidated-catalog`, default off).
+//! `prevalidated-catalog`, default on with `akita`).
 //!
 //! Before the guest is built, the host decodes the setup section of the
 //! stream it is about to embed (never a proof), attaches its payloads and

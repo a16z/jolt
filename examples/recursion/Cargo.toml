@@ -70,6 +70,10 @@ akita = [
 # terminal-contraction: the verifier guest (and the host's Akita) contract the
 # terminal ring relations by signed 16-bit coefficients and evaluate the fused
 # setup scan with its jobs and weighted dots inline; same field values. Default on.
+# prevalidated-catalog: the host records the embedded setup's one-hot catalog
+# view and the verifier guest rebuilds a byte-equal view from that record
+# instead of validating it again; same field values. Default on; effective only
+# with `akita`.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -83,6 +87,7 @@ default = [
   "segment-setup",
   "weighted-dot-horner",
   "terminal-contraction",
+  "prevalidated-catalog",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
