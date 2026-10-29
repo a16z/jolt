@@ -7,14 +7,14 @@
 use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
 use jolt_poly::{CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
-    prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
+    prove_batch, prove_uniskip_clear, round_pow_bits, BatchMember, BatchPrelude, BooleanHypercube,
     CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, EvaluationClaim, ProveRounds,
     ProvedBatch, RoundMessage, SequentialRounds, SumcheckClaim, SumcheckDomain, SumcheckDomainSpec,
     SumcheckError, SumcheckProof, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{
     prover_transcript, Blake2b512, ChallengeCodec, Encoding, FieldTranscript, ProverState,
-    ProverTranscript, ScriptedTranscript,
+    ProverTranscript, ScriptedTranscript, Transcript,
 };
 
 const LABEL: &[u8] = b"binary-sumcheck";
@@ -49,8 +49,9 @@ impl BinaryField for F128 {
     }
 }
 
-// `F64` challenges carry 64 bits, below the 128-bit Fiat-Shamir target; the
-// `F64` tests check sumcheck algebra, not Fiat-Shamir security.
+// `F64` challenges carry 64 bits, which no supported proof of work lifts to
+// the 128-bit target, so a priced transcript rejects every round; the `F64`
+// tests check sumcheck algebra, not Fiat-Shamir security.
 impl BinaryField for F64 {
     type HashTranscript = ScriptedTranscript<ProverState<Blake2b512>, Self>;
 
@@ -440,6 +441,25 @@ fn rejection<F: BinaryField>() {
     let mut coefficients = round.coeffs_except_linear_term().to_vec();
     coefficients[0] += F::one();
     *round = CompressedPoly::new(coefficients);
+    // The honest nonces were ground against the untampered rounds; regrind so
+    // the round loop reaches the final oracle check under test.
+    let mut transcript = F::hash_transcript();
+    fixture.replay_head(&mut transcript);
+    proof.pow_nonces = proof
+        .round_polynomials
+        .iter()
+        .filter_map(|round| {
+            let coefficients = round.coeffs_except_linear_term();
+            transcript.append(&(coefficients.len() as u64));
+            for coefficient in coefficients {
+                transcript.append(coefficient);
+            }
+            let bits = round_pow_bits::<F, F::HashTranscript>(2).unwrap();
+            let nonce = transcript.public_grind(bits).unwrap();
+            let _ = transcript.challenge().unwrap();
+            nonce
+        })
+        .collect();
     let mut transcript = F::hash_transcript();
     fixture.replay_head(&mut transcript);
     let reduced = altered
@@ -495,9 +515,12 @@ fn uncompressed<F: BinaryField>() {
     let mut bind = None;
     let mut rounds = Vec::new();
     let mut challenges = Vec::new();
+    let mut pow_nonces = Vec::new();
     for round in 0..4 {
         let polynomial = member.prove_round(bind, round, previous_claim).unwrap();
         polynomial.append_to_transcript(&mut prover);
+        let bits = round_pow_bits::<F, F::HashTranscript>(3).unwrap();
+        pow_nonces.extend(prover.public_grind(bits).unwrap());
         let challenge = prover.challenge().unwrap();
         previous_claim = polynomial.evaluate(challenge);
         bind = Some(challenge);
@@ -509,6 +532,7 @@ fn uncompressed<F: BinaryField>() {
     let reduced = SumcheckVerifier::verify(
         &SumcheckClaim::new(4, 3, input_claim),
         &rounds,
+        &pow_nonces,
         BooleanHypercube,
         &mut verifier,
     )

@@ -6,8 +6,10 @@ use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::{ClearSumcheckProof, CompressedSumcheckProof};
 use jolt_sumcheck::round_proof::RoundMessage;
-use jolt_sumcheck::{BooleanHypercube, SumcheckVerifier};
-use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, ProverState, Transcript};
+use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckVerifier};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript, Transcript,
+};
 
 type F = Fr;
 
@@ -31,6 +33,10 @@ fn new_transcript() -> ProverState<Blake2b512> {
     prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"soundness-test"), b"")
 }
 
+fn pow_bits(degree: usize) -> u32 {
+    round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap()
+}
+
 fn honest_prove(
     evals: &[F],
     num_vars: usize,
@@ -38,6 +44,7 @@ fn honest_prove(
 ) -> ClearSumcheckProof<F> {
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
 
     for _round in 0..num_vars {
         let half = buf.len() / 2;
@@ -49,6 +56,7 @@ fn honest_prove(
         }
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
         <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
+        pow_nonces.extend(transcript.public_grind(pow_bits(1)).unwrap());
         let r: F = transcript.challenge().unwrap();
         round_polys.push(round_poly);
         for i in 0..half {
@@ -59,6 +67,7 @@ fn honest_prove(
 
     ClearSumcheckProof {
         round_polynomials: round_polys,
+        pow_nonces,
     }
 }
 
@@ -83,6 +92,7 @@ fn verify_with_oracle_check(
     } = SumcheckVerifier::verify(
         claim,
         &proof.round_polynomials,
+        &proof.pow_nonces,
         BooleanHypercube,
         &mut transcript,
     )?;
@@ -119,8 +129,13 @@ fn wrong_polynomial_same_sum_fails_oracle_check() {
 
     // Round checks pass (proof is internally consistent for g)
     let mut vt = new_transcript();
-    let round_result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
+    let round_result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
     assert!(
         round_result.is_ok(),
         "round checks should pass for honest g proof"
@@ -152,8 +167,13 @@ fn corrupted_last_round_detected() {
     };
 
     let mut vt = new_transcript();
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
     assert!(result.is_err(), "corrupted last round must be rejected");
 }
 
@@ -177,8 +197,13 @@ fn swapped_round_order_rejected() {
     };
 
     let mut vt = new_transcript();
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
 
     // Round 0 now has the wrong s(0)+s(1) (it was computed for a different running sum).
     // Even if by accident s(0)+s(1) matched, the transcript would desync.
@@ -227,8 +252,13 @@ fn verifier_transcript_desync_rejected() {
     let mut vt = new_transcript();
     vt.append(&F::from_u64(0xdead));
 
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
 
     // Round 0's s(0)+s(1) check passes (it doesn't depend on challenges),
     // but the challenge r_0 will differ, so round 1's running sum will be wrong.
@@ -247,7 +277,7 @@ fn num_vars_zero_accepts_any_claimed_sum() {
 
     let round_proofs: &[UnivariatePoly<F>] = &[];
     let mut vt = new_transcript();
-    let result = SumcheckVerifier::verify(&claim, round_proofs, BooleanHypercube, &mut vt);
+    let result = SumcheckVerifier::verify(&claim, round_proofs, &[], BooleanHypercube, &mut vt);
     assert!(result.is_ok());
 
     let EvaluationClaim {
@@ -268,6 +298,20 @@ fn absorb_compressed_round(round: &CompressedPoly<F>, transcript: &mut ProverSta
     }
 }
 
+/// The nonces an honest prover grinds for `rounds` at degree bound `degree`.
+fn grind_compressed_nonces(rounds: &[CompressedPoly<F>], degree: usize) -> Vec<u64> {
+    let mut transcript = new_transcript();
+    rounds
+        .iter()
+        .filter_map(|round| {
+            absorb_compressed_round(round, &mut transcript);
+            let nonce = transcript.public_grind(pow_bits(degree)).unwrap();
+            let _challenge: F = transcript.challenge().unwrap();
+            nonce
+        })
+        .collect()
+}
+
 /// Honest degree-2 compressed prover for f = g * h (both multilinear,
 /// HighToLow binding), absorbing rounds exactly the way `verify_compressed`
 /// replays them.
@@ -280,6 +324,7 @@ fn honest_prove_product_compressed(
     let mut g = g_evals.to_vec();
     let mut h = h_evals.to_vec();
     let mut rounds = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
 
     for _round in 0..num_vars {
         let half = g.len() / 2;
@@ -296,6 +341,7 @@ fn honest_prove_product_compressed(
         let compressed = UnivariatePoly::new(vec![c0, c1, c2]).compress();
 
         absorb_compressed_round(&compressed, transcript);
+        pow_nonces.extend(transcript.public_grind(pow_bits(2)).unwrap());
         let r: F = transcript.challenge().unwrap();
 
         for i in 0..half {
@@ -309,6 +355,7 @@ fn honest_prove_product_compressed(
 
     CompressedSumcheckProof {
         round_polynomials: rounds,
+        pow_nonces,
     }
 }
 
@@ -353,6 +400,9 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
                 .to_vec();
             coeffs[position] += F::from_u64(1);
             tampered.round_polynomials[round] = CompressedPoly::new(coeffs);
+            // The honest nonces were ground against the untampered transcript;
+            // regrind so the round loop reaches the coefficients under test.
+            tampered.pow_nonces = grind_compressed_nonces(&tampered.round_polynomials, 2);
 
             let mut vt = new_transcript();
             let result =

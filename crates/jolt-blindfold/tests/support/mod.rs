@@ -1716,6 +1716,7 @@ fn prove_slow_sumcheck(
     SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces: Vec::new(),
         },
         point: prefix,
     }

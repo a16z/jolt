@@ -190,7 +190,7 @@ where
     R: RngCore,
     C: BlindFoldRowCommitter<F, VC>,
 {
-    // BlindFold runs over wide challenge sets only.
+    // BlindFold runs over wide challenge sets only; no draw here grinds.
     require_no_pow(T::CHALLENGE_SET).map_err(|_| ProverError::NeedsProofOfWork)?;
     validate_witness::<F, VC>(setup, protocol, witness)?;
 
@@ -877,6 +877,7 @@ where
     Ok(SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces: Vec::new(),
         },
         point,
     })
@@ -952,6 +953,7 @@ where
     Ok(SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces: Vec::new(),
         },
         point,
     })

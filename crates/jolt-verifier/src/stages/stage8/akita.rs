@@ -25,6 +25,7 @@ use jolt_poly::Point;
 use jolt_transcript::{Encoding, FieldTranscript};
 
 use super::precommitted::precommitted_final_openings;
+use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
@@ -162,6 +163,14 @@ where
         .map_err(batch_failed)
 }
 
+/// Whether any of `plans` draws a selector point, so that stage 8 has a
+/// challenge burst for proof of work to protect.
+pub fn has_selectors<'a>(plans: impl IntoIterator<Item = &'a PrefixPackedObjectPlan>) -> bool {
+    plans
+        .into_iter()
+        .any(|plan| plan.packing().selector_num_vars() > 0)
+}
+
 fn advice_object<'a, PCS: CommitmentScheme>(
     leaf: Option<&EvaluationClaim<PCS::Field>>,
     commitment: Option<&'a PCS::Output>,
@@ -246,6 +255,7 @@ pub fn verify<PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
     proof: &PCS::Proof,
+    pow_nonces: &StagePowNonces,
     transcript: &mut T,
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
@@ -312,6 +322,26 @@ where
             .map_err(batch_failed)
         })
         .transpose()?;
+
+    // One nonce covers every object's selector point: the reductions absorb
+    // only claims fixed by earlier messages, so no prover message falls
+    // between the draws. With no selector there is no burst and no nonce.
+    let selectors = has_selectors(
+        [untrusted.as_ref(), trusted.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|object| &object.plan)
+            .chain(
+                program
+                    .iter()
+                    .flat_map(|(_, plan)| [&plan.bytecode, &plan.program_image]),
+            ),
+    );
+    if selectors {
+        check_pow(PowSite::Stage8, pow_nonces, transcript)?;
+    } else {
+        pow_nonces.require_absent(PowSite::Stage8)?;
+    }
 
     let untrusted_claim = if let Some(object) = untrusted.as_ref() {
         validate_packed_object_metadata(object.commitment, &object.plan)?;

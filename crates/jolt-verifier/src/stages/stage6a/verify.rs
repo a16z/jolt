@@ -21,8 +21,13 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
-        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
-        stage5::Stage5Output, zk::committed,
+        pow::{check_pow, PowSite},
+        stage1::Stage1Output,
+        stage2::Stage2Output,
+        stage3::Stage3Output,
+        stage4::Stage4Output,
+        stage5::Stage5Output,
+        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -80,6 +85,7 @@ where
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
+    check_pow(PowSite::Stage6a, &proof.stages.pow_nonces, transcript)?;
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 

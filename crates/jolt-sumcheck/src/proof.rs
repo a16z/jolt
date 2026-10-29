@@ -25,6 +25,9 @@ use serde::{Deserialize, Serialize};
 pub struct ClearSumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
+    /// One proof-of-work nonce per round, ground after the round polynomial
+    /// and before its challenge; empty when the round difficulty is zero.
+    pub pow_nonces: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -32,6 +35,8 @@ pub struct ClearSumcheckProof<F: Field> {
 pub struct CompressedSumcheckProof<F: Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
+    /// One proof-of-work nonce per round, as in [`ClearSumcheckProof`].
+    pub pow_nonces: Vec<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,9 +110,13 @@ impl<F: Field, C> SumcheckProof<F, C> {
         D: SumcheckDomain<F>,
     {
         match self {
-            Self::Clear(ClearProof::Full(proof)) => {
-                SumcheckVerifier::verify(claim, &proof.round_polynomials, domain, transcript)
-            }
+            Self::Clear(ClearProof::Full(proof)) => SumcheckVerifier::verify(
+                claim,
+                &proof.round_polynomials,
+                &proof.pow_nonces,
+                domain,
+                transcript,
+            ),
             Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "full clear",
                 got: "compressed clear",

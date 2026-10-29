@@ -12,6 +12,7 @@ use jolt_verifier::config::JoltProtocolConfig;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::proof::ClearProofClaims;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
 use crate::boundary::finish_stage;
 use crate::dory::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
@@ -191,6 +192,20 @@ where
         stage6a_sumcheck_proof: stage6a.sumcheck_proof,
         stage6b_sumcheck_proof: stage6b.sumcheck_proof,
         stage7_sumcheck_proof: stage7.sumcheck_proof,
+        // The homomorphic opening draws no selector point, so stage 8 has no
+        // nonce.
+        pow_nonces: StagePowNonces::from_iter([
+            (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+            (PowSite::Stage1, stage1.pow_nonce),
+            (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+            (PowSite::Stage2, stage2.pow_nonce),
+            (PowSite::Stage3, stage3.pow_nonce),
+            (PowSite::Stage4, stage4.pow_nonce),
+            (PowSite::Stage5, stage5.pow_nonce),
+            (PowSite::Stage6a, stage6a.pow_nonce),
+            (PowSite::Stage6b, stage6b.pow_nonce),
+            (PowSite::Stage7, stage7.pow_nonce),
+        ]),
     };
 
     #[cfg(not(feature = "zk"))]
