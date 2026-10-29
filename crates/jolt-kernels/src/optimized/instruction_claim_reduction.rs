@@ -9,6 +9,8 @@ use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedI
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -165,10 +167,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
                 |j: usize| -> Result<F, WitnessError> { Ok(coefficients.combine(&access.row(j)?)) };
             #[cfg(feature = "parallel")]
             {
-                (0..1usize << log_t)
-                    .into_par_iter()
-                    .map(cell)
-                    .collect::<Result<_, _>>()?
+                par_collect_windows(1usize << log_t, cell)?
             }
             #[cfg(not(feature = "parallel"))]
             {
