@@ -4,8 +4,13 @@
 | --------- | --------------- |
 | Author(s) | @shreyas-londhe |
 | Created   | 2026-04-17      |
-| Status    | implemented     |
+| Status    | historical; superseded by [2110-jolt-transcript-sealed-spongefish.md](./2110-jolt-transcript-sealed-spongefish.md) |
 | PR        | 1455            |
+
+> **Superseded.** [One sealed transcript over spongefish states](./2110-jolt-transcript-sealed-spongefish.md)
+> (#2110) describes the current transcript: no compatibility facade, sealed
+> traits, positional word-aligned absorbs, and full-width challenges. The body
+> below records the #1455 design and does not describe the current code.
 
 ## Summary
 
