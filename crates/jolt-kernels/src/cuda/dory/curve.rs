@@ -3,8 +3,9 @@
 //! Contiguous multi-pairing inputs become deferred device requests; individual
 //! pairings and other input layouts use the CPU curve. Transcript operations
 //! delegate to `JoltToDoryTranscript`, resolving handles through their ordinary
-//! group serialization. The returned transparent proof is converted back to
-//! the shared host proof type before the arena closes.
+//! group serialization and propagating refused challenges through `finish`.
+//! The returned transparent proof is converted back to the shared host proof
+//! type before the arena closes.
 
 use ark_bn254::Fq;
 use ark_bn254::Fq12;
@@ -23,7 +24,8 @@ use dory::primitives::DorySerialize;
 use dory::proof::DoryProof;
 use jolt_dory::JoltToDoryTranscript;
 use jolt_field::Fr;
-use jolt_transcript::Transcript;
+use jolt_openings::OpeningsError;
+use jolt_transcript::FieldTranscript;
 
 use super::gt::DeviceGT;
 use super::handle::{load_all, load_all_g2, span, span_g2, DeviceG1, DeviceG2};
@@ -95,19 +97,23 @@ impl PairingCurve for CudaBN254 {
     }
 }
 
-pub(super) struct CudaDoryTranscript<'a, T: Transcript<Challenge = Fr>> {
+pub(super) struct CudaDoryTranscript<'a, T: FieldTranscript<Fr>> {
     inner: JoltToDoryTranscript<'a, T>,
 }
 
-impl<'a, T: Transcript<Challenge = Fr>> CudaDoryTranscript<'a, T> {
+impl<'a, T: FieldTranscript<Fr>> CudaDoryTranscript<'a, T> {
     pub(super) fn new(transcript: &'a mut T) -> Self {
         Self {
             inner: JoltToDoryTranscript::new(transcript),
         }
     }
+
+    pub(super) fn finish(self) -> Result<(), OpeningsError> {
+        self.inner.finish()
+    }
 }
 
-impl<T: Transcript<Challenge = Fr>> DoryTranscript for CudaDoryTranscript<'_, T> {
+impl<T: FieldTranscript<Fr>> DoryTranscript for CudaDoryTranscript<'_, T> {
     type Curve = CudaBN254;
 
     fn append_bytes(&mut self, label: &[u8], bytes: &[u8]) {
@@ -207,7 +213,10 @@ mod tests {
     use dory::messages::{ScalarProductProof, Sigma1Proof, Sigma2Proof};
     use dory::primitives::{Compress, SerializationError};
     use jolt_dory::DoryProof as JoltDoryProof;
-    use jolt_transcript::{Blake2bTranscript, LegacyBlake2bTranscript};
+    use jolt_transcript::{
+        protocol_tag, prover_transcript, verifier_transcript, Blake2b512, Keccak, ProverInit,
+        ProverState, Transcript,
+    };
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -381,15 +390,26 @@ mod tests {
         gt::reset();
     }
 
-    fn host_transcript_operations<T: Transcript<Challenge = Fr>>() {
-        let mut actual = T::new(b"cuda-dory-transcript");
-        let mut expected = T::new(b"cuda-dory-transcript");
+    fn assert_same_challenge(
+        actual: &mut impl FieldTranscript<Fr>,
+        expected: &mut impl FieldTranscript<Fr>,
+    ) {
+        assert_eq!(
+            actual.challenge().expect("CUDA transcript challenge"),
+            expected.challenge().expect("CPU transcript challenge"),
+        );
+    }
+
+    fn host_transcript_operations<T: FieldTranscript<Fr> + ProverInit>() {
+        let session = protocol_tag(b"cuda-dory-transcript");
+        let mut actual = T::init(&session, b"");
+        let mut expected = T::init(&session, b"");
         actual.append_bytes(b"prior Jolt state");
         expected.append_bytes(b"prior Jolt state");
         for payload in [b"".as_slice(), b"one", b"some longer transcript payload"] {
             CudaDoryTranscript::new(&mut actual).append_bytes(b"cuda-label", payload);
             JoltToDoryTranscript::new(&mut expected).append_bytes(b"host-label", payload);
-            assert_eq!(actual.state(), expected.state());
+            assert_same_challenge(&mut actual, &mut expected);
         }
         let mut rng = ChaCha20Rng::seed_from_u64(21_127);
         for scalar in [
@@ -401,49 +421,52 @@ mod tests {
             let value = ArkFr(scalar);
             CudaDoryTranscript::new(&mut actual).append_field(b"field", &value);
             JoltToDoryTranscript::new(&mut expected).append_field(b"field", &value);
-            assert_eq!(actual.state(), expected.state());
+            assert_same_challenge(&mut actual, &mut expected);
             CudaDoryTranscript::new(&mut actual).append_serde(b"scalar", &value);
             JoltToDoryTranscript::new(&mut expected).append_serde(b"scalar", &value);
-            assert_eq!(actual.state(), expected.state());
+            assert_same_challenge(&mut actual, &mut expected);
             for _ in 0..3 {
-                let before = actual.state();
+                let mut cuda = CudaDoryTranscript::new(&mut actual);
+                let mut cpu = JoltToDoryTranscript::new(&mut expected);
                 assert_eq!(
-                    CudaDoryTranscript::new(&mut actual).challenge_scalar(b"challenge"),
-                    JoltToDoryTranscript::new(&mut expected).challenge_scalar(b"challenge"),
+                    cuda.challenge_scalar(b"challenge"),
+                    cpu.challenge_scalar(b"challenge"),
                 );
-                assert_eq!(actual.state(), expected.state());
-                assert_ne!(actual.state(), before);
+                cuda.finish().expect("CUDA adapter accepts the challenge");
+                cpu.finish().expect("CPU adapter accepts the challenge");
+                assert_same_challenge(&mut actual, &mut expected);
             }
         }
     }
 
     #[test]
     fn transcript_host_operations_match_cpu_without_an_arena() {
-        host_transcript_operations::<Blake2bTranscript>();
-        host_transcript_operations::<LegacyBlake2bTranscript>();
+        host_transcript_operations::<ProverState<Blake2b512>>();
+        host_transcript_operations::<ProverState<Keccak>>();
     }
 
-    fn resident_transcript_messages<T: Transcript<Challenge = Fr>>() {
+    fn resident_transcript_messages<T: FieldTranscript<Fr> + ProverInit>() {
         let guard = arena::open(17, 17).expect("arena");
         gt::reset();
         let (ps, qs) = points(17);
         let hp = store_all(&ps);
         let hq = store_frozen_g2(&qs);
-        let mut actual = T::new(b"cuda-dory-resident");
-        let mut expected = T::new(b"cuda-dory-resident");
+        let session = protocol_tag(b"cuda-dory-resident");
+        let mut actual = T::init(&session, b"");
+        let mut expected = T::init(&session, b"");
         for index in [0, 1, 3] {
             CudaDoryTranscript::new(&mut actual).append_group(b"g1", &hp[index]);
             JoltToDoryTranscript::new(&mut expected).append_group(b"g1", &ArkG1(ps[index]));
-            assert_eq!(actual.state(), expected.state());
+            assert_same_challenge(&mut actual, &mut expected);
             CudaDoryTranscript::new(&mut actual).append_group(b"g2", &hq[index]);
             JoltToDoryTranscript::new(&mut expected).append_group(b"g2", &ArkG2(qs[index]));
-            assert_eq!(actual.state(), expected.state());
+            assert_same_challenge(&mut actual, &mut expected);
         }
         let target = CudaBN254::multi_pair(&hp[1..6], &hq[2..7]);
         let host_target = ArkGT(Bn254::multi_pairing(ps[1..6].to_vec(), qs[2..7].to_vec()));
         CudaDoryTranscript::new(&mut actual).append_group(b"gt", &target);
         JoltToDoryTranscript::new(&mut expected).append_group(b"gt", &host_target);
-        assert_eq!(actual.state(), expected.state());
+        assert_same_challenge(&mut actual, &mut expected);
         let targets = vec![
             CudaBN254::multi_pair(&hp[1..6], &hq[2..7]),
             CudaBN254::multi_pair(&hp[3..8], &hq[4..9]),
@@ -454,16 +477,12 @@ mod tests {
         ];
         CudaDoryTranscript::new(&mut actual).append_serde(b"targets", &targets);
         JoltToDoryTranscript::new(&mut expected).append_serde(b"targets", &host_targets);
-        assert_eq!(actual.state(), expected.state());
+        assert_same_challenge(&mut actual, &mut expected);
         drop(guard);
         for (value, host_value) in targets.into_iter().zip(host_targets) {
             CudaDoryTranscript::new(&mut actual).append_group(b"resolved", &value);
             JoltToDoryTranscript::new(&mut expected).append_group(b"resolved", &host_value);
-            assert_eq!(
-                CudaDoryTranscript::new(&mut actual).challenge_scalar(b"challenge"),
-                JoltToDoryTranscript::new(&mut expected).challenge_scalar(b"challenge"),
-            );
-            assert_eq!(actual.state(), expected.state());
+            assert_same_challenge(&mut actual, &mut expected);
         }
         assert!(!arena::poisoned());
         gt::reset();
@@ -474,31 +493,22 @@ mod tests {
         if shared_context().is_none() {
             return;
         }
-        resident_transcript_messages::<Blake2bTranscript>();
-        resident_transcript_messages::<LegacyBlake2bTranscript>();
+        resident_transcript_messages::<ProverState<Blake2b512>>();
+        resident_transcript_messages::<ProverState<Keccak>>();
     }
 
     #[test]
     fn transcript_reset_is_rejected_without_changing_state() {
-        let mut actual = LegacyBlake2bTranscript::new(b"cuda-dory-reset");
-        let mut expected = LegacyBlake2bTranscript::new(b"cuda-dory-reset");
+        let session = protocol_tag(b"cuda-dory-reset");
+        let mut actual = prover_transcript::<Keccak>(&session, b"");
+        let mut expected = prover_transcript::<Keccak>(&session, b"");
         actual.append_bytes(b"prior state");
         expected.append_bytes(b"prior state");
-        let before = actual.state();
         assert!(std::panic::catch_unwind(AssertUnwindSafe(|| {
             CudaDoryTranscript::new(&mut actual).reset(b"new domain");
         }))
         .is_err());
-        assert!(std::panic::catch_unwind(AssertUnwindSafe(|| {
-            JoltToDoryTranscript::new(&mut expected).reset(b"new domain");
-        }))
-        .is_err());
-        assert_eq!(actual.state(), before);
-        assert_eq!(expected.state(), before);
-        assert_eq!(
-            CudaDoryTranscript::new(&mut actual).challenge_scalar(b"continued"),
-            JoltToDoryTranscript::new(&mut expected).challenge_scalar(b"continued"),
-        );
+        assert_same_challenge(&mut actual, &mut expected);
     }
 
     #[test]
@@ -518,19 +528,27 @@ mod tests {
                 3
             }
         }
-        let mut actual = LegacyBlake2bTranscript::new(b"cuda-dory-error");
-        let mut expected = LegacyBlake2bTranscript::new(b"cuda-dory-error");
-        let before = actual.state();
+        let session = protocol_tag(b"cuda-dory-error");
+        let mut actual = prover_transcript::<Keccak>(&session, b"");
+        let mut expected = prover_transcript::<Keccak>(&session, b"");
         assert!(std::panic::catch_unwind(AssertUnwindSafe(|| {
             CudaDoryTranscript::new(&mut actual).append_serde(b"failing", &Unserializable);
         }))
         .is_err());
-        assert!(std::panic::catch_unwind(AssertUnwindSafe(|| {
-            JoltToDoryTranscript::new(&mut expected).append_serde(b"failing", &Unserializable);
-        }))
-        .is_err());
-        assert_eq!(actual.state(), before);
-        assert_eq!(expected.state(), before);
+        assert_same_challenge(&mut actual, &mut expected);
+    }
+
+    #[test]
+    fn transcript_finish_reports_a_refused_challenge() {
+        let session = protocol_tag(b"cuda-dory-refused-challenge");
+        let mut transcript = verifier_transcript::<Keccak>(&session, b"", &[]);
+        assert!(transcript.check_public_grind(0, Some(1)).is_err());
+        let mut adapter = CudaDoryTranscript::new(&mut transcript);
+        let _ = adapter.challenge_scalar(b"refused");
+        assert!(matches!(
+            adapter.finish(),
+            Err(OpeningsError::TranscriptRejected),
+        ));
     }
 
     fn proof_fixture<G1: Group + Copy, G2: Copy, GT: Copy>(

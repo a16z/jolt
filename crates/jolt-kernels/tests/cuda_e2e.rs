@@ -36,7 +36,7 @@ use jolt_prover::{
     dory, CommittedProgramProverData, JoltProverPreprocessing, JoltSharedPreprocessing,
     ProverConfig,
 };
-use jolt_transcript::LegacyBlake2bTranscript;
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 #[cfg(feature = "zk")]
 use jolt_verifier::proof::JoltProofClaims;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -122,7 +122,7 @@ fn prove_guest(
             commitment: advice.commitment.clone(),
             hint: advice.hint.clone(),
         });
-    let cpu = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+    let cpu = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
         JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
         &config,
@@ -130,7 +130,7 @@ fn prove_guest(
         &public_io,
     )
     .expect("optimized proof");
-    let gpu = dory::prove::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+    let gpu = dory::prove::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &cuda_preprocessing,
         &config,
@@ -138,7 +138,7 @@ fn prove_guest(
         &public_io,
     )
     .expect("CUDA proof");
-    jolt_verifier::verify::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+    jolt_verifier::verify::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
         &cuda_preprocessing.verifier,
         &public_io,
         &gpu,
@@ -154,7 +154,7 @@ fn prove_guest(
         "CUDA and optimized proofs must be byte-identical",
     );
     #[cfg(feature = "zk")]
-    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
         &preprocessing.verifier,
         &public_io,
         &cpu,
@@ -173,7 +173,7 @@ fn prove_guest(
                 Fr,
                 CudaDoryScheme,
                 Pedersen<Bn254G1>,
-                LegacyBlake2bTranscript,
+                VerifierState<'_, Keccak>,
             >(
                 &cuda_preprocessing.verifier,
                 &public_io,

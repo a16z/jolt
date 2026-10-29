@@ -41,7 +41,8 @@ mod profile {
     use jolt_program::execution::{ExecutionBackend, TraceInputs};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_prover::{dory, JoltProverPreprocessing, JoltSharedPreprocessing, ProverConfig};
-    use jolt_transcript::LegacyBlake2bTranscript;
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_verifier::verify;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use serde_json::json;
     use tracer::execution_backend::TracerBackend;
@@ -195,18 +196,17 @@ mod profile {
             macro_rules! prove {
                 ($pcs:ty, $backend:expr, $preprocessing:expr) => {{
                     let start = Instant::now();
-                    let proof =
-                        dory::prove::<Fr, $pcs, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
-                            $backend.with_witness(&witness),
-                            $preprocessing,
-                            &config,
-                            None,
-                            &public_io,
-                        )
-                        .expect("proof");
+                    let proof = dory::prove::<Fr, $pcs, Pedersen<Bn254G1>, ProverState<Keccak>>(
+                        $backend.with_witness(&witness),
+                        $preprocessing,
+                        &config,
+                        None,
+                        &public_io,
+                    )
+                    .expect("proof");
                     let seconds = start.elapsed().as_secs_f64();
                     let verify_start = Instant::now();
-                    jolt_verifier::verify::<Fr, $pcs, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+                    verify::<Fr, $pcs, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
                         &$preprocessing.verifier,
                         &public_io,
                         &proof,

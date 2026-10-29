@@ -41,7 +41,7 @@ use jolt_openings::{
     ZkStreamingCommitment,
 };
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
@@ -220,7 +220,7 @@ impl CommitmentScheme for CudaDoryScheme {
         _eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         let num_vars = point.len();
         let sigma = num_vars.div_ceil(2);
@@ -276,6 +276,7 @@ impl CommitmentScheme for CudaDoryScheme {
             .map_err(|error| {
                 OpeningsError::ProveFailed(format!("dory::prove failed: {error:?}"))
             })?;
+        dory_transcript.finish()?;
 
         if arena::poisoned() {
             return Err(OpeningsError::ProveFailed(
@@ -294,7 +295,7 @@ impl CommitmentScheme for CudaDoryScheme {
         eval: Self::Field,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
         DoryScheme::verify(commitment, point, eval, proof, setup, transcript)
     }
@@ -426,7 +427,7 @@ impl ZkOpeningScheme for CudaDoryScheme {
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
         DoryScheme::open_zk(poly, point, eval, setup, hint, transcript)
     }
@@ -436,7 +437,7 @@ impl ZkOpeningScheme for CudaDoryScheme {
         point: &[Self::Field],
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
         DoryScheme::verify_zk(commitment, point, proof, setup, transcript)
     }
@@ -470,7 +471,9 @@ mod tests {
     use jolt_field::{Field, Fr, Ring};
     use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme};
     use jolt_poly::Polynomial;
-    use jolt_transcript::{Blake2bTranscript, Transcript};
+    use jolt_transcript::{
+        protocol_tag, prover_transcript, verifier_transcript, FieldTranscript, Keccak,
+    };
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -481,6 +484,7 @@ mod tests {
     use crate::cuda::common::msm::testing::point;
 
     const NUM_VARS: usize = 4;
+    const SESSION: [u8; 32] = protocol_tag(b"dory");
     const PROVE_SCALE_VARS: usize = 20;
     const PROVE_WIDE_HINTS: usize = 40;
     const PROVE_WIDE_ROWS: usize = 8_192;
@@ -545,7 +549,7 @@ mod tests {
         setup: &DoryProverSetup,
         hint: DoryHint,
     ) -> (DoryProof, DoryProof) {
-        let mut transcript = Blake2bTranscript::new(b"dory");
+        let mut transcript = prover_transcript::<Keccak>(&SESSION, b"");
         let got = CudaDoryScheme::open(
             poly,
             point,
@@ -556,10 +560,15 @@ mod tests {
         )
         .expect("cuda open");
 
-        let mut oracle_transcript = Blake2bTranscript::new(b"dory");
+        let mut oracle_transcript = prover_transcript::<Keccak>(&SESSION, b"");
         let expected =
             DoryScheme::open(poly, point, eval, setup, Some(hint), &mut oracle_transcript)
                 .expect("dory open");
+        let next: Fr = transcript.challenge().expect("CUDA transcript challenge");
+        let expected_next: Fr = oracle_transcript
+            .challenge()
+            .expect("CPU transcript challenge");
+        assert_eq!(next, expected_next, "the opening transcript diverged");
         (got, expected)
     }
 
@@ -663,7 +672,7 @@ mod tests {
         let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
         assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
 
-        let mut verify_transcript = Blake2bTranscript::new(b"dory");
+        let mut verify_transcript = verifier_transcript::<Keccak>(&SESSION, b"", &[]);
         DoryScheme::verify(
             &commitment,
             &point,
@@ -673,6 +682,7 @@ mod tests {
             &mut verify_transcript,
         )
         .expect("the DoryScheme verifier must accept a CudaDoryScheme proof");
+        verify_transcript.check_eof().expect("no unread proof data");
     }
 
     #[test]
@@ -699,7 +709,7 @@ mod tests {
                 "the proof diverged at {num_vars} variables"
             );
 
-            let mut verify_transcript = Blake2bTranscript::new(b"dory");
+            let mut verify_transcript = verifier_transcript::<Keccak>(&SESSION, b"", &[]);
             let accepted = DoryScheme::verify(
                 &commitment,
                 &point,
@@ -712,6 +722,7 @@ mod tests {
                 accepted.is_ok(),
                 "the verifier rejected a {num_vars}-variable CudaDoryScheme proof: {accepted:?}"
             );
+            verify_transcript.check_eof().expect("no unread proof data");
         }
     }
 
@@ -739,7 +750,7 @@ mod tests {
         let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
         assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
 
-        let mut verify_transcript = Blake2bTranscript::new(b"dory");
+        let mut verify_transcript = verifier_transcript::<Keccak>(&SESSION, b"", &[]);
         DoryScheme::verify(
             &commitment,
             &point,
@@ -749,6 +760,7 @@ mod tests {
             &mut verify_transcript,
         )
         .expect("the DoryScheme verifier must accept a CudaDoryScheme proof");
+        verify_transcript.check_eof().expect("no unread proof data");
     }
 
     #[test]
