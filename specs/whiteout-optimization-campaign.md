@@ -403,6 +403,60 @@ paper delta.
   D < 64 and with i16 primes, which is unverified. Merged (Akita
   f0de039e2, jolt 3bc688951); bars green, and the dump has the 5 known
   omissions.
+- **U1 (2026-10-29; constant-time digit lift).** `DigitMontLut::get`, the
+  scalar fill behind `fill_ntt_limb`, now computes `digit · R mod p` as one
+  Montgomery product by `R^2` instead of reading a table at the secret
+  digit. The NEON and AVX2/AVX-512 digit entries were already table-free.
+  `scalar_digit_fill_is_digit_times_montgomery_radix` forces the scalar
+  plan and checks every i8 digit against `d · 2^R_LOG mod p` for i32 and
+  i16 primes. Scratch dudect (uncommitted, M4, `AKITA_SCALAR_NTT=1`,
+  10^6 samples, fixed −8 or 0 vs random in [−8, 7]): `get` max |t| ≤ 1.7
+  for i32 and i16 primes. The scalar i16 forward NTT shows a crop-only |t|
+  of 71–91 for an all-zero input, both before and after U1. Its source is
+  branch-free and it is not the fill; it is unexplained. A/B, min of 5
+  runs at load 44–120: NEON q64 `signed_i8/512` 1143 → 1074 ns, scalar
+  6060 → 5954 ns, scalar q128 `signed_i8_negacyclic/64` 653 → 673 ns,
+  all within noise. Open, off this chain: the IFMA i16 scalar fallback
+  (`canonical_i16`, `mul` by `%`) branches and divides on its input.
+  x86_64 was type-checked, not run.
+- **U1b (2026-10-29; U1's two constant-time follow-ups).** (a) The
+  scalar i16 NTT's all-zero |t| is a real operand-value effect of the M4,
+  not a harness artifact, and not a code-level leak. Scratch dudect
+  (uncommitted, `AKITA_SCALAR_NTT=1`, i16 tail prime, `D` = 512, 10^6
+  samples, max cropped |t|): all-zero input 159 for fill plus NTT, 129
+  for the NTT alone, 138 with a fresh output buffer per sample, 84 for
+  the vectorized butterfly stages (`len ≥ 8`), 7.4 for the scalar tail
+  stages, and 1.3 for the twist. Fixed −8 gives 2.3, a fixed random vector
+  2.1, half zeros 1.5, and random against random 1.6. The fill alone gives 1.4. DIT
+  (`msr DIT, #1`, as the prover sets under A11) cuts the zero case to
+  4.6–14 over eight runs (one run of the full scalar transform gave 1.4).
+  With zero input and no override, the NEON transforms pass with or
+  without DIT: i16 tail at most 2.1, and q128 i32 at `D` = 512 at most 2.0.
+  The release aarch64 code has no division and branches only on loop
+  indices and alias checks; selects are `csel` or vector masks. Isolated
+  register-operand multiplies (`smull`, `mul`, `sqdmulh`, `madd`, `msub`,
+  throughput and latency) show no zero dependence. A dependent `madd`
+  chain whose addend is a loaded zero does: t −89 to −108 without DIT and
+  5–8 with DIT. A nonzero constant passes, and so does XOR-ing the load
+  with a constant. Reachability: on aarch64 the scalar i16 transform runs
+  only under `AKITA_SCALAR_NTT=1`, because the plan is NEON otherwise. On
+  x86_64 it runs without AVX2 or at `D < 64`, which was not measured. No
+  fix: there is no secret-dependent operation in the source to remove.
+  (b) The IFMA i16 scalar fallback is now branch-free and division-free
+  on its data. `canonical_i16`, `add` and `sub` use masked selects. The
+  transforms multiply by twiddles through Shoup quotients
+  (`mul_precon`, the scalar form of the IFMA multiplier). The
+  accumulator `reduce` mirrors `x86::dot_reduce`.
+  `scalar_arithmetic_matches_u128_remainders` checks each against `u128 %`
+  at its range edges. Scratch dudect on the M4, zero vs random digits
+  through `forward_i16`, accumulate, `reduce` and `inverse` (`D` = 256,
+  10^6): before 5016 (17.4 vs 73.0 µs); after 675 without DIT and 8.5
+  with DIT, the same zero effect as (a); a fixed random vector gives 1.6
+  and 1.7. The prover never ran this fallback, since Akita builds
+  `Ifma52Params` only when `ifma52_enabled()` holds. Still open, shared
+  with the IFMA path: `Ifma52Params::reconstruct` uses `rem_euclid` and
+  a branch on the tail digit of the mat-vec output. x86_64 was
+  clippy-checked and its release code inspected, not run.
 
 ## Not verified
 

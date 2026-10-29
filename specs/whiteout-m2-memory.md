@@ -303,22 +303,34 @@ Still unwiped:
   (`assign_i8_with_lut` → `DigitMontLut::fill_ntt_limb`,
   `jolt-algebra/src/ring/crt_ntt_repr/lut.rs`, from Akita's
   `mat_vec_mul_blocks_i8_with_params_impl` under `Dense`) has a scalar
-  fallback, `fill_limb`. It reads `DigitMontLut::get` (`lut.rs:182`),
-  which indexes a 16-entry table by the secret digit. That is a
-  secret-dependent memory access. The fallback runs whenever no vector
-  transform applies:
+  fallback, `fill_limb`. At M2 it read `DigitMontLut::get`, which indexed
+  a 16-entry table by the secret digit. The fallback runs whenever no
+  vector transform applies:
   - aarch64 with `i16` primes, since the NEON path needs `i32`;
   - x86_64 without AVX2, and x86_64 at `D < 64`
     (`use_x86_transform_ntt`), including the response commit's
     compression levels at `D` = 16 and 8;
   - any target without NEON or AVX2.
 
-  **On the M4 it is not live for the response.** A temporary probe
-  (uncommitted, removed) logged every `fill_ntt_limb` call during the
-  response commit on muldiv and fib 2^20. Each one had `i32` primes
+  **Resolved (U1).** `DigitMontLut::get` now computes the digit's
+  Montgomery form as one Montgomery product by `R^2`
+  (`NttPrime::from_canonical`), with no table. The vector paths were
+  already table-free: NEON (`centered_i8_to_mont_i32`,
+  `forward_ntt_i8_i32`) and AVX2/AVX-512 (`forward_ntt_i8_*`) sign-extend
+  the digits and multiply by `R^2` or `psi^i R^2`. The IFMA i16 kernel is
+  not on this chain. Its scalar fallback branched (`canonical_i16`,
+  `add`, `sub`) and divided (`mul` and `reduce` by `u128 %`) on its
+  input. **Resolved (U1b).** It now uses masked selects and Shoup
+  products against the twiddle quotients already in `Ifma52Twiddles`;
+  `mul` keeps its division for public table setup only. Akita builds
+  `Ifma52Params` only when `ifma52_enabled()` holds, so the prover never
+  ran this fallback; a direct `Ifma52NttMatrix` caller without IFMA did.
+
+  On the M4 the fallback is still not live for the response. A temporary
+  probe (uncommitted, removed) logged every `fill_ntt_limb` call during
+  the response commit on muldiv and fib 2^20. Each one had `i32` primes
   (`K` = 6) and the NEON plan, at `D` = 512, 64, 16 and 8, so each took
-  `neon::forward_ntt_i8_i32` or its cyclic form. `fill_limb` was never
-  entered. M2 does not change this kernel.
+  `neon::forward_ntt_i8_i32` or its cyclic form.
 - **Digit range.** The digit-range session (`DigitRangeProver`) reads its
   own unwiped copy of the digits (`Arc::from(digits.range)`, `zk/mod.rs:321`)
   and groups them by value class in `CompactDigitSource`.
@@ -387,9 +399,23 @@ All of these passed on the final trees: jolt `wo/m2-memory` rebased onto
 - **Small shapes.** No test proves a response with ν < 3. There the
   kernel never leaves the streamed state, and `e_first` folds the digits
   directly. The synthetic shapes in the tests are larger.
-- **The LUT fallback off the M4.** The `DigitMontLut` table read was
-  only shown not to run on aarch64 with NEON. On x86_64 the response
-  commit's `D` = 16 and 8 levels reach it.
+- **The scalar digit fill off the M4.** U1 made it table-free and
+  checked it on the M4 with the scalar plan forced. On x86_64 it was only
+  type-checked (`cargo check --target x86_64-apple-darwin`), not run.
+- **The IFMA i16 scalar fallback on x86_64 (U1b).** Clippy-checked for
+  `x86_64-apple-darwin`, and its x86_64 release code inspected: no
+  division and no data-dependent jump in `scalar_forward`,
+  `scalar_inverse` or the mat-vec. Not run on x86_64. On the M4 it
+  matches `u128` remainders and the ring-arithmetic mat-vec tests.
+- **Zero inputs on the M4 (U1b).** An all-zero input runs measurably
+  faster than random digits through branch-free, division-free scalar
+  code: the scalar i16 NTT (cropped |t| 84–160 without DIT, 4.6–14 with
+  DIT) and the fixed IFMA fallback (675 without DIT, 8.5 with). A
+  four-instruction loop reproduces it: a dependent `madd` whose addend is
+  a loaded zero. Fixed nonzero inputs pass. No source change removes
+  it. The production M4 paths do not show it (NEON i16 and i32 NTT pass
+  with zero input), and the scalar i16 NTT runs on aarch64 only under
+  `AKITA_SCALAR_NTT=1`. The DIT residual was not explained.
 - **Timing.** No dudect run. The constant-time argument is by code
   reading and by one compiler's output on aarch64, inspected at the
   previous agent's heads. x86_64 was not inspected, and its IFMA i16
