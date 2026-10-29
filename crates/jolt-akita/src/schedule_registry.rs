@@ -137,7 +137,8 @@ impl GroupedScheduleParams {
         self.final_group
     }
 
-    /// Provision and audit the exact grouped rows before constructing backend matrices.
+    /// Provision and audit rows for this final group before constructing backend matrices.
+    /// Other trace shapes are excluded so they cannot inflate this setup's capacity.
     /// Used by preprocessing and the offline grouped-schedule diagnostic.
     pub fn extend_catalog(
         &self,
@@ -162,7 +163,18 @@ impl GroupedScheduleParams {
                 self,
                 one_hot_k,
             )?;
-            Ok(extend_catalog::<Cfg>(&catalog, &rows)?)
+            let scoped_rows = catalog
+                .rows()
+                .filter(|row| row.profiles().final_group.group == self.final_group)
+                .chain(rows.rows())
+                .map(|row| (row.profiles().clone(), row.schedule().clone()))
+                .collect::<Vec<_>>();
+            Ok(ValidatedScheduleCatalog::try_new(
+                Cfg::schedule_family_name(),
+                scoped_rows,
+                catalog.policy(),
+                Cfg::ring_challenge_config,
+            )?)
         })
     }
 }
@@ -486,6 +498,12 @@ mod tests {
                 .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
                 .unwrap();
             assert_eq!(admitted.policy().witness_chunk, profile.witness_cfg());
+            assert!(admitted
+                .rows()
+                .all(|row| row.profiles().final_group.group == params.final_group));
+            let _ = admitted
+                .resolve_key(&ScheduleLookupKey::single(params.final_group))
+                .unwrap();
             let precommitteds = advice
                 .map(|arity| {
                     dense_group_profile(&dense, PolynomialGroupLayout::singleton(arity)).unwrap()
@@ -502,6 +520,16 @@ mod tests {
                 row.schedule().root.params.witness_chunk,
                 profile.witness_cfg()
             );
+            // Cached grouped rows must survive provisioning a second time.
+            let cached = params
+                .extend_catalog(&dense, &full_dense, &admitted, AKITA_ONE_HOT_K16, profile)
+                .unwrap();
+            assert_eq!(cached.rows().count(), admitted.rows().count());
+            for row in admitted.rows() {
+                assert!(cached.rows().any(|cached_row| {
+                    cached_row.selection().row_digest == row.selection().row_digest
+                }));
+            }
         }
     }
 
