@@ -53,12 +53,7 @@ pub(super) fn commit_columns<const D: usize>(
         .ring_view::<D>(plan.n_a, active_cols)?;
     let a_rows = a_view.rows().collect::<Vec<_>>();
     let max_per_ring = (D / source.one_hot_k).max(1);
-    let prefix_rows = source.rows.nonzero_prefix_len();
-    let prefix_rings = if source.one_hot_k < D {
-        prefix_rows.div_ceil(D / source.one_hot_k)
-    } else {
-        prefix_rows * (source.one_hot_k / D)
-    };
+    let prefix_rings = source.nonzero_ring_prefix::<D>()?;
     drop(_prepare_span);
 
     let coefficients = if segment_rings >= plan.num_positions_per_block {
