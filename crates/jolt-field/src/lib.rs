@@ -182,6 +182,8 @@ pub enum FieldError {
     InvalidSize { expected: usize, actual: usize },
 }
 
+#[cfg(feature = "signed-byte-sum")]
+mod signed_byte_sum;
 #[cfg(feature = "terminal-contraction")]
 mod terminal_contraction;
 #[doc(hidden)]

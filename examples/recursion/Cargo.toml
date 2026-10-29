@@ -156,6 +156,11 @@ fill-ingress = ["jolt-akita?/fill-ingress"]
 setup-lane-streams = ["jolt-akita?/setup-lane-streams"]
 # carry-graph: compiled carry-state graphs for the eq-pair tensor recurrences.
 carry-graph = ["jolt-akita?/carry-graph"]
+# mle-leaf-tiles: low-variable multilinear evaluation by fixed leaf tiles.
+mle-leaf-tiles = ["jolt-akita?/mle-leaf-tiles"]
+# signed-byte-sum: sparse challenge evaluation at powers through one signed-byte
+# field sum.
+signed-byte-sum = ["jolt-akita?/signed-byte-sum"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }

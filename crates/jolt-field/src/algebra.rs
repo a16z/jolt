@@ -199,6 +199,8 @@ pub trait Field: Ring {
     }
     #[cfg(feature = "terminal-contraction")]
     crate::terminal_contraction::field_methods!();
+    #[cfg(feature = "signed-byte-sum")]
+    crate::signed_byte_sum::field_methods!();
     #[cfg(feature = "fill-ingress")]
     crate::algebra::fill_ingress_field_method!();
     /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added

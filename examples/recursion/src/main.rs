@@ -954,6 +954,10 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("setup-lane-streams");
     #[cfg(all(feature = "akita", feature = "carry-graph"))]
     program.add_guest_feature("carry-graph");
+    #[cfg(all(feature = "akita", feature = "mle-leaf-tiles"))]
+    program.add_guest_feature("mle-leaf-tiles");
+    #[cfg(all(feature = "akita", feature = "signed-byte-sum"))]
+    program.add_guest_feature("signed-byte-sum");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
 }

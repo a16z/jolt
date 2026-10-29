@@ -644,8 +644,13 @@ mod guest {
         }
         finish()
     }
+
+    #[cfg(feature = "signed-byte-sum")]
+    include!("field_inline/signed_byte_sum.rs");
 }
 
+#[cfg(feature = "signed-byte-sum")]
+pub use guest::sum_signed_bytes;
 pub use guest::{
     accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub,
     sum_of_products, weighted_dot_rows,

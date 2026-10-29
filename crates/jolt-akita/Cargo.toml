@@ -63,6 +63,11 @@ fill-ingress = ["akita-algebra/fill-ingress", "jolt-field/fill-ingress"]
 setup-lane-streams = ["akita-pcs/setup-lane-streams"]
 # Compiled carry-state graphs for the eq-pair tensor recurrences (default off).
 carry-graph = ["akita-algebra/carry-graph"]
+# Low-variable multilinear evaluation by fixed leaf tiles (default off).
+mle-leaf-tiles = ["akita-pcs/mle-leaf-tiles"]
+# Sparse challenge evaluation at powers through one signed-byte field sum
+# (default off; enables jolt-field/signed-byte-sum on the Akita side).
+signed-byte-sum = ["akita-pcs/signed-byte-sum"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
