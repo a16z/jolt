@@ -5,9 +5,8 @@ transform. The protocol has sumchecks, batching, polynomial openings, and
 BlindFold. Wherever the verifier would send a random challenge, both parties
 derive it from a hash of everything sent so far. A proof has one transcript,
 which the prover and the verifier run in the same order: from the statement
-through stage 8, and through BlindFold in ZK builds. The one exception is
-[Akita](./akita.md)'s opening proof. It runs its own Fiat-Shamir session,
-whose session tag is extended with one challenge drawn from Jolt's transcript.
+through stage 8, and through BlindFold in ZK builds. [Akita](./akita.md)'s
+opening proof runs inside the same transcript.
 
 The transcript lives in `crates/jolt-transcript`. It is built on the
 [spongefish](https://github.com/arkworks-rs/spongefish) 0.8 duplex-sponge
@@ -106,12 +105,15 @@ A Jolt proof is a serialized structure: commitments, sumcheck round
 polynomials, claims, and opening proofs. The verifier absorbs each field it
 reads from that structure as a public message. Spongefish absorbs the same
 bytes for both kinds of message, so the challenges match those of the same
-protocol with every field sent through the NARG string. The NARG string of a
-current Jolt proof is therefore empty. At the end of verification, the
-verifier still calls `check_eof`, which rejects a proof whose NARG string has
-unread bytes or whose transcript has recorded a failure. Without this check,
-a valid proof followed by trailing bytes would verify, so proof bytes would
-be malleable.
+protocol with every field sent through the NARG string.
+
+The one exception is Akita's stage-8 opening. Akita sends its messages as
+prover messages, so an Akita proof's NARG string holds the opening proof, and
+a Dory proof's NARG string is empty. At the end of verification, the verifier
+calls `check_eof` (for Akita, through `GroupBatchOpening::check_eof`). It
+rejects a proof whose NARG string has unread bytes or whose transcript has
+recorded a failure. Without this check, a valid proof followed by trailing
+bytes would verify, so proof bytes would be malleable.
 
 ## Drawing challenges
 

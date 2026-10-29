@@ -153,11 +153,11 @@ Key abstractions:
   nonces are #2108. Until #2108 lands, Akita clear proofs (128-bit field)
   carry no proof of work. Each degree-`d` sumcheck round therefore gives
   about `128 - log2(d)` bits per hash call instead of 128.
-- **Moving Akita's opening into Jolt's sponge.** Akita's opening still runs
-  its own nested Fiat-Shamir session. That session's tag is extended with one
-  Jolt challenge (`bridged_akita_session` in `crates/jolt-akita/src/adapters.rs`).
-  Running the opening in Jolt's sponge with `GroupBatchOpening` and
-  `check_eof` is #2111.
+- **Moving Akita's opening into Jolt's sponge.** In this PR, Akita's opening
+  runs its own nested Fiat-Shamir session, whose tag is extended with one Jolt
+  challenge. #2111 runs the opening in Jolt's sponge through
+  `GroupBatchOpening` and `check_eof`, so the Akita opening proof is carried
+  in the NARG string.
 - **Moving the Dory short-challenge table into dory-pcs.** This needs a
   dory-pcs 0.5 release carrying a16z/dory#33.
 - **A protocol Poseidon transcript.** `PoseidonSponge` is kept for symmetry
@@ -269,8 +269,9 @@ spongefish::ProverState<H, Shake128>      spongefish::VerifierState<'_, H>
   and writes nothing to the NARG string. A prover message (`send` and
   `prover_message`) is absorbed the same way and written to the NARG string.
   `JoltProof` is a serialized structure: every field the verifier reads is
-  absorbed as a public message, so `proof.narg` is empty for the current
-  protocol, and the verifier still requires it to be read to the end.
+  absorbed as a public message. `proof.narg` is empty for Dory proofs and,
+  after #2111, holds the Akita opening proof. The verifier requires it to be
+  read to the end.
 - **Challenges.** `draw_challenges` squeezes `challenge_bytes(len)` bytes and
   decodes them with the field's codec. `draw_short_scalar` squeezes
   `ceil(b/8)` bytes rounded up to a word and keeps the low `b` bits. Requests
