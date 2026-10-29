@@ -21,14 +21,20 @@ use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 use jolt_prover::{JoltProverPreprocessing as GenericJoltProverPreprocessing, ProverConfig};
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-blake2b"
+    feature = "transcript-blake2b",
+    not(feature = "transcript-poseidon")
 ))]
 use jolt_transcript::Blake2b512;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
-    not(feature = "transcript-blake2b")
+    not(any(feature = "transcript-blake2b", feature = "transcript-poseidon"))
 ))]
 use jolt_transcript::Keccak;
+#[cfg(all(
+    any(feature = "host", feature = "guest-verifier"),
+    feature = "transcript-poseidon"
+))]
+use jolt_transcript::PoseidonSponge;
 #[cfg(feature = "host")]
 use jolt_transcript::ProverState;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
@@ -42,18 +48,28 @@ use tracer::TracerInlineExpansionProvider;
 
 #[cfg(feature = "host")]
 pub use jolt_host as host;
-/// The duplex sponge of the Fiat-Shamir transcript: Keccak, or Blake2b512 with
-/// the `transcript-blake2b` feature.
+#[cfg(all(feature = "transcript-blake2b", feature = "transcript-poseidon"))]
+compile_error!("enable at most one of `transcript-blake2b` and `transcript-poseidon`");
+/// The duplex sponge of the Fiat-Shamir transcript: Keccak by default,
+/// Blake2b512 with the `transcript-blake2b` feature, or the BN254 Poseidon
+/// sponge with the `transcript-poseidon` feature.
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
-    not(feature = "transcript-blake2b")
+    not(any(feature = "transcript-blake2b", feature = "transcript-poseidon"))
 ))]
 pub type ProtocolSponge = Keccak;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-blake2b"
+    feature = "transcript-blake2b",
+    not(feature = "transcript-poseidon")
 ))]
 pub type ProtocolSponge = Blake2b512;
+#[cfg(all(
+    any(feature = "host", feature = "guest-verifier"),
+    feature = "transcript-poseidon",
+    not(feature = "transcript-blake2b")
+))]
+pub type ProtocolSponge = PoseidonSponge;
 #[cfg(feature = "host")]
 pub type ProofTranscript = ProverState<ProtocolSponge>;
 #[cfg(feature = "host")]

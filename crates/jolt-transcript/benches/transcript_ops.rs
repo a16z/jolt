@@ -9,11 +9,11 @@ use criterion::{
 use jolt_field::Fr;
 use jolt_transcript::{
     protocol_tag, prover_transcript, Blake2b512, FieldTranscript, Keccak, PoseidonSponge,
-    ProverState, Transcript,
+    ProverState, SpongeUnit, Transcript,
 };
-use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
+use spongefish::DuplexSpongeInit;
 
-fn fresh<H: DuplexSpongeInterface<U = u8> + DuplexSpongeInit>() -> ProverState<H> {
+fn fresh<H: DuplexSpongeInit<U: SpongeUnit>>() -> ProverState<H> {
     prover_transcript::<H>(&protocol_tag(b"bench"), b"bench")
 }
 
@@ -23,7 +23,7 @@ fn bench_append_bytes_with<H>(
     label: &str,
     data: &[u8],
 ) where
-    H: DuplexSpongeInterface<U = u8> + DuplexSpongeInit,
+    H: DuplexSpongeInit<U: SpongeUnit>,
 {
     group.bench_with_input(BenchmarkId::new(name, label), data, |bench, data| {
         bench.iter_batched(
@@ -69,6 +69,18 @@ fn bench_challenge(c: &mut Criterion) {
         bench.iter_batched(
             || {
                 let mut t = fresh::<Keccak>();
+                t.append_bytes(&[42u8; 32]);
+                t
+            },
+            |mut t| FieldTranscript::<Fr>::challenge(&mut t),
+            BatchSize::SmallInput,
+        );
+    });
+
+    group.bench_function("Poseidon", |bench| {
+        bench.iter_batched(
+            || {
+                let mut t = fresh::<PoseidonSponge>();
                 t.append_bytes(&[42u8; 32]);
                 t
             },

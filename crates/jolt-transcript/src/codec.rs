@@ -1,4 +1,4 @@
-//! Message encodings for byte-oriented spongefish transcripts.
+//! Message encodings, and how a sponge absorbs them.
 //!
 //! Every absorbed message starts and ends on an eight-byte word boundary.
 //! [`BytesMsg`] is a byte string absorbed as an eight-byte little-endian
@@ -7,8 +7,18 @@
 //! Counts and other integers are bare `u64` words, which spongefish encodes
 //! little-endian. [`protocol_tag`] pads a protocol name to the 32-byte tag
 //! that opens a sub-protocol.
+//!
+//! Every message is a byte [`Encoding`]. [`SpongeUnit`] maps it to the units
+//! the sponge absorbs: a byte sponge absorbs the bytes as they are, and
+//! `PoseidonSponge` packs them into BN254 `Fr` elements.
 
-use spongefish::{Encoding, FromNarg, NargReader, VerificationError};
+use spongefish::{Encoding, FromNarg, NargReader, Unit, VerificationError};
+
+use sealed::Sealed;
+
+pub(crate) mod sealed {
+    pub trait Sealed {}
+}
 
 /// Bytes in one absorbed word.
 pub const WORD_BYTES: usize = 8;
@@ -92,6 +102,76 @@ impl FromNarg for BytesMsg {
             let body = reader.take(len)?;
             Ok(BytesMsg(body.to_vec()))
         })
+    }
+}
+
+/// The alphabet of a transcript's sponge: how the sponge absorbs a message,
+/// and how it reads a proof-of-work check from squeezed units.
+///
+/// The trait is sealed.
+pub trait SpongeUnit: Unit + Copy + Eq + Sealed {
+    /// Units squeezed for a proof-of-work check.
+    const CHECK_LEN: usize;
+
+    /// The units the sponge absorbs for `message`. The map is injective and
+    /// prefix-free on byte strings, so messages absorbed back to back decode
+    /// uniquely whenever their byte encodings do.
+    fn encode_message<M: Encoding + ?Sized>(message: &M) -> impl AsRef<[Self]>;
+
+    /// [`encode_message`](Self::encode_message) of `word`'s eight
+    /// little-endian bytes, the absorbed form of a proof-of-work nonce, as an
+    /// owned value.
+    fn encode_word(word: u64) -> impl AsRef<[Self]>;
+
+    /// The low 64 bits of a check, or `None` unless `check` has
+    /// [`CHECK_LEN`](Self::CHECK_LEN) units.
+    fn low_word(check: &[Self]) -> Option<u64>;
+}
+
+impl Sealed for u8 {}
+
+/// A byte sponge absorbs a message's bytes as they are. A check is one word,
+/// read as a little-endian `u64`.
+impl SpongeUnit for u8 {
+    const CHECK_LEN: usize = WORD_BYTES;
+
+    fn encode_message<M: Encoding + ?Sized>(message: &M) -> impl AsRef<[u8]> {
+        message.encode()
+    }
+
+    fn encode_word(word: u64) -> impl AsRef<[u8]> {
+        word.to_le_bytes()
+    }
+
+    fn low_word(check: &[u8]) -> Option<u64> {
+        <[u8; WORD_BYTES]>::try_from(check)
+            .ok()
+            .map(u64::from_le_bytes)
+    }
+}
+
+/// A message as its sponge absorbs it: [`SpongeUnit::encode_message`] of its
+/// byte encoding. The proof carries the byte encoding itself.
+pub(crate) struct Units<M>(pub(crate) M);
+
+impl<U: SpongeUnit, M: Encoding> Encoding<U> for Units<M> {
+    fn encode(&self) -> impl AsRef<[U]> {
+        U::encode_message(&self.0)
+    }
+}
+
+impl<M: FromNarg> FromNarg for Units<M> {
+    fn from_narg(reader: &mut NargReader<'_>) -> Result<Self, VerificationError> {
+        M::from_narg(reader).map(Self)
+    }
+}
+
+/// Bytes absorbed as they are: the byte encoding of a message given as bytes.
+pub(crate) struct RawBytes<'a>(pub(crate) &'a [u8]);
+
+impl Encoding for RawBytes<'_> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0
     }
 }
 
@@ -188,6 +268,21 @@ mod tests {
         assert_eq!(word_padding(1), 7);
         assert_eq!(word_padding(8), 0);
         assert_eq!(word_padding(13), 3);
+    }
+
+    #[test]
+    fn byte_units_read_a_check_from_one_le_word() {
+        assert_eq!(u8::CHECK_LEN, 8);
+        assert_eq!(
+            u8::low_word(&0x0102_0304u64.to_le_bytes()),
+            Some(0x0102_0304)
+        );
+        assert_eq!(u8::low_word(&[0u8; 7]), None);
+        assert_eq!(u8::low_word(&[0u8; 9]), None);
+        assert_eq!(
+            u8::encode_word(0x0102_0304).as_ref(),
+            u8::encode_message(&0x0102_0304u64.to_le_bytes()).as_ref()
+        );
     }
 
     #[test]

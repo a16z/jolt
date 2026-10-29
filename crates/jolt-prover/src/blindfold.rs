@@ -27,7 +27,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
-use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit, Unit};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::stages::zk::{blindfold, inputs::BlindFoldInputs};
 use jolt_verifier::stages::{
@@ -126,17 +126,17 @@ where
         shell,
         trusted_advice_commitment,
     )?;
-    // A 32-byte compare guarding the exact seam the design rests on: the
+    // A 32-unit compare guarding the exact seam the design rests on: the
     // replay landing on the prover's forward sponge state, compared by what
     // copies of the two sponges squeeze next. Hard error (not debug-only) so
     // release provers diagnose drift here rather than as a downstream
     // BlindFold verification failure.
-    let next_bytes = |transcript: &T| {
-        let mut out = [0u8; 32];
+    let next_units = |transcript: &T| {
+        let mut out = [<T::Unit as Unit>::ZERO; 32];
         transcript.verifier_message_oracle()(&[], &mut out);
         out
     };
-    if next_bytes(&transcript) != next_bytes(forward) {
+    if next_units(&transcript) != next_units(forward) {
         return Err(ProverError::InvariantViolation {
             reason: "the verifier replay diverged from the prover's forward transcript",
         });
