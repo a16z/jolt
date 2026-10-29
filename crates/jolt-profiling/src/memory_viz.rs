@@ -116,6 +116,7 @@ mod tests {
 
     use super::*;
     use crate::memory::PeakMemory;
+    use crate::span_boundary::BoundarySamples;
     use crate::summary::{aggregate_events, build_summary, parse_folded, SummaryContext};
 
     #[test]
@@ -149,7 +150,7 @@ mod tests {
         let summary = build_summary(
             &events,
             &ctx,
-            &[],
+            &BoundarySamples::default(),
             PeakMemory {
                 rss_bytes: Some(1 << 30),
                 footprint_bytes: None,

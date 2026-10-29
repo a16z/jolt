@@ -1,7 +1,7 @@
 #![cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 #![expect(clippy::unwrap_used)]
 
-use jolt_profiling::stage_boundary::StageBoundaryRow;
+use jolt_profiling::span_boundary::{BoundarySamples, SpanInstructions, StageBoundaryRow};
 use jolt_profiling::summary::{
     build_summary, convert_counter_events, parse_folded, summary_path, ProfileSummary,
     SummaryContext, SUMMARY_SCHEMA_JSON,
@@ -25,21 +25,37 @@ fn fixture_context() -> SummaryContext {
     }
 }
 
-fn fixture_stage_rows() -> Vec<StageBoundaryRow> {
-    vec![
-        StageBoundaryRow {
-            stage: "prove_stage0",
-            rss_open_bytes: GIB as u64,
-            rss_close_bytes: 2 * GIB as u64,
-            instructions: Some(7_000_000),
-        },
-        StageBoundaryRow {
-            stage: ROOT_SPAN,
-            rss_open_bytes: GIB as u64,
-            rss_close_bytes: 3 * GIB as u64,
-            instructions: Some(20_000_000),
-        },
-    ]
+fn fixture_samples() -> BoundarySamples {
+    let sampled = |instances, instructions| SpanInstructions {
+        instances,
+        instructions,
+    };
+    BoundarySamples {
+        stage_rows: vec![
+            StageBoundaryRow {
+                stage: "prove_stage0",
+                rss_open_bytes: GIB as u64,
+                rss_close_bytes: 2 * GIB as u64,
+                instructions: Some(7_000_000),
+            },
+            StageBoundaryRow {
+                stage: ROOT_SPAN,
+                rss_open_bytes: GIB as u64,
+                rss_close_bytes: 3 * GIB as u64,
+                instructions: Some(20_000_000),
+            },
+        ],
+        // `EqPolynomial::evals` ran on a pool thread, so it was never
+        // sampled.
+        span_instructions: [
+            (ROOT_SPAN, sampled(1, Some(20_000_000))),
+            ("prove_batch", sampled(1, Some(500_000))),
+            ("sumcheck_round", sampled(1, Some(200_000))),
+            ("commit_witness", sampled(1, None)),
+        ]
+        .into_iter()
+        .collect(),
+    }
 }
 
 fn fixture_peak() -> PeakMemory {
@@ -53,7 +69,7 @@ fn fixture_summary(events: &[Value]) -> ProfileSummary {
     build_summary(
         events,
         &fixture_context(),
-        &fixture_stage_rows(),
+        &fixture_samples(),
         fixture_peak(),
         1_700_000_000,
         Some("abc1234".to_string()),
@@ -168,6 +184,25 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(cpu.samples, 1);
 }
 
+/// A label's instruction total is reported only when every trace instance
+/// was sampled with a count; partial or unavailable samples are `null`,
+/// never an undercount.
+#[test]
+fn span_instructions_require_every_instance_sampled() {
+    let summary = fixture_summary(&fixture_events());
+    let instructions = |label: &str| summary.spans.get(label).unwrap().instructions;
+    assert_eq!(instructions(ROOT_SPAN), Some(20_000_000));
+    assert_eq!(instructions("prove_batch"), Some(500_000));
+    assert_eq!(
+        instructions("sumcheck_round"),
+        None,
+        "1 of 2 instances sampled"
+    );
+    assert_eq!(instructions("commit_witness"), None, "counter unavailable");
+    assert_eq!(instructions("EqPolynomial::evals"), None, "pool thread");
+    assert_eq!(instructions("prove_stage1"), None, "never sampled");
+}
+
 #[test]
 fn summary_is_invariant_under_counter_conversion() {
     let raw = fixture_summary(&fixture_events());
@@ -221,7 +256,7 @@ fn fixture_labels_conform_to_taxonomy() {
 }
 
 /// Repeated stage and root labels pair with their rows by occurrence index
-/// (both are recorded in span-close order), never all with the first
+/// (both are recorded in span-exit order), never all with the first
 /// matching row; the summary's root is the longest instance.
 #[test]
 fn repeated_labels_pair_rows_by_occurrence() {
@@ -244,16 +279,19 @@ fn repeated_labels_pair_rows_by_occurrence() {
         rss_close_bytes: rss_close_gib * GIB as u64,
         instructions: Some(instructions),
     };
-    let rows = vec![
-        row("prove_stage0", 1, 2, 10),
-        row(ROOT_SPAN, 1, 2, 30),
-        row("prove_stage0", 3, 5, 40),
-        row(ROOT_SPAN, 2, 5, 60),
-    ];
+    let samples = BoundarySamples {
+        stage_rows: vec![
+            row("prove_stage0", 1, 2, 10),
+            row(ROOT_SPAN, 1, 2, 30),
+            row("prove_stage0", 3, 5, 40),
+            row(ROOT_SPAN, 2, 5, 60),
+        ],
+        span_instructions: Default::default(),
+    };
     let summary = build_summary(
         &events,
         &fixture_context(),
-        &rows,
+        &samples,
         PeakMemory::default(),
         0,
         None,

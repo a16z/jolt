@@ -165,6 +165,11 @@ jq '.stages | map({label, rss_delta_gib, peak_memory_gib})' $S
 # User-space instructions retired, whole prove and per stage (null without
 # a hardware counter; see Measurement semantics)
 jq '{root: .root.instructions, stages: (.stages | map({label, instructions}))}' $S
+
+# Top 10 span labels by instructions retired (orchestrating-thread spans only)
+jq '.spans | to_entries | map(select(.value.instructions != null))
+    | sort_by(-.value.instructions) | .[:10]
+    | map({label: .key, count: .value.count, instructions: .value.instructions})' $S
 ```
 
 Arbitrary ad-hoc queries go through Perfetto's `trace_processor` SQL against
@@ -206,13 +211,19 @@ for row in q:
   memory across runs. On Linux it equals `peak_rss_gib`. The monitor's
   `counters.footprint_gib` samples the same measure over time (macOS only);
   `memory_gib` and `root.peak_memory_gib` remain resident-set based.
-- **Instruction counts** (`root.instructions`, `stages[].instructions`) are
-  user-space instructions retired, read from a Linux hardware counter
-  (`perf_event_open`) at the same span boundaries as the boundary RSS. The
-  counter is process-wide: it covers every thread spawned after tracing
-  setup (rayon's pool included) and excludes the chrome writer and monitor
-  threads, so like wallclock a stage's count is not additive across
-  parallel spans. Counts are native, unlike Callgrind's: the AVX-512/IFMA
+- **Instruction counts** (`root.instructions`, `stages[].instructions`,
+  `spans.<label>.instructions`) are user-space instructions retired, read
+  from a Linux hardware counter (`perf_event_open`) at every enter and exit
+  of a span on the orchestrating thread — the thread that set up tracing —
+  however the span is declared (`#[tracing::instrument]` or an inline
+  `info_span!`). The counter is process-wide: it covers every thread spawned
+  after tracing setup (rayon's pool included) and excludes the chrome writer
+  and monitor threads, so a span's count includes the parallel work it fans
+  out, and like wallclock counts are not additive across nested spans. Spans
+  inside rayon closures overlap their siblings and are not sampled; a label
+  is `null` unless every instance ran on the orchestrating thread. Work a
+  span leaves running in the background (e.g. `drop_in_background_thread`)
+  is charged to whichever span is open when it executes. Counts are native, unlike Callgrind's: the AVX-512/IFMA
   kernels Valgrind hides run as in production. The counter needs a PMU the
   kernel exposes and `perf_event_paranoid` ≤ 2; elsewhere (macOS, most CI
   VMs) the fields are `null` and setup logs a warning, and a counter the
@@ -303,7 +314,7 @@ Every summary metric is reachable as a string-keyed `jolt-eval` objective
 (`telemetry:<workload>:<metric>`), so optimization agents can target any
 span without editing `jolt-eval`. End-to-end instruction counts are
 `telemetry:<workload>:instructions` and
-`telemetry:<workload>:stage_instructions:<stage-label>`; deterministic
+`telemetry:<workload>:instructions:<span-label>`; deterministic
 microbenchmark counts are available through the opt-in iai-callgrind lane
 (`callgrind:<bench-name>:instructions`). See `jolt-eval/README.md`.
 

@@ -10,7 +10,7 @@
 //!              | peak_rss_gib          (process-lifetime getrusage high-water mark)
 //!              | peak_memory_gib       (max over memory samples in the root span)
 //!              | instructions          (user-space instructions retired in the root span)
-//!              | stage_instructions:<stage-label> (the same, summed over a stage's instances)
+//!              | instructions:<span-label> (the same, summed over all instances)
 //!              | total:<span-label>    (inclusive time summed over all instances, seconds)
 //!              | self:<span-label>     (exclusive time summed over all instances, seconds)
 //!              | heap:<snapshot>       (allocative snapshot total, exact bytes)
@@ -58,9 +58,10 @@ pub enum TelemetryMetric {
     PeakMemoryGib,
     /// User-space instructions the process retired inside the root span.
     Instructions,
-    /// User-space instructions the process retired inside one stage span,
-    /// summed over its instances.
-    StageInstructions(&'static str),
+    /// User-space instructions the process retired inside one span label,
+    /// summed over all instances; present only for labels that run on the
+    /// profiled orchestrating thread.
+    SpanInstructions(&'static str),
     /// Inclusive time of one span label summed over all instances, seconds.
     Total(&'static str),
     /// Exclusive time of one span label summed over all instances, seconds.
@@ -179,8 +180,8 @@ impl TelemetryObjective {
             "peak_memory_gib" => TelemetryMetric::PeakMemoryGib,
             "instructions" => TelemetryMetric::Instructions,
             other => {
-                if let Some(label) = other.strip_prefix("stage_instructions:") {
-                    TelemetryMetric::StageInstructions(intern(label))
+                if let Some(label) = other.strip_prefix("instructions:") {
+                    TelemetryMetric::SpanInstructions(intern(label))
                 } else if let Some(label) = other.strip_prefix("total:") {
                     TelemetryMetric::Total(intern(label))
                 } else if let Some(label) = other.strip_prefix("self:") {
@@ -232,7 +233,7 @@ impl TelemetryObjective {
             | TelemetryMetric::SelfTime(_) => Some("s"),
             TelemetryMetric::PeakRssGib | TelemetryMetric::PeakMemoryGib => Some("GiB"),
             TelemetryMetric::Heap { .. } => Some("bytes"),
-            TelemetryMetric::Instructions | TelemetryMetric::StageInstructions(_) => {
+            TelemetryMetric::Instructions | TelemetryMetric::SpanInstructions(_) => {
                 Some("instructions")
             }
         }
@@ -399,29 +400,27 @@ impl TelemetryObjective {
                          kernel multiplexed it)",
                     )
                 }),
-            TelemetryMetric::StageInstructions(label) => {
-                let counts: Vec<Option<f64>> = summary
-                    .get("stages")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .filter(|stage| stage.get("label").and_then(Value::as_str) == Some(label))
-                    .map(|stage| stage.get("instructions").and_then(Value::as_f64))
-                    .collect();
-                if counts.is_empty() {
-                    return Err(MeasurementError::new(format!(
-                        "stage {label:?} absent from summary (key {}); absent stages are an \
-                         error, never 0.0",
-                        self.key
-                    )));
-                }
-                counts.into_iter().sum::<Option<f64>>().ok_or_else(|| {
-                    MeasurementError::new(format!(
-                        "stage {label:?} has no instruction count (key {}): no hardware \
-                         counter, or the kernel multiplexed it",
-                        self.key
-                    ))
-                })
+            TelemetryMetric::SpanInstructions(label) => {
+                let span = summary
+                    .get("spans")
+                    .and_then(|spans| spans.get(label))
+                    .ok_or_else(|| {
+                        MeasurementError::new(format!(
+                            "span label {label:?} absent from summary (key {}); absent \
+                             labels are an error, never 0.0",
+                            self.key
+                        ))
+                    })?;
+                span.get("instructions")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| {
+                        MeasurementError::new(format!(
+                            "span label {label:?} has no instruction count (key {}): some \
+                             instance ran off the orchestrating thread, or no hardware \
+                             counter / the kernel multiplexed it",
+                            self.key
+                        ))
+                    })
             }
             TelemetryMetric::Total(label) | TelemetryMetric::SelfTime(label) => {
                 let field = match self.metric {
@@ -610,34 +609,34 @@ mod tests {
     }
 
     #[test]
-    fn instruction_extraction_reads_root_and_sums_stages_and_errors_on_null() {
+    fn instruction_extraction_reads_root_and_spans_and_errors_on_null() {
         let summary: Value = serde_json::json!({
             "schema_version": 1,
             "root": { "wall_time_ns": 1u64, "instructions": 9_000u64 },
-            "stages": [
-                { "label": "prove_stage1", "instructions": 2_000u64 },
-                { "label": "prove_stage1", "instructions": 3_000u64 },
-                { "label": "prove_stage2", "instructions": null },
-            ],
+            "spans": {
+                "RamReadWriteChecking::prove_round": { "count": 29, "instructions": 5_000u64 },
+                "EqPolynomial::evals": { "count": 8, "instructions": null },
+            },
         });
         let root = TelemetryObjective::parse("telemetry:fibonacci:instructions").unwrap();
         assert_eq!(root.units(), Some("instructions"));
         assert_eq!(root.extract(&summary).unwrap(), 9_000.0);
-        let stage =
-            TelemetryObjective::parse("telemetry:fibonacci:stage_instructions:prove_stage1")
-                .unwrap();
+        let span = TelemetryObjective::parse(
+            "telemetry:fibonacci:instructions:RamReadWriteChecking::prove_round",
+        )
+        .unwrap();
         assert_eq!(
-            stage.metric,
-            TelemetryMetric::StageInstructions("prove_stage1")
+            span.metric,
+            TelemetryMetric::SpanInstructions("RamReadWriteChecking::prove_round")
         );
-        assert_eq!(stage.extract(&summary).unwrap(), 5_000.0);
+        assert_eq!(span.extract(&summary).unwrap(), 5_000.0);
 
-        let null = TelemetryObjective::parse("telemetry:fibonacci:stage_instructions:prove_stage2")
-            .unwrap();
+        let null =
+            TelemetryObjective::parse("telemetry:fibonacci:instructions:EqPolynomial::evals")
+                .unwrap();
         assert!(null.extract(&summary).is_err(), "null is an error, not 0.0");
         let absent =
-            TelemetryObjective::parse("telemetry:fibonacci:stage_instructions:prove_stage9")
-                .unwrap();
+            TelemetryObjective::parse("telemetry:fibonacci:instructions:NoSuchSpan").unwrap();
         assert!(absent.extract(&summary).is_err());
         let counter_off: Value = serde_json::json!({
             "schema_version": 1,

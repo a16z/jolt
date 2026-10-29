@@ -7,19 +7,29 @@
 //! included, provided the pool is first used after setup. Threads that
 //! already exist are not counted; setup opens the counter after spawning the
 //! chrome writer and metrics-monitor threads to keep the profiler's own work
-//! out of the counts. A read sums the live inherited children in one syscall
-//! (~6 µs with 16 threads on a Zen 4 VM), so the counter is sampled only at
-//! stage-span boundaries.
+//! out of the counts.
+//!
+//! Readings are served only on that opening thread. A process-wide delta is
+//! a span's own cost only while nothing else runs, which holds for the
+//! sequential orchestration on the opening thread (its parallel work runs
+//! on pool threads inside the span) but not for spans on pool threads,
+//! which overlap their siblings. A read sums the live inherited children in
+//! one syscall (~6 µs with 16 threads on a Zen 4 VM).
 //!
 //! Requires a PMU the kernel exposes and `perf_event_paranoid <= 2`
 //! (kernel-mode instructions are excluded). Elsewhere opening fails and
 //! every reading is absent.
 
+use std::cell::Cell;
 use std::fs::File;
 use std::io::{Read, Result};
 use std::sync::OnceLock;
 
 static PROCESS_COUNTER: OnceLock<InstructionCounter> = OnceLock::new();
+
+thread_local! {
+    static ON_OPENING_THREAD: Cell<bool> = const { Cell::new(false) };
+}
 
 /// Opens the process counter on the calling thread.
 pub(crate) fn open_process_counter() -> Result<()> {
@@ -27,12 +37,17 @@ pub(crate) fn open_process_counter() -> Result<()> {
     // `setup_tracing` installs the global subscriber, so it runs once per
     // process; a second counter would have nothing to add.
     let _ = PROCESS_COUNTER.set(counter);
+    ON_OPENING_THREAD.set(true);
     Ok(())
 }
 
-/// The process counter's current value; `None` if it was never opened or
-/// the read failed.
+/// The process counter's current value; `None` off the opening thread, if
+/// the counter was never opened, or if the read failed.
 pub(crate) fn read_process_counter() -> Option<InstructionReading> {
+    // `try_with`: spans can close during thread-local teardown.
+    if !ON_OPENING_THREAD.try_with(Cell::get).unwrap_or(false) {
+        return None;
+    }
     PROCESS_COUNTER.get()?.read().ok()
 }
 

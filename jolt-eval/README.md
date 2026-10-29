@@ -68,7 +68,7 @@ telemetry:<workload>:<metric>
              | peak_rss_gib          (process-lifetime getrusage high-water mark)
              | peak_memory_gib       (max over memory samples in the root span)
              | instructions          (user-space instructions retired in the root span)
-             | stage_instructions:<stage-label> (the same, summed over a stage's instances)
+             | instructions:<span-label> (the same, summed over all instances)
              | total:<span-label>    (inclusive time summed over all instances, seconds)
              | self:<span-label>     (exclusive time summed over all instances, seconds)
              | heap:<snapshot>       (allocative mid-stage snapshot total, exact bytes)
@@ -88,8 +88,10 @@ report exact bytes; snapshot labels are the flamegraph names
 (`Stage2Batch_prepared`, …) and root frames are the kernel type names from
 the summary's `heap` section. `instructions` metrics read the profile
 harness's Linux hardware counter; on hosts without one (macOS, most CI VMs)
-they are measurement errors. Set `RAYON_NUM_THREADS=1` for near-deterministic
-counts (see the book's measurement semantics).
+they are measurement errors, as are labels with any instance inside a rayon
+closure (only spans on the orchestrating thread are counted). Set
+`RAYON_NUM_THREADS=1` for near-deterministic counts (see the book's
+measurement semantics).
 
 ```bash
 cargo run -p jolt-eval --bin measure-objectives -- \

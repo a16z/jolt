@@ -6,8 +6,8 @@
 //!   and `tracing-subscriber` (console output) for the host binary.
 //! - **Memory profiling** — tracks memory deltas across proving stages via `memory-stats`.
 //! - **Instruction counts** — samples a process-wide hardware counter of
-//!   user-space instructions retired at the same stage boundaries (Linux
-//!   `perf_event_open`; absent elsewhere).
+//!   user-space instructions retired at the boundaries of every span on the
+//!   orchestrating thread (Linux `perf_event_open`; absent elsewhere).
 //! - **System metrics monitoring** (`monitor` feature) — background thread sampling
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
 //!   rewritten into native Perfetto counter tracks at flush (`summary::finalize_trace`).
@@ -62,7 +62,7 @@ pub mod memory;
 mod instructions;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub mod stage_boundary;
+pub mod span_boundary;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 pub mod summary;
@@ -94,7 +94,7 @@ pub use memory::{
     print_current_memory_usage, report_memory_usage, start_memory_tracing_span, PeakMemory,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use stage_boundary::{report_stage_boundaries, take_stage_boundary_rows, StageBoundaryLayer};
+pub use span_boundary::{report_stage_boundaries, take_boundary_samples, SpanBoundaryLayer};
 
 #[cfg(target_arch = "wasm32")]
 pub fn peak_rss_bytes() -> Option<u64> {
