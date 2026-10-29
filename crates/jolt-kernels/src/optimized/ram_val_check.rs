@@ -1,13 +1,14 @@
 //! Optimized RAM value check (stage 4).
 //!
 //! Summand: `inc(j) · ra(j) · (LT(j, r_cycle) + γ)`.
-//! [`LazyFoldedRa`] delays the dense `ra` table to `T/16`; [`SplitLt`] stores
+//! [`LazyFoldedRa`] keeps `ra` lazy until dense storage is cheaper or four binds
+//! have completed; [`SplitLt`] stores
 //! `LT + γ` in ~√T space. [`IncColumn`] derives `inc` from raw trace values
-//! for two rounds, then materializes at `T/4`.
+//! for two rounds, then retains an explicit prefix with a zero suffix.
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, Polynomial, UnivariatePoly};
+use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -16,11 +17,11 @@ use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutpu
 use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, DEFAULT_MAX_WIDTH};
-use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, NO_ACCESS};
+use super::lazy_ra::{ChunkIndexSource, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
+use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, RamAddresses, NO_ACCESS};
 use super::support::{
-    bind_raw_twice, bound_pair, pin_derived_term, triple_product_round_evals, RoundProgress,
-    SplitLt,
+    bind_prefix_pairs, bind_prefix_pairs_buffer_len, bound_pair, map_indices, pin_derived_term,
+    triple_product_round_evals, RoundProgress, SplitLt,
 };
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -30,10 +31,14 @@ use crate::{
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressIndices {
-    addresses: Arc<Vec<u32>>,
+    addresses: Arc<RamAddresses>,
 }
 
 impl ChunkIndexSource for RamAddressIndices {
+    fn constant_suffix_start(&self) -> usize {
+        self.addresses.prefix_len()
+    }
+
     fn num_columns(&self) -> usize {
         1
     }
@@ -81,44 +86,151 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
     }
 }
 
-// `scalar_window_bytes` is derived for eight-wide lazy address tables only.
-const _: () = assert!(DEFAULT_MAX_WIDTH == 8);
+/// Bytes the value check's scalar tables and the RAM access columns request
+/// at their largest over `2^log_t` cycles, `ram_k` addresses and the
+/// `prefix_cycles` cycles before the trace's constant suffix, or `None` past
+/// `usize::MAX`. The bound replays the kernel's binds. The `ra` address table
+/// doubles through the lazy branch schedule ([`LazyBind`]), each new table
+/// beside the old one, until `ra` materializes at most
+/// `⌈prefix_cycles / 2w⌉` values at the switch's width `w`; each later bind
+/// may collect their bound half beside them, whose allocation is counted at
+/// its materialized length. The second bind builds the
+/// `⌈prefix_cycles / 4⌉`-entry increment table beside the check's own value
+/// columns, then drops them, and later binds halve it in place or beside it
+/// (`bind_prefix_pairs_buffer_len`). Every window counts the shared address
+/// column and stage 2's value columns, which may still await their background
+/// drop ([`ram_access_columns_bytes`]), the LT tables at their largest
+/// (`SplitLt::peak_bytes`), and the branch tables queued for a background drop
+/// at the switch, which no window assumes has run. Not counted: the access
+/// columns' collection (the eager check reserves it separately), transients
+/// inside `jolt-poly` constructors, the boxed kernel, `Vec` and `Arc` headers,
+/// round messages, Rayon jobs and the macOS purge's cache-pump requests.
+pub fn scalar_window_bytes<F: JoltField>(
+    log_t: usize,
+    ram_k: usize,
+    prefix_cycles: usize,
+) -> Option<usize> {
+    /// `ra` between binds: the lazy branch table at `width` branches, or the
+    /// queued branch tables beside the materialized values.
+    enum Ra {
+        Lazy {
+            width: usize,
+            table: usize,
+        },
+        Materialized {
+            queued: usize,
+            len: usize,
+            capacity: usize,
+        },
+    }
+    impl Ra {
+        fn held(&self) -> Option<usize> {
+            match *self {
+                Self::Lazy { table, .. } => Some(table),
+                Self::Materialized {
+                    queued, capacity, ..
+                } => queued.checked_add(capacity),
+            }
+        }
+    }
 
-/// Bytes the value check's scalar tables request at their largest over
-/// `2^log_t` cycles and `ram_k` addresses: the larger of two windows, both
-/// with the split LT tables. The second bind builds the `T/4`-entry
-/// increment table while the shared address column, two generations of
-/// value columns ([`ram_access_columns_bytes`]: stage 2's, which may still
-/// await its background drop, and the check's own, dropped right after) and
-/// the `2K`-entry address table are live. The fourth bind builds the
-/// `16K`-entry address table beside the `8K`-entry one, with the address
-/// column, stage 2's generation and the increment table still counted, the
-/// last at `T/4` although parallel binds may already have copied it smaller.
-/// Every other scalar request of the check, from the collector's chunk views
-/// at preparation through the dense address and LT replacements, round
-/// messages, the output and the tables a parallel build queues for a
-/// background drop, fits in the larger window. Not counted: the boxed
-/// kernel, `Vec` and `Arc` headers, Rayon jobs and the macOS purge's
-/// cache-pump requests.
-///
-/// Derived for the canonical 64-bit `Fr` and Akita field layouts, from the
-/// minimum trace length `ProverConfig::from_padded_dimensions` enforces
-/// (2^8 cycles, 2^12 under Akita) to 2^32 cycles and for up to 2^32
-/// addresses, independent of the cycle count; not claimed for other layouts.
-pub fn scalar_window_bytes<F: JoltField>(log_t: usize, ram_k: usize) -> usize {
-    let field = |entries: usize| entries.saturating_mul(size_of::<F>());
-    let increments = (1usize << log_t) / 4;
-    let second_bind = ram_access_columns_bytes(log_t, 2)
-        .saturating_add(field(increments.saturating_add(ram_k.saturating_mul(2))));
-    let fourth_bind = ram_access_columns_bytes(log_t, 1).saturating_add(field(
-        increments.saturating_add(ram_k.saturating_mul(3 * DEFAULT_MAX_WIDTH)),
-    ));
-    second_bind
-        .max(fourth_bind)
-        .saturating_add(SplitLt::<F>::split_bytes(log_t))
+    let cycles = 1usize << log_t;
+    let mut peak = 0usize;
+    // `generations` of access columns beside `entries` scalars.
+    let mut window = |generations: usize, entries: usize| -> Option<()> {
+        let bytes = ram_access_columns_bytes(prefix_cycles, generations)?
+            .checked_add(entries.checked_mul(size_of::<F>())?)?;
+        peak = peak.max(bytes);
+        Some(())
+    };
+    // The address eq table and the one-entry tail beside both generations.
+    window(2, ram_k.checked_add(1)?)?;
+    let mut ra = Ra::Lazy {
+        width: 1,
+        table: ram_k,
+    };
+    // The increment table's `(len, capacity)` once the second bind builds it.
+    let mut increments: Option<(usize, usize)> = None;
+    for bind in 1..=log_t {
+        let generations = if bind == 1 { 2 } else { 1 };
+        let increments_held = match increments {
+            None if bind == 2 => {
+                let len = prefix_cycles.div_ceil(4);
+                window(2, len.checked_add(ra.held()?)?)?;
+                increments = Some((len, len));
+                len
+            }
+            None => 0,
+            Some((len, capacity)) => {
+                let buffer = bind_prefix_pairs_buffer_len(len);
+                window(1, capacity.checked_add(buffer)?.checked_add(ra.held()?)?)?;
+                let capacity = if buffer > 0 {
+                    len.div_ceil(2)
+                } else {
+                    capacity
+                };
+                increments = Some((len.div_ceil(2), capacity));
+                capacity
+            }
+        };
+        ra = match ra {
+            Ra::Lazy { width, table } => {
+                let doubled = table.checked_mul(2)?;
+                let values = prefix_cycles.div_ceil(2 * width);
+                match LazyBind::new(width, DEFAULT_MAX_WIDTH, 1, cycles, [table].into_iter()) {
+                    LazyBind::Double => {
+                        window(
+                            generations,
+                            increments_held.checked_add(table.checked_add(doubled)?)?,
+                        )?;
+                        Ra::Lazy {
+                            width: 2 * width,
+                            table: doubled,
+                        }
+                    }
+                    LazyBind::DoubleThenMaterialize => {
+                        let tables = table
+                            .checked_add(doubled)?
+                            .max(doubled.checked_add(values)?);
+                        window(generations, increments_held.checked_add(tables)?)?;
+                        Ra::Materialized {
+                            queued: doubled,
+                            len: values,
+                            capacity: values,
+                        }
+                    }
+                    LazyBind::FusedMaterialize => {
+                        window(
+                            generations,
+                            increments_held.checked_add(table.checked_add(values)?)?,
+                        )?;
+                        Ra::Materialized {
+                            queued: table,
+                            len: values,
+                            capacity: values,
+                        }
+                    }
+                }
+            }
+            Ra::Materialized {
+                queued,
+                len,
+                capacity,
+            } => {
+                let held = queued.checked_add(capacity)?.checked_add(len.div_ceil(2))?;
+                window(generations, increments_held.checked_add(held)?)?;
+                Ra::Materialized {
+                    queued,
+                    len: len.div_ceil(2),
+                    capacity,
+                }
+            }
+        };
+    }
+    peak.checked_add(SplitLt::<F>::peak_bytes(log_t)?)
 }
 
-/// Raw trace values for two rounds; a dense `T/4` table afterward.
+/// Raw trace values for two rounds; an explicit prefix with a zero suffix afterward.
 /// Reads have `post == pre`, and no-ops are zero, matching `RamInc`.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncColumn<F: JoltField> {
@@ -128,12 +240,7 @@ enum IncColumn<F: JoltField> {
         #[cfg_attr(feature = "allocative", allocative(skip))]
         r1: F,
     },
-    Bound(Polynomial<F>),
-}
-
-#[inline]
-fn raw_inc<F: JoltField>(columns: &RamAccessColumns, j: usize) -> F {
-    F::from_i128(columns.post_values[j] as i128 - columns.pre_values[j] as i128)
+    Bound(Vec<F>),
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -148,10 +255,10 @@ impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         let mut freed_columns = false;
         if let IncColumn::Bound(inc) = &mut self.inc {
-            inc.bind_with_order(challenge, BindingOrder::LowToHigh);
+            bind_prefix_pairs(inc, challenge, F::zero());
         } else {
             let placeholder = IncColumn::Raw(RamAccessColumns {
-                addresses: Arc::new(Vec::new()),
+                addresses: Arc::new(Vec::new().into()),
                 pre_values: Vec::new(),
                 post_values: Vec::new(),
             });
@@ -162,12 +269,10 @@ impl<F: JoltField> RamValCheckKernel<F> {
                 },
                 IncColumn::RawBound { columns, r1 } => {
                     freed_columns = true;
-                    IncColumn::Bound(bind_raw_twice(
-                        |j| raw_inc(&columns, j),
-                        columns.addresses.len(),
-                        r1,
-                        challenge,
-                    ))
+                    IncColumn::Bound(map_indices(columns.value_prefix_len().div_ceil(4), |y| {
+                        let first = |j| bound_pair(|k| columns.increment(k), r1, j);
+                        bound_pair(first, challenge, y)
+                    }))
                 }
                 IncColumn::Bound(_) => unreachable!("bound inc binds in place above"),
             };
@@ -202,24 +307,26 @@ impl<F: JoltField> ProveRounds<F> for RamValCheckKernel<F> {
         let lt = |y: usize| self.lt.pair(y);
         let evals = match &self.inc {
             IncColumn::Raw(columns) => triple_product_round_evals(
-                columns.addresses.len() / 2,
-                |y| (raw_inc(columns, 2 * y), raw_inc(columns, 2 * y + 1)),
+                columns.value_prefix_len().div_ceil(2),
+                |y| (columns.increment(2 * y), columns.increment(2 * y + 1)),
                 ra,
                 lt,
             ),
             IncColumn::RawBound { columns, r1 } => triple_product_round_evals(
-                columns.addresses.len() / 4,
+                columns.value_prefix_len().div_ceil(4),
                 |y| {
-                    let inc = |j| raw_inc(columns, j);
+                    let inc = |j| columns.increment(j);
                     (bound_pair(inc, *r1, 2 * y), bound_pair(inc, *r1, 2 * y + 1))
                 },
                 ra,
                 lt,
             ),
-            IncColumn::Bound(inc) => {
-                let inc = inc.evals();
-                triple_product_round_evals(inc.len() / 2, |y| (inc[2 * y], inc[2 * y + 1]), ra, lt)
-            }
+            IncColumn::Bound(inc) => triple_product_round_evals(
+                inc.len().div_ceil(2),
+                |y| (inc[2 * y], inc.get(2 * y + 1).copied().unwrap_or(F::zero())),
+                ra,
+                lt,
+            ),
         };
 
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
@@ -246,9 +353,9 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
             program_image: inputs.program_image,
             ram_ra: self.ra.final_values()[0],
             ram_inc: match &self.inc {
-                IncColumn::Raw(columns) => raw_inc(columns, 0),
-                IncColumn::RawBound { columns, r1 } => bound_pair(|j| raw_inc(columns, j), *r1, 0),
-                IncColumn::Bound(inc) => inc.evals()[0],
+                IncColumn::Raw(columns) => columns.increment(0),
+                IncColumn::RawBound { columns, r1 } => bound_pair(|j| columns.increment(j), *r1, 0),
+                IncColumn::Bound(inc) => inc.first().copied().unwrap_or(F::zero()),
             },
         })
     }
@@ -418,11 +525,41 @@ mod tests {
     }
 
     #[test]
+    fn zero_suffix_boundaries_match_reference() {
+        let shape = FixtureShape {
+            log_t: 5,
+            ram_k: 16,
+        };
+        for prefix in [0, 1, 2, 3, 6, 7, 8, 14, 15, 16, 30, 31] {
+            let ops = mixed_ops().into_iter().cycle().take(prefix).collect();
+            run_parity(shape, ops, 401 + prefix as u64);
+        }
+        run_parity(FixtureShape { log_t: 5, ram_k: 1 }, vec![RamOp::None], 499);
+    }
+
+    #[test]
     fn matches_reference_on_single_round() {
         run_parity(
             FixtureShape { log_t: 1, ram_k: 8 },
             vec![RamOp::Write { word: 1, post: 4 }],
             41,
+        );
+    }
+
+    /// Over 2^13 cycles, 64 addresses and 4096 proof rows, `ra` doubles at
+    /// the first three binds and materializes 256 values at the fourth. The
+    /// largest window opens the second bind: its 1024-entry increment table
+    /// beside the 128-entry `ra` table, the `u32` address column and two
+    /// generations of `u64` value columns, 4096 · 36 + 1152 · 32 = 184,320
+    /// bytes. The windows before it hold at most 153,600 bytes (the first
+    /// bind's 64- and 128-entry tables beside both generations), and those
+    /// after it at most 143,360 (the fifth bind's). The LT tables add
+    /// 64 + 3 · 128 entries, 14,336 bytes.
+    #[test]
+    fn scalar_windows_peak_at_the_second_bind() {
+        assert_eq!(
+            scalar_window_bytes::<Fr>(13, 64, 4096),
+            Some(184_320 + 14_336)
         );
     }
 }

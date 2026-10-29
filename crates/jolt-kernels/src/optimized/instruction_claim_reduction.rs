@@ -21,7 +21,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
+use super::support::{
+    fallible_collect_bytes, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -59,27 +61,34 @@ impl InstructionOperandRow {
 pub struct OptimizedInstructionClaimReduction;
 
 impl OptimizedInstructionClaimReduction {
+    /// Bytes `prepare` requests over `2^log_t` cycles while it builds the
+    /// `T`-entry combined table, or `None` past `usize::MAX`: the fallible
+    /// collect (`fallible_collect_bytes`), whose partial vectors it frees
+    /// before it returns. Not counted: the row store, a handle on the
+    /// witness's rows when it has one.
+    pub fn construction_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        fallible_collect_bytes::<F>(1usize << log_t)
+    }
+
     /// Peak bytes over `2^log_t` cycles, `log_t >= 1`, from the end of
-    /// `prepare` through the output walk: the combined table at `T` entries,
-    /// its split-eq tables ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and
-    /// `log_t` challenge slots, plus the larger of the buffer the table's
-    /// first in-place shrink allocates ([`Polynomial::in_place_shrink_len`])
-    /// and the output walk's reversed challenges and two eq tables. Both
-    /// windows keep the table's full capacity counted. Not counted: the
-    /// construction collect, which ends before any member of the batch binds
-    /// and which the eager memory check covers with the RAM read-write
-    /// kernel's first bind; the row store, a handle on the witness's rows when
-    /// it has one; the round messages.
-    pub fn post_prepare_peak_bytes<F: JoltField>(log_t: usize) -> usize {
+    /// `prepare` through the output walk, or `None` past `usize::MAX`: the
+    /// combined table at `T` entries, its split-eq tables
+    /// ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and `log_t` challenge
+    /// slots, plus the larger of the buffer the table's first in-place shrink
+    /// allocates ([`Polynomial::in_place_shrink_len`]) and the output walk's
+    /// reversed challenges and two eq tables. Both windows keep the table's
+    /// full capacity counted. Not counted: the row store, a handle on the
+    /// witness's rows when it has one; the round messages.
+    pub fn post_prepare_peak_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
         let cycles = 1usize << log_t;
         let walk = log_t
-            .saturating_add(1usize << (log_t / 2))
-            .saturating_add(1usize << log_t.div_ceil(2));
+            .checked_add(1usize << (log_t / 2))?
+            .checked_add(1usize << log_t.div_ceil(2))?;
         cycles
-            .saturating_add(log_t)
-            .saturating_add(Polynomial::<F>::in_place_shrink_len(cycles).max(walk))
-            .saturating_mul(size_of::<F>())
-            .saturating_add(GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t))
+            .checked_add(log_t)?
+            .checked_add(Polynomial::<F>::in_place_shrink_len(cycles).max(walk))?
+            .checked_mul(size_of::<F>())?
+            .checked_add(GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t)?)
     }
 }
 

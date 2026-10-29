@@ -1,8 +1,6 @@
 use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, SourceInstructionRow};
 
-use crate::expand::{
-    allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, operands::format_i_imm, ExpansionError,
-};
+use crate::expand::{allocator::NUM_VIRTUAL_INSTRUCTION_REGISTERS, ExpansionError};
 
 /// Symbolic register placeholder, resolved to a physical virtual register during materialization.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -156,15 +154,21 @@ impl<K> InstructionTemplate<K> {
         }
     }
 
-    /// Pseudo-I format for address/alignment assertions that read `rs1` and an
-    /// immediate offset but do not write `rd`.
-    pub(super) fn address(instruction_kind: K, rs1: RegisterOperand, imm: i128) -> Self {
+    /// R format plus an immediate, for store-data shifters whose effective
+    /// address is the right operand `base + imm`.
+    pub(super) fn shift_data(
+        instruction_kind: K,
+        rd: RegisterOperand,
+        value: RegisterOperand,
+        base: RegisterOperand,
+        imm: i128,
+    ) -> Self {
         Self {
             instruction_kind,
             operands: TemplateOperands {
-                rd: None,
-                rs1: Some(rs1),
-                rs2: None,
+                rd: Some(rd),
+                rs1: Some(value),
+                rs2: Some(base),
                 imm,
             },
         }
@@ -316,24 +320,20 @@ impl ExpansionBuilder {
         self.emit_i(instruction_kind, rd, rs1, imm);
     }
 
-    /// Emit an address-form assert (`VirtualAssert{Word,Halfword}Alignment`).
-    ///
-    /// The offset is wrapped to `u64` exactly as `emit_i` callers do via
-    /// [`format_i_imm`]. These asserts carry `AddOperands`, so the bytecode's
-    /// `Imm` column is compared against a lookup index of `rs1 + imm` as a field
-    /// element; a raw *signed* offset would leave the two disagreeing, and would
-    /// make a negative effective address produce an index of `2^128 - |rs1+imm|`
-    /// whose only satisfying representative sits in the fp128 alias band.
-    pub(super) fn emit_address(
+    pub(super) fn emit_shift_data(
         &mut self,
         instruction_kind: impl Into<SourceInstructionKind>,
-        rs1: impl Into<RegisterOperand>,
+        rd: impl Into<RegisterOperand>,
+        value: impl Into<RegisterOperand>,
+        base: impl Into<RegisterOperand>,
         imm: i128,
     ) {
-        self.instruction(SourceInstructionRowTemplate::address(
+        self.instruction(SourceInstructionRowTemplate::shift_data(
             instruction_kind.into(),
-            rs1.into(),
-            format_i_imm(imm),
+            rd.into(),
+            value.into(),
+            base.into(),
+            imm,
         ));
     }
 

@@ -690,6 +690,7 @@ where
         proof.one_hot_config,
         preprocessing,
         &proof.commitments,
+        proof.fused_inc_commitment.as_ref(),
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
