@@ -826,7 +826,7 @@ fn committed_rounds_reject_degree_bound_before_absorbing() {
 }
 
 #[test]
-fn committed_output_claims_absorb_commitments_in_order() {
+fn committed_output_claims_absorb_count_then_commitments() {
     let output_claims = CommittedOutputClaims {
         commitments: vec![F::from_u64(3), F::from_u64(5), F::from_u64(8)],
     };
@@ -837,6 +837,7 @@ fn committed_output_claims_absorb_commitments_in_order() {
 
     let mut expected =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-output"), b"");
+    expected.append(&3u64);
     for commitment in &output_claims.commitments {
         expected.append(&commitment);
     }
@@ -848,6 +849,27 @@ fn committed_output_claims_absorb_commitments_in_order() {
     let actual: F = actual.challenge().unwrap();
     let expected: F = expected.challenge().unwrap();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn committed_output_claims_bind_the_split_point() {
+    let claims = |values: &[u64]| CommittedOutputClaims {
+        commitments: values.iter().map(|&v| F::from_u64(v)).collect::<Vec<_>>(),
+    };
+    let challenge_after = |first: &[u64], second: &[u64]| -> F {
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"committed-output"),
+            b"",
+        );
+        transcript.append(&claims(first));
+        transcript.append(&claims(second));
+        transcript.challenge().unwrap()
+    };
+
+    assert_ne!(
+        challenge_after(&[3, 5], &[8]),
+        challenge_after(&[3], &[5, 8])
+    );
 }
 
 #[test]
@@ -876,6 +898,7 @@ fn committed_proof_checks_rounds_then_output_claims() {
         manual.append(&round.commitment);
         expected_challenges.push(manual.challenge().unwrap());
     }
+    manual.append(&(proof.output_claims.commitments.len() as u64));
     for commitment in &proof.output_claims.commitments {
         manual.append(&commitment);
     }
