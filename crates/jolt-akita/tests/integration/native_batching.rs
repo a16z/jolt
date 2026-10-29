@@ -196,7 +196,7 @@ fn akita_native_batching_roundtrips_grouped_commitment() {
     let statement = native_statement(commitment, &point, [eval_a, eval_b]);
 
     let mut prover_state =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-bb-roundtrip"), b"");
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-roundtrip"), b"");
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
@@ -207,7 +207,7 @@ fn akita_native_batching_roundtrips_grouped_commitment() {
     .expect("black-box proof should be produced");
 
     let mut verifier_transcript =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-bb-roundtrip"), b"");
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-roundtrip"), b"");
     <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &statement,
@@ -236,8 +236,7 @@ fn akita_native_batching_rejects_malformed_statements() {
         AkitaScheme::commit_group(&prover_setup, layout(7), &[polynomial(16, 80)])
             .expect("other commit should succeed");
 
-    let mut transcript =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-bb-empty"), b"");
+    let mut transcript = prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-empty"), b"");
     assert!(matches!(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
@@ -259,10 +258,8 @@ fn akita_native_batching_rejects_malformed_statements() {
             evaluation: EvaluationClaim::new(point.clone(), eval_b),
         },
     ];
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-mixed-commit"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-mixed-commit"), b"");
     assert!(matches!(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
@@ -278,10 +275,8 @@ fn akita_native_batching_rejects_malformed_statements() {
     let mut shifted_point = point.clone();
     shifted_point[0] += f(1);
     mixed_points[1].evaluation = EvaluationClaim::new(shifted_point, eval_b);
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-mixed-points"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-mixed-points"), b"");
     assert!(matches!(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
@@ -294,10 +289,8 @@ fn akita_native_batching_rejects_malformed_statements() {
     ));
 
     let one_claim_for_two_slots = single_statement(group_commitment, &point, eval_a);
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-claim-count"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-claim-count"), b"");
     assert!(matches!(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
@@ -329,10 +322,8 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
     .expect("other grouped commit should succeed");
     let statement = native_statement(commitment, &point, [eval_a, eval_b]);
 
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-wrong-hint"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-wrong-hint"), b"");
     assert!(
         matches!(
             <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
@@ -347,10 +338,8 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
         "mismatched prover hint should reject"
     );
 
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-wrong-count"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-wrong-count"), b"");
     assert!(matches!(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
@@ -363,8 +352,7 @@ fn akita_native_batching_rejects_bad_prover_witnesses() {
     ));
 
     let wrong_dimension = polynomial(12, 200);
-    let mut transcript =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-bb-wrong-dim"), b"");
+    let mut transcript = prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-wrong-dim"), b"");
     assert!(matches!(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
@@ -390,8 +378,7 @@ fn akita_native_batching_rejects_tampered_verifier_inputs() {
             .expect("grouped commit should succeed");
     let statement = native_statement(commitment.clone(), &point, [eval_a, eval_b]);
 
-    let mut prover_state =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-bb-tamper"), b"");
+    let mut prover_state = prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-tamper"), b"");
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
@@ -402,7 +389,7 @@ fn akita_native_batching_rejects_tampered_verifier_inputs() {
     .expect("black-box proof should be produced");
 
     let mut verifier_transcript =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-bb-tamper"), b"");
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-tamper"), b"");
     <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &statement,
@@ -442,8 +429,7 @@ fn assert_native_verify_rejects(
     statement: jolt_akita::AkitaNativeBatchStatement,
     proof: &jolt_akita::AkitaBatchProof,
 ) {
-    let mut transcript =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-bb-tamper"), b"");
+    let mut transcript = prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-tamper"), b"");
     assert!(<AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         setup,
         &statement,
@@ -474,10 +460,8 @@ fn akita_native_batching_rejects_point_commitment_dimension_mismatch() {
             .expect("commit should succeed");
     let statement = single_statement(commitment, &short_point, f(9));
 
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-short-point"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-short-point"), b"");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
@@ -502,10 +486,8 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
         AkitaScheme::commit_group(&small_setup, layout(7), std::slice::from_ref(&small_poly))
             .expect("commit should succeed");
     let small_statement = single_statement(small_commitment, &small_point, small_eval);
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-cross-setup"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-cross-setup"), b"");
     let small_proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &small_setup,
         small_statement.clone(),
@@ -516,10 +498,8 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     .expect("proof should be produced");
 
     let (_, wider_verifier) = setup_for(15, 2, layout(7));
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-cross-setup"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-cross-setup"), b"");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &wider_verifier,
@@ -545,10 +525,8 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
         &point,
         [poly_a.evaluate(&point), poly_b.evaluate(&point)],
     );
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-cross-setup"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-cross-setup"), b"");
     let group_proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &two_slot_setup,
         group_statement.clone(),
@@ -558,10 +536,8 @@ fn akita_native_batching_rejects_statements_outside_the_verifier_setup() {
     )
     .expect("group proof should be produced");
     let (_, one_slot_verifier) = setup_for(16, 1, layout(7));
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-cross-setup"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-cross-setup"), b"");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &one_slot_verifier,
@@ -583,10 +559,8 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
         AkitaScheme::commit_group(&prover_setup, layout(7), std::slice::from_ref(&poly))
             .expect("commit should succeed");
     let statement = single_statement(commitment.clone(), &point, eval);
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-full-chunk"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-full-chunk"), b"");
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
@@ -604,10 +578,8 @@ fn akita_native_batching_rejects_dense_commitment_with_chunk_size() {
         serde_json::from_value(forged).expect("forged commitment deserializes");
     let forged_statement = single_statement(forged, &point, eval);
 
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-full-chunk"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-full-chunk"), b"");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
@@ -650,10 +622,8 @@ fn akita_native_batching_rejects_dense_witnesses_for_one_hot_hints() {
     let dense_12 = polynomial(12, 1);
     let point_12: Vec<_> = (0..12).map(|index| f(index as u64 + 2)).collect();
     let statement = single_statement(commitment, &point_12, dense_12.evaluate(&point_12));
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-bb-dense-for-onehot"),
-        b"",
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&protocol_tag(b"akita-bb-dense-for-onehot"), b"");
     expect_invalid_batch(
         <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &one_hot_setup,
