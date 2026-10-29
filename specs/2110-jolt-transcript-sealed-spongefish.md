@@ -76,7 +76,8 @@ Key abstractions:
    between two squeezes must decode uniquely from their concatenation, given
    what the verifier already knows. This means each encoding has a fixed
    width, has a length fixed by bound data, or carries its own `u64` count or
-   length, as `BytesMsg` does. Enforcement:
+   length, as `BytesMsg` and a committed sumcheck's `CommittedOutputClaims`
+   do. Enforcement:
    - `Transcript::append` has a `debug_assert` on word alignment.
    - `append_values` and `BytesMsg` pad by construction.
    - Fixed widths of field and group encodings are type properties.

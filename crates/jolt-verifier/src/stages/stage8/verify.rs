@@ -52,7 +52,6 @@ use jolt_poly::Point;
 use jolt_transcript::Encoding;
 use jolt_transcript::FieldTranscript;
 #[cfg(not(feature = "akita"))]
-#[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
 /// [`batch_entries`] wiring. The id is the composite [`ComposedOpeningId`] so
@@ -95,10 +94,7 @@ where
 {
     // The homomorphic opening draws no selector point, so the stage-8 slot
     // must stay empty.
-    proof
-        .stages
-        .pow_nonces
-        .require_absent(PowSite::Stage8)?;
+    proof.stages.pow_nonces.require_absent(PowSite::Stage8)?;
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 

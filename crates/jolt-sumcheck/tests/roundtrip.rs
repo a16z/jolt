@@ -3,8 +3,8 @@
 use jolt_field::{Fr, Ring};
 use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
-use jolt_sumcheck::proof::ClearSumcheckProof;
-use jolt_sumcheck::round_proof::{CompressedRoundPoly, RoundMessage};
+use jolt_sumcheck::proof::{ClearSumcheckProof, CompressedSumcheckProof};
+use jolt_sumcheck::round_proof::{append_compressed_round, RoundMessage};
 use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckVerifier};
 use jolt_transcript::{
     prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript,
@@ -140,9 +140,6 @@ fn degree3_final_eval_correct() {
 
 #[test]
 fn compressed_round_verifier_roundtrip() {
-    // Full prover-verifier roundtrip where both the prover and the verifier
-    // absorb through `CompressedRoundPoly` — the wrapper is the
-    // single source of truth for the compressed wire format.
     let num_vars = 3;
     let n = 1 << num_vars;
     let degree = 2;
@@ -183,12 +180,12 @@ fn compressed_round_verifier_roundtrip() {
             .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
 
-        let compressed = CompressedRoundPoly::new(&round_poly);
-        <CompressedRoundPoly<'_, F> as RoundMessage>::append_to_transcript(&compressed, &mut pt);
+        let compressed = round_poly.compress();
+        append_compressed_round(&mut pt, compressed.coeffs_except_linear_term());
         grind_round(degree, &mut pt, &mut pow_nonces);
 
         let r: F = pt.challenge().unwrap();
-        round_polys.push(round_poly);
+        round_polys.push(compressed);
 
         for buf in &mut bufs {
             for i in 0..half {
@@ -198,7 +195,7 @@ fn compressed_round_verifier_roundtrip() {
         }
     }
 
-    let proof = ClearSumcheckProof {
+    let proof = CompressedSumcheckProof {
         round_polynomials: round_polys,
         pow_nonces,
     };
@@ -208,26 +205,12 @@ fn compressed_round_verifier_roundtrip() {
         claimed_sum,
     };
 
-    let wrapped: Vec<CompressedRoundPoly<'_, F>> = proof
-        .round_polynomials
-        .iter()
-        .map(CompressedRoundPoly::new)
-        .collect();
-
     let mut vt =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
-    let result = SumcheckVerifier::verify(
-        &claim,
-        &wrapped,
-        &proof.pow_nonces,
-        BooleanHypercube,
-        &mut vt,
-    );
-    assert!(
-        result.is_ok(),
-        "compressed round verifier roundtrip failed: {:?}",
-        result.err()
-    );
+    let EvaluationClaim { point, value } = proof.verify(&claim, BooleanHypercube, &mut vt).unwrap();
+    let f_at_r = Polynomial::new(f).evaluate_and_consume(&point);
+    let g_at_r = Polynomial::new(g).evaluate_and_consume(&point);
+    assert_eq!(value, f_at_r * g_at_r);
 }
 
 #[test]

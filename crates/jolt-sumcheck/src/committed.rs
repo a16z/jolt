@@ -37,24 +37,19 @@ impl<C: Encoding> RoundMessage for CommittedRound<C> {
 }
 
 /// Vector commitments to a committed sumcheck's hidden output claims.
-///
-/// # Security
-/// The [`Encoding`] absorbs the commitments with no count, so it binds them
-/// only when their number is already fixed. A caller that absorbs claims read
-/// from a proof must first check `commitments.len()` against the count its
-/// protocol fixes from bound data, as the Jolt verifier does with
-/// `hidden.div_ceil(capacity)`, or absorb that count as a `u64` word itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedOutputClaims<C> {
     pub commitments: Vec<C>,
 }
 
-/// Each commitment, with no count: the verifier fixes the number of
-/// commitments from the hidden-claim count and the vector-commitment capacity
-/// and rejects any other count before the proof is accepted.
+/// The commitment count as a `u64` LE word, then each commitment. The prover
+/// chooses the count, so the transcript binds it: without it, claims
+/// `[c1, c2]` followed by a message starting with `c3` would absorb the same
+/// bytes as `[c1]` followed by `[c2, c3, ..]`.
 impl<C: Encoding> Encoding for CommittedOutputClaims<C> {
     fn encode(&self) -> impl AsRef<[u8]> {
         let mut out = Vec::new();
+        out.extend_from_slice(&(self.commitments.len() as u64).to_le_bytes());
         for commitment in &self.commitments {
             out.extend_from_slice(commitment.encode().as_ref());
         }

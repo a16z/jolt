@@ -69,8 +69,6 @@
 //! - [`ClearRound<F>`] — clear round polynomial evaluation and well-formedness.
 //! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — absorbs a `u64` count
 //!   word, then its coefficients.
-//! - [`CompressedRoundPoly`] — borrowed wrapper using the compressed wire
-//!   format (omits the linear coefficient).
 //!
 //! # Dependency position
 //!
@@ -158,5 +156,5 @@ pub use r1cs::{
 #[cfg(all(feature = "committed", feature = "prover"))]
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
-pub use round_proof::{append_compressed_round, ClearRound, CompressedRoundPoly, RoundMessage};
+pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
 pub use verifier::SumcheckVerifier;
