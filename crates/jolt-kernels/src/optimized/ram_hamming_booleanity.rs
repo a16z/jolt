@@ -31,9 +31,7 @@
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_claims::NoChallenges;
 use jolt_field::JoltField;
-use jolt_poly::{
-    bind_prefix_in_place, BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly,
-};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
@@ -141,7 +139,7 @@ impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
                 }
             }
             HammingState::Folded(hamming) => {
-                let _ = bind_prefix_in_place(&mut hamming.values, challenge, hamming.tail[1]);
+                let _ = hamming.bind(challenge);
             }
         }
         self.progress.advance();

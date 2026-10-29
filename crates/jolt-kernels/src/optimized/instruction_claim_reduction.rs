@@ -7,9 +7,7 @@
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{
-    bind_prefix_in_place, BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly,
-};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
@@ -294,8 +292,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        // Avoid a fresh half-size table each round.
-        let _ = bind_prefix_in_place(&mut self.combined.values, challenge, self.combined.tail[1]);
+        let _ = self.combined.bind(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();
     }
