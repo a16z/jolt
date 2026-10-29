@@ -11,8 +11,7 @@ jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::c
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#2
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenge_vector#0
 jolt-claims::r1cs.rs::lower_claim_expr::challenge#0
-jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge#1
-jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge_short_scalar#0
+jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge#0
 jolt-hyperkzg::kzg.rs::absorb_evaluations::challenge_powers#1
 jolt-hyperkzg::kzg.rs::absorb_witnesses::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::open_table::challenge#1
@@ -30,7 +29,6 @@ jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_round::challenge#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify::challenge#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_committed_round_consistency::challenge#1
 jolt-sumcheck::verifier.rs::SumcheckVerifier::verify_compressed::challenge#1
-jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::challenge_short_scalar::challenge_short_scalar#0
 jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::challenge_vector::challenge_vector#0
 jolt-transcript::transcript.rs::FieldTranscript::challenge::challenge_vector#0
 jolt-transcript::transcript.rs::FieldTranscript::challenge_powers::challenge#0

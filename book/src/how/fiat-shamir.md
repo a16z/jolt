@@ -152,36 +152,10 @@ statistical distance $2^{-161}$ of uniform:
   over: every byte pattern of the right length is a field element, so
   decoding is a bijection.
 
-**Short challenges for Dory.** The Dory verifier multiplies group elements by
-its challenges `beta`, `alpha` and `d`. A scalar multiplication costs time
-proportional to the scalar's bit length. So these three challenges are drawn
-as integers in $[0, 2^b)$ instead of full-width field elements.
-
-The width $b$ comes from the step's *loss factor* $L$: the number of
-challenge values for which a false claim could pass. $b$ is the least integer
-with $2^b \ge L \cdot 2^{128}$, so one attempt hits a bad value with
-probability at most $2^{-128}$ and no proof of work is needed:
-
-| Challenge | Loss $L$ | Why | Width $b$ |
-|-----------|----------|-----|-----------|
-| `beta` | 2 | the round's checks are Laurent polynomials from $\beta^{-1}$ to $\beta$ | 129 |
-| `alpha` | 4 | the fold spans $\alpha^{-1}$ to $\alpha$, and the last `alpha` shares a draw with `gamma` | 130 |
-| `d` | 3 | the final pairing check spans $d^{-1}$ to $d^2$ | 130 |
-
-These losses are Jolt's analysis of dory-pcs 0.4.2. The bound is round by
-round: a check that passes outside its bad set yields a break of Dory's
-binding. A bound summed over all of Dory's challenges would need about
-5 more bits. `gamma` stays full width, because the verifier uses only
-$-\gamma$ and $\gamma^{-1}$, which are full width anyway. The ZK
-Sigma-protocol challenges also stay full width, because the verifier squares
-them or multiplies them by other challenges.
-
-Dory names its challenges by label, and the adapter in
-`crates/jolt-dory/src/transcript.rs` maps those labels to losses. The table
-depends on how dory-pcs uses each label and on its draw order, so the
-workspace pins dory-pcs to exactly 0.4.2, and
-`crates/jolt-dory/tests/challenge_bursts.rs` checks the draw order. Every
-other challenge Jolt draws is full width. Akita's opening squeezes its own
+Every challenge drawn on Jolt's transcript is full width, including the ones
+Dory's verifier multiplies into group elements. The Dory adapter
+(`crates/jolt-dory/src/transcript.rs`) ignores dory-pcs's challenge labels
+and draws each challenge with `challenge`. Akita's opening squeezes its own
 challenges from the same sponge, decoded by Akita's code.
 
 ## Proof of work
@@ -205,9 +179,9 @@ of each attempt to about $2^b$ hash calls:
 
 The difficulty is the least $b$ with $|C| \cdot 2^b \ge L \cdot 2^{128}$,
 computed with exact integers from the codec's challenge-set size. This puts
-each protected challenge back at about $2^{128}$ hash calls. Like the Dory
-widths, this is a per-challenge (round-by-round) bound, not a bound summed
-over the whole proof.
+each protected challenge back at about $2^{128}$ hash calls. This is a
+per-challenge (round-by-round) bound, not a bound summed over the whole
+proof.
 
 The layout of one proof-of-work step:
 
