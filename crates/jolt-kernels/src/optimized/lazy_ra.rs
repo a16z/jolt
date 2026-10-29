@@ -619,6 +619,13 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
             })
             .collect();
     }
+    // `vec![column; n]` would clone one column n times on this thread.
+    #[cfg(feature = "parallel")]
+    let mut values: Vec<Vec<F>> = (0..tables.len() / factors)
+        .into_par_iter()
+        .map(|_| vec![F::zero(); len])
+        .collect();
+    #[cfg(not(feature = "parallel"))]
     let mut values = vec![vec![F::zero(); len]; tables.len() / factors];
     let columns = values.iter_mut().map(Vec::as_mut_slice).collect();
     fill(columns, 0, tables, factors, source, branches);
