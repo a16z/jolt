@@ -28,7 +28,8 @@ pub struct MaskedGroupClaim<F, C> {
 /// producer contract its one-shot fold digits are sized for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum DenseSource {
-    /// Coefficients bounded by `u64` (advice words, committed programs).
+    /// Coefficients of centered magnitude at most `u64::MAX` (advice words,
+    /// committed programs, the signed RV64 increments `FusedInc`).
     Bounded,
     /// Arbitrary field elements (field-register increments).
     FullField,

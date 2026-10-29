@@ -720,8 +720,8 @@ fn whiteout_masked_level_and_auxiliary_block_tampers() {
 fn whiteout_rerun_reuses_nothing_from_the_aborted_attempt() {
     let (case, aborted) = whiteout_rerun_case();
     let trace = case.honest_trace();
-    // Each commitment's header (layout digest and sizes) is public metadata
-    // of one fixed length; its image follows. The trace commitment's comes
+    // Each commitment is two messages: its header (layout digest and sizes,
+    // public metadata) and then its image. The trace commitment's comes
     // first, then the RV64 increments'.
     let commitments: Vec<_> = trace
         .messages()
@@ -729,11 +729,11 @@ fn whiteout_rerun_reuses_nothing_from_the_aborted_attempt() {
         .filter(|message| message.region == Region::Commitments)
         .map(|message| message.range)
         .collect();
-    let header_len = commitments.first().expect("the trace commitment").len();
-    let headers: Vec<_> = commitments
-        .into_iter()
-        .filter(|range| range.len() == header_len)
-        .collect();
+    assert!(
+        commitments.len() >= 4 && commitments.len().is_multiple_of(2),
+        "the commitments are (header, image) pairs: {commitments:?}"
+    );
+    let headers: Vec<_> = commitments.into_iter().step_by(2).collect();
     let mut compared = 0;
     for item in classify(&trace) {
         let fresh = matches!(

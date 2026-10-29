@@ -54,7 +54,7 @@ so the authors can fold it into the paper.
 | D21 | Open author questions Q1, Q2 (A7, A8, A9, A14), Q4, Q6, Q7, W6-Q5 | open | open |
 | D22 | Q7: the 1/p clause of Lemma `wo:lem:fold-overflow` holds only for the whole challenge tuple | paper fix | open (authors) |
 | D23 | Bounded rerun (≤ 3 runs) on FoldOverflow or exhausted Σ attempts, where the paper aborts | departure | specified (W6) |
-| D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc) get no randomness | gap (would leak) | closed by Akita W2b: every precommitted group at a masked level is hiding |
+| D24 | Precommitted groups that carry witness data (untrusted advice, FieldInc, FusedInc) get no randomness | gap (would leak) | closed by Akita W2b: every precommitted group at a masked level is hiding |
 | D25 | #254's statement-binding argument rewritten for masked claims | clarification | specified (W6) |
 | D26 | Multi-pair product rows ct(Σ_k X_k Y_k − Z); merged repeated products; affine BlindFold operands | extension (paper gap) | implemented (`wo/multipair`) |
 | D27 | Soundness ledger of the response proof: ≈ 2^−119.7 in total; the α round alone 126/q ≈ 2^−121 | accepted for now | accepted for now (user, 2026-10-22); revisit with the paper authors |
@@ -63,7 +63,7 @@ so the authors can fold it into the paper.
 | D30 | Two-witness distinguisher: per-byte χ², Bonferroni, calibrated by two injected leaks | evaluation input | measured (Akita W5d) |
 | D31 | Precommitted groups opened masked: statement-fixed groups committed hiding at preprocessing, the packing reduction absorbs no evaluation; their trust root is the holder of r | departure (stricter than paper), clarification | implemented (W6f, A44) |
 | D32 | Persisted plans: the ZK catalog (planned at setup) and exported response schedules enter a setup only at construction, are re-audited and re-admitted on load, and the pads absorb the masked catalog's, selected row's and response schedule's digests | extension (public parameters), transcript change | implemented (O1) |
-| D34 | Small byte items (O5): compressed images take the fewest balanced chunks under the chain's SIS bound (884 coefficients, the paper's `FCHAIN_MAX_IMAGE`), so t_p and cm(u_a) take 2 chunks, not 3; a repeated intermediate product takes one auxiliary slot (Whiteout and BlindFold committed proofs). One-chunk t_p is impossible at R_Σ | departure narrowed (D9), slot sharing (D12, D26) | implemented (O5) |
+| D34 | Small byte items (O5): compressed images take the fewest balanced chunks under the first map's certified SIS bound (15,115 coefficients at q128), so t_p and cm(u_a) take one chunk each; a repeated intermediate product takes one auxiliary slot (Whiteout and BlindFold committed proofs). | departure narrowed (D9), slot sharing (D12, D26) | implemented (O5) |
 | D35 | The residual commitment (and the pad commitment, which shares the Σ ring) over `R_128`: rank 9–10 instead of 18–19 over `R_64`, same `R_Σ`; the planner's dimension ceiling is lifted at the after-cut level only, and it never offloads into the cut level | parameter change (follows `06_evaluation.tex:124-133`) | implemented (O6, d = 128); d = 256 gated on a rerun |
 
 ## D1. Constant-time Σ attempt
@@ -503,9 +503,9 @@ evaluation charges 416 B for three compressed commitments plus the nonce
 - W5c lands in RP4 (commit `fe57e2446` and reviewer steering). Images above
   Akita's 512-coefficient (8 KiB) cap are split into ⌈len/512⌉ chunks, each
   compressed by the existing two-map chain.
-- Since O5 (D34) the chunks hold up to 884 coefficients, the first map's
-  SIS bound and the paper's `FCHAIN_MAX_IMAGE`; an image takes the fewest
-  chunks, balanced. The 8 KiB cap still bounds clear B/D images.
+- Since O5 (D34) the chunks hold up to the first map's certified SIS
+  bound, 15,115 coefficients at q128; an image takes the fewest chunks,
+  balanced. The 8 KiB cap still bounds clear B/D images.
 
 **Why.** Akita's compression source is capped at 512 Fp128 coefficients
 (`akita-params/src/compression.rs:19`, per `whiteout-sigma.md` A12), and the
@@ -530,10 +530,11 @@ load-bearing: the prover chooses `cm`, and a carry inside `ξ₁` (bits
 `(0, −1)` → `(−2, 0)`, then `ξ₂` and `cm` recomputed) passes everything
 else (Akita spec §5.7).
 
-**For the paper.** Q4 (closed by D34): the cost model's
-`FCHAIN_MAX_IMAGE = 884` now matches Whiteout's chunk bound. Price the
-split chain for images above it (t_p and u_a, 1,216 coefficients at
-rank 19, take two chunks), and state the rows
+**For the paper.** Q4 (closed by D34): Whiteout's chunk bound is the
+first map's certified SIS width, 15,115 coefficients at q128, against the
+cost model's `FCHAIN_MAX_IMAGE = 884`; t_p and u_a (at most 1,280
+coefficients) take one chunk. Price the split chain only for images above
+the bound, and state the rows
 as reduced evaluations at `α` (or the paper's coefficient rows, at the cost
 of `d` rows per map).
 
@@ -1020,8 +1021,8 @@ protection (`03_setting.tex:167-173`).
 **Implementation** (Akita W2b, `akita:specs/whiteout-akita.md` §3.5).
 
 - Akita W1 gave every precommitted group zero randomness. Jolt's per-proof
-  auxiliary groups, **untrusted advice and `FieldInc`**, enter Akita as
-  precommitted groups but carry witness data
+  auxiliary groups, **untrusted advice, `FieldInc` and `FusedInc`** (the
+  RV64 increments), enter Akita as precommitted groups but carry witness data
   (`J8:crates/jolt-prover/src/akita/stage8.rs:1-4`), so their outer images
   would have been published without hiding.
 - `ZkOpeningSchedule::admit` now requires every precommitted group folded at
@@ -1368,10 +1369,10 @@ affine form over committed pads (`06_evaluation.tex:78-83`).
 **Implementation** (jolt `whiteout/dev` + W6f;
 `jolt:specs/whiteout-jolt-integration.md`, prototype deltas).
 
-- *Which groups.* Untrusted advice and `FieldInc` (per proof), trusted
-  advice and the two committed-program objects (statement-fixed) all open
-  as precommitted groups beside the trace group, in the clear stage 8's
-  canonical order. Each is committed under the root profile of the
+- *Which groups.* Untrusted advice, `FieldInc` and `FusedInc` (per
+  proof), trusted advice and the two committed-program objects
+  (statement-fixed) all open as precommitted groups beside the trace group,
+  in the clear stage 8's canonical order (`FusedInc` last, always present). Each is committed under the root profile of the
   zero-knowledge row of its own shape (`jolt:crates/jolt-akita/src/whiteout/mod.rs`,
   `PrecommittedRow`), so it carries the masked root's B randomness
   (Akita §3.5, R6). The trace row is planned keyed on those profiles.
@@ -1397,8 +1398,8 @@ affine form over committed pads (`06_evaluation.tex:78-83`).
   not matter; across proofs the reused randomness only ever reappears
   inside witnesses that are themselves freshly hidden (Akita §3.5,
   "A commitment reused across proofs is still one commitment"). The
-  per-proof groups (untrusted advice, `FieldInc`) draw fresh randomness in
-  every proof.
+  per-proof groups (untrusted advice, `FieldInc`, `FusedInc`) draw fresh
+  randomness in every proof.
 - *Packing reduction.* An advice or committed-program object is
   prefix-packed (`PrefixPackedLayout`). The clear reduction absorbs the
   layout words, the digest, the common point and the evaluations, then
@@ -1467,8 +1468,10 @@ group's claims (D25).
   variables have no ZK row (Akita's audited fold domain); Jolt's dense
   objects are at least 14.
 
-**Status.** Implemented (W6f) for advice, committed programs and
-field-inline's `FieldInc` (a full-field group, `ZkCommitmentConfig<JoltDenseFull>`):
+**Status.** Implemented (W6f) for advice, committed programs,
+field-inline's `FieldInc` (a full-field group, `ZkCommitmentConfig<JoltDenseFull>`)
+and the RV64 increments `FusedInc` (a bounded group: its signed increments
+fit `JoltDenseBounded`, whose centered magnitude is at least `u64::MAX`):
 jolt-prover `whiteout_e2e` (honest proofs verify, tampers reject, a
 recommitted trusted advice or program commitment rejects; with
 `field-inline`, a field-ops proof with untrusted advice) and jolt-verifier's
@@ -1620,18 +1623,18 @@ intermediate products (7 in stage 5, 34 in stage 6's cycle phase).
   `akita-pcs/src/zk/compression.rs`). The bound is
   `CompressionChainPlan::max_certified_source_coefficients`: the largest
   source whose first map stays inside its rank-one SIS cell. At q128 that
-  cell is d = 16, 7,077 columns of `{−1, 0, 1}` differences
+  cell is d = 32, 60,460 columns of `{−1, 0, 1}` differences
   (`akita-params/src/sis/compression.rs`), and a source of n coefficients
-  needs `128·n/16` columns, so n ≤ 884 (7,072 columns); 885 needs 7,080.
+  needs `128·n/32` columns, so n ≤ 15,115; 15,116 needs 60,464.
   An image takes the fewest chunks that bound allows, balanced to within
   one coefficient (`compression::chunks`, the single owner of the
   geometry). Each chunk is derived by `for_certified_source`: the same two
-  maps, the same certification and the same 128 B terminal as the clear
+  maps, the same certification and the same 256 B terminal as the clear
   chain, without the 8 KiB cap, under its own policy id
   `NegativeBinaryTwoMapSisBoundV1` (tag 4, appended), which no instance
   descriptor admits. The cap still bounds every clear B/D image, so no
-  clear catalog, plan or descriptor changes. t_p and cm(u_a) become 2
-  chunks of 608 coefficients, 256 B each; t_D (64 coefficients) stays 1.
+  clear catalog, plan or descriptor changes. t_p, cm(u_a) and t_D each
+  take one chunk.
 - *Shared intermediate products* (jolt `wo/o5-bytes`,
   `jolt-zk/src/masking/lowering.rs`, `ProductMemo`). One memo spans a
   relation's lowering in one domain (`JoltResidual::lower_claims`). A
@@ -1657,27 +1660,16 @@ intermediate products (7 in stage 5, 34 in stage 6's cycle phase).
 
 - *Chunk binding.* Lemma `wo:lem:compressed-binding` applies per chunk
   (D9): two openings of one chunk's `cm` that reconstruct different images
-  give a nonzero `{−1, 0, 1}` vector in the kernel of `K₁` or `K₂`. The
-  maps' widths and Akita's estimator (`sis_estimator_once`, q128,
-  rank 1, ℓ∞ bound 1):
-
-  | map | width (columns) | exhaustive β search | proven-pruned (early exit) | local-minimum |
-  |---|---|---|---|---|
-  | `K₁`, a 608-coefficient chunk (t_p, u_a) | 4,864 of 7,077 | 140.98 bits (β 532) | above target (≥ 128.26) | 155.3 bits |
-  | `K₁` at the bound, 884 coefficients | 7,072 | 128.26 bits (β 484) | above target | 141.3 bits |
-  | `K₁` one past the cell | 7,078 | — | 127.995 bits | 141.0 bits |
-  | `K₂` (every chunk) | 256 of 508 | — | above target | 168.8 bits |
-  | `K₁`, t_D (64 coefficients) | 512 | — | inside the cell (narrower than 4,864) | — |
-
-  The cell is the authority every compression map is priced by
-  (`min_compression_secure_rank`). Balancing keeps the chunks t_p and u_a
-  use 12.7 bits above the target (140.98 against 128.26 at the bound); the
-  bound's 0.26-bit margin applies only to an image that fills a whole
-  chunk. The chain rows'
-  α-reduction error is unchanged per row (degree ≤ 15), and there are
+  give a nonzero `{−1, 0, 1}` vector in the kernel of `K₁` or `K₂`. A
+  t_p or u_a chunk's `K₁` (1,152–1,280 coefficients) is 4,608–5,120 of
+  the `R_32` cell's 60,460 columns; every chunk's `K₂` is 256 of the
+  `R_16` cell's 2,400. The cells are the authority every compression map
+  is priced by (`min_compression_secure_rank`), and a map narrower than
+  its cell is at least as hard. The chain rows' α-reduction error is
+  unchanged per row (degree below the map's ring dimension), and there are
   fewer rows. The binary constraint covers ξ₁ and ξ₂ of every chunk, as
   before; ξ₁'s length depends only on the image, and each removed chunk
-  removes one ξ₂ (2,048 digits). The response schedule is keyed by `e`'s
+  removes one ξ₂. The response schedule is keyed by `e`'s
   length, so a shorter `e` selects its row by the existing lookup.
   Hiding is unchanged: compressed forms are functions of the raw images
   (D9).
@@ -1702,19 +1694,6 @@ intermediate products (7 in stage 5, 34 in stage 6's cycle phase).
 
 **Not done, and why.**
 
-- *One-chunk t_p.* It needs t_p ≤ 884 coefficients, i.e. `rank_p·64 ≤ 884`,
-  rank ≤ 13 at d = 64. A_p must be SIS-binding at the Σ collision radius
-  R_Σ ≈ 2^47.82, because the Σ extractor certifies the pads only inside its
-  Gaussian box (`sigma_matrix_rank`, `specs/whiteout-o7-sigma-radius.md`
-  §3): the Σ-binding table gives rank 18 for widths up to 2,463 columns and
-  19 above (muldiv's A_p is 3,330 columns, rank 19), and hardness tracks
-  n = rank·d, so another ring dimension does not help. The tables give
-  rank 13 at d = 64 only at radii up to about 2^39.7 (O7 §3.2), 2^8 below
-  R_Σ. Narrowing A_p to rank 18 would still need 2 chunks (1,152
-  coefficients). A chain with a 1,216-coefficient source needs a rank-2
-  first map, whose 32-coefficient output needs 512 `R_8` columns at the
-  second map, over its cell's 508; a third map would break the fixed
-  two-map chain.
 - *The 2 defining slots.* Distributing an affine operand over its
   openings (`(Σ c_i o_i + c₀)·y = Σ o_i·(c_i y) + c₀ y`, a multi-pair row)
   would remove both (−32 B), at the cost of 35 + 3 more operand pads for
@@ -1726,7 +1705,7 @@ intermediate products (7 in stage 5, 34 in stage 6's cycle phase).
   product). Every slot holds a uniformly masked field element, so
   nothing in the block compresses.
 
-**Measured** (release, `--backend optimized`; proof wire bytes):
+**Measured at O5** (release, `--backend optimized`; proof wire bytes):
 
 | | muldiv | fib 2^16 | fib 2^20 |
 |---|---|---|---|
@@ -1771,11 +1750,11 @@ D rings are 64 on every row.
   catalog changes.
 - The residual is rank 9–10 over `R_128` on every row (rank 18–19 over
   `R_64` before; `A_a` was 18 on dense 14:1). u_a is 1,280 coefficients instead of 1,216 (1,152 on a rank-9
-  row) and is still sent as 2 chunks of `cm(u_a)`. r_a is 321 `R_128`
+  row) and is sent as one chunk of `cm(u_a)`. r_a is 321 `R_128`
   columns instead of 610 `R_64` columns.
 - `A_p` follows, since jolt's Σ setup has one ring: rank 9 (rank 10 above
-  1,231 columns) over `R_128`. t_p is 1,152 or 1,280 coefficients, still 2
-  chunks.
+  1,231 columns) over `R_128`. t_p is 1,152 or 1,280 coefficients, one
+  chunk.
 - The zero-knowledge planner never offloads a setup into the cut level.
   A setup prefix there puts the parent's response and inner digits into
   w_k, hence into `s` and `e`, and the planner's setup-first objective
