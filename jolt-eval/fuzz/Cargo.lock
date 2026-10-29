@@ -1563,7 +1563,6 @@ dependencies = [
  "getrandom 0.4.2",
  "jolt-field",
  "light-poseidon",
- "rayon",
  "sha3",
  "shake",
  "spongefish",
