@@ -35,7 +35,6 @@ mod pad_commitment;
 mod params;
 mod placement;
 mod response;
-mod ring;
 #[cfg(feature = "whiteout-prover")]
 mod sample;
 mod segments;
@@ -72,7 +71,6 @@ pub use response::{
     CompressedTarget, ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows,
     ResponseSegment, ResponseStatement, ResponseWeights, ResponseWitness, FIELD_LEVELS,
 };
-pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
 pub use sample::sample_zero_constant_term;
 pub use segments::{balanced_range, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable};

@@ -66,10 +66,6 @@ rand_chacha.workspace = true
 rand_core.workspace = true
 
 [[test]]
-name = "whiteout_ring"
-required-features = ["whiteout"]
-
-[[test]]
 name = "whiteout_sample"
 required-features = ["whiteout-prover"]
 

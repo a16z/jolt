@@ -362,8 +362,8 @@ the transcript free of any such value.
 
 ### 2.2 Lifting the rows
 
-Each row becomes an R-linear form in `(u, s)` (`wo:lem:ct-lift`), built with
-`LiftedFunctional` (M6d):
+Each row becomes an R-linear form in `(u, s)` (`wo:lem:ct-lift`), built in
+`whiteout/lift.rs`:
 
 | Residual element | Lift |
 |---|---|
