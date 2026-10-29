@@ -148,6 +148,11 @@ jobs:
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
         run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas --cargo-quiet --lib -E 'test(/^ntt::/) | test(/^ring::/)'
+      - name: Run parallel-only NEON NTT kernel tests
+        env:
+          RUSTFLAGS: -D warnings -C target-cpu=native
+        # The add-reduce kernels and their tail tests exist only with `parallel`.
+        run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas,parallel --cargo-quiet --lib -E 'test(/^ntt::neon::/)'
 
   avx512:
     name: AVX-512 field kernels (emulated)
