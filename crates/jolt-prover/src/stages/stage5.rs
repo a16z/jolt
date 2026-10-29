@@ -21,7 +21,8 @@ use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 #[cfg(feature = "field-inline")]
@@ -67,7 +68,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let log_k = checked.ram_K.ilog2() as usize;
     let formula_dimensions = super::formula_dimensions(
@@ -149,7 +150,7 @@ mod field_inline_round_trip {
     use jolt_field::{Fr, Ring};
     use jolt_kernels::ProverInputs;
     use jolt_poly::EqPolynomial;
-    use jolt_transcript::{LegacyBlake2bTranscript as Blake2bTranscript, Transcript};
+    use jolt_transcript::{prover_transcript, Keccak, ProverState};
     use jolt_verifier::stages::relations::ConcreteSumcheck as _;
     use jolt_witness::JoltWitnessOracle as _;
 
@@ -171,7 +172,10 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = Blake2bTranscript::new(b"stage5-field-inline");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage5-field-inline"),
+            b"",
+        );
         let ((stage1, stage2, stage3), stage4) = FixtureProver {
             backend: &mut context,
             mode: &mode,
@@ -179,10 +183,10 @@ mod field_inline_round_trip {
             public_io: &public_io,
             checked: &checked,
             preprocessing: &preprocessing,
-            transcript: &mut prover_transcript,
+            transcript: &mut prover_state,
         }
         .through_stage4();
-        let out = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let out = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
             &checked,
@@ -190,13 +194,16 @@ mod field_inline_round_trip {
             &preprocessing,
             &stage2.clear_output,
             &stage4.clear_output,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
         // The verifier twin (stage5::verify's clear body), positioned by the
         // upstream replays.
-        let mut transcript = Blake2bTranscript::new(b"stage5-field-inline");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage5-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
@@ -219,7 +226,10 @@ mod field_inline_round_trip {
             &out,
         );
 
-        assert_eq!(transcript.state(), prover_transcript.state());
+        assert_eq!(
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
+        );
     }
 
     fn fr(value: u64) -> Fr {

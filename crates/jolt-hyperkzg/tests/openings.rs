@@ -12,7 +12,7 @@ use jolt_hyperkzg::{
 };
 use jolt_openings::CommitmentScheme;
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, ProverState, ScriptedTranscript};
 
 fn setup_params(beta: u64, capacity: usize) -> HyperKZGSetupParams {
     let beta = Fr::from_u64(beta);
@@ -31,8 +31,8 @@ fn setup(beta: u64, capacity: usize) -> (HyperKZGProverSetup, HyperKZGVerifierSe
     HyperKZGScheme::setup(setup_params(beta, capacity)).unwrap()
 }
 
-fn transcript() -> Blake2bTranscript {
-    Blake2bTranscript::new(b"hyperkzg-test")
+fn transcript() -> ProverState<Blake2b512> {
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"hyperkzg-test"), b"")
 }
 
 fn multilinear_oracle(table: &[Fr], point: &[Fr]) -> Fr {
@@ -78,7 +78,10 @@ fn independent_evaluations_and_transcripts_match() {
         assert_eq!(consumed, bytes.len());
         let mut vt = transcript();
         HyperKZGScheme::verify(&commitment, &point, evaluation, &proof, &vk, &mut vt).unwrap();
-        assert_eq!(pt.challenge(), vt.challenge());
+        assert_eq!(
+            pt.verifier_message::<[u8; 32]>(),
+            vt.verifier_message::<[u8; 32]>()
+        );
     }
 }
 
@@ -225,7 +228,10 @@ fn malformed_shape_and_arity_return_errors_before_transcript_mutation() {
             ),
             Err(HyperKZGError::InvalidArity)
         );
-        assert_eq!(actual.challenge(), transcript().challenge());
+        assert_eq!(
+            actual.verifier_message::<[u8; 32]>(),
+            transcript().verifier_message::<[u8; 32]>()
+        );
     }
 }
 
@@ -282,25 +288,9 @@ fn bad_imports_and_false_prover_claims_reject() {
     .unwrap();
 }
 
-#[derive(Default)]
-struct ZeroTranscript;
-
-impl Transcript for ZeroTranscript {
-    type Challenge = Fr;
-
-    fn new(_: &'static [u8]) -> Self {
-        Self
-    }
-
-    fn append_bytes(&mut self, _: &[u8]) {}
-
-    fn challenge(&mut self) -> Fr {
-        Fr::zero()
-    }
-
-    fn state(&self) -> [u8; 32] {
-        [0; 32]
-    }
+/// A transcript whose first challenge, the fold challenge, is zero.
+fn zero_fold_challenge() -> ScriptedTranscript<ProverState<Blake2b512>, Fr> {
+    ScriptedTranscript::with_script(transcript(), vec![Fr::zero()])
 }
 
 #[test]
@@ -313,7 +303,7 @@ fn zero_fold_challenge_rejects_on_both_paths() {
             f.evaluation,
             &f.proof,
             &f.vk,
-            &mut ZeroTranscript,
+            &mut zero_fold_challenge(),
         ),
         Err(HyperKZGError::DegenerateChallenge),
     );
@@ -325,7 +315,7 @@ fn zero_fold_challenge_rejects_on_both_paths() {
         Fr::one(),
         &pk,
         None,
-        &mut ZeroTranscript,
+        &mut zero_fold_challenge(),
     )
     .is_err());
 }

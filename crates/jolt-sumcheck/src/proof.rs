@@ -3,13 +3,11 @@ use crate::{
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
     domain::{BooleanHypercube, SumcheckDomain},
     error::SumcheckError,
-    round_proof::LabeledRoundPoly,
     verifier::SumcheckVerifier,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 use serde::{Deserialize, Serialize};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
@@ -99,22 +97,16 @@ impl<F: Field, C> SumcheckProof<F, C> {
         &self,
         claim: &SumcheckClaim<F>,
         domain: D,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        F: Encoding,
+        T: FieldTranscript<F>,
         D: SumcheckDomain<F>,
     {
         match self {
             Self::Clear(ClearProof::Full(proof)) => {
-                let rounds = proof
-                    .round_polynomials
-                    .iter()
-                    .map(|poly| LabeledRoundPoly::new(poly, round_label))
-                    .collect::<Vec<_>>();
-                SumcheckVerifier::verify(claim, &rounds, domain, transcript)
+                SumcheckVerifier::verify(claim, &proof.round_polynomials, domain, transcript)
             }
             Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "full clear",
@@ -141,15 +133,14 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        F: Encoding,
+        T: FieldTranscript<F>,
     {
         match self {
             Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
                 &SumcheckClaim::new(num_vars, degree, claimed_sum),
                 proof,
                 BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
                 transcript,
             ),
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
@@ -175,8 +166,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         match self {
             Self::Committed(proof) => proof.verify_committed_consistency(statement, transcript),
@@ -202,8 +193,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         self.verify_committed_consistency(SumcheckStatement::new(num_vars, degree), transcript)
     }

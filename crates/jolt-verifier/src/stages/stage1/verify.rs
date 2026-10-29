@@ -2,7 +2,7 @@ use jolt_claims::protocols::jolt::{geometry::spartan::SpartanOuterDimensions, Jo
 use jolt_crypto::VectorCommitment;
 use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
 use super::outputs::{
@@ -25,12 +25,12 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
-    let tau = uniskip::draw_spartan_outer_tau(transcript, log_t);
+    let tau = uniskip::draw_spartan_outer_tau(transcript, log_t)?;
 
     if !checked.zk {
         let claims = &proof.clear_claims()?.stage1;

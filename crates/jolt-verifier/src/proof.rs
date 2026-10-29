@@ -68,6 +68,11 @@ pub struct JoltProof<
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
+    /// The spongefish NARG string: the prover messages the verifier reads
+    /// from its transcript. Every message of the current protocol is a field
+    /// of this struct absorbed as a public message, so the prover leaves it
+    /// empty; the verifier still requires it to be read to its end.
+    pub narg: Vec<u8>,
 }
 
 impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
@@ -111,6 +116,7 @@ where
             rw_config,
             one_hot_config,
             trace_polynomial_order,
+            narg: Vec::new(),
         }
     }
 
@@ -161,6 +167,7 @@ where
             rw_config: self.rw_config,
             one_hot_config: self.one_hot_config,
             trace_polynomial_order: self.trace_polynomial_order,
+            narg: self.narg,
         }
     }
 }

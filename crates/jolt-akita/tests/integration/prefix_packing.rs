@@ -9,7 +9,7 @@ use jolt_akita::{
 use jolt_field::Ring;
 use jolt_openings::{CommitmentScheme, PrefixPackedClaims, PrefixPackedLayout};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 fn f(value: u64) -> AkitaField {
     AkitaField::from_u64(value)
@@ -57,21 +57,21 @@ fn fixed_prefix_claim_opens_the_materialized_akita_polynomial() {
     ))
     .unwrap();
     let (commitment, hint) = AkitaScheme::commit(&physical, &prover_setup).unwrap();
-    let mut prover_transcript = Blake2bTranscript::new(b"akita/fixed-prefix");
-    let physical_claim = layout
-        .reduce_claims(&claims, &mut prover_transcript)
-        .unwrap();
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita/fixed-prefix"), b"");
+    let physical_claim = layout.reduce_claims(&claims, &mut prover_state).unwrap();
     let proof = AkitaScheme::open(
         &physical,
         physical_claim.point.as_slice(),
         physical_claim.value,
         &prover_setup,
         Some(hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
 
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita/fixed-prefix");
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita/fixed-prefix"), b"");
     let verifier_claim = layout
         .reduce_claims(&claims, &mut verifier_transcript)
         .unwrap();
@@ -117,21 +117,25 @@ fn changed_fixed_prefix_statement_rejects_the_original_proof() {
     ))
     .unwrap();
     let (commitment, hint) = AkitaScheme::commit(&physical, &prover_setup).unwrap();
-    let mut prover_transcript = Blake2bTranscript::new(b"akita/fixed-prefix-tamper");
-    let physical_claim = layout
-        .reduce_claims(&claims, &mut prover_transcript)
-        .unwrap();
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita/fixed-prefix-tamper"),
+        b"",
+    );
+    let physical_claim = layout.reduce_claims(&claims, &mut prover_state).unwrap();
     let proof = AkitaScheme::open(
         &physical,
         physical_claim.point.as_slice(),
         physical_claim.value,
         &prover_setup,
         Some(hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
 
-    let mut honest_verifier_transcript = Blake2bTranscript::new(b"akita/fixed-prefix-tamper");
+    let mut honest_verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita/fixed-prefix-tamper"),
+        b"",
+    );
     let honest_claim = layout
         .reduce_claims(&claims, &mut honest_verifier_transcript)
         .unwrap();
@@ -147,7 +151,10 @@ fn changed_fixed_prefix_statement_rejects_the_original_proof() {
 
     evaluations[1] += f(1);
     let changed = PrefixPackedClaims::new(digest, logical_point, evaluations);
-    let mut verifier_transcript = Blake2bTranscript::new(b"akita/fixed-prefix-tamper");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita/fixed-prefix-tamper"),
+        b"",
+    );
     let changed_claim = layout
         .reduce_claims(&changed, &mut verifier_transcript)
         .unwrap();

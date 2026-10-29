@@ -16,7 +16,7 @@ use jolt_openings::{
     ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, Point, Polynomial, HIGH_TO_LOW};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 
 const MAX_NUM_VARS: usize = 4;
@@ -103,7 +103,7 @@ fn prove_clear(
     polynomials: &[Polynomial<Fr>],
     hints: Vec<DoryHint>,
 ) -> <DoryBatch as BatchOpeningScheme>::Proof {
-    let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+    let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
     <DoryBatch as BatchOpeningScheme>::prove_batch(
         setup,
         claims,
@@ -148,17 +148,17 @@ fuzz_target!(|data: &[u8]| {
     match data[2] % 10 {
         0 => {
             let (claims, hints) = commit_clear(&polynomials, &point, prover_setup);
-            let mut prover_transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut prover_state = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
             let proof = <DoryBatch as BatchOpeningScheme>::prove_batch(
                 prover_setup,
                 claims.clone(),
                 sources(&polynomials),
                 hints,
-                &mut prover_transcript,
+                &mut prover_state,
             )
             .unwrap_or_else(|error| panic!("Dory clear batch proof failed: {error}"));
 
-            let mut verifier_transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut verifier_transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
             <DoryBatch as BatchOpeningScheme>::verify_batch(
                 verifier_setup,
                 &claims,
@@ -166,14 +166,17 @@ fuzz_target!(|data: &[u8]| {
                 &mut verifier_transcript,
             )
             .unwrap_or_else(|error| panic!("honest clear batch verification failed: {error}"));
-            assert_eq!(prover_transcript.state(), verifier_transcript.state());
+            assert_eq!(
+                prover_state.verifier_message::<[u8; 32]>(),
+                verifier_transcript.verifier_message::<[u8; 32]>()
+            );
         }
         1 => {
             let (mut claims, hints) = commit_clear(&polynomials, &point, prover_setup);
             let proof = prove_clear(prover_setup, claims.clone(), &polynomials, hints);
             claims[0].evaluation.value += Fr::from_u64(1);
 
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
             assert!(
                 <DoryBatch as BatchOpeningScheme>::verify_batch(
                     verifier_setup,
@@ -197,7 +200,7 @@ fuzz_target!(|data: &[u8]| {
 
             let mut tampered = claims;
             tampered[0].commitment = wrong_commitment;
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
             assert!(
                 <DoryBatch as BatchOpeningScheme>::verify_batch(
                     verifier_setup,
@@ -212,7 +215,7 @@ fuzz_target!(|data: &[u8]| {
         3 => {
             let (mut claims, hints) = commit_clear(&polynomials, &point, prover_setup);
             claims[1].evaluation.point = shifted_point(&point);
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
             assert!(
                 <DoryBatch as BatchOpeningScheme>::prove_batch(
                     prover_setup,
@@ -230,7 +233,7 @@ fuzz_target!(|data: &[u8]| {
             let wrong = Polynomial::new(vec![Fr::from_u64(1); 1usize << (num_vars + 1)]);
             let mut polynomial_sources = sources(&polynomials);
             polynomial_sources[0] = &wrong;
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
             assert!(
                 <DoryBatch as BatchOpeningScheme>::prove_batch(
                     prover_setup,
@@ -248,7 +251,7 @@ fuzz_target!(|data: &[u8]| {
             let mut polynomial_sources = sources(&polynomials);
             polynomial_sources.pop();
             hints.pop();
-            let mut transcript = Blake2bTranscript::new(CLEAR_LABEL);
+            let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(CLEAR_LABEL), b"");
             assert!(
                 <DoryBatch as BatchOpeningScheme>::prove_batch(
                     prover_setup,
@@ -264,7 +267,7 @@ fuzz_target!(|data: &[u8]| {
         6 => {
             let (claims, hints) = commit_clear(&polynomials, &point, prover_setup);
             let proof = prove_clear(prover_setup, claims.clone(), &polynomials, hints);
-            let mut transcript = Blake2bTranscript::new(b"fuzz-openings-clear-alt");
+            let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"fuzz-openings-clear-alt"), b"");
             assert!(
                 <DoryBatch as BatchOpeningScheme>::verify_batch(
                     verifier_setup,
@@ -278,7 +281,7 @@ fuzz_target!(|data: &[u8]| {
         }
         7 => {
             let (commitments, hints, evaluations) = commit_zk(&polynomials, &point, prover_setup);
-            let mut prover_transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut prover_state = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(ZK_LABEL), b"");
             let opening = <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
                 prover_setup,
                 point.clone(),
@@ -286,11 +289,11 @@ fuzz_target!(|data: &[u8]| {
                 sources(&polynomials),
                 hints,
                 evaluations,
-                &mut prover_transcript,
+                &mut prover_state,
             )
             .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
 
-            let mut verifier_transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut verifier_transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(ZK_LABEL), b"");
             let verifier_hiding = <DoryBatch as ZkBatchOpeningScheme>::verify_batch_zk(
                 verifier_setup,
                 point,
@@ -300,7 +303,10 @@ fuzz_target!(|data: &[u8]| {
             )
             .unwrap_or_else(|error| panic!("honest ZK batch verification failed: {error}"));
             assert_eq!(opening.hiding_commitment, verifier_hiding);
-            assert_eq!(prover_transcript.state(), verifier_transcript.state());
+            assert_eq!(
+                prover_state.verifier_message::<[u8; 32]>(),
+                verifier_transcript.verifier_message::<[u8; 32]>()
+            );
         }
         8 => {
             let (commitments, mut hints, mut evaluations) =
@@ -309,7 +315,7 @@ fuzz_target!(|data: &[u8]| {
             polynomial_sources.pop();
             hints.pop();
             evaluations.pop();
-            let mut transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(ZK_LABEL), b"");
             assert!(
                 <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
                     prover_setup,
@@ -327,7 +333,7 @@ fuzz_target!(|data: &[u8]| {
         _ => {
             let (mut commitments, hints, evaluations) =
                 commit_zk(&polynomials, &point, prover_setup);
-            let mut prover_transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut prover_state = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(ZK_LABEL), b"");
             let opening = <DoryBatch as ZkBatchOpeningScheme>::prove_batch_zk(
                 prover_setup,
                 point.clone(),
@@ -335,7 +341,7 @@ fuzz_target!(|data: &[u8]| {
                 sources(&polynomials),
                 hints,
                 evaluations,
-                &mut prover_transcript,
+                &mut prover_state,
             )
             .unwrap_or_else(|error| panic!("Dory ZK batch proof failed: {error}"));
 
@@ -348,7 +354,7 @@ fuzz_target!(|data: &[u8]| {
             }
             commitments[0] = wrong_commitment;
 
-            let mut verifier_transcript = Blake2bTranscript::new(ZK_LABEL);
+            let mut verifier_transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(ZK_LABEL), b"");
             assert!(
                 <DoryBatch as ZkBatchOpeningScheme>::verify_batch_zk(
                     verifier_setup,

@@ -21,6 +21,7 @@ mod builder;
 mod error;
 mod proof;
 pub mod protocol;
+#[cfg(feature = "prover")]
 mod prove;
 pub mod r1cs;
 mod relaxed;
@@ -35,6 +36,7 @@ pub use protocol::{
     BlindFoldDimensions, BlindFoldProtocol, FinalOpeningWitnessCoordinates, RowDimensions,
     WitnessCoordinate, WitnessRowLayout,
 };
+#[cfg(feature = "prover")]
 pub use prove::{
     prove, prove_with_row_committer, BlindFoldRowCommitter, BlindFoldWitness,
     DirectBlindFoldRowCommitter,

@@ -15,7 +15,7 @@ use jolt_akita::{
     AkitaSetupParams, AkitaVerifierSetup,
 };
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use serde_json::Value;
 use std::{fs, sync::Arc};
 
@@ -279,7 +279,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &prover,
         Some(hint),
-        &mut Blake2bTranscript::new(DOMAIN),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap();
     let mut encoded = serde_json::to_value(&verifier).unwrap();
@@ -292,7 +292,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &proof,
         &transported,
-        &mut Blake2bTranscript::new(DOMAIN),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap();
     let mut tampered = encoded.clone();
@@ -310,7 +310,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &proof,
         &tampered,
-        &mut Blake2bTranscript::new(DOMAIN),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap_err();
     assert!(
@@ -326,7 +326,7 @@ fn dense_geometry_survives_verifier_transport() {
         evaluation,
         &proof,
         &wrong,
-        &mut Blake2bTranscript::new(DOMAIN)
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"")
     )
     .is_err());
 }
