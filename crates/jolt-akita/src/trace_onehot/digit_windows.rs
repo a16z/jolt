@@ -47,18 +47,37 @@ impl<const D: usize> DigitWindows<D> {
     }
 
     /// `dst += a · Σ_k X^k` over `shifts`, each `< D`.
+    #[inline]
     pub(super) fn accumulate(&self, dst: &mut DigitAccumulator<D>, shifts: &[usize]) {
-        debug_assert!(shifts.iter().all(|&shift| shift < D));
-        if shifts.is_empty() {
+        Self::accumulate_slots(std::slice::from_ref(self), dst, &[shifts]);
+    }
+
+    /// `dst += Σ_s a_s · Σ_k X^k` over each window's `shifts`, each `< D`.
+    /// All windows' shifts of a destination tile sum in registers, so a
+    /// sparse batch touches `dst` once rather than once per window.
+    pub(super) fn accumulate_slots(
+        windows: &[Self],
+        dst: &mut DigitAccumulator<D>,
+        shifts: &[impl AsRef<[usize]>],
+    ) {
+        debug_assert_eq!(windows.len(), shifts.len());
+        debug_assert!(shifts
+            .iter()
+            .flat_map(AsRef::as_ref)
+            .all(|&shift| shift < D));
+        if shifts.iter().all(|shifts| shifts.as_ref().is_empty()) {
             return;
         }
         for (tile, out) in dst.chunks_exact_mut(TILE).enumerate() {
             let base = D + tile * TILE;
             let mut sums = [[0u32; 8]; TILE];
-            for &shift in shifts {
-                for (sum, digits) in sums.iter_mut().zip(&self.digits[base - shift..][..TILE]) {
-                    for (sum, &digit) in sum.iter_mut().zip(digits) {
-                        *sum += u32::from(digit);
+            for (window, shifts) in windows.iter().zip(shifts) {
+                for &shift in shifts.as_ref() {
+                    for (sum, digits) in sums.iter_mut().zip(&window.digits[base - shift..][..TILE])
+                    {
+                        for (sum, &digit) in sum.iter_mut().zip(digits) {
+                            *sum += u32::from(digit);
+                        }
                     }
                 }
             }
