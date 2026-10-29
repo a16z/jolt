@@ -87,7 +87,7 @@ impl PadPlacement {
         }
     }
 
-    pub fn place(&self, pad: PadIndex) -> Result<PadPlace, WhiteoutError> {
+    pub(crate) fn place(&self, pad: PadIndex) -> Result<PadPlace, WhiteoutError> {
         self.places
             .get(pad.0)
             .copied()

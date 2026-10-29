@@ -24,11 +24,11 @@ use rand_core::{RngCore, SeedableRng};
 
 use super::compression::{CompressedImage, ImageCompression};
 use super::placement::PadPlacement;
-use super::response::PlaneLayout;
+use super::response::{PlaneLayout, FIELD_LEVELS};
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
 use super::{
     sample_zero_constant_term, BlockTarget, EvaluationClaims, LatticePadCommitment, ResidualBlock,
-    ResidualGadget, SigmaSetup, WhiteoutError, FIELD_LEVELS,
+    ResidualGadget, SigmaSetup, WhiteoutError,
 };
 use crate::masking::{
     AffineRow, MaskedOperand, PadIndex, PadLayout, ProductOperand, ProductPair, ProductRow,
