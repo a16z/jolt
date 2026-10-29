@@ -208,27 +208,6 @@ pub fn require_no_pow(challenge_set: ChallengeSetSize) -> Result<(), GrindBitsEr
     }
 }
 
-/// The least `b` with `2^b ≥ L · 2^λ`, for loss factor `L = loss_factor` and
-/// security level `λ = security_bits`: the narrowest set of `2^b` challenges
-/// for which [`grind_bits_for_loss`] asks for no proof of work. A challenge
-/// drawn uniformly from it lands in a bad set of `L` values with probability
-/// at most `2^-λ`.
-///
-/// # Errors
-/// [`GrindBitsError::ZeroLoss`] if `loss_factor == 0` and
-/// [`GrindBitsError::SecurityBitsTooLarge`] if `security_bits > 192`.
-pub fn challenge_bits_for_loss(
-    loss_factor: u64,
-    security_bits: u32,
-) -> Result<u32, GrindBitsError> {
-    // Checks the arguments; every target is below the saturated size.
-    let _ = grind_bits_for_loss(loss_factor, ChallengeSetSize::SATURATED, security_bits)?;
-    let target = target(loss_factor, security_bits, 0);
-    (0..=256)
-        .find(|&bits| ChallengeSetSize::power_of_two(bits) >= target)
-        .ok_or(GrindBitsError::Unattainable)
-}
-
 /// Why a proof-of-work difficulty or challenge-set size was rejected.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GrindBitsError {
@@ -267,8 +246,8 @@ impl Error for GrindBitsError {}
 #[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::{
-        challenge_bits_for_loss, grind_bits_for_loss, require_no_pow, ChallengeSetSize,
-        GrindBitsError, MAX_POW_BITS, MAX_SECURITY_BITS,
+        grind_bits_for_loss, require_no_pow, ChallengeSetSize, GrindBitsError, MAX_POW_BITS,
+        MAX_SECURITY_BITS,
     };
     use num_bigint::BigUint;
 
@@ -403,36 +382,6 @@ mod tests {
         assert_eq!(grind_bits_for_loss(2, set, 128), Ok(26));
         let set = ChallengeSetSize::power_of_two(102);
         assert_eq!(grind_bits_for_loss(1, set, 128), Ok(26));
-    }
-
-    /// The least `b` with `2^b ≥ L · 2^λ`, at which `grind_bits_for_loss`
-    /// first asks for no proof of work.
-    #[test]
-    fn challenge_bits_are_the_least_free_power_of_two() {
-        for loss in [1, 2, 3, 4, 5, 8, 9, (1 << 25) + 1, u64::MAX] {
-            for security_bits in [0, 5, 64, 128, MAX_SECURITY_BITS] {
-                let bits = challenge_bits_for_loss(loss, security_bits).unwrap();
-                let target = BigUint::from(loss) << security_bits;
-                assert!(BigUint::from(1u8) << bits >= target, "loss={loss}");
-                assert!(bits == 0 || BigUint::from(1u8) << (bits - 1) < target);
-                let free = |bits| {
-                    grind_bits_for_loss(loss, ChallengeSetSize::power_of_two(bits), security_bits)
-                };
-                assert_eq!(free(bits), Ok(0), "loss={loss}");
-                assert!(bits == 0 || free(bits - 1) != Ok(0), "loss={loss}");
-            }
-        }
-        for (loss, bits) in [(1, 128), (2, 129), (3, 130), (4, 130), (5, 131)] {
-            assert_eq!(challenge_bits_for_loss(loss, 128), Ok(bits), "loss={loss}");
-        }
-        assert_eq!(
-            challenge_bits_for_loss(0, 128),
-            Err(GrindBitsError::ZeroLoss)
-        );
-        assert_eq!(
-            challenge_bits_for_loss(1, MAX_SECURITY_BITS + 1),
-            Err(GrindBitsError::SecurityBitsTooLarge)
-        );
     }
 
     #[test]

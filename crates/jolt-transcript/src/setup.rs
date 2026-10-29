@@ -28,8 +28,7 @@ use crate::shake128::{ProverState, Shake128};
 /// - **The challenge codec.** Each field's [`ChallengeCodec`]: BN254 `Fr` and
 ///   `Fq` take 56 bytes per element; pseudo-Mersenne pools of four-byte
 ///   candidates hold an even number of them; `F8` messages pad their squeeze
-///   to a word. Short scalars squeeze `ceil(b / 8)` bytes rounded up to a
-///   word and keep their low `b` bits.
+///   to a word.
 /// - **The session identifier.** SHAKE128 (FIPS 202) derives it from this
 ///   tag.
 /// - **The proof-of-work layout.** The nonce is canonical LEB128 in the NARG
