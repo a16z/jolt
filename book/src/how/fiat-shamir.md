@@ -1,12 +1,22 @@
 # Fiat-Shamir transcript
 
 Jolt is an interactive protocol made non-interactive with the Fiat-Shamir
-transform. The protocol has sumchecks, batching, polynomial openings, and
-BlindFold. Wherever the verifier would send a random challenge, both parties
-derive it from a hash of everything sent so far. A proof has one transcript,
-which the prover and the verifier run in the same order: from the statement
-through stage 8, and through BlindFold in ZK builds. [Akita](./akita.md)'s
-opening proof runs inside the same transcript.
+transform. Wherever the verifier would send a random challenge, the prover and
+the verifier both derive it by hashing the statement and every message
+before it. This chapter describes that transcript: how messages are framed,
+how challenges are drawn, and where proof of work fits in.
+
+Jolt has two proof configurations, and parts of this chapter apply to only
+one of them:
+
+| Configuration | Field | Opening | Zero knowledge |
+|---------------|-------|---------|----------------|
+| Dory | BN254 scalar field | [Dory](./dory.md) | optional ([BlindFold](./blindfold.md)) |
+| Akita | 128-bit prime field | [Akita](./akita.md) | not supported |
+
+In both configurations, one transcript runs from the statement through the
+stage-8 opening, and through BlindFold in ZK builds. Dory and Akita both run
+their openings on Jolt's transcript.
 
 The transcript lives in `crates/jolt-transcript`. It is built on the
 [spongefish](https://github.com/arkworks-rs/spongefish) 0.8 duplex-sponge
@@ -16,208 +26,234 @@ framework. The normative design is in the
 ## The sponge
 
 A duplex sponge has two operations. *Absorb* mixes bytes into the state.
-*Squeeze* reads pseudorandom bytes out of it. A message is absorbed, and a
-challenge is squeezed. Each squeeze depends on every byte absorbed before it.
+*Squeeze* reads pseudorandom bytes out of it. Messages are absorbed, and
+challenges are squeezed, so each challenge depends on every byte absorbed
+before it.
 
 The sponge is a build-time choice:
 
 | Sponge | Selected by | Field challenges |
 |--------|-------------|------------------|
-| Keccak-f[1600] duplex sponge | default | yes |
+| Keccak-f[1600] | default | yes |
 | Blake2b-512 | `jolt-sdk` feature `transcript-blake2b` | yes |
 | Poseidon (BN254, Circom parameters) | `jolt-transcript` feature `transcript-poseidon` | no |
 
-Field challenges are decoded from raw squeezed bytes, so the sponge must squeeze
-uniform bytes. Poseidon squeezes BN254 scalars, whose top bits are not
-uniform. The type system therefore does not let a Poseidon transcript draw
-field challenges, and Jolt proofs use Keccak or Blake2b.
+Field challenges are decoded from squeezed bytes, so the codecs need a sponge
+whose output bytes are uniform. Poseidon squeezes BN254 scalars, whose top
+bits are not uniform. A Poseidon transcript therefore cannot draw field
+challenges: the trait bound fails at compile time. It exists for symmetry
+tests and absorb-only use, and Jolt proofs use Keccak or Blake2b.
 
 Two other hashes appear around the sponge:
 
-- **Session identifier.** SHAKE128 derives the spongefish session identifier
-  from Jolt's transcript protocol tag. The prover's private randomness also
-  comes from SHAKE128.
-- **Digests.** Digests that the statement or a key binds, such as the
+- **Session identifier.** SHAKE128 (FIPS 202) derives the spongefish session
+  identifier from the crate's protocol tag (below).
+- **Digests.** Digests bound into the statement or a key, such as the
   preprocessing digest, use SHA3-256. With the `jolt-transcript` feature
-  `keccak256-digests`, they use Keccak-256 (the Ethereum padding) instead.
-  The two differ only in a padding byte, so a guest with a Keccak permutation
-  instruction pays the same for either. The choice is part of the protocol
-  tag, so a proof made under one never verifies under the other.
+  `keccak256-digests`, they use Keccak-256 instead. The two hashes run the
+  same permutation and differ only in padding, so a guest verifier with a
+  Keccak instruction pays about the same for either. The choice is part of
+  the protocol tag, so a proof made under one never verifies under the
+  other.
 
-## How a proof's transcript is framed
+## Framing a proof's transcript
 
 **Protocol tag and session.** The crate-wide protocol tag,
-`a16z/jolt-transcript/v2/sha3` padded to 32 bytes, names the transcript layout,
-the challenge codecs, and the digest hash. SHAKE128 of the tag is the sponge's
-session identifier, so a change to any of these changes every challenge.
+`a16z/jolt-transcript/v2/sha3` zero-padded to 32 bytes, versions the absorb
+layout, the challenge codecs, the session-identifier derivation, the
+proof-of-work layout, and the digest hash. The session identifier is derived
+from it, so changing any of these changes every challenge.
 
 **Statement binding.** Before the first message, the transcript absorbs the
 instance:
 
-- the 32-byte session tag of the protocol being proved (`Jolt` for a Jolt
-  proof), then
-- the public statement, as a length-prefixed byte string.
+1. the 32-byte session tag of the protocol being proved (`Jolt` for a Jolt
+   proof), then
+2. the public statement, as a length-prefixed byte string.
 
 Jolt's statement contains:
 
-- the protocol configuration: ZK or clear, Dory or Akita, field-inline
-  settings, memory layout, trace length, RAM size, entry address, and the
-  read-write, one-hot and trace-ordering parameters;
+- the protocol configuration: ZK or clear, Dory or Akita, the field-inline
+  settings, the memory layout, the trace length, the RAM size, the entry
+  address, and the read-write, one-hot and trace-ordering parameters;
 - the guest's panic flag;
-- whether advice commitments are present;
-- the preprocessing digest;
+- which advice commitments are present;
+- the preprocessing digest, which commits to the program;
 - the public inputs and outputs.
 
-The only way to build a transcript is from a session tag and a statement, so
-the statement cannot be skipped. The prover and the verifier encode the
-statement through the same function.
+The transcript constructors take a session tag and a statement, so no
+transcript exists without them. That the statement is the *right* one is up
+to the caller: in Jolt, the prover and the verifier both build it in
+`validate_and_seed_transcript`, so they encode it the same way.
 
 **Positional, word-aligned messages.** Messages carry no labels. The
-protocol's fixed schedule says what the next message is, so its position in
-the transcript identifies it. Every absorb and every squeeze is a whole
-number of 8-byte words:
+protocol's schedule fixes what the next message is, so a message's position
+identifies it. The transcript's methods absorb whole 8-byte words:
 
-- Field elements and compressed group elements have fixed widths that are
-  multiples of 8 bytes.
+- Jolt's field elements (32 bytes on BN254, 16 on Akita's field) and
+  compressed group elements have fixed widths that are multiples of 8 bytes.
+  `append` takes one such value. A narrower encoding, such as a 4-byte field
+  element, trips a debug assertion.
 - Integers and counts are one `u64` little-endian word.
 - A byte string is its `u64` length, the bytes, and zero padding to the next
   word.
-- A slice whose length is fixed by bound data is absorbed as its concatenated
-  encodings, padded once at the end.
+- `append_values` absorbs a slice whose length is fixed by data already
+  bound: the concatenated encodings, padded once at the end.
+
+A count or length is absorbed only where the prover chooses it. Word
+alignment holds for every call through these methods. It is a convention, not
+a type-level guarantee: spongefish's own `public_message` absorbs any
+encoding.
 
 The sponge absorbs bytes with no separators. So the messages between two
 squeezes must decode uniquely from their concatenation, given what the
 verifier already knows. Each encoding therefore has a fixed width, has a
 length fixed by data already bound, or carries its own length. This rule is a
 review obligation, not a type-level check. The Fiat-Shamir inventories
-described below record every absorb site, so that a change to any site
-requires review.
+(see [Testing](#testing)) record every absorb site in the verifier's
+dependency closure, so changing a site shows up for review. Absorbs inside
+dory-pcs and Akita are outside the inventories.
 
 **Public messages, prover messages, and the NARG string.** Spongefish
-separates two kinds of message:
+separates two kinds of message, which enter the sponge the same way:
 
-- A *prover message* is absorbed and also appended to the proof's argument
-  string. Spongefish calls this the NARG string. The verifier reads prover
-  messages back from it.
+- A *prover message* is also appended to the proof's argument string, which
+  spongefish calls the NARG string. The verifier reads it back from there.
 - A *public message* is absorbed by both sides and written nowhere.
 
-A Jolt proof is a serialized structure: commitments, sumcheck round
-polynomials, claims, and opening proofs. The verifier absorbs each field it
-reads from that structure as a public message. Spongefish absorbs the same
-bytes for both kinds of message, so the challenges match those of the same
-protocol with every field sent through the NARG string.
+A Jolt proof is a serialized structure of commitments, sumcheck messages,
+claims, and opening proofs. The verifier absorbs each field it reads from
+that structure as a public message. The exception is Akita's opening, which
+sends its messages as prover messages. So an Akita proof's NARG string holds
+the opening proof, and a Dory proof's NARG string is empty. The verifier ends
+with `check_eof` (for Akita, through `GroupBatchOpening::check_eof`), which
+rejects unread NARG bytes and any failure the transcript recorded, such as an
+exhausted rejection sampler. Without it, a valid proof with bytes appended to
+its NARG string would also verify.
 
-The one exception is Akita's stage-8 opening. Akita sends its messages as
-prover messages, so an Akita proof's NARG string holds the opening proof, and
-a Dory proof's NARG string is empty. At the end of verification, the verifier
-calls `check_eof` (for Akita, through `GroupBatchOpening::check_eof`). It
-rejects a proof whose NARG string has unread bytes or whose transcript has
-recorded a failure. Without this check, a valid proof followed by trailing
-bytes would verify, so proof bytes would be malleable.
+The transcript binds the values the verifier decoded from the proof
+structure, not the bytes it decoded them from. Rejecting non-canonical or
+trailing bytes in the proof structure is the proof decoder's job.
 
 ## Drawing challenges
 
-Each draw is one squeeze. Each field's challenge codec decodes the squeezed
-bytes so that one draw's challenges are within statistical distance $2^{-161}$
-of uniform:
+Each challenge draw is one squeeze. A field's challenge codec decodes the
+squeezed bytes so that one draw, of one or many challenges, is within
+statistical distance $2^{-161}$ of uniform:
 
-- **BN254** (`Fr`, `Fq`): each challenge reduces 56 squeezed bytes modulo $p$.
-  Per element, the result is within $2^{-196}$ of uniform over the whole
+- **BN254** (`Fr`, `Fq`): each challenge reduces 56 squeezed bytes modulo
+  $p$, which leaves each element within $2^{-196}$ of uniform over the whole
   field. These are *full-width* challenges.
-- **Pseudo-Mersenne fields**, including Akita's 128-bit field: rejection
-  sampling from a pool of candidates. The pool is sized so that running out
-  has probability at most $2^{-161}$.
-- **Binary fields**: every byte pattern of the right length is a field
-  element, so decoding is a bijection.
+- **Pseudo-Mersenne fields**, including Akita's: rejection sampling from a
+  pool of candidates. The pool is sized so that it runs out with probability
+  at most $2^{-161}$. If it does run out, the draw fails and so does the
+  proof, so this costs completeness, not soundness.
+- **Binary fields**, which `jolt-transcript` supports but Jolt does not prove
+  over: every byte pattern of the right length is a field element, so
+  decoding is a bijection.
 
 **Short challenges for Dory.** The Dory verifier multiplies group elements by
 its challenges `beta`, `alpha` and `d`. A scalar multiplication costs time
 proportional to the scalar's bit length. So these three challenges are drawn
 as integers in $[0, 2^b)$ instead of full-width field elements.
 
-The width $b$ comes from the step's *loss factor* $L$, the number of
-challenge values that would let a false claim pass. $b$ is the least integer
-with $2^b \ge L \cdot 2^{128}$. A bad challenge then appears with probability
-at most $2^{-128}$, and no proof of work is needed:
+The width $b$ comes from the step's *loss factor* $L$: the number of
+challenge values for which a false claim could pass. $b$ is the least integer
+with $2^b \ge L \cdot 2^{128}$, so one attempt hits a bad value with
+probability at most $2^{-128}$ and no proof of work is needed:
 
 | Challenge | Loss $L$ | Why | Width $b$ |
 |-----------|----------|-----|-----------|
-| `beta` | 2 | the round's checks are Laurent polynomials spanning $\beta^{-1}$ to $\beta$ | 129 |
+| `beta` | 2 | the round's checks are Laurent polynomials from $\beta^{-1}$ to $\beta$ | 129 |
 | `alpha` | 4 | the fold spans $\alpha^{-1}$ to $\alpha$, and the last `alpha` shares a draw with `gamma` | 130 |
 | `d` | 3 | the final pairing check spans $d^{-1}$ to $d^2$ | 130 |
 
-`gamma` stays full width, because the verifier uses only $-\gamma$ and
-$\gamma^{-1}$, which are full width anyway. The zero-knowledge
+These losses are Jolt's analysis of dory-pcs 0.4.2. The bound is round by
+round: a check that passes outside its bad set yields a break of Dory's
+binding. A bound summed over all of Dory's challenges would need about
+5 more bits. `gamma` stays full width, because the verifier uses only
+$-\gamma$ and $\gamma^{-1}$, which are full width anyway. The ZK
 Sigma-protocol challenges also stay full width, because the verifier squares
-them or multiplies them by other challenges. Dory names its challenges by
-label, so the adapter in `crates/jolt-dory/src/transcript.rs` maps those
-labels to losses. The adapter assumes Dory's draw order, so the workspace
-pins dory-pcs to one exact version. Every other challenge in Jolt is full
-width.
+them or multiplies them by other challenges.
+
+Dory names its challenges by label, and the adapter in
+`crates/jolt-dory/src/transcript.rs` maps those labels to losses. The table
+depends on how dory-pcs uses each label and on its draw order, so the
+workspace pins dory-pcs to exactly 0.4.2, and
+`crates/jolt-dory/tests/challenge_bursts.rs` checks the draw order. Every
+other challenge Jolt draws is full width. Akita's opening squeezes its own
+challenges from the same sponge, decoded by Akita's code.
 
 ## Proof of work
 
-Under Fiat-Shamir, a cheating prover can retry. Changing an earlier message
-gives a fresh challenge at the cost of one hash call. Suppose a step loses
-when its challenge falls in a bad set of $L$ values, and challenges are
-uniform on a set $C$. Then each attempt succeeds with probability
-$L / |C|$.
+Under Fiat-Shamir, a cheating prover can retry: changing an earlier message
+gives a fresh challenge for the cost of one hash call. Suppose a step lets a
+false claim through when its challenge lands in a bad set of $L$ values, and
+challenges are uniform on a set $C$. Then each attempt succeeds with
+probability $L / |C|$.
 
-Over BN254, $|C| \approx 2^{254}$, so this is far below $2^{-128}$. Over a
-128-bit field, a degree-$d$ sumcheck round gives only about
-$128 - \log_2 d$ bits per hash call.
+- On BN254, $|C| \approx 2^{254}$. Every loss Jolt prices leaves this far
+  below $2^{-128}$.
+- On a 128-bit field it does not. A degree-$d$ sumcheck round gives only
+  about $128 - \log_2 d$ bits per hash call.
 
-A *proof of work* of $b$ bits before the challenge makes each attempt cost
-about $2^b$ hash calls:
+A *proof of work* of $b$ bits before the challenge raises the expected cost
+of each attempt to about $2^b$ hash calls:
 
 1. The prover finds a nonce for which the next squeezed bytes pass a check.
 2. The verifier checks the nonce with one squeeze.
 
-The difficulty is the least $b$ with $|C| \cdot 2^b \ge L \cdot 2^{128}$.
-This restores 128 bits per protected challenge. The rule is computed with
-exact integers from the challenge codec's set size.
+The difficulty is the least $b$ with $|C| \cdot 2^b \ge L \cdot 2^{128}$,
+computed with exact integers from the codec's challenge-set size. This puts
+each protected challenge back at about $2^{128}$ hash calls. Like the Dory
+widths, this is a per-challenge (round-by-round) bound, not a bound summed
+over the whole proof.
 
 The layout of one proof-of-work step:
 
-- The nonce is a `u64` below $2^{b+7}$. The sponge absorbs it as one word.
-  In the NARG string it is encoded as canonical LEB128. It can instead be
-  carried in the proof structure and absorbed as a public message.
-- Both sides squeeze 8 bytes. The verifier accepts if the low $b$ bits of
-  their little-endian integer are zero.
+- The nonce is a `u64` below $2^{b+7}$, and the sponge absorbs it as one
+  word. It travels either in the NARG string, encoded as canonical LEB128, or
+  in the proof structure, absorbed as a public message.
+- Both sides then squeeze 8 bytes. The verifier accepts if the low $b$ bits
+  of their little-endian integer are zero.
 - $b$ is at most 57, so the nonce space holds $2^7$ times the expected
   number of trials.
-- The step protects the challenges drawn right after it, up to the next
+- The nonce protects the challenges drawn right after it, up to the next
   absorbed message.
 
-The prover searches nonces in increasing order. It tests each candidate
-against a copy of the public sponge state, so a failed attempt leaves the
-transcript unchanged.
+The prover tries nonces in increasing order. It tests each one against a copy
+of the public sponge state, so a failed attempt leaves the transcript
+unchanged. The search runs only under the `prover-grinding` feature, which
+`jolt-prover` enables and verifier-only builds leave off.
 
-Protocols that carry no nonces check their challenge set at entry. BlindFold
-and the committed (ZK) sumcheck refuse a field whose challenges would need
-proof of work at the largest possible loss. BN254 passes this check, and
-128-bit fields do not.
+Protocols that carry no nonces check their challenge set when they start:
+they refuse a field whose challenges would need proof of work at any loss up
+to $2^{64}$. The committed sumcheck and BlindFold do this. Both exist only in
+ZK builds, which run on BN254 and pass the check. A 128-bit field fails it.
 
-No protocol step grinds yet. The planned sites are sumcheck rounds, priced by
-their degree, and a fixed set of stage sites. They are tracked in
-[#2108](https://github.com/a16z/jolt/pull/2108) and matter for Akita's
-128-bit field. On BN254 they price to zero bits.
+No protocol step grinds yet, so on this transcript an Akita proof's sumcheck
+rounds keep the per-round margin above. Proof-of-work sites for sumcheck
+rounds and stage-level challenge bursts are tracked in
+[#2108](https://github.com/a16z/jolt/pull/2108). They price to 0 bits on
+BN254, so Dory proofs carry no nonces.
 
 ## Testing
 
 [Testing gates](../dev/testing-gates.md#fiat-shamir-soundness) lists the
-Fiat-Shamir checks.
+Fiat-Shamir checks:
 
-- **Inventories.** The `fs_obligations` inventories give every absorb site,
-  every challenge site, and every serialized verifier input a stable
-  identity. Changing the schedule then shows up as a reviewed diff.
-- **Attack tests.** The `fs-attacks` tests make a claim false and show that
-  the verifier still accepts it with frozen challenges. They then show that
-  the real transcript changes a relevant challenge and rejects.
+- **Inventories.** The `fs_obligations` inventories give a stable identity to
+  every absorb site, challenge site, and serialized verifier input in the
+  verifier's dependency closure. A schedule change then shows up as a
+  reviewed diff.
+- **Attack tests.** The `fs-attacks` tests, run for Dory clear, Dory ZK and
+  Akita clear, make one claim false and show that the verifier accepts it
+  when its challenges are frozen. They then show that the real transcript
+  changes a relevant challenge and rejects.
 - **Symmetry.** The `jolt-eval` invariant
   `transcript_prover_verifier_consistency` checks, for each sponge, that a
-  prover and a verifier running the same sequence of operations agree on
-  every message and every challenge.
+  prover and a verifier running the same operations agree on every message
+  and every challenge.
 - **Crate tests.** `jolt-transcript` pins the protocol tag, the session
   identifier, the challenge codecs, and the proof-of-work layout with
   known-answer tests.
