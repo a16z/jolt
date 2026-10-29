@@ -53,64 +53,9 @@ impl<F: Field + Encoding> ClearRound<F> for UnivariatePoly<F> {
 
 /// Absorbs a compressed round's sent coefficients `[c0, c2, ..., cd]`: one
 /// `u64` count word, then the coefficients as one message zero-padded to a
-/// word. The prover ([`CompressedRoundPoly`] and the recorder), the
-/// verifier's compressed-proof loop and the BlindFold prover all call this,
-/// so the encoding has one owner.
+/// word. The prover's recorder, the verifier's compressed-proof loop and the
+/// BlindFold prover all call this, so the encoding has one owner.
 pub fn append_compressed_round<F: Encoding, T: Transcript>(transcript: &mut T, sent: &[F]) {
     transcript.append(&(sent.len() as u64));
     transcript.append_values(sent);
-}
-
-/// Compressed round polynomial. Wire format omits the linear coefficient
-/// `c_1`; the verifier recovers it from the sum-check invariant
-/// `running_sum = s(0) + s(1) = 2·c_0 + c_1 + c_2 + … + c_d`. It absorbs the
-/// sent coefficients through [`append_compressed_round`].
-pub struct CompressedRoundPoly<'a, F: Field> {
-    poly: &'a UnivariatePoly<F>,
-}
-
-impl<'a, F: Field> CompressedRoundPoly<'a, F> {
-    pub fn new(poly: &'a UnivariatePoly<F>) -> Self {
-        Self { poly }
-    }
-}
-
-impl<F: Field + Encoding> RoundMessage for CompressedRoundPoly<'_, F> {
-    fn degree(&self) -> usize {
-        <UnivariatePoly<F> as RoundMessage>::degree(self.poly)
-    }
-
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        // Every construction path produces >= 2 coefficients; the verifier
-        // rejects fewer (`check_round_well_formed`).
-        debug_assert!(
-            !self.poly.coefficients().is_empty(),
-            "round polynomial has no coefficients"
-        );
-        append_compressed_round(transcript, self.poly.compress().coeffs_except_linear_term());
-    }
-}
-
-impl<F: Field + Encoding> ClearRound<F> for CompressedRoundPoly<'_, F> {
-    fn evaluate(&self, challenge: F) -> F {
-        <UnivariatePoly<F> as ClearRound<F>>::evaluate(self.poly, challenge)
-    }
-
-    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F {
-        <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(
-            self.poly,
-            coefficients,
-        )
-    }
-
-    fn check_round_well_formed(&self, round: usize) -> Result<(), SumcheckError<F>> {
-        let coeffs = self.poly.coefficients();
-        if coeffs.len() < 2 {
-            return Err(SumcheckError::CompressedPolynomialTooShort {
-                round,
-                got: coeffs.len(),
-            });
-        }
-        Ok(())
-    }
 }
