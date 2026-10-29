@@ -23,7 +23,6 @@ parallel = [
 prover-fixtures = [
   "dep:jolt-host",
   "dep:zeroize",
-  "jolt-zk?/test-support",
 ]
 # Field-inline protocol composition: the field-inline prover — every stage
 # proves the composed protocol, and only field-inline guests are accepted (the
@@ -146,8 +145,7 @@ jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-transcript = { workspace = true, features = ["transcript-keccak"] }
 jolt-platform.workspace = true
-# Uncommitted pads for the Whiteout stage fixtures until W6d.
-jolt-zk = { workspace = true, features = ["test-support"] }
+jolt-zk.workspace = true
 sha2.workspace = true
 sha3.workspace = true
 postcard = { workspace = true, features = ["use-std"] }
