@@ -102,11 +102,9 @@ occurrences included. `A_p`'s rank comes from the same Σ-binding table
 the table was generated.
 
 **Compression chains.** u_a is `10 × 128 = 1,280` coefficients, and t_p
-`9 × 128 = 1,152` or `10 × 128 = 1,280`. Each still fits in 2 balanced
-chunks of at most 884 coefficients (O5). The first map of a 640-coefficient
-chunk has 5,120 columns of the `R_16` cell's 7,077, which gives **139.13
-bits** (β 525, exhaustive). The 608-coefficient chunk was 140.98 bits, and
-the cell's 884-coefficient bound is 128.26.
+`9 × 128 = 1,152` or `10 × 128 = 1,280`. Each fits in one chunk of at
+most 15,115 coefficients (D34), whose first map is 4,608 or 5,120 of the
+`R_32` cell's 60,460 columns.
 
 **Σ binding and extraction.** Thm `wo:thm:knowledge` is unchanged. The
 radius, the challenge family (`|𝓒| = 2^128.06`, `κ₁ = 53`), the label count
