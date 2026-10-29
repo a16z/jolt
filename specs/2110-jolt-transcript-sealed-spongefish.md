@@ -19,8 +19,8 @@ implement it and draw challenges outside the audited codecs. PR #2110 replaces b
 transcript: spongefish 0.8.0's `ProverState` and `VerifierState`, reached only
 through sealed traits whose every method has one implementation shared by
 prover and verifier. Absorbs are positional and word aligned, the statement is
-bound when the transcript is built, challenges are full width except Dory's
-priced short scalars, and a proof-of-work mechanism is in place for the
+bound when the transcript is built, every field challenge is full width, and
+a proof-of-work mechanism is in place for the
 protocol sites that #2108 adds. All callers are ported in the same PR. This
 spec supersedes [`jolt-transcript-spongefish.md`](./jolt-transcript-spongefish.md)
 (#1455), which describes the earlier two-surface design.
@@ -41,8 +41,8 @@ Key abstractions:
   `check_public_grind` (a proof of work whose nonce the proof carries outside
   the NARG string).
 - **`FieldTranscript<F>`**: challenges in `F` through `F`'s sealed
-  `ChallengeCodec`: `challenge`, `challenge_vector`, `challenge_powers`, and
-  `challenge_short_scalar(loss_factor)`. It exposes `CHALLENGE_SET`, the exact
+  `ChallengeCodec`: `challenge`, `challenge_vector` and `challenge_powers`.
+  It exposes `CHALLENGE_SET`, the exact
   size of one challenge's range, for proof-of-work pricing.
 - **`ProverTranscript`** (`src/prover.rs`): `send` (a prover message written
   to the NARG string), `narg_string`, and, under `prover-grinding`,
@@ -116,19 +116,7 @@ Key abstractions:
      `PoseidonSponge` squeezes BN254 scalars, which are not uniform bytes, so
      a Poseidon transcript cannot draw field challenges. This is a compile
      error, not a runtime check.
-7. **Dory short challenges.** Dory's `beta`, `alpha` and `d` multiply group
-   elements in the verifier, so they are drawn by
-   `challenge_short_scalar(loss)`. Its width is `challenge_bits_for_loss(L,
-   128)`, the narrowest power-of-two set for which a bad set of `L` values is
-   hit with probability at most 2^-128. The losses are 2, 4 and 3, giving
-   129 or 130 bits. `gamma` and the ZK Sigma-protocol challenges stay full
-   width. The losses live in a label table, `short_challenge_loss` in
-   `crates/jolt-dory/src/transcript.rs`, keyed by the labels dory-pcs 0.4.2
-   uses. The workspace pins `dory-pcs = "=0.4.2"`.
-   `crates/jolt-dory/tests/challenge_bursts.rs` checks that each short draw
-   follows an absorb, and that only `gamma` shares a burst with the last
-   `alpha`.
-8. **Proof-of-work bounds.**
+7. **Proof-of-work bounds.**
    - Difficulty: `grind_bits_for_loss(L, |C|, λ)` returns the least `b ≤
      MAX_POW_BITS = 57` with `|C| · 2^b ≥ L · 2^λ`, computed with exact
      256-bit integers.
@@ -141,7 +129,7 @@ Key abstractions:
    - `require_no_pow(CHALLENGE_SET)` fails closed where a protocol carries no
      nonces. BlindFold prove and verify call it, as do both committed-sumcheck
      paths. On BN254 it passes. On a 128-bit field it fails.
-9. **Sealed boundary.** No crate outside `jolt-transcript` can implement
+8. **Sealed boundary.** No crate outside `jolt-transcript` can implement
    `Transcript`, `ChallengeCodec` or `UniformBytes`. So no caller can draw
    challenges except through an audited codec, and no caller can build a
    transcript without binding a session and a statement.
@@ -156,8 +144,6 @@ Key abstractions:
   Jolt challenge (`bridged_akita_session` in `crates/jolt-akita/src/adapters.rs`).
   Running the opening in Jolt's sponge with `GroupBatchOpening` and
   `check_eof` is #2111.
-- **Moving the Dory short-challenge table into dory-pcs.** This needs a
-  dory-pcs 0.5 release carrying a16z/dory#33.
 - **A protocol Poseidon transcript.** `PoseidonSponge` is kept for symmetry
   tests and absorb-only use. A native-`Fr` Poseidon sponge is #2113.
 - **Wire compatibility with earlier proofs.** Every challenge changes, and
@@ -232,16 +218,16 @@ Cross-crate gates:
 - **FS attacks.** `scripts/ci/fs-soundness.sh` (the `fs-attacks-smoke` job)
   covers Dory clear, Dory ZK and Akita clear. Each attack must verify with
   frozen challenges and be rejected with the production transcript.
-- **Dory.** `crates/jolt-dory/tests/challenge_bursts.rs` checks the
-  short-challenge bursts in transparent and ZK modes.
 - **End to end.** The e2e matrix and verifier fixtures run in clear, ZK and
   Akita modes, as listed in `CLAUDE.md`.
 
 ### Performance
 
 No regression is expected. Positional absorbs remove the label bytes that the
-facade absorbed. Dory's short scalars keep the verifier's group
-multiplications at about 130 bits. The `transcript_ops` Criterion bench runs
+facade absorbed. Dory's `beta`, `alpha` and `d`, which the verifier
+multiplies into group elements, are now full-width 254-bit scalars instead of
+the previous 128-bit ones, so those multiplications cost more; #2174's Dory
+verifier optimizations are expected to offset this. The `transcript_ops` Criterion bench runs
 in `bench-crates.yml`, base against PR on one runner. Results are reported
 with a 10% noise threshold and do not gate the PR. No jolt-eval objective is
 expected to move beyond noise.
@@ -270,8 +256,7 @@ spongefish::ProverState<H, Shake128>      spongefish::VerifierState<'_, H>
   absorbed as a public message, so `proof.narg` is empty for the current
   protocol, and the verifier still requires it to be read to the end.
 - **Challenges.** `draw_challenges` squeezes `challenge_bytes(len)` bytes and
-  decodes them with the field's codec. `draw_short_scalar` squeezes
-  `ceil(b/8)` bytes rounded up to a word and keeps the low `b` bits. Requests
+  decodes them with the field's codec. Requests
   over `MAX_CHALLENGE_BYTES` (16 MiB) are rejected before any sponge
   operation.
 - **Proof of work.** `SpongePow` (`src/pow.rs`) owns the layout.
@@ -287,7 +272,7 @@ spongefish::ProverState<H, Shake128>      spongefish::VerifierState<'_, H>
 - **Dory adapter.** `JoltToDoryTranscript` implements dory-pcs's
   `DoryTranscript` over any `FieldTranscript<Fr>`. It drops Dory's labels,
   absorbs group elements through `append_values` (fixed compressed width), and
-  picks a short or full draw from `short_challenge_loss`. Dory's trait cannot
+  draws every challenge full width with `challenge`. Dory's trait cannot
   return errors, so a refused draw yields zero and makes `finish()` return
   `OpeningsError::TranscriptRejected`.
 - **SDK.** `jolt-sdk` selects `ProtocolSponge = Keccak`, or `Blake2b512` with
@@ -311,18 +296,25 @@ spongefish::ProverState<H, Shake128>      spongefish::VerifierState<'_, H>
    over BN254 gives 128 bits only for loss 1. Sumcheck rounds and batching
    draws have larger losses and would need proof of work. Full-width BN254
    challenges make `require_no_pow` hold, so BlindFold and committed sumcheck
-   need no nonces. Short scalars are kept only where the verifier does group
-   arithmetic with them (Dory), and they are priced from the loss.
-5. **Parallel nonce search (`MessageSearch`/`Probe` with rayon).** Rejected
+   need no nonces.
+5. **Short Dory challenges.** Rejected. Dory's verifier multiplies group
+   elements by `beta`, `alpha` and `d`, so drawing them at 129 to 130 bits
+   (the least width that keeps a bad set of 2 to 4 values below 2^-128)
+   would make those multiplications about half as expensive. It needs a
+   loss table keyed by dory-pcs's labels, a test pinning dory-pcs's draw
+   order, and an exact dory-pcs version pin. Verifier time on the curve is
+   not a current priority, and #2174's Dory verifier optimizations more than
+   offset the difference, so the surface area is not worth it.
+6. **Parallel nonce search (`MessageSearch`/`Probe` with rayon).** Rejected
    for this PR. The sequential search over an owned oracle needs no `Sync`
    probe and no rayon in the transcript crate. At the difficulties #2108
    plans (about 10 bits on Akita's field), search time is small next to
    proving time.
-6. **A `u32` nonce with `MAX_POW_BITS = 25`, LEB128 one byte per message.**
+7. **A `u32` nonce with `MAX_POW_BITS = 25`, LEB128 one byte per message.**
    Replaced by a `u64` nonce absorbed as one word. This keeps the transcript
    word aligned and raises the cap to 57 bits. Every difficulty up to 25 keeps
    its nonces.
-7. **TurboSHAKE128 for the session id.** Replaced by FIPS 202 SHAKE128.
+8. **TurboSHAKE128 for the session id.** Replaced by FIPS 202 SHAKE128.
    Spongefish 0.8 builds its SHAKE128 suite only together with a non-FIPS XOF,
    so the crate supplies its own (`src/shake128.rs`).
 
@@ -347,8 +339,6 @@ Implemented in #2110. Follow-ups:
 - **#2113**: a width-5 native-`Fr` Poseidon sponge. The byte-based
   `PoseidonSponge` kept here resists only about 2^127 hash calls, below the
   2^128 target, so it is not a protocol sponge.
-- **dory-pcs 0.5** (a16z/dory#33): Dory draws its own short challenges, and
-  `short_challenge_loss` and the exact-version pin are deleted.
 
 ## References
 

@@ -54,8 +54,8 @@ pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
 pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
 pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
 pub use grind_bits::{
-    challenge_bits_for_loss, grind_bits_for_loss, require_no_pow, ChallengeSetSize, GrindBitsError,
-    MAX_POW_BITS, SECURITY_BITS,
+    grind_bits_for_loss, require_no_pow, ChallengeSetSize, GrindBitsError, MAX_POW_BITS,
+    SECURITY_BITS,
 };
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
