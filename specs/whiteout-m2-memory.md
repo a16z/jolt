@@ -303,22 +303,30 @@ Still unwiped:
   (`assign_i8_with_lut` → `DigitMontLut::fill_ntt_limb`,
   `jolt-algebra/src/ring/crt_ntt_repr/lut.rs`, from Akita's
   `mat_vec_mul_blocks_i8_with_params_impl` under `Dense`) has a scalar
-  fallback, `fill_limb`. It reads `DigitMontLut::get` (`lut.rs:182`),
-  which indexes a 16-entry table by the secret digit. That is a
-  secret-dependent memory access. The fallback runs whenever no vector
-  transform applies:
+  fallback, `fill_limb`. At M2 it read `DigitMontLut::get`, which indexed
+  a 16-entry table by the secret digit. The fallback runs whenever no
+  vector transform applies:
   - aarch64 with `i16` primes, since the NEON path needs `i32`;
   - x86_64 without AVX2, and x86_64 at `D < 64`
     (`use_x86_transform_ntt`), including the response commit's
     compression levels at `D` = 16 and 8;
   - any target without NEON or AVX2.
 
-  **On the M4 it is not live for the response.** A temporary probe
-  (uncommitted, removed) logged every `fill_ntt_limb` call during the
-  response commit on muldiv and fib 2^20. Each one had `i32` primes
+  **Resolved (U1).** `DigitMontLut::get` now computes the digit's
+  Montgomery form as one Montgomery product by `R^2`
+  (`NttPrime::from_canonical`), with no table. The vector paths were
+  already table-free: NEON (`centered_i8_to_mont_i32`,
+  `forward_ntt_i8_i32`) and AVX2/AVX-512 (`forward_ntt_i8_*`) sign-extend
+  the digits and multiply by `R^2` or `psi^i R^2`. The IFMA i16 kernel is
+  not on this chain. Its scalar fallback (`Ifma52Prime::canonical_i16`,
+  `mul` by `%`) branches and divides on its input; that is recorded as
+  open in the U1 campaign entry.
+
+  On the M4 the fallback is still not live for the response. A temporary
+  probe (uncommitted, removed) logged every `fill_ntt_limb` call during
+  the response commit on muldiv and fib 2^20. Each one had `i32` primes
   (`K` = 6) and the NEON plan, at `D` = 512, 64, 16 and 8, so each took
-  `neon::forward_ntt_i8_i32` or its cyclic form. `fill_limb` was never
-  entered. M2 does not change this kernel.
+  `neon::forward_ntt_i8_i32` or its cyclic form.
 - **Digit range.** The digit-range session (`DigitRangeProver`) reads its
   own unwiped copy of the digits (`Arc::from(digits.range)`, `zk/mod.rs:321`)
   and groups them by value class in `CompactDigitSource`.
@@ -387,9 +395,9 @@ All of these passed on the final trees: jolt `wo/m2-memory` rebased onto
 - **Small shapes.** No test proves a response with ν < 3. There the
   kernel never leaves the streamed state, and `e_first` folds the digits
   directly. The synthetic shapes in the tests are larger.
-- **The LUT fallback off the M4.** The `DigitMontLut` table read was
-  only shown not to run on aarch64 with NEON. On x86_64 the response
-  commit's `D` = 16 and 8 levels reach it.
+- **The scalar digit fill off the M4.** U1 made it table-free and
+  checked it on the M4 with the scalar plan forced. On x86_64 it was only
+  type-checked (`cargo check --target x86_64-apple-darwin`), not run.
 - **Timing.** No dudect run. The constant-time argument is by code
   reading and by one compiler's output on aarch64, inspected at the
   previous agent's heads. x86_64 was not inspected, and its IFMA i16

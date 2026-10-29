@@ -403,6 +403,22 @@ paper delta.
   D < 64 and with i16 primes, which is unverified. Merged (Akita
   f0de039e2, jolt 3bc688951); bars green, and the dump has the 5 known
   omissions.
+- **U1 (2026-10-29; constant-time digit lift).** `DigitMontLut::get`, the
+  scalar fill behind `fill_ntt_limb`, now computes `digit · R mod p` as one
+  Montgomery product by `R^2` instead of reading a table at the secret
+  digit. The NEON and AVX2/AVX-512 digit entries were already table-free.
+  `scalar_digit_fill_is_digit_times_montgomery_radix` forces the scalar
+  plan and checks every i8 digit against `d · 2^R_LOG mod p` for i32 and
+  i16 primes. Scratch dudect (uncommitted, M4, `AKITA_SCALAR_NTT=1`,
+  10^6 samples, fixed −8 or 0 vs random in [−8, 7]): `get` max |t| ≤ 1.7
+  for i32 and i16 primes. The scalar i16 forward NTT shows a crop-only |t|
+  of 71–91 for an all-zero input, both before and after U1. Its source is
+  branch-free and it is not the fill; it is unexplained. A/B, min of 5
+  runs at load 44–120: NEON q64 `signed_i8/512` 1143 → 1074 ns, scalar
+  6060 → 5954 ns, scalar q128 `signed_i8_negacyclic/64` 653 → 673 ns,
+  all within noise. Open, off this chain: the IFMA i16 scalar fallback
+  (`canonical_i16`, `mul` by `%`) branches and divides on its input.
+  x86_64 was type-checked, not run.
 
 ## Not verified
 

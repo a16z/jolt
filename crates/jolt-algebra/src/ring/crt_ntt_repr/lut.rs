@@ -15,23 +15,20 @@ use crate::ntt::NttTwiddles;
 
 use super::CrtNttParamSet;
 
-/// Number of balanced-digit slots covered by [`DigitMontLut`].
-///
-/// Balanced i8 decomposition uses `log_basis` in `1..=8`, so every digit lands
-/// in `[-128, 127]`. One fixed 256-entry table therefore covers all bases,
-/// which lets the lookup drop the const-generic `L` and the per-`log_basis`
-/// monomorphization it forced.
-const DIGIT_LUT_LEN: usize = 256;
-const DIGIT_LUT_OFFSET: i16 = (DIGIT_LUT_LEN / 2) as i16;
+/// Largest balanced-digit magnitude accepted by [`DigitMontLut`]: balanced i8
+/// decomposition uses `log_basis` in `1..=8`, so every digit lands in
+/// `[-128, 127]`.
+const DIGIT_LUT_OFFSET: i16 = 128;
 
-/// Precomputed Montgomery forms for balanced i8 digit values in `[-128, 127]`.
+/// Digit-to-Montgomery conversion for balanced i8 digits in an active range
+/// `[-bound, bound)`, built once per mat-vec.
 ///
-/// Storing the Montgomery representation eliminates one `from_canonical`
-/// Montgomery multiply per coefficient in the hot digit path. The table is
-/// built once per mat-vec and is independent of the decomposition `log_basis`.
+/// Digits are secret (Whiteout response digits), so the conversion is one
+/// Montgomery product by `R^2` per coefficient rather than a table read: a
+/// load indexed by a secret digit leaks it through the cache.
 #[derive(Debug, Clone)]
 pub struct DigitMontLut<W: PrimeWidth, const K: usize> {
-    vals: [[MontCoeff<W>; DIGIT_LUT_LEN]; K],
+    primes: [NttPrime<W>; K],
     len: usize,
     offset: i16,
 }
@@ -143,10 +140,7 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
         );
     }
 
-    /// Build a lookup table for the active balanced range `[-bound, bound)`.
-    ///
-    /// This keeps the fixed non-monomorphized LUT type while avoiding needless
-    /// Montgomery conversions for common small bases (`log_basis` 2, 3, or 4).
+    /// Prepare the conversion for the active balanced range `[-bound, bound)`.
     pub fn new_with_digit_bound<const D: usize>(
         params: &CrtNttParamSet<W, K, D>,
         digit_abs_bound: u64,
@@ -157,35 +151,27 @@ impl<W: PrimeWidth, const K: usize> DigitMontLut<W, K> {
             .max(1)
             .next_power_of_two()
             .min(DIGIT_LUT_OFFSET as u64);
-        let len = (digit_abs_bound as usize) * 2;
-        let offset = digit_abs_bound as i16;
-        let mut vals = [[MontCoeff::from_raw(W::default()); DIGIT_LUT_LEN]; K];
-        for (k, limb) in vals.iter_mut().enumerate() {
-            let prime = params.primes[k];
-            for (idx, dst) in limb.iter_mut().enumerate().take(len) {
-                let v = idx as i64 - i64::from(offset);
-                *dst = prime.from_canonical(W::from_i64(v));
-            }
+        Self {
+            primes: params.primes,
+            len: (digit_abs_bound as usize) * 2,
+            offset: digit_abs_bound as i16,
         }
-        Self { vals, len, offset }
     }
 
-    /// Look up the Montgomery form of a balanced digit for CRT prime `k`.
+    /// The Montgomery form of a balanced digit for CRT prime `k`, in
+    /// constant time in `digit`.
     ///
     /// Contract: `digit` is in this LUT's active balanced range and `k < K`.
     /// The i8-NTT kernel boundary upholds this with validated `log_basis` and
-    /// per-block digit range checks. Because the active table length is a power
-    /// of two, masking keeps the lookup in-bounds and branch-free without a
-    /// per-coefficient bounds check. The debug assertion surfaces any contract
-    /// violation in debug builds.
+    /// per-block digit range checks; the debug assertion surfaces any
+    /// contract violation in debug builds.
     #[inline(always)]
     pub fn get(&self, k: usize, digit: i8) -> MontCoeff<W> {
-        let idx = (i16::from(digit) + self.offset) as usize;
         debug_assert!(
-            idx < self.len,
+            ((i16::from(digit) + self.offset) as usize) < self.len,
             "digit LUT lookup outside active balanced range"
         );
-        self.vals[k][idx & (self.len - 1)]
+        self.primes[k].from_canonical(W::from_i64(i64::from(digit)))
     }
 
     /// Fill one CRT limb with Montgomery representations of signed digits.
