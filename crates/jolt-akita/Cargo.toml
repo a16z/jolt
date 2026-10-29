@@ -71,6 +71,8 @@ signed-byte-sum = ["akita-pcs/signed-byte-sum"]
 # Direct setup scan weights added by fixed tiles on field-register addition
 # (default off; enables jolt-field/setup-weight-tiles on the Akita side).
 setup-weight-tiles = ["akita-pcs/setup-weight-tiles"]
+# Signed sparse challenges decoded from whole SHAKE output words (default off).
+challenge-word-decode = ["akita-pcs/challenge-word-decode"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.

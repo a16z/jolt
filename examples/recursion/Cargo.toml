@@ -173,6 +173,9 @@ signed-byte-sum = ["jolt-akita?/signed-byte-sum"]
 # setup-weight-tiles: the direct setup scan adds its setup weights by fixed
 # tiles on field-register addition.
 setup-weight-tiles = ["jolt-akita?/setup-weight-tiles"]
+# challenge-word-decode: signed sparse challenges decoded from whole SHAKE
+# output words.
+challenge-word-decode = ["jolt-akita?/challenge-word-decode"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }
