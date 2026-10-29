@@ -277,11 +277,20 @@ where
     // Summing position weights per `(column, coefficient)` first leaves one
     // packing-weight multiplication per coefficient instead of per nonzero.
     let span = positions_per_block.min(segment_rings);
-    let spans = segment_rings / span;
-    let schedule =
-        trace_block_task_schedule::<D>(source.one_hot_k, span, spans, TASKS_PER_RAYON_WORKER);
+    let prefix_rings = source.nonzero_ring_prefix::<D>()?;
+    let spans = prefix_rings.div_ceil(span);
+    let schedule = trace_block_task_schedule::<D>(
+        source.one_hot_k,
+        span,
+        spans.max(1),
+        TASKS_PER_RAYON_WORKER,
+    );
     let partials = (0..spans * schedule.parts)
         .into_par_iter()
+        .filter(|&task| {
+            let (part_start, _) = schedule.part_range(task % schedule.parts);
+            task / schedule.parts * span + part_start < prefix_rings
+        })
         .map(|task| {
             let (part_start, part_end) = schedule.part_range(task % schedule.parts);
             let ring_start = task / schedule.parts * span + part_start;
