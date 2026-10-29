@@ -24,8 +24,9 @@
 //!   joint `(cycle ‖ stream)` domain and the first round's endpoints are
 //!   produced by one pass over the typed rows
 //!   (`OuterLinearStage::fused_materialise_polynomials_round_zero`).
-//! - **In-place binding**: `Az`/`Bz` bind without swap buffers; the ordinary input
-//!   tables are never bound.
+//! - **Constant padding suffixes**: `Az`/`Bz` retain an explicit cycle prefix
+//!   and a two-entry stream tail. The first bind makes that tail constant;
+//!   later rounds include it through its total equality weight.
 //! - **Post-hoc opening evaluation**: the ordinary produced opening claims come
 //!   from one final eq-weighted walk over the typed rows
 //!   (`R1CSEval::compute_claimed_inputs`), not from binding all input polynomials
@@ -73,7 +74,7 @@ use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 // The COMPOSED R1CS shapes (feature-aware): identical to the rv64-only constants
 // without field-inline, the field-inline-extended row/column composition under
 // `field-inline` — the same sources the reference kernel folds with.
@@ -101,16 +102,20 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::prefix_product::PrefixColumn;
 #[cfg(feature = "field-inline")]
 use super::support::map_reduce_chunks;
 use super::support::{
-    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    RoundChallenges,
+    bind_prefix_pairs_buffer_len, pin_derived_term_if_derived, prefix_cycle_weights,
+    try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
+
+mod guard_groups;
+use guard_groups::GuardGroups;
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
@@ -154,7 +159,7 @@ const _: () = {
     }
 };
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SpartanOuterRow {
     left_instruction_input: LeftInstructionInput,
     right_instruction_input: RightInstructionInput,
@@ -211,6 +216,20 @@ struct SpartanOuterRow {
     field_load_accumulate_from_memory: OpFlag,
     #[cfg(feature = "field-inline")]
     field_advice_limb: OpFlag,
+}
+
+impl SpartanOuterRow {
+    fn folded_groups<F: JoltField>(&self, lagrange: &[F]) -> ([F; 2], [F; 2]) {
+        let values = self.group_values();
+        let (a0, b0) = fold_group(lagrange, &values.a_first, &values.b_first, &[0; DOMAIN]);
+        let (a1, b1) = fold_group(
+            lagrange,
+            &values.a_second,
+            &values.b_second_lo,
+            &values.b_second_hi,
+        );
+        ([a0, a1], [b0, b1])
+    }
 }
 
 impl WitnessBundle for SpartanOuterRow {
@@ -523,7 +542,7 @@ impl SpartanOuterRow {
         let compressed = 2 * i128::from(self.is_compressed.0);
         let pc_step = diff(self.next_unexpanded_pc.0, self.unexpanded_pc.0);
         let rv64_b_second_lo = [
-            diff(self.ram_address.0, self.rs1_value.0) - imm_lo,
+            diff(self.ram_address.0, self.rs1_value.0) - imm_lo + word(self.lookup_output.0),
             right_lookup_lo - left_input - right_input_lo,
             right_lookup_lo - left_input + right_input_lo,
             right_lookup_lo - product_lo,
@@ -794,6 +813,7 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], lo: &[i128], hi: &[i1
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanOuterCarry<F: JoltField> {
     log_t: usize,
+    prefix_cycles: usize,
     tau: Vec<F>,
     /// Typed-row store: slice-backed witnesses stay unmaterialized (the
     /// ~176 B × T row vector is the prover's peak allocation at large scale).
@@ -845,14 +865,22 @@ impl OptimizedOuterUniskip {
             });
         }
         let (tau_low, _) = tau.split_at(log_t + 1);
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut prefix_cycles = rows.access().constant_suffix_start(1 << log_t)?;
+        #[cfg(feature = "field-inline")]
+        if let Some((cycle, _)) = field_rows.last() {
+            prefix_cycles = prefix_cycles.max(cycle.saturating_add(1)).min(1 << log_t);
+        }
         let t1_values = Self::extended_t1_values(
             &rows.access(),
+            prefix_cycles,
             tau_low,
             #[cfg(feature = "field-inline")]
             &field_rows,
         )?;
         session.park(SpartanOuterCarry {
             log_t,
+            prefix_cycles,
             tau: tau.to_vec(),
             rows,
             #[cfg(feature = "field-inline")]
@@ -864,6 +892,7 @@ impl OptimizedOuterUniskip {
 
     fn extended_t1_values<F: JoltField>(
         rows: &BundleAccess<'_, SpartanOuterRow>,
+        prefix_cycles: usize,
         tau_low: &[F],
         #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
     ) -> Result<Vec<F>, WitnessError> {
@@ -876,52 +905,95 @@ impl OptimizedOuterUniskip {
         let pairs_per_block = e_in.len() / 2;
         let two_pow_64 = F::from_u128(1 << 64);
 
-        let extended = try_par_sum_vecs(e_out.len(), EXTENDED_NODE_COUNT, |x_out| {
-            // At most e_in.len() fmadds per accumulator: on 64-bit hosts the
-            // split gives ≤ 2^32 terms. BN254 slots grow by < 2^66 per i128
-            // term; fp128 slots by < 2^65, leaving ample carry headroom.
-            let mut sums = [(
-                <F as WithAccumulator>::SignedProductAccumulator::default(),
-                <F as WithAccumulator>::SignedProductAccumulator::default(),
-            ); EXTENDED_NODE_COUNT];
-            #[cfg(feature = "field-inline")]
-            let mut field_sums = [F::zero(); EXTENDED_NODE_COUNT];
-            #[cfg(feature = "field-inline")]
-            let mut field_cursor = FieldInlineRowCursor::seek(field_rows, x_out * pairs_per_block);
-            for pair in 0..pairs_per_block {
-                let t = x_out * pairs_per_block + pair;
-                let row = rows.row(t)?;
-                let (e_first, e_second) = (e_in[2 * pair], e_in[2 * pair + 1]);
+        let mut extended = try_par_sum_vecs(
+            prefix_cycles.div_ceil(pairs_per_block),
+            EXTENDED_NODE_COUNT,
+            |x_out| {
+                // At most e_in.len() fmadds per accumulator: on 64-bit hosts the
+                // split gives ≤ 2^32 terms. BN254 slots grow by < 2^66 per i128
+                // term; fp128 slots by < 2^65, leaving ample carry headroom.
+                let mut sums = [(
+                    <F as WithAccumulator>::SignedProductAccumulator::default(),
+                    <F as WithAccumulator>::SignedProductAccumulator::default(),
+                ); EXTENDED_NODE_COUNT];
+                let mut first_groups = GuardGroups::<F, DOMAIN, 1>::new();
+                let mut second_groups = GuardGroups::<F, SECOND_GROUP_LEN, 2>::new();
                 #[cfg(feature = "field-inline")]
-                if let Some(field_row) = field_cursor.advance(t) {
-                    let values = row.field_group_values(field_row);
-                    let products = values.extended_products();
-                    for (sum, (first, second)) in field_sums.iter_mut().zip(&products) {
-                        *sum += e_first * *first + e_second * *second;
+                let mut field_sums = [F::zero(); EXTENDED_NODE_COUNT];
+                #[cfg(feature = "field-inline")]
+                let mut field_cursor =
+                    FieldInlineRowCursor::seek(field_rows, x_out * pairs_per_block);
+                for pair in 0..pairs_per_block.min(prefix_cycles - x_out * pairs_per_block) {
+                    let t = x_out * pairs_per_block + pair;
+                    let row = rows.row(t)?;
+                    let (e_first, e_second) = (e_in[2 * pair], e_in[2 * pair + 1]);
+                    #[cfg(feature = "field-inline")]
+                    if let Some(field_row) = field_cursor.advance(t) {
+                        let values = row.field_group_values(field_row);
+                        let products = values.extended_products();
+                        for (sum, (first, second)) in field_sums.iter_mut().zip(&products) {
+                            *sum += e_first * *first + e_second * *second;
+                        }
+                        continue;
                     }
-                    continue;
+                    let values = row.group_values();
+                    let first_added =
+                        first_groups.try_add(&values.a_first, [&values.b_first], e_first);
+                    let second_added = second_groups.try_add(
+                        &values.a_second,
+                        [&values.b_second_lo, &values.b_second_hi],
+                        e_second,
+                    );
+                    if !first_added || !second_added {
+                        let products = extended_products(&values);
+                        for ((low, high), product) in sums.iter_mut().zip(products) {
+                            if !first_added {
+                                low.fmadd_i128(e_first, product.first);
+                            }
+                            if !second_added {
+                                low.fmadd_i128(e_second, product.second_lo);
+                                high.fmadd_i128(e_second, product.second_hi);
+                            }
+                        }
+                    }
                 }
-                let products = extended_products(&row.group_values());
-                for ((low, high), product) in sums.iter_mut().zip(products) {
-                    low.fmadd_i128(e_first, product.first);
-                    low.fmadd_i128(e_second, product.second_lo);
-                    high.fmadd_i128(e_second, product.second_hi);
-                }
+                let first = first_groups.finish(two_pow_64);
+                let second = second_groups.finish(two_pow_64);
+                let grouped = first.into_iter().zip(second).map(|(a, b)| a + b);
+                #[cfg(feature = "field-inline")]
+                return Ok(sums
+                    .into_iter()
+                    .zip(field_sums)
+                    .zip(grouped)
+                    .map(|(((low, high), field_sum), grouped)| {
+                        e_out[x_out]
+                            * (low.reduce() + two_pow_64 * high.reduce() + field_sum + grouped)
+                    })
+                    .collect());
+                #[cfg(not(feature = "field-inline"))]
+                Ok(sums
+                    .into_iter()
+                    .zip(grouped)
+                    .map(|((low, high), grouped)| {
+                        e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce() + grouped)
+                    })
+                    .collect())
+            },
+        )?;
+
+        let cycles = 1usize << (tau_low.len() - 1);
+        if prefix_cycles < cycles {
+            let products = extended_products(&rows.row(prefix_cycles)?.group_values());
+            let stream = tau_low[tau_low.len() - 1];
+            let mass = EqPolynomial::suffix_sum(&tau_low[..tau_low.len() - 1], prefix_cycles);
+            for (value, product) in extended.iter_mut().zip(products) {
+                *value += mass
+                    * ((F::one() - stream) * F::from_i128(product.first)
+                        + stream
+                            * (F::from_i128(product.second_lo)
+                                + two_pow_64 * F::from_i128(product.second_hi)));
             }
-            #[cfg(feature = "field-inline")]
-            return Ok(sums
-                .into_iter()
-                .zip(field_sums)
-                .map(|((low, high), field_sum)| {
-                    e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce() + field_sum)
-                })
-                .collect());
-            #[cfg(not(feature = "field-inline"))]
-            Ok(sums
-                .into_iter()
-                .map(|(low, high)| e_out[x_out] * (low.reduce() + two_pow_64 * high.reduce()))
-                .collect())
-        })?;
+        }
 
         let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
         for (position, value) in EXTENDED_POSITIONS.into_iter().zip(extended) {
@@ -987,25 +1059,22 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
 /// linear-time round kernel.
 pub struct OptimizedOuterRemainder;
 
-/// Entries of each of the remainder's `Az` and `Bz` tables over `2^log_t`
-/// cycles: the joint `(cycle ‖ stream)` domain.
-fn remainder_len(log_t: usize) -> usize {
-    (1usize << log_t).saturating_mul(2)
-}
-
 impl OptimizedOuterRemainder {
-    /// Peak bytes of the remainder's tables over `2^log_t` cycles: `Az` and
-    /// `Bz` at [`remainder_len`] entries each, plus the buffer the first
-    /// in-place shrink of `Az` allocates while `Bz` still holds its full
-    /// capacity ([`Polynomial::in_place_shrink_len`]). The closing opening
-    /// walk's `2^log_t` cycle weights come after both tables are bound down.
-    /// Not counted: the row store, a handle on the witness's rows when it has
-    /// one; the uni-skip carry; the split-eq tables; the field-inline rows.
-    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
-        let len = remainder_len(log_t);
-        len.saturating_mul(2)
-            .saturating_add(Polynomial::<F>::in_place_shrink_len(len))
-            .saturating_mul(size_of::<F>())
+    /// Peak bytes of the remainder over `prefix_cycles` cycles before the
+    /// trace's constant suffix, or `None` past `usize::MAX`: `Az` and `Bz` at
+    /// their `2 · prefix_cycles` allocated entries each, which binding never
+    /// grows, plus the larger of the bound half the first bind of `Az`
+    /// collects beside both (`bind_prefix_pairs_buffer_len`) and the
+    /// closing opening walk's `prefix_cycles + 1` cycle weights. Not counted:
+    /// the row store, a handle on the witness's rows when it has one; the
+    /// uni-skip carry; the split-eq tables; the opening walk's eq factors and
+    /// per-block sums; the field-inline rows.
+    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
+        let len = prefix_cycles.checked_mul(2)?;
+        let transient = bind_prefix_pairs_buffer_len(len).max(prefix_cycles.checked_add(1)?);
+        len.checked_mul(2)?
+            .checked_add(transient)?
+            .checked_mul(size_of::<F>())
     }
 }
 
@@ -1043,8 +1112,9 @@ struct DerivedWeights<F> {
 /// domain (stream = index LSB, bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
-    az: Polynomial<F>,
-    bz: Polynomial<F>,
+    az: PrefixColumn<F>,
+    bz: PrefixColumn<F>,
+    prefix_cycles: usize,
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -1065,6 +1135,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     ) -> Result<Self, KernelError<F>> {
         let SpartanOuterCarry {
             log_t,
+            prefix_cycles,
             tau,
             rows,
             #[cfg(feature = "field-inline")]
@@ -1096,14 +1167,20 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
 
-        let mut az: Vec<F> = unsafe_allocate_zero_vec(remainder_len(log_t));
-        let mut bz: Vec<F> = unsafe_allocate_zero_vec(remainder_len(log_t));
+        let cycles = 1usize << log_t;
+        let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
+        let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
         let e_out = split_eq.e_out_current();
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
         let width = 2 * in_len;
         let access = rows.access();
         let lagrange = &lagrange_r0;
+        let (az_tail, bz_tail) = if prefix_cycles < cycles {
+            access.row(prefix_cycles)?.folded_groups(lagrange)
+        } else {
+            ([F::zero(); 2], [F::zero(); 2])
+        };
         #[cfg(feature = "field-inline")]
         let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
         let block = |x_out: usize,
@@ -1114,19 +1191,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             let mut inner_infinity = F::zero();
             #[cfg(feature = "field-inline")]
             let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, x_out * in_len);
-            for x_in in 0..in_len {
+            for x_in in 0..az_chunk.len() / 2 {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
                 let integer_fold = || {
-                    let values = row.group_values();
-                    let (az_zero, bz_zero) =
-                        fold_group(lagrange, &values.a_first, &values.b_first, &[0; DOMAIN]);
-                    let (az_one, bz_one) = fold_group(
-                        lagrange,
-                        &values.a_second,
-                        &values.b_second_lo,
-                        &values.b_second_hi,
-                    );
+                    let ([az_zero, az_one], [bz_zero, bz_one]) = row.folded_groups(lagrange);
                     (az_zero, bz_zero, az_one, bz_one)
                 };
                 #[cfg(feature = "field-inline")]
@@ -1173,9 +1242,21 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             }
             folded
         };
+        let tail_mass = split_eq.suffix_weight(prefix_cycles);
+        let endpoints = (
+            endpoints.0 + tail_mass * az_tail[0] * bz_tail[0],
+            endpoints.1 + tail_mass * (az_tail[1] - az_tail[0]) * (bz_tail[1] - bz_tail[0]),
+        );
         Ok(Self {
-            az: Polynomial::new(az),
-            bz: Polynomial::new(bz),
+            az: PrefixColumn {
+                values: az,
+                tail: az_tail,
+            },
+            bz: PrefixColumn {
+                values: bz,
+                tail: bz_tail,
+            },
+            prefix_cycles,
             purged: false,
             split_eq,
             pending_endpoints: Some(endpoints),
@@ -1217,8 +1298,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        let shrunk = self.az.bind_low_to_high_in_place(challenge);
-        let _ = self.bz.bind_low_to_high_in_place(challenge);
+        let shrunk = self.az.bind(challenge);
+        let _ = self.bz.bind(challenge);
         if shrunk && !self.purged {
             self.purged = true;
             crate::mem::purge_retained_memory(self.challenges.total() - 1);
@@ -1235,7 +1316,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .copied()
             .collect();
         let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
-        EqPolynomial::<F>::evals(&reversed, None)
+        prefix_cycle_weights(&reversed, self.prefix_cycles)
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
@@ -1434,11 +1515,11 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         }
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.split_eq.product_endpoints(&self.az, &self.bz),
+            None => self.az.product_endpoints(&self.bz, &self.split_eq),
         };
         self.split_eq
             .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.split_eq.product_at_one(&self.az, &self.bz)
+                self.az.product_at_one(&self.bz, &self.split_eq)
             })
     }
 
@@ -1862,7 +1943,7 @@ mod tests {
     }
 
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        parity_case_with_eq(dummy_plane, log_t, seed, None, false);
+        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None);
     }
 
     fn parity_case_with_eq(
@@ -1871,10 +1952,25 @@ mod tests {
         seed: u64,
         exceptional: Option<ExceptionalEq>,
         zero_scale: bool,
+        prefix: Option<usize>,
     ) {
-        let rows = synthetic_rows(log_t, seed);
+        let mut rows = synthetic_rows(log_t, seed);
+        if let Some(prefix) = prefix {
+            let tail = rows[rows.len() - 1];
+            rows[prefix..].fill(tail);
+        }
         #[cfg(feature = "field-inline")]
-        let field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
+        let mut field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
+        #[cfg(feature = "field-inline")]
+        if let Some(prefix) = prefix {
+            // Odd seeds keep field rows past the integer suffix boundary.
+            crate::optimized::testing::trim_field_rows(
+                &mut field_rows,
+                log_t,
+                prefix,
+                seed % 2 == 1,
+            );
+        }
         let mut tau: Vec<Fr> = exceptional.map_or_else(
             || {
                 (0..log_t + 2)
@@ -1972,7 +2068,13 @@ mod tests {
 
         let rounds = log_t + 1;
         let challenges: Vec<Fr> = (0..rounds)
-            .map(|i| Fr::from_u64(7919 + seed + 31 * i as u64))
+            .map(|i| {
+                if prefix.is_some() && seed.is_multiple_of(2) && i < 2 {
+                    Fr::from_u64(i as u64)
+                } else {
+                    Fr::from_u64(7919 + seed + 31 * i as u64)
+                }
+            })
             .collect();
         let mut bind = None;
         let mut previous = input_claim;
@@ -2012,10 +2114,71 @@ mod tests {
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
         with_sample_backend(|dummy| {
             for case in ExceptionalEq::ALL {
-                parity_case_with_eq(dummy, 4, 389, Some(case), false);
+                parity_case_with_eq(dummy, 4, 389, Some(case), false, None);
             }
-            parity_case_with_eq(dummy, 4, 389, None, true);
+            parity_case_with_eq(dummy, 4, 389, None, true, None);
         });
+    }
+
+    #[test]
+    fn constant_stream_tails_match_reference_rounds_and_openings() {
+        with_sample_backend(|dummy| {
+            for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
+                for seed in [389, 390] {
+                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix));
+                    for case in ExceptionalEq::ALL {
+                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix));
+                    }
+                }
+                parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix));
+            }
+        });
+    }
+
+    #[test]
+    fn uniskip_matches_reference_with_many_guard_patterns() {
+        let log_t = 12;
+        let rows = synthetic_rows(log_t, 0x6a_726f_7773);
+        #[cfg(feature = "field-inline")]
+        let field_rows = synthetic_field_rows(log_t, 0x6a_6669_656c);
+        let tau: Vec<Fr> = (0..log_t + 2)
+            .map(|i| Fr::from_u64(991 + 17 * i as u64))
+            .collect();
+        let backend = fixed_backend_from_rows(
+            log_t,
+            &rows,
+            #[cfg(feature = "field-inline")]
+            &field_rows,
+        );
+        let mut reference = ProofSession::default();
+        reference.park(SpartanOuterKernel::<Fr>::prepare(log_t, &tau, &backend).unwrap());
+        let expected =
+            <ReferenceBackend as UniskipKernel<Fr, OuterRemainder<Fr>>>::first_round_poly(
+                &ReferenceBackend,
+                &mut reference,
+                &[],
+                &(),
+            )
+            .unwrap();
+        let mut optimized = ProofSession::default();
+        OptimizedOuterUniskip::prepare_from_rows(
+            &mut optimized,
+            log_t,
+            &tau,
+            rows,
+            #[cfg(feature = "field-inline")]
+            field_rows,
+        )
+        .unwrap();
+        let actual =
+            <OptimizedOuterUniskip as UniskipKernel<Fr, OuterRemainder<Fr>>>::first_round_poly(
+                &OptimizedOuterUniskip,
+                &mut optimized,
+                &[],
+                &(),
+            )
+            .unwrap();
+        assert_eq!(actual, expected);
     }
 
     #[test]

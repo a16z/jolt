@@ -23,7 +23,7 @@ use crate::{
 #[cfg(not(feature = "akita"))]
 pub type ProofCommitments<PCS> = JoltCommitments<<PCS as Commitment>::Output>;
 /// The proof-carried polynomial commitments on the `akita` build: the single
-/// native `OneHotTrace` group commitment carrying every per-proof column.
+/// native `OneHotTrace` group commitment carrying the RA columns.
 #[cfg(feature = "akita")]
 pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 
@@ -53,6 +53,9 @@ pub struct JoltProof<
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
+    /// Required RV64 increment commitment in Akita proofs.
+    #[cfg(feature = "akita")]
+    pub fused_inc_commitment: Option<PCS::Output>,
     /// Direct commitment to the full field-register increment polynomial.
     /// Required for every Akita field-inline proof, including an all-zero trace.
     /// Producers without field-inline semantics leave this absent and are rejected
@@ -72,10 +75,9 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    /// Assemble a proof without a field-inline payload. Producers with no field-inline
-    /// semantics (the legacy converters) build through here so they never name the
-    /// feature-gated slots; the modular provers with field-inline enabled attach theirs with
-    /// [`Self::with_field_inc_commitment`].
+    /// Assemble a proof shell. Akita producers must attach `fused_inc_commitment`;
+    /// field-inline producers also attach the field-increment payload with
+    /// [`Self::with_field_inc_commitment`]. Verification rejects missing required payloads.
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per proof component, mirroring the wire struct"
@@ -99,6 +101,8 @@ where
             stages,
             joint_opening_proof,
             untrusted_advice_commitment,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: None,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc_commitment: None,
             claims,
@@ -147,6 +151,8 @@ where
             stages: self.stages,
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: self.fused_inc_commitment,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc_commitment: self.field_inc_commitment,
             claims,

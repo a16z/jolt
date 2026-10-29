@@ -152,8 +152,8 @@ where
             .into_iter()
             .map(|coordinates| {
                 SubringCoefficientPackingPartials::new(
-                    plan.point.geometry(),
-                    plan.point.num_live_blocks(),
+                    plan.tables.point().geometry(),
+                    plan.tables.point().num_live_blocks(),
                     coordinates,
                 )
             })

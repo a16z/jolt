@@ -112,13 +112,13 @@ pub fn instruction_inputs_match_constraint_fn<C, T, I>(
         } else {
             0
         };
-        let right_expected: i128 = if flags[InstructionFlags::RightOperandIsRs2Value] {
-            rs2 as i128
-        } else if flags[InstructionFlags::RightOperandIsImm] {
-            imm
-        } else {
-            0
-        };
+        let mut right_expected: i128 = 0;
+        if flags[InstructionFlags::RightOperandIsRs2Value] {
+            right_expected += rs2 as i128;
+        }
+        if flags[InstructionFlags::RightOperandIsImm] {
+            right_expected += imm;
+        }
 
         let (left_actual, right_actual) = LookupQuery::<XLEN>::to_instruction_inputs(&cycle);
         assert_eq!(

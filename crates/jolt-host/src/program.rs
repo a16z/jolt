@@ -1,5 +1,5 @@
 use crate::analyze::ProgramSummary;
-use crate::{default_target_dir, Program};
+use crate::{default_target_dir, GuestElf, Program};
 use common::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
     DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
@@ -12,9 +12,9 @@ use jolt_program::{JoltProgram, ProgramError};
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT_ALL_INLINES};
-use std::fs;
+use std::fs::{self, File};
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracer::emulator::memory::Memory;
 #[cfg(feature = "field-inline")]
@@ -137,7 +137,7 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::build_with_features")]
     #[expect(
         clippy::expect_used,
-        reason = "the infallible host build API reports CLI failures by panicking"
+        reason = "the infallible host build API reports CLI and I/O failures by panicking"
     )]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
         if self.elf.is_none() {
@@ -255,6 +255,15 @@ impl Program {
                 None => cmd.env_remove(FIELD_INLINE_MODULUS_ENV),
             };
 
+            // WARNING: every `jolt build`, even one with nothing to recompile,
+            // deletes and re-links the ELF. Builds of the same guest from other
+            // processes share this directory, so the ELF is read under this
+            // lock and never again by path.
+            fs::create_dir_all(&guest_target_dir).expect("create the guest target directory");
+            let build_lock = File::create(Path::new(&guest_target_dir).join(".jolt-build.lock"))
+                .expect("open the guest build lock");
+            build_lock.lock().expect("acquire the guest build lock");
+
             let output = cmd
                 .output()
                 .expect("failed to run jolt - make sure it's installed (cargo install --path .)");
@@ -284,47 +293,40 @@ impl Program {
                 .join(out_profile)
                 .join(&self.guest);
 
-            assert!(
-                elf_path.exists(),
-                "Built ELF not found at expected location: {}",
-                elf_path.display()
-            );
+            let elf = GuestElf::read(elf_path).expect("read the built guest ELF");
+            drop(build_lock);
 
             if cargo_features
                 .iter()
                 .any(|feature| feature == "compute_advice")
             {
-                self.elf_compute_advice = Some(elf_path.clone());
-                info!("Built compute_advice guest binary: {}", elf_path.display());
+                info!(
+                    "Built compute_advice guest binary: {}",
+                    elf.path().display()
+                );
+                self.elf_compute_advice = Some(elf);
             } else {
-                self.elf = Some(elf_path.clone());
-                info!("Built guest binary with jolt: {}", elf_path.display());
+                info!("Built guest binary with jolt: {}", elf.path().display());
+                self.elf = Some(elf);
             }
         }
     }
 
     pub fn get_elf_contents(&self) -> Option<Vec<u8>> {
-        self.elf.as_ref().and_then(|elf| fs::read(elf).ok())
+        self.elf.as_ref().map(|elf| elf.bytes().to_vec())
     }
 
     pub fn get_elf_compute_advice_contents(&self) -> Option<Vec<u8>> {
         self.elf_compute_advice
             .as_ref()
-            .and_then(|elf| fs::read(elf).ok())
+            .map(|elf| elf.bytes().to_vec())
     }
 
-    #[expect(
-        clippy::expect_used,
-        reason = "a successful host build must produce a readable ELF"
-    )]
     pub fn jolt_program(&mut self) -> Result<JoltProgram, ProgramError> {
-        self.build(&default_target_dir().to_string_lossy());
-        let elf_contents = self
-            .get_elf_contents()
-            .expect("ELF contents should be available after building the guest");
+        let elf = self.built_elf();
         let mut inline_provider = tracer::TracerInlineExpansionProvider::new();
         jolt_program::build_jolt_program_with_inline_provider(
-            &elf_contents,
+            elf.bytes(),
             &mut inline_provider,
             self.instruction_profile,
         )
@@ -376,15 +378,15 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> (LazyTraceIterator, Vec<Cycle>, Memory, JoltDevice) {
-        let (elf, elf_contents) = self.built_elf();
-        let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
+        let elf = self.built_elf();
+        let image = jolt_program::image::decode_elf(elf.bytes(), self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
         let (lazy_trace, trace, memory, jolt_device, _advice_tape) = tracer::trace(
-            &elf_contents,
-            Some(&elf),
+            elf.bytes(),
+            Some(elf.path()),
             inputs,
             untrusted_advice,
             trusted_advice,
@@ -408,15 +410,15 @@ impl Program {
         untrusted_advice: &[u8],
         trusted_advice: &[u8],
     ) -> usize {
-        let (elf, elf_contents) = self.built_elf();
-        let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
+        let elf = self.built_elf();
+        let image = jolt_program::image::decode_elf(elf.bytes(), self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
         let (executed_instructions, _, _) = tracer::execute(
-            &elf_contents,
-            Some(&elf),
+            elf.bytes(),
+            Some(elf.path()),
             inputs,
             untrusted_advice,
             trusted_advice,
@@ -438,15 +440,15 @@ impl Program {
         trusted_advice: &[u8],
         trace_file: &PathBuf,
     ) -> (Memory, JoltDevice) {
-        let (elf, elf_contents) = self.built_elf();
-        let image = jolt_program::image::decode_elf(&elf_contents, self.instruction_profile)
+        let elf = self.built_elf();
+        let image = jolt_program::image::decode_elf(elf.bytes(), self.instruction_profile)
             .expect("program ELF decoding failed");
         let memory_config =
             self.memory_config_with_program_size(image.program_end - RAM_START_ADDRESS);
 
         tracer::trace_to_file(
-            &elf_contents,
-            Some(&elf),
+            elf.bytes(),
+            Some(elf.path()),
             inputs,
             untrusted_advice,
             trusted_advice,
@@ -493,16 +495,13 @@ impl Program {
 
     #[expect(
         clippy::expect_used,
-        reason = "a successful host build must produce a readable ELF"
+        reason = "a successful default-feature build always records its ELF"
     )]
-    fn built_elf(&mut self) -> (PathBuf, Vec<u8>) {
+    fn built_elf(&mut self) -> GuestElf {
         self.build(&default_target_dir().to_string_lossy());
-        let path = self
-            .elf
+        self.elf
             .clone()
-            .expect("guest build did not produce an ELF");
-        let contents = fs::read(&path).expect("guest ELF is not readable");
-        (path, contents)
+            .expect("guest build did not produce an ELF")
     }
 }
 

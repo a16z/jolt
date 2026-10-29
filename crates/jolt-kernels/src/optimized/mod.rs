@@ -47,6 +47,8 @@ pub mod booleanity;
 pub mod bytecode_read_raf;
 #[cfg(not(feature = "akita"))]
 pub mod commitment;
+mod constant_suffix;
+mod eq_prefix;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;
 #[cfg(feature = "field-inline")]
@@ -65,6 +67,7 @@ mod lazy_ra;
 #[cfg(not(feature = "akita"))]
 pub mod opening;
 pub mod precommitted_reduction;
+mod prefix_product;
 pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;
@@ -87,7 +90,7 @@ pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeRe
 pub use hamming_weight_claim_reduction::OptimizedHammingWeightClaimReduction;
 pub use inc_claim_reduction::OptimizedIncClaimReduction;
 pub use precommitted_reduction::{OptimizedPrecommittedAddress, OptimizedPrecommittedCycle};
-pub use ram_trace::ram_access_columns_bytes;
+pub use ram_trace::{ram_access_columns_bytes, ram_value_collection_bytes};
 
 /// The optimized implementations' marker type: implements the RAM-family
 /// [`PrepareKernel`](crate::PrepareKernel) slots (each module here hosts its

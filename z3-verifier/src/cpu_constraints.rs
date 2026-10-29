@@ -27,9 +27,9 @@ use tracer::instruction::{
     bne::BNE,
     fence::FENCE,
     format::{
-        format_assert_align::FormatAssert, format_b::FormatB, format_i::FormatI, format_j::FormatJ,
-        format_load::FormatLoad, format_no_operands::FormatNoOperands, format_r::FormatR,
-        format_s::FormatS, format_t::FormatT, format_u::FormatU,
+        format_b::FormatB, format_i::FormatI, format_j::FormatJ, format_load::FormatLoad,
+        format_no_operands::FormatNoOperands, format_r::FormatR, format_s::FormatS,
+        format_t::FormatT, format_u::FormatU,
         format_virtual_right_shift_i::FormatVirtualRightShiftI,
         format_virtual_right_shift_r::FormatVirtualRightShiftR,
     },
@@ -49,12 +49,13 @@ use tracer::instruction::{
     sub::SUB,
     virtual_advice::VirtualAdvice,
     virtual_assert_eq::VirtualAssertEQ,
-    virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
     virtual_assert_lte::VirtualAssertLTE,
     virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
     virtual_assert_valid_div0::VirtualAssertValidDiv0,
     virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-    virtual_assert_word_alignment::VirtualAssertWordAlignment,
+    virtual_load_b::VirtualLoadB,
+    virtual_load_h::VirtualLoadH,
+    virtual_load_w::VirtualLoadW,
     virtual_movsign::VirtualMovsign,
     virtual_muli::VirtualMULI,
     virtual_muliw::VirtualMULIW,
@@ -72,6 +73,9 @@ use tracer::instruction::{
     virtual_srai::VirtualSRAI,
     virtual_srl::VirtualSRL,
     virtual_srli::VirtualSRLI,
+    virtual_store_b::VirtualStoreB,
+    virtual_store_h::VirtualStoreH,
+    virtual_store_w::VirtualStoreW,
     Instruction,
 };
 use z3::{ast::Int, Params, SatResult, Solver};
@@ -495,12 +499,13 @@ test_instruction_constraints!(SLTU, FormatR);
 test_instruction_constraints!(SUB, FormatR);
 test_instruction_constraints!(VirtualAdvice, FormatJ, advice: 0);
 test_instruction_constraints!(VirtualAssertEQ, FormatB);
-test_instruction_constraints!(VirtualAssertHalfwordAlignment, FormatAssert);
 test_instruction_constraints!(VirtualAssertLTE, FormatB);
 test_instruction_constraints!(VirtualAssertMulUNoOverflow, FormatB);
 test_instruction_constraints!(VirtualAssertValidDiv0, FormatB);
 test_instruction_constraints!(VirtualAssertValidUnsignedRemainder, FormatB);
-test_instruction_constraints!(VirtualAssertWordAlignment, FormatAssert);
+test_instruction_constraints!(VirtualLoadB, FormatLoad);
+test_instruction_constraints!(VirtualLoadH, FormatLoad);
+test_instruction_constraints!(VirtualLoadW, FormatLoad);
 test_instruction_constraints!(VirtualNegateIf, FormatR);
 test_instruction_constraints!(VirtualMovsign, FormatI);
 test_instruction_constraints!(VirtualMULI, FormatI);
@@ -518,3 +523,6 @@ test_instruction_constraints!(VirtualSRA, FormatVirtualRightShiftR);
 test_instruction_constraints!(VirtualSRAI, FormatVirtualRightShiftI);
 test_instruction_constraints!(VirtualSRL, FormatVirtualRightShiftR);
 test_instruction_constraints!(VirtualSRLI, FormatVirtualRightShiftI);
+test_instruction_constraints!(VirtualStoreB, FormatS);
+test_instruction_constraints!(VirtualStoreH, FormatS);
+test_instruction_constraints!(VirtualStoreW, FormatS);

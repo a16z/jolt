@@ -1053,13 +1053,14 @@ include these `JoltTargetExtension` families:
   bytecode;
 - `JoltTargetExtension::ControlFlow`: final branch/jump instructions such as
   `BEQ`, `BNE`, `BLT`, `BGE`, `BLTU`, `BGEU`, `JAL`, `JALR`, and `FENCE`;
-- `JoltTargetExtension::LoadStore64`: final `LD` and `SD` instructions;
+- `JoltTargetExtension::LoadStore64`: final `LD` and `SD` instructions, and the
+  floor-addressed `VirtualLoad{B,H,W}` and `VirtualStore{B,H,W}` that sub-word
+  loads and stores lower to;
 - `JoltTargetExtension::Advice`: `VirtualAdvice` and `VirtualAdviceLoad`;
 - `JoltTargetExtension::HostIO`: `VirtualHostIO`;
 - `JoltTargetExtension::VirtualAssertions`: `VirtualAssertEQ`,
   `VirtualAssertLTE`, `VirtualAssertValidDiv0`,
-  `VirtualAssertValidUnsignedRemainder`, `VirtualAssertMulUNoOverflow`,
-  `VirtualAssertWordAlignment`, and `VirtualAssertHalfwordAlignment`;
+  `VirtualAssertValidUnsignedRemainder`, and `VirtualAssertMulUNoOverflow`;
 - `JoltTargetExtension::VirtualArithmetic`: `VirtualMULI`,
   `VirtualMovsign`, `VirtualPow2`, `VirtualPow2I`, `VirtualPow2W`,
   `VirtualPow2IW`, `VirtualNegateIf`,

@@ -1,0 +1,13 @@
+# Read by `cargo audit` from the repository root, including the nightly run in
+# .github/workflows/cargo-audit.yml. Each ignore states why the affected code is
+# unreachable and when to remove the entry.
+[advisories]
+ignore = [
+  # crypto-bigint < 0.7.6 branches on secret values in arithmetic meant to be
+  # constant-time. 0.5.5 comes from the RustCrypto 0.13 curve stack
+  # (elliptic-curve 0.13 requires crypto-bigint 0.5) through k256 0.13 via
+  # alloy, used only by examples/sig-recovery, which only recovers signers from
+  # public signatures (its host signs with the `secp256k1` crate). Remove once
+  # alloy releases on k256 0.14.
+  "RUSTSEC-2026-0387",
+]

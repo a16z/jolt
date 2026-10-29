@@ -1,10 +1,12 @@
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::rows::CollectRegisterEntries;
-use crate::optimized::support::{bind_raw_twice, bound_pair, mul_0_optimized, pool_workers};
+use crate::optimized::prefix_product::PrefixColumn;
+use crate::optimized::support::{
+    bind_prefix_pairs_buffer_len, bound_pair, map_indices, mul_0_optimized, pool_workers,
+};
 
 /// Values a coefficient LUT may hold: it squares only while the square fits.
 const MAX_LUT_VALUES: usize = 1 << 16;
@@ -201,11 +203,11 @@ enum CyclePhase<F: JoltField> {
         metas: Vec<IndexedMeta>,
         ra_lut: CoeffLut<F>,
         wa_lut: CoeffLut<F>,
-        inc: Polynomial<F>,
+        inc: PrefixColumn<F>,
     },
     Direct {
         entries: Vec<SparseEntry<F, F>>,
-        inc: Polynomial<F>,
+        inc: PrefixColumn<F>,
     },
 }
 
@@ -214,14 +216,20 @@ pub(super) struct CycleState<F: JoltField>(CyclePhase<F>);
 
 #[inline]
 fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
-    bound_pair(|j| F::from_i128(raw[j]), r1, y)
+    bound_pair(|j| F::from_i128(raw.get(j).copied().unwrap_or(0)), r1, y)
 }
 
 impl<F: JoltField> CycleState<F> {
-    pub(super) fn new(entries: Vec<SeedEntry>, gamma: F, rd_inc: Vec<i128>) -> Self {
+    pub(super) fn new(entries: Vec<SeedEntry>, gamma: F, mut rd_inc: Vec<i128>) -> Self {
         let gamma_sq = gamma * gamma;
         let read: [F; READ_SEED_VALUES] = [F::zero(), gamma, gamma_sq, gamma + gamma_sq];
         let write: [F; WRITE_SEED_VALUES] = [F::zero(), F::one()];
+        let prefix = rd_inc
+            .iter()
+            .rposition(|&inc| inc != 0)
+            .map_or(0, |i| i + 1);
+        rd_inc.truncate(prefix);
+        rd_inc.shrink_to_fit();
         Self(CyclePhase::Seed {
             entries,
             ra_lut: CoeffLut::new(read.to_vec()),
@@ -230,19 +238,21 @@ impl<F: JoltField> CycleState<F> {
         })
     }
 
-    /// Peak bytes of the cycle-first state over `2^log_t >= 2^8` cycles: the
-    /// most any phase holds at once, with every entry generation at
-    /// [`MAX_ENTRIES_PER_CYCLE`] entries per cycle (`R`; binding only merges
-    /// rows):
+    /// Peak bytes of the cycle-first state over the `cycles` cycles before
+    /// the trace's constant suffix that the collect retains, or `None` past
+    /// `usize::MAX`: the most any phase holds at once, with every entry
+    /// generation at [`MAX_ENTRIES_PER_CYCLE`] entries per cycle (`R`; binding
+    /// only merges rows):
     ///
     /// - preparation: the `R` seed entries and raw increments, with the
-    ///   parallel collect's chunk bookkeeping;
+    ///   parallel collect's chunk bookkeeping, then the truncated copy of the
+    ///   increments `new` may allocate beside them;
     /// - round 1: the seed state and each pool worker's merge scratch (the
     ///   first bind's LUT clones hold less);
     /// - the second bind: the indexed generation (`R` values and packed
     ///   metadata) filled beside the seed state through per-block scratch,
-    ///   then the LUT squaring and the `T/4` bound increments. The seeds,
-    ///   queued for a background drop after the fill, count to its end;
+    ///   then the LUT squaring and the `⌈cycles / 4⌉` bound increments. The
+    ///   seeds, queued for a background drop after the fill, count to its end;
     /// - the third bind: the indexed generation compacted in place through
     ///   per-block scratch, then the LUT squaring and the increment bind;
     /// - the fourth bind: the direct generation (`R` entries) beside the
@@ -252,65 +262,68 @@ impl<F: JoltField> CycleState<F> {
     ///
     /// A LUT squaring holds each new table beside the one it replaces, and a
     /// block pass its bounds, counts and slices plus scratch for one block
-    /// per pool worker. The increments keep at most the second bind's `T/4`
-    /// allocation: [`Polynomial::bind_with_order`] binds in place and
-    /// truncates, keeping the capacity, except on its parallel path for a
-    /// large table, where the old table and its half-length copy coexist
-    /// until the copy replaces it (`T/4 + T/8` at the third bind, less than
-    /// `T/4` after it). The collapse to the `K`-entry address tables, the
-    /// address rounds and the output eq tables hold less than the fourth
-    /// bind.
-    pub(super) fn peak_bytes(log_t: usize) -> usize {
-        let cycles = 1usize << log_t;
-        let entries = cycles.saturating_mul(MAX_ENTRIES_PER_CYCLE);
-        let sum = |terms: &[usize]| terms.iter().copied().fold(0, usize::saturating_add);
-        let field = |count: usize| count.saturating_mul(size_of::<F>());
+    /// per pool worker. The increments keep at most the second bind's
+    /// `⌈cycles / 4⌉` entries: a bound prefix keeps its capacity in place or
+    /// collects its bound half (`bind_prefix_pairs_buffer_len`) beside the old
+    /// table, which only the third bind's copy adds to that allocation. The
+    /// collapse to the `K`-entry address tables and the address rounds hold
+    /// less than the fourth bind.
+    pub(super) fn peak_bytes(cycles: usize) -> Option<usize> {
+        let sum = |terms: &[usize]| {
+            terms
+                .iter()
+                .try_fold(0usize, |total, &term| total.checked_add(term))
+        };
+        let field = |count: usize| count.checked_mul(size_of::<F>());
         let read = |binds: u32| lut_len(READ_SEED_VALUES, binds);
         let write = |binds: u32| lut_len(WRITE_SEED_VALUES, binds);
         let lut = |binds: u32| field(read(binds) + write(binds));
         // The read LUT squares first, then the write LUT.
         let squaring =
             |binds: u32| field(read(binds + 1) + write(binds) + read(binds).max(write(binds + 1)));
-        let increments = field(cycles / 4);
+        let entries = cycles.checked_mul(MAX_ENTRIES_PER_CYCLE)?;
+        let increments = field(cycles.div_ceil(4))?;
+        let increment_copy = field(bind_prefix_pairs_buffer_len(cycles.div_ceil(4)))?;
         let blocks = block_count(entries);
         let block_pass = |task_scratch: usize| {
             let bookkeeping = 2 * size_of::<usize>() + 2 * size_of::<&mut [F]>();
             sum(&[
-                (blocks + 1).saturating_mul(bookkeeping),
-                pool_workers().min(blocks).saturating_mul(task_scratch),
+                blocks.checked_add(1)?.checked_mul(bookkeeping)?,
+                pool_workers().min(blocks).checked_mul(task_scratch)?,
             ])
         };
-        let seeds = sum(&[
-            entries.saturating_mul(size_of::<SeedEntry>()),
-            cycles.saturating_mul(size_of::<i128>()),
-        ]);
-        let indexed = entries.saturating_mul(size_of::<F>() + size_of::<IndexedMeta>());
-        let direct = entries.saturating_mul(size_of::<SparseEntry<F, F>>());
+        let raw_increments = cycles.checked_mul(size_of::<i128>())?;
+        let seeds = sum(&[entries.checked_mul(size_of::<SeedEntry>())?, raw_increments])?;
+        let indexed = entries.checked_mul(size_of::<F>() + size_of::<IndexedMeta>())?;
+        let direct = entries.checked_mul(size_of::<SparseEntry<F, F>>())?;
         let fused = 2 * FUSED_SCRATCH_LEN * size_of::<SparseEntry<F, LutIndex>>();
         let soa_scratch = IN_PLACE_SCRATCH_LEN * (size_of::<F>() + size_of::<IndexedMeta>());
         let direct_scratch = IN_PLACE_SCRATCH_LEN * size_of::<SparseEntry<F, F>>();
         [
-            sum(&[seeds, CollectRegisterEntries::chunk_bytes(cycles)]),
-            sum(&[seeds, lut(0), lut(1), pool_workers().saturating_mul(fused)]),
+            sum(&[
+                seeds,
+                CollectRegisterEntries::chunk_bytes(cycles)?.max(raw_increments),
+            ]),
+            sum(&[seeds, lut(0)?, lut(1)?, pool_workers().checked_mul(fused)?]),
             sum(&[
                 seeds,
                 indexed,
-                lut(0),
-                sum(&[lut(1), block_pass(fused)])
-                    .max(squaring(1))
-                    .max(sum(&[lut(2), increments])),
+                lut(0)?,
+                sum(&[lut(1)?, block_pass(fused)?])?
+                    .max(squaring(1)?)
+                    .max(sum(&[lut(2)?, increments])?),
             ]),
             sum(&[
                 indexed,
-                sum(&[lut(2), increments, block_pass(soa_scratch)])
-                    .max(sum(&[squaring(2), increments]))
-                    .max(sum(&[lut(3), increments, field(cycles / 8)])),
+                sum(&[lut(2)?, increments, block_pass(soa_scratch)?])?
+                    .max(sum(&[squaring(2)?, increments])?)
+                    .max(sum(&[lut(3)?, increments, increment_copy])?),
             ]),
-            sum(&[indexed, direct, lut(3), increments, block_pass(0)]),
-            sum(&[direct, increments, block_pass(direct_scratch)]),
+            sum(&[indexed, direct, lut(3)?, increments, block_pass(0)?]),
+            sum(&[direct, increments, block_pass(direct_scratch)?]),
         ]
         .into_iter()
-        .fold(0, usize::max)
+        .try_fold(0usize, |peak, phase| Some(peak.max(phase?)))
     }
 
     pub(super) fn unused_lut() -> CoeffLut<F> {
@@ -325,8 +338,11 @@ impl<F: JoltField> CycleState<F> {
                 wa_lut,
                 rd_inc,
             } => sparse_quadratic(entries, ra_lut, wa_lut, e_in, e_out, |z| {
-                let inc_0 = F::from_i128(rd_inc[2 * z]);
-                [inc_0, F::from_i128(rd_inc[2 * z + 1]) - inc_0]
+                let inc_0 = F::from_i128(rd_inc.get(2 * z).copied().unwrap_or(0));
+                [
+                    inc_0,
+                    F::from_i128(rd_inc.get(2 * z + 1).copied().unwrap_or(0)) - inc_0,
+                ]
             }),
             CyclePhase::SeedBound {
                 entries,
@@ -356,19 +372,15 @@ impl<F: JoltField> CycleState<F> {
                 ra_lut,
                 wa_lut,
                 inc,
-            } => {
-                let inc = inc.evals();
-                sparse_quadratic_soa(vals, metas, ra_lut, wa_lut, e_in, e_out, |z| {
-                    let inc_0 = inc[2 * z];
-                    [inc_0, inc[2 * z + 1] - inc_0]
-                })
-            }
+            } => sparse_quadratic_soa(vals, metas, ra_lut, wa_lut, e_in, e_out, |z| {
+                let inc_0 = inc.value(2 * z);
+                [inc_0, inc.value(2 * z + 1) - inc_0]
+            }),
             CyclePhase::Direct { entries, inc } => {
                 let unused = Self::unused_lut();
-                let inc = inc.evals();
                 sparse_quadratic(entries, &unused, &unused, e_in, e_out, |z| {
-                    let inc_0 = inc[2 * z];
-                    [inc_0, inc[2 * z + 1] - inc_0]
+                    let inc_0 = inc.value(2 * z);
+                    [inc_0, inc.value(2 * z + 1) - inc_0]
                 })
             }
         }
@@ -387,7 +399,7 @@ impl<F: JoltField> CycleState<F> {
                 wa_lut,
                 e_in,
                 e_out,
-                |row| F::from_i128(rd_inc[row]),
+                |row| F::from_i128(rd_inc.get(row).copied().unwrap_or(0)),
             ),
             CyclePhase::SeedBound {
                 entries,
@@ -425,7 +437,7 @@ impl<F: JoltField> CycleState<F> {
                 wa_lut,
                 e_in,
                 e_out,
-                |row| inc.evals()[row],
+                |row| inc.value(row),
             ),
             CyclePhase::Direct { entries, inc } => {
                 let unused = Self::unused_lut();
@@ -435,7 +447,7 @@ impl<F: JoltField> CycleState<F> {
                     &unused,
                     e_in,
                     e_out,
-                    |row| inc.evals()[row],
+                    |row| inc.value(row),
                 )
             }
         }
@@ -454,7 +466,7 @@ impl<F: JoltField> CycleState<F> {
                 bind_indexed_in_place_soa(vals, metas, ra_lut, wa_lut, r);
                 ra_lut.bind(r);
                 wa_lut.bind(r);
-                inc.bind_with_order(r, BindingOrder::LowToHigh);
+                let _ = inc.bind(r);
                 return false;
             }
             CyclePhase::Direct { entries, inc } => {
@@ -462,7 +474,7 @@ impl<F: JoltField> CycleState<F> {
                 bind_sparse_entries_in_place(entries, |even, odd| {
                     SparseEntry::<F, F>::bind(even, odd, r, &unused, &unused)
                 });
-                inc.bind_with_order(r, BindingOrder::LowToHigh);
+                let _ = inc.bind(r);
                 return false;
             }
             _ => {}
@@ -471,7 +483,10 @@ impl<F: JoltField> CycleState<F> {
             &mut self.0,
             CyclePhase::Direct {
                 entries: Vec::new(),
-                inc: Polynomial::new(Vec::new()),
+                inc: PrefixColumn {
+                    values: Vec::new(),
+                    tail: [F::zero(); 2],
+                },
             },
         );
         let (next, freed_generation) = match state {
@@ -525,7 +540,12 @@ impl<F: JoltField> CycleState<F> {
                         metas,
                         ra_lut,
                         wa_lut,
-                        inc: bind_raw_twice(|j| F::from_i128(rd_inc[j]), rd_inc.len(), r1, r),
+                        inc: PrefixColumn {
+                            values: map_indices(rd_inc.len().div_ceil(4), |y| {
+                                bound_pair(|j| raw_bound_inc(&rd_inc, r1, j), r, y)
+                            }),
+                            tail: [F::zero(); 2],
+                        },
                     },
                     true,
                 )
@@ -541,7 +561,7 @@ impl<F: JoltField> CycleState<F> {
                 CyclePhase::Direct {
                     entries: bind_indexed_to_direct(&vals, &metas, &ra_lut, &wa_lut, r),
                     inc: {
-                        inc.bind_with_order(r, BindingOrder::LowToHigh);
+                        let _ = inc.bind(r);
                         inc
                     },
                 },
@@ -559,7 +579,10 @@ impl<F: JoltField> CycleState<F> {
             &mut self.0,
             CyclePhase::Direct {
                 entries: Vec::new(),
-                inc: Polynomial::new(Vec::new()),
+                inc: PrefixColumn {
+                    values: Vec::new(),
+                    tail: [F::zero(); 2],
+                },
             },
         );
         let mut ra = vec![F::zero(); k];
@@ -605,7 +628,7 @@ impl<F: JoltField> CycleState<F> {
                     wa[meta.col as usize] = LutIndex(meta.wa).value(&wa_lut);
                     val[meta.col as usize] = value;
                 }
-                inc.evals()[0]
+                inc.value(0)
             }
             CyclePhase::Direct { entries, inc } => {
                 for entry in entries {
@@ -614,7 +637,7 @@ impl<F: JoltField> CycleState<F> {
                     wa[entry.col as usize] = entry.wa;
                     val[entry.col as usize] = entry.val;
                 }
-                inc.evals()[0]
+                inc.value(0)
             }
         };
         (ra, wa, val, inc)

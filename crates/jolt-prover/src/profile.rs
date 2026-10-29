@@ -320,11 +320,10 @@ pub struct ProfileArgs {
     /// optimized prover's known eager reservation, which covers named eager
     /// tables only, fails after tracing, before proving. Under Akita, a budget
     /// that cannot hold the trace output, program and program preprocessing
-    /// buffers plus the one-hot setup's flat public matrix and setup-prefix
-    /// sources fails before PCS setup allocates them, and any budget fails for
-    /// multi-chunk or field-inline setups, which that check does not price.
-    /// Passing does not mean the whole proof fits, and the budget does not cap
-    /// process memory.
+    /// buffers plus the one-hot setup's flat public matrix fails before PCS
+    /// setup allocates it, and any budget fails for multi-chunk or
+    /// field-inline setups, which that check does not price. Passing does not
+    /// mean the whole proof fits, and the budget does not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -769,7 +768,8 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         // `prove_workload`'s `ProverConfig::derive_from_dimensions` rejects a
         // trace whose padded length exceeds `max_trace_length`.
         program.build(&default_target_dir().to_string_lossy());
-        tracer.elf_path = Some(program.elf.clone().expect("guest build produces an ELF"));
+        let elf = program.elf.as_ref().expect("guest build produces an ELF");
+        tracer.elf_path = Some(elf.path().clone());
         let trace_output = program
             .trace_with_backend(&mut tracer, &input, &[], &[])
             .expect("modular trace");

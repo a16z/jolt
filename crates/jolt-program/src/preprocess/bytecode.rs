@@ -65,6 +65,41 @@ impl BytecodePreprocessing {
     pub fn get_pc(&self, instruction: &JoltInstructionRow) -> Option<usize> {
         self.pc_map.get_instruction_pc(instruction)
     }
+
+    /// Bytes the rows and the PC map hold on the heap, at capacity.
+    pub fn heap_bytes(&self) -> usize {
+        self.bytecode.capacity() * size_of::<JoltInstructionRow>() + self.pc_map.heap_bytes()
+    }
+
+    /// Bytes [`Self::preprocess`] keeps for a copy of `bytecode` once it
+    /// returns, or [`PreprocessingError::BytecodeTooLarge`] past `usize::MAX`:
+    /// the rows in the buffer the prepended no-op moves them into, which the
+    /// padding fits (`max(2 · len, 4)` rows under Rust 1.95's amortized
+    /// growth, a pinned toolchain fact), and the PC map's slot table, whose
+    /// address range the address-0 no-op leaves unchanged.
+    pub fn retained_bytes(bytecode: &[JoltInstructionRow]) -> Result<usize, PreprocessingError> {
+        let slots = BytecodePCMapper::required_allocation_bytes(bytecode)?;
+        bytecode
+            .len()
+            .checked_mul(2)
+            .and_then(|rows| rows.max(4).checked_mul(size_of::<JoltInstructionRow>()))
+            .and_then(|rows| rows.checked_add(slots))
+            .ok_or(PreprocessingError::BytecodeTooLarge)
+    }
+
+    /// Bytes [`Self::preprocess`] requests at most for a copy of `bytecode`,
+    /// the copy included: what it keeps ([`Self::retained_bytes`]) and the
+    /// copy, which the move into the grown buffer frees.
+    pub fn required_allocation_bytes(
+        bytecode: &[JoltInstructionRow],
+    ) -> Result<usize, PreprocessingError> {
+        let retained = Self::retained_bytes(bytecode)?;
+        bytecode
+            .len()
+            .checked_mul(size_of::<JoltInstructionRow>())
+            .and_then(|copy| copy.checked_add(retained))
+            .ok_or(PreprocessingError::BytecodeTooLarge)
+    }
 }
 
 /// An address expands to a full descending `virtual_sequence_remaining` run —
@@ -173,12 +208,12 @@ impl BytecodePCMapper {
     }
 
     /// Bytes the slot table holds on the heap, at capacity.
-    pub fn heap_bytes(&self) -> usize {
+    pub(crate) fn heap_bytes(&self) -> usize {
         self.slots.capacity() * size_of::<PcSlot>()
     }
 
     /// Bytes [`Self::try_new`] requests for `bytecode`'s slot table.
-    pub fn required_allocation_bytes(
+    fn required_allocation_bytes(
         bytecode: &[JoltInstructionRow],
     ) -> Result<usize, PreprocessingError> {
         Self::index_count(bytecode)?
@@ -316,10 +351,8 @@ const fn noop_instruction() -> JoltInstructionRow {
 mod tests {
     #[cfg(feature = "field-inline")]
     use crate::field_inline::FieldInlineInstructionError;
-    use jolt_riscv::{
-        JoltInstructionKind, JoltInstructionProfile, JoltInstructionRow, NormalizedOperands,
-        SourceExtension, RV64IMAC_JOLT,
-    };
+    use crate::RV64I;
+    use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
 
@@ -494,6 +527,31 @@ mod tests {
         assert_eq!(preprocessing.heap_bytes(), expected);
     }
 
+    /// The prices match what `preprocess` keeps, the rows at their grown
+    /// capacity and the slot table, and, at its peak, the copy it receives.
+    #[test]
+    fn allocation_prices_match_the_copy_and_what_preprocess_keeps() {
+        for len in [0, 1, 3, 4, 7] {
+            let bytecode: Vec<_> = (0..len)
+                .map(|i| instruction(0x8000_0000 + 4 * i, None))
+                .collect();
+            let kept =
+                BytecodePreprocessing::preprocess(bytecode.clone(), 0x8000_0000, RV64IMAC_JOLT)
+                    .unwrap();
+            assert_eq!(kept.bytecode.capacity(), (2 * len).max(4), "len {len}");
+            assert_eq!(
+                BytecodePreprocessing::retained_bytes(&bytecode).unwrap(),
+                kept.heap_bytes(),
+                "len {len}"
+            );
+            assert_eq!(
+                BytecodePreprocessing::required_allocation_bytes(&bytecode).unwrap(),
+                len * size_of::<JoltInstructionRow>() + kept.heap_bytes(),
+                "len {len}"
+            );
+        }
+    }
+
     fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {
         JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
@@ -546,16 +604,10 @@ mod tests {
 
     #[test]
     fn rejects_profile_illegal_target_rows() {
-        const RV64I_ONLY: JoltInstructionProfile = JoltInstructionProfile {
-            source_extensions: &[SourceExtension::Rv64I],
-            inline_extensions: &[],
-        };
-
         let mut row = instruction(0x8000_0000, None);
         row.instruction_kind = JoltInstructionKind::MUL;
 
-        let err =
-            BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64I_ONLY).unwrap_err();
+        let err = BytecodePreprocessing::preprocess(vec![row], 0x8000_0000, RV64I).unwrap_err();
         assert_eq!(
             err,
             PreprocessingError::IllegalTargetInstruction(JoltInstructionKind::MUL)

@@ -9,7 +9,10 @@ use jolt_program::expand::{
 };
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
-use jolt_riscv::{instructions::VirtualHostIO, InlineExtension, JoltInstructionKind as Kind};
+use jolt_riscv::{
+    instructions::VirtualHostIO, InlineExtension, JoltInstructionKind as Kind,
+    JoltInstructionProfile,
+};
 #[cfg(feature = "field-inline")]
 use jolt_riscv::{FieldInlineOp, RV64IMAC_JOLT_FIELD_INLINE};
 
@@ -25,16 +28,17 @@ use crate::instruction::inline::{
 use crate::instruction::{Instruction, RISCVInstruction};
 use crate::TracerInlineExpansionProvider;
 
+#[cfg(feature = "field-inline")]
+const PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
+#[cfg(not(feature = "field-inline"))]
+const PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_ALL_INLINES;
+
 fn guest(words: &[u32]) -> (JoltProgram, TraceInputs) {
     let elf = build_elf64(words, &[], StrtabOrder::GnuLd);
-    #[cfg(feature = "field-inline")]
-    let profile = RV64IMAC_JOLT_FIELD_INLINE;
-    #[cfg(not(feature = "field-inline"))]
-    let profile = RV64IMAC_JOLT_ALL_INLINES;
     let program = jolt_program::build_jolt_program_with_inline_provider(
         &elf,
         &mut TracerInlineExpansionProvider::new(),
-        profile,
+        PROFILE,
     )
     .unwrap();
     let inputs = TraceInputs {
@@ -202,7 +206,7 @@ fn pending_window_holds_the_longest_tick_without_growing() {
 fn conversion_growth_is_checked_before_it_is_made() {
     let row = size_of::<JoltTraceRow>();
     let chunk = size_of::<ConvertedChunk>();
-    let bytecode = BytecodePCMapper::try_new(&[]).unwrap();
+    let bytecode = BytecodePreprocessing::preprocess(Vec::new(), 0x8000_0000, PROFILE).unwrap();
     let cycles = vec![Cycle::NoOp; 12];
     let pending = heap_bytes(&cycles);
 
@@ -250,15 +254,19 @@ fn conversion_growth_is_checked_before_it_is_made() {
 
 /// `len` cycles with a field-inline event at each of `positions`.
 #[cfg(feature = "field-inline")]
-fn field_inline_cycles(positions: &[usize], len: usize) -> (Vec<Cycle>, BytecodePCMapper) {
+fn field_inline_cycles(positions: &[usize], len: usize) -> (Vec<Cycle>, BytecodePreprocessing) {
     let instruction = Instruction::decode(
         super::tests::field_inline_word(FieldInlineOp::LoadAccumulateFromRegister, 2, 5, 0),
         0x8000_0000,
         false,
     )
     .unwrap();
-    let bytecode =
-        BytecodePCMapper::try_new(&[instruction.try_jolt_instruction_row().unwrap()]).unwrap();
+    let bytecode = BytecodePreprocessing::preprocess(
+        vec![instruction.try_jolt_instruction_row().unwrap()],
+        0x8000_0000,
+        PROFILE,
+    )
+    .unwrap();
     let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
     cpu.write_register(5, 11);
     let mut cycles = vec![Cycle::NoOp; len];
@@ -448,19 +456,25 @@ fn refused_advice_write_stops_its_inline() {
     assert_eq!((cpu.x[5], cycles.len(), cpu.advice_tape.len()), (1, 2, 8));
 }
 
+/// The guest's host I/O word: `.insn i 0x5B, 2, x0, x0, 0`.
+const HOST_IO_WORD: u32 = 0x0000_205b;
+
 /// A guest that writes 24 bytes of its own text to the advice tape, then
-/// 64 KiB through the registered inline above, then 7 bytes, and stalls.
-fn advice_writing_guest() -> (JoltProgram, TraceInputs) {
+/// 64 KiB through `large_write` (its own host I/O or the registered inline
+/// above), then 7 bytes, and stalls. A trace that converts the inline's rows
+/// fails main's bytecode check: the inline builder keeps the host I/O row's
+/// `x0` operands, which the executed row does not carry.
+fn advice_writing_guest(large_write: u32) -> (JoltProgram, TraceInputs) {
     guest(&[
         0x00ad_c537, // lui a0, 0xadc
         0xabe5_0513, // addi a0, a0, -0x542: the advice-write call
         0x0000_0597, // auipc a1, 0
         0x0180_0613, // addi a2, x0, 24
-        0x0000_205b, // host I/O
+        HOST_IO_WORD,
         0x0001_0637, // lui a2, 0x10
-        HOST_WRITE_INLINE_WORD,
+        large_write,
         0x0070_0613, // addi a2, x0, 7
-        0x0000_205b, // host I/O
+        HOST_IO_WORD,
         0x0000_006f, // j .
     ])
 }
@@ -471,7 +485,7 @@ fn advice_writing_guest() -> (JoltProgram, TraceInputs) {
 #[test]
 fn tape_only_run_writes_the_traced_tape() {
     assert_eq!(JOLT_ADVICE_WRITE_CALL_ID, 0x00ad_babe);
-    let (program, inputs) = advice_writing_guest();
+    let (program, inputs) = advice_writing_guest(HOST_IO_WORD);
     let original = TracerBackend::new()
         .trace(&program, inputs.clone())
         .unwrap();
@@ -489,7 +503,7 @@ fn tape_only_run_writes_the_traced_tape() {
 /// with a shorter tape. The tape-only setup requests no row reserve.
 #[test]
 fn refused_advice_write_fails_the_run() {
-    let (program, inputs) = advice_writing_guest();
+    let (program, inputs) = advice_writing_guest(HOST_WRITE_INLINE_WORD);
     let (_, setup) = rejection(limited(0).trace(&program, inputs.clone())).unwrap();
     let (phase, required) = rejection(limited(setup).trace(&program, inputs.clone())).unwrap();
     assert_eq!(phase, TraceAllocationPhase::AdviceWrite);
@@ -511,7 +525,7 @@ fn refused_advice_write_fails_the_run() {
 /// fault.
 #[test]
 fn tape_only_stop_ends_at_a_zero_row_tick() {
-    let (program, inputs) = advice_writing_guest();
+    let (program, inputs) = advice_writing_guest(HOST_WRITE_INLINE_WORD);
     let mut emulator = crate::create_emulator(
         program.elf_bytes(),
         None,
