@@ -86,6 +86,10 @@ akita = [
 # setup-lane-streams: the verifier guest (and the host's Akita) stream each lane
 # of the root setup scan with its row scales hoisted; same field values. Default
 # on; effective only with `akita`.
+# carry-graph: the host emits Akita's fixed carry-state graphs for the inner
+# proofs' padded trace size and the verifier guest evaluates the eq-pair tensor
+# recurrences through them (no graph for another size: recurrence path); same
+# field values. Default on; effective only with `akita`.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -107,6 +111,7 @@ default = [
   "bytecode-fold",
   "fill-ingress",
   "setup-lane-streams",
+  "carry-graph",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
