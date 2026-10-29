@@ -29,6 +29,8 @@ use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -252,10 +254,7 @@ impl<F: JoltField> ValEvaluationKernel<F> {
                     Ok(lo + challenge * (hi - lo))
                 };
                 #[cfg(feature = "parallel")]
-                let table = (0..half)
-                    .into_par_iter()
-                    .map(bound)
-                    .collect::<Result<Vec<F>, _>>()?;
+                let table = par_collect_windows(half, bound)?;
                 #[cfg(not(feature = "parallel"))]
                 let table = (0..half).map(bound).collect::<Result<Vec<F>, _>>()?;
                 self.inc = IncState::Dense(PrefixColumn {
@@ -315,7 +314,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
                         || [F::Accumulator::default(); 3],
                         |mut acc, y| {
                             group(y, &mut acc)?;
-                            Ok(acc)
+                            Ok::<_, SumcheckError<F>>(acc)
                         },
                     )
                     .map(|acc| acc.map(|acc| acc.map(F::Accumulator::reduce)))

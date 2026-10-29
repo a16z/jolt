@@ -76,9 +76,7 @@ type FieldInlineField = Fr;
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 type FieldInlineField = AkitaField;
 #[cfg(not(feature = "akita"))]
-use jolt_transcript::AppendToTranscript;
-#[cfg(not(feature = "akita"))]
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::{Encoding, Keccak, ProverState, VerifierState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 #[cfg(not(feature = "akita"))]
 use rayon::ThreadPoolBuilder;
@@ -938,14 +936,14 @@ where
     PCS: CommitmentScheme<Field = Fr>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = Bn254G1, Blind = Fr>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<Fr>,
+    PCS::Output: Encoding + HomomorphicCommitment<Fr>,
 {
     // --- The measured window: the full modular prove (witness
     // materialization, commitment, all sumcheck stages, joint opening). The
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = crate::dory::prove::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let proof = crate::dory::prove::<Fr, PCS, Pedersen<Bn254G1>, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -971,7 +969,7 @@ where
         .build()
         .expect("single-threaded verifier pool must build");
     let verify = || {
-        jolt_verifier::verify::<Fr, PCS, Pedersen<Bn254G1>, Blake2bTranscript>(
+        jolt_verifier::verify::<Fr, PCS, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,
@@ -1001,10 +999,11 @@ fn prove_workload(
     backend: BackendKind,
     chunk_profile: AkitaChunkProfile,
 ) -> ProvenRun {
-    use crate::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::CommitmentScheme;
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
     let backend = match backend {
@@ -1070,7 +1069,7 @@ fn prove_workload(
     // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
-    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -1096,7 +1095,7 @@ fn prove_workload(
     );
 
     let verify = || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,

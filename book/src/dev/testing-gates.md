@@ -146,9 +146,11 @@ scripts/ci/fs-soundness.sh
 `fs_obligations` assigns stable identities to transcript absorption expressions,
 challenge-shaped calls, scope annotations, generated sumcheck batching draws,
 and serialized verifier inputs in the production dependency closure. The
-absorption inventory includes normalized call expressions, so changing either a
-label or its bound value requires review. A reviewed protocol change may
-regenerate the inventories with:
+absorption inventory identifies each absorb by its function, its ordinal among
+like calls in that function, and its normalized call expression; transcript messages carry
+no labels. Changing a bound expression, or adding, removing or reordering
+absorbs within a function, therefore requires review. A reviewed protocol
+change may regenerate the inventories with:
 
 ```bash
 JOLT_FS_BLESS=1 cargo nextest run -p jolt-verifier \

@@ -3,7 +3,7 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
 use jolt_prover::{dory, JoltSharedPreprocessing, ProverConfig, ProverError};
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -66,7 +66,7 @@ pub fn verify_full(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
         preprocessing,
         public_io,
         proof,

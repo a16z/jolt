@@ -11,7 +11,7 @@ use crate::{
 use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{protocol_tag, prover_transcript, Blake2b512};
 
 fn params(vars: usize) -> AkitaSetupParams {
     AkitaSetupParams::dense_only(
@@ -50,7 +50,7 @@ impl DenseFixture {
             evaluation,
             &prover,
             Some(hint),
-            &mut Blake2bTranscript::new(b"verifier-resources"),
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"verifier-resources"), b""),
         )
         .unwrap();
         Self {
@@ -68,7 +68,7 @@ impl DenseFixture {
             evaluation,
             &self.proof,
             setup,
-            &mut Blake2bTranscript::new(b"verifier-resources"),
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"verifier-resources"), b""),
         )
         .is_ok()
     }
@@ -182,7 +182,7 @@ fn one_hot_proofs_use_the_same_warm_backend_at_different_arities() {
             evaluation,
             &prover,
             Some(hint),
-            &mut Blake2bTranscript::new(b"warm-onehot"),
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"warm-onehot"), b""),
         )
         .unwrap();
         AkitaScheme::verify(
@@ -191,7 +191,7 @@ fn one_hot_proofs_use_the_same_warm_backend_at_different_arities() {
             evaluation,
             &proof,
             &verifier,
-            &mut Blake2bTranscript::new(b"warm-onehot"),
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"warm-onehot"), b""),
         )
         .unwrap();
     }
@@ -208,7 +208,7 @@ fn prepared_resources_hold_every_required_prefix_and_only_the_verifier_matrix() 
     ));
     let requirements = AkitaVerifierRequirements::for_setups(std::slice::from_ref(&setup)).unwrap();
     assert!(!requirements.prefix_slots.is_empty());
-    assert!(requirements.generation_field_elements > requirements.retained_field_elements);
+    assert!(requirements.prefix_field_elements > requirements.retained_field_elements);
     let state = Prepared::new([Ok(setup)]).unwrap();
     let material = &state.material;
     assert_eq!(
@@ -344,7 +344,7 @@ fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
         evaluation,
         &prover,
         Some(hint),
-        &mut Blake2bTranscript::new(b"prefix-fold"),
+        &mut prover_transcript::<Blake2b512>(&protocol_tag(b"prefix-fold"), b""),
     )
     .unwrap();
     drop((prover, polynomial));
@@ -370,7 +370,7 @@ fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
             evaluation,
             &proof,
             setup,
-            &mut Blake2bTranscript::new(b"prefix-fold"),
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"prefix-fold"), b""),
         )
         .is_ok()
     };

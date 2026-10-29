@@ -2,9 +2,10 @@
 
 use std::ops::Range;
 
-use blake2::{digest::consts::U32, Blake2b, Digest};
 use jolt_field::Field;
 use jolt_openings::OpeningsError;
+use jolt_transcript::DigestHasher;
+use sha3::Digest;
 
 use super::super::JoltCommittedPolynomial;
 use super::geometry::LatticeGeometryError;
@@ -157,7 +158,7 @@ fn layout_digest(
     num_vars: usize,
     columns: &[JoltCommittedPolynomial],
 ) -> Result<[u8; 32], OpeningsError> {
-    let mut hasher = Blake2b::<U32>::new();
+    let mut hasher = DigestHasher::new();
     hasher.update(b"jolt/akita/one_hot_trace/native-batch/v9");
     append_usize(&mut hasher, num_vars);
     append_usize(&mut hasher, columns.len());
@@ -190,7 +191,7 @@ fn layout_digest(
     Ok(hasher.finalize().into())
 }
 
-fn append_usize(hasher: &mut Blake2b<U32>, value: usize) {
+fn append_usize(hasher: &mut DigestHasher, value: usize) {
     hasher.update((value as u64).to_le_bytes());
 }
 

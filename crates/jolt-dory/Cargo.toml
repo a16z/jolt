@@ -39,6 +39,7 @@ jolt-profiling = { path = "../jolt-profiling", default-features = false }
 criterion = { workspace = true }
 jolt-transcript = { workspace = true, features = [
   "bn254",
+  "test-utils",
   "transcript-blake2b",
   "transcript-keccak",
 ] }

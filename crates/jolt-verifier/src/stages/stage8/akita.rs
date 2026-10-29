@@ -22,9 +22,10 @@ use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use super::precommitted::precommitted_final_openings;
+use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
@@ -151,7 +152,7 @@ fn reduce_object<PCS, T>(
 ) -> Result<EvaluationClaim<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let claims = object_leaf_claims(&object.plan, leaves)?;
     let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
@@ -160,6 +161,14 @@ where
         .packing()
         .reduce_claims(&semantic, transcript)
         .map_err(batch_failed)
+}
+
+/// Whether any of `plans` draws a selector point, so that stage 8 has a
+/// challenge burst for proof of work to protect.
+pub fn has_selectors<'a>(plans: impl IntoIterator<Item = &'a PrefixPackedObjectPlan>) -> bool {
+    plans
+        .into_iter()
+        .any(|plan| plan.packing().selector_num_vars() > 0)
 }
 
 fn advice_object<'a, PCS: CommitmentScheme>(
@@ -246,6 +255,7 @@ pub fn verify<PCS, VC, T>(
     trusted_advice_commitment: Option<&PCS::Output>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
     proof: &PCS::Proof,
+    pow_nonces: &StagePowNonces,
     transcript: &mut T,
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
@@ -254,10 +264,10 @@ pub fn verify<PCS, VC, T>(
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: Clone + AppendToTranscript + OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
@@ -299,19 +309,6 @@ where
         JoltAdviceKind::Trusted,
     )?;
 
-    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-    let trusted_claim = if let Some(object) = trusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-
     let program = preprocessing
         .program
         .committed()
@@ -325,6 +322,40 @@ where
             .map_err(batch_failed)
         })
         .transpose()?;
+
+    // One nonce covers every object's selector point: the reductions absorb
+    // only claims fixed by earlier messages, so no prover message falls
+    // between the draws. With no selector there is no burst and no nonce.
+    let selectors = has_selectors(
+        [untrusted.as_ref(), trusted.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|object| &object.plan)
+            .chain(
+                program
+                    .iter()
+                    .flat_map(|(_, plan)| [&plan.bytecode, &plan.program_image]),
+            ),
+    );
+    if selectors {
+        check_pow(PowSite::Stage8, pow_nonces, transcript)?;
+    } else {
+        pow_nonces.require_absent(PowSite::Stage8)?;
+    }
+
+    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+    let trusted_claim = if let Some(object) = trusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+
     let mut auxiliary_groups = Vec::with_capacity(5);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),

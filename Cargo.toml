@@ -299,6 +299,7 @@ ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
 sha3 = "=0.12.0"
+shake = { version = "=0.1.0", default-features = false }
 blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
@@ -311,15 +312,15 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "dfdbd7674cab5cfbe95243e947d1b10a982f232b", default-features = false }
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -436,7 +437,7 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.7", features = ["rayon"] }
+reth-primitives-traits = { version = "0.8", features = ["rayon"] }
 reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", default-features = false }
 secp256k1 = { version = "0.33", features = ["recovery", "rand"] }
 

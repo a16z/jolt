@@ -7,7 +7,7 @@ use jolt_kernels::cuda::CudaDoryScheme;
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 use jolt_prover::dory::{self, DoryProverPreprocessing};
 use jolt_prover::{JoltBackend, ProverConfig, ProverError};
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::{Keccak, ProverState};
 use jolt_verifier::proof::JoltProof;
 use jolt_witness::TraceBackend;
 
@@ -33,7 +33,7 @@ impl DoryBackend for JoltBackend<Fr, DoryScheme> {
         trusted_advice: Option<&TrustedAdviceCommitment<DoryScheme>>,
         public_io: &JoltDevice,
     ) -> Result<Proof, ProverError<Fr>> {
-        dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             self.with_witness(witness),
             preprocessing,
             config,
@@ -71,7 +71,7 @@ impl DoryBackend for JoltBackend<Fr, CudaDoryScheme> {
             commitment: advice.commitment.clone(),
             hint: advice.hint.clone(),
         });
-        let proof = dory::prove::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let proof = dory::prove::<Fr, CudaDoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             self.with_witness(witness),
             &cuda_preprocessing,
             config,
