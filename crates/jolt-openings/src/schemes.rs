@@ -1,6 +1,8 @@
 //! Polynomial commitment scheme (PCS) trait hierarchy.
 //!
 //! - [`CommitmentScheme`] — commit, open, verify for multilinear polynomials.
+//! - [`GroupBatchOpening`] — one opening of several commitment groups inside
+//!   the caller's transcript.
 //! - [`AdditivelyHomomorphic`] — linear combination of commitments.
 //! - [`StreamingCommitment`] — chunked commitment without full materialization.
 //! - [`ZkOpeningScheme`] — zero-knowledge commitments and opening proofs.
@@ -11,8 +13,9 @@ use std::{fmt::Debug, marker::PhantomData};
 use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::{JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
-use jolt_transcript::{Encoding, FieldTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverState, VerifierState};
 use serde::{de::DeserializeOwned, Serialize};
+use spongefish::DuplexSpongeInterface;
 
 use crate::claims::{VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
@@ -105,38 +108,49 @@ pub trait CommitmentScheme: Commitment {
             "this commitment scheme has no native commitment group".to_owned(),
         ))
     }
+}
 
-    /// Proves one batch containing zero or more independently committed groups
-    /// followed by a final commitment group. Every opening runs from retained
-    /// commit-time state; there is deliberately no polynomial argument.
+/// Opens zero or more independently committed groups, then a final
+/// commitment group, in one proof that runs inside the caller's Fiat-Shamir
+/// state. The scheme writes its messages to the caller's argument string and
+/// draws its challenges from the caller's sponge, so the caller must bind
+/// every commitment before the challenges that depend on it.
+pub trait GroupBatchOpening: CommitmentScheme {
+    /// The sponge the caller's transcript must run on.
+    type Sponge: DuplexSpongeInterface;
+    /// A verifier acceptance that still needs [`Self::check_eof`].
+    type PendingEof;
+
+    /// Proves the batch. Every opening runs from retained commit-time state;
+    /// there is deliberately no polynomial argument.
     // TODO(#1782): fold the retained-state contract into a first-class
     // committed-object type on this trait instead of the `OpeningHint`
     // side-channel.
     fn prove_batch(
-        _setup: &Self::ProverSetup,
-        _groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
-        _final_group: GroupOpeningClaim<Self::Field, Self::Output>,
-        _final_hint: Self::OpeningHint,
-        _transcript: &mut impl FieldTranscript<Self::Field>,
-    ) -> Result<Self::Proof, OpeningsError> {
-        Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native group-batch opening".to_owned(),
-        ))
-    }
+        setup: &Self::ProverSetup,
+        groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
+        final_group: GroupOpeningClaim<Self::Field, Self::Output>,
+        final_hint: Self::OpeningHint,
+        transcript: &mut ProverState<Self::Sponge>,
+    ) -> Result<Self::Proof, OpeningsError>;
 
-    /// Verifies one proof opening zero or more independently committed groups
-    /// at their group-local points, followed by a final commitment group.
+    /// Verifies the batch at the groups' local points. The caller must stop on
+    /// an error, and pass its transcript to [`Self::check_eof`] after its own
+    /// last message.
     fn verify_batch(
-        _setup: &Self::VerifierSetup,
-        _groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
-        _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
-        _proof: &Self::Proof,
-        _transcript: &mut impl FieldTranscript<Self::Field>,
-    ) -> Result<(), OpeningsError> {
-        Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native group-batch opening".to_owned(),
-        ))
-    }
+        setup: &Self::VerifierSetup,
+        groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
+        final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
+        proof: &Self::Proof,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
+    ) -> Result<Self::PendingEof, OpeningsError>;
+
+    /// Completes a verification: checks that the whole argument string was
+    /// read.
+    fn check_eof(
+        pending: Self::PendingEof,
+        transcript: VerifierState<'_, Self::Sponge>,
+    ) -> Result<(), OpeningsError>;
 }
 
 /// Transparent derivation of a singleton commitment-object setup from an

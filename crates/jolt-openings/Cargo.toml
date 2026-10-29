@@ -16,6 +16,7 @@ jolt-poly = { path = "../jolt-poly", default-features = false, features = [
 ] }
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde.workspace = true
+spongefish.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 

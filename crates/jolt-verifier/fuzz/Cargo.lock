@@ -662,6 +662,7 @@ dependencies = [
  "jolt-poly",
  "jolt-transcript",
  "serde",
+ "spongefish",
  "thiserror",
  "tracing",
 ]

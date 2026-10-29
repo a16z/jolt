@@ -33,11 +33,6 @@ pub struct Stage8ZkOutput<F: JoltField, C, H> {
 pub enum Stage8Output<F: JoltField, C, H> {
     #[cfg(not(feature = "akita"))]
     Clear(Stage8ClearOutput<F, C>),
-    /// The akita build's clear stage 8 verifies to completion inside
-    /// [`super::verify`] (one native batch opening over trace columns and
-    /// auxiliary objects), so no per-opening payload survives it.
-    #[cfg(feature = "akita")]
-    Clear,
     Zk(Stage8ZkOutput<F, C, H>),
 }
 
@@ -47,8 +42,6 @@ impl<F: JoltField, C, H> Stage8Output<F, C, H> {
             Self::Zk(output) => Ok(output),
             #[cfg(not(feature = "akita"))]
             Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage8" }),
-            #[cfg(feature = "akita")]
-            Self::Clear => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage8" }),
         }
     }
 }

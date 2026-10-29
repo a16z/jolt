@@ -203,12 +203,13 @@ ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-serialize = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 
-# The refreshed Akita cutover consumes jolt-field from this exact Git source.
-# Redirect that package to the workspace member so Cargo resolves one shared
-# field identity rather than separate path and Git copies.
+# Akita consumes jolt-field, jolt-poly and jolt-transcript from this Git
+# source. Redirect them to the workspace members so Cargo resolves one shared
+# identity for each: Akita then runs on Jolt's own transcript states.
 [patch."https://github.com/a16z/jolt"]
 jolt-field = { path = "crates/jolt-field" }
 jolt-poly = { path = "crates/jolt-poly" }
+jolt-transcript = { path = "crates/jolt-transcript" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
@@ -304,15 +305,18 @@ dory = { package = "dory-pcs", version = "=0.4.2", features = [
   "disk-persistence",
   "zk",
 ] }
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+# LayerZero-Labs/akita feat/embedded-transcript (#254). Move to Akita main once
+# the #253/#255/#260/#254 stack merges.
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0e9f88dafb79a2cb29a8c03858cf2a20f05972e2", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
