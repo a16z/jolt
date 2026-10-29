@@ -14,7 +14,7 @@ use flags::PackedFlags;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{bind_prefix_in_place, BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -27,9 +27,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    bind_prefix_pairs, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
-};
+use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -460,7 +458,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }
             InputState::Packed { operands, flags } => {
                 for (i, table) in operands.iter_mut().enumerate() {
-                    bind_prefix_pairs(table, challenge, self.tail[2 * i + 1]);
+                    let _ = bind_prefix_in_place(table, challenge, self.tail[2 * i + 1]);
                 }
                 if flags.saturated() {
                     let flag_tables = flags.materialize_bound(challenge);
@@ -478,7 +476,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }
             InputState::Dense(tables) => {
                 for (table, tail) in tables.iter_mut().zip(self.tail) {
-                    bind_prefix_pairs(table, challenge, tail);
+                    let _ = bind_prefix_in_place(table, challenge, tail);
                 }
                 if self.progress.bound() + 1 == LATE_PURGE_ROUNDS {
                     purge_retained_memory(self.progress.total());

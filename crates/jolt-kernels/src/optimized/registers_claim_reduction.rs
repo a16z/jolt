@@ -99,6 +99,11 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
         let cycles = 1usize << log_t;
         let values = BundleStore::<RegisterValuesRow>::resolve(witness, cycles)?;
         let access = values.access();
+        let prefix_cycles = access.constant_suffix_start(cycles)?;
+        let tail = access
+            .row(prefix_cycles.min(cycles - 1))?
+            .0
+            .map(F::from_u64);
 
         let gamma = inputs.challenges.gamma;
         let gamma_sq = gamma * gamma;
@@ -107,15 +112,25 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
         let prefix_vars = tau_lo.len();
         let p = EqPolynomial::<F>::evals(tau_lo, None);
         let eq_suffix = EqPolynomial::<F>::evals(tau_hi, None);
+        let width = 1usize << prefix_vars;
+        let live_high = prefix_cycles.div_ceil(width);
+        let partial = prefix_cycles % width;
+        let tail_weight: F = eq_suffix[live_high..].iter().copied().sum();
+        let partial_weight = eq_suffix
+            .get(prefix_cycles / width)
+            .copied()
+            .unwrap_or(F::zero());
+        let tail_value = tail[0] + gamma * tail[1] + gamma_sq * tail[2];
 
         const BLOCK: usize = 32;
         let build_q_block =
             |(block_index, q_block): (usize, &mut [F])| -> Result<(), WitnessError> {
                 let mut folds = vec![[F::SmallScalarAccumulator::default(); 3]; q_block.len()];
-                for (x_hi, &eq_hi) in eq_suffix.iter().enumerate() {
+                for (x_hi, &eq_hi) in eq_suffix.iter().take(live_high).enumerate() {
                     let eq_hi_shifted = eq_hi.mul_pow_2(32);
                     let base = x_hi << prefix_vars;
-                    for (i, fold) in folds.iter_mut().enumerate() {
+                    let live = prefix_cycles.saturating_sub(base + block_index * BLOCK);
+                    for (i, fold) in folds.iter_mut().take(live).enumerate() {
                         let x_lo = block_index * BLOCK + i;
                         let row = access.row(base + x_lo)?.0;
                         fmadd_u64_split(&mut fold[0], eq_hi, eq_hi_shifted, row[0]);
@@ -123,8 +138,18 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
                         fmadd_u64_split(&mut fold[2], eq_hi, eq_hi_shifted, row[2]);
                     }
                 }
-                for (q, fold) in q_block.iter_mut().zip(folds) {
-                    *q = fold[0].reduce() + gamma * fold[1].reduce() + gamma_sq * fold[2].reduce();
+                for (i, (q, fold)) in q_block.iter_mut().zip(folds).enumerate() {
+                    let x_lo = block_index * BLOCK + i;
+                    let weight = tail_weight
+                        + if partial != 0 && x_lo >= partial {
+                            partial_weight
+                        } else {
+                            F::zero()
+                        };
+                    *q = fold[0].reduce()
+                        + gamma * fold[1].reduce()
+                        + gamma_sq * fold[2].reduce()
+                        + weight * tail_value;
                 }
                 Ok(())
             };
@@ -140,6 +165,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>>
 
         Ok(Box::new(ClaimReductionKernel {
             log_t,
+            prefix_cycles,
             gamma,
             gamma_sq,
             tau: tau.to_vec(),
@@ -166,6 +192,7 @@ enum Phase<F> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ClaimReductionKernel<F: JoltField> {
     log_t: usize,
+    prefix_cycles: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -185,19 +212,36 @@ impl<F: JoltField> ClaimReductionKernel<F> {
         let chunk = eq_prefix.len();
         let remaining = 1usize << (self.log_t - bound);
         let access = self.values.access();
+        let tail = access
+            .row(self.prefix_cycles.min((1usize << self.log_t) - 1))?
+            .0
+            .map(F::from_u64);
+        let boundary_mass = EqPolynomial::<F>::suffix_sum(&r_prefix, self.prefix_cycles % chunk);
 
         let fold_chunk = |chunk_index: usize| -> Result<[F; 3], WitnessError> {
             let base = chunk_index * chunk;
+            let live = self.prefix_cycles.saturating_sub(base).min(chunk);
+            if live == 0 {
+                return Ok(tail);
+            }
             let mut fold = [F::SmallScalarAccumulator::default(); 3];
-            for (offset, (&eq, &eq_shifted)) in
-                eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
+            for (offset, (&eq, &eq_shifted)) in eq_prefix[..live]
+                .iter()
+                .zip(&eq_prefix_shifted[..live])
+                .enumerate()
             {
                 let row = access.row(base + offset)?;
                 fmadd_u64_split(&mut fold[0], eq, eq_shifted, row.0[0]);
                 fmadd_u64_split(&mut fold[1], eq, eq_shifted, row.0[1]);
                 fmadd_u64_split(&mut fold[2], eq, eq_shifted, row.0[2]);
             }
-            Ok(fold.map(F::SmallScalarAccumulator::reduce))
+            let mut values = fold.map(F::SmallScalarAccumulator::reduce);
+            if live < chunk {
+                for (value, tail) in values.iter_mut().zip(tail) {
+                    *value += boundary_mass * tail;
+                }
+            }
+            Ok(values)
         };
         #[cfg(feature = "parallel")]
         let folds: Vec<[F; 3]> = (0..remaining)
@@ -438,5 +482,11 @@ mod tests {
         fixture.op(Some(9), Some(8), Some(8));
         fixture.op(None, Some(9), Some(8));
         run_parity(fixture, 2, 109);
+    }
+    #[test]
+    fn padding_at_prefix_and_fold_boundaries_matches_reference() {
+        for prefix in [1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64] {
+            run_parity(structured_fixture(prefix), 6, 113 + prefix as u64);
+        }
     }
 }

@@ -519,29 +519,6 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     table.truncate(half);
 }
 
-/// Low-bit-first binding of a prefix, with the missing odd endpoint supplied
-/// by its implicit suffix. Small prefixes reuse their allocation.
-pub(crate) fn bind_prefix_pairs<F: JoltField>(table: &mut Vec<F>, r: F, boundary: F) {
-    let len = table.len().div_ceil(2);
-    #[cfg(feature = "parallel")]
-    if len >= 1024 {
-        *table = table
-            .par_chunks(2)
-            .map(|pair| {
-                let lo = pair[0];
-                r.mul_add(pair.get(1).copied().unwrap_or(boundary) - lo, lo)
-            })
-            .collect();
-        return;
-    }
-    for index in 0..len {
-        let lo = table[2 * index];
-        let hi = table.get(2 * index + 1).copied().unwrap_or(boundary);
-        table[index] = r.mul_add(hi - lo, lo);
-    }
-    table.truncate(len);
-}
-
 /// The drawn challenges of a kernel's bound rounds, tracked against the
 /// round total — one authority for both the challenge history and the
 /// bound-rounds invariant. Kernels that never revisit their challenges use
