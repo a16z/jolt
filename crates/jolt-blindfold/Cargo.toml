@@ -6,8 +6,13 @@ license = "MIT"
 description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 
 [features]
-# The prove side. Verifier builds leave it off.
-prover = ["jolt-sumcheck/prover", "dep:rayon"]
+# The prove side: `prove` and the proof-of-work search before its challenges,
+# which copies the sponge state. Verifier builds leave it off.
+prover = [
+  "jolt-sumcheck/prover",
+  "jolt-transcript/prover-grinding",
+  "dep:rayon",
+]
 
 [lints]
 workspace = true
@@ -32,6 +37,7 @@ jolt-transcript = { workspace = true, features = [
   "bn254",
   "solinas",
   "transcript-blake2b",
+  "prover-grinding",
   "test-utils",
 ] }
 rand_chacha.workspace = true

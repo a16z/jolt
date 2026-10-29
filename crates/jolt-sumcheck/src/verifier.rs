@@ -8,6 +8,7 @@ use crate::committed::{
 };
 use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
+use crate::pow::RoundNonces;
 use crate::proof::CompressedSumcheckProof;
 use crate::round_proof::{append_compressed_round, ClearRound, RoundMessage};
 
@@ -20,8 +21,11 @@ impl SumcheckVerifier {
     /// 1. The degree bound is enforced against `claim.degree`.
     /// 2. The round sum is checked against the running sum in `domain`.
     /// 3. The round message is absorbed into the transcript.
-    /// 4. A challenge $r_i$ is squeezed from the transcript.
-    /// 5. The running sum is updated to the round polynomial at $r_i$.
+    /// 4. The round's proof-of-work nonce from `pow_nonces` is checked
+    ///    (one per round when the difficulty for `claim.degree` is positive,
+    ///    none otherwise).
+    /// 5. A challenge $r_i$ is squeezed from the transcript.
+    /// 6. The running sum is updated to the round polynomial at $r_i$.
     ///
     /// On success, returns an [`EvaluationClaim`] `{ point: r, value: v }`
     /// where `v` is the final evaluation and `r = (r_1, ..., r_n)` is the
@@ -30,7 +34,8 @@ impl SumcheckVerifier {
     /// # Errors
     ///
     /// Returns [`SumcheckError`] if any round check fails, a degree bound
-    /// is exceeded, or the proof has the wrong number of rounds.
+    /// is exceeded, a proof-of-work nonce is missing or wrong, or the proof
+    /// has the wrong number of rounds or nonces.
     ///
     /// # Soundness
     ///
@@ -44,6 +49,7 @@ impl SumcheckVerifier {
     pub fn verify<F, T, R, D>(
         claim: &SumcheckClaim<F>,
         round_proofs: &[R],
+        pow_nonces: &[u64],
         domain: D,
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
@@ -59,6 +65,7 @@ impl SumcheckVerifier {
                 got: round_proofs.len(),
             });
         }
+        let pow = RoundNonces::new::<F, T>(claim.degree, claim.num_vars, pow_nonces)?;
 
         let mut running_sum = claim.claimed_sum;
         let mut challenges = Vec::with_capacity(claim.num_vars);
@@ -72,6 +79,7 @@ impl SumcheckVerifier {
             }
             domain.check_round_sum(round, running_sum, round_proof)?;
             round_proof.append_to_transcript(transcript);
+            pow.check(round, transcript)?;
             let r: F = transcript.challenge()?;
             running_sum = round_proof.evaluate(r);
             challenges.push(r);
@@ -97,6 +105,7 @@ impl SumcheckVerifier {
                 got: proof.round_polynomials.len(),
             });
         }
+        let pow = RoundNonces::new::<F, T>(claim.degree, claim.num_vars, &proof.pow_nonces)?;
         let BooleanHypercube = domain;
 
         let mut running_sum = claim.claimed_sum;
@@ -116,6 +125,7 @@ impl SumcheckVerifier {
 
             // The count word: the prover chooses the degree up to the bound.
             append_compressed_round(transcript, coeffs);
+            pow.check(round, transcript)?;
             let r: F = transcript.challenge()?;
             running_sum = round_proof.evaluate_with_hint(running_sum, r);
             challenges.push(r);

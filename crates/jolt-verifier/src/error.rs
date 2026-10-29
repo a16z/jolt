@@ -4,6 +4,7 @@ use jolt_transcript::VerificationError;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
+use crate::stages::pow::PowSite;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[derive(Debug, thiserror::Error)]
@@ -133,6 +134,12 @@ pub enum VerifierError {
 
     #[error("program preprocessing digest failed: {reason}")]
     PreprocessingDigestFailed { reason: String },
+
+    #[error("no proof-of-work difficulty reaches the security target for the stage-level loss")]
+    PowDifficulty,
+
+    #[error("proof-of-work nonce at {site:?} is missing, unexpected, or fails the check")]
+    ProofOfWorkRejected { site: PowSite },
 
     /// The transcript refused a challenge draw: the challenge codec does not
     /// support the request, or its rejection pool ran out.

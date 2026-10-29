@@ -7,6 +7,8 @@ use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening}
 use super::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(not(feature = "akita"))]
+use crate::stages::pow::PowSite;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
@@ -90,6 +92,9 @@ where
     VC: VectorCommitment<Field = F>,
     T: FieldTranscript<F>,
 {
+    // The homomorphic opening draws no selector point, so the stage-8 slot
+    // must stay empty.
+    proof.stages.pow_nonces.require_absent(PowSite::Stage8)?;
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
@@ -699,6 +704,7 @@ where
         #[cfg(feature = "field-inline")]
         proof.field_inc_commitment.as_ref(),
         &proof.joint_opening_proof,
+        &proof.stages.pow_nonces,
         transcript,
         &checked.precommitted,
         stage4.clear()?,

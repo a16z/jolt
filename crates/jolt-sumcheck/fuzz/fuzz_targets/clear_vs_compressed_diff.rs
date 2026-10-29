@@ -13,9 +13,12 @@
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::CompressedPoly;
 use jolt_sumcheck::{
-    BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, SumcheckClaim, SumcheckVerifier,
+    round_pow_bits, BooleanHypercube, CompressedSumcheckProof, EvaluationClaim, SumcheckClaim,
+    SumcheckVerifier,
 };
-use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, Transcript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript, Transcript,
+};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -47,19 +50,24 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // Reference: decompress each round with the running-sum hint, evaluate
-    // the full polynomial, and mirror the wire transcript framing exactly.
+    // the full polynomial, and mirror the wire transcript framing exactly,
+    // grinding each round's proof of work the way an honest prover does.
+    let bits =
+        round_pow_bits::<Fr, ProverState<Blake2b512>>(degree).expect("difficulty for degree <= 4");
     let mut transcript = prover_transcript::<Blake2b512>(
         &jolt_transcript::protocol_tag(b"jolt-sumcheck-diff-fuzz"),
         b"",
     );
     let mut running_sum = claimed_sum;
     let mut challenges: Vec<Fr> = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::with_capacity(num_vars);
     for round in &wire_rounds {
         let stored = round.coeffs_except_linear_term();
         transcript.append(&(stored.len() as u64));
         for coefficient in stored {
             transcript.append(coefficient);
         }
+        pow_nonces.extend(transcript.public_grind(bits).expect("proof-of-work search"));
         let r: Fr = transcript.challenge().unwrap();
         let full = round.decompress(running_sum);
         running_sum = full.evaluate(r);
@@ -69,6 +77,7 @@ fuzz_target!(|data: &[u8]| {
 
     let proof = CompressedSumcheckProof {
         round_polynomials: wire_rounds,
+        pow_nonces,
     };
     let mut transcript = prover_transcript::<Blake2b512>(
         &jolt_transcript::protocol_tag(b"jolt-sumcheck-diff-fuzz"),

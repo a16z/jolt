@@ -5,10 +5,19 @@ use jolt_poly::{Polynomial, UnivariatePoly};
 use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::proof::{ClearSumcheckProof, CompressedSumcheckProof};
 use jolt_sumcheck::round_proof::{append_compressed_round, RoundMessage};
-use jolt_sumcheck::{BooleanHypercube, SumcheckVerifier};
-use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, ProverState};
+use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckVerifier};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript,
+};
 
 type F = Fr;
+
+/// Grinds one round's proof of work the way the verifier checks it: after the
+/// round message is absorbed, at the difficulty for the claim's `degree`.
+fn grind_round(degree: usize, transcript: &mut ProverState<Blake2b512>, nonces: &mut Vec<u64>) {
+    let bits = round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap();
+    nonces.extend(transcript.public_grind(bits).unwrap());
+}
 
 /// Prove a sumcheck for the product of `polys` multilinear polynomials.
 ///
@@ -32,6 +41,7 @@ fn prove_product(
 
     let mut bufs: Vec<Vec<F>> = polys.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
 
     for _round in 0..num_vars {
         let half = bufs[0].len() / 2;
@@ -62,6 +72,7 @@ fn prove_product(
 
         // Absorb through the same path the unlabelled verifier uses.
         <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
+        grind_round(degree, transcript, &mut pow_nonces);
 
         let r: F = transcript.challenge().unwrap();
         round_polys.push(round_poly);
@@ -78,6 +89,7 @@ fn prove_product(
     (
         ClearSumcheckProof {
             round_polynomials: round_polys,
+            pow_nonces,
         },
         claimed_sum,
     )
@@ -111,8 +123,14 @@ fn degree3_final_eval_correct() {
     let EvaluationClaim {
         point: challenges,
         value: final_eval,
-    } = SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt)
-        .unwrap();
+    } = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    )
+    .unwrap();
 
     let f_at_r = Polynomial::new(f_evals).evaluate_and_consume(&challenges);
     let g_at_r = Polynomial::new(g_evals).evaluate_and_consume(&challenges);
@@ -134,6 +152,7 @@ fn compressed_round_verifier_roundtrip() {
     let mut bufs = vec![f.clone(), g.clone()];
     let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
     let mut round_polys = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
 
     for _round in 0..num_vars {
         let half = bufs[0].len() / 2;
@@ -163,6 +182,7 @@ fn compressed_round_verifier_roundtrip() {
 
         let compressed = round_poly.compress();
         append_compressed_round(&mut pt, compressed.coeffs_except_linear_term());
+        grind_round(degree, &mut pt, &mut pow_nonces);
 
         let r: F = pt.challenge().unwrap();
         round_polys.push(compressed);
@@ -177,6 +197,7 @@ fn compressed_round_verifier_roundtrip() {
 
     let proof = CompressedSumcheckProof {
         round_polynomials: round_polys,
+        pow_nonces,
     };
     let claim = SumcheckClaim {
         num_vars,
@@ -207,6 +228,7 @@ fn full_round_verifier_roundtrip() {
     let mut bufs = vec![f.clone(), g.clone()];
     let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
     let mut round_polys = Vec::new();
+    let mut pow_nonces = Vec::new();
 
     for _round in 0..num_vars {
         let half = bufs[0].len() / 2;
@@ -235,6 +257,7 @@ fn full_round_verifier_roundtrip() {
         let round_poly = UnivariatePoly::interpolate(&points);
 
         <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, &mut pt);
+        grind_round(degree, &mut pt, &mut pow_nonces);
 
         let r: F = pt.challenge().unwrap();
         round_polys.push(round_poly);
@@ -249,6 +272,7 @@ fn full_round_verifier_roundtrip() {
 
     let proof = ClearSumcheckProof {
         round_polynomials: round_polys,
+        pow_nonces,
     };
 
     let claim = SumcheckClaim {
@@ -259,8 +283,13 @@ fn full_round_verifier_roundtrip() {
 
     let mut vt =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
-    let result =
-        SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
     assert!(
         result.is_ok(),
         "full round verifier roundtrip failed: {:?}",

@@ -733,6 +733,7 @@ mod tests {
             + protocol.dimensions.error.row_len.trailing_zeros() as usize;
         CompressedSumcheckProof {
             round_polynomials: vec![CompressedPoly::new(vec![f(0)]); num_vars],
+            pow_nonces: Vec::new(),
         }
     }
 
@@ -772,7 +773,7 @@ mod tests {
         }
     }
 
-    /// The verifier's transcript right before the folding challenge.
+    /// The verifier's transcript right before the folding proof of work.
     fn fold_transcript(
         protocol: &BlindFoldProtocol<Fr, Bn254G1>,
         proof: &BlindFoldProof<Fr, Bn254G1>,
@@ -800,7 +801,7 @@ mod tests {
         transcript
     }
 
-    /// The folding challenge.
+    /// The folding challenge. Over `Fr` the folding draw grinds nothing.
     fn folding_challenge(
         protocol: &BlindFoldProtocol<Fr, Bn254G1>,
         proof: &BlindFoldProof<Fr, Bn254G1>,

@@ -6,6 +6,7 @@ use jolt_claims::protocols::field_inline::FieldInlineRelationId;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::{Fr, JoltField};
+use jolt_verifier::stages::pow::PowSite;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims;
 #[cfg(feature = "field-inline")]
@@ -1385,6 +1386,19 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::UnsupportedInstruction { .. }
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
+        // The difficulty depends only on the challenge set, so the first site
+        // reports it.
+        VerifierError::PowDifficulty => Some(VerifierPhase::Stage1),
+        VerifierError::ProofOfWorkRejected { site } => Some(match site {
+            PowSite::Stage1Tau | PowSite::Stage1 => VerifierPhase::Stage1,
+            PowSite::Stage2TauHigh | PowSite::Stage2 => VerifierPhase::Stage2,
+            PowSite::Stage3 => VerifierPhase::Stage3,
+            PowSite::Stage4 => VerifierPhase::Stage4,
+            PowSite::Stage5 => VerifierPhase::Stage5,
+            PowSite::Stage6a | PowSite::Stage6b => VerifierPhase::Stage6,
+            PowSite::Stage7 => VerifierPhase::Stage7,
+            PowSite::Stage8 => VerifierPhase::Stage8Openings,
+        }),
         // A refused draw or unread NARG bytes are observed wherever the
         // transcript stops; neither names a phase.
         VerifierError::TranscriptRejected | VerifierError::NargNotConsumed => None,

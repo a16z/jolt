@@ -11,6 +11,7 @@ use jolt_openings::{
 use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
@@ -144,7 +145,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage7", log_t, backend.session(), &stage7.clear_output);
-    let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
+    let (joint_opening_proof, stage8_pow_nonce) = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
         preprocessing,
@@ -167,6 +168,20 @@ where
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 
+    let pow_nonces = StagePowNonces::from_iter([
+        (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+        (PowSite::Stage1, stage1.pow_nonce),
+        (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+        (PowSite::Stage2, stage2.pow_nonce),
+        (PowSite::Stage3, stage3.pow_nonce),
+        (PowSite::Stage4, stage4.pow_nonce),
+        (PowSite::Stage5, stage5.pow_nonce),
+        (PowSite::Stage6a, stage6a.pow_nonce),
+        (PowSite::Stage6b, stage6b.pow_nonce),
+        (PowSite::Stage7, stage7.pow_nonce),
+        (PowSite::Stage8, stage8_pow_nonce),
+    ]);
+
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
         commitments: stage0.commitment,
@@ -182,6 +197,7 @@ where
             stage6a_sumcheck_proof: stage6a.sumcheck_proof,
             stage6b_sumcheck_proof: stage6b.sumcheck_proof,
             stage7_sumcheck_proof: stage7.sumcheck_proof,
+            pow_nonces,
         },
         joint_opening_proof,
         untrusted_advice_commitment: stage0

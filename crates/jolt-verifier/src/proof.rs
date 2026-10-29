@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::JoltProtocolConfig,
     stages::{
-        stage1::outputs::Stage1OutputClaims, stage2::outputs::Stage2OutputClaims,
-        stage3::outputs::Stage3OutputClaims, stage4::outputs::Stage4OutputClaims,
-        stage5::outputs::Stage5OutputClaims, stage6a::outputs::Stage6aOutputClaims,
-        stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims,
+        pow::StagePowNonces, stage1::outputs::Stage1OutputClaims,
+        stage2::outputs::Stage2OutputClaims, stage3::outputs::Stage3OutputClaims,
+        stage4::outputs::Stage4OutputClaims, stage5::outputs::Stage5OutputClaims,
+        stage6a::outputs::Stage6aOutputClaims, stage6b::outputs::Stage6bOutputClaims,
+        stage7::outputs::Stage7OutputClaims,
     },
     VerifierError,
 };
@@ -327,4 +328,8 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    /// Nonces of the challenge bursts outside the sumcheck rounds. A slot is
+    /// filled only where the site is visited and the challenge set needs proof
+    /// of work, so a BN254 proof carries none.
+    pub pow_nonces: StagePowNonces,
 }

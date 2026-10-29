@@ -205,11 +205,33 @@ they refuse a field whose challenges would need proof of work at any loss up
 to $2^{64}$. The committed sumcheck and BlindFold do this. Both exist only in
 ZK builds, which run on BN254 and pass the check. A 128-bit field fails it.
 
-No protocol step grinds yet, so on this transcript an Akita proof's sumcheck
-rounds keep the per-round margin above. Proof-of-work sites for sumcheck
-rounds and stage-level challenge bursts are tracked in
-[#2108](https://github.com/a16z/jolt/pull/2108). They price to 0 bits on
-BN254, so Dory proofs carry no nonces.
+### Where Jolt grinds
+
+Jolt grinds only where a challenge set is too small on its own, which today
+means Akita's 128-bit field. Every BN254 site prices to 0 bits, so a Dory
+proof carries no nonces. Jolt carries its nonces in the proof structure and
+absorbs them as public messages.
+
+- **Sumcheck rounds.** Each round of a clear sumcheck grinds after its round
+  message and before its challenge. The loss is the verifier's degree bound
+  for the round, never a degree the prover declares, so a proof cannot lower
+  its own difficulty. The nonces sit next to the round messages, one per
+  round when the difficulty is positive and none otherwise
+  (`crates/jolt-sumcheck/src/pow.rs`).
+- **Stage sites.** After some prover messages, the verifier draws a burst of
+  challenges with no message in between: stage 1's `tau`, the relation
+  challenges and batching coefficients of stages 1 to 7, stage 2's
+  `tau_high`, and the selector points of Akita's stage-8 opening. One nonce,
+  ground before the burst's first draw, covers the whole burst. Every site
+  has the same flat loss, `SITE_LOSS = 1023`, about 4.5 times the largest
+  per-burst loss bound worked out in `crates/jolt-verifier/src/stages/pow.rs`.
+  A per-site count that drifted below the true loss would be a silent
+  soundness bug; overpricing costs only a few extra hash calls. On Akita's
+  field this is 10 bits. The nonces sit in `StagePowNonces`, one slot per
+  site. A slot must hold a nonce exactly when the site is visited and its
+  difficulty is positive.
+
+Challenges drawn inside Akita's opening are Akita's to protect.
 
 ## Testing
 

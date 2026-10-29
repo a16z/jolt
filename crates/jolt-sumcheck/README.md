@@ -7,8 +7,10 @@ pool. Its default feature set is empty.
 ## Features
 
 - `parallel`: parallel polynomial operations.
-- `prover`: the prove side — the batched round loop and the recorders'
-  rounds. Verifier builds leave it off.
+- `prover`: the prove side — the batched round loop, the recorders' rounds
+  and the per-round proof-of-work search. The search copies the sponge state,
+  which needs spongefish's `yolocrypto` feature, so verifier builds leave
+  `prover` off.
 - `transcript-blake2b`, `transcript-keccak`: the sponges a transcript can draw
   field challenges from. Keccak is jolt-transcript's default.
 - `committed`: commitment-backed round proving. It exposes the generic

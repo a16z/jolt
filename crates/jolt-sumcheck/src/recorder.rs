@@ -35,6 +35,8 @@ use crate::committed::CommittedSumcheckBuilder;
 use crate::committed::CommittedSumcheckWitness;
 #[cfg(feature = "prover")]
 use crate::error::SumcheckError;
+#[cfg(feature = "prover")]
+use crate::pow::grind_round;
 use crate::proof::CompressedSumcheckProof;
 #[cfg(all(feature = "committed", feature = "prover"))]
 use crate::proof::SumcheckProof;
@@ -43,7 +45,8 @@ use crate::round_proof::append_compressed_round;
 
 /// Records one sumcheck's proof material, abstracting over clear vs. committed
 /// (ZK) recording: `absorb_input_claims` once (from `begin_batch`),
-/// `absorb_round` per round (returning the Fiat-Shamir challenge), then
+/// `absorb_round` per round (grinding a clear round's proof of work and
+/// returning the Fiat-Shamir challenge), then
 /// `finish` with the flattened output-claim values.
 pub trait SumcheckRecorder<F: Field> {
     /// The proof encoding produced by this recorder.
@@ -56,12 +59,16 @@ pub trait SumcheckRecorder<F: Field> {
     fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T);
 
     /// Record one round polynomial and squeeze the round challenge. Clear:
-    /// appended compressed, after its count word. Committed: Pedersen
-    /// commitment appended.
+    /// appended compressed, after its count word, then the round's proof of
+    /// work is ground at the difficulty for `degree_bound` (the batch's degree
+    /// bound, which the verifier prices the round at). Committed: Pedersen
+    /// commitment appended, with no proof of work (the challenge set must be
+    /// wide enough to need none).
     #[cfg(feature = "prover")]
     fn absorb_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
+        degree_bound: usize,
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
@@ -100,6 +107,7 @@ pub struct RecordedSumcheck<F: Field, P> {
 )]
 pub struct ClearSumcheckRecorder<F: Field> {
     round_polynomials: Vec<CompressedPoly<F>>,
+    pow_nonces: Vec<u64>,
 }
 
 impl<F: Field> Default for ClearSumcheckRecorder<F> {
@@ -112,6 +120,7 @@ impl<F: Field> ClearSumcheckRecorder<F> {
     pub fn new() -> Self {
         Self {
             round_polynomials: Vec::new(),
+            pow_nonces: Vec::new(),
         }
     }
 }
@@ -129,6 +138,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     fn absorb_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
+        degree_bound: usize,
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
@@ -136,6 +146,12 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
     {
         let compressed = round_poly.compress();
         append_compressed_round(transcript, compressed.coeffs_except_linear_term());
+        grind_round(
+            degree_bound,
+            self.round_polynomials.len(),
+            &mut self.pow_nonces,
+            transcript,
+        )?;
         let challenge = transcript.challenge()?;
         self.round_polynomials.push(compressed);
         Ok(challenge)
@@ -156,6 +172,7 @@ impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
         Ok(RecordedSumcheck {
             proof: CompressedSumcheckProof {
                 round_polynomials: self.round_polynomials,
+                pow_nonces: self.pow_nonces,
             },
             committed_witness: None,
         })
@@ -206,6 +223,7 @@ where
     fn absorb_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
+        _degree_bound: usize,
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where

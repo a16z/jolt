@@ -38,6 +38,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
         zk::committed,
@@ -163,7 +164,8 @@ where
 
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
     // the field-register read-write gamma, then the RAM value-check gamma, each a single
-    // `challenge()` in one squeeze run.
+    // `challenge()` in one squeeze run behind the stage-4 proof of work.
+    check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {
