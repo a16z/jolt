@@ -50,7 +50,6 @@ use jolt_poly::Point;
 use jolt_transcript::Encoding;
 use jolt_transcript::FieldTranscript;
 #[cfg(not(feature = "akita"))]
-#[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
 /// [`batch_entries`] wiring. The id is the composite [`ComposedOpeningId`] so
