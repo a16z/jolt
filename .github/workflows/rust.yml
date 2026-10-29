@@ -109,7 +109,8 @@ jobs:
       # that no workspace consumer enables together, so lint them all here.
       - name: cargo clippy -p jolt-transcript --all-features
         run: cargo clippy -p jolt-transcript --all-targets --all-features
-      # --all-features turns on parallel; lint the sequential nonce search too.
+      # --all-features also selects Keccak-256 digests and every sponge; lint the
+      # default sponge with the nonce search on its own.
       - name: cargo clippy -p jolt-transcript --features bn254,solinas,binary,prover-grinding
         run: cargo clippy -p jolt-transcript --all-targets --features bn254,solinas,binary,prover-grinding
       # The workspace-wide invocations above unify jolt-prover's `prover`
@@ -826,7 +827,7 @@ jobs:
       # skips the known answers pinned for the default SHA3-256 digests.
       - name: Test jolt-transcript with every sponge and SHA3-256 digests
         if: matrix.shard == 1
-        run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,parallel,transcript-blake2b,transcript-poseidon,test-utils --cargo-quiet
+        run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,transcript-blake2b,transcript-poseidon,test-utils --cargo-quiet
       - name: Test jolt-transcript with sequential grinding
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,prover-grinding --cargo-quiet
@@ -849,7 +850,6 @@ jobs:
       - name: Test jolt-blindfold with its prover
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-blindfold --features prover --cargo-quiet
-        run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
       - name: Test jolt-poly and jolt-sumcheck with binary fields
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-poly -p jolt-sumcheck --features jolt-poly/binary,jolt-sumcheck/binary,jolt-sumcheck/prover --cargo-quiet
