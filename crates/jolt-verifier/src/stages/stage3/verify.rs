@@ -76,12 +76,7 @@ where
     // input, register reduction); each is a single `challenge()`. The drawn
     // challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
-    check_pow(
-        PowSite::Stage3,
-        sumchecks.challenge_loss(),
-        &proof.stages.pow_nonces(),
-        transcript,
-    )?;
+    check_pow(PowSite::Stage3, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

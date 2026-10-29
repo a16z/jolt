@@ -13,22 +13,35 @@
 //! for a public message and for a prover message, so the challenges are those
 //! of the same protocol with the field sent through the NARG string.
 //!
-//! A byte sponge absorbs a message's bytes with no length or separator, so
-//! the messages absorbed between two squeezes must decode uniquely from their
-//! concatenation. Every [`Encoding`] a protocol absorbs is therefore of fixed
-//! width, or of a length fixed by bound data, or carries its own count, as
-//! [`append_values`](Transcript::append_values) and [`BytesMsg`] do.
-//! `PoseidonSponge` frames each message itself ([`SpongeUnit`]).
+//! The transcript is positional: a message's place in the protocol's
+//! schedule says what it is, so no message carries a label. The sponge
+//! absorbs a message's bytes with no length or separator, so the messages
+//! absorbed between two squeezes must decode uniquely from their
+//! concatenation, given everything the verifier knows before it reads them.
+//! Every [`Encoding`] a protocol absorbs is therefore of fixed width, or of a
+//! length fixed by bound data before the proof is accepted, or carries its own
+//! `u64` count or length, as [`BytesMsg`] does.
+//!
+//! Every absorb and every squeeze is a whole number of eight-byte words, so
+//! each starts and ends on a word boundary of the sponge's rate. Encodings
+//! shorter than a word are zero-padded to one; the padding is injective
+//! because its length follows from the message's own length.
+//!
+//! That is the layout on a byte sponge. `PoseidonSponge` absorbs the same
+//! byte encodings, each packed on its own with its length into BN254 `Fr`
+//! elements, so it frames every message itself ([`SpongeUnit`]). There the
+//! split into messages is part of the transcript: the prover and the verifier
+//! must absorb the same messages, not only the same bytes.
 
-use jolt_field::{CanonicalEncoding, Ring};
+use jolt_field::Ring;
 use spongefish::{
     DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, NargReader, ProverState, Unit,
     VerificationError, VerifierState,
 };
 
-use crate::codec::{BytesMsg, Label, LabelWithCount, SpongeUnit, Units};
-use crate::pow::{Leb128, SpongePow};
-use crate::{challenge_bits_for_loss, ChallengeSetSize, ChallengeSponge, SECURITY_BITS};
+use crate::codec::{word_padding, BytesMsg, SpongeUnit, Units, WORD_BYTES};
+use crate::pow::{nonce_word, SpongePow};
+use crate::{ChallengeSetSize, ChallengeSponge};
 use sealed::Sealed;
 
 pub(crate) mod sealed {
@@ -59,26 +72,50 @@ pub(crate) mod sealed {
 /// sides.
 pub trait Transcript: Sealed {
     /// Absorbs `message` as a public message.
+    ///
+    /// The encoding must be a whole number of eight-byte words, so the
+    /// absorb ends on a word boundary. Every production field element, group
+    /// element and `u64` qualifies. A value with a shorter encoding, such as a
+    /// 32-bit field element, goes through [`append_values`](Self::append_values),
+    /// which zero-pads it to a word.
+    ///
+    /// # Panics
+    /// In debug builds, if the encoding's length is not a multiple of eight.
     fn append<M: Encoding + ?Sized>(&mut self, message: &M) {
+        debug_assert_eq!(
+            message.encode().as_ref().len() % WORD_BYTES,
+            0,
+            "Transcript::append needs a whole number of words; pad with append_values"
+        );
         self.absorb(message);
     }
 
-    /// Absorbs a [`Label`] word, then `message`.
-    fn append_labeled<M: Encoding + ?Sized>(&mut self, label: &'static [u8], message: &M) {
-        self.absorb(&Label(label));
-        self.absorb(message);
-    }
-
-    /// Absorbs a [`LabelWithCount`] word carrying `values.len()`, then each
-    /// value in order.
-    fn append_values<M: Encoding>(&mut self, label: &'static [u8], values: &[M]) {
-        self.absorb(&LabelWithCount(label, values.len() as u64));
-        for value in values {
-            self.absorb(value);
+    /// Absorbs the values' encodings, concatenated in order and zero-padded
+    /// to the next word, as one message with no count: the caller's schedule
+    /// must fix `values.len()` from bound data. A protocol whose count the
+    /// prover chooses absorbs that count as a `u64` word first.
+    ///
+    /// For values whose encodings are whole words, such as every production
+    /// field element and Dory's compressed group elements, the padding is
+    /// empty and a byte sponge absorbs the bytes that one absorb per value
+    /// would. `PoseidonSponge` frames the whole slice as one message, which
+    /// differs from one message per value.
+    /// Shorter encodings, such as an odd count of 4-byte elements, are padded
+    /// once at the end. An empty slice absorbs nothing.
+    fn append_values<M: Encoding>(&mut self, values: &[M]) {
+        if values.is_empty() {
+            return;
         }
+        let mut bytes = Vec::new();
+        for value in values {
+            bytes.extend_from_slice(value.encode().as_ref());
+        }
+        bytes.resize(bytes.len() + word_padding(bytes.len()), 0);
+        self.absorb(&WordAligned(bytes));
     }
 
-    /// Absorbs `bytes` as a length-prefixed [`BytesMsg`].
+    /// Absorbs `bytes` as a [`BytesMsg`]: a `u64` length, the bytes, and zero
+    /// padding to the next word.
     fn append_bytes(&mut self, bytes: &[u8]) {
         self.absorb(&BytesMsg(bytes));
     }
@@ -88,13 +125,13 @@ pub trait Transcript: Sealed {
     ///
     /// For `bits == 0` the proof carries no nonce and the transcript is
     /// unchanged. For `1 <= bits <= MAX_POW_BITS` the nonce must be at most
-    /// `2^(bits + 7) - 1`; its canonical LEB128 encoding is absorbed one byte
-    /// per public message, then the check is squeezed and its low `bits` bits
-    /// must be zero: `ceil(bits / 8)` little-endian bytes on a byte sponge, one
-    /// element's canonical integer on `PoseidonSponge`. This is the layout of
+    /// `2^(bits + 7) - 1`; it is absorbed as one `u64` little-endian word in a
+    /// public message, then the check is squeezed and its low `bits` bits must
+    /// be zero: eight bytes read as a little-endian `u64` on a byte sponge,
+    /// one element's canonical integer on `PoseidonSponge`. This is the layout of
     /// [`VerifierTranscript::check_grind`](crate::VerifierTranscript::check_grind)
     /// with the nonce absorbed as a public message instead of read from the
-    /// NARG string; the sponge absorbs the same bytes.
+    /// NARG string; the sponge absorbs the same word.
     ///
     /// The step protects the challenges drawn after it, up to the next
     /// absorbed message. The difficulty and the position of the step must be
@@ -107,7 +144,7 @@ pub trait Transcript: Sealed {
     fn check_public_grind(
         &mut self,
         bits: u32,
-        nonce: Option<u32>,
+        nonce: Option<u64>,
     ) -> Result<(), VerificationError> {
         let Some(pow) = SpongePow::new(bits) else {
             return self.require(bits == 0 && nonce.is_none());
@@ -115,15 +152,22 @@ pub trait Transcript: Sealed {
         let Some(nonce) = nonce.filter(|&nonce| nonce <= pow.last_nonce()) else {
             return self.require(false);
         };
-        for byte in Leb128::new(nonce).as_bytes() {
-            self.absorb(byte);
-        }
-        let passes = self.squeeze(Self::Unit::check_len(bits), |check| pow.accepts(check));
+        self.absorb(&nonce_word(nonce));
+        let passes = self.squeeze(Self::Unit::CHECK_LEN, |check| pow.accepts(check));
         self.require(passes)
     }
 }
 
 impl<T: Sealed + ?Sized> Transcript for T {}
+
+/// Bytes already padded to a whole number of words, absorbed as they are.
+struct WordAligned(Vec<u8>);
+
+impl Encoding for WordAligned {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.as_slice()
+    }
+}
 
 /// A transcript that draws challenges in `F`.
 pub trait FieldTranscript<F>: Transcript {
@@ -157,32 +201,6 @@ pub trait FieldTranscript<F>: Transcript {
     fn challenge(&mut self) -> Result<F, VerificationError> {
         self.challenge_vector(1)?.pop().ok_or(VerificationError)
     }
-
-    /// Draws one challenge on the integers `[0, 2^b)`, for a step whose bad
-    /// set holds at most `loss_factor` challenges: `b` is
-    /// [`challenge_bits_for_loss`] at [`SECURITY_BITS`], the narrowest width
-    /// that needs no proof of work. A group scalar this short costs about
-    /// half as much as a full-width BN254 element.
-    ///
-    /// It reads an integer from the sponge ([`SpongeUnit::short_word`]),
-    /// clears the bits above `b`, and decodes the little-endian integer. A
-    /// byte sponge squeezes `ceil(b / 8)` bytes, which are uniform
-    /// ([`UniformBytes`]). `PoseidonSponge` squeezes two elements `x0` and
-    /// `x1` and keeps the low `b` bits of `x0 + p * x1`, within 2^-253 of
-    /// uniform. As `b` is below the bit length of the field order, distinct
-    /// integers decode to distinct elements.
-    ///
-    /// # Errors
-    /// `VerificationError`, before any sponge operation, when
-    /// [`challenge_bits_for_loss`] rejects `loss_factor` or `b` is not below
-    /// the bit length of the field order, or if the squeezed units do not fit
-    /// [`SpongeUnit::short_word`], which no sponge allows. The verifier's state
-    /// is poisoned then, so `check_eof` fails too.
-    ///
-    /// [`UniformBytes`]: crate::UniformBytes
-    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
-    where
-        F: CanonicalEncoding;
 
     /// Draws one challenge `gamma` and returns `[1, gamma, ..., gamma^(len-1)]`.
     /// `gamma` is drawn even for `len == 0`.
@@ -220,40 +238,6 @@ where
     let challenges = transcript.squeeze(units, |tape| H::decode_challenges(tape, len));
     transcript.require(challenges.is_some())?;
     challenges.ok_or(VerificationError)
-}
-
-/// One short challenge of [`challenge_short_scalar`]: the single
-/// implementation behind every [`FieldTranscript`].
-///
-/// [`challenge_short_scalar`]: FieldTranscript::challenge_short_scalar
-pub(crate) fn draw_short_scalar<T, F>(
-    transcript: &mut T,
-    loss_factor: u64,
-) -> Result<F, VerificationError>
-where
-    T: Sealed + ?Sized,
-    F: CanonicalEncoding,
-{
-    // A width that does not fit poisons the verifier too, so a caller that
-    // drops the error still fails `check_eof`.
-    let bits = challenge_bits_for_loss(loss_factor, SECURITY_BITS)
-        .ok()
-        .filter(|&bits| bits < F::MODULUS_BITS);
-    transcript.require(bits.is_some())?;
-    let bits = bits.ok_or(VerificationError)?;
-    // `bits < MODULUS_BITS <= 256`, so the bytes fit one 32-byte word.
-    let len = bits.div_ceil(8) as usize;
-    let excess = 8 * len as u32 - bits;
-    let scalar = transcript.squeeze(T::Unit::short_len(bits), |tape| {
-        let mut word = T::Unit::short_word(tape)?;
-        let bytes = word.get_mut(..len)?;
-        if let Some(top) = bytes.last_mut() {
-            *top &= u8::MAX >> excess;
-        }
-        Some(F::from_bytes_le_reduced(bytes))
-    });
-    transcript.require(scalar.is_some())?;
-    scalar.ok_or(VerificationError)
 }
 
 impl<H, R> Sealed for ProverState<H, R>
@@ -333,13 +317,6 @@ where
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw_challenges::<_, H, F>(self, len)
     }
-
-    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
-    where
-        F: CanonicalEncoding,
-    {
-        draw_short_scalar(self, loss_factor)
-    }
 }
 
 impl<H, F> FieldTranscript<F> for VerifierState<'_, H>
@@ -350,12 +327,5 @@ where
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
         draw_challenges::<_, H, F>(self, len)
-    }
-
-    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
-    where
-        F: CanonicalEncoding,
-    {
-        draw_short_scalar(self, loss_factor)
     }
 }

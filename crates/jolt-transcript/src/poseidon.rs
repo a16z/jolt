@@ -16,9 +16,7 @@
 //!
 //! Challenges are squeezed natively, one unit each. A squeezed unit is a
 //! uniform `Fr` up to the sponge's security, so `Fr` challenges need no
-//! decoding and have no reduction bias. A short challenge of `b` bits takes
-//! two units `x0` and `x1` and keeps the low `b` bits of `x0 + p * x1`
-//! ([`SpongeUnit::short_word`]). Challenges in any other field are not
+//! decoding and have no reduction bias. Challenges in any other field are not
 //! offered on this sponge.
 //!
 //! # Byte packing
@@ -32,14 +30,14 @@
 //! one: the map is injective and prefix-free, so the messages absorbed
 //! between two squeezes decode uniquely from their concatenation.
 //!
-//! A message is packed from its byte [`Encoding`]. A one-byte message, such
-//! as each byte of a proof-of-work nonce, is two units; a 32-byte field
-//! element is three.
+//! A message is packed from its byte [`Encoding`]. A proof-of-work nonce,
+//! one eight-byte word, is two units; a 32-byte field element is three. The
+//! word padding of the byte layout is packed like any other byte.
 
 use std::sync::OnceLock;
 
 use ark_bn254::Fr as InnerFr;
-use ark_ff::{AdditiveGroup, BigInteger, Field, PrimeField};
+use ark_ff::{AdditiveGroup, Field, PrimeField};
 use jolt_field::Fr;
 use light_poseidon::parameters::bn254_x5::get_poseidon_parameters;
 use spongefish::{DuplexSponge, EncodedSessionId, Encoding, Permutation, Unit};
@@ -103,41 +101,25 @@ impl UnitSealed for FrUnit {}
 /// A message is its packed byte encoding. The proof-of-work check is one
 /// squeezed element, tested on the low bits of its canonical integer: for a
 /// uniform element and `bits <= MAX_POW_BITS`, those bits are within
-/// `2^bits / p < 2^-228` of uniform.
+/// `2^bits / p < 2^-196` of uniform.
 ///
 /// [`MAX_POW_BITS`]: crate::MAX_POW_BITS
 impl SpongeUnit for FrUnit {
+    const CHECK_LEN: usize = 1;
+
     fn encode_message<M: Encoding + ?Sized>(message: &M) -> impl AsRef<[Self]> {
         pack_bytes(message.encode().as_ref())
     }
 
-    fn check_len(_bits: u32) -> usize {
-        1
+    fn encode_word(word: u64) -> impl AsRef<[Self]> {
+        pack_bytes(&word.to_le_bytes())
     }
 
-    fn low_word(check: &[Self]) -> Option<u32> {
+    fn low_word(check: &[Self]) -> Option<u64> {
         let [unit] = check else {
             return None;
         };
-        let low_limb = unit.0.into_bigint().0.first().copied()?;
-        Some(low_limb as u32)
-    }
-
-    fn short_len(_bits: u32) -> usize {
-        2
-    }
-
-    /// `x0 + p * x1 mod 2^256`. For uniform elements `x0` and `x1`, the integer
-    /// `x0 + p * x1` is uniform on `[0, p^2)`, so its low `bits` bits are
-    /// within `2^bits / p^2 <= 2^-253` of uniform for `bits <= 253`.
-    fn short_word(units: &[Self]) -> Option<[u8; 32]> {
-        let [low, high] = units else {
-            return None;
-        };
-        let mut word = high.0.into_bigint().mul_low(&InnerFr::MODULUS);
-        // The carry out of bit 256 is dropped: the word is the sum mod 2^256.
-        let _carry = word.add_with_carry(&low.0.into_bigint());
-        word.to_bytes_le().try_into().ok()
+        unit.0.into_bigint().0.first().copied()
     }
 }
 
@@ -253,6 +235,8 @@ impl ChallengeSponge<Fr> for PoseidonSponge {
 mod tests {
     use super::*;
     use std::str::FromStr;
+
+    use ark_ff::BigInteger;
 
     use light_poseidon::{Poseidon, PoseidonHasher};
     use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
@@ -395,11 +379,26 @@ mod tests {
 
     #[test]
     fn pow_check_reads_the_low_word_of_one_element() {
+        assert_eq!(FrUnit::CHECK_LEN, 1);
+        let wide = FrUnit(InnerFr::from(u128::MAX));
+        assert_eq!(FrUnit::low_word(&[wide]), Some(u64::MAX));
         assert_eq!(
             FrUnit::low_word(&[unit(0x1234_5678_9abc)]),
-            Some(0x5678_9abc)
+            Some(0x1234_5678_9abc)
         );
         assert_eq!(FrUnit::low_word(&[]), None);
         assert_eq!(FrUnit::low_word(&[unit(0); 2]), None);
+    }
+
+    /// The owned nonce encoding is the packing of the nonce's word.
+    #[test]
+    fn a_nonce_word_packs_as_its_eight_bytes() {
+        let word = 0x0102_0304_0506_0708u64;
+        let packed = FrUnit::encode_word(word);
+        assert_eq!(
+            packed.as_ref(),
+            FrUnit::encode_message(&word.to_le_bytes()).as_ref()
+        );
+        assert_eq!(packed.as_ref(), [unit(8), unit(word)]);
     }
 }

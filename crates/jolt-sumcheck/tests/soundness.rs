@@ -6,12 +6,9 @@ use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::{ClearSumcheckProof, CompressedSumcheckProof};
 use jolt_sumcheck::round_proof::RoundMessage;
-use jolt_sumcheck::{
-    round_pow_bits, BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-};
+use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckVerifier};
 use jolt_transcript::{
-    prover_transcript, Blake2b512, FieldTranscript, LabelWithCount, ProverState, ProverTranscript,
-    Transcript,
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript, Transcript,
 };
 
 type F = Fr;
@@ -33,7 +30,7 @@ impl From<SumcheckError<F>> for OracleCheckError {
 }
 
 fn new_transcript() -> ProverState<Blake2b512> {
-    prover_transcript::<Blake2b512>(b"soundness-test", b"")
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"soundness-test"), b"")
 }
 
 fn pow_bits(degree: usize) -> u32 {
@@ -292,20 +289,17 @@ fn num_vars_zero_accepts_any_claimed_sum() {
 }
 
 /// Absorbs one compressed round exactly the way `verify_compressed` replays
-/// it: `LabelWithCount(label, degree)` then the stored coefficients `[c0, c2]`.
+/// it: `(degree as u64)` then the stored coefficients `[c0, c2]`.
 fn absorb_compressed_round(round: &CompressedPoly<F>, transcript: &mut ProverState<Blake2b512>) {
     let coeffs = round.coeffs_except_linear_term();
-    transcript.append(&LabelWithCount(
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        coeffs.len() as u64,
-    ));
+    transcript.append(&(coeffs.len() as u64));
     for coeff in coeffs {
         transcript.append(coeff);
     }
 }
 
 /// The nonces an honest prover grinds for `rounds` at degree bound `degree`.
-fn grind_compressed_nonces(rounds: &[CompressedPoly<F>], degree: usize) -> Vec<u32> {
+fn grind_compressed_nonces(rounds: &[CompressedPoly<F>], degree: usize) -> Vec<u64> {
     let mut transcript = new_transcript();
     rounds
         .iter()
@@ -388,14 +382,8 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
     // Harness sanity: the honest compressed proof verifies AND satisfies the
     // oracle check, so any failure below is attributable to the tamper.
     let mut vt = new_transcript();
-    let honest = SumcheckVerifier::verify_compressed(
-        &claim,
-        &proof,
-        BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        &mut vt,
-    )
-    .unwrap();
+    let honest =
+        SumcheckVerifier::verify_compressed(&claim, &proof, BooleanHypercube, &mut vt).unwrap();
     assert_eq!(
         honest.value,
         product_eval(&g_evals, &h_evals, &honest.point)
@@ -417,13 +405,8 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
             tampered.pow_nonces = grind_compressed_nonces(&tampered.round_polynomials, 2);
 
             let mut vt = new_transcript();
-            let result = SumcheckVerifier::verify_compressed(
-                &claim,
-                &tampered,
-                BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-                &mut vt,
-            );
+            let result =
+                SumcheckVerifier::verify_compressed(&claim, &tampered, BooleanHypercube, &mut vt);
             // The compressed encoding re-derives each linear coefficient from
             // the running sum, so s(0)+s(1) == running_sum holds by
             // construction and the round loop CANNOT reject this tamper.

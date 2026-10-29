@@ -6,9 +6,10 @@
 
 use jolt_field::CanonicalBytes;
 use jolt_transcript::{
-    prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec, FieldTranscript,
+    protocol_tag, prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec,
+    FieldTranscript, ProverTranscript, Transcript, MAX_CHALLENGE_BYTES,
 };
-use spongefish::instantiations::Keccak;
+use spongefish::{instantiations::Keccak, Encoding};
 use std::fmt::{Debug, Write};
 
 #[cfg(feature = "solinas")]
@@ -21,22 +22,19 @@ use jolt_field::{
 use jolt_field::{Fq, Fr};
 #[cfg(feature = "binary")]
 use jolt_field::{F128, F192, F64, F8};
-#[cfg(feature = "binary")]
-use jolt_transcript::MAX_CHALLENGE_BYTES;
-
-const SESSION: &[u8] = b"jolt/challenge-codecs/v1";
+const SESSION: [u8; 32] = protocol_tag(b"jolt/challenge-codecs/v1");
 const INSTANCE: [u8; 32] = [0x42; 32];
 
 fn round_trip<F: ChallengeCodec + PartialEq + Debug>() {
     for len in [1, 17, 28] {
-        let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
-        prover.prover_message(&BytesMsg(b"before".to_vec()));
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        prover.send(&BytesMsg(b"before".to_vec()));
         let expected = FieldTranscript::<F>::challenge_vector(&mut prover, len).unwrap();
         assert_eq!(expected.len(), len);
-        prover.prover_message(&BytesMsg(b"after".to_vec()));
+        prover.send(&BytesMsg(b"after".to_vec()));
         let tail: [u8; 32] = prover.verifier_message();
 
-        let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, prover.narg_string());
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
         assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
         assert_eq!(
             FieldTranscript::<F>::challenge_vector(&mut verifier, len).unwrap(),
@@ -46,6 +44,7 @@ fn round_trip<F: ChallengeCodec + PartialEq + Debug>() {
         assert_eq!(verifier.verifier_message::<[u8; 32]>(), tail);
         verifier.check_eof().unwrap();
 
+        assert_eq!(F::challenge_bytes(len).unwrap() % 8, 0, "whole words");
         assert_eq!(F::challenge_bytes(0), Some(0));
         assert_eq!(F::decode_challenges(&[], 0), Some(vec![]));
         assert!(F::decode_challenges(&[], len).is_none());
@@ -84,18 +83,17 @@ fn registered_primes_and_valid_towers_round_trip() {
 fn bn254_round_trip() {
     round_trip::<Fr>();
     round_trip::<Fq>();
-    for len in 1..=8 {
-        assert_eq!(Fr::challenge_bytes(len), Some(len * 52));
-        assert_eq!(Fq::challenge_bytes(len), Some(len * 52));
+    // 56 bytes, seven words, per element at every length up to the byte cap.
+    let longest = MAX_CHALLENGE_BYTES / 56;
+    assert_eq!(longest, 299_593);
+    for len in (1..=2048).chain([longest - 1, longest]) {
+        assert_eq!(Fr::challenge_bytes(len), Some(len * 56));
+        assert_eq!(Fq::challenge_bytes(len), Some(len * 56));
     }
-    for len in 9..=128 {
-        assert_eq!(Fr::challenge_bytes(len), Some(len * 53));
-        assert_eq!(Fq::challenge_bytes(len), Some(len * 53));
-    }
-    for (len, minimum) in [(1, 51), (17, 901), (28, 1484)] {
-        assert!(Fr::challenge_bytes(len).unwrap() >= minimum);
-        assert!(Fq::challenge_bytes(len).unwrap() >= minimum);
-    }
+    // The TV bound needs 8 * 56 >= 254 + 159 + ceil(log2(len)): at the cap
+    // len < 2^19, and 448 >= 254 + 159 + 19 = 432.
+    const { assert!(MAX_CHALLENGE_BYTES / 56 < 1 << 19 && 8 * 56 >= 254 + 159 + 19) };
+    assert!(Fr::challenge_bytes(longest + 1).unwrap() > MAX_CHALLENGE_BYTES);
     assert_eq!(Fr::challenge_bytes(usize::MAX), None);
 }
 
@@ -106,18 +104,27 @@ fn binary_round_trip_and_all_ones_are_canonical() {
 
     fn binary<F: ChallengeCodec + CanonicalEncoding>() {
         round_trip::<F>();
-        let tape = vec![0xff; F::NUM_BYTES];
+        // One element squeezes a whole word and decodes its first bytes.
+        let tape = vec![0xff; F::NUM_BYTES.next_multiple_of(8)];
         assert_eq!(F::challenge_bytes(1), Some(tape.len()));
-        assert_eq!(
-            F::decode_challenges(&tape, 1),
-            Some(vec![F::from_bytes_le_checked(&tape).unwrap()])
-        );
+        let element = F::from_bytes_le_checked(tape.get(..F::NUM_BYTES).unwrap()).unwrap();
+        assert_eq!(F::decode_challenges(&tape, 1), Some(vec![element]));
     }
     binary::<F8>();
     binary::<F64>();
     binary::<F128>();
     binary::<F192>();
     assert_eq!(F192::challenge_bytes(usize::MAX), None);
+    // F8 messages pad to a word; the padding bytes are not decoded.
+    for len in 0..=33 {
+        assert_eq!(F8::challenge_bytes(len), Some(len.div_ceil(8) * 8));
+    }
+    let mut tape = vec![0u8; 8];
+    tape[..3].copy_from_slice(&[1, 2, 3]);
+    let decoded = F8::decode_challenges(&tape, 3).unwrap();
+    tape[3..].fill(0xff);
+    assert_eq!(F8::decode_challenges(&tape, 3).unwrap(), decoded);
+    assert!(F8::decode_challenges(&tape[..3], 3).is_none());
 }
 
 #[cfg(feature = "solinas")]
@@ -133,9 +140,31 @@ fn pooled_message_sizes_meet_owner_bounds() {
     }
     check::<Prime128OffsetA7F7>([32, 288, 464], [32, 288, 464]);
     check::<Prime64Offset59>([24, 152, 240], [24, 160, 248]);
-    check::<Prime32Offset99>([28, 96, 140], [32, 100, 144]);
+    // Four-byte candidates come in pairs: 25 candidates round up to 26, and
+    // 11 to 12.
+    check::<Prime32Offset99>([28, 96, 140], [32, 104, 144]);
     check::<Ext2<Prime64Offset59>>([32, 288, 472], [32, 296, 472]);
-    check::<FpExt4<Prime32Offset99>>([40, 300, 476], [44, 304, 480]);
+    check::<FpExt4<Prime32Offset99>>([40, 300, 476], [48, 304, 480]);
+}
+
+#[cfg(feature = "solinas")]
+#[test]
+fn pooled_messages_are_whole_words() {
+    fn check<F: ChallengeCodec>() {
+        for len in 1..=300 {
+            assert_eq!(F::challenge_bytes(len).unwrap() % 8, 0, "length {len}");
+        }
+    }
+    check::<Prime24Offset3>();
+    check::<Prime30Offset35>();
+    check::<Prime31Offset19>();
+    check::<Prime32Offset99>();
+    check::<Prime40Offset195>();
+    check::<Prime64Offset59>();
+    check::<Prime128Offset275>();
+    check::<Ext2<Prime31Offset19>>();
+    check::<FpExt4<Prime24Offset3>>();
+    check::<FpExt8<Prime32Offset99>>();
 }
 
 #[cfg(feature = "solinas")]
@@ -143,9 +172,9 @@ fn pooled_message_sizes_meet_owner_bounds() {
 fn unsupported_lengths_return_transcript_errors() {
     for len in [1 << 22, usize::MAX] {
         assert_eq!(Prime24Offset3::challenge_bytes(len), None);
-        let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
         assert!(FieldTranscript::<Prime24Offset3>::challenge_vector(&mut prover, len).is_err());
-        let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, &[]);
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
         assert!(FieldTranscript::<Prime24Offset3>::challenge_vector(&mut verifier, len).is_err());
         assert!(verifier.check_eof().is_err());
     }
@@ -154,24 +183,24 @@ fn unsupported_lengths_return_transcript_errors() {
 #[cfg(feature = "binary")]
 #[test]
 fn messages_above_the_byte_cap_are_rejected_before_touching_the_sponge() {
-    let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
+    let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
     let full = FieldTranscript::<F8>::challenge_vector(&mut prover, MAX_CHALLENGE_BYTES).unwrap();
     assert_eq!(full.len(), MAX_CHALLENGE_BYTES);
-    let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, &[]);
+    let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
     assert_eq!(
         FieldTranscript::<F8>::challenge_vector(&mut verifier, MAX_CHALLENGE_BYTES).unwrap(),
         full
     );
 
     for len in [MAX_CHALLENGE_BYTES + 1, usize::MAX] {
-        let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
+        let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
         assert!(FieldTranscript::<F8>::challenge_vector(&mut prover, len).is_err());
-        let mut fresh = prover_transcript::<Keccak>(SESSION, &INSTANCE);
+        let mut fresh = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
         );
-        let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, &[]);
+        let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, &[]);
         assert!(FieldTranscript::<F8>::challenge_vector(&mut verifier, len).is_err());
         assert!(verifier.check_eof().is_err());
     }
@@ -187,20 +216,20 @@ fn empty_messages_leave_the_sponge_untouched() {
     use spongefish::DuplexSpongeInit;
 
     fn check<H: DuplexSpongeInit<U = u8> + UniformBytes>() {
-        let mut prover = prover_transcript::<H>(SESSION, &INSTANCE);
+        let mut prover = prover_transcript::<H>(&SESSION, &INSTANCE);
         assert!(FieldTranscript::<Fr>::challenge_vector(&mut prover, 0)
             .unwrap()
             .is_empty());
-        let mut fresh = prover_transcript::<H>(SESSION, &INSTANCE);
+        let mut fresh = prover_transcript::<H>(&SESSION, &INSTANCE);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
         );
-        let mut verifier = verifier_transcript::<H>(SESSION, &INSTANCE, &[]);
+        let mut verifier = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
         assert!(FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0)
             .unwrap()
             .is_empty());
-        let mut fresh = verifier_transcript::<H>(SESSION, &INSTANCE, &[]);
+        let mut fresh = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
         assert_eq!(
             verifier.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
@@ -324,12 +353,12 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
     expected: &str,
     continuation: &str,
 ) {
-    let mut prover = prover_transcript::<Keccak>(SESSION, &INSTANCE);
-    prover.prover_message(&BytesMsg(b"before".to_vec()));
+    let mut prover = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    prover.send(&BytesMsg(b"before".to_vec()));
     let values = FieldTranscript::<F>::challenge_vector(&mut prover, len).unwrap();
     let tail: [u8; 16] = prover.verifier_message();
-    prover.prover_message(&BytesMsg(b"after".to_vec()));
-    let mut verifier = verifier_transcript::<Keccak>(SESSION, &INSTANCE, prover.narg_string());
+    prover.send(&BytesMsg(b"after".to_vec()));
+    let mut verifier = verifier_transcript::<Keccak>(&SESSION, &INSTANCE, prover.narg_string());
     assert_eq!(verifier.prover_message::<BytesMsg>().unwrap().0, b"before");
     assert_eq!(
         FieldTranscript::<F>::challenge_vector(&mut verifier, len).unwrap(),
@@ -342,67 +371,195 @@ fn known_answer<F: ChallengeCodec + CanonicalBytes + PartialEq + Debug>(
     assert_eq!(hex_bytes(&tail), continuation);
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "solinas")]
 #[test]
 fn solinas_known_answers() {
+    // Pools of 16- and 8-byte candidates are already whole words; the Fp32
+    // extension pool rounds its candidate count up to even (R5), so its next
+    // squeeze starts at byte 48 instead of 44.
     known_answer::<Prime128OffsetA7F7>(
         1,
-        "5959c3d06da4cac12e213b0a40561729",
-        "b472a6adf15848ee75dcb33ad957fedc",
+        "e1fd4d691fdfd5431ee0b45796a1b3ad",
+        "663164ebd1ed79c41375a2c02aae4edf",
     );
-    known_answer::<Prime64Offset59>(1, "5959c3d06da4cac1", "726b39e9293a7f34b472a6adf15848ee");
+    known_answer::<Prime64Offset59>(1, "e1fd4d691fdfd543", "1469a531ac276dd1663164ebd1ed79c4");
     known_answer::<FpExt4<Prime32Offset99>>(
         1,
-        "5959c3d06da4cac12e213b0a40561729",
-        "d957fedc2beeeca9ff3845fe8d185610",
+        "e1fd4d691fdfd5431ee0b45796a1b3ad",
+        "b5121e2e2bfabaae6f0832afec310e0b",
     );
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "bn254")]
 #[test]
 fn bn254_known_answer() {
+    // One element squeezes a fixed 56 bytes (R5), so the next squeeze starts
+    // at byte 56.
     known_answer::<Fr>(
         1,
-        "3424a763bfe2f28b25691136e72b25e7f1f5709c830315c19b75ba7f79502801",
-        "ff3845fe8d185610fd0f6f5f3a1716dd",
+        "19726053acccc3deea86bae864e97dfddb01905d53d6899046819f89f9527906",
+        "6f0832afec310e0b705df269fea7021a",
     );
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "binary")]
 #[test]
 fn binary_known_answer() {
     known_answer::<F128>(
         1,
-        "5959c3d06da4cac12e213b0a40561729",
-        "b8bad568fce27c3e726b39e9293a7f34",
+        "e1fd4d691fdfd5431ee0b45796a1b3ad",
+        "7c6c0cc83ae5c82f1469a531ac276dd1",
     );
 }
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[cfg(feature = "binary")]
 #[test]
 fn keccak_rate_boundary_known_answers() {
     assert_eq!(F8::challenge_bytes(136), Some(136));
-    assert_eq!(F8::challenge_bytes(137), Some(137));
+    assert_eq!(F8::challenge_bytes(137), Some(144));
+    // 136 bytes fill one rate block exactly. 137 elements squeeze 144 bytes
+    // and decode the first 137 (R5), so their continuation is the 136-element
+    // stream from byte 144: it starts with the second half of that tail.
     known_answer::<F8>(
         136,
         concat!(
-            "5959c3d06da4cac12e213b0a40561729b8bad568fce27c3e726b39e9293a7f34",
-            "b472a6adf15848ee75dcb33ad957fedc2beeeca9ff3845fe8d185610fd0f6f5f",
-            "3a1716dd7e109dad1802541146f6a50e9c8dfc03e58418c8de63358dc966a759",
-            "f7d8f868432c2dad6e68d122bc05941e9d6e77fa626293b78ae6a7b24170ef3e",
-            "e2201b11556985d5",
+            "e1fd4d691fdfd5431ee0b45796a1b3ad7c6c0cc83ae5c82f1469a531ac276dd1",
+            "663164ebd1ed79c41375a2c02aae4edfb5121e2e2bfabaae6f0832afec310e0b",
+            "705df269fea7021a301b510ce1f141c953d3aed27fb138fea5eae4780cf8ee65",
+            "dd5f1e33442d2393b7b1fd435f8945c5f1358f60155dd4e348924d872ea1e160",
+            "a3f8ed296bcd9bce",
         ),
-        "f7f146013fd5b9a1c32789797f229446",
+        "3dd469cc1281b9292e8e4b027efe5163",
     );
     known_answer::<F8>(
         137,
         concat!(
-            "5959c3d06da4cac12e213b0a40561729b8bad568fce27c3e726b39e9293a7f34",
-            "b472a6adf15848ee75dcb33ad957fedc2beeeca9ff3845fe8d185610fd0f6f5f",
-            "3a1716dd7e109dad1802541146f6a50e9c8dfc03e58418c8de63358dc966a759",
-            "f7d8f868432c2dad6e68d122bc05941e9d6e77fa626293b78ae6a7b24170ef3e",
-            "e2201b11556985d5f7",
+            "e1fd4d691fdfd5431ee0b45796a1b3ad7c6c0cc83ae5c82f1469a531ac276dd1",
+            "663164ebd1ed79c41375a2c02aae4edfb5121e2e2bfabaae6f0832afec310e0b",
+            "705df269fea7021a301b510ce1f141c953d3aed27fb138fea5eae4780cf8ee65",
+            "dd5f1e33442d2393b7b1fd435f8945c5f1358f60155dd4e348924d872ea1e160",
+            "a3f8ed296bcd9bce3d",
         ),
-        "f146013fd5b9a1c32789797f229446a8",
+        "2e8e4b027efe5163565eeaaa98babf82",
     );
+}
+
+/// `append_values` against one absorb per value: the challenge after each is
+/// the same exactly when every value's encoding is a whole number of words.
+fn append_values_matches_per_value_absorbs<M: Encoding>(values: &[M]) {
+    let width = values[0].encode().as_ref().len();
+    assert_eq!(width % 8, 0, "{width}-byte encoding");
+    let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    batched.append_values(values);
+    let mut separate = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    for value in values {
+        separate.public_message(value);
+    }
+    assert_eq!(
+        batched.verifier_message::<[u8; 32]>(),
+        separate.verifier_message::<[u8; 32]>(),
+        "{width}-byte values"
+    );
+}
+
+/// For every production width the one padded absorb is byte-identical to the
+/// per-value absorbs it replaced: BN254 `Fr` and `Fq` (32 bytes), `Fp64` (8),
+/// `Fp128` (16), their extensions, and Dory's compressed G1, G2 and GT bytes
+/// (32, 64 and 384 one-byte values).
+#[cfg(all(feature = "solinas", feature = "bn254"))]
+#[test]
+fn append_values_is_unchanged_for_whole_word_encodings() {
+    use jolt_field::Ring;
+    fn elements<F: Ring>(len: u64) -> Vec<F> {
+        (1..=len)
+            .map(|i| F::from_u64(i * 0x1234_5678_9abc))
+            .collect()
+    }
+    for len in [1, 3, 8] {
+        append_values_matches_per_value_absorbs(&elements::<Fr>(len));
+        append_values_matches_per_value_absorbs(&elements::<Fq>(len));
+        append_values_matches_per_value_absorbs(&elements::<Prime64Offset59>(len));
+        append_values_matches_per_value_absorbs(&elements::<Prime128OffsetA7F7>(len));
+        append_values_matches_per_value_absorbs(&elements::<Prime128Offset275>(len));
+        append_values_matches_per_value_absorbs(&elements::<FpExt4<Prime32Offset99>>(len));
+        append_values_matches_per_value_absorbs(&elements::<Ext2<Prime64Offset59>>(len));
+    }
+    for len in [32usize, 64, 384] {
+        let group: Vec<u8> = (0..len).map(|i| i as u8 ^ 0x5a).collect();
+        let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        Transcript::append_values(&mut batched, &group);
+        let mut separate = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+        for byte in &group {
+            separate.public_message(byte);
+        }
+        assert_eq!(
+            batched.verifier_message::<[u8; 32]>(),
+            separate.verifier_message::<[u8; 32]>(),
+            "{len} group bytes"
+        );
+    }
+}
+
+/// An odd count of 4-byte values is padded once, at the end, to a whole word
+/// (R6): three `Prime32Offset99` values absorb as their 12 bytes and 4 zeros,
+/// so the next message starts on a word boundary. Keccak absorbs by
+/// overwriting state bytes. In this fixture the 4 padding bytes land on state
+/// bytes that are still zero and stay inside one rate block, so padding alone
+/// would leave the next squeeze unchanged here. The check therefore absorbs
+/// one more word after the padding.
+#[cfg(feature = "solinas")]
+#[test]
+fn append_values_pads_an_odd_count_of_four_byte_values() {
+    use jolt_field::Ring;
+    let values: Vec<Prime32Offset99> = (1..=3).map(|i| Prime32Offset99::from_u64(i * 77)).collect();
+    let mut padded = [0u8; 16];
+    for (chunk, value) in padded.chunks_mut(4).zip(&values) {
+        let bytes = value.encode();
+        assert_eq!(bytes.as_ref().len(), 4);
+        chunk.copy_from_slice(bytes.as_ref());
+    }
+    let next = 0x0123_4567_89ab_cdef_u64;
+    let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    batched.append_values(&values);
+    batched.append(&next);
+    let mut expected = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    expected.public_message(&padded);
+    expected.public_message(&next);
+    let mut unpadded = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    for value in &values {
+        unpadded.public_message(value);
+    }
+    unpadded.public_message(&next);
+    let challenge = batched.verifier_message::<[u8; 32]>();
+    assert_eq!(challenge, expected.verifier_message::<[u8; 32]>());
+    assert_ne!(challenge, unpadded.verifier_message::<[u8; 32]>());
+}
+
+/// `append` absorbs an encoding as it is, so it accepts only whole words: a
+/// bare 4-byte `Prime32Offset99` would leave the next message off a word
+/// boundary. Debug builds reject it; such a value goes through
+/// `append_values`, which pads it.
+#[cfg(all(feature = "solinas", debug_assertions))]
+#[test]
+#[should_panic(expected = "whole number of words")]
+fn append_rejects_a_sub_word_encoding() {
+    use jolt_field::Ring;
+    let mut transcript = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
+    transcript.append(&Prime32Offset99::from_u64(77));
 }

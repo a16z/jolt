@@ -44,9 +44,7 @@ const SUPPORTED: &[&str] = &[
     "Addi",
     "And",
     "AndI",
-    "AssertHalfwordAlignment",
     "AssertLte",
-    "AssertWordAlignment",
     "Auipc",
     "Beq",
     "Bge",
@@ -123,10 +121,15 @@ const SUPPORTED: &[&str] = &[
     "Pext",
     "WindowMaskB",
     "WindowMaskH",
-    "AlignAddr",
     "ShiftDataB",
     "ShiftDataH",
     "ShiftDataW",
+    "LoadB",
+    "LoadH",
+    "LoadW",
+    "StoreB",
+    "StoreH",
+    "StoreW",
 ];
 
 fn class_by_marker(marker: &str) -> Class {
@@ -395,16 +398,41 @@ fn store(rng: &mut StdRng) -> Instance {
     i
 }
 
-fn assert_align(rng: &mut StdRng, kind: JoltInstructionKind, align: u64) -> Instance {
+/// A floor-addressed row at a `width`-aligned offset of a scratch doubleword:
+/// the reference interpreter panics on a misaligned one.
+fn floor_access(rng: &mut StdRng, kind: JoltInstructionKind, width: u64) -> Instance {
     let mut i = base_instance(rng, kind);
     let rs1 = rd(rng);
     i.row.operands.rs1 = Some(rs1);
-    // FormatAssert immediates are wrapped-to-u64 offsets; keep them small
-    // and pin the base so the (passing) alignment holds.
-    let imm = (rng.gen_range(0..16u64) * align) as i128;
+    let imm = imm12(rng);
     i.row.operands.imm = imm;
-    let target = SCRATCH_START + align * rng.gen_range(0..64u64);
+    let target = scratch_slot(rng) + width * rng.gen_range(0..8 / width);
     pin_base(&mut i, rs1, imm, target);
+    i
+}
+
+fn floor_load(rng: &mut StdRng, kind: JoltInstructionKind, width: u64) -> Instance {
+    let mut i = floor_access(rng, kind, width);
+    i.row.operands.rd = Some(rd(rng));
+    i
+}
+
+fn floor_store(rng: &mut StdRng, kind: JoltInstructionKind, width: u64) -> Instance {
+    let mut i = floor_access(rng, kind, width);
+    i.row.operands.rs2 = Some(reg(rng));
+    i
+}
+
+/// A store-data shifter whose effective address `rs2 + imm` is a real one.
+fn shift_data(rng: &mut StdRng, kind: JoltInstructionKind) -> Instance {
+    let mut i = base_instance(rng, kind);
+    let rs2 = rd(rng);
+    i.row.operands.rs1 = Some(reg(rng));
+    i.row.operands.rs2 = Some(rs2);
+    i.row.operands.rd = Some(rd(rng));
+    let imm = imm12(rng);
+    i.row.operands.imm = imm;
+    pin_base(&mut i, rs2, imm, scratch_slot(rng) + rng.gen_range(0..8));
     i
 }
 
@@ -692,8 +720,6 @@ difftests! {
     diff_jalr => jalr;
     diff_ld => load;
     diff_sd => store;
-    diff_assert_halfword_alignment => |r| assert_align(r, K::VirtualAssertHalfwordAlignment, 2);
-    diff_assert_word_alignment => |r| assert_align(r, K::VirtualAssertWordAlignment, 4);
     diff_assert_lte => assert_lte;
     diff_fence => fence;
     diff_host_io => host_io;
@@ -745,10 +771,15 @@ difftests! {
     diff_window_mask_w => |r| alu_ri(r, kind_by_name("VirtualWindowMaskW"), false);
     diff_window_mask_b => |r| alu_ri(r, kind_by_name("VirtualWindowMaskB"), false);
     diff_window_mask_h => |r| alu_ri(r, kind_by_name("VirtualWindowMaskH"), false);
-    diff_align_addr => |r| alu_ri(r, kind_by_name("VirtualAlignAddr"), false);
     diff_pext_signed => |r| alu_rr(r, kind_by_name("VirtualPextSigned"));
     diff_pext => |r| alu_rr(r, kind_by_name("VirtualPext"));
-    diff_shift_data_b => |r| alu_rr(r, kind_by_name("VirtualShiftDataB"));
-    diff_shift_data_h => |r| alu_rr(r, kind_by_name("VirtualShiftDataH"));
-    diff_shift_data_w => |r| alu_rr(r, kind_by_name("VirtualShiftDataW"));
+    diff_shift_data_b => |r| shift_data(r, kind_by_name("VirtualShiftDataB"));
+    diff_shift_data_h => |r| shift_data(r, kind_by_name("VirtualShiftDataH"));
+    diff_shift_data_w => |r| shift_data(r, kind_by_name("VirtualShiftDataW"));
+    diff_load_b => |r| floor_load(r, kind_by_name("VirtualLoadB"), 1);
+    diff_load_h => |r| floor_load(r, kind_by_name("VirtualLoadH"), 2);
+    diff_load_w => |r| floor_load(r, kind_by_name("VirtualLoadW"), 4);
+    diff_store_b => |r| floor_store(r, kind_by_name("VirtualStoreB"), 1);
+    diff_store_h => |r| floor_store(r, kind_by_name("VirtualStoreH"), 2);
+    diff_store_w => |r| floor_store(r, kind_by_name("VirtualStoreW"), 4);
 }

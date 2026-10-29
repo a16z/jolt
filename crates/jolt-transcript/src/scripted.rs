@@ -3,14 +3,10 @@
 
 use std::collections::VecDeque;
 
-use jolt_field::CanonicalEncoding;
-
-#[cfg(feature = "prover-grinding")]
-use crate::pow::MessageSearch;
 use crate::transcript::sealed::Sealed;
 use crate::{
-    ChallengeSetSize, FieldTranscript, ProverInit, ProverTranscript, VerifierInit,
-    VerifierTranscript,
+    ChallengeSetSize, FieldTranscript, NargMessage, ProverInit, ProverTranscript, VerifierInit,
+    VerifierTranscript, TAG_BYTES,
 };
 use spongefish::{Encoding, FromNarg, VerificationError};
 
@@ -24,13 +20,6 @@ pub enum TranscriptEvent<F> {
     Squeeze(usize),
     /// One challenge draw and the values it returned.
     Challenges(Vec<F>),
-    /// One short challenge draw.
-    ShortChallenge {
-        /// The loss factor its width was priced from.
-        loss_factor: u64,
-        /// The value it returned.
-        value: F,
-    },
 }
 
 /// What a [`ScriptedTranscript`] does with the challenges of each draw.
@@ -124,9 +113,7 @@ impl<T, F, S> ScriptedTranscript<T, F, S> {
             .iter()
             .filter_map(|event| match event {
                 TranscriptEvent::Absorb(bytes) => Some(bytes.as_slice()),
-                TranscriptEvent::Squeeze(_)
-                | TranscriptEvent::Challenges(_)
-                | TranscriptEvent::ShortChallenge { .. } => None,
+                TranscriptEvent::Squeeze(_) | TranscriptEvent::Challenges(_) => None,
             })
             .collect()
     }
@@ -180,31 +167,15 @@ where
             .push(TranscriptEvent::Challenges(challenges.clone()));
         Ok(challenges)
     }
-
-    fn challenge_short_scalar(&mut self, loss_factor: u64) -> Result<F, VerificationError>
-    where
-        F: CanonicalEncoding,
-    {
-        let mut challenge = [self.inner.challenge_short_scalar(loss_factor)?];
-        self.script.draw(&mut challenge);
-        let [challenge] = challenge;
-        self.events.push(TranscriptEvent::ShortChallenge {
-            loss_factor,
-            value: challenge,
-        });
-        Ok(challenge)
-    }
 }
 
 impl<T: ProverTranscript<Unit = u8>, F, S: Script<F>> ProverTranscript
     for ScriptedTranscript<T, F, S>
 {
-    type Sponge = T::Sponge;
-
-    fn prover_message<M: Encoding + ?Sized>(&mut self, msg: &M) {
+    fn send<M: NargMessage + ?Sized>(&mut self, msg: &M) {
         self.events
             .push(TranscriptEvent::Absorb(msg.encode().as_ref().to_vec()));
-        self.inner.prover_message(msg);
+        self.inner.send(msg);
     }
 
     fn narg_string(&self) -> &[u8] {
@@ -212,8 +183,8 @@ impl<T: ProverTranscript<Unit = u8>, F, S: Script<F>> ProverTranscript
     }
 
     #[cfg(feature = "prover-grinding")]
-    fn message_search(&self) -> MessageSearch<T::Sponge> {
-        self.inner.message_search()
+    fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<T, F, S> {
+        self.inner.verifier_message_oracle()
     }
 
     #[cfg(feature = "prover-grinding")]
@@ -222,7 +193,7 @@ impl<T: ProverTranscript<Unit = u8>, F, S: Script<F>> ProverTranscript
     }
 
     #[cfg(feature = "prover-grinding")]
-    fn public_grind(&mut self, bits: u32) -> Result<Option<u32>, VerificationError> {
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u64>, VerificationError> {
         self.inner.public_grind(bits)
     }
 }
@@ -249,7 +220,11 @@ impl<T: VerifierTranscript<Unit = u8>, F, S: Script<F>> VerifierTranscript
 impl<'a, T: VerifierInit<'a, Unit = u8>, F, S: Script<F> + Default> VerifierInit<'a>
     for ScriptedTranscript<T, F, S>
 {
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized), narg: &'a [u8]) -> Self {
+    fn init(
+        session: &[u8; TAG_BYTES],
+        statement: &(impl Encoding + ?Sized),
+        narg: &'a [u8],
+    ) -> Self {
         Self::scripted_by(T::init(session, statement, narg), S::default())
     }
 }
@@ -257,7 +232,7 @@ impl<'a, T: VerifierInit<'a, Unit = u8>, F, S: Script<F> + Default> VerifierInit
 impl<T: ProverInit<Unit = u8>, F, S: Script<F> + Default> ProverInit
     for ScriptedTranscript<T, F, S>
 {
-    fn init(session: &[u8], statement: &(impl Encoding + ?Sized)) -> Self {
+    fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self {
         Self::scripted_by(T::init(session, statement), S::default())
     }
 }

@@ -13,7 +13,7 @@
 //! RA product — with one extra `FusedInc` cycle factor (degree +1).
 //!
 //! The cycle phase therefore produces the `FusedInc` opening at the shared
-//! stage-6b cycle point (consumed by the stage-7 hamming-weight decode leg),
+//! stage-6b cycle point (opened directly against the dense increment commitment),
 //! and no store-selector opening exists anywhere.
 //!
 //! The per-cycle store/rd disjointness comes from `jolt-program`'s memory

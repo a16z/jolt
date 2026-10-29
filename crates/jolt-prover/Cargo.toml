@@ -18,7 +18,6 @@ parallel = [
   "jolt-crypto/parallel",
   "jolt-kernels/parallel",
   "jolt-sumcheck/parallel",
-  "jolt-transcript/parallel",
   "dep:rayon",
 ]
 prover-fixtures = ["dep:jolt-host"]
@@ -142,6 +141,7 @@ tracer = { workspace = true, optional = true }
 
 [dev-dependencies]
 bincode.workspace = true
+jolt-transcript = { workspace = true, features = ["transcript-poseidon"] }
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-platform.workspace = true

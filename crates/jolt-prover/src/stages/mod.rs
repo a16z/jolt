@@ -11,7 +11,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::formula_dimensions_from_parts;
-use jolt_verifier::stages::pow::{pow_bits, PowSite};
+use jolt_verifier::stages::pow::{site_pow_bits, PowSite};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
 use crate::ProverConfig;
@@ -33,18 +33,17 @@ pub mod stage7;
 /// when the difficulty is zero.
 ///
 /// # Errors
-/// [`VerifierError::PowDifficulty`] as for [`pow_bits`], and
+/// [`VerifierError::PowDifficulty`] as for [`site_pow_bits`], and
 /// [`VerifierError::ProofOfWorkRejected`] if the nonce search fails.
 pub(crate) fn grind_pow<F, T>(
     site: PowSite,
-    loss: u64,
     transcript: &mut T,
-) -> Result<Option<u32>, VerifierError>
+) -> Result<Option<u64>, VerifierError>
 where
     T: FieldTranscript<F> + ProverTranscript,
 {
     transcript
-        .public_grind(pow_bits::<F, T>(site, loss)?)
+        .public_grind(site_pow_bits::<F, T>()?)
         .map_err(|_| VerifierError::ProofOfWorkRejected { site })
 }
 

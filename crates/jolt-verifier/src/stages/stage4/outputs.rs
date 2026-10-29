@@ -103,11 +103,11 @@ impl<F: JoltField> Stage4OutputClaims<F> {
         values
     }
 
-    /// Append every produced opening to the transcript in canonical order, each
-    /// under the `b"opening_claim"` label, matching the prover's commitment order.
+    /// Append every produced opening to the transcript in canonical order,
+    /// matching the prover's commitment order.
     pub fn append_to_transcript<T: FieldTranscript<F>>(&self, transcript: &mut T) {
         for value in self.opening_values() {
-            transcript.append_labeled(b"opening_claim", &value);
+            transcript.append(&value);
         }
     }
 }
@@ -293,9 +293,9 @@ mod tests {
     /// Pins the batch's `draw_challenges` to the inline draw order: one `challenge()` per
     /// leading member — the registers gamma, under `field-inline` the field-register
     /// read-write gamma (the spec's draw slot: after the registers gamma, before the RAM
-    /// value-check draw) — then the RAM value-check draw (its domain separator + gamma; that
-    /// draw's byte exactness is pinned by its own member test). The replica reuses the RAM
-    /// member's `draw_challenges` so this test pins the member ORDER.
+    /// value-check draw) — then the RAM value-check gamma (pinned by its own member test).
+    /// No absorb sits between the draws. The replica reuses the RAM member's
+    /// `draw_challenges` so this test pins the member ORDER.
     #[test]
     fn draw_challenges_matches_inline_draw_sequence() {
         use crate::stages::relations::ConcreteSumcheck as _;
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(draw_events.first(), Some(&squeeze(1)));
         assert!(draw_events
             .iter()
-            .any(|event| matches!(event, TranscriptEvent::Absorb(_))));
+            .all(|event| matches!(event, TranscriptEvent::Challenges(_))));
         #[cfg(not(feature = "field-inline"))]
         let drawn_gammas = vec![challenges.registers_read_write.gamma];
         #[cfg(feature = "field-inline")]

@@ -1,7 +1,16 @@
 use jolt_field::JoltField;
 use jolt_poly::EvaluationClaim;
-use jolt_transcript::{Encoding, Label, LabelWithCount};
+use jolt_transcript::Encoding;
 
+/// A hiding evaluation claim: a point and a commitment to the value there.
+///
+/// # Security
+/// The [`Encoding`] absorbs the point's coordinates and then the hiding
+/// commitment, with no count. Claims whose points differ in length can then
+/// absorb as the same bytes, so the encoding binds a claim only when the
+/// point's length is already fixed. A caller that absorbs a claim built from
+/// proof data must first check `point.len()` against the length its protocol
+/// fixes from bound data, or absorb that length as a `u64` word itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZkEvaluationClaim<'a, F, C> {
     pub point: &'a [F],
@@ -23,14 +32,10 @@ where
     C: Encoding,
 {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = LabelWithCount(b"zk_opening_point", self.point.len() as u64)
-            .encode()
-            .as_ref()
-            .to_vec();
+        let mut out = Vec::new();
         for coordinate in self.point {
             out.extend_from_slice(coordinate.encode().as_ref());
         }
-        out.extend_from_slice(Label(b"zk_eval_commitment").encode().as_ref());
         out.extend_from_slice(self.hiding_commitment.encode().as_ref());
         out
     }
@@ -49,10 +54,7 @@ where
     F: JoltField,
 {
     fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = LabelWithCount(b"rlc_claims", self.0.len() as u64)
-            .encode()
-            .as_ref()
-            .to_vec();
+        let mut out = Vec::new();
         for claim in self.0 {
             out.extend_from_slice(claim.evaluation.value.encode().as_ref());
         }

@@ -7,6 +7,8 @@ use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening}
 use super::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(not(feature = "akita"))]
+use crate::stages::pow::PowSite;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
@@ -50,9 +52,6 @@ use jolt_poly::Point;
 use jolt_transcript::Encoding;
 use jolt_transcript::FieldTranscript;
 #[cfg(not(feature = "akita"))]
-use jolt_transcript::LabelWithCount;
-
-#[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
 /// [`batch_entries`] wiring. The id is the composite [`ComposedOpeningId`] so
@@ -93,6 +92,9 @@ where
     VC: VectorCommitment<Field = F>,
     T: FieldTranscript<F>,
 {
+    // The homomorphic opening draws no selector point, so the stage-8 slot
+    // must stay empty.
+    proof.stages.pow_nonces.require_absent(PowSite::Stage8)?;
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
@@ -230,13 +232,14 @@ where
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    transcript.append(&LabelWithCount(
-        b"rlc_claims",
-        crate::num::u64_from_usize(opening_claims.len()),
-    ));
-    for claim in &opening_claims {
-        transcript.append(&claim.evaluation.value);
-    }
+    // The verifier builds `opening_claims`, so its length needs no word. One
+    // message, as `HomomorphicBatch::prove_batch` absorbs it: a sponge that
+    // frames each absorb (Poseidon) tells N messages from their concatenation.
+    let evaluations = opening_claims
+        .iter()
+        .map(|claim| claim.evaluation.value)
+        .collect::<Vec<_>>();
+    transcript.append_values(&evaluations);
     let gamma_powers = transcript.challenge_powers(opening_claims.len())?;
 
     let joint_claim = gamma_powers
@@ -699,12 +702,13 @@ where
         proof.one_hot_config,
         preprocessing,
         &proof.commitments,
+        proof.fused_inc_commitment.as_ref(),
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
         proof.field_inc_commitment.as_ref(),
         &proof.joint_opening_proof,
-        &proof.stages.pow_nonces(),
+        &proof.stages.pow_nonces,
         transcript,
         &checked.precommitted,
         stage4.clear()?,

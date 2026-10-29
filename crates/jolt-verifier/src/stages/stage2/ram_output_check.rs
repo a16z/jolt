@@ -109,12 +109,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamOutputCheck<F> {
         &self.symbolic
     }
 
-    /// The zero-check point has `log_k` coordinates, and the check is
-    /// multilinear in each.
-    fn challenge_loss(&self) -> u64 {
-        crate::num::u64_from_usize(self.read_write_dimensions.log_k())
-    }
-
     /// Draws the output-check address reference point: one challenge per RAM
     /// address variable. This member is declared last in `Stage2BatchSumchecks`,
     /// so the generated aggregate draw lands the vector exactly where the legacy

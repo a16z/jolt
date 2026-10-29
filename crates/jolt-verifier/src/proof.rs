@@ -24,7 +24,7 @@ use crate::{
 #[cfg(not(feature = "akita"))]
 pub type ProofCommitments<PCS> = JoltCommitments<<PCS as Commitment>::Output>;
 /// The proof-carried polynomial commitments on the `akita` build: the single
-/// native `OneHotTrace` group commitment carrying every per-proof column.
+/// native `OneHotTrace` group commitment carrying the RA columns.
 #[cfg(feature = "akita")]
 pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
 
@@ -54,6 +54,9 @@ pub struct JoltProof<
     pub stages: JoltStageProofs<PCS::Field, VC>,
     pub joint_opening_proof: JointOpeningProof<PCS>,
     pub untrusted_advice_commitment: Option<PCS::Output>,
+    /// Required RV64 increment commitment in Akita proofs.
+    #[cfg(feature = "akita")]
+    pub fused_inc_commitment: Option<PCS::Output>,
     /// Direct commitment to the full field-register increment polynomial.
     /// Required for every Akita field-inline proof, including an all-zero trace.
     /// Producers without field-inline semantics leave this absent and are rejected
@@ -78,10 +81,9 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    /// Assemble a proof without a field-inline payload. Producers with no field-inline
-    /// semantics (the legacy converters) build through here so they never name the
-    /// feature-gated slots; the modular provers with field-inline enabled attach theirs with
-    /// [`Self::with_field_inc_commitment`].
+    /// Assemble a proof shell. Akita producers must attach `fused_inc_commitment`;
+    /// field-inline producers also attach the field-increment payload with
+    /// [`Self::with_field_inc_commitment`]. Verification rejects missing required payloads.
     #[expect(
         clippy::too_many_arguments,
         reason = "one argument per proof component, mirroring the wire struct"
@@ -105,6 +107,8 @@ where
             stages,
             joint_opening_proof,
             untrusted_advice_commitment,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: None,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc_commitment: None,
             claims,
@@ -154,6 +158,8 @@ where
             stages: self.stages,
             joint_opening_proof: self.joint_opening_proof,
             untrusted_advice_commitment: self.untrusted_advice_commitment,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: self.fused_inc_commitment,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc_commitment: self.field_inc_commitment,
             claims,
@@ -322,30 +328,8 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
-    /// Nonces of the challenge bursts outside the sumcheck rounds. Only the
-    /// Akita build's challenge set needs them; the other builds carry none and
-    /// reject a challenge set that would ([`require_no_pow`]).
-    ///
-    /// [`require_no_pow`]: crate::stages::pow::require_no_pow
-    #[cfg(feature = "akita")]
+    /// Nonces of the challenge bursts outside the sumcheck rounds. A slot is
+    /// filled only where the site is visited and the challenge set needs proof
+    /// of work, so a BN254 proof carries none.
     pub pow_nonces: StagePowNonces,
-}
-
-impl<F, VC> JoltStageProofs<F, VC>
-where
-    F: JoltField,
-    VC: VectorCommitment<Field = F>,
-{
-    /// The proof-of-work nonces of the challenge bursts; none on builds whose
-    /// proofs carry no slots for them.
-    pub const fn pow_nonces(&self) -> StagePowNonces {
-        #[cfg(feature = "akita")]
-        {
-            self.pow_nonces
-        }
-        #[cfg(not(feature = "akita"))]
-        {
-            StagePowNonces::new()
-        }
-    }
 }

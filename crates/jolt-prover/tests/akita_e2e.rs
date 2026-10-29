@@ -245,20 +245,14 @@ mod akita_tests {
             proof
         };
         let one = AkitaField::from_u64(1);
+        let mut missing = proved.proof.clone();
+        missing.fused_inc_commitment = None;
+        let mut swapped = proved.proof.clone();
+        swapped.fused_inc_commitment = Some(swapped.commitments.clone());
         for proof in [
             tamper(&|claims| claims.stage6b.bytecode_read_raf.fused_inc += one),
-            tamper(&|claims| {
-                claims
-                    .stage7
-                    .hamming_weight_claim_reduction
-                    .balanced_inc_digits[0] += one;
-            }),
-            tamper(&|claims| {
-                claims
-                    .stage7
-                    .hamming_weight_claim_reduction
-                    .balanced_inc_carry += one;
-            }),
+            missing,
+            swapped,
         ] {
             let tampered = ProvedGuest {
                 preprocessing: proved.preprocessing.clone(),
@@ -277,7 +271,7 @@ mod akita_tests {
         let (run, config) = muldiv_run();
         let proved = prove_guest(run, config, false, &[]);
         verify(&proved).expect("Akita proof must verify");
-        let with_nonce = |site: PowSite, nonce: Option<u32>| {
+        let with_nonce = |site: PowSite, nonce: Option<u64>| {
             let mut proof = proved.proof.clone();
             proof.stages.pow_nonces.set(site, nonce);
             ProvedGuest {

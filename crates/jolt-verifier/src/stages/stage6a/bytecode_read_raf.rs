@@ -355,12 +355,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
         &self.symbolic
     }
 
-    /// The gammas fold the staged claims into a polynomial whose degree in
-    /// them is the input expression's challenge degree.
-    fn challenge_loss(&self) -> u64 {
-        crate::stages::pow::challenge_degree(&self.symbolic().input_expression::<F>())
-    }
-
     fn wire_output_openings(
         &self,
     ) -> BTreeSet<<AddressPhaseSymbolic as SymbolicSumcheck>::OpeningId> {

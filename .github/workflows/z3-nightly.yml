@@ -4,20 +4,22 @@
 # packages or on whatever z3-src happens to be current.
 #
 # SCOPE — this suite is narrower than "the expansion pipeline". The main step
-# runs 86 of the crate's 106 tests:
-#   * 34 virtual-sequence proofs (17 mnemonics x correctness+consistency):
-#     ADDIW ADDW LW MULW SUBW and the twelve shifts. Exhaustive over register
-#     values, but at one fixed operand assignment (rd=x1, rs1=x2, rs2=x3,
-#     imm=1234), so immediate-form sequences are proved at a single shift
-#     amount and the rd=x0 expansion path is never taken.
-#   * 52 per-instruction R1CS/product-constraint determinism checks.
+# runs 126 of the crate's 146 tests:
+#   * 70 virtual-sequence proofs: 34 mnemonics x correctness+consistency
+#     (ADDIW ADDW MULW SUBW, the sub-word loads and stores LB LBU LH LHU LW
+#     LWU SB SH SW, the nine word AMOs, and the twelve shifts) plus two
+#     negative-immediate checks. Exhaustive over register values, but at one
+#     fixed operand assignment (rd=x1, rs1=x2, rs2=x3, imm=1234), so
+#     immediate-form sequences are proved at a single shift amount and the
+#     rd=x0 expansion path is never taken.
+#   * 56 per-instruction R1CS/product-constraint determinism checks.
 # A second step runs the signed DIV/REM/DIVW/REMW proofs (8 of the 20
 # #[ignore]d div/rem/mulh tests) at Z3_VERIFIER_BV_BITS=8: non-terminating
 # under the 64-bit model, but at 8 bits they discharge in milliseconds and
 # still prove that arbitrary advice cannot yield a wrong or non-unique result.
 # NOT covered: the div/rem family at 64-bit width, the unsigned div/rem and
-# mulh sequences at any width, all memory/atomic/LR-SC/CSR/trap expansions
-# (except LW), and the registered inlines.
+# mulh sequences at any width, the doubleword AMOs, LR/SC, the advice loads,
+# the CSR/trap expansions, and the registered inlines.
 #
 # Nightly-only by design: the vendored Z3 build is too slow for the PR-blocking
 # path, and the obligations only move when expansions or the z3 model change.
@@ -46,10 +48,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           # Cache the expensive vendored-Z3 CMake build across nightly runs.
           shared-key: z3-nightly

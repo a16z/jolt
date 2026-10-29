@@ -11,7 +11,7 @@
 use std::fmt::Debug;
 
 use jolt_transcript::{
-    prover_transcript, Blake2b512, Keccak, PoseidonSponge, SpongeUnit, Transcript,
+    protocol_tag, prover_transcript, Blake2b512, Keccak, PoseidonSponge, SpongeUnit, Transcript,
 };
 use libfuzzer_sys::fuzz_target;
 use spongefish::DuplexSpongeInit;
@@ -49,7 +49,7 @@ fn run<H: DuplexSpongeInit<U: SpongeUnit>>(
     ops: &[Op<'_>],
     flip: Option<(usize, u8)>,
 ) -> (Vec<Vec<H::U>>, Vec<H::U>) {
-    let mut transcript = prover_transcript::<H>(b"fuzz-determinism", b"");
+    let mut transcript = prover_transcript::<H>(&protocol_tag(b"fuzz-determinism"), b"");
     let mut challenges = Vec::new();
     let mut absorbed = 0usize;
     for op in ops {

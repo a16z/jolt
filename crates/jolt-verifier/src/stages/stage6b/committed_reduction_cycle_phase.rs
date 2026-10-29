@@ -138,12 +138,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
         &self.symbolic
     }
 
-    /// Draws no challenge before the batch: its challenges come from the
-    /// batch-level draw or from an earlier stage.
-    fn challenge_loss(&self) -> u64 {
-        0
-    }
-
     /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
     /// the batch challenge vector, not the front-loaded suffix.
     fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
@@ -231,12 +225,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    /// Draws no challenge before the batch: its challenges come from the
-    /// batch-level draw or from an earlier stage.
-    fn challenge_loss(&self) -> u64 {
-        0
     }
 
     fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
@@ -346,12 +334,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
         &self.symbolic
     }
 
-    /// Draws no challenge before the batch: its challenges come from the
-    /// batch-level draw or from an earlier stage.
-    fn challenge_loss(&self) -> u64 {
-        0
-    }
-
     /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of
     /// the batch challenge vector, not the front-loaded suffix.
     fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
@@ -457,12 +439,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    /// Draws no challenge before the batch: its challenges come from the
-    /// batch-level draw or from an earlier stage.
-    fn challenge_loss(&self) -> u64 {
-        0
     }
 
     /// Precommitted cycle-phase reductions are bound on the offset-0 prefix of

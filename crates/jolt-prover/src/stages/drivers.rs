@@ -306,11 +306,6 @@ mod twin_tests {
                     &self.symbolic
                 }
 
-                /// Test relation: draws no challenge of its own.
-                fn challenge_loss(&self) -> u64 {
-                    0
-                }
-
                 fn derive_opening_points(
                     &self,
                     sumcheck_point: &[F],
@@ -762,7 +757,8 @@ mod twin_tests {
         )));
 
         let mut context = KernelContext::new(&kernels, NoWitness, session);
-        let mut prover_state = prover_transcript::<Keccak>(b"prove-driver-twin", b"");
+        let mut prover_state =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"prove-driver-twin"), b"");
         let challenges = sumchecks.draw_challenges(&mut prover_state).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
@@ -780,7 +776,8 @@ mod twin_tests {
         // Verifier twin: generated draw + composed verify_clear (which runs the
         // derive-opening-points and expected-final-claim checks internally) +
         // output-claim absorbs.
-        let mut verifier_transcript = prover_transcript::<Keccak>(b"prove-driver-twin", b"");
+        let mut verifier_transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"prove-driver-twin"), b"");
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let _ = sumchecks
             .verify_clear(
@@ -876,7 +873,10 @@ mod twin_tests {
         let session = ProofSession::default();
 
         let mut context = KernelContext::new(&kernels, NoWitness, session);
-        let mut prover_state = prover_transcript::<Keccak>(b"prove-driver-head-twin", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"prove-driver-head-twin"),
+            b"",
+        );
         let challenges = sumchecks.draw_challenges(&mut prover_state).unwrap();
         let input_points = sumchecks.empty_input_points();
         let proved = sumchecks
@@ -891,7 +891,10 @@ mod twin_tests {
             )
             .unwrap();
 
-        let mut verifier_transcript = prover_transcript::<Keccak>(b"prove-driver-head-twin", b"");
+        let mut verifier_transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"prove-driver-head-twin"),
+            b"",
+        );
         let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
         let verified_points = sumchecks
             .verify_clear(
@@ -944,7 +947,8 @@ mod twin_tests {
         let sumchecks = fixture(false);
         let inputs = inputs(false);
         let kernels = toy_kernels();
-        let mut transcript = prover_transcript::<Keccak>(b"prove-driver-twin", b"");
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"prove-driver-twin"), b"");
         let challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
         let input_points = sumchecks.empty_input_points();
         let result = sumchecks.prove(

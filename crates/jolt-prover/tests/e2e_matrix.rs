@@ -79,6 +79,52 @@ mod matrix {
             .collect()
     }
 
+    /// Byte-array model of the memory-ops guest: RISC-V load and store
+    /// semantics over its 24-byte scratch, folding every loaded value into the
+    /// hash in program order.
+    #[cfg(not(feature = "field-inline"))]
+    fn memory_ops_reference() -> (u64, [u64; 3]) {
+        fn load(scratch: &[u8; 24], offset: i64, width: usize, signed: bool) -> u64 {
+            let start = (offset + 8) as usize;
+            let mut bytes = [0u8; 8];
+            bytes[..width].copy_from_slice(&scratch[start..start + width]);
+            if signed && bytes[width - 1] & 0x80 != 0 {
+                bytes[width..].fill(0xff);
+            }
+            u64::from_le_bytes(bytes)
+        }
+        let mut scratch: [u8; 24] = std::array::from_fn(|i| 0x80 | (i as u8).wrapping_mul(37));
+        let mut hash = 0u64;
+        for (width, signed) in [
+            (1, true),
+            (1, false),
+            (2, true),
+            (2, false),
+            (4, true),
+            (4, false),
+            (8, true),
+        ] {
+            for offset in (-8..16).step_by(width) {
+                hash = hash.rotate_left(7) ^ load(&scratch, offset, width, signed);
+            }
+        }
+        let mut value = 0u64;
+        for width in [1, 2, 4, 8] {
+            for offset in (-8i64..16).step_by(width) {
+                value = value.rotate_left(13) ^ 0x9e37_79b9_7f4a_7c15;
+                let start = (offset + 8) as usize;
+                scratch[start..start + width].copy_from_slice(&value.to_le_bytes()[..width]);
+                for read_back in [-8, 0, 8] {
+                    hash = hash.rotate_left(7) ^ load(&scratch, read_back, 8, true);
+                }
+            }
+        }
+        let words = std::array::from_fn(|i| {
+            u64::from_le_bytes(scratch[8 * i..8 * i + 8].try_into().expect("doubleword"))
+        });
+        (hash, words)
+    }
+
     /// Native replica of the btreemap guest's workload.
     #[cfg(not(feature = "field-inline"))]
     fn btreemap_reference(n: u32) -> u128 {
@@ -126,10 +172,9 @@ mod matrix {
                     expected_output: Some(encode(&354_224_848_179_261_915_075u128)),
                     ..GuestCase::new("fibonacci-guest")
                 };
-                // The guest stores 0x12 and 0x3456 and reloads them signed; the
-                // untouched bytes read back as 0.
                 memory_ops => GuestCase {
-                    expected_output: Some(encode(&(0x12i32, 0u32, 0x3456i32, 0u32))),
+                    func: Some("memory_ops"),
+                    expected_output: Some(encode(&memory_ops_reference())),
                     ..GuestCase::new("memory-ops-guest")
                 };
                 // 127 bytes: one full block through the initial compression,
@@ -192,15 +237,20 @@ mod matrix {
                     })),
                     ..GuestCase::new("stdlib-guest")
                 };
-                advice_consumer => GuestCase {
-                    inputs: encode(&12u64),
-                    untrusted_advice: encode(&5u64),
-                    trusted_advice: encode(&7u64),
-                    expected_output: Some(encode(&(7u64 * 3 + 5))),
-                    ..GuestCase::new("advice-consumer-guest")
-                };
+                advice_consumer => advice_consumer_case();
             }
         };
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    fn advice_consumer_case() -> GuestCase {
+        GuestCase {
+            inputs: encode(&12u64),
+            untrusted_advice: encode(&5u64),
+            trusted_advice: encode(&7u64),
+            expected_output: Some(encode(&(7u64 * 3 + 5))),
+            ..GuestCase::new("advice-consumer-guest")
+        }
     }
 
     /// The limb-conversion conformance guest, importing and reading back `p − 1`
@@ -246,6 +296,12 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn poseidon_transcript() {
+            super::mode::prove_and_verify_poseidon(&advice_consumer_case());
+        }
     }
 
     #[cfg(all(feature = "zk", not(feature = "akita")))]
@@ -253,6 +309,12 @@ mod matrix {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
         guests!(emit_tests);
+
+        #[cfg(not(feature = "field-inline"))]
+        #[test]
+        fn poseidon_transcript() {
+            super::mode::prove_and_verify_poseidon(&advice_consumer_case());
+        }
     }
 
     #[cfg(feature = "akita")]
@@ -268,22 +330,45 @@ mod matrix {
         use jolt_dory::DoryScheme;
         use jolt_field::Fr;
         use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig};
-        use jolt_transcript::{Keccak, ProverState, VerifierState};
+        use jolt_transcript::{
+            ChallengeSponge, Keccak, PoseidonSponge, ProverInit, ProverState, VerifierInit,
+            VerifierState,
+        };
         use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
         use crate::support::{self, GuestCase};
 
         pub fn prove_and_verify(case: &GuestCase) {
+            prove_and_verify_with::<Keccak>(case);
+        }
+
+        /// Poseidon frames each absorb as its own message, so this catches a
+        /// prover and verifier that absorb the same bytes in different splits.
+        pub fn prove_and_verify_poseidon(case: &GuestCase) {
+            prove_and_verify_with::<PoseidonSponge>(case);
+        }
+
+        fn prove_and_verify_with<H>(case: &GuestCase)
+        where
+            H: ChallengeSponge<Fr> + 'static,
+            ProverState<H>: ProverInit,
+            for<'a> VerifierState<'a, H>: VerifierInit<'a>,
+        {
             #[cfg(feature = "zk")]
             {
                 let case = case.clone();
-                support::with_zk_stack(move || prove_case(&case));
+                support::with_zk_stack(move || prove_case::<H>(&case));
             }
             #[cfg(not(feature = "zk"))]
-            prove_case(case);
+            prove_case::<H>(case);
         }
 
-        fn prove_case(case: &GuestCase) {
+        fn prove_case<H>(case: &GuestCase)
+        where
+            H: ChallengeSponge<Fr>,
+            ProverState<H>: ProverInit,
+            for<'a> VerifierState<'a, H>: VerifierInit<'a>,
+        {
             let prepared = support::prepare(case);
             let mut config = ProverConfig::derive_from_dimensions::<Fr>(
                 prepared.trace.dimensions,
@@ -317,7 +402,7 @@ mod matrix {
                 .include_trusted_advice(trusted.is_some()),
                 JoltVmWitnessInputs::new(&prepared.program, &program_preprocessing, prepared.trace),
             );
-            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+            let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<H>>(
                 JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
@@ -325,7 +410,7 @@ mod matrix {
                 &public_io,
             )
             .expect("Dory proof");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
+            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, H>>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

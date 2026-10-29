@@ -47,6 +47,8 @@ pub mod booleanity;
 pub mod bytecode_read_raf;
 #[cfg(not(feature = "akita"))]
 pub mod commitment;
+mod constant_suffix;
+mod eq_prefix;
 #[cfg(feature = "field-inline")]
 pub mod field_registers_claim_reduction;
 #[cfg(feature = "field-inline")]
@@ -65,6 +67,7 @@ mod lazy_ra;
 #[cfg(not(feature = "akita"))]
 pub mod opening;
 pub mod precommitted_reduction;
+mod prefix_product;
 pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;

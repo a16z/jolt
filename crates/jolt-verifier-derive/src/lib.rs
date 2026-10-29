@@ -474,8 +474,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         // Collect each present member's claimed sum, in declaration order, for
         // the recorder absorb — the Fiat-Shamir binding that must precede the
-        // batching-coefficient draw (a clear recorder appends each under
-        // `b"sumcheck_claim"`).
+        // batching-coefficient draw (a clear recorder appends each in order).
         let sum_ident = format_ident!("__sum");
         let sum_collects = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
             per_member(
@@ -1048,29 +1047,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
     // value re-rolls) hand-assembles its challenge aggregate, and a generated
     // per-member draw would squeeze at the wrong transcript position if ever
     // called — so it must not exist to be miscalled.
-    let loss_terms = plans.iter().map(|plan| {
-        let id = &plan.ident;
-        per_member(
-            plan.is_option,
-            &[(&member_ident, quote!(self.#id))],
-            quote!(__loss = __loss.saturating_add(__member.challenge_loss());),
-        )
-    });
     let draw_challenges_method = if options.no_draw_challenges {
         quote!()
     } else {
         quote! {
-            /// Proof-of-work loss of the burst that [`Self::draw_challenges`]
-            /// starts and the batching-coefficient draw of `begin_batch` ends:
-            /// each present member's `challenge_loss`, plus
-            /// `BATCH_COEFFICIENT_LOSS` for the coefficients.
-            pub fn challenge_loss(&self) -> u64 {
-                use #relations::ConcreteSumcheck as _;
-                let mut __loss = #krate::stages::pow::BATCH_COEFFICIENT_LOSS;
-                #(#loss_terms)*
-                __loss
-            }
-
             /// Draw each instance's Fiat-Shamir challenges in declaration order,
             /// assembling the stage's challenge aggregate. Members with no
             /// challenges draw nothing; `Option` members draw only when present.
@@ -1110,15 +1090,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
 
             /// Append every absorbed opening to the transcript in canonical order,
-            /// each under the `b"opening_claim"` label, matching the prover's
-            /// commitment order.
+            /// matching the prover's commitment order. The generated output
+            /// struct fixes the value count, so no count word is absorbed.
             pub fn append_output_claims<__T: ::jolt_transcript::Transcript>(
                 &self,
                 transcript: &mut __T,
                 claims: &#output_claims_name<#f>,
             ) {
                 for value in self.opening_values(claims) {
-                    transcript.append_labeled(b"opening_claim", &value);
+                    transcript.append(&value);
                 }
             }
         }

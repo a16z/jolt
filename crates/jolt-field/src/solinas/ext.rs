@@ -140,21 +140,19 @@ impl<F: Field + CanonicalBytes, C: Ext2Config<F>> CanonicalBytes for FpExt2<F, C
     }
 }
 
-crate::impl_ring_ops!(impl[F: Field, C: Ext2Config<F>] FpExt2<F, C> {
+crate::impl_ring_ops!(impl[F: PseudoMersenne, C: Ext2Config<F>] FpExt2<F, C> {
     add(a, b): FpExt2::new(a.coeffs[0] + b.coeffs[0], a.coeffs[1] + b.coeffs[1]),
     sub(a, b): FpExt2::new(a.coeffs[0] - b.coeffs[0], a.coeffs[1] - b.coeffs[1]),
     mul(a, b): {
-        let v0 = a.coeffs[0] * b.coeffs[0];
-        let v1 = a.coeffs[1] * b.coeffs[1];
-        let cross = (a.coeffs[0] + a.coeffs[1]) * (b.coeffs[0] + b.coeffs[1]);
-        FpExt2::new(v0 + Self::mul_nr(v1), cross - v0 - v1)
+        let [c0, c1] = F::ext2_mul::<C>(a.coeffs, b.coeffs);
+        FpExt2::new(c0, c1)
     },
     neg(a): FpExt2::new(-a.coeffs[0], -a.coeffs[1]),
     zero: FpExt2::new(F::zero(), F::zero()),
     one: FpExt2::new(F::one(), F::zero()),
 });
 
-impl<F: Field, C: Ext2Config<F>> Ring for FpExt2<F, C> {
+impl<F: PseudoMersenne, C: Ext2Config<F>> Ring for FpExt2<F, C> {
     #[inline]
     fn from_u64(v: u64) -> Self {
         Self::new(F::from_u64(v), F::zero())
@@ -174,16 +172,12 @@ impl<F: Field, C: Ext2Config<F>> Ring for FpExt2<F, C> {
 
     #[inline(always)]
     fn square(&self) -> Self {
-        let v0 = self.coeffs[0] * self.coeffs[0];
-        let v1 = self.coeffs[1] * self.coeffs[1];
-        Self::new(
-            v0 + Self::mul_nr(v1),
-            (self.coeffs[0] + self.coeffs[0]) * self.coeffs[1],
-        )
+        let [c0, c1] = F::ext2_square::<C>(self.coeffs);
+        Self::new(c0, c1)
     }
 }
 
-impl<F: Field, C: Ext2Config<F>> Field for FpExt2<F, C> {
+impl<F: PseudoMersenne, C: Ext2Config<F>> Field for FpExt2<F, C> {
     /// Inversion via the norm: `x^{-1} = conjugate(x) / norm(x)`.
     fn inverse(&self) -> Option<Self> {
         if self.is_zero() {

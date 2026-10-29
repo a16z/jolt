@@ -16,12 +16,15 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref || github.run_id }}
-  cancel-in-progress: true
+  # Only PR runs cancel each other: a main run is the one that saves caches,
+  # so back-to-back merges must not cancel it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Caching strategy: jobs with near-identical dependency footprints share one
 # rust-cache entry (shared-key), and only the job with the largest footprint
-# saves it. Per-job caches previously totaled >10 GB, blowing the repository
-# cache quota so every run started cold.
+# saves it, and only on main. Per-job caches previously totaled >10 GB, and
+# PR-scoped saves (refs/pull/*/merge, which no other run can restore) evicted
+# main's entries, blowing the repository cache quota so every run started cold.
 jobs:
   fmt:
     runs-on: ubuntu-latest
@@ -39,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install taplo
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: taplo-cli
       - name: taplo fmt --check
@@ -66,7 +69,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Require one jolt-field identity (no akita-field post-cutover)
@@ -92,9 +95,10 @@ jobs:
         with:
           components: clippy
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: clippy
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo clippy --features allocative,host
         run: cargo clippy --all --all-targets --features allocative,host
       - name: cargo clippy --features allocative,host,zk
@@ -105,7 +109,8 @@ jobs:
       # that no workspace consumer enables together, so lint them all here.
       - name: cargo clippy -p jolt-transcript --all-features
         run: cargo clippy -p jolt-transcript --all-targets --all-features
-      # --all-features turns on parallel; lint the sequential nonce search too.
+      # --all-features also selects Keccak-256 digests and every sponge; lint the
+      # default sponge with the nonce search on its own.
       - name: cargo clippy -p jolt-transcript --features bn254,solinas,binary,prover-grinding
         run: cargo clippy -p jolt-transcript --all-targets --features bn254,solinas,binary,prover-grinding
       # The workspace-wide invocations above unify jolt-prover's `prover`
@@ -243,9 +248,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: wasm
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install wasm32 target
         run: rustup target add wasm32-unknown-unknown
       # jolt-platform owns the wasm RNG backend (getrandom 0.2 `js`, 0.3
@@ -269,7 +275,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -289,7 +295,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests
@@ -304,7 +310,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -339,12 +345,12 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       # Guest ELFs link ZeroOS, so building them needs its musl toolchain.
@@ -378,7 +384,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -398,7 +404,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Run jolt-prover tests with zk feature
@@ -425,9 +431,10 @@ jobs:
           cache: false
       # Sole saver for the release-tests shared cache — largest dependency
       # footprint of the group (host + akita at release).
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
+          save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-directories: ~/.cache/dory
       - name: Cache ZeroOS musl toolchain
         id: cache-zeroos-musl
@@ -444,7 +451,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       # The Akita arm of the guest x mode matrix plus the Akita prover
@@ -471,7 +478,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -491,7 +498,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       # e2e_matrix selects field_ops, field_limbs, and muldiv for the
@@ -520,7 +527,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -540,7 +547,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       # The same field_ops, field_limbs, and muldiv matrix table runs over fp128.
@@ -555,14 +562,31 @@ jobs:
       # under this pair.
       - name: Run jolt-kernels with field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-kernels --features field-inline,akita
-      # The Akita field-inline provisioning checks and verifier fixture suite (the modular
-      # Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
-      # field-inline axis disabled).
-      - name: Run jolt-akita with field-inline
-        run: >-
-          cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
       - name: Run jolt-verifier with prover-fixtures,field-inline,akita
         run: cargo nextest run --cargo-profile ci -p jolt-verifier --features prover-fixtures,field-inline,akita --test-threads 1
+
+  # The Akita field-inline provisioning checks and verifier fixture suite (the
+  # modular Akita prover's eq-MLE proof; legacy-generated akita fixtures pin the
+  # field-inline axis disabled). Its own job: it needs no guest toolchain, and
+  # in series with the prover lane above it set that job's critical path.
+  test-akita-field-inline:
+    runs-on: ubuntu-latest
+    name: Test jolt-akita (field-inline)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+      - name: Install nextest
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
+        with:
+          tool: nextest
+      - name: Run jolt-akita with field-inline
+        run: cargo nextest run --cargo-profile ci -p jolt-akita --features field-inline
 
   test-verifier-field-inline-fixtures:
     runs-on: ubuntu-latest
@@ -573,7 +597,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -593,7 +617,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       # The fixture-driven field-inline suites: valid-fixture acceptance
@@ -612,7 +636,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -632,7 +656,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       # The fixture-driven akita suites: valid-fixture acceptance
@@ -658,7 +682,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -691,7 +715,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -755,11 +779,12 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: dev-tests-${{ matrix.shard }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Discover modular crates
@@ -798,6 +823,11 @@ jobs:
       - name: Test jolt-transcript with all features
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --all-features --cargo-quiet
+      # --all-features selects Keccak-256 digests (`keccak256-digests`), which
+      # skips the known answers pinned for the default SHA3-256 digests.
+      - name: Test jolt-transcript with every sponge and SHA3-256 digests
+        if: matrix.shard == 1
+        run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,transcript-blake2b,transcript-poseidon,test-utils --cargo-quiet
       - name: Test jolt-transcript with sequential grinding
         if: matrix.shard == 1
         run: cargo nextest run -p jolt-transcript --features bn254,solinas,binary,prover-grinding --cargo-quiet
@@ -820,7 +850,6 @@ jobs:
       - name: Test jolt-blindfold with its prover
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-blindfold --features prover --cargo-quiet
-        run: cargo nextest run -p jolt-sumcheck --features committed --cargo-quiet
       - name: Test jolt-poly and jolt-sumcheck with binary fields
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-poly -p jolt-sumcheck --features jolt-poly/binary,jolt-sumcheck/binary,jolt-sumcheck/prover --cargo-quiet
@@ -869,7 +898,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -889,7 +918,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Run verifier fixtures
@@ -903,11 +932,12 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: dev-inlines
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Discover inline crates
@@ -937,7 +967,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -945,7 +975,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Generate test fixtures
@@ -961,7 +991,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
         with:
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
@@ -969,7 +999,7 @@ jobs:
       - name: Build and install jolt CLI
         run: cargo install --path . --locked --force --profile ci --target-dir target
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Run tracer tests
@@ -992,7 +1022,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
         with:
           tool: nextest
       - name: Run extractor tests

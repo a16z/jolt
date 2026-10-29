@@ -67,10 +67,8 @@
 //! ## Per-round proof types
 //! - [`RoundMessage`] — degree bound and transcript absorption.
 //! - [`ClearRound<F>`] — clear round polynomial evaluation and well-formedness.
-//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw, unlabelled absorb.
-//! - [`LabeledRoundPoly`] — borrowed wrapper adding a `LabelWithCount` prefix.
-//! - [`CompressedLabeledRoundPoly`] — borrowed wrapper using the compressed
-//!   wire format (omits the linear coefficient).
+//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — absorbs a `u64` count
+//!   word, then its coefficients.
 //!
 //! # Dependency position
 //!
@@ -125,26 +123,6 @@ mod round_scheduler_tests;
 #[cfg(all(test, feature = "committed", feature = "prover"))]
 mod tests;
 
-use jolt_transcript::Encoding;
-
-/// Transcript label used for ordinary sumcheck round polynomials.
-pub const SUMCHECK_ROUND_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_poly";
-/// Transcript label used for univariate-skip round polynomials.
-pub const UNISKIP_ROUND_TRANSCRIPT_LABEL: &[u8] = b"uniskip_poly";
-/// Transcript label used when a sumcheck claim scalar is absorbed before batching.
-pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
-/// Transcript label used when a produced opening claim is absorbed in the clear.
-pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
-
-/// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
-pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
-where
-    A: Encoding,
-    T: jolt_transcript::Transcript,
-{
-    transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
-}
-
 pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 #[cfg(all(feature = "committed", feature = "prover"))]
@@ -160,7 +138,7 @@ pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, Sumche
 pub use error::SumcheckError;
 #[cfg(feature = "prover")]
 pub use pow::grind_round;
-pub use pow::{round_pow_bits, Nonced, NoncedRef};
+pub use pow::round_pow_bits;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
 #[cfg(all(feature = "committed", feature = "prover"))]
 pub use prover::prove_uniskip_committed;
@@ -178,5 +156,5 @@ pub use r1cs::{
 #[cfg(all(feature = "committed", feature = "prover"))]
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
-pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
+pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
 pub use verifier::SumcheckVerifier;

@@ -12,10 +12,7 @@
 
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_poly::CompressedPoly;
-use jolt_sumcheck::{
-    BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckVerifier,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-};
+use jolt_sumcheck::{BooleanHypercube, CompressedSumcheckProof, SumcheckClaim, SumcheckVerifier};
 use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 
@@ -62,21 +59,16 @@ fuzz_target!(|data: &[u8]| {
     }
     // Remaining bytes become proof-of-work nonces, so the count and value
     // checks see attacker-chosen input too.
-    let pow_nonces = data[cursor..].iter().map(|&byte| u32::from(byte)).collect();
+    let pow_nonces = data[cursor..].iter().map(|&byte| u64::from(byte)).collect();
     let proof = CompressedSumcheckProof {
         round_polynomials,
         pow_nonces,
     };
 
     // The verifier must terminate without panicking on any input.
-    let mut transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-fuzz", b"");
-    let _ = SumcheckVerifier::verify_compressed(
-        &claim,
-        &proof,
-        BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        &mut transcript,
-    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"jolt-sumcheck-fuzz"), b"");
+    let _ = SumcheckVerifier::verify_compressed(&claim, &proof, BooleanHypercube, &mut transcript);
 });
 
 #[inline]

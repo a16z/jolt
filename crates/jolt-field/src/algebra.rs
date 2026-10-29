@@ -22,6 +22,7 @@ use std::iter::{Product, Sum};
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::signed::S256;
+use crate::Ext2Config;
 
 pub trait AdditiveGroup:
     Sized
@@ -162,6 +163,45 @@ pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
+    /// `Σ a[i]·b[i]` over the shorter of the two slices.
+    #[inline]
+    fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        a.iter()
+            .zip(b)
+            .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
+    }
+
+    /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
+    /// otherwise.
+    #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        terms
+            .into_iter()
+            .fold(<Self as Zero>::zero(), |acc, (term, negative)| {
+                if negative {
+                    acc - *term
+                } else {
+                    acc + *term
+                }
+            })
+    }
+
+    /// `Σ_i Π_k terms[i][k]`, an empty product being one.
+    #[inline]
+    fn sum_of_products<const K: usize>(terms: &[[Self; K]]) -> Self {
+        terms.iter().fold(<Self as Zero>::zero(), |acc, factors| {
+            acc + match factors.split_first() {
+                Some((first, rest)) => rest
+                    .iter()
+                    .fold(*first, |product, factor| product * *factor),
+                None => <Self as One>::one(),
+            }
+        })
+    }
+
     /// Multiplicative inverse with zero mapped to zero.
     #[inline]
     fn inv_or_zero(self) -> Self {
@@ -211,6 +251,23 @@ pub trait Field: Ring {
 pub trait PseudoMersenne: Field + CanonicalEncoding {
     /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
+
+    /// Quadratic extension multiply kernel in `Self[u]/(u² − NR)`, basis
+    /// `[1, u]`.
+    ///
+    /// Defaults to Karatsuba; base fields whose representation supports
+    /// fusing product sums before reduction override it (`Fp64` sums raw
+    /// products in `u128` and reduces once per coordinate).
+    #[inline(always)]
+    fn ext2_mul<C: Ext2Config<Self>>(a: [Self; 2], b: [Self; 2]) -> [Self; 2] {
+        crate::schedules::ext2_mul_coeffs::<Self, C>(a, b)
+    }
+
+    /// Quadratic extension squaring kernel in `Self[u]/(u² − NR)`.
+    #[inline(always)]
+    fn ext2_square<C: Ext2Config<Self>>(a: [Self; 2]) -> [Self; 2] {
+        crate::schedules::ext2_square_coeffs::<Self, C>(a)
+    }
 
     /// Degree-4 extension multiply kernel in the `[1, e1, e2, e3]` basis.
     ///
@@ -342,19 +399,6 @@ pub trait CanonicalEncoding:
     ///
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
-}
-
-/// Bytes per element so that `2^share_bits` elements, each reduced modulo a
-/// `modulus_bits`-bit order from its own uniform bytes, are jointly within
-/// total variation `2^-161` of uniform.
-///
-/// Reducing `M = 2^(8w)` uniform values modulo `p` is within
-/// `r(p − r)/(pM) ≤ p/(4M)` of uniform, where `r = M mod p`. With
-/// `8w ≥ modulus_bits + 159 + share_bits` each element is within
-/// `2^-(161 + share_bits)`, and `2^share_bits` of them within `2^-161`.
-#[must_use]
-pub const fn reduction_width(modulus_bits: u32, share_bits: u32) -> usize {
-    (modulus_bits as usize + 159 + share_bits as usize).div_ceil(8)
 }
 
 /// Accumulates sums and products with potentially deferred modular reduction.

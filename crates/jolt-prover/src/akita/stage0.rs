@@ -1,5 +1,5 @@
 use common::jolt_device::JoltDevice;
-use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
+use jolt_kernels::akita::commitment::{FusedIncObject, WitnessCommitRequest, WitnessCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 
 use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
@@ -26,6 +26,7 @@ where
     pub transcript: T,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
+    pub fused_inc: FusedIncObject<PCS>,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
     /// The field increment polynomial, committed on every Akita field-inline proof.
     #[cfg(feature = "field-inline")]
@@ -103,11 +104,12 @@ where
         config.trace_polynomial_order,
         config.one_hot_config,
         trusted_advice.is_some(),
+        untrusted_advice_present,
         false,
     )?;
 
     let mut transcript = T::init(
-        JOLT_SESSION,
+        &JOLT_SESSION,
         &JoltStatement {
             checked: &checked,
             config: ProofTranscriptConfig {
@@ -145,7 +147,7 @@ where
     };
 
     // Canonical batch order: advice, then field increments or direct committed-program
-    // objects (mutually exclusive), then OneHotTrace.
+    // objects (mutually exclusive), then FusedInc and OneHotTrace.
     let mut precommitted_hints: Vec<&PCS::OpeningHint> = untrusted_advice
         .as_ref()
         .map(|object| &object.hint)
@@ -160,6 +162,7 @@ where
         precommitted_hints.extend(program.objects().map(|object| &object.hint));
     }
     let WitnessCommitment {
+        fused_inc,
         commitment,
         hint,
         #[cfg(feature = "field-inline")]
@@ -174,6 +177,7 @@ where
 
     absorb_akita_commitments(
         &commitment,
+        Some(&fused_inc.commitment),
         untrusted_advice.as_ref().map(|object| &object.commitment),
         trusted_advice.map(|object| &object.commitment),
         #[cfg(feature = "field-inline")]
@@ -192,6 +196,7 @@ where
         transcript,
         commitment,
         hint,
+        fused_inc,
         untrusted_advice,
         #[cfg(feature = "field-inline")]
         field_inc,

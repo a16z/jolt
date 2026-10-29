@@ -280,7 +280,10 @@ mod clear {
             ],
             vec![AkitaField::from_u64(0)],
         );
-        let mut transcript = prover_transcript::<Keccak>(b"spurious-field_inline-group", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"spurious-field_inline-group"),
+            b"",
+        );
         let error = <AkitaScheme as CommitmentScheme>::verify_batch(
             &output.verifier_preprocessing.pcs_setup,
             &[field_claim.clone(), field_claim],

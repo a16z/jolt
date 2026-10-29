@@ -245,6 +245,11 @@ pub enum SumcheckError<F: Field> {
     #[error("no proof-of-work difficulty reaches the target for round degree {degree}")]
     PowDifficulty { degree: usize },
 
+    /// A committed (zero-knowledge) sumcheck ran over a challenge set that
+    /// needs proof of work; committed proofs carry no nonces.
+    #[error("committed sumcheck challenges need proof of work, which committed proofs omit")]
+    NeedsProofOfWork,
+
     /// Consecutive integer domain points have colliding images in the field.
     #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
     IntegerDomainNotDistinct { domain_size: usize },

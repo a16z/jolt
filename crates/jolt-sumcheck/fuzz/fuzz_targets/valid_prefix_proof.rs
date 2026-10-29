@@ -53,12 +53,15 @@ fuzz_target!(|data: &[u8]| {
     // `valid_rounds` rounds, so the proof is valid by construction up to
     // round `valid_rounds - 1` and the verifier's running sum after
     // ingesting those rounds matches what we compute below.
-    let mut prover_state = prover_transcript::<Blake2b512>(b"jolt-sumcheck-valid-fuzz", b"");
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-valid-fuzz"),
+        b"",
+    );
     let mut running_sum = claimed_sum;
     let mut round_proofs: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
     let bits =
         round_pow_bits::<Fr, ProverState<Blake2b512>>(degree).expect("difficulty for degree <= 6");
-    let mut pow_nonces: Vec<u32> = Vec::with_capacity(num_vars);
+    let mut pow_nonces: Vec<u64> = Vec::with_capacity(num_vars);
 
     for round in 0..num_vars {
         if round < valid_rounds {
@@ -126,7 +129,10 @@ fuzz_target!(|data: &[u8]| {
         }
     }
 
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(b"jolt-sumcheck-valid-fuzz", b"");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-valid-fuzz"),
+        b"",
+    );
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &round_proofs,

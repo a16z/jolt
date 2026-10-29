@@ -96,12 +96,7 @@ where
     // ZK/clear branch; the advice and committed-program address phases draw nothing
     // (`NoChallenges`). BlindFold sources the gamma from
     // `challenges.hamming_weight_claim_reduction.gamma`.
-    check_pow(
-        PowSite::Stage7,
-        sumchecks.challenge_loss(),
-        &proof.stages.pow_nonces(),
-        transcript,
-    )?;
+    check_pow(PowSite::Stage7, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk {

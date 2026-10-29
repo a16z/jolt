@@ -85,12 +85,7 @@ where
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
-    check_pow(
-        PowSite::Stage6a,
-        address_sumchecks.challenge_loss(),
-        &proof.stages.pow_nonces(),
-        transcript,
-    )?;
+    check_pow(PowSite::Stage6a, &proof.stages.pow_nonces, transcript)?;
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -329,7 +324,7 @@ mod tests {
 
         let mut want = recorder();
         for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
-            want.append_labeled(b"opening_claim", &value);
+            want.append(&value);
         }
 
         assert_eq!(got.absorbed(), want.absorbed());
@@ -356,7 +351,7 @@ mod tests {
             stage5_gamma: gamma,
         };
         let mut transcript = ScriptedTranscript::with_script(
-            prover_transcript::<Keccak>(b"stage-gamma-powers", b""),
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"stage-gamma-powers"), b""),
             vec![gamma; BYTECODE_STAGE_GAMMA_COUNTS.len()],
         );
         for (powers, len) in challenges

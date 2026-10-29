@@ -3,14 +3,12 @@ use crate::{
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
     domain::{BooleanHypercube, SumcheckDomain},
     error::SumcheckError,
-    round_proof::LabeledRoundPoly,
     verifier::SumcheckVerifier,
-    Nonced, NoncedRef, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
 use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{Encoding, FieldTranscript};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Serialize};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
 ///
@@ -22,54 +20,24 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// The proof is complete when all $n$ round polynomials have been sent;
 /// the verifier is left with a single evaluation claim at the point
 /// $(r_1, \ldots, r_n)$.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct ClearSumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
     /// One proof-of-work nonce per round, ground after the round polynomial
     /// and before its challenge; empty when the round difficulty is zero.
-    pub pow_nonces: Vec<u32>,
+    pub pow_nonces: Vec<u64>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
 pub struct CompressedSumcheckProof<F: Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
     /// One proof-of-work nonce per round, as in [`ClearSumcheckProof`].
-    pub pow_nonces: Vec<u32>,
+    pub pow_nonces: Vec<u64>,
 }
-
-/// Serializes the rounds and their nonces as one [`Nonced`] list, so a proof
-/// with no nonces costs what its rounds alone do.
-macro_rules! nonced_rounds_serde {
-    ($proof:ident, $poly:ident) => {
-        impl<F: Field + Serialize> Serialize for $proof<F> {
-            fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-                NoncedRef {
-                    messages: &self.round_polynomials,
-                    pow_nonces: &self.pow_nonces,
-                }
-                .serialize(serializer)
-            }
-        }
-
-        impl<'de, F: Field + Deserialize<'de>> Deserialize<'de> for $proof<F> {
-            fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-                let Nonced {
-                    messages,
-                    pow_nonces,
-                } = Nonced::<$poly<F>>::deserialize(deserializer)?;
-                Ok(Self {
-                    round_polynomials: messages,
-                    pow_nonces,
-                })
-            }
-        }
-    };
-}
-
-nonced_rounds_serde!(ClearSumcheckProof, UnivariatePoly);
-nonced_rounds_serde!(CompressedSumcheckProof, CompressedPoly);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
@@ -134,7 +102,6 @@ impl<F: Field, C> SumcheckProof<F, C> {
         &self,
         claim: &SumcheckClaim<F>,
         domain: D,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
@@ -143,14 +110,13 @@ impl<F: Field, C> SumcheckProof<F, C> {
         D: SumcheckDomain<F>,
     {
         match self {
-            Self::Clear(ClearProof::Full(proof)) => {
-                let rounds = proof
-                    .round_polynomials
-                    .iter()
-                    .map(|poly| LabeledRoundPoly::new(poly, round_label))
-                    .collect::<Vec<_>>();
-                SumcheckVerifier::verify(claim, &rounds, &proof.pow_nonces, domain, transcript)
-            }
+            Self::Clear(ClearProof::Full(proof)) => SumcheckVerifier::verify(
+                claim,
+                &proof.round_polynomials,
+                &proof.pow_nonces,
+                domain,
+                transcript,
+            ),
             Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "full clear",
                 got: "compressed clear",
@@ -184,7 +150,6 @@ impl<F: Field, C> SumcheckProof<F, C> {
                 &SumcheckClaim::new(num_vars, degree, claimed_sum),
                 proof,
                 BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
                 transcript,
             ),
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {

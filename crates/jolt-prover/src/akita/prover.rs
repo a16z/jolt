@@ -151,6 +151,7 @@ where
         preprocessing,
         &stage0.commitment,
         stage0.hint,
+        &stage0.fused_inc,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
         #[cfg(feature = "field-inline")]
@@ -167,8 +168,7 @@ where
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 
-    let mut pow_nonces = StagePowNonces::new();
-    for (site, nonce) in [
+    let pow_nonces = StagePowNonces::from_iter([
         (PowSite::Stage1Tau, stage1.tau_pow_nonce),
         (PowSite::Stage1, stage1.pow_nonce),
         (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
@@ -180,13 +180,12 @@ where
         (PowSite::Stage6b, stage6b.pow_nonce),
         (PowSite::Stage7, stage7.pow_nonce),
         (PowSite::Stage8, stage8_pow_nonce),
-    ] {
-        pow_nonces.set(site, nonce);
-    }
+    ]);
 
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
         commitments: stage0.commitment,
+        fused_inc_commitment: Some(stage0.fused_inc.commitment),
         stages: JoltStageProofs {
             stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
             stage1_sumcheck_proof: stage1.sumcheck_proof,

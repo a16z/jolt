@@ -27,7 +27,7 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec};
-use jolt_transcript::{Encoding, FieldTranscript, Label, Probe, ProverInit, Unit};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit, Unit};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::stages::zk::{blindfold, inputs::BlindFoldInputs};
 use jolt_verifier::stages::{
@@ -133,7 +133,7 @@ where
     // BlindFold verification failure.
     let next_units = |transcript: &T| {
         let mut out = [<T::Unit as Unit>::ZERO; 32];
-        transcript.message_search().probe(&[], &mut out);
+        transcript.verifier_message_oracle()(&[], &mut out);
         out
     };
     if next_units(&transcript) != next_units(forward) {
@@ -157,7 +157,6 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
-    transcript.append(&Label(b"BlindFold"));
     let proof = jolt_blindfold::prove::<F, VC, T, _>(
         vc_setup,
         &protocol,
@@ -202,7 +201,7 @@ where
         public_io,
         shell,
         trusted_advice_commitment,
-        |statement| T::init(JOLT_SESSION, statement),
+        |statement| T::init(&JOLT_SESSION, statement),
     )?;
     let formula_dimensions = jolt_verifier::stages::build_formula_dimensions(
         shell,

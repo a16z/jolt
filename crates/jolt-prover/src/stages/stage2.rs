@@ -47,9 +47,7 @@ use jolt_verifier::stages::stage2::ram_output_check::RamOutputCheck;
 use jolt_verifier::stages::stage2::ram_raf_evaluation::RamRafEvaluation;
 use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking;
 use jolt_verifier::stages::stage2::{product_tau_low, stage2_batch_input_values_from_upstream};
-use jolt_verifier::stages::uniskip::{
-    draw_spartan_product_tau_high, spartan_product_tau_high_loss,
-};
+use jolt_verifier::stages::uniskip::draw_spartan_product_tau_high;
 use jolt_verifier::VerifierError;
 
 use crate::recorder::ProofMode;
@@ -59,9 +57,9 @@ use crate::{ProverConfig, ProverError, StageProver as _};
 /// verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage2ProverOutput<F: JoltField, C> {
     /// Nonce ground before the `tau_high` draw.
-    pub tau_high_pow_nonce: Option<u32>,
+    pub tau_high_pow_nonce: Option<u64>,
     /// Nonce ground before the stage's challenge burst.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage2OutputClaims<F>,
@@ -109,11 +107,7 @@ where
     tracing::info_span!("SpartanProductUniskip::prepare")
         .in_scope(|| backend.prepare_product_uniskip(log_t, &tau_low))?;
 
-    let tau_high_pow_nonce = grind_pow::<F, _>(
-        PowSite::Stage2TauHigh,
-        spartan_product_tau_high_loss(),
-        transcript,
-    )?;
+    let tau_high_pow_nonce = grind_pow::<F, _>(PowSite::Stage2TauHigh, transcript)?;
     let tau_high: F = draw_spartan_product_tau_high(transcript)?;
     let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
     // The field-inline lane inputs enter the composed input claim exactly as on the
@@ -168,7 +162,7 @@ where
     };
     // Both batch gammas, then the RAM output-check address reference point (the
     // last member's `draw_challenges` override) — the verifier's exact schedule.
-    let pow_nonce = grind_pow::<F, _>(PowSite::Stage2, sumchecks.challenge_loss(), transcript)?;
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage2, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
@@ -244,7 +238,10 @@ mod field_inline_round_trip {
         let config = test_prover_config();
         let public_io = test_public_io();
 
-        let mut prover_state = prover_transcript::<Keccak>(b"stage2-field-inline", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline"),
+            b"",
+        );
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
@@ -273,7 +270,10 @@ mod field_inline_round_trip {
         assert_eq!(reduction.rs2_value, appendage.rs2_value);
         assert_eq!(reduction.rd_value, appendage.rd_value);
 
-        let mut transcript = prover_transcript::<Keccak>(b"stage2-field-inline", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &out);
 
@@ -317,7 +317,10 @@ mod field_inline_zk {
         let config = test_prover_config();
         let public_io = test_public_io();
 
-        let mut prover_state = prover_transcript::<Keccak>(b"stage2-field-inline-zk", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline-zk"),
+            b"",
+        );
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
@@ -353,6 +356,7 @@ mod field_inline_zk {
             ram_K: 1 << 4,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
+            untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),
             precommitted: PrecommittedSchedule {
@@ -362,7 +366,10 @@ mod field_inline_zk {
                 program_image: None,
             },
         };
-        let mut transcript = prover_transcript::<Keccak>(b"stage2-field-inline-zk", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage2-field-inline-zk"),
+            b"",
+        );
         {
             let tau = uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
             let uniskip_step = uniskip::verify_zk(

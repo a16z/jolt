@@ -5,7 +5,7 @@
 //! chunk boundaries must reach different transcript states.
 //!
 //! Each chunk is absorbed the way production code absorbs variable-length
-//! payloads — `append_bytes`, a length-prefixed `BytesMsg` — so a boundary
+//! payloads — `append_bytes`, a length-prefixed, word-padded `BytesMsg` — so a boundary
 //! move changes the framing and MUST change the state. A matching state would
 //! mean the framing convention fails to separate `[ab]` from `[a][b]`, the
 //! classic transcript-malleability footgun. The state is observed as the next
@@ -14,7 +14,7 @@
 use std::fmt::Debug;
 
 use jolt_transcript::{
-    prover_transcript, Blake2b512, Keccak, PoseidonSponge, SpongeUnit, Transcript,
+    protocol_tag, prover_transcript, Blake2b512, Keccak, PoseidonSponge, SpongeUnit, Transcript,
 };
 use libfuzzer_sys::fuzz_target;
 use spongefish::DuplexSpongeInit;
@@ -37,7 +37,7 @@ fn parse_chunks(data: &[u8]) -> Vec<&[u8]> {
 }
 
 fn framed_state<H: DuplexSpongeInit<U: SpongeUnit + Debug>>(chunks: &[Vec<u8>]) -> Vec<H::U> {
-    let mut transcript = prover_transcript::<H>(b"fuzz-injectivity", b"");
+    let mut transcript = prover_transcript::<H>(&protocol_tag(b"fuzz-injectivity"), b"");
     for chunk in chunks {
         transcript.append_bytes(chunk);
     }

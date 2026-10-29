@@ -151,6 +151,12 @@ impl DoryHint {
             commit_blind,
         }
     }
+
+    /// Per-row tier-1 commitments. These are deterministic in the witness;
+    /// under ZK only the final tier-2 commitment carries the blind.
+    pub fn row_commitments(&self) -> &[Bn254G1] {
+        &self.row_commitments
+    }
 }
 
 #[derive(Clone)]
@@ -304,8 +310,10 @@ mod tests {
         let (commitment, hint) =
             crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut prove_transcript =
-            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-vs", b"");
+        let mut prove_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"serde-vs"),
+            b"",
+        );
         let proof = crate::DoryScheme::open(
             &poly,
             &point,
@@ -316,8 +324,10 @@ mod tests {
         )
         .unwrap();
 
-        let mut verify_transcript =
-            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-vs", b"");
+        let mut verify_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"serde-vs"),
+            b"",
+        );
         let result = crate::DoryScheme::verify(
             &commitment,
             &point,
@@ -377,7 +387,10 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(b"serde-bp", b"");
+        let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"serde-bp"),
+            b"",
+        );
         let proof =
             crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
                 .unwrap();
@@ -389,8 +402,10 @@ mod tests {
         let verifier_setup = DoryVerifierSetup(prover_setup.0.to_verifier_setup());
         let (commitment, _) = crate::DoryScheme::commit(poly.evaluations(), &prover_setup).unwrap();
 
-        let mut verify_transcript =
-            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-bp", b"");
+        let mut verify_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"serde-bp"),
+            b"",
+        );
         let result = crate::DoryScheme::verify(
             &commitment,
             &point,
@@ -420,8 +435,10 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let mut transcript =
-            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-trailing", b"");
+        let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"serde-trailing"),
+            b"",
+        );
         let proof =
             crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
                 .unwrap();
@@ -447,8 +464,10 @@ mod tests {
             .collect();
         let eval = poly.evaluate(&point);
 
-        let mut transcript =
-            jolt_transcript::prover_transcript::<Blake2b512>(b"serde-oversized", b"");
+        let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"serde-oversized"),
+            b"",
+        );
         let proof =
             crate::DoryScheme::open(&poly, &point, eval, &prover_setup, None, &mut transcript)
                 .unwrap();

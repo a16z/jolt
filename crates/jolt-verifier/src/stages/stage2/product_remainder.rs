@@ -108,11 +108,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProductRemainder<F> {
         &self.symbolic
     }
 
-    /// Draws no challenge of its own.
-    fn challenge_loss(&self) -> u64 {
-        0
-    }
-
     #[cfg_attr(
         not(feature = "field-inline"),
         expect(

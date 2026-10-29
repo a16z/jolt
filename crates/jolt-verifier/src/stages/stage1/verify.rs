@@ -34,13 +34,8 @@ where
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
-    let pow_nonces = proof.stages.pow_nonces();
-    check_pow(
-        PowSite::Stage1Tau,
-        uniskip::spartan_outer_tau_loss(log_t),
-        &pow_nonces,
-        transcript,
-    )?;
+    let pow_nonces = &proof.stages.pow_nonces;
+    check_pow(PowSite::Stage1Tau, pow_nonces, transcript)?;
     let tau = uniskip::draw_spartan_outer_tau(transcript, log_t)?;
 
     if !checked.zk {
@@ -70,12 +65,7 @@ where
         let sumchecks = Stage1BatchSumchecks {
             outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
         };
-        check_pow(
-            PowSite::Stage1,
-            sumchecks.challenge_loss(),
-            &pow_nonces,
-            transcript,
-        )?;
+        check_pow(PowSite::Stage1, pow_nonces, transcript)?;
         let batch_challenges = sumchecks.draw_challenges(transcript)?;
         let input_points = sumchecks.empty_input_points();
 
@@ -108,6 +98,9 @@ where
     }
 
     {
+        // The committed path grinds no stage-1 nonce (ZK runs over BN254 only,
+        // where no site needs one), so the slot must stay empty.
+        pow_nonces.require_absent(PowSite::Stage1)?;
         let uniskip = uniskip::verify_zk(
             checked,
             &proof.stages.stage1_uni_skip_first_round_proof,

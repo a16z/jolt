@@ -89,12 +89,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionAddressPhase<F> {
         &self.symbolic
     }
 
-    /// Draws no challenge before the batch: its challenges come from the
-    /// batch-level draw or from an earlier stage.
-    fn challenge_loss(&self) -> u64 {
-        0
-    }
-
     /// The bytecode address phase is bound on the offset-0 prefix of the batch
     /// challenge vector (two-phase reductions front-load the address rounds).
     fn instance_point_offset(&self, _batch_num_vars: usize) -> Result<usize, VerifierError> {
@@ -180,12 +174,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionAddressPhase<F> 
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
-    }
-
-    /// Draws no challenge before the batch: its challenges come from the
-    /// batch-level draw or from an earlier stage.
-    fn challenge_loss(&self) -> u64 {
-        0
     }
 
     /// The program-image address phase is bound on the offset-0 prefix of the batch

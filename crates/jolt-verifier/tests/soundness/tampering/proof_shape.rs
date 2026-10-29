@@ -82,7 +82,6 @@ fn empty_blindfold_proof() -> BlindFoldProof<Fr, jolt_crypto::Bn254G1> {
         random_eval_commitments: Vec::new(),
         random_u: zero,
         cross_term_error_row_commitments: Vec::new(),
-        pow_nonces: Vec::new(),
         outer_sumcheck: CompressedSumcheckProof::default(),
         az_rx: zero,
         bz_rx: zero,

@@ -47,7 +47,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// cross-stage carrier downstream stages consume.
 pub struct Stage5ProverOutput<F: JoltField, C> {
     /// Nonce ground before the stage's challenge burst.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage5OutputClaims<F>,
     pub clear_output: Stage5ClearOutput<F>,
@@ -95,7 +95,7 @@ where
     // Draws the instruction gamma, then the RAM gamma (registers draws
     // nothing, and so does the `field-inline` field value-evaluation member) —
     // the generated declaration-order draw.
-    let pow_nonce = grind_pow::<F, _>(PowSite::Stage5, sumchecks.challenge_loss(), transcript)?;
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage5, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
@@ -178,7 +178,10 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_state = prover_transcript::<Keccak>(b"stage5-field-inline", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage5-field-inline"),
+            b"",
+        );
         let ((stage1, stage2, stage3), stage4) = FixtureProver {
             backend: &mut context,
             mode: &mode,
@@ -203,7 +206,10 @@ mod field_inline_round_trip {
 
         // The verifier twin (stage5::verify's clear body), positioned by the
         // upstream replays.
-        let mut transcript = prover_transcript::<Keccak>(b"stage5-field-inline", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage5-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);

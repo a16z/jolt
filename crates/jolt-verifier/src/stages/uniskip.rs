@@ -19,11 +19,10 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
-    SumcheckStatement, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    SumcheckStatement,
 };
 use jolt_transcript::{Encoding, FieldTranscript};
 
-use crate::num::u64_from_usize;
 use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
@@ -105,23 +104,6 @@ where
     Ok(transcript.challenge_vector(log_t + 2)?)
 }
 
-/// Proof-of-work loss of [`draw_spartan_outer_tau`]. A false outer claim
-/// survives `tau` only at a root of a nonzero polynomial in it: multilinear in
-/// the `log_t + 1` equality coordinates, and of degree `domain_size - 1` in
-/// the last coordinate through the uni-skip Lagrange kernel. The loss is its
-/// total degree.
-pub fn spartan_outer_tau_loss(log_t: usize) -> u64 {
-    u64_from_usize(log_t).saturating_add(u64_from_usize(SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE))
-}
-
-/// Proof-of-work loss of [`draw_spartan_product_tau_high`]. The Lagrange
-/// kernel weighs the product lanes' claims by polynomials of degree
-/// `domain_size - 1` in `tau_high`, so a false lane survives only at a root
-/// of one.
-pub fn spartan_product_tau_high_loss() -> u64 {
-    u64_from_usize(SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE).saturating_sub(1)
-}
-
 /// The stage-2 product tau_high, drawn before the product uni-skip round.
 /// Both fronts call this, so the draw is single-sourced.
 pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> Result<F, VerifierError>
@@ -147,8 +129,8 @@ pub struct UniskipZk<F: JoltField, C> {
 /// Protocol contract (byte-exact; the prover's uni-skip round must mirror it):
 /// the wire proof is verified as a one-round sumcheck of `params`' degree over
 /// `params`' centered integer domain, the reduced value is hard-checked
-/// against `output_claim`, and `output_claim` is then absorbed under the
-/// `b"opening_claim"` label — BEFORE any post-uni-skip draw (the remainder
+/// against `output_claim`, and `output_claim` is then absorbed — BEFORE any
+/// post-uni-skip draw (the remainder
 /// batch's coefficient squeeze in particular). Errors are attributed to
 /// `params`' stage.
 pub fn verify_clear<F, C, T>(
@@ -166,7 +148,6 @@ where
         .verify(
             &SumcheckClaim::new(UNISKIP_ROUNDS, params.degree, input_claim),
             CenteredIntegerDomain::new(params.domain_size),
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )
         .map_err(|error| params.sumcheck_failed(error))?;
@@ -179,7 +160,7 @@ where
     // Match the prover transcript: the uni-skip output is absorbed as an
     // opening claim before any post-uni-skip draw (the remainder batch's RLC
     // coefficient squeeze in particular).
-    transcript.append_labeled(b"opening_claim", &output_claim);
+    transcript.append(&output_claim);
 
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));

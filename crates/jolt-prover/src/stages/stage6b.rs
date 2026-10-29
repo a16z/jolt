@@ -65,7 +65,7 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
     #[cfg(feature = "zk")]
     pub committed_witness: CommittedSumcheckWitness<F>,
     /// The nonce ground before the post-6a draws, when their loss needs one.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
 }
 
 /// Prove stage 6b on `transcript` (positioned at the stage-6a boundary).
@@ -105,12 +105,8 @@ where
     // The bytecode gamma shares stage 6a's squeeze; the post-6a draws and the
     // challenges aggregate are the verifier's promoted two-front helpers.
     let carried = &stage6a.challenges;
-    let pow_nonce = grind_pow::<F, _>(
-        PowSite::Stage6b,
-        Stage6bDraws::<F>::challenge_loss(&formula_dimensions, committed_program),
-        transcript,
-    )?;
-    let draws = Stage6bDraws::draw(transcript, &formula_dimensions, committed_program)?;
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage6b, transcript)?;
+    let draws = Stage6bDraws::draw(transcript, committed_program)?;
 
     // The batch, through the verifier's own promoted constructor over the
     // clear carriers. Full-mode bytecode rows come from program preprocessing.
@@ -288,7 +284,8 @@ mod field_inline_round_trip {
         let public_io = test_public_io();
         let checked = test_checked_inputs();
 
-        let mut prover_state = prover_transcript::<Keccak>(label, b"");
+        let mut prover_state =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &mut context,
             mode: &mode,
@@ -319,7 +316,8 @@ mod field_inline_round_trip {
         // the upstream replays. The private wire-shape validator is
         // transcript-free and elided; `verify_clear`'s hard checks and the
         // final state equality pin the protocol content.
-        let mut transcript = prover_transcript::<Keccak>(label, b"");
+        let mut transcript =
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
@@ -362,7 +360,7 @@ mod field_inline_round_trip {
         )
         .unwrap();
         let carried = &stage6a.clear_output.challenges;
-        let draws = Stage6bDraws::draw(&mut transcript, &formula_dimensions, false).unwrap();
+        let draws = Stage6bDraws::draw(&mut transcript, false).unwrap();
         let program = preprocessing.program().unwrap();
         let entry_bytecode_index = preprocessing
             .verifier
@@ -441,7 +439,7 @@ mod field_inline_round_trip {
             &cycle_points.bytecode_read_raf.bytecode_ra,
             &booleanity_point,
         ) {
-            transcript.append_labeled(b"opening_claim", &value);
+            transcript.append(&value);
         }
 
         assert_eq!(
@@ -569,7 +567,10 @@ mod field_inline_zk {
         let checked = test_checked_inputs();
         let preprocessing = addi_only_preprocessing();
 
-        let mut transcript = prover_transcript::<Keccak>(b"stage6b-field-inline-zk", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage6b-field-inline-zk"),
+            b"",
+        );
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &mut context,
             mode: &mode,

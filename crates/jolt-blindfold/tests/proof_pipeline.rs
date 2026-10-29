@@ -12,7 +12,10 @@ use support::*;
 fn verify_blindfold_protocol_pipeline(
     full: &BlindFoldTestProof,
 ) -> Result<(), VerificationError<F>> {
-    let mut transcript = prover_transcript::<Blake2b512>(b"protocol-backed-blindfold-proof", b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"protocol-backed-blindfold-proof"),
+        b"",
+    );
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
     full.protocol
         .verify::<VC, _>(&full.proof, &full.setup, &mut transcript)
@@ -144,7 +147,8 @@ fn blindfold_protocol_pipeline_rejects_tampered_error_opening_blinding() {
 fn blindfold_protocol_pipeline_rejects_wrong_transcript() {
     let mut rng = ChaCha20Rng::from_seed([76; 32]);
     let full = prove_blindfold_protocol_pipeline(&mut rng);
-    let mut transcript = prover_transcript::<Blake2b512>(b"wrong-transcript", b"");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"wrong-transcript"), b"");
     append_protocol_transcript_prefix(&full.protocol, &mut transcript);
 
     assert!(full

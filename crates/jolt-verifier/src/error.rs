@@ -135,14 +135,11 @@ pub enum VerifierError {
     #[error("program preprocessing digest failed: {reason}")]
     PreprocessingDigestFailed { reason: String },
 
-    #[error("no proof-of-work difficulty reaches the security target at {site:?} for loss {loss}")]
-    PowDifficulty { site: PowSite, loss: u64 },
+    #[error("no proof-of-work difficulty reaches the security target for the stage-level loss")]
+    PowDifficulty,
 
     #[error("proof-of-work nonce at {site:?} is missing, unexpected, or fails the check")]
     ProofOfWorkRejected { site: PowSite },
-
-    #[error("the challenge set needs proof of work, which this build's proofs do not carry")]
-    ChallengeSetNeedsProofOfWork,
 
     /// The transcript refused a challenge draw: the challenge codec does not
     /// support the request, or its rejection pool ran out.

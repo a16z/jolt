@@ -50,7 +50,7 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// cross-stage carrier downstream stages consume.
 pub struct Stage4ProverOutput<F: JoltField, C> {
     /// Nonce ground before the stage's challenge burst.
-    pub pow_nonce: Option<u32>,
+    pub pow_nonce: Option<u64>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage4OutputClaims<F>,
     pub clear_output: Stage4ClearOutput<F>,
@@ -184,9 +184,8 @@ where
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
     // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
-    // then the RAM value-check gamma behind its `b"ram_val_check_gamma"` domain
-    // separator (replayed by the relation's `draw_challenges` override).
-    let pow_nonce = grind_pow::<F, _>(PowSite::Stage4, sumchecks.challenge_loss(), transcript)?;
+    // then the RAM value-check gamma, in one squeeze run behind the stage-4 proof of work.
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage4, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage4_input_values_from_upstream(
@@ -279,7 +278,10 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_state = prover_transcript::<Keccak>(b"stage4-field-inline", b"");
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage4-field-inline"),
+            b"",
+        );
         let (stage1, stage2, stage3) = FixtureProver {
             backend: &mut context,
             mode: &mode,
@@ -304,7 +306,10 @@ mod field_inline_round_trip {
 
         // The verifier twin (stage4::verify's clear body, shared as the
         // stage-5+ twins' replay), positioned by the upstream replays.
-        let mut transcript = prover_transcript::<Keccak>(b"stage4-field-inline", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage4-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &stage1);
         twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
         twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
@@ -483,7 +488,10 @@ mod field_inline_zk {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut transcript = prover_transcript::<Keccak>(b"stage4-field-inline-zk", b"");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage4-field-inline-zk"),
+            b"",
+        );
         let (_stage1, stage2, stage3) = FixtureProver {
             backend: &mut context,
             mode: &mode,

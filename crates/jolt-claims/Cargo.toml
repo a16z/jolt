@@ -18,7 +18,6 @@ test-utils = []
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-blake2.workspace = true
 derive_more.workspace = true
 jolt-claims-derive.workspace = true
 jolt-field.workspace = true
@@ -27,9 +26,11 @@ jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
+jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rayon.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"] }
+sha3.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

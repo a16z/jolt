@@ -83,11 +83,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionClaimReduction<F> {
         &self.symbolic
     }
 
-    /// Its gamma folds the input claims with powers up to 4.
-    fn challenge_loss(&self) -> u64 {
-        4
-    }
-
     fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
         let [lookup_output] = instruction::read_raf_consistency_openings();
         let [left_input, right_input] = instruction::input_virtualization_consistency_openings();

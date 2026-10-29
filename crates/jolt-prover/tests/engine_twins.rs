@@ -18,7 +18,7 @@ use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, CenteredIntegerDomain, ClearRound, ClearSumcheckRecorder,
     CommittedSumcheckRecorder, ProveRounds, SequentialRounds, SumcheckDomain, SumcheckError,
-    SumcheckProof, SumcheckRecorder, OPENING_CLAIM_TRANSCRIPT_LABEL,
+    SumcheckProof, SumcheckRecorder,
 };
 use jolt_transcript::{prover_transcript, Keccak, Transcript};
 use jolt_verifier::stages::relations::{ConcreteSumcheck as _, SumcheckBatch};
@@ -128,7 +128,8 @@ fn synthetic_output_values() -> Vec<Fr> {
 fn clear_engine_twin_matches_generated_verify_clear() {
     let sumchecks = fixture();
     let inputs = inputs();
-    let mut prover_state = prover_transcript::<Keccak>(b"engine-twin", b"");
+    let mut prover_state =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"engine-twin"), b"");
     let prover_challenges = sumchecks.draw_challenges(&mut prover_state).unwrap();
 
     let instruction_sum = sumchecks
@@ -177,7 +178,8 @@ fn clear_engine_twin_matches_generated_verify_clear() {
 
     // Verifier: draw → begin_batch → verify_compressed_boolean → output-claim
     // absorbs (the low-level clear path the composed `verify_clear` wraps).
-    let mut verifier_transcript = prover_transcript::<Keccak>(b"engine-twin", b"");
+    let mut verifier_transcript =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"engine-twin"), b"");
     let verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
     let mut verifier_recorder = ClearSumcheckRecorder::<Fr>::new();
     let (verifier_batch, verifier_coefficients) = sumchecks
@@ -197,7 +199,7 @@ fn clear_engine_twin_matches_generated_verify_clear() {
         )
         .unwrap();
     for value in &output_values {
-        verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, value);
+        verifier_transcript.append(value);
     }
 
     assert_eq!(reduction.value, proved.final_claim);
@@ -218,7 +220,8 @@ fn committed_engine_twin_matches_generated_verify_zk() {
     // prove_batch → finish (output-claim row commitments absorbed).
     let sumchecks = fixture();
     let inputs = inputs();
-    let mut prover_state = prover_transcript::<Keccak>(b"engine-zk-twin", b"");
+    let mut prover_state =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"engine-zk-twin"), b"");
     let prover_challenges = sumchecks.draw_challenges(&mut prover_state).unwrap();
 
     let instruction_sum = sumchecks
@@ -268,7 +271,8 @@ fn committed_engine_twin_matches_generated_verify_zk() {
         .unwrap();
     assert!(recorded.committed_witness.is_some());
 
-    let mut verifier_transcript = prover_transcript::<Keccak>(b"engine-zk-twin", b"");
+    let mut verifier_transcript =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"engine-zk-twin"), b"");
     let _verifier_challenges = sumchecks.draw_challenges(&mut verifier_transcript).unwrap();
     let consistency = sumchecks
         .verify_zk(&recorded.proof, &mut verifier_transcript)
@@ -312,12 +316,14 @@ fn uniskip_prover_twin_matches_uniskip_verify_clear() {
         &coefficients,
     );
 
-    let mut prover_state = prover_transcript::<Keccak>(b"uniskip-stage-twin", b"");
+    let mut prover_state =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"uniskip-stage-twin"), b"");
     let proved =
         prove_uniskip_clear::<Fr, _>(poly, input_claim, degree, domain_size, &mut prover_state)
             .unwrap();
 
-    let mut verifier_transcript = prover_transcript::<Keccak>(b"uniskip-stage-twin", b"");
+    let mut verifier_transcript =
+        prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"uniskip-stage-twin"), b"");
     let challenge = uniskip::verify_clear(
         &SumcheckProof::<Fr, Bn254G1>::from(proved.proof),
         &params,

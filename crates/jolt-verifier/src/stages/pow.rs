@@ -5,41 +5,50 @@
 //! relation challenges and batching coefficients, the stage-1 `tau` vector,
 //! the stage-2 `tau_high`, and the stage-8 selector points. A false statement
 //! survives the burst only when some draw hits a bad set; summed over the
-//! burst, the bad sets hold at most `loss · |C|^-1` of the challenge space,
-//! where `loss` is fixed by the protocol parameters. One nonce, ground right
-//! before the burst's first draw, lifts the burst to `SECURITY_BITS`:
-//! the difficulty is `grind_bits_for_loss(loss, T::CHALLENGE_SET,
-//! SECURITY_BITS)`, the same rule the sumcheck rounds use.
+//! burst, the bad sets hold at most `loss · |C|^-1` of the challenge space.
+//! One nonce, ground right before the burst's first draw, lifts the burst to
+//! `SECURITY_BITS`.
+//!
+//! Every site is priced at the one flat loss [`SITE_LOSS`] rather than at a
+//! per-relation count: overpricing costs the prover a few probes, while a
+//! count that drifts below the expressions it describes would be a silent
+//! soundness bug. Sumcheck rounds keep their own degree pricing.
 //!
 //! The nonces ride in [`StagePowNonces`], one optional slot per [`PowSite`].
-//! A slot holds a nonce exactly when its difficulty is positive.
+//! A slot holds a nonce exactly when the site is visited and its difficulty
+//! is positive; a site the verifier skips must hold none
+//! ([`StagePowNonces::require_absent`]).
 
-use jolt_claims::{Expr, Source};
 use jolt_transcript::{grind_bits_for_loss, FieldTranscript, SECURITY_BITS};
 use serde::{Deserialize, Serialize};
 
-use crate::num::u64_from_usize;
 use crate::VerifierError;
 
-/// Loss of a batch's coefficients. They combine the members' claims
-/// linearly, so a batch with a false member claim passes for at most one
-/// value of any one coefficient, whatever the member count.
-pub const BATCH_COEFFICIENT_LOSS: u64 = 1;
-
-/// The highest number of challenge factors in any term of `expr`: the total
-/// degree of `expr` in the challenges it reads.
-pub fn challenge_degree<F, O, P, C>(expr: &Expr<F, O, P, C>) -> u64 {
-    expr.terms
-        .iter()
-        .map(|term| {
-            term.factors
-                .iter()
-                .filter(|factor| matches!(factor, Source::Challenge(_)))
-                .count()
-        })
-        .max()
-        .map_or(0, u64_from_usize)
-}
+/// The loss every stage-level burst is priced at.
+///
+/// Bounds on the bursts' actual losses (Akita with field-inline, the worst
+/// case; `B` and `R` are the bytecode and RAM chunk counts, `ℓT` and `ℓR` the
+/// trace and RAM address bits):
+///
+/// | Site | Loss | 64-bit extreme (`B = R = 16`) |
+/// |---|---|---|
+/// | Stage 6a | `163 + 2(B + R)` | 227 |
+/// | Stage 7 | `82 + 3R + 2B` | 162 |
+/// | Stage 2 | `ℓR + 8` | 69 |
+/// | Stage 1 `tau` | `ℓT + 15` | 55 at `ℓT = 40` |
+/// | Stages 1, 2 `tau_high`, 3, 4, 5, 6b | at most 15 | |
+/// | Stage 8 | `Σ log₂(slot capacity)` over at most 4 objects | a few |
+///
+/// Stage 6a is the bytecode read-RAF's 62, up to 4 fresh booleanity
+/// coordinates, `2(N − 1)` for the `N = 32 + B + R + 16 + 1` boolean-checked
+/// openings, and 1 for the batching coefficients. Stage 7 is 3 `γ` powers per
+/// RAM chunk, 2 per instruction and bytecode chunk, 1 per increment digit,
+/// plus 2.
+///
+/// 1023 is 4.5 times the extreme and still covers 2-bit chunks (about 383).
+/// It is `2^10 − 1` rather than `2^10`: the field order is below `2^128`, so a
+/// power-of-two loss would cost one more bit.
+pub const SITE_LOSS: u64 = 1023;
 
 /// The challenge bursts that a proof-of-work nonce protects, in transcript
 /// order.
@@ -78,7 +87,7 @@ impl PowSite {
         Self::Stage8,
     ];
 
-    /// Position in transcript order, which is also the slot and mask bit.
+    /// Position in transcript order, which is also the slot.
     const fn index(self) -> u32 {
         match self {
             Self::Stage1Tau => 0,
@@ -94,16 +103,11 @@ impl PowSite {
             Self::Stage8 => 10,
         }
     }
-
-    fn mask_bit(self) -> u16 {
-        1u16.checked_shl(self.index()).unwrap_or(0)
-    }
 }
 
 /// The proof-of-work nonces of every [`PowSite`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(into = "PowNonceWire", try_from = "PowNonceWire")]
-pub struct StagePowNonces([Option<u32>; PowSite::ALL.len()]);
+pub struct StagePowNonces([Option<u64>; PowSite::ALL.len()]);
 
 impl StagePowNonces {
     /// No nonces.
@@ -111,14 +115,36 @@ impl StagePowNonces {
         Self([None; PowSite::ALL.len()])
     }
 
-    pub fn get(&self, site: PowSite) -> Option<u32> {
+    pub fn get(&self, site: PowSite) -> Option<u64> {
         self.0.get(slot(site)).copied().flatten()
     }
 
-    pub fn set(&mut self, site: PowSite, nonce: Option<u32>) {
+    pub fn set(&mut self, site: PowSite, nonce: Option<u64>) {
         if let Some(entry) = self.0.get_mut(slot(site)) {
             *entry = nonce;
         }
+    }
+
+    /// Rejects a nonce at a site the verifier does not visit on this path, so
+    /// the slot cannot carry bytes that nothing checks.
+    ///
+    /// # Errors
+    /// [`VerifierError::ProofOfWorkRejected`] if the slot holds a nonce.
+    pub fn require_absent(&self, site: PowSite) -> Result<(), VerifierError> {
+        match self.get(site) {
+            None => Ok(()),
+            Some(_) => Err(VerifierError::ProofOfWorkRejected { site }),
+        }
+    }
+}
+
+impl FromIterator<(PowSite, Option<u64>)> for StagePowNonces {
+    fn from_iter<I: IntoIterator<Item = (PowSite, Option<u64>)>>(sites: I) -> Self {
+        let mut nonces = Self::new();
+        for (site, nonce) in sites {
+            nonces.set(site, nonce);
+        }
+        nonces
     }
 }
 
@@ -126,121 +152,51 @@ fn slot(site: PowSite) -> usize {
     usize::try_from(site.index()).unwrap_or(usize::MAX)
 }
 
-/// Wire form of [`StagePowNonces`]: a bitmask of the occupied slots, then
-/// their nonces in site order. With no nonces it costs two bytes.
-#[derive(Serialize, Deserialize)]
-struct PowNonceWire {
-    present: u16,
-    nonces: Vec<u32>,
-}
-
-impl From<StagePowNonces> for PowNonceWire {
-    fn from(slots: StagePowNonces) -> Self {
-        let mut present = 0u16;
-        let mut nonces = Vec::new();
-        for site in PowSite::ALL {
-            if let Some(nonce) = slots.get(site) {
-                present |= site.mask_bit();
-                nonces.push(nonce);
-            }
-        }
-        Self { present, nonces }
-    }
-}
-
-impl TryFrom<PowNonceWire> for StagePowNonces {
-    type Error = &'static str;
-
-    fn try_from(wire: PowNonceWire) -> Result<Self, Self::Error> {
-        let known = PowSite::ALL
-            .iter()
-            .fold(0u16, |mask, site| mask | site.mask_bit());
-        if wire.present & !known != 0 {
-            return Err("proof-of-work mask names an unknown site");
-        }
-        if usize::try_from(wire.present.count_ones()).ok() != Some(wire.nonces.len()) {
-            return Err("proof-of-work mask and nonce count disagree");
-        }
-        let mut slots = Self::new();
-        let mut nonces = wire.nonces.into_iter();
-        for site in PowSite::ALL {
-            if wire.present & site.mask_bit() != 0 {
-                slots.set(site, nonces.next());
-            }
-        }
-        Ok(slots)
-    }
-}
-
-/// Proof-of-work difficulty for a burst at `site` whose draws lose `loss`
-/// in total; a burst that loses nothing needs none.
+/// Proof-of-work difficulty of every stage-level burst: the difficulty for a
+/// loss of [`SITE_LOSS`] over `T::CHALLENGE_SET`.
 ///
 /// # Errors
 /// [`VerifierError::PowDifficulty`] if no supported difficulty reaches
-/// `SECURITY_BITS` for this loss and challenge set.
-pub fn pow_bits<F, T: FieldTranscript<F>>(site: PowSite, loss: u64) -> Result<u32, VerifierError> {
-    if loss == 0 {
-        return Ok(0);
-    }
-    grind_bits_for_loss(loss, T::CHALLENGE_SET, SECURITY_BITS)
-        .map_err(|_| VerifierError::PowDifficulty { site, loss })
+/// `SECURITY_BITS` for this challenge set.
+pub fn site_pow_bits<F, T: FieldTranscript<F>>() -> Result<u32, VerifierError> {
+    grind_bits_for_loss(SITE_LOSS, T::CHALLENGE_SET, SECURITY_BITS)
+        .map_err(|_| VerifierError::PowDifficulty)
 }
 
 /// Checks the nonce of the burst at `site` right before its first draw.
 ///
 /// # Errors
-/// [`VerifierError::PowDifficulty`] as for [`pow_bits`], and
+/// [`VerifierError::PowDifficulty`] as for [`site_pow_bits`], and
 /// [`VerifierError::ProofOfWorkRejected`] if the nonce is missing, present
 /// when the difficulty is zero, or fails the check.
 pub fn check_pow<F, T: FieldTranscript<F>>(
     site: PowSite,
-    loss: u64,
     nonces: &StagePowNonces,
     transcript: &mut T,
 ) -> Result<(), VerifierError> {
     transcript
-        .check_public_grind(pow_bits::<F, T>(site, loss)?, nonces.get(site))
+        .check_public_grind(site_pow_bits::<F, T>()?, nonces.get(site))
         .map_err(|_| VerifierError::ProofOfWorkRejected { site })
-}
-
-/// Rejects a challenge set narrow enough that some burst would need proof of
-/// work. Builds whose proofs carry no [`StagePowNonces`] (Dory, ZK) call this
-/// before touching the transcript: they draw challenges, such as the stage-8
-/// batching coefficients and the BlindFold challenges, that grind nowhere.
-///
-/// # Errors
-/// [`VerifierError::ChallengeSetNeedsProofOfWork`] if a burst of the largest
-/// loss needs a positive difficulty.
-pub fn require_no_pow<F, T: FieldTranscript<F>>() -> Result<(), VerifierError> {
-    match grind_bits_for_loss(u64::MAX, T::CHALLENGE_SET, SECURITY_BITS) {
-        Ok(0) => Ok(()),
-        _ => Err(VerifierError::ChallengeSetNeedsProofOfWork),
-    }
 }
 
 #[cfg(test)]
 mod tests {
     #![expect(clippy::unwrap_used, reason = "tests")]
 
-    use super::{PowNonceWire, PowSite, StagePowNonces};
+    use jolt_transcript::{grind_bits_for_loss, ChallengeSetSize, SECURITY_BITS};
 
+    use super::SITE_LOSS;
+
+    /// The flat loss costs 10 bits over a 128-bit prime field; a loss of
+    /// `2^10` would cost 11.
     #[test]
-    fn wire_form_round_trips_and_rejects_inconsistent_masks() {
-        let mut slots = StagePowNonces::default();
-        slots.set(PowSite::Stage1Tau, Some(7));
-        slots.set(PowSite::Stage8, Some(0));
-        let bytes = bincode::serde::encode_to_vec(slots, bincode::config::standard()).unwrap();
-        let (back, _): (StagePowNonces, _) =
-            bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
-        assert_eq!(back, slots);
-
-        let empty =
-            bincode::serde::encode_to_vec(StagePowNonces::default(), bincode::config::standard())
-                .unwrap();
-        assert_eq!(empty.len(), 2);
-
-        for (present, nonces) in [(0b1, vec![]), (0b1, vec![1, 2]), (0x800, vec![1])] {
-            assert!(StagePowNonces::try_from(PowNonceWire { present, nonces }).is_err());
-        }
+    fn site_loss_costs_ten_bits_over_a_128_bit_field() {
+        // 2^128 − 0xffff_a7f7, the modulus of `Prime128OffsetA7F7`.
+        let set = ChallengeSetSize::field_order(u128::MAX - 0xffff_a7f6, 1).unwrap();
+        assert_eq!(grind_bits_for_loss(SITE_LOSS, set, SECURITY_BITS), Ok(10));
+        assert_eq!(
+            grind_bits_for_loss(SITE_LOSS + 1, set, SECURITY_BITS),
+            Ok(11)
+        );
     }
 }

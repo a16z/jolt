@@ -78,11 +78,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamReadWriteChecking<F> {
         &self.symbolic
     }
 
-    /// Its gamma folds the input claims with powers up to 1.
-    fn challenge_loss(&self) -> u64 {
-        1
-    }
-
     fn derive_opening_points(
         &self,
         sumcheck_point: &[F],

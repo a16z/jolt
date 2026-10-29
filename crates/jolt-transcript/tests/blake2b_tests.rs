@@ -8,15 +8,19 @@ use jolt_transcript::Blake2b512;
 
 transcript_tests!(Blake2b512);
 
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[test]
 fn test_blake2b_known_vector() {
     let mut transcript = transcript(b"Jolt");
     transcript.append(&12345u64);
     let challenge: Fr = transcript.challenge().unwrap();
     // Pins the session derived from PROTOCOL_ID, the instance absorb, one
-    // `u64` public message and one 52-byte challenge squeeze reduced mod r.
+    // `u64` public message and one 56-byte challenge squeeze reduced mod r.
     assert_eq!(
         format!("{challenge:?}"),
-        "9356779209320493234425964665725634890796037071057512197394342005071209638942"
+        "19511679008748546059954614320539583065670345019378152892361345655216605672333"
     );
 }

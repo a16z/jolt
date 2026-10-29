@@ -110,12 +110,7 @@ where
     // registers draws nothing, and neither does the `field-inline` value-evaluation member.
     // The drawn challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
-    check_pow(
-        PowSite::Stage5,
-        sumchecks.challenge_loss(),
-        &proof.stages.pow_nonces(),
-        transcript,
-    )?;
+    check_pow(PowSite::Stage5, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

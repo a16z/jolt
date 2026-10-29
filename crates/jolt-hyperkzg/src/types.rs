@@ -1,6 +1,6 @@
 use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
 use jolt_field::Fr;
-use jolt_transcript::{FieldTranscript, U64Word, VerificationError};
+use jolt_transcript::{FieldTranscript, VerificationError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -61,6 +61,12 @@ impl HyperKZGVerifierSetup {
         Ok(len)
     }
 
+    /// Absorbs the setup, the commitment, the point and the evaluation.
+    ///
+    /// # Security
+    /// The point is absorbed with no count, so the caller must validate
+    /// `point.len()` first, as the scheme's entry points do with
+    /// [`Self::check_arity`].
     pub(crate) fn append_statement(
         &self,
         commitment: &Bn254G1,
@@ -68,13 +74,13 @@ impl HyperKZGVerifierSetup {
         evaluation: Fr,
         transcript: &mut impl FieldTranscript<Fr>,
     ) {
-        transcript.append_labeled(b"hyperkzg-binary-bn254-v1", &U64Word(self.num_powers));
-        transcript.append_bytes(&self.setup_id);
+        transcript.append(&self.num_powers);
+        transcript.append(&self.setup_id);
         transcript.append(&self.g1);
         transcript.append(&self.g2);
         transcript.append(&self.beta_g2);
         transcript.append(commitment);
-        transcript.append_values(b"opening-point", point);
+        transcript.append_values(point);
         transcript.append(&evaluation);
     }
 }
@@ -151,7 +157,10 @@ mod tests {
                 Fr::zero(),
                 &proof,
                 key,
-                &mut prover_transcript::<Blake2b512>(b"decoded-key", b""),
+                &mut prover_transcript::<Blake2b512>(
+                    &jolt_transcript::protocol_tag(b"decoded-key"),
+                    b"",
+                ),
             )
         };
         verify(&valid).unwrap();

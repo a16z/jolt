@@ -1,9 +1,11 @@
 //! The Akita final opening.
 //!
 //! `OneHotTrace` batches its native columns at one common point. Advice,
-//! field increments, and direct committed-program objects
+//! RV64 increments, field-register increments, and direct committed-program objects
 //! join it as auxiliary Akita groups and are discharged by one joint opening.
 
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::increments::{fused_inc_group_role, FusedIncLayout};
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
@@ -161,15 +163,12 @@ where
         .map_err(batch_failed)
 }
 
-/// Proof-of-work loss of the selector points of `plans`. A false claim among
-/// an object's evaluations survives its selector only at a root of a nonzero
-/// multilinear polynomial in the selector's variables, whose total degree is
-/// their count.
-pub fn selector_loss<'a>(plans: impl IntoIterator<Item = &'a PrefixPackedObjectPlan>) -> u64 {
+/// Whether any of `plans` draws a selector point, so that stage 8 has a
+/// challenge burst for proof of work to protect.
+pub fn has_selectors<'a>(plans: impl IntoIterator<Item = &'a PrefixPackedObjectPlan>) -> bool {
     plans
         .into_iter()
-        .map(|plan| crate::num::u64_from_usize(plan.packing().selector_num_vars()))
-        .fold(0, u64::saturating_add)
+        .any(|plan| plan.packing().selector_num_vars() > 0)
 }
 
 fn advice_object<'a, PCS: CommitmentScheme>(
@@ -223,6 +222,25 @@ pub fn field_inc_claim<F: JoltField, C: Clone>(
     ))
 }
 
+/// The ReadRAF reduction already produces the increment claim at a cycle point.
+#[cfg(feature = "akita")]
+pub fn fused_inc_claim<F: JoltField, C: Clone>(
+    commitment: &C,
+    stage6b: &Stage6bClearOutput<F>,
+) -> Result<TaggedGroupOpeningClaim<F, C>, VerifierError> {
+    let point = stage6b.output_points.fused_inc_opening_point();
+    Ok(TaggedGroupOpeningClaim::new(
+        fused_inc_group_role(),
+        GroupOpeningClaim::new(
+            commitment.clone(),
+            FusedIncLayout::new(point.len())
+                .opening_point(point)
+                .map_err(batch_failed)?,
+            vec![stage6b.output_values.bytecode_read_raf.fused_inc],
+        ),
+    ))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the stage inputs are passed separately by the verifier driver"
@@ -232,6 +250,7 @@ pub fn verify<PCS, VC, T>(
     one_hot_config: JoltOneHotConfig,
     preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
+    #[cfg(feature = "akita")] fused_inc_commitment: Option<&PCS::Output>,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
@@ -252,7 +271,7 @@ where
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
-    // committed-program objects. Optional objects join exactly when their direct final
+    // committed-program objects, then FusedInc. Optional objects join exactly when their direct final
     // reductions exist; presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
     let one_hot_trace_shape = OneHotTraceShape {
@@ -306,8 +325,8 @@ where
 
     // One nonce covers every object's selector point: the reductions absorb
     // only claims fixed by earlier messages, so no prover message falls
-    // between the draws.
-    let selector_loss = selector_loss(
+    // between the draws. With no selector there is no burst and no nonce.
+    let selectors = has_selectors(
         [untrusted.as_ref(), trusted.as_ref()]
             .into_iter()
             .flatten()
@@ -318,7 +337,11 @@ where
                     .flat_map(|(_, plan)| [&plan.bytecode, &plan.program_image]),
             ),
     );
-    check_pow(PowSite::Stage8, selector_loss, pow_nonces, transcript)?;
+    if selectors {
+        check_pow(PowSite::Stage8, pow_nonces, transcript)?;
+    } else {
+        pow_nonces.require_absent(PowSite::Stage8)?;
+    }
 
     let untrusted_claim = if let Some(object) = untrusted.as_ref() {
         validate_packed_object_metadata(object.commitment, &object.plan)?;
@@ -376,6 +399,16 @@ where
                 ),
             ));
         }
+    }
+
+    #[cfg(feature = "akita")]
+    {
+        let commitment = fused_inc_commitment.ok_or(VerifierError::MissingProofPayload {
+            field: "fused_inc_commitment",
+        })?;
+        let layout = FusedIncLayout::new(formula_dimensions.trace.log_t());
+        validate_group_commitment_metadata(commitment, layout.layout_digest(), layout.num_vars())?;
+        auxiliary_groups.push(fused_inc_claim(commitment, stage6b)?);
     }
 
     PCS::verify_batch(
@@ -518,21 +551,6 @@ pub fn leaf_claims<F: JoltField>(
         &hamming_values.ram_ra,
         &hamming_points.ram_ra,
         Poly::RamRa,
-    )?;
-
-    insert_indexed(
-        &mut leaves,
-        &hamming_values.balanced_inc_digits,
-        &hamming_points.balanced_inc_digits,
-        Poly::BalancedIncDigit,
-    )?;
-    insert(
-        &mut leaves,
-        Poly::BalancedIncCarry,
-        leaf(
-            hamming_values.balanced_inc_carry,
-            &hamming_points.balanced_inc_carry,
-        ),
     )?;
 
     #[cfg(feature = "akita")]

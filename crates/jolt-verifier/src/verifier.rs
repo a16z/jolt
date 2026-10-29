@@ -15,7 +15,7 @@ use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{
-    Encoding, FieldTranscript, Label, LabelWithCount, Transcript, U64Word, VerifierInit,
+    protocol_tag, BytesMsg, Encoding, FieldTranscript, Transcript, VerifierInit, TAG_BYTES,
 };
 
 #[cfg(not(feature = "akita"))]
@@ -57,13 +57,12 @@ where
 {
     use crate::stages::zk::{blindfold, inputs::BlindFoldInputs};
 
-    crate::stages::pow::require_no_pow::<F, T>()?;
     let (checked, mut transcript) = validate_and_seed_transcript(
         preprocessing,
         public_io,
         proof,
         trusted_advice_commitment,
-        |statement| T::init(JOLT_SESSION, statement, &proof.narg),
+        |statement| T::init(&JOLT_SESSION, statement, &proof.narg),
     )?;
 
     // Built once for the whole verification and shared by the stages that read
@@ -160,7 +159,6 @@ where
             .ok_or(VerifierError::MissingVectorCommitmentSetup)?;
         jolt_verifier_derive::fs_scope_guard!(BlindFold);
 
-        transcript.append(&Label(b"BlindFold"));
         blindfold
             .verify::<VC, T>(proof.blindfold_proof()?, vc_setup, &mut transcript)
             .map_err(|error| VerifierError::BlindFoldVerificationFailed {
@@ -201,7 +199,7 @@ where
         public_io,
         proof,
         trusted_advice_commitment,
-        |statement| T::init(JOLT_SESSION, statement, &proof.narg),
+        |statement| T::init(&JOLT_SESSION, statement, &proof.narg),
     )?;
 
     // Built once for the whole verification and shared by the stages that read
@@ -287,13 +285,19 @@ where
         .map_err(|_| VerifierError::NargNotConsumed)
 }
 
-/// The session every Jolt transcript is bound to.
-pub const JOLT_SESSION: &[u8] = b"Jolt";
+/// The session every Jolt transcript is bound to: a fixed 32-byte tag.
+pub const JOLT_SESSION: [u8; TAG_BYTES] = protocol_tag(b"Jolt");
 
 /// The statement every Jolt transcript is bound to before its first message:
 /// the protocol configuration, the preprocessing digest, the public I/O, and
 /// the proof's structural parameters, all validated before the transcript is
 /// built. Prover and verifier encode it through this one type.
+///
+/// The encoding is positional: 19 configuration words and the advice presence
+/// word, each one `u64` little-endian word, then the 32-byte preprocessing
+/// digest, then the inputs and the outputs, each a length word, the bytes and
+/// zero padding to a word. Every later absorb whose presence depends on advice
+/// is fixed by the presence word.
 #[derive(Clone, Copy, Debug)]
 pub struct JoltStatement<'a> {
     pub checked: &'a CheckedInputs,
@@ -306,86 +310,55 @@ impl Encoding for JoltStatement<'_> {
         let public_io = &checked.public_io;
         let protocol = JoltProtocolConfig::for_zk(checked.zk);
         let mut out = Vec::new();
-        let mut word = |label: &'static [u8], value: u64| {
-            out.extend_from_slice(Label(label).encode().as_ref());
-            out.extend_from_slice(U64Word(value).encode().as_ref());
-        };
-        word(
-            b"zk",
-            match protocol.zk {
-                ZkConfig::Transparent => 0,
-                ZkConfig::BlindFold => 1,
-            },
-        );
-        word(
-            b"commitment",
-            match protocol.commitment {
-                CommitmentConfig::Homomorphic => 0,
-                CommitmentConfig::Akita => 1,
-            },
-        );
-        word(b"field_inline", u64::from(protocol.field_inline.enabled));
-        word(
-            b"field_register_log_k",
-            num::u64_from_usize(protocol.field_inline.field_register_log_k),
-        );
-        word(
-            b"field_inline_representation",
-            match protocol.field_inline.representation {
-                FieldInlineRepresentation::NativeFieldElement => 0,
-            },
-        );
-        word(b"max_input_size", public_io.memory_layout.max_input_size);
-        word(b"max_output_size", public_io.memory_layout.max_output_size);
-        word(b"heap_size", public_io.memory_layout.heap_size);
-        word(b"panic", u64::from(public_io.panic));
-        word(b"ram_K", num::u64_from_usize(checked.ram_K));
-        word(b"trace_length", num::u64_from_usize(checked.trace_length));
-        word(b"entry_address", checked.entry_address);
+        let mut word = |value: u64| out.extend_from_slice(&value.to_le_bytes());
+        word(match protocol.zk {
+            ZkConfig::Transparent => 0,
+            ZkConfig::BlindFold => 1,
+        });
+        word(match protocol.commitment {
+            CommitmentConfig::Homomorphic => 0,
+            CommitmentConfig::Akita => 1,
+        });
+        word(u64::from(protocol.field_inline.enabled));
+        word(num::u64_from_usize(
+            protocol.field_inline.field_register_log_k,
+        ));
+        word(match protocol.field_inline.representation {
+            FieldInlineRepresentation::NativeFieldElement => 0,
+        });
+        word(public_io.memory_layout.max_input_size);
+        word(public_io.memory_layout.max_output_size);
+        word(public_io.memory_layout.heap_size);
+        word(u64::from(public_io.panic));
+        word(num::u64_from_usize(checked.ram_K));
+        word(num::u64_from_usize(checked.trace_length));
+        word(checked.entry_address);
         let rw = self.config.rw_config;
-        word(
-            b"ram_rw_phase1_num_rounds",
-            u64::from(rw.ram_rw_phase1_num_rounds),
-        );
-        word(
-            b"ram_rw_phase2_num_rounds",
-            u64::from(rw.ram_rw_phase2_num_rounds),
-        );
-        word(
-            b"registers_rw_phase1_num_rounds",
-            u64::from(rw.registers_rw_phase1_num_rounds),
-        );
-        word(
-            b"registers_rw_phase2_num_rounds",
-            u64::from(rw.registers_rw_phase2_num_rounds),
-        );
+        word(u64::from(rw.ram_rw_phase1_num_rounds));
+        word(u64::from(rw.ram_rw_phase2_num_rounds));
+        word(u64::from(rw.registers_rw_phase1_num_rounds));
+        word(u64::from(rw.registers_rw_phase2_num_rounds));
         let one_hot = self.config.one_hot_config;
-        word(b"log_k_chunk", u64::from(one_hot.log_k_chunk));
-        word(
-            b"lookups_ra_virtual_log_k_chunk",
-            u64::from(one_hot.lookups_ra_virtual_log_k_chunk),
-        );
-        word(
-            b"dory_layout",
-            self.config.trace_polynomial_order.transcript_scalar(),
-        );
-        for (label, bytes) in [
-            (
-                &b"preprocessing_digest"[..],
-                &checked.preprocessing_digest[..],
-            ),
-            (b"inputs", &public_io.inputs),
-            (b"outputs", &public_io.outputs),
-        ] {
-            out.extend_from_slice(
-                LabelWithCount(label, num::u64_from_usize(bytes.len()))
-                    .encode()
-                    .as_ref(),
-            );
-            out.extend_from_slice(bytes);
+        word(u64::from(one_hot.log_k_chunk));
+        word(u64::from(one_hot.lookups_ra_virtual_log_k_chunk));
+        word(self.config.trace_polynomial_order.transcript_scalar());
+        word(advice_presence(checked));
+        out.extend_from_slice(&checked.preprocessing_digest);
+        for bytes in [&public_io.inputs, &public_io.outputs] {
+            let message = BytesMsg(bytes.as_slice());
+            out.extend_from_slice(message.encode().as_ref());
         }
         out
     }
+}
+
+/// The advice presence word: bit 0 when the proof carries an untrusted-advice
+/// commitment, bit 1 when the verifier was given a trusted-advice commitment.
+/// It is computed on every build, so the advice commitments that follow are
+/// fixed by bound data.
+fn advice_presence(checked: &CheckedInputs) -> u64 {
+    u64::from(checked.untrusted_advice_commitment_present)
+        | (u64::from(checked.trusted_advice_commitment_present) << 1)
 }
 
 /// Validates the inputs and proof shape, builds the Fiat-Shamir transcript
@@ -443,6 +416,7 @@ pub struct CheckedInputs {
     pub ram_K: usize,
     pub entry_address: u64,
     pub preprocessing_digest: [u8; 32],
+    pub untrusted_advice_commitment_present: bool,
     pub trusted_advice_commitment_present: bool,
     pub vc_capacity: Option<usize>,
     pub precommitted: PrecommittedSchedule,
@@ -462,7 +436,6 @@ where
     let ram_k = proof.ram_K;
     let trace_polynomial_order = proof.trace_polynomial_order;
     let one_hot_config = proof.one_hot_config;
-    #[cfg(not(feature = "akita"))]
     let untrusted_advice_commitment_present = proof.untrusted_advice_commitment.is_some();
     let zk = matches!(JOLT_VERIFIER_CONFIG.zk, ZkConfig::BlindFold);
     let vc_capacity = if zk {
@@ -622,6 +595,7 @@ where
         ram_K: ram_k,
         entry_address: program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
         precommitted,
@@ -678,6 +652,13 @@ where
     if proof.field_inc_commitment.is_none() {
         return Err(VerifierError::MissingProofPayload {
             field: "field_inc_commitment",
+        });
+    }
+
+    #[cfg(feature = "akita")]
+    if proof.fused_inc_commitment.is_none() {
+        return Err(VerifierError::MissingProofPayload {
+            field: "fused_inc_commitment",
         });
     }
 
@@ -777,6 +758,7 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     #[cfg(feature = "akita")]
     absorb_akita_commitments(
         &proof.commitments,
+        proof.fused_inc_commitment.as_ref(),
         proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
@@ -791,12 +773,13 @@ pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
     );
 }
 
-/// Absorbs the Akita commitment objects in canonical object order: `OneHotTrace`, untrusted
-/// advice, trusted advice, the field-increment commitment (field-inline builds), then the whole
+/// Absorbs the Akita commitment objects in canonical object order: `OneHotTrace`, `FusedInc`,
+/// untrusted advice, trusted advice, the field-increment commitment (field-inline builds), then the whole
 /// bytecode and program image. Shared verbatim by the Akita prover's stage 0.
 #[cfg(feature = "akita")]
 pub fn absorb_akita_commitments<C, T>(
     one_hot_trace: &C,
+    fused_inc_commitment: Option<&C>,
     untrusted_advice_commitment: Option<&C>,
     trusted_advice_commitment: Option<&C>,
     #[cfg(feature = "field-inline")] field_inc_commitment: Option<&C>,
@@ -806,16 +789,19 @@ pub fn absorb_akita_commitments<C, T>(
     C: Encoding,
     T: Transcript,
 {
-    transcript.append_labeled(b"commitment", one_hot_trace);
+    transcript.append(one_hot_trace);
+    if let Some(commitment) = fused_inc_commitment {
+        transcript.append(commitment);
+    }
     if let Some(commitment) = untrusted_advice_commitment {
-        transcript.append_labeled(b"untrusted_advice", commitment);
+        transcript.append(commitment);
     }
     if let Some(commitment) = trusted_advice_commitment {
-        transcript.append_labeled(b"trusted_advice", commitment);
+        transcript.append(commitment);
     }
     #[cfg(feature = "field-inline")]
     if let Some(commitment) = field_inc_commitment {
-        transcript.append_labeled(b"field_inc", commitment);
+        transcript.append(commitment);
     }
     if let Some((bytecode, image)) = program_commitments {
         absorb_akita_program_commitments(bytecode, image, transcript);
@@ -828,8 +814,8 @@ where
     C: Encoding,
     T: Transcript,
 {
-    transcript.append_labeled(b"program_bytecode_commitment", bytecode);
-    transcript.append_labeled(b"program_image_init_commitment", image);
+    transcript.append(bytecode);
+    transcript.append(image);
 }
 
 /// Absorbs the preprocessing-held committed-program commitments (whole
@@ -843,8 +829,8 @@ pub fn absorb_committed_program_commitments<C, T>(
     C: Encoding,
     T: Transcript,
 {
-    transcript.append_labeled(b"program_bytecode_commit", bytecode_commitment);
-    transcript.append_labeled(b"program_image_commitment", program_image_commitment);
+    transcript.append(bytecode_commitment);
+    transcript.append(program_image_commitment);
 }
 
 /// Absorbs the proof-derived polynomial commitments (increment, one-hot `ra`,
@@ -862,8 +848,7 @@ pub fn absorb_transcript_commitments<C, T>(
     C: Encoding,
     T: Transcript,
 {
-    let mut absorb_commitment =
-        |commitment: &C| transcript.append_labeled(b"commitment", commitment);
+    let mut absorb_commitment = |commitment: &C| transcript.append(commitment);
     absorb_commitment(&commitments.rd_inc);
     absorb_commitment(&commitments.ram_inc);
     for commitment in &commitments.instruction_ra {
@@ -880,16 +865,13 @@ pub fn absorb_transcript_commitments<C, T>(
     // protocol. The prover's stage 0 must commit in this same order.
     #[cfg(feature = "field-inline")]
     if let Some(field_inline) = &commitments.field_inline {
-        transcript.append_labeled(
-            b"field_rd_inc_commitment",
-            &field_inline.field_registers.rd_inc,
-        );
+        transcript.append(&field_inline.field_registers.rd_inc);
     }
     if let Some(untrusted_advice_commitment) = untrusted_advice_commitment {
-        transcript.append_labeled(b"untrusted_advice", untrusted_advice_commitment);
+        transcript.append(untrusted_advice_commitment);
     }
     if let Some(trusted_advice_commitment) = trusted_advice_commitment {
-        transcript.append_labeled(b"trusted_advice", trusted_advice_commitment);
+        transcript.append(trusted_advice_commitment);
     }
 }
 
@@ -920,12 +902,14 @@ fn validate_trace_length(
     Ok(())
 }
 
-/// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
-/// `8k + lowest_address`, and the lattice digit-zero reconstruction relies on
-/// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
-/// access at remapped word zero (see "Where the RAM activation is pinned" in
-/// `specs/lattice-claims.md`). Mirrors the prover-side
-/// `UnmapRamAddressPolynomial::new` assertion (`start_address > 8`).
+/// Fail closed on a RAM remap base that RAF evaluation cannot rely on. Stage
+/// 2's RAF-evaluation unmap is `8k + lowest_address`:
+/// - `lowest_address > 8` keeps `unmap(0) ≠ 0`, which the lattice digit-zero
+///   reconstruction relies on to distinguish "no RAM access" from an access
+///   at remapped word zero;
+/// - `lowest_address ≡ 0 (mod 8)` makes every admissible `RamAddress` a
+///   multiple of 8, which is how RAF evaluation rejects a memory access
+///   misaligned for its width (see R1CS constraint 0 in `jolt-claims`).
 fn validate_ram_remap_base(
     memory_layout: &common::jolt_device::MemoryLayout,
 ) -> Result<(), VerifierError> {
@@ -935,6 +919,14 @@ fn validate_ram_remap_base(
             reason: format!(
                 "lowest remapped RAM address {lowest_address:#x} must exceed 8 so the RAF \
                  unmap constant stays clear of the null-address range"
+            ),
+        });
+    }
+    if !lowest_address.is_multiple_of(8) {
+        return Err(VerifierError::InvalidMemoryLayout {
+            reason: format!(
+                "lowest remapped RAM address {lowest_address:#x} must be doubleword-aligned so \
+                 RAF evaluation rejects misaligned memory accesses"
             ),
         });
     }
@@ -953,7 +945,7 @@ pub fn validate_inputs_from_parts<PCS, VC>(
     trace_polynomial_order: TracePolynomialOrder,
     one_hot_config: JoltOneHotConfig,
     trusted_advice_commitment_present: bool,
-    #[cfg(not(feature = "akita"))] untrusted_advice_commitment_present: bool,
+    untrusted_advice_commitment_present: bool,
     zk: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
@@ -1089,6 +1081,7 @@ where
         ram_K: ram_k,
         entry_address: preprocessing.program.entry_address(),
         preprocessing_digest: preprocessing.preprocessing_digest,
+        untrusted_advice_commitment_present,
         trusted_advice_commitment_present,
         vc_capacity,
         precommitted,
@@ -1104,6 +1097,7 @@ where
     )
 )]
 mod tests {
+    use jolt_claims::protocols::jolt::relations::booleanity::BooleanityOutputClaims;
     use std::sync::Arc;
 
     use common::constants::RAM_START_ADDRESS;
@@ -1114,7 +1108,6 @@ mod tests {
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
-    #[cfg(feature = "akita")]
     use crate::stages::pow::StagePowNonces;
     use crate::stages::stage1::outputs::Stage1OutputClaims;
     use crate::stages::stage1::OuterRemainderOutputClaims;
@@ -1266,7 +1259,7 @@ mod tests {
         let public_io = JoltDevice::default();
         assert!(matches!(
             validate_and_seed_transcript(&preprocessing, &public_io, &proof, None, |statement| {
-                verifier_transcript::<Keccak>(JOLT_SESSION, statement, &[])
+                verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &[])
             }),
             Err(VerifierError::ProtocolConfigMismatch { .. })
         ));
@@ -1274,7 +1267,7 @@ mod tests {
         proof.stages.stage1_sumcheck_proof = sumcheck_proof(!is_zk);
         assert!(matches!(
             validate_and_seed_transcript(&preprocessing, &public_io, &proof, None, |statement| {
-                verifier_transcript::<Keccak>(JOLT_SESSION, statement, &[])
+                verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &[])
             }),
             Err(VerifierError::ExpectedClearProof {
                 field: "stage1_sumcheck_proof"
@@ -1288,7 +1281,11 @@ mod tests {
     /// it the verifier reads, except the fields the verifier binds another
     /// way. Proof-body fields are absorbed as messages where they are read.
     #[test]
-    #[expect(clippy::unwrap_used)]
+    #[expect(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "the test reads fixed offsets of a statement whose length it asserts first"
+    )]
     fn statement_binds_each_field_the_verifier_reads() {
         type Edit = fn(&mut CheckedInputs, &mut ProofTranscriptConfig);
 
@@ -1318,6 +1315,38 @@ mod tests {
             bytes
         };
         let honest = encode(|_, _| {});
+
+        // The positional layout: 19 configuration words, the advice presence
+        // word, the bare 32-byte digest, then the inputs `[1, 2]` and the
+        // outputs `[3]`, each a length word, the bytes and padding to a word.
+        let word =
+            |index: usize| u64::from_le_bytes(honest[8 * index..8 * index + 8].try_into().unwrap());
+        assert_eq!(honest.len(), 20 * 8 + 32 + 2 * 16);
+        assert_eq!(word(0), u64::from(is_zk), "zk is the first word");
+        assert_eq!(word(19), 0, "no advice is present");
+        assert_eq!(&honest[160..192], &checked.preprocessing_digest);
+        assert_eq!(
+            &honest[192..208],
+            &[2, 0, 0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(
+            &honest[208..224],
+            &[1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0]
+        );
+        let presence = |untrusted: bool, trusted: bool| {
+            let mut checked = checked.clone();
+            checked.untrusted_advice_commitment_present = untrusted;
+            checked.trusted_advice_commitment_present = trusted;
+            let statement = JoltStatement {
+                checked: &checked,
+                config,
+            };
+            let bytes = statement.encode().as_ref().to_vec();
+            u64::from_le_bytes(bytes[152..160].try_into().unwrap())
+        };
+        assert_eq!(presence(true, false), 1);
+        assert_eq!(presence(false, true), 2);
+        assert_eq!(presence(true, true), 3);
 
         let bound: &[(&str, Edit)] = &[
             ("zk", |c, _| c.zk = !c.zk),
@@ -1358,6 +1387,14 @@ mod tests {
                     TracePolynomialOrder::CycleMajor => TracePolynomialOrder::AddressMajor,
                     TracePolynomialOrder::AddressMajor => TracePolynomialOrder::CycleMajor,
                 };
+            }),
+            // The advice commitments are absorbed without labels, so their
+            // presence is bound by the presence word on every build.
+            ("untrusted_advice_commitment_present", |c, _| {
+                c.untrusted_advice_commitment_present = !c.untrusted_advice_commitment_present;
+            }),
+            ("trusted_advice_commitment_present", |c, _| {
+                c.trusted_advice_commitment_present = !c.trusted_advice_commitment_present;
             }),
         ];
         for (field, edit) in bound {
@@ -1408,11 +1445,6 @@ mod tests {
                 c.public_io.memory_layout.termination += 1;
             }),
             ("io_end", |c, _| c.public_io.memory_layout.io_end += 1),
-            // The trusted-advice commitment is absorbed under its own label
-            // right after the statement, so its presence is bound there.
-            ("trusted_advice_commitment_present", |c, _| {
-                c.trusted_advice_commitment_present = !c.trusted_advice_commitment_present;
-            }),
             // The capacity of the verifier's own vector-commitment setup.
             ("vc_capacity", |c, _| {
                 c.vc_capacity = Some(c.vc_capacity.unwrap_or(0) + 1);
@@ -1514,6 +1546,25 @@ mod tests {
     }
 
     #[test]
+    fn validate_inputs_rejects_misaligned_ram_remap_base() {
+        let mut memory_layout = test_memory_layout();
+        memory_layout.trusted_advice_start -= 4;
+        memory_layout.untrusted_advice_start -= 4;
+        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        let proof = proof_with_zk(false, clear_claims());
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &proof, false),
+            Err(VerifierError::InvalidMemoryLayout { reason })
+                if reason.contains("doubleword-aligned")
+        ));
+    }
+
+    #[test]
     fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -1574,7 +1625,6 @@ mod tests {
                 proof.trace_polynomial_order,
                 proof.one_hot_config,
                 false,
-                #[cfg(not(feature = "akita"))]
                 false,
                 false,
             ),
@@ -1650,6 +1700,8 @@ mod tests {
             #[cfg(feature = "akita")]
             joint_opening_proof: (),
             untrusted_advice_commitment: None,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: Some(TestCommitment),
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc_commitment: Some(TestCommitment),
             claims,
@@ -1828,21 +1880,11 @@ mod tests {
                         bytecode_ra: Vec::new(),
                         fused_inc: zero,
                     },
-                #[cfg(not(feature = "akita"))]
-                booleanity: stage6b::outputs::BooleanityOutputClaims {
+                booleanity: BooleanityOutputClaims {
                     instruction_ra: Vec::new(),
                     bytecode_ra: Vec::new(),
                     ram_ra: Vec::new(),
                 },
-                #[cfg(feature = "akita")]
-                booleanity:
-                    jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
-                        instruction_ra: Vec::new(),
-                        bytecode_ra: Vec::new(),
-                        ram_ra: Vec::new(),
-                        balanced_inc_digits: Vec::new(),
-                        balanced_inc_carry: zero,
-                    },
                 ram_hamming_booleanity: stage6b::outputs::RamHammingBooleanityOutputClaims {
                     ram_hamming_weight: zero,
                 },
@@ -1874,10 +1916,6 @@ mod tests {
                         instruction_ra: Vec::new(),
                         bytecode_ra: Vec::new(),
                         ram_ra: Vec::new(),
-                        #[cfg(feature = "akita")]
-                        balanced_inc_digits: Vec::new(),
-                        #[cfg(feature = "akita")]
-                        balanced_inc_carry: zero,
                     },
                 #[cfg(not(feature = "akita"))]
                 trusted_advice: None,
@@ -1911,7 +1949,6 @@ mod tests {
             random_eval_commitments: Vec::new(),
             random_u: Fr::zero(),
             cross_term_error_row_commitments: Vec::new(),
-            pow_nonces: Vec::new(),
             outer_sumcheck: CompressedSumcheckProof::default(),
             az_rx: Fr::zero(),
             bz_rx: Fr::zero(),
@@ -1944,7 +1981,6 @@ mod tests {
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
-            #[cfg(feature = "akita")]
             pow_nonces: StagePowNonces::new(),
         }
     }

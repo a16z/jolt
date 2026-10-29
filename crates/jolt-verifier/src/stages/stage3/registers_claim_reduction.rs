@@ -66,11 +66,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
         &self.symbolic
     }
 
-    /// Its gamma folds the input claims with powers up to 2.
-    fn challenge_loss(&self) -> u64 {
-        2
-    }
-
     fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
         vec![
             (

@@ -10,8 +10,6 @@
 //! exactly when their precommitted layout needs a cycle-phase reduction, so the
 //! batch's instance count matches the prover's.
 
-use std::convert::Infallible;
-
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
 #[cfg(not(feature = "akita"))]
@@ -19,7 +17,7 @@ use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_claims::protocols::jolt::{
     geometry::{
         booleanity::BooleanityDimensions,
-        claim_reductions::bytecode::{BytecodeLaneWeightInputs, NUM_BYTECODE_VAL_STAGES},
+        claim_reductions::bytecode::BytecodeLaneWeightInputs,
         dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
     },
     JoltRelationId,
@@ -57,10 +55,8 @@ use super::instruction_ra_virtualization::{
 use super::outputs::{Stage6bChallenges, Stage6bSumchecks};
 use super::ram_hamming_booleanity::RamHammingBooleanity;
 use super::ram_ra_virtualization::RamRaVirtualization;
-use crate::num::u64_from_usize;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
-use crate::stages::pow::BATCH_COEFFICIENT_LOSS;
 use crate::stages::stage1::Stage1Output;
 use crate::stages::stage2::{Stage2BatchOutputPoints, Stage2Output};
 use crate::stages::stage3::outputs::Stage3OutputPoints;
@@ -128,55 +124,18 @@ pub struct Stage6bDraws<F> {
 impl<F: JoltField> Stage6bDraws<F> {
     pub fn draw<T: FieldTranscript<F>>(
         transcript: &mut T,
-        formula_dimensions: &JoltFormulaDimensions,
         committed_bytecode: bool,
     ) -> Result<Self, VerifierError> {
-        Self::sequence(formula_dimensions, committed_bytecode, |_| {
-            transcript.challenge().map_err(VerifierError::from)
-        })
-    }
-
-    /// The loss of the burst [`draw`](Self::draw) opens, including the batching
-    /// coefficients that follow it. It runs the same
-    /// [`sequence`](Self::sequence) as `draw`, summing losses instead of
-    /// squeezing, so the price cannot drift from the draws.
-    pub fn challenge_loss(
-        formula_dimensions: &JoltFormulaDimensions,
-        committed_bytecode: bool,
-    ) -> u64 {
-        let mut loss = BATCH_COEFFICIENT_LOSS;
-        let _ = Self::sequence(formula_dimensions, committed_bytecode, |draw_loss| {
-            loss = loss.saturating_add(draw_loss);
-            Ok::<F, Infallible>(F::from_u64(0))
-        });
-        loss
-    }
-
-    /// The burst's draws in squeeze order. `scalar` receives each draw's loss
-    /// and returns its value, or an error that stops the burst. Each draw folds its member's input claims with
-    /// powers up to one less than the claim count: the instruction RA claims,
-    /// the four base increment claims, the two field-register increment
-    /// claims, and the staged bytecode Val claims.
-    fn sequence<E>(
-        formula_dimensions: &JoltFormulaDimensions,
-        committed_bytecode: bool,
-        mut scalar: impl FnMut(u64) -> Result<F, E>,
-    ) -> Result<Self, E> {
         // Field order is draw order: the struct literal evaluates in
         // declaration order.
         Ok(Self {
-            instruction_ra_gamma: scalar(u64_from_usize(
-                formula_dimensions
-                    .instruction_ra_virtualization
-                    .num_virtual_ra_polys()
-                    .saturating_sub(1),
-            ))?,
+            instruction_ra_gamma: transcript.challenge()?,
             #[cfg(not(feature = "akita"))]
-            inc_gamma: scalar(3)?,
+            inc_gamma: transcript.challenge()?,
             #[cfg(feature = "field-inline")]
-            field_registers_inc_gamma: scalar(1)?,
+            field_registers_inc_gamma: transcript.challenge()?,
             eta: committed_bytecode
-                .then(|| scalar(u64_from_usize(NUM_BYTECODE_VAL_STAGES.saturating_sub(1))))
+                .then(|| transcript.challenge())
                 .transpose()?,
         })
     }
@@ -470,15 +429,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             })?
         };
 
-        #[cfg(feature = "akita")]
-        let booleanity_dimensions =
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                booleanity_dimensions,
-            )
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::Booleanity,
-                reason: error.to_string(),
-            })?;
         // The little-endian reference cycle is construction geometry (the
         // reversed stage-5 instruction cycle, no draw of its own), so it is
         // rederived from the stage-5 point rather than carried with the
@@ -613,7 +563,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, squeeze};
-    use jolt_claims::protocols::jolt::geometry::dimensions::JoltOneHotDimensions;
     use jolt_field::Fr;
 
     /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
@@ -622,15 +571,6 @@ mod tests {
     /// then the committed bytecode eta exactly when the bytecode layout is committed.
     #[test]
     fn stage6b_draws_follow_member_declaration_order() {
-        let formula_dimensions = JoltFormulaDimensions::try_from(JoltOneHotDimensions {
-            log_t: 8,
-            instruction_address_bits: 128,
-            bytecode_k: 1024,
-            ram_k: 4096,
-            committed_chunk_bits: 8,
-            lookup_virtual_chunk_bits: 32,
-        })
-        .unwrap();
         for committed_bytecode in [false, true] {
             let mut expected_squeezes = 1usize;
             #[cfg(not(feature = "akita"))]
@@ -648,9 +588,8 @@ mod tests {
                     .map(|_| t.challenge().unwrap())
                     .collect::<Vec<Fr>>()
             });
-            let (draw_events, draws) = record(|t| {
-                Stage6bDraws::<Fr>::draw(t, &formula_dimensions, committed_bytecode).unwrap()
-            });
+            let (draw_events, draws) =
+                record(|t| Stage6bDraws::<Fr>::draw(t, committed_bytecode).unwrap());
 
             assert_eq!(draw_events, inline_events);
             assert_eq!(

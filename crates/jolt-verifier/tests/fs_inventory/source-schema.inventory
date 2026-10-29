@@ -70,6 +70,7 @@ jolt-verifier::proof.rs::JoltCommitments.rd_inc
 jolt-verifier::proof.rs::JoltProof.claims
 jolt-verifier::proof.rs::JoltProof.commitments
 jolt-verifier::proof.rs::JoltProof.field_inc_commitment
+jolt-verifier::proof.rs::JoltProof.fused_inc_commitment
 jolt-verifier::proof.rs::JoltProof.joint_opening_proof
 jolt-verifier::proof.rs::JoltProof.narg
 jolt-verifier::proof.rs::JoltProof.one_hot_config

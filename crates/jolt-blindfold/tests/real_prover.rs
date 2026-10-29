@@ -9,7 +9,7 @@ mod support;
 
 use jolt_blindfold::{prove, BlindFoldProof, BlindFoldWitness, ProverError, VerificationError};
 use jolt_crypto::Bn254G1;
-use jolt_transcript::{prover_transcript, Blake2b512};
+use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -18,7 +18,10 @@ fn prove_real(
     instance: &ProtocolBackedInstance,
     rng: &mut ChaCha20Rng,
 ) -> Result<BlindFoldProof<F, Bn254G1>, ProverError<F>> {
-    let mut transcript = prover_transcript::<Blake2b512>(PROTOCOL_BACKED_TRANSCRIPT_LABEL, b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     prove::<F, VC, _, _>(
         &instance.setup,
@@ -38,7 +41,10 @@ fn verify_real(
     instance: &ProtocolBackedInstance,
     proof: &BlindFoldProof<F, Bn254G1>,
 ) -> Result<(), VerificationError<F>> {
-    let mut transcript = prover_transcript::<Blake2b512>(PROTOCOL_BACKED_TRANSCRIPT_LABEL, b"");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     instance
         .protocol
@@ -53,6 +59,45 @@ fn real_prover_roundtrip_verifies() {
     verify_real(&instance, &proof).expect("real prover's proof verifies");
 }
 
+/// The verifier absorbs exactly what the prover absorbed: after BlindFold
+/// both transcripts draw the same next challenge, so a protocol composed
+/// after it stays in step.
+#[test]
+fn prover_and_verifier_transcripts_agree_after_blindfold() {
+    let mut rng = ChaCha20Rng::from_seed([103; 32]);
+    let instance = build_protocol_backed_instance(&mut rng);
+    let mut prover = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
+    append_protocol_transcript_prefix(&instance.protocol, &mut prover);
+    let proof = prove::<F, VC, _, _>(
+        &instance.setup,
+        &instance.protocol,
+        &mut prover,
+        BlindFoldWitness {
+            rows: &instance.rows,
+            blindings: &instance.blindings,
+            eval_outputs: &instance.eval_outputs,
+            eval_blindings: &instance.eval_blindings,
+        },
+        &mut rng,
+    )
+    .expect("real prover succeeds on a valid witness");
+    let mut verifier = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
+    append_protocol_transcript_prefix(&instance.protocol, &mut verifier);
+    instance
+        .protocol
+        .verify::<VC, _>(&proof, &instance.setup, &mut verifier)
+        .expect("real prover's proof verifies");
+    let prover_next: F = prover.challenge().expect("prover draws");
+    let verifier_next: F = verifier.challenge().expect("verifier draws");
+    assert_eq!(prover_next, verifier_next);
+}
+
 #[test]
 fn real_prover_roundtrip_verifies_with_two_final_openings() {
     let mut rng = ChaCha20Rng::from_seed([107; 32]);
@@ -60,28 +105,6 @@ fn real_prover_roundtrip_verifies_with_two_final_openings() {
     assert_eq!(instance.protocol.eval_commitments.len(), 2);
     let proof = prove_real(&instance, &mut rng).expect("real prover succeeds on a valid witness");
     verify_real(&instance, &proof).expect("real prover's proof verifies with two bindings");
-}
-
-#[test]
-fn bn254_proof_carries_no_nonces_and_rejects_an_extra_one() {
-    let mut rng = ChaCha20Rng::from_seed([109; 32]);
-    let instance = build_protocol_backed_instance(&mut rng);
-    let mut proof =
-        prove_real(&instance, &mut rng).expect("real prover succeeds on a valid witness");
-    assert!(proof.pow_nonces.is_empty());
-
-    proof.pow_nonces.push(0);
-    let err = verify_real(&instance, &proof).expect_err("an extra nonce is rejected");
-    assert!(
-        matches!(
-            err,
-            VerificationError::WrongNumberOfPowNonces {
-                expected: 0,
-                got: 1
-            }
-        ),
-        "expected a nonce count mismatch, got: {err}"
-    );
 }
 
 #[test]

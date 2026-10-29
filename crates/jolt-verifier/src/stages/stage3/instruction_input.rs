@@ -69,11 +69,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionInput<F> {
         &self.symbolic
     }
 
-    /// Its gamma folds the input claims with powers up to 1.
-    fn challenge_loss(&self) -> u64 {
-        1
-    }
-
     fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
         // The geometry pair is (shift, instruction-input); the shift opening is
         // the canonical source, so the aliased/source order swaps here.

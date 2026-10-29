@@ -1,0 +1,21 @@
+[package]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
+edition = "2021"
+description = "32-bit Montgomery NTT inline for Jolt"
+license = "MIT"
+
+[lints]
+workspace = true
+
+[features]
+default = []
+host = ["jolt-inlines-sdk/host"]
+
+[dependencies]
+jolt-inlines-sdk = { workspace = true, optional = true }
+
+[dev-dependencies]
+jolt-inlines-sdk = { workspace = true, features = ["test-utils"] }
+rand = { workspace = true, features = ["std", "std_rng"] }
+tracer = { workspace = true, features = ["std", "test-utils"] }

@@ -44,11 +44,11 @@ fn fixture() -> &'static Fixture {
         let (commitment, hint) =
             DoryScheme::commit(poly.evaluations(), &prover_setup).expect("fixture commit");
 
-        let mut pt = prover_transcript::<Blake2b512>(TRANSCRIPT_LABEL, b"");
+        let mut pt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
         let proof = DoryScheme::open(&poly, &point, eval, &prover_setup, Some(hint), &mut pt)
             .expect("fixture open");
 
-        let mut vt = prover_transcript::<Blake2b512>(TRANSCRIPT_LABEL, b"");
+        let mut vt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
         DoryScheme::verify(&commitment, &point, eval, &proof, &verifier_setup, &mut vt)
             .expect("fixture proof must verify before tampering");
 
@@ -146,7 +146,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    let mut transcript = prover_transcript::<Blake2b512>(TRANSCRIPT_LABEL, b"");
+    let mut transcript = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     let result = DoryScheme::verify(
         &fix.commitment,
         &fix.point,

@@ -648,7 +648,6 @@ mod tests {
                     degree,
                 })
                 .collect(),
-            pow_nonces: Vec::new(),
             output_claims: CommittedOutputClaims {
                 commitments: output_claims
                     .iter()
@@ -671,7 +670,6 @@ mod tests {
                     degree,
                 })
                 .collect(),
-            pow_nonces: Vec::new(),
             output_claims: CommittedOutputClaims {
                 commitments: output_claims
                     .iter()
@@ -708,7 +706,8 @@ mod tests {
             });
         }
 
-        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold", b"");
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"blindfold"), b"");
         let mut next_opening_id = 0usize;
         let stages = stages
             .iter()
@@ -797,7 +796,10 @@ mod tests {
 
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-alias", b"");
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"blindfold-alias"),
+            b"",
+        );
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");
@@ -829,7 +831,10 @@ mod tests {
 
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21]);
-        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-alias", b"");
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"blindfold-alias"),
+            b"",
+        );
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");
@@ -934,7 +939,10 @@ mod tests {
     fn rejects_extra_output_claim_rows_without_typed_openings() {
         let statement = SumcheckStatement::new(1, 1);
         let proof = proof(&[(11, 1)], &[21, 22]);
-        let mut transcript = prover_transcript::<Blake2b512>(b"blindfold-output-row-count", b"");
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"blindfold-output-row-count"),
+            b"",
+        );
         let consistency = proof
             .verify_committed_consistency(statement, &mut transcript)
             .expect("committed proof is consistent");
