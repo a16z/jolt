@@ -129,7 +129,7 @@ mod clear {
                     >(&preprocessing.verifier, &public_io, &proof, None,)
                     .is_err(),
                     "kind {kind}: a misaligned access produced an accepted proof",
-                )
+                );
             }
         }
     }
