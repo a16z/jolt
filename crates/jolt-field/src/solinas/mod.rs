@@ -193,24 +193,21 @@ pub(crate) fn reduce_le_bytes_mod_order<F: Ring>(bytes: &[u8]) -> F {
 
 #[cfg(test)]
 mod reduction_tests {
+    use num_bigint::BigUint;
+
     use super::{reduce_le_bytes_mod_order, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
-    use crate::Ring;
+    use crate::PseudoMersenne;
 
-    /// The byte-at-a-time Horner fold that the word fold replaced.
-    fn reduce_bytewise<F: Ring>(bytes: &[u8]) -> F {
-        let base = F::from_u64(256);
-        bytes.iter().rev().fold(F::zero(), |acc, &byte| {
-            acc * base + F::from_u64(u64::from(byte))
-        })
-    }
-
-    fn check<F: Ring>() {
+    fn check<F: PseudoMersenne>() {
+        let modulus = (BigUint::from(1u8) << F::MODULUS_BITS) - BigUint::from(F::OFFSET);
         for len in 0..=100usize {
             let mixed: Vec<u8> = (0..len).map(|i| (i * 151 + 7) as u8).collect();
             for bytes in [mixed, vec![u8::MAX; len]] {
                 assert_eq!(
-                    reduce_le_bytes_mod_order::<F>(&bytes),
-                    reduce_bytewise::<F>(&bytes),
+                    BigUint::from_bytes_le(
+                        &reduce_le_bytes_mod_order::<F>(&bytes).to_bytes_le_vec()
+                    ),
+                    BigUint::from_bytes_le(&bytes) % &modulus,
                     "length {len}"
                 );
             }
@@ -218,7 +215,7 @@ mod reduction_tests {
     }
 
     #[test]
-    fn word_fold_matches_the_byte_fold() {
+    fn word_fold_matches_big_integer_reduction() {
         check::<Prime32Offset99>();
         check::<Prime64Offset59>();
         check::<Prime128OffsetA7F7>();
