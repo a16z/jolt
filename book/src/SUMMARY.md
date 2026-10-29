@@ -25,6 +25,7 @@
     - [Dory](./how/dory.md)
     - [Akita](./how/akita.md)
     - [BlindFold (Zero Knowledge)](./how/blindfold.md)
+    - [Fiat-Shamir transcript](./how/fiat-shamir.md)
     - [Optimizations](./how/optimizations/optimizations.md)
         - [Batched sumcheck](./how/optimizations/batched-sumcheck.md)
         - [Batched openings](./how/optimizations/batched-openings.md)
