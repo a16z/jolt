@@ -59,6 +59,9 @@ pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 #[doc(hidden)]
 pub use adapters::{jolt_to_akita_evals, jolt_to_akita_index, reverse_point};
 
+#[cfg(feature = "carry-graph")]
+pub use akita_algebra::offset_eq::carry_graph;
+
 #[cfg(feature = "prevalidated-catalog")]
 mod prevalidated_catalog;
 #[cfg(feature = "prevalidated-catalog")]

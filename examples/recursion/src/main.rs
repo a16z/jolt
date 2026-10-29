@@ -952,6 +952,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("fill-ingress");
     #[cfg(all(feature = "akita", feature = "setup-lane-streams"))]
     program.add_guest_feature("setup-lane-streams");
+    #[cfg(all(feature = "akita", feature = "carry-graph"))]
+    program.add_guest_feature("carry-graph");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
 }
@@ -1136,6 +1138,7 @@ sha256sum "$2"
 env | grep -E '^(ZEROOS_GUEST_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]*|RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_[A-Z0-9_]*|RECURSION_GUEST_CODEGEN|JOLT_FUNC_NAME)=' | sort || true
 if [ -n "${JOLT_IMMUTABLE_RECIPES_RS:-}" ]; then echo immutable-recipes-tables; sha256sum < "$JOLT_IMMUTABLE_RECIPES_RS"; else echo immutable-recipes-tables-none; fi
 if [ -n "${JOLT_PREVALIDATED_CATALOG_RS:-}" ]; then echo prevalidated-catalog; sha256sum < "$JOLT_PREVALIDATED_CATALOG_RS"; else echo prevalidated-catalog-none; fi
+if [ -n "${JOLT_CARRY_GRAPH_RS:-}" ]; then echo carry-graph; sha256sum < "$JOLT_CARRY_GRAPH_RS"; else echo carry-graph-none; fi
 echo "$3"
 } | sha256sum | cut -c1-64
 "#;
@@ -1398,6 +1401,10 @@ fn verify_proofs(
         &all_groups_data[..layout.setup_len],
         "/tmp/jolt-guest-targets",
     );
+    // Carry graph: Akita's fixed carry-state graphs for the proofs' padded
+    // trace size, or no graph (recurrence path) for any other size.
+    #[cfg(all(feature = "akita", feature = "carry-graph"))]
+    let carry_graph = carry_graph_source::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
     run_recursion_proof(
         guest,
         run_config,
@@ -1409,6 +1416,8 @@ fn verify_proofs(
     immutable_recipe_tables::release(recipe_tables);
     #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
     prevalidated_catalog::release(prevalidated_catalog);
+    #[cfg(all(feature = "akita", feature = "carry-graph"))]
+    carry_graph_source::release(carry_graph);
 }
 
 fn main() {
@@ -1529,6 +1538,8 @@ fn main() {
     }
 }
 
+#[cfg(all(feature = "akita", feature = "carry-graph"))]
+mod carry_graph_source;
 #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
 mod immutable_recipe_generation;
 #[cfg(feature = "immutable-recipes")]

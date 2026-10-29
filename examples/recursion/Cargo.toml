@@ -149,6 +149,8 @@ fill-ingress = ["jolt-akita?/fill-ingress"]
 # setup-lane-streams: the root setup scan streams each lane with its row
 # scales hoisted.
 setup-lane-streams = ["jolt-akita?/setup-lane-streams"]
+# carry-graph: compiled carry-state graphs for the eq-pair tensor recurrences.
+carry-graph = ["jolt-akita?/carry-graph"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }

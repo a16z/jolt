@@ -61,6 +61,8 @@ fill-ingress = ["akita-algebra/fill-ingress", "jolt-field/fill-ingress"]
 # Root setup scan by lane with hoisted row scales (default off; implies
 # terminal-contraction on the Akita side).
 setup-lane-streams = ["akita-pcs/setup-lane-streams"]
+# Compiled carry-state graphs for the eq-pair tensor recurrences (default off).
+carry-graph = ["akita-algebra/carry-graph"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
