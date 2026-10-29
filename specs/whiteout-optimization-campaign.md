@@ -255,6 +255,10 @@ paper delta.
   check, so it blocks upstreaming. It is mechanical; run it after O0, O1 and O4
   merge, since they touch the same files. Merge bars check new lines against
   the pre-merge dev head.
+  **Resolved (S1):** 72 violations, all `nominal-imports`, fixed as
+  import-only path shortening with matching `cfg` gates. Merged at
+  3e2a3a48f; `check_style_invariants.py --base main` is clean, and the jolt
+  bar is green.
 - **S2. Legacy setup bytes under `zk`.** `jolt-akita`'s
   `legacy_single_setup_keeps_its_transcript` fails with `--features
   zk-prover` (`UnexpectedEnd`). Since W6b, a `zk` build's
