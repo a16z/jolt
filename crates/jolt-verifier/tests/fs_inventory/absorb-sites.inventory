@@ -61,7 +61,6 @@ jolt-sumcheck::committed.rs::CommittedSumcheckBuilder<'a,F,VC,R>::finish::append
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_input_claims::append#0::transcript.append(input_claim)
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::absorb_round::append_compressed_round#0::append_compressed_round(transcript,compressed.coeffs_except_linear_term())
 jolt-sumcheck::recorder.rs::ClearSumcheckRecorder<F>::finish::append#0::transcript.append(opening_claim)
-jolt-sumcheck::round_proof.rs::CompressedRoundPoly<'_,F>::append_to_transcript::append_compressed_round#0::append_compressed_round(transcript,self.poly.compress().coeffs_except_linear_term())
 jolt-sumcheck::round_proof.rs::UnivariatePoly<F>::append_to_transcript::append#0::transcript.append(&(coeffs.len()asu64))
 jolt-sumcheck::round_proof.rs::UnivariatePoly<F>::append_to_transcript::append_values#1::transcript.append_values(coeffs)
 jolt-sumcheck::round_proof.rs::append_compressed_round::append#0::transcript.append(&(sent.len()asu64))
