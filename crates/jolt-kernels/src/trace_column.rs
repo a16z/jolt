@@ -216,7 +216,7 @@ impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
     fn evaluate(&self, point: &[F]) -> F {
         debug_assert_eq!(point.len(), self.placement.total_vars);
         let eq = TensorEqTable::new(point);
-        scatter_sum(self.values.len(), |range| {
+        scatter_sum(self.values.prefix_len(), |range| {
             let mut acc = F::zero();
             for cycle in range {
                 let value = self.values.value(cycle);
@@ -244,7 +244,7 @@ impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
         );
         let num_cols = 1usize << sigma;
         let mask = num_cols - 1;
-        scatter_fold(self.values.len(), num_cols, |range, acc| {
+        scatter_fold(self.values.prefix_len(), num_cols, |range, acc| {
             for cycle in range {
                 let value = self.values.value(cycle);
                 if !value.is_zero() {

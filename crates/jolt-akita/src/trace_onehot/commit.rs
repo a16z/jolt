@@ -13,7 +13,9 @@ use super::traversal::{
     validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
     DeferredFp128Ring,
 };
-use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
+use super::{
+    COMMIT_TASKS_PER_RAYON_WORKER, K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW,
+};
 use crate::AkitaField;
 
 pub(super) fn commit_columns<const D: usize>(
@@ -67,10 +69,12 @@ pub(super) fn commit_columns<const D: usize>(
             blocks_per_column * plan.num_positions_per_block,
             segment_rings
         );
+        // Blocks wholly past the constant suffix hold no work.
         let schedule = trace_block_task_schedule::<D>(
             source.one_hot_k,
             plan.num_positions_per_block,
-            blocks_per_column,
+            prefix_rings.div_ceil(plan.num_positions_per_block),
+            COMMIT_TASKS_PER_RAYON_WORKER,
         );
         let num_columns = source.rows.num_columns();
         let ntt_commit = a_rows
