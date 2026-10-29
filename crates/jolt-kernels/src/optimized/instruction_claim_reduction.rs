@@ -7,7 +7,7 @@
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
@@ -23,6 +23,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::prefix_product::PrefixColumn;
 use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -34,7 +35,7 @@ const NUM_TABLES: usize = 5;
 /// One cycle's five reduced instruction operands as native scalars — the
 /// compact backing of the γ-combined table build and the post-hoc
 /// output-claim walk.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, WitnessBundle)]
 pub struct InstructionOperandRow {
     pub lookup_output: LookupOutput,
     pub left_lookup_operand: LeftLookupOperand,
@@ -137,7 +138,8 @@ pub struct OptimizedInstructionClaimReductionKernel<F: JoltField> {
     progress: RoundProgress,
     /// The γ-combined operand table `C(j) = Σ_i γ^i·o_i(j)` — the only bound
     /// table (the summand is linear in the five operands).
-    combined: Polynomial<F>,
+    combined: PrefixColumn<F>,
+    prefix_cycles: usize,
     rows: BundleStore<InstructionOperandRow>,
     gruen: GruenSplitEqPolynomial<F>,
     bound_challenges: Vec<F>,
@@ -160,23 +162,30 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             }
         }
         let coefficients = CombineCoefficients::new(gamma);
+        let cycles = 1usize << log_t;
+        let access = rows.access();
+        let prefix_cycles = access.constant_suffix_start(cycles)?;
+        let tail = coefficients.combine(&access.row(prefix_cycles.min(cycles - 1))?);
         let combined: Vec<F> = {
-            let access = rows.access();
             let coefficients = &coefficients;
             let cell =
                 |j: usize| -> Result<F, WitnessError> { Ok(coefficients.combine(&access.row(j)?)) };
             #[cfg(feature = "parallel")]
             {
-                par_collect_windows(1usize << log_t, cell)?
+                par_collect_windows(prefix_cycles, cell)?
             }
             #[cfg(not(feature = "parallel"))]
             {
-                (0..1usize << log_t).map(cell).collect::<Result<_, _>>()?
+                (0..prefix_cycles).map(cell).collect::<Result<_, _>>()?
             }
         };
         Ok(Self {
             progress: RoundProgress::new(log_t),
-            combined: Polynomial::new(combined),
+            combined: PrefixColumn {
+                values: combined,
+                tail: [tail; 2],
+            },
+            prefix_cycles,
             rows,
             gruen: GruenSplitEqPolynomial::new(tau_low, BindingOrder::LowToHigh),
             bound_challenges: Vec::with_capacity(log_t),
@@ -195,7 +204,7 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
         let block = |idx_hi: usize| -> Result<[F; NUM_TABLES], WitnessError> {
             let mut sums = [F::zero(); NUM_TABLES];
             let start = idx_hi * lo_len;
-            for (offset, &weight) in e_lo.iter().enumerate() {
+            for (offset, &weight) in e_lo.iter().take(self.prefix_cycles - start).enumerate() {
                 let row = access.row(start + offset)?;
                 let values = row.field_values::<F>();
                 for (sum, value) in sums.iter_mut().zip(values) {
@@ -212,21 +221,28 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             left
         };
 
+        let blocks = self.prefix_cycles.div_ceil(lo_len);
         #[cfg(feature = "parallel")]
-        {
-            (0..e_hi.len()).into_par_iter().map(block).try_reduce(
-                || [F::zero(); NUM_TABLES],
-                |left, right| Ok(merge(left, right)),
-            )
-        }
+        let mut folded = (0..blocks).into_par_iter().map(block).try_reduce(
+            || [F::zero(); NUM_TABLES],
+            |left, right| Ok(merge(left, right)),
+        )?;
         #[cfg(not(feature = "parallel"))]
-        {
+        let mut folded = {
             let mut folded = [F::zero(); NUM_TABLES];
-            for idx_hi in 0..e_hi.len() {
+            for idx_hi in 0..blocks {
                 folded = merge(folded, block(idx_hi)?);
             }
-            Ok(folded)
+            folded
+        };
+        let tail = access
+            .row(self.prefix_cycles.min((1usize << reversed.len()) - 1))?
+            .field_values::<F>();
+        let mass = EqPolynomial::<F>::suffix_sum(&reversed, self.prefix_cycles);
+        for (sum, value) in folded.iter_mut().zip(tail) {
+            *sum += mass * value;
         }
+        Ok(folded)
     }
 
     /// `s(t) = ℓ(t) · Σ_y E(y) · combo(t, y)` at `t ∈ {0, 1, 2}`, with the
@@ -239,12 +255,13 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         const POINTS: usize = 3;
         let combined = &self.combined;
-        let mut q_evals = self.gruen.par_fold_out_in(
+        let prefix_pairs = combined.values.len().div_ceil(2);
+        let mut q_evals = self.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || [F::zero(); POINTS],
             |acc, row, _x_in, e_in| {
-                let evals = combined.evals();
-                let lo = evals[2 * row];
-                let step = evals[2 * row + 1] - lo;
+                let (lo, hi) = combined.pair(row);
+                let step = hi - lo;
                 let mut eval = lo;
                 for value in acc.iter_mut() {
                     *value += e_in * eval;
@@ -265,14 +282,17 @@ impl<F: JoltField> OptimizedInstructionClaimReductionKernel<F> {
             },
         );
 
+        let tail_mass = self.gruen.suffix_weight(prefix_pairs) * combined.tail[0];
+        for value in &mut q_evals {
+            *value += tail_mass;
+        }
         self.gruen
             .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn bind(&mut self, challenge: F) {
         self.gruen.bind(challenge);
-        // Avoid a fresh half-size table each round.
-        let _ = self.combined.bind_low_to_high_in_place(challenge);
+        let _ = self.combined.bind(challenge);
         self.bound_challenges.push(challenge);
         self.progress.advance();
     }
@@ -393,9 +413,9 @@ mod tests {
         z ^ (z >> 31)
     }
 
-    fn assert_parity(log_t: usize, seed: u64) {
+    fn assert_parity(log_t: usize, seed: u64, suffix: Option<(usize, bool)>) {
         let mut state = seed;
-        let rows: Vec<InstructionOperandRow> = (0..1usize << log_t)
+        let mut rows: Vec<InstructionOperandRow> = (0..1usize << log_t)
             .map(|_| InstructionOperandRow {
                 lookup_output: LookupOutput(splitmix(&mut state)),
                 left_lookup_operand: LeftLookupOperand(splitmix(&mut state)),
@@ -408,6 +428,20 @@ mod tests {
                 ),
             })
             .collect();
+        if let Some((prefix, zero)) = suffix {
+            let tail = if zero {
+                InstructionOperandRow {
+                    lookup_output: LookupOutput(0),
+                    left_lookup_operand: LeftLookupOperand(0),
+                    right_lookup_operand: RightLookupOperand(0),
+                    left_instruction_input: LeftInstructionInput(0),
+                    right_instruction_input: RightInstructionInput(0),
+                }
+            } else {
+                rows[rows.len() - 1]
+            };
+            rows[prefix..].fill(tail);
+        }
         let tables: Vec<Vec<Fr>> = (0..5)
             .map(|i| rows.iter().map(|row| row.field_values::<Fr>()[i]).collect())
             .collect();
@@ -516,11 +550,19 @@ mod tests {
 
     #[test]
     fn parity_even_log_t() {
-        assert_parity(4, 7);
+        assert_parity(4, 7, None);
     }
 
     #[test]
     fn parity_odd_log_t() {
-        assert_parity(3, 99);
+        assert_parity(3, 99, None);
+    }
+    #[test]
+    fn constant_suffix_rounds_and_claims_match_reference() {
+        for prefix in [0, 1, 2, 3, 7, 8, 9, 31, 32, 33, 63, 64] {
+            for zero in [false, true] {
+                assert_parity(6, 103, Some((prefix, zero)));
+            }
+        }
     }
 }

@@ -43,9 +43,8 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
-use super::support::bind_prefix_pairs;
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, Polynomial};
+use jolt_poly::{bind_prefix_in_place, BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -408,11 +407,11 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     .par_iter_mut()
                     .zip(&tail)
                     .for_each(|(values, &tail)| {
-                        bind_prefix_pairs(values, challenge, tail);
+                        let _ = bind_prefix_in_place(values, challenge, tail);
                     });
                 #[cfg(not(feature = "parallel"))]
                 for (values, &tail) in values.iter_mut().zip(&tail) {
-                    bind_prefix_pairs(values, challenge, tail);
+                    let _ = bind_prefix_in_place(values, challenge, tail);
                 }
                 Self::Prefix { values, tail }
             }
