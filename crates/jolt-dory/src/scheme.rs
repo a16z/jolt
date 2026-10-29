@@ -311,11 +311,10 @@ impl AdditivelyHomomorphic for DoryScheme {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
 
-        let combined = commitments
-            .par_iter()
-            .zip(scalars.par_iter())
-            .map(|(c, s)| jolt_fr_to_ark(s) * jolt_gt_to_ark(&c.0))
-            .reduce(ArkGT::identity, |acc, x| acc + x);
+        let ark_commitments: Vec<ArkGT> =
+            commitments.iter().map(|c| jolt_gt_to_ark(&c.0)).collect();
+        let ark_scalars: Vec<ArkFr> = scalars.iter().map(jolt_fr_to_ark).collect();
+        let combined = InnerBN254::gt_msm(&ark_commitments, &ark_scalars);
 
         DoryCommitment(ark_to_jolt_gt(&combined))
     }

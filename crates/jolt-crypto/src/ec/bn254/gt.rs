@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use ark_bn254::{Fq12, Fr};
-use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
+use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field as ArkField, PrimeField};
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
 use jolt_field::JoltField;
 
@@ -42,13 +42,6 @@ impl From<Bn254GT> for Fq12 {
     #[inline(always)]
     fn from(w: Bn254GT) -> Self {
         w.0
-    }
-}
-
-impl From<Fq12> for Bn254GT {
-    #[inline(always)]
-    fn from(value: Fq12) -> Self {
-        Self(value)
     }
 }
 
@@ -187,8 +180,13 @@ impl JoltGroup for Bn254GT {
     #[inline]
     fn scalar_mul<F: JoltField>(&self, scalar: &F) -> Self {
         // GT exponentiation: self^scalar (written additively as scalar * self).
+        // Cyclotomic squaring is valid only in the cyclotomic subgroup, which
+        // contains GT. Bn254GT has no unchecked public constructor: values are
+        // pairing outputs, products of them, or subgroup-checked on
+        // deserialization (here, or in dory-pcs for jolt-dory's transmuted
+        // Dory values).
         let fr = field_to_fr(scalar);
-        Self(self.0.pow(fr.into_bigint()))
+        Self(self.0.cyclotomic_exp(fr.into_bigint()))
     }
 
     #[inline]
@@ -203,7 +201,7 @@ impl JoltGroup for Bn254GT {
         let mut acc = Fq12::ONE;
         for (base, scalar) in bases.iter().zip(scalars.iter()) {
             let fr = field_to_fr(scalar);
-            acc *= base.0.pow(fr.into_bigint());
+            acc *= base.0.cyclotomic_exp(fr.into_bigint());
         }
         Self(acc)
     }
