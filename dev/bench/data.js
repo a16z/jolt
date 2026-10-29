@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793308390205,
+  "lastUpdate": 1793308776589,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -209506,6 +209506,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 783364,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "18a81f3b9ab03ab6b5404a435dd229a2e222e6e2",
+          "message": "feat(transcript)!: one sealed transcript over spongefish 0.8 states (#2110)\n\n* feat(transcript)!: one sealed transcript over spongefish 0.8 states\n\nReplaces the transcript stack (J1-J9) with its final form in one change.\n\n- jolt-transcript: a sealed Transcript/FieldTranscript over spongefish\n  ProverState/VerifierState. Absorbs are positional and word-aligned with\n  no labels; sessions are 32-byte protocol tags and a SHAKE128 session id;\n  bound digests are SHA3-256 (Keccak-256 behind `keccak256-digests`).\n- Challenges: full-width BN254 scalars; Dory's group-scalar challenges are\n  short, sized from their loss.\n- Proof-of-work mechanism only (no protocol site uses it yet): one u64 nonce\n  word, MAX_POW_BITS = 57, difficulty priced from the challenge-set size,\n  and a sequential search through an owned `verifier_message_oracle`.\n- Sumcheck, openings, Dory, HyperKZG, Akita, BlindFold, the verifier and\n  prover, SDK, examples, jolt-eval and fuzz targets run on it.\n- Akita grouped statements carry a role code for main's fused-increment\n  group.\n- FS inventories re-blessed; verifier fuzz bundles regenerated.\n\n* chore(jolt-eval): drop rayon from jolt-transcript in the fuzz lockfile\n\n* ci: fix the Rust workflow's duplicated run key\n\nMerging main left the old jolt-sumcheck command under the new\n\"Test jolt-blindfold with its prover\" step, so the step had two run keys\nand GitHub rejected the whole workflow without running it. Also drop the\nremoved jolt-transcript parallel feature from the every-sponge test and\nupdate the clippy comment that referred to it.\n\n* docs(transcript): spec and book chapter for the sealed spongefish transcript\n\n* style: import Ordering, Encoding and Transcript; allow hex \"ba\" in Rust\n\n* docs(transcript): scope the Fiat-Shamir chapter by configuration and enforcement\n\n* test: end the misaligned-access assert with a semicolon\n\n* refactor(transcript)!: draw Dory's challenges full width\n\nDrops challenge_short_scalar, challenge_bits_for_loss, the Dory loss\ntable and its burst test, and the exact dory-pcs pin. Curve verifier time\nis not a priority, and #2174's Dory verifier optimizations more than\noffset the cost.\n\n* test: re-bless FS inventories and regenerate verifier fuzz bundles\n\n* test(verifier): bump FIXTURE_MAGIC for the new proof format\n\nEvery transcript byte changes in this PR, but the cached verifier fixtures\nkept JVCF0008, the value main writes, and cached fixtures load without an\nacceptance check. JVCF0011 is unused by any branch (#2137 uses JVCF0010).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(field): check the Solinas word fold against big-integer reduction\n\nThe oracle was a test-only copy of the byte-at-a-time fold that the word\nfold replaced. Compare with num-bigint `% p` instead, as\nbn254_differential.rs does.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* style(verifier): drop a duplicated cfg on Stage8BatchEntry\n\nLeft behind when the LabelWithCount import was removed.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(sumcheck): delete the test-only CompressedRoundPoly wrapper\n\nProduction absorbs compressed rounds through append_compressed_round and\nverifies them with CompressedSumcheckProof. The wrapper had no production\ncaller and carried its own compressed-round checks.\n\nhonest_prove_compressed and the compressed roundtrip now absorb through\nappend_compressed_round and verify a CompressedSumcheckProof against the\npolynomial's evaluation. The tests that only exercised the wrapper are\nremoved, and the FS absorb inventory loses the wrapper's site.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(sumcheck)!: bind the committed output-claim count\n\nThe committed sumcheck's output-claim commitments were absorbed with no\ncount, so a public caller that accepted any count could move a commitment\nacross the message boundary without changing a challenge. Absorb the count\nas a u64 word ahead of the commitments, as main's LabelWithCount did.\n\n* test: regenerate verifier fuzz bundles\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T13:05:01-07:00",
+          "tree_id": "69359f417ee657d43a8541e0723a2c65f0937009",
+          "url": "https://github.com/a16z/jolt/commit/18a81f3b9ab03ab6b5404a435dd229a2e222e6e2"
+        },
+        "date": 1793308771110,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.4811,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 783496,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7031,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 425156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 425616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 425328,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8536,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 425916,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871676,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.912,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425960,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7721,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 425836,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.7886,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131460,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0543,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 782620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8152,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 426008,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5899,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 425828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.4746,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.4277,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 428336,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 36.373,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 709620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.3427,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 603360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 63.406,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 659412,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8334,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 425860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.15,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 428268,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 18.5628,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 782780,
             "unit": "KB",
             "extra": ""
           }
