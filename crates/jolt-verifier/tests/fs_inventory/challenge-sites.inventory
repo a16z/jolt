@@ -8,7 +8,7 @@ jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::c
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_inner_folded_r1cs::challenge#2
 jolt-blindfold::verify.rs::BlindFoldProtocol<F,Com>::verify_outer_folded_r1cs::challenge_vector#0
 jolt-claims::r1cs.rs::lower_claim_expr::challenge#0
-jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge#1
+jolt-dory::transcript.rs::JoltToDoryTranscript<'_,T>::challenge_scalar::challenge#0
 jolt-hyperkzg::kzg.rs::absorb_evaluations::challenge_powers#1
 jolt-hyperkzg::kzg.rs::absorb_witnesses::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::open_table::challenge#1
