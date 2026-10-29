@@ -33,6 +33,7 @@ use crate::committed::CommittedSumcheckBuilder;
 use crate::committed::CommittedSumcheckWitness;
 use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
 use crate::error::SumcheckError;
+use crate::pow::grind_round;
 use crate::proof::{ClearSumcheckProof, SumcheckProof};
 use crate::recorder::SumcheckRecorder;
 use crate::round_proof::RoundMessage;
@@ -325,7 +326,7 @@ where
             });
         }
 
-        let challenge = recorder.absorb_round(&batched_poly, transcript)?;
+        let challenge = recorder.absorb_round(&batched_poly, prelude.max_degree, transcript)?;
         running_claim = batched_poly.evaluate(challenge);
         challenges.push(challenge);
 
@@ -415,9 +416,10 @@ fn check_uniskip_round<F: Field + Encoding>(
 }
 
 /// Prove a clear uni-skip first round, mirroring the verifier's
-/// `uniskip::verify_clear`: absorb the full round polynomial, squeeze the
-/// reduction challenge, evaluate the output claim, and absorb it — before any
-/// post-uni-skip draw (the remainder batch's coefficient squeeze in particular), which is why the
+/// `uniskip::verify_clear`: absorb the full round polynomial, grind its proof
+/// of work, squeeze the reduction challenge, evaluate the output claim, and
+/// absorb it — before any post-uni-skip draw
+/// (the remainder batch's coefficient squeeze in particular), which is why the
 /// absorb lives here and not in the stage.
 #[tracing::instrument(skip_all, name = "prove_uniskip_clear")]
 pub fn prove_uniskip_clear<F, T>(
@@ -434,6 +436,8 @@ where
     check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
 
     round_poly.append_to_transcript(transcript);
+    let mut pow_nonces = Vec::new();
+    grind_round(degree, 0, &mut pow_nonces, transcript)?;
     let challenge = transcript.challenge()?;
     let output_claim = round_poly.evaluate(challenge);
     transcript.append(&output_claim);
@@ -441,6 +445,7 @@ where
     Ok(ProvedUniskip {
         proof: ClearSumcheckProof {
             round_polynomials: vec![round_poly],
+            pow_nonces,
         },
         challenge,
         output_claim,

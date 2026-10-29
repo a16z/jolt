@@ -22,7 +22,9 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
 
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 #[cfg(feature = "field-inline")]
@@ -44,6 +46,8 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _
 /// Stage 5's outputs: the wire proof, the wire claims, and the verifier-typed
 /// cross-stage carrier downstream stages consume.
 pub struct Stage5ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u64>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage5OutputClaims<F>,
     pub clear_output: Stage5ClearOutput<F>,
@@ -91,6 +95,7 @@ where
     // Draws the instruction gamma, then the RAM gamma (registers draws
     // nothing, and so does the `field-inline` field value-evaluation member) —
     // the generated declaration-order draw.
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage5, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage5_input_values_from_upstream(&stage2.output_values, &stage4.output_values);
@@ -114,6 +119,7 @@ where
 
     let instruction_r_address = proved.output_points.instruction_r_address();
     Ok(Stage5ProverOutput {
+        pow_nonce,
         sumcheck_proof,
         claims: proved.output_claims.clone(),
         clear_output: Stage5ClearOutput {

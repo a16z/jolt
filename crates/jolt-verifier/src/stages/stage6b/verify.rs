@@ -53,6 +53,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         relations::validate_member_presence,
         stage1::Stage1Output,
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
@@ -93,6 +94,7 @@ where
     // draws and the challenges aggregate are the promoted two-front helpers.
     let carried = stage6a.challenges();
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
+    check_pow(PowSite::Stage6b, &proof.stages.pow_nonces, transcript)?;
     let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some())?;
 
     let sumchecks = Stage6bSumchecks::build(

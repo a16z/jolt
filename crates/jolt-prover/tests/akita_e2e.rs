@@ -44,6 +44,7 @@ mod akita_tests {
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+    use jolt_verifier::stages::pow::PowSite;
     use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
@@ -260,6 +261,56 @@ mod akita_tests {
                 trusted_advice_commitment: None,
             };
             assert!(verify(&tampered).is_err());
+        }
+    }
+
+    /// Every proof-of-work site rejects a missing, an unexpected, or a wrong
+    /// nonce with its own error.
+    #[test]
+    fn muldiv_akita_rejects_tampered_pow_nonces() {
+        let (run, config) = muldiv_run();
+        let proved = prove_guest(run, config, false, &[]);
+        verify(&proved).expect("Akita proof must verify");
+        let with_nonce = |site: PowSite, nonce: Option<u64>| {
+            let mut proof = proved.proof.clone();
+            proof.stages.pow_nonces.set(site, nonce);
+            ProvedGuest {
+                preprocessing: proved.preprocessing.clone(),
+                public_io: proved.public_io.clone(),
+                proof,
+                trusted_advice_commitment: None,
+            }
+        };
+        let rejected_at = |result: Result<(), VerifierError>, site: PowSite| matches!(result, Err(VerifierError::ProofOfWorkRejected { site: s }) if s == site);
+        let nonces = proved.proof.stages.pow_nonces;
+        assert!(
+            PowSite::ALL.iter().any(|&site| nonces.get(site).is_some()),
+            "the fp128 challenge set needs proof of work"
+        );
+        for site in PowSite::ALL {
+            match nonces.get(site) {
+                Some(nonce) => {
+                    assert!(
+                        rejected_at(verify(&with_nonce(site, None)), site),
+                        "{site:?}"
+                    );
+                    // Another nonce passes the check with probability 2^-bits,
+                    // so some nonce close by must fail it.
+                    assert!(
+                        (1..=64).any(|offset| rejected_at(
+                            verify(&with_nonce(site, Some(nonce.wrapping_add(offset)))),
+                            site
+                        )),
+                        "{site:?}"
+                    );
+                }
+                None => {
+                    assert!(
+                        rejected_at(verify(&with_nonce(site, Some(0))), site),
+                        "{site:?}"
+                    );
+                }
+            }
         }
     }
 

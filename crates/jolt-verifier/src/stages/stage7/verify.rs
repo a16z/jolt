@@ -35,6 +35,7 @@ use crate::stages::stage6b::committed_reduction_cycle_phase::advice_reference_po
 use crate::{
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
         zk::committed,
@@ -95,6 +96,7 @@ where
     // ZK/clear branch; the advice and committed-program address phases draw nothing
     // (`NoChallenges`). BlindFold sources the gamma from
     // `challenges.hamming_weight_claim_reduction.gamma`.
+    check_pow(PowSite::Stage7, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk {

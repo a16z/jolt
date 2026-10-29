@@ -1114,6 +1114,7 @@ mod tests {
     use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
+    use crate::stages::pow::StagePowNonces;
     use crate::stages::stage1::outputs::Stage1OutputClaims;
     use crate::stages::stage1::OuterRemainderOutputClaims;
     use crate::stages::stage2::outputs::{Stage2BatchOutputClaims, Stage2OutputClaims};
@@ -1986,6 +1987,7 @@ mod tests {
             stage6a_sumcheck_proof: sumcheck_proof(is_zk),
             stage6b_sumcheck_proof: sumcheck_proof(is_zk),
             stage7_sumcheck_proof: sumcheck_proof(is_zk),
+            pow_nonces: StagePowNonces::new(),
         }
     }
 

@@ -17,9 +17,10 @@ transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 committed = ["dep:jolt-crypto", "dep:rand_core"]
-# The prove side: the round loop and the recorders' rounds. Verifier builds
-# leave it off.
-prover = []
+# The prove side: the round loop, the recorders' rounds and the per-round
+# proof-of-work search, which copies the sponge state. Verifier builds leave it
+# off.
+prover = ["jolt-transcript/prover-grinding"]
 r1cs = ["dep:jolt-r1cs"]
 
 [lints]
@@ -46,6 +47,7 @@ jolt-transcript = { workspace = true, features = [
   "binary",
   "transcript-blake2b",
   "transcript-keccak",
+  "prover-grinding",
   "test-utils",
 ] }
 rand_core = { workspace = true, features = ["getrandom"] }

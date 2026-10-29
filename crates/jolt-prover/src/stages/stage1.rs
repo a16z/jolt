@@ -19,7 +19,9 @@ use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
 
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
@@ -34,6 +36,10 @@ use crate::{ProverError, StageProver as _};
 /// Stage 1's outputs: the two wire proofs, the wire claims, and the
 /// verifier-typed cross-stage carrier downstream stages consume.
 pub struct Stage1ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the `tau` draw.
+    pub tau_pow_nonce: Option<u64>,
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u64>,
     pub uniskip_proof: SumcheckProof<F, C>,
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage1OutputClaims<F>,
@@ -58,6 +64,7 @@ where
     VC: VectorCommitment<Field = F>,
     T: FieldTranscript<F> + ProverTranscript,
 {
+    let tau_pow_nonce = grind_pow::<F, _>(PowSite::Stage1Tau, transcript)?;
     let tau = draw_spartan_outer_tau(transcript, log_t)?;
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
@@ -83,6 +90,12 @@ where
             uniskip_challenge,
         ),
     };
+    // The committed path grinds no stage-1 nonce, matching the verifier's ZK
+    // branch (ZK runs over BN254 only, where no site needs one).
+    #[cfg(feature = "zk")]
+    let pow_nonce = None;
+    #[cfg(not(feature = "zk"))]
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage1, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
     let input_points = sumchecks.empty_input_points();
     let inputs = Stage1BatchInputClaims {
@@ -109,6 +122,8 @@ where
     let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
     Ok(Stage1ProverOutput {
+        tau_pow_nonce,
+        pow_nonce,
         uniskip_proof: proved_uniskip.proof,
         sumcheck_proof,
         claims,
