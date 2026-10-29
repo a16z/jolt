@@ -90,6 +90,13 @@ akita = [
 # proofs' padded trace size and the verifier guest evaluates the eq-pair tensor
 # recurrences through them (no graph for another size: recurrence path); same
 # field values. Default on; effective only with `akita`.
+# mle-leaf-tiles: the verifier guest (and the host's Akita) evaluate the
+# low-variable multilinear extensions by fixed leaf tiles; same field values.
+# Default on; effective only with `akita`.
+# signed-byte-sum: the verifier guest (and the host's Akita) take the signed
+# byte coefficients of a sparse challenge in through one field sum when
+# evaluating it at powers; same field values. Default on; effective only with
+# `akita`.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -112,6 +119,8 @@ default = [
   "fill-ingress",
   "setup-lane-streams",
   "carry-graph",
+  "mle-leaf-tiles",
+  "signed-byte-sum",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
