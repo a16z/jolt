@@ -68,9 +68,10 @@ impl BytecodePreprocessing {
 }
 
 /// An address expands to a full descending `virtual_sequence_remaining` run —
-/// `virtual_sequence_length - 1` down to 0 — at consecutive PCs, so these two
-/// fields determine every `(address, vsr) -> pc`. `try_new` rejects any bytecode
-/// that violates it.
+/// `virtual_sequence_length - 1` down to 0 — at consecutive PCs, followed for a
+/// dual load or store by its misaligned run, which descends the same way. These
+/// fields determine every `(address, vsr, misaligned_variant) -> pc`. `try_new`
+/// rejects any bytecode that violates it.
 #[repr(C)]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(
@@ -84,9 +85,13 @@ impl BytecodePreprocessing {
 )]
 struct PcSlot {
     first_pc: u32,
-    /// Number of bytecode rows the address expands to; 0 marks an unmapped slot,
-    /// which is why `MAX_INLINE_ROWS_PER_SOURCE` stops one short of `u16` range.
+    /// Number of rows in the address's run without `misaligned_variant`; 0
+    /// marks an unmapped slot, which is why `MAX_INLINE_ROWS_PER_SOURCE` stops
+    /// one short of `u16` range.
     virtual_sequence_length: u16,
+    /// Number of `misaligned_variant` rows after them: 0 unless the address
+    /// holds a dual load or store.
+    misaligned_sequence_length: u16,
 }
 
 impl PcSlot {
@@ -119,6 +124,7 @@ impl BytecodePCMapper {
         self.get_pc(
             instruction.address,
             instruction.virtual_sequence_remaining.unwrap_or(0),
+            instruction.misaligned_variant,
         )
     }
 
@@ -136,22 +142,45 @@ impl BytecodePCMapper {
 
         let mut last_pc = 0u32;
         for run in rows.chunk_by(|a, b| a.address == b.address) {
-            let Some((first_row, rest)) = run.split_first() else {
+            let Some(address) = run.first().map(|row| row.address) else {
                 continue;
             };
-            let address = first_row.address;
             if address == 0 {
                 return Err(PreprocessingError::InvalidBytecodeAddress(0));
             }
             let bytecode_index = Self::try_get_index(address)?;
+            let split = run
+                .iter()
+                .position(|row| row.misaligned_variant)
+                .unwrap_or(run.len());
+            let (aligned, misaligned) = run.split_at(split);
+            let Some((first_row, rest)) = aligned.split_first() else {
+                return Err(PreprocessingError::MisalignedSequenceOrder {
+                    bytecode_index,
+                    address,
+                });
+            };
+            if !misaligned.iter().all(|row| row.misaligned_variant) {
+                return Err(PreprocessingError::MisalignedSequenceOrder {
+                    bytecode_index,
+                    address,
+                });
+            }
             let virtual_sequence_length =
                 Self::validate_run(bytecode_index, address, first_row, rest)?;
+            let misaligned_sequence_length = match misaligned.split_first() {
+                Some((first_row, rest)) => {
+                    Self::validate_run(bytecode_index, address, first_row, rest)?
+                }
+                None => 0,
+            };
 
             let first_pc = last_pc
                 .checked_add(1)
                 .ok_or(PreprocessingError::BytecodeTooLarge)?;
             last_pc = first_pc
                 .checked_add(u32::from(virtual_sequence_length - 1))
+                .and_then(|pc| pc.checked_add(u32::from(misaligned_sequence_length)))
                 .ok_or(PreprocessingError::BytecodeTooLarge)?;
 
             let slot = slots
@@ -166,6 +195,7 @@ impl BytecodePCMapper {
             *slot = PcSlot {
                 first_pc,
                 virtual_sequence_length,
+                misaligned_sequence_length,
             };
         }
 
@@ -210,18 +240,35 @@ impl BytecodePCMapper {
             })
     }
 
-    pub fn get_pc(&self, address: usize, virtual_sequence_remaining: u16) -> Option<usize> {
+    fn get_pc(
+        &self,
+        address: usize,
+        virtual_sequence_remaining: u16,
+        misaligned_variant: bool,
+    ) -> Option<usize> {
         let index = Self::try_get_index(address).ok()?;
         let slot = *self.slots.get(index)?;
-        // An unmapped slot has length 0, so this also rejects it.
-        if virtual_sequence_remaining >= slot.virtual_sequence_length {
+        let (run_start, run_length) = if misaligned_variant {
+            (
+                slot.virtual_sequence_length,
+                slot.misaligned_sequence_length,
+            )
+        } else {
+            (0, slot.virtual_sequence_length)
+        };
+        // An unmapped slot or absent misaligned run has length 0, so this also
+        // rejects it.
+        if virtual_sequence_remaining >= run_length {
             return None;
         }
-        let offset = slot.virtual_sequence_length - 1 - virtual_sequence_remaining;
-        Some(slot.first_pc as usize + offset as usize)
+        let offset = run_start as usize + (run_length - 1 - virtual_sequence_remaining) as usize;
+        Some(slot.first_pc as usize + offset)
     }
 
-    pub fn get_first_pc(&self, address: usize) -> Option<usize> {
+    /// The PC of the address's first row: the aligned head of a dual load or
+    /// store, so a program whose entry instruction is one cannot prove a first
+    /// execution that takes the misaligned sequence.
+    fn get_first_pc(&self, address: usize) -> Option<usize> {
         let index = if address == 0 {
             0
         } else {
@@ -293,6 +340,7 @@ const fn noop_instruction() -> JoltInstructionRow {
         virtual_sequence_remaining: None,
         is_first_in_sequence: false,
         is_compressed: false,
+        misaligned_variant: false,
     }
 }
 
@@ -449,6 +497,70 @@ mod tests {
         assert_eq!(preprocessing.get_pc(&instruction(0x8000_0004, None)), None);
     }
 
+    /// A dual address resolves its aligned run first and its misaligned run
+    /// right after, each counting its own `virtual_sequence_remaining` down to
+    /// 0; the entry PC is the aligned head.
+    #[test]
+    fn maps_the_misaligned_run_after_the_aligned_run() {
+        let bytecode = vec![
+            instruction(0x8000_0004, Some(1)),
+            instruction(0x8000_0004, Some(0)),
+            misaligned(0x8000_0004, 2),
+            misaligned(0x8000_0004, 1),
+            misaligned(0x8000_0004, 0),
+            instruction(0x8000_0008, None),
+        ];
+
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode.clone(), 0x8000_0004, RV64IMAC_JOLT)
+                .unwrap();
+
+        assert_eq!(preprocessing.entry_bytecode_index(), Some(1));
+        for (pc, row) in (1..).zip(&bytecode) {
+            assert_eq!(preprocessing.get_pc(row), Some(pc), "{row:?}");
+        }
+        assert_eq!(preprocessing.get_pc(&misaligned(0x8000_0004, 3)), None);
+        assert_eq!(preprocessing.get_pc(&misaligned(0x8000_0008, 0)), None);
+    }
+
+    /// A native `LD`/`SD` row is a whole aligned run: its `None` resolves to
+    /// the address's first PC, not to the misaligned run's last row.
+    #[test]
+    fn maps_a_native_aligned_row_before_its_misaligned_run() {
+        let bytecode = vec![
+            instruction(0x8000_0000, None),
+            misaligned(0x8000_0000, 1),
+            misaligned(0x8000_0000, 0),
+        ];
+
+        let preprocessing =
+            BytecodePreprocessing::preprocess(bytecode.clone(), 0x8000_0000, RV64IMAC_JOLT)
+                .unwrap();
+
+        for (pc, row) in (1..).zip(&bytecode) {
+            assert_eq!(preprocessing.get_pc(row), Some(pc), "{row:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_misaligned_rows_outside_their_place() {
+        let address = 0x8000_0004;
+        let error = PreprocessingError::MisalignedSequenceOrder {
+            bytecode_index: BytecodePCMapper::get_index(address),
+            address,
+        };
+        for bytecode in [
+            vec![misaligned(address, 0)],
+            vec![
+                instruction(address, Some(0)),
+                misaligned(address, 0),
+                instruction(address, Some(0)),
+            ],
+        ] {
+            assert_eq!(BytecodePCMapper::try_new(&bytecode).unwrap_err(), error);
+        }
+    }
+
     fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {
         JoltInstructionRow {
             instruction_kind: JoltInstructionKind::ADDI,
@@ -462,6 +574,14 @@ mod tests {
             virtual_sequence_remaining,
             is_first_in_sequence: virtual_sequence_remaining == Some(2),
             is_compressed: false,
+            misaligned_variant: false,
+        }
+    }
+
+    fn misaligned(address: usize, virtual_sequence_remaining: u16) -> JoltInstructionRow {
+        JoltInstructionRow {
+            misaligned_variant: true,
+            ..instruction(address, Some(virtual_sequence_remaining))
         }
     }
 

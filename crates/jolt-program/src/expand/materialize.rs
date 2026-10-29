@@ -7,14 +7,18 @@ use std::ops::RangeInclusive;
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_INLINE_REGISTERS, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
-    expand_source_only_instruction,
+    expand_source_only_instruction, final_rows_to_instructions,
     grammar::{
         is_source_only, ExpandedInstructionSequence, ExpansionOp, InlineTempId, RegisterOperand,
         RowTemplate, SourceInstructionRowTemplate, TempId, TemplateOperands,
     },
     metadata::{stamp_inline_sequence, stamp_instruction_sequence},
     operands::{handles_rd_zero_internally, noop_for},
-    ExpansionError,
+    ExpansionError, SourceExpansion,
+};
+#[cfg(feature = "zicclsm")]
+use crate::expand::{
+    memory::expand_misaligned, metadata::stamp_misaligned_sequence, DualExpansion,
 };
 
 pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
@@ -68,6 +72,37 @@ impl ExpansionState {
         let result = self.dispatch_source(instruction);
         self.allocator.exit_expansion();
         result
+    }
+
+    /// Expand a top-level source instruction into its final bytecode. Under
+    /// `zicclsm`, a dual load or store also gets its misaligned sequence,
+    /// expanded after the aligned one from the same allocator state.
+    ///
+    /// Only top-level instructions get a misaligned sequence: a nested `LW`/`SW`
+    /// (inside `LR.W`/`SC.W`) is spliced into one straight-line parent and keeps
+    /// the aligned rows, so misaligned atomics stay unprovable.
+    pub(super) fn expand_source_top_level(
+        &mut self,
+        instruction: &SourceInstruction,
+    ) -> Result<SourceExpansion, ExpansionError> {
+        let aligned = self.expand_source_recursive(instruction)?;
+        #[cfg(feature = "zicclsm")]
+        if let Some((access, sequence)) = expand_misaligned(instruction, aligned.first())? {
+            let misaligned = self.materialize_with_options(
+                sequence,
+                MaterializeOptions {
+                    capacity: MAX_FINAL_ROWS_PER_SOURCE,
+                    append_inline_resets: false,
+                    stamp: stamp_misaligned_sequence,
+                },
+            )?;
+            return Ok(SourceExpansion::Dual(DualExpansion {
+                access,
+                aligned: final_rows_to_instructions(aligned, self.profile)?,
+                misaligned: final_rows_to_instructions(misaligned, self.profile)?,
+            }));
+        }
+        final_rows_to_instructions(aligned, self.profile).map(SourceExpansion::Single)
     }
 
     /// Route one source instruction to its final-row representation.
@@ -188,6 +223,7 @@ impl ExpansionState {
                     virtual_sequence_remaining: Some(0),
                     is_first_in_sequence: false,
                     is_compressed: false,
+                    misaligned_variant: false,
                 })?;
             }
         }
@@ -374,6 +410,7 @@ impl SequenceMaterializer {
             virtual_sequence_remaining: Some(0),
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         })
     }
 

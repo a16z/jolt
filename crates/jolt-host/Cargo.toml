@@ -18,6 +18,7 @@ field-inline = [
   "jolt-riscv/field-inline",
   "tracer/field-inline",
 ]
+zicclsm = ["jolt-program/zicclsm", "jolt-riscv/zicclsm", "tracer/zicclsm"]
 
 [dependencies]
 jolt-field = { workspace = true, optional = true }

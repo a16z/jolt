@@ -29,6 +29,8 @@ mod lrd;
 mod lrw;
 mod lw;
 mod lwu;
+#[cfg(feature = "zicclsm")]
+mod misaligned;
 mod sb;
 mod scd;
 mod scw;
@@ -65,6 +67,8 @@ pub(super) use lrd::expand_lrd;
 pub(super) use lrw::expand_lrw;
 pub(super) use lw::expand_lw;
 pub(super) use lwu::expand_lwu;
+#[cfg(feature = "zicclsm")]
+pub(super) use misaligned::expand_misaligned;
 pub(super) use sb::expand_sb;
 pub(super) use scd::expand_scd;
 pub(super) use scw::expand_scw;

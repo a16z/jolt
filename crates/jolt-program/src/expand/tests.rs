@@ -9,8 +9,7 @@ use crate::RV64I;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{
-    JoltInstruction, JoltInstructionKind as Kind, SourceInlineKey, SourceInstructionRow,
-    RV64IMAC_JOLT,
+    JoltInstructionKind as Kind, SourceInlineKey, SourceInstructionRow, RV64IMAC_JOLT,
 };
 #[cfg(feature = "serialization")]
 use serde::{Deserialize, Serialize};
@@ -22,7 +21,11 @@ use sha2::{Digest, Sha256};
 struct ExpansionParityCase {
     name: String,
     input: SourceInstruction,
+    /// The single sequence, or a dual expansion's aligned one.
     output_sha256: String,
+    /// A dual expansion's misaligned sequence (`zicclsm` builds only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    misaligned_sha256: Option<String>,
 }
 
 fn source_row(
@@ -59,8 +62,9 @@ fn instruction(
     )
 }
 
-fn rows(instructions: Vec<JoltInstruction>) -> Vec<JoltInstructionRow> {
-    instructions
+fn rows(expansion: SourceExpansion) -> Vec<JoltInstructionRow> {
+    expansion
+        .into_bytecode()
         .into_iter()
         .map(JoltInstructionRow::from)
         .collect()
@@ -532,38 +536,195 @@ fn recursive_helper_expansion_is_stamped_as_one_sequence() -> Result<(), Expansi
     Ok(())
 }
 
+#[cfg(feature = "zicclsm")]
+fn dual_expansion(input: &SourceInstruction) -> Result<DualExpansion, ExpansionError> {
+    let mut allocator = ExpansionAllocator::new();
+    let expansion = expand_instruction(input, &mut allocator, RV64IMAC_JOLT)?;
+    assert_eq!(
+        allocator.allocate()?,
+        40,
+        "{:?} leaked a temporary",
+        input.kind()
+    );
+    match expansion {
+        SourceExpansion::Dual(dual) => Ok(dual),
+        SourceExpansion::Single(_) => Err(ExpansionError::MalformedInstruction(
+            "dual load or store expanded once",
+        )),
+    }
+}
+
+#[test]
+#[cfg(feature = "zicclsm")]
+fn dual_accesses_stamp_each_sequence_on_its_own() -> Result<(), ExpansionError> {
+    for (kind, width) in [
+        (SourceInstructionKind::LH, DualWidth::Halfword),
+        (SourceInstructionKind::LHU, DualWidth::Halfword),
+        (SourceInstructionKind::SH, DualWidth::Halfword),
+        (SourceInstructionKind::LW, DualWidth::Word),
+        (SourceInstructionKind::LWU, DualWidth::Word),
+        (SourceInstructionKind::SW, DualWidth::Word),
+        (SourceInstructionKind::LD, DualWidth::Doubleword),
+        (SourceInstructionKind::SD, DualWidth::Doubleword),
+    ] {
+        let rd = (!kind.name().starts_with('S')).then_some(3);
+        for is_compressed in [false, true] {
+            let input = instruction(kind, rd, is_compressed);
+            let dual = dual_expansion(&input)?;
+            assert_eq!(
+                dual.access,
+                DualAccess {
+                    base: 1,
+                    offset: 7,
+                    width
+                }
+            );
+            for (sequence, misaligned) in [(dual.aligned, false), (dual.misaligned, true)] {
+                let rows: Vec<JoltInstructionRow> =
+                    sequence.into_iter().map(JoltInstructionRow::from).collect();
+                assert!(rows.iter().all(|row| row.address == input.row().address
+                    && row.misaligned_variant == misaligned));
+                if let [row] = rows.as_slice() {
+                    if row.virtual_sequence_remaining.is_none() {
+                        // A native LD/SD row is its own aligned sequence.
+                        assert!(!misaligned && !row.is_first_in_sequence);
+                        assert_eq!(row.is_compressed, is_compressed);
+                        continue;
+                    }
+                }
+                let last = rows.len() - 1;
+                for (index, row) in rows.iter().enumerate() {
+                    assert_eq!(
+                        row.virtual_sequence_remaining,
+                        Some((last - index) as u16),
+                        "{kind:?}"
+                    );
+                    assert_eq!(row.is_first_in_sequence, index == 0, "{kind:?}");
+                    assert_eq!(
+                        row.is_compressed,
+                        is_compressed && index == last,
+                        "{kind:?}"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "zicclsm")]
+fn dual_rd_zero_load_writes_one_temporary_in_both_sequences() -> Result<(), ExpansionError> {
+    for kind in [
+        SourceInstructionKind::LH,
+        SourceInstructionKind::LHU,
+        SourceInstructionKind::LW,
+        SourceInstructionKind::LWU,
+        SourceInstructionKind::LD,
+    ] {
+        let dual = dual_expansion(&instruction(kind, Some(0), false))?;
+        for sequence in [dual.aligned, dual.misaligned] {
+            let last = sequence.last().copied().map(JoltInstructionRow::from);
+            assert_eq!(last.and_then(|row| row.operands.rd), Some(40), "{kind:?}");
+        }
+    }
+    Ok(())
+}
+
+/// The word accesses nested in `LR.W`/`SC.W` and the doubleword ones in the
+/// `.D` atomics keep their aligned rows, so a misaligned atomic stays
+/// unprovable; byte accesses never need a second sequence.
+#[test]
+fn atomics_and_byte_accesses_expand_once() -> Result<(), ExpansionError> {
+    for kind in [
+        SourceInstructionKind::LB,
+        SourceInstructionKind::LBU,
+        SourceInstructionKind::SB,
+        SourceInstructionKind::LRW,
+        SourceInstructionKind::SCW,
+        SourceInstructionKind::LRD,
+        SourceInstructionKind::SCD,
+        SourceInstructionKind::AMOADDW,
+        SourceInstructionKind::AMOSWAPD,
+    ] {
+        let rd = (kind != SourceInstructionKind::SB).then_some(3);
+        let mut allocator = ExpansionAllocator::new();
+        let expansion =
+            expand_instruction(&instruction(kind, rd, false), &mut allocator, RV64IMAC_JOLT)?;
+        assert!(matches!(expansion, SourceExpansion::Single(_)), "{kind:?}");
+        assert!(rows(expansion).iter().all(|row| !row.misaligned_variant));
+    }
+    Ok(())
+}
+
+#[test]
+#[cfg(not(feature = "zicclsm"))]
+fn loads_and_stores_expand_once_without_zicclsm() -> Result<(), ExpansionError> {
+    for kind in [
+        SourceInstructionKind::LH,
+        SourceInstructionKind::LHU,
+        SourceInstructionKind::LW,
+        SourceInstructionKind::LWU,
+        SourceInstructionKind::LD,
+        SourceInstructionKind::SH,
+        SourceInstructionKind::SW,
+        SourceInstructionKind::SD,
+    ] {
+        let rd = (!kind.name().starts_with('S')).then_some(3);
+        let mut allocator = ExpansionAllocator::new();
+        let expansion =
+            expand_instruction(&instruction(kind, rd, false), &mut allocator, RV64IMAC_JOLT)?;
+        assert!(matches!(expansion, SourceExpansion::Single(_)), "{kind:?}");
+        assert!(rows(expansion).iter().all(|row| !row.misaligned_variant));
+    }
+    Ok(())
+}
+
 #[test]
 #[cfg(feature = "serialization")]
 fn expansion_matches_main_golden_fixture() -> Result<(), Box<dyn std::error::Error>> {
     // Pins expansion order, virtual-register reuse and emitted tags (kinds
     // serialize as tags) without checking the expanded rows in. Re-baseline with
-    // `JOLT_UPDATE_EXPANSION_FIXTURES=1 cargo nextest run -p jolt-program -E
-    // 'test(expansion_matches_main_golden_fixture)'` and review which cases moved.
+    // `JOLT_UPDATE_EXPANSION_FIXTURES=1 cargo nextest run -p jolt-program
+    // --features zicclsm -E 'test(expansion_matches_main_golden_fixture)'`, which
+    // also moves the misaligned pins, and review which cases moved.
     let cases: Vec<ExpansionParityCase> =
         serde_json::from_str(include_str!("fixtures/main_expand_parity_hashes.json"))?;
     // WARNING: guards against accidental truncation when re-baselining (a
     // filtering rewrite of the fixture must not drop unchanged entries).
-    assert_eq!(cases.len(), 360);
+    assert_eq!(cases.len(), 380);
 
+    let sequence_sha256 = |sequence: Vec<JoltInstruction>| {
+        let rows: Vec<JoltInstructionRow> =
+            sequence.into_iter().map(JoltInstructionRow::from).collect();
+        serde_json::to_vec(&rows).map(|encoded| hex::encode(Sha256::digest(encoded)))
+    };
     let bless = std::env::var_os("JOLT_UPDATE_EXPANSION_FIXTURES").is_some();
     let mut blessed = Vec::with_capacity(cases.len());
     for case in cases {
         let mut allocator = ExpansionAllocator::new();
-        let expanded = rows(expand_instruction(
-            &case.input,
-            &mut allocator,
-            RV64IMAC_JOLT,
-        )?);
-        let encoded = serde_json::to_vec(&expanded)?;
-        let output_sha256 = hex::encode(Sha256::digest(encoded));
+        let (sequence, misaligned) =
+            match expand_instruction(&case.input, &mut allocator, RV64IMAC_JOLT)? {
+                SourceExpansion::Single(sequence) => (sequence, None),
+                SourceExpansion::Dual(dual) => (dual.aligned, Some(dual.misaligned)),
+            };
+        let output_sha256 = sequence_sha256(sequence)?;
+        let misaligned_sha256 = match misaligned {
+            Some(sequence) => Some(sequence_sha256(sequence)?),
+            // Without `zicclsm` no misaligned sequence is expanded to check.
+            None if !cfg!(feature = "zicclsm") => case.misaligned_sha256.clone(),
+            None => None,
+        };
 
         if bless {
             blessed.push(ExpansionParityCase {
                 output_sha256,
+                misaligned_sha256,
                 ..case
             });
         } else {
             assert_eq!(output_sha256, case.output_sha256, "{}", case.name);
+            assert_eq!(misaligned_sha256, case.misaligned_sha256, "{}", case.name);
         }
     }
     if bless {

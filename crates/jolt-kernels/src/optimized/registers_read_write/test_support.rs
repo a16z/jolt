@@ -90,6 +90,7 @@ impl TraceFixture {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         };
         self.rows
             .push(TraceRow::new(instruction, registers, RamAccess::NoOp, 1).unwrap());

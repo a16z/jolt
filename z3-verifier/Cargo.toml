@@ -24,6 +24,7 @@ z3-src = { version = "=501.0.1", optional = true }
 # Used by .github/workflows/z3-nightly.yml so nightly results depend only on
 # this repo, not on runner packages.
 vendored-z3 = ["z3/vendored", "dep:z3-src"]
+zicclsm = ["jolt-claims/zicclsm", "jolt-riscv/zicclsm", "tracer/zicclsm"]
 
 [package.metadata.cargo-machete]
 ignored = ["z3-src"]

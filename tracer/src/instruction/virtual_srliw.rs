@@ -45,6 +45,7 @@ mod tests {
             virtual_sequence_remaining: None,
             is_first_in_sequence: true,
             is_compressed: false,
+            misaligned_variant: false,
         };
         let mut cpu = Cpu::new(Box::new(DummyTerminal::default()));
         cpu.x[1] = 1;

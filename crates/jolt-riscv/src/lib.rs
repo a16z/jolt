@@ -192,6 +192,10 @@ macro_rules! for_each_instruction_kind {
                 VirtualStoreB => StoreB => "jolt.virtual.storeb",
                 VirtualStoreH => StoreH => "jolt.virtual.storeh",
                 VirtualStoreW => StoreW => "jolt.virtual.storew",
+                #[cfg(feature = "zicclsm")]
+                VirtualWindowMaskD => WindowMaskD => "jolt.virtual.windowmaskd",
+                #[cfg(feature = "zicclsm")]
+                VirtualFunnelHigh => FunnelHigh => "jolt.virtual.funnelhigh",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -317,6 +321,10 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualStoreB => StoreB => (0x00a5, "jolt.virtual.storeb"),
                 VirtualStoreH => StoreH => (0x00a6, "jolt.virtual.storeh"),
                 VirtualStoreW => StoreW => (0x00a7, "jolt.virtual.storew"),
+                #[cfg(feature = "zicclsm")]
+                VirtualWindowMaskD => WindowMaskD => (0x00a8, "jolt.virtual.windowmaskd"),
+                #[cfg(feature = "zicclsm")]
+                VirtualFunnelHigh => FunnelHigh => (0x00a9, "jolt.virtual.funnelhigh"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

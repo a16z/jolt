@@ -8,7 +8,10 @@ stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned entry poi
 advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`,
 `field_limbs`, and `muldiv`, covering active field operations, the SDK's
 checked limb conversions, and an ordinary guest proved under the field-inline
-protocol with no field activity.
+protocol with no field activity. Enabling `zicclsm` adds
+`misaligned_memory_ops` to the ordinary table, which runs every load and store
+at every offset; memory-ops itself stays at naturally aligned offsets, so it
+proves in both builds.
 
 The shared runner checks each guest's output against a natively computed
 value, its panic status, trace bound, and field activity, then proves it with
@@ -31,6 +34,11 @@ cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,zk -E 'binary(e2e_matrix)' --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,field-inline,akita -E 'binary(e2e_matrix)' --cargo-quiet
+
+# zicclsm: the ordinary cases plus misaligned_memory_ops
+cargo nextest run -p jolt-prover --features prover-fixtures,zicclsm -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features prover-fixtures,zicclsm,zk -E 'binary(e2e_matrix)' --cargo-quiet
+cargo nextest run -p jolt-prover --features akita,prover-fixtures,zicclsm -E 'binary(e2e_matrix)' --cargo-quiet
 ```
 
 Add a guest by appending a row to its profile table: the example crate name,

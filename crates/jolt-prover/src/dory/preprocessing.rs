@@ -123,6 +123,7 @@ pub fn preprocess_committed_with_order(
         max_padded_trace_length: full.max_padded_trace_length,
         bytecode_commitment,
         program_image_commitment,
+        bytecode_lanes: bytecode::total_lanes(),
         trace_order,
     };
     let verifier = JoltVerifierPreprocessing::new(

@@ -6,6 +6,8 @@ pub mod advice_ld;
 pub mod advice_lh;
 pub mod advice_load;
 pub mod advice_lw;
+#[cfg(feature = "zicclsm")]
+pub mod funnel_high;
 pub mod host_io;
 pub mod load_b;
 pub mod load_h;
@@ -42,6 +44,8 @@ pub mod store_b;
 pub mod store_h;
 pub mod store_w;
 pub mod window_mask_b;
+#[cfg(feature = "zicclsm")]
+pub mod window_mask_d;
 pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod xor_rot16;
@@ -64,6 +68,8 @@ pub use advice_ld::AdviceLd;
 pub use advice_lh::AdviceLh;
 pub use advice_load::VirtualAdviceLoad;
 pub use advice_lw::AdviceLw;
+#[cfg(feature = "zicclsm")]
+pub use funnel_high::FunnelHigh;
 pub use host_io::VirtualHostIO;
 pub use load_b::LoadB;
 pub use load_h::LoadH;
@@ -100,6 +106,8 @@ pub use store_b::StoreB;
 pub use store_h::StoreH;
 pub use store_w::StoreW;
 pub use window_mask_b::WindowMaskB;
+#[cfg(feature = "zicclsm")]
+pub use window_mask_d::WindowMaskD;
 pub use window_mask_h::WindowMaskH;
 pub use window_mask_w::WindowMaskW;
 pub use xor_rot16::VirtualXorRot16;

@@ -43,7 +43,20 @@ For a floor-addressed row, `RamAddress` is the address of the doubleword it acce
 
 RAF evaluation ties `RamAddress` to the one-hot address: on each cycle it must equal $8k + \texttt{lowest\_address}$ for the accessed cell $k$, or 0 on a cycle without a RAM access.
 The verifier requires `lowest_address` to be a multiple of 8, so every admissible `RamAddress` is a multiple of 8.
-An access misaligned for its width, such as an `LH` at an odd address or any misaligned `LD`, leaves a low bit set in `RamAddress` and cannot be proven.
+Run on an access misaligned for its width, such as an `LH` at an odd address or a misaligned `LD`, these rows leave a low bit set in `RamAddress`, so they cannot prove it.
+
+### Misaligned accesses
+
+By default that is where it ends: the tracer aborts on a misaligned access, so a program that makes one cannot be proven.
+With the `zicclsm` feature (RISC-V's Zicclsm: misaligned loads and stores are supported), `LH`, `LHU`, `LW`, `LWU`, `LD`, `SH`, `SW` and `SD` instead expand twice, into an *aligned* sequence (the rows above, or the native `LD`/`SD` row) and a *misaligned* one, and the bytecode holds both at the instruction's address.
+Each execution runs one of them: the tracer picks the misaligned sequence exactly when the effective address is not a multiple of the access width.
+Nothing in the proof pins that choice, and nothing needs to: the aligned sequence cannot prove a misaligned access, and the misaligned sequence is correct at every offset.
+
+The misaligned sequence reads the doublewords holding the first and last accessed bytes with byte-class floor rows, which clear all three offset bits.
+It addresses the second one at `ea + width - 1`, so it touches only doublewords that hold accessed bytes: a single one when the access does not cross a doubleword boundary.
+A load splits the two doublewords at the offset with a window mask and adds the halves holding its bytes, plus one or two cycles to narrow a word or halfword: 6 cycles for `LD`, 7 for `LW`/`LWU` and 8 for `LH`/`LHU`. A store merges its bytes into both doublewords and writes them back, in 12 cycles for `SD` and 16 for `SH`/`SW`.
+`LB`/`LBU`/`SB` never need a second sequence.
+The `LW`/`SW` inside `LR.W`/`SC.W` and the `LD`/`SD` inside the doubleword atomics keep only the aligned rows, so a misaligned atomic cannot be proven.
 
 ## Deviations from the Twist algorithm as described in the paper
 

@@ -1,4 +1,4 @@
-use crate::instruction::Instruction;
+use crate::instruction::{InlineExpansion, Instruction};
 
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
@@ -29,10 +29,10 @@ pub struct CachedDecode {
     pub instr: Instruction,
     /// Instruction length in bytes (2 or 4), for advancing the PC.
     pub len: u8,
-    /// Lazily-built inline sequence for multi-row instructions. Taken out and
+    /// Lazily-built inline expansion for multi-row instructions. Taken out and
     /// put back around tracing so the rows can be iterated while the CPU is
     /// borrowed mutably; `None` also means "not built yet".
-    pub expansion: Option<Box<[Instruction]>>,
+    pub expansion: Option<InlineExpansion>,
 }
 
 impl DecodeCache {
@@ -152,13 +152,13 @@ impl DecodeCache {
     }
 
     #[inline]
-    pub fn take_expansion(&mut self, index: u32) -> Option<Box<[Instruction]>> {
+    pub fn take_expansion(&mut self, index: u32) -> Option<InlineExpansion> {
         self.entries[index as usize].expansion.take()
     }
 
     #[inline]
-    pub fn put_expansion(&mut self, index: u32, rows: Box<[Instruction]>) {
-        self.entries[index as usize].expansion = Some(rows);
+    pub fn put_expansion(&mut self, index: u32, expansion: InlineExpansion) {
+        self.entries[index as usize].expansion = Some(expansion);
     }
 
     /// Invalidate any decoded slots overlapping a store to

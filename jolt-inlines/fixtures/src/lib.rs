@@ -146,6 +146,7 @@ mod tests {
                     RV64IMAC_JOLT_ALL_INLINES,
                 )?;
                 let rows = expanded
+                    .into_bytecode()
                     .into_iter()
                     .map(JoltInstructionRow::from)
                     .collect::<Vec<_>>();

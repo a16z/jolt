@@ -21,6 +21,7 @@ pub struct VirtualAdvice {
     pub is_first_in_sequence: bool,
     pub advice: u64,
     pub is_compressed: bool,
+    pub misaligned_variant: bool,
 }
 
 impl RISCVInstruction for VirtualAdvice {
@@ -56,6 +57,7 @@ impl RISCVInstruction for VirtualAdvice {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: false,
+            misaligned_variant: false,
         }
     }
 
@@ -73,6 +75,7 @@ impl From<JoltInstructionRow> for VirtualAdvice {
             virtual_sequence_remaining: ni.virtual_sequence_remaining,
             is_first_in_sequence: ni.is_first_in_sequence,
             is_compressed: ni.is_compressed,
+            misaligned_variant: ni.misaligned_variant,
         }
     }
 }
@@ -86,6 +89,7 @@ impl From<SourceInstructionRow> for VirtualAdvice {
             virtual_sequence_remaining: None,
             is_first_in_sequence: false,
             is_compressed: row.is_compressed,
+            misaligned_variant: false,
         }
     }
 }

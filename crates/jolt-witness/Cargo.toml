@@ -22,6 +22,11 @@ field-inline = [
   "jolt-program/field-inline",
   "jolt-riscv/field-inline",
 ]
+zicclsm = [
+  "jolt-lookup-tables/zicclsm",
+  "jolt-program/zicclsm",
+  "jolt-riscv/zicclsm",
+]
 
 [dependencies]
 common.workspace = true

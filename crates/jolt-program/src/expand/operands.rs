@@ -15,6 +15,7 @@ pub(super) fn noop_for(instruction: SourceInstructionRow) -> JoltInstructionRow 
         virtual_sequence_remaining: None,
         is_first_in_sequence: false,
         is_compressed: instruction.is_compressed,
+        misaligned_variant: false,
     }
 }
 

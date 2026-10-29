@@ -8,6 +8,8 @@ pub mod assert_mulu_no_overflow;
 pub mod assert_valid_div0;
 pub mod assert_valid_unsigned_remainder;
 pub mod floor_access;
+#[cfg(feature = "zicclsm")]
+pub mod funnel_high;
 pub mod host_io;
 pub mod movsign;
 pub mod muli;
@@ -38,6 +40,8 @@ pub mod srli;
 pub mod srliw;
 pub mod srlw;
 pub mod window_mask_b;
+#[cfg(feature = "zicclsm")]
+pub mod window_mask_d;
 pub mod window_mask_h;
 pub mod window_mask_w;
 pub mod xor_rot;

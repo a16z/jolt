@@ -308,6 +308,7 @@ impl INLINE {
             RV64IMAC_JOLT_ALL_INLINES,
         )
         .expect("jolt-program inline expansion failed")
+        .into_bytecode()
         .into_iter()
         .map(JoltInstructionRow::from)
         .map(|instruction| {
@@ -349,7 +350,7 @@ impl INLINE {
                         ),
                     };
                 }
-                instr.trace_raw(cpu, trace.as_deref_mut());
+                instr.trace_row(cpu, trace.as_deref_mut());
             }
             assert!(
                 advice.is_empty(),
@@ -362,7 +363,7 @@ impl INLINE {
         } else {
             let mut trace = trace;
             for instr in sequence {
-                instr.trace_raw(cpu, trace.as_deref_mut());
+                instr.trace_row(cpu, trace.as_deref_mut());
             }
         }
     }
