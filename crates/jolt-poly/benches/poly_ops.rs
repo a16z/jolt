@@ -1,6 +1,6 @@
 #![expect(unused_results)]
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use jolt_field::{Field, Fr, JoltField, Prime128OffsetA7F7};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
@@ -23,7 +23,7 @@ fn bench_bind(c: &mut Criterion) {
                         p.bind(std::hint::black_box(scalar));
                         p
                     },
-                    criterion::BatchSize::LargeInput,
+                    BatchSize::LargeInput,
                 );
             },
         );
@@ -53,7 +53,7 @@ fn bench_inplace_field<F: JoltField>(c: &mut Criterion, field: &str) {
                         p.bind_low_to_high_in_place(std::hint::black_box(scalar));
                         p
                     },
-                    criterion::BatchSize::LargeInput,
+                    BatchSize::LargeInput,
                 );
             },
         );
