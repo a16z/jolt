@@ -31,7 +31,7 @@ mod base {
     fn akita_advice_message_sweep() {
         let case = akita_advice_case();
         checks::message_sweep(case, None);
-        checks::trusted_advice_tampers(case, &checks::sent_commitment(case, 1));
+        checks::trusted_advice_tampers(case, &checks::sent_commitment(case, 2));
     }
 
     #[test]

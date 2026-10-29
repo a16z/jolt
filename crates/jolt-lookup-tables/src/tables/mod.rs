@@ -15,11 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::challenge_ops::{ChallengeOps, FieldOps};
 use crate::traits::LookupTable;
 
-pub mod align_addr;
+pub mod address_offset;
 pub mod and;
 pub mod andn;
 pub mod equal;
-pub mod halfword_alignment;
 pub mod lower_half_word;
 pub mod mulu_no_overflow;
 pub mod not_equal;
@@ -61,17 +60,15 @@ pub mod virtual_xor_rotw;
 pub mod window_mask_b;
 pub mod window_mask_h;
 pub mod window_mask_w;
-pub mod word_alignment;
 pub mod xor;
 
 pub use prefixes::{PrefixEval, Prefixes};
 pub use suffixes::{SuffixEval, Suffixes};
 
-use align_addr::AlignAddrTable;
+use address_offset::AddressOffsetTable;
 use and::AndTable;
 use andn::AndnTable;
 use equal::EqualTable;
-use halfword_alignment::HalfwordAlignmentTable;
 use lower_half_word::LowerHalfWordTable;
 use mulu_no_overflow::MulUNoOverflowTable;
 use not_equal::NotEqualTable;
@@ -111,7 +108,6 @@ use virtual_xor_rotw::VirtualXORROTWTable;
 use window_mask_b::WindowMaskBTable;
 use window_mask_h::WindowMaskHTable;
 use window_mask_w::WindowMaskWTable;
-use word_alignment::WordAlignmentTable;
 use xor::XorTable;
 
 /// Identifies a lookup table type at a given word size.
@@ -120,7 +116,9 @@ use xor::XorTable;
 /// declare which table they use via
 /// [`InstructionLookupTable::lookup_table`](crate::InstructionLookupTable::lookup_table).
 ///
-/// Variant indices are proof-format identifiers and must remain stable.
+/// Variant indices are proof-format identifiers, pinned by the
+/// `proof_format_indices_are_stable` test: removing or reordering a variant
+/// changes the proof format, so only append outside a deliberate format break.
 #[expect(clippy::unsafe_derive_deserialize)]
 #[derive(
     Clone,
@@ -154,8 +152,6 @@ pub enum LookupTableKind<const XLEN: usize> {
     UnsignedLessThanEqual(UnsignedLessThanEqualTable<XLEN>),
     ValidUnsignedRemainder(ValidUnsignedRemainderTable<XLEN>),
     ValidDiv0(ValidDiv0Table<XLEN>),
-    HalfwordAlignment(HalfwordAlignmentTable<XLEN>),
-    WordAlignment(WordAlignmentTable<XLEN>),
     LowerHalfWord(LowerHalfWordTable<XLEN>),
     SignExtendWord(SignExtendWordTable<XLEN>),
     Pow2(Pow2Table<XLEN>),
@@ -187,11 +183,13 @@ pub enum LookupTableKind<const XLEN: usize> {
     Pext(PextTable<XLEN>),
     WindowMaskB(WindowMaskBTable<XLEN>),
     WindowMaskH(WindowMaskHTable<XLEN>),
-    AlignAddr(AlignAddrTable<XLEN>),
     ShiftDataB(ShiftDataBTable<XLEN>),
     ShiftDataH(ShiftDataHTable<XLEN>),
     ShiftDataW(ShiftDataWTable<XLEN>),
     VirtualXORROTL1(VirtualXORROTL1Table<XLEN>),
+    AddressOffsetB(AddressOffsetTable<XLEN, 1>),
+    AddressOffsetH(AddressOffsetTable<XLEN, 2>),
+    AddressOffsetW(AddressOffsetTable<XLEN, 4>),
 }
 
 macro_rules! dispatch {
@@ -214,8 +212,6 @@ macro_rules! dispatch {
             Self::UnsignedLessThanEqual($t) => $expr,
             Self::ValidUnsignedRemainder($t) => $expr,
             Self::ValidDiv0($t) => $expr,
-            Self::HalfwordAlignment($t) => $expr,
-            Self::WordAlignment($t) => $expr,
             Self::LowerHalfWord($t) => $expr,
             Self::SignExtendWord($t) => $expr,
             Self::Pow2($t) => $expr,
@@ -247,11 +243,13 @@ macro_rules! dispatch {
             Self::Pext($t) => $expr,
             Self::WindowMaskB($t) => $expr,
             Self::WindowMaskH($t) => $expr,
-            Self::AlignAddr($t) => $expr,
             Self::ShiftDataB($t) => $expr,
             Self::ShiftDataH($t) => $expr,
             Self::ShiftDataW($t) => $expr,
             Self::VirtualXORROTL1($t) => $expr,
+            Self::AddressOffsetB($t) => $expr,
+            Self::AddressOffsetH($t) => $expr,
+            Self::AddressOffsetW($t) => $expr,
         }
     };
 }
@@ -365,8 +363,6 @@ mod tests {
             "UnsignedLessThanEqual",
             "ValidUnsignedRemainder",
             "ValidDiv0",
-            "HalfwordAlignment",
-            "WordAlignment",
             "LowerHalfWord",
             "SignExtendWord",
             "Pow2",
@@ -398,11 +394,13 @@ mod tests {
             "Pext",
             "WindowMaskB",
             "WindowMaskH",
-            "AlignAddr",
             "ShiftDataB",
             "ShiftDataH",
             "ShiftDataW",
             "VirtualXORROTL1",
+            "AddressOffsetB",
+            "AddressOffsetH",
+            "AddressOffsetW",
         ];
 
         let actual = LookupTableKind::<64>::iter()

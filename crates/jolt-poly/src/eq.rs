@@ -35,6 +35,27 @@ impl<F: JoltField> EqPolynomial<F> {
         self.point.len()
     }
 
+    /// Sum equality weights on `start..2^point.len()` in O(point.len()) time.
+    /// Subcubes strictly above the index have remaining-coordinate mass one.
+    pub fn suffix_sum(point: &[F], start: usize) -> F {
+        let len = 1usize << point.len();
+        assert!(start <= len);
+        if start == len {
+            return F::zero();
+        }
+        let mut prefix = F::one();
+        let mut greater = F::zero();
+        for (i, &r) in point.iter().enumerate() {
+            if start & (1 << (point.len() - i - 1)) == 0 {
+                greater += prefix * r;
+                prefix *= F::one() - r;
+            } else {
+                prefix *= r;
+            }
+        }
+        greater + prefix
+    }
+
     /// Materializes all $2^n$ evaluations of $\widetilde{eq}(\cdot, r)$ over the Boolean hypercube.
     ///
     /// Uses a bottom-up doubling construction: starting from `[1]`, each coordinate
@@ -458,6 +479,30 @@ mod tests {
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
+
+    #[test]
+    fn suffix_sums_match_dense_boolean_tables() {
+        let mut rng = ChaCha20Rng::seed_from_u64(849);
+        for bits in 0..9 {
+            for kind in 0..3 {
+                let point: Vec<Fr> = (0..bits)
+                    .map(|_| match kind {
+                        0 => Fr::zero(),
+                        1 => Fr::one(),
+                        _ => Fr::random(&mut rng),
+                    })
+                    .collect();
+                let table: Vec<Fr> = EqPolynomial::evals(&point, None);
+                for index in 0..table.len() {
+                    assert_eq!(
+                        EqPolynomial::suffix_sum(&point, index),
+                        table[index..].iter().copied().sum::<Fr>()
+                    );
+                }
+                assert_eq!(EqPolynomial::suffix_sum(&point, table.len()), Fr::zero());
+            }
+        }
+    }
 
     fn index_to_bits(idx: usize, n: usize) -> Vec<Fr> {
         (0..n)

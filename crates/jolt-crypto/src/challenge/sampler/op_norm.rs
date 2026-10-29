@@ -354,11 +354,10 @@ fn decide_transposed_fused(
             let im = i128::from(acc_im[lane]);
             let abs_re = re.abs();
             let abs_im = im.abs();
-            if decide_frequency(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold)? {
-                return Ok(Decision::Reject);
-            }
-            if !frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold) {
-                indeterminate = true;
+            match decide_frequency(abs_re, abs_im, r, two_r, two_r_sq, threshold) {
+                Decision::Reject => return Ok(Decision::Reject),
+                Decision::Indeterminate => indeterminate = true,
+                Decision::Accept => {}
             }
         }
         start_k += len;
@@ -378,42 +377,28 @@ fn ct_abs(x: i128) -> i128 {
     (x ^ sign) - sign
 }
 
-#[expect(clippy::too_many_arguments)]
-#[inline]
-fn frequency_accepts_upper(
-    abs_re: i128,
-    abs_im: i128,
-    re: i128,
-    im: i128,
-    _r: i128,
-    two_r: i128,
-    two_r_sq: i128,
-    threshold: i128,
-) -> bool {
-    let center = re * re + im * im;
-    let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
-    upper <= threshold
-}
-
-#[expect(clippy::too_many_arguments)]
 #[inline]
 fn decide_frequency(
     abs_re: i128,
     abs_im: i128,
-    re: i128,
-    im: i128,
     r: i128,
     two_r: i128,
     two_r_sq: i128,
     threshold: i128,
-) -> Result<bool, CryptoError> {
-    if frequency_accepts_upper(abs_re, abs_im, re, im, r, two_r, two_r_sq, threshold) {
-        return Ok(false);
+) -> Decision {
+    let center = abs_re * abs_re + abs_im * abs_im;
+    let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
+    if upper <= threshold {
+        return Decision::Accept;
     }
     let low_re = (abs_re - r).max(0);
     let low_im = (abs_im - r).max(0);
     let lower = low_re * low_re + low_im * low_im;
-    Ok(lower > threshold)
+    if lower > threshold {
+        Decision::Reject
+    } else {
+        Decision::Indeterminate
+    }
 }
 
 /// Validate worst-case `i64` accumulator magnitudes for the transposed path.
@@ -478,7 +463,8 @@ fn validate_no_overflow(
 /// sound global error bound `eps_root`.
 #[expect(
     clippy::indexing_slicing,
-    reason = "`t` ranges over the 2d entries both tables are allocated with"
+    reason = "`t` ranges over the 2d entries both tables are allocated with, and \
+              `octant_reduce` bounds `r` by the d/4 first-octant entries"
 )]
 fn build_tables(d: usize, q: u32) -> (Vec<i128>, Vec<i128>, i128) {
     let two_d = 2 * d;
@@ -488,14 +474,20 @@ fn build_tables(d: usize, q: u32) -> (Vec<i128>, Vec<i128>, i128) {
     let mut base_cos = vec![0i128; two_d];
     let mut base_sin = vec![0i128; two_d];
     let mut eps_root: i128 = 0;
+    // Reflected angles share the same certified first-octant enclosure:
+    // phi = pi * r / d, enclosed at TRIG_SCALE; phi in [0, pi/4].
+    let first_octant: Vec<_> = (0..=d / 4)
+        .map(|r| {
+            let phi_lo = fdiv(pi_lo * r as i128, d as i128);
+            let phi_hi = cdiv(pi_hi * r as i128, d as i128);
+            (taylor_cos((phi_lo, phi_hi)), taylor_sin((phi_lo, phi_hi)))
+        })
+        .collect();
 
     for t in 0..two_d {
         let (r, swap, cos_sign, sin_sign) = octant_reduce(t, d);
-        // phi = pi * r / d, enclosed at TRIG_SCALE; phi in [0, pi/4].
-        let phi_lo = fdiv(pi_lo * r as i128, d as i128);
-        let phi_hi = cdiv(pi_hi * r as i128, d as i128);
-        let cos_phi = taylor_cos((phi_lo, phi_hi));
-        let sin_phi = taylor_sin((phi_lo, phi_hi));
+        // octant_reduce bounds r by d/4 for every degree.
+        let (cos_phi, sin_phi) = first_octant[r];
         let (cos_a, sin_a) = if swap {
             (sin_phi, cos_phi)
         } else {
@@ -746,16 +738,15 @@ mod tests {
                 acc_im += coeff * table.base_sin[idx];
             }
             let (abs_re, abs_im) = (acc_re.abs(), acc_im.abs());
-            if decide_frequency(
-                abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
-            )
-            .unwrap()
-            {
-                return Decision::Reject;
-            }
-            if !frequency_accepts_upper(
-                abs_re, abs_im, acc_re, acc_im, r, two_r, two_r_sq, threshold,
-            ) {
+            // Keep the reference predicate independent of the production decision.
+            let center = acc_re * acc_re + acc_im * acc_im;
+            let upper = center + two_r * (abs_re + abs_im) + two_r_sq;
+            if upper > threshold {
+                let low_re = (abs_re - r).max(0);
+                let low_im = (abs_im - r).max(0);
+                if low_re * low_re + low_im * low_im > threshold {
+                    return Decision::Reject;
+                }
                 indeterminate = true;
             }
         }

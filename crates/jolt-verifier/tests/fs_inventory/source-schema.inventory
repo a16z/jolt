@@ -73,6 +73,7 @@ jolt-verifier::proof.rs::JoltCommitments.rd_inc
 jolt-verifier::proof.rs::JoltProof.narg
 jolt-verifier::proof.rs::JoltProof.protocol
 jolt-verifier::proof.rs::ProofCommitments.field_inc @cfg(all(feature="akita",feature="field-inline"))
+jolt-verifier::proof.rs::ProofCommitments.fused_inc @cfg(feature="akita")
 jolt-verifier::proof.rs::ProofCommitments.one_hot_trace @cfg(feature="akita")
 jolt-verifier::proof.rs::ProofCommitments.trace @cfg(not(feature="akita"))
 jolt-verifier::proof.rs::ProofCommitments.untrusted_advice

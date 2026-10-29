@@ -117,7 +117,7 @@ Spec created: specs/<feature-name>.md
 
 Next steps:
 1. Review the spec above
-2. Open a PR — a GitHub Action will add the `spec` label
+2. Open a PR
 3. Add the `claude-spec-review-request` label for external analysis, or run `/analyze-spec` locally
 ```
 

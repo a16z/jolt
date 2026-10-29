@@ -37,7 +37,7 @@ use jolt_witness::JoltWitnessPlane;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
+use super::ram_trace::{RamAddresses, SharedRamAddresses, NO_ACCESS};
 use super::support::{bind_pairs, pin_derived_term, RoundProgress};
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -100,7 +100,7 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
         } else {
             Phase::Prefix {
                 p: cycle_points.map(|r| eq_table(&r[suffix_bits..])),
-                q: build_q_tables(&addresses, &eq_address, &eq_hi, prefix_bits),
+                q: build_q_tables(addresses.prefix(), &eq_address, &eq_hi, prefix_bits),
                 eq_hi,
                 addresses,
                 eq_address,
@@ -233,7 +233,7 @@ enum Phase<F: JoltField> {
         p: [Vec<F>; TERMS],
         q: [Vec<F>; TERMS],
         eq_hi: [Vec<F>; TERMS],
-        addresses: Arc<Vec<u32>>,
+        addresses: Arc<RamAddresses>,
         eq_address: Vec<F>,
         r_cycle_lo: [Vec<F>; TERMS],
         challenges: Vec<F>,
@@ -301,7 +301,7 @@ impl<F: JoltField> RaReductionKernel<F> {
         let r_prefix: Vec<F> = challenges.iter().rev().copied().collect();
         let eq_prefix = eq_table(&r_prefix);
         let h = gather_h_prime(
-            &addresses,
+            addresses.prefix(),
             &eq_address,
             &eq_prefix,
             self.prefix_bits,

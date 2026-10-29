@@ -256,8 +256,8 @@ fn whiteout_opening_verifies_and_rejects_a_flipped_response_byte() {
 /// the residual's ring, width 449) takes rank 9, whose Σ-binding bracket is
 /// 32 < width ≤ 1231, so rank 8 is under the 128-bit target there, as the
 /// A40 harness's rank 2 is; `A_D` (key Open, d 64, ℓ∞ 15) takes rank 1 at
-/// width 4736, inside the q128 cell's rank-1 width of 93,935. The residual's
-/// own ranks are pinned by akita-pcs
+/// width 4736, inside the q128 cell's rank-1 width of 13,656 under the
+/// 169-bit tables. The residual's own ranks are pinned by akita-pcs
 /// (`admission_prices_the_residual_at_the_sigma_radius`).
 #[test]
 fn whiteout_ranks_sit_at_the_tables_minimum() {
@@ -278,8 +278,8 @@ fn whiteout_ranks_sit_at_the_tables_minimum() {
     assert!(sigma_matrix_rank(128, 1232).unwrap() > 9);
 
     assert_eq!(digit_matrix_rank(4736).unwrap(), 1);
-    assert_eq!(digit_matrix_rank(93_935).unwrap(), 1);
-    assert!(digit_matrix_rank(93_936).unwrap() > 1);
+    assert_eq!(digit_matrix_rank(13_656).unwrap(), 1);
+    assert!(digit_matrix_rank(13_657).unwrap() > 1);
 }
 
 /// `A_p`'s rank and randomness fixed point across Akita's Σ-binding brackets

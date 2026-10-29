@@ -141,21 +141,24 @@ unless a later optimization PR makes that explicit.
 - The current final Jolt memory-row contract is:
 
   ```text
-  LD:
-    RamAddress     = effective address
+  LD, VirtualLoad{B,H,W}:
+    RamAddress     = accessed doubleword address
     RamReadValue   = RdWriteValue
     RamWriteValue  = RdWriteValue
 
-  SD:
-    RamAddress     = effective address
+  SD, VirtualStore{B,H,W}:
+    RamAddress     = accessed doubleword address
     RamReadValue   = old memory value
     RamWriteValue  = Rs2Value
   ```
 
   This contract follows from the existing R1CS constraints and from PR #1522's
   source/final split: narrow loads/stores, atomics, and store-conditionals are
-  source-level operations that lower to final `LD`, compute rows, and final
-  `SD` rows before proving.
+  source-level operations that lower to final load rows (`LD` or the
+  floor-addressed `VirtualLoad*`), compute rows, and final store rows (`SD`
+  or `VirtualStore*`) before proving. The accessed doubleword address is the
+  effective address for `LD`/`SD` and `ea − AddressOffset(ea)` for the
+  floor-addressed rows (R1CS constraint 0).
 - If a future final instruction violates the current memory-row contract, one
   of these must happen before enabling it:
   - lower it into canonical `LD`/compute/`SD` rows;
@@ -1060,8 +1063,8 @@ candidate and maybe a debug layout, but not the only design.
 
 ### Derive RAM Address From `rs1 + imm`
 
-For load/store rows, `RamAddress == Rs1Value + Imm` is already an R1CS
-constraint. Deriving address can save one physical slot, but it adds an
+For load/store rows, `RamAddress == Rs1Value + Imm − LookupOutput` is already
+an R1CS constraint. Deriving address can save one physical slot, but it adds an
 accessor branch and signed/wrapping immediate arithmetic. Since RAM phases use
 addresses heavily, this should be benchmarked against storing or aliasing the
 address.

@@ -61,7 +61,7 @@ fn median(mut times: Vec<f64>) -> f64 {
     times[times.len() / 2]
 }
 
-fn bench(guest: &str, input: Vec<u8>, runs: usize) {
+fn bench(guest: &str, input: Vec<u8>, runs: usize, workers: usize) {
     let (_, elf_path, _) = support::build_guest(guest);
     // Each run re-reads and re-decodes the ELF, matching what the legacy
     // host::Program::trace timed region did — keeps MHz comparable with
@@ -119,7 +119,6 @@ fn bench(guest: &str, input: Vec<u8>, runs: usize) {
         "{guest} (execute-only): times(s)={exec_times:.3?}, median={exec_median:.3}s => {exec_mhz:.2} MHz row-equiv"
     );
 
-    let workers = parallel_workers();
     if workers > 1 {
         std::env::set_var("TRACER_PARALLEL", workers.to_string());
         // Warmup (thread/pool/page state)
@@ -145,6 +144,7 @@ fn bench(guest: &str, input: Vec<u8>, runs: usize) {
 }
 
 fn main() {
+    let workers = parallel_workers();
     let filter = std::env::args().nth(1);
     let selected = |name: &str| filter.as_deref().is_none_or(|f| name.contains(f));
 
@@ -167,7 +167,7 @@ fn main() {
     let mut ran = false;
     for (guest, input_fn) in benches {
         if selected(guest) {
-            bench(guest, input_fn(), 3);
+            bench(guest, input_fn(), 3, workers);
             ran = true;
         }
     }

@@ -644,6 +644,7 @@ where
         checked.one_hot_config,
         preprocessing,
         &commitments.one_hot_trace,
+        &commitments.fused_inc,
         commitments.untrusted_advice.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]

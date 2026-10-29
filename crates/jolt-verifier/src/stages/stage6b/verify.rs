@@ -270,7 +270,6 @@ pub fn stage6b_input_points_from_upstream<F: JoltField>(
 
 #[cfg(test)]
 mod tests {
-    #[cfg(not(feature = "akita"))]
     use super::super::booleanity::BooleanityOutputClaims;
     #[cfg(not(feature = "akita"))]
     use super::super::bytecode_read_raf::BytecodeReadRafOutputClaims;
@@ -310,27 +309,25 @@ mod tests {
             },
         );
         #[cfg(all(feature = "akita", not(feature = "field-inline")))]
-        let last = 11;
+        let last = 9;
         #[cfg(all(feature = "akita", feature = "field-inline"))]
-        let last = 12;
+        let last = 10;
         #[cfg(feature = "akita")]
         let (bytecode_read_raf, booleanity) = (
             LatticeBytecodeReadRafOutputClaims {
                 bytecode_ra: vec![fr(1), fr(2)],
                 fused_inc: fr(3),
             },
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityOutputClaims {
+            BooleanityOutputClaims {
                 instruction_ra: vec![fr(4)],
                 bytecode_ra: vec![fr(5)],
                 ram_ra: vec![fr(6)],
-                balanced_inc_digits: vec![fr(7)],
-                balanced_inc_carry: fr(8),
             },
         );
         #[cfg(not(feature = "akita"))]
         let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(6), fr(7), fr(8));
         #[cfg(feature = "akita")]
-        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(9), fr(10), fr(11));
+        let (hamming, ram_ra_virt, instruction_ra_virt) = (fr(7), fr(8), fr(9));
         (
             Stage6bOutputClaims {
                 bytecode_read_raf,

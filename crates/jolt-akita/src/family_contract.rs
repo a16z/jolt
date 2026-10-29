@@ -30,11 +30,12 @@ impl OneHotFamilyContract {
             Self::K256(profile) => (12, 43, profile),
         };
         // Two-polynomial rows have more live blocks for the two chunked levels.
-        let min = match (profile, num_polys) {
-            (AkitaChunkProfile::Single | AkitaChunkProfile::Two, _)
-            | (AkitaChunkProfile::Four, 2) => base_min,
-            (AkitaChunkProfile::Four, _) | (AkitaChunkProfile::Eight, 2) => base_min + 1,
-            (AkitaChunkProfile::Eight, _) => base_min + 2,
+        let min = match (profile.chunks, profile.levels, num_polys) {
+            (4, 2, 2) => base_min,
+            (4, 2, _) | (8, 2, 2) => base_min + 1,
+            (8, 2, _) => base_min + 2,
+            // The catalog audit checks each fold against the requested geometry.
+            _ => base_min,
         };
         (min, max)
     }
@@ -51,10 +52,10 @@ mod tests {
     #[test]
     fn profile_bounds_follow_the_admitted_family_contract() {
         for (profile, one_poly_min, two_poly_min) in [
-            (AkitaChunkProfile::Single, 12, 12),
-            (AkitaChunkProfile::Two, 12, 12),
-            (AkitaChunkProfile::Four, 13, 12),
-            (AkitaChunkProfile::Eight, 14, 13),
+            (AkitaChunkProfile::new(1, 0), 12, 12),
+            (AkitaChunkProfile::new(2, 2), 12, 12),
+            (AkitaChunkProfile::new(4, 2), 13, 12),
+            (AkitaChunkProfile::new(8, 2), 14, 13),
         ] {
             for (k, max) in [(16, 40), (256, 43)] {
                 let contract = OneHotFamilyContract::from_parts(k, profile).unwrap();
@@ -62,6 +63,6 @@ mod tests {
                 assert_eq!(contract.num_vars_range(2), (two_poly_min, max));
             }
         }
-        assert!(OneHotFamilyContract::from_parts(64, AkitaChunkProfile::Single).is_err());
+        assert!(OneHotFamilyContract::from_parts(64, AkitaChunkProfile::new(1, 0)).is_err());
     }
 }

@@ -1,8 +1,13 @@
 use std::arch::aarch64::*;
 
 use crate::ntt::batched_four_point_eligible;
-use crate::ntt::butterfly::NttTwiddles;
+use crate::ntt::butterfly::{self, NttTwiddles};
 use crate::ntt::prime::{MontCoeff, NttPrime};
+use crate::ntt::NttKernelPlan;
+
+/// The twist, untwist, and final range passes consume eight coefficients per
+/// step and have no scalar tail. Smaller degrees use the scalar transforms.
+const MIN_VECTOR_DEGREE: usize = 8;
 
 /// Convert signed i16 coefficients directly into an i16 Montgomery limb.
 /// Montgomery reduction accepts the signed representative directly, including
@@ -202,6 +207,10 @@ pub(crate) unsafe fn forward_ntt_i16<const D: usize>(
 ) {
     // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
+        if D < MIN_VECTOR_DEGREE {
+            butterfly::forward_ntt(a, prime, tw, NttKernelPlan::SCALAR);
+            return;
+        }
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
         let p_q = vdupq_n_s16(prime.p);
@@ -307,6 +316,10 @@ pub(crate) unsafe fn inverse_ntt_i16<const D: usize>(
 ) {
     // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
+        if D < MIN_VECTOR_DEGREE {
+            butterfly::inverse_ntt(a, prime, tw, NttKernelPlan::SCALAR);
+            return;
+        }
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
         let p_q = vdupq_n_s16(prime.p);
@@ -398,6 +411,10 @@ pub(crate) unsafe fn forward_ntt_cyclic_i16<const D: usize>(
 ) {
     // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
+        if D < MIN_VECTOR_DEGREE {
+            butterfly::forward_ntt_cyclic(a, prime, tw, NttKernelPlan::SCALAR);
+            return;
+        }
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
         let p_q = vdupq_n_s16(prime.p);
@@ -460,6 +477,10 @@ pub(crate) unsafe fn inverse_ntt_cyclic_i16<const D: usize>(
 ) {
     // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
+        if D < MIN_VECTOR_DEGREE {
+            butterfly::inverse_ntt_cyclic(a, prime, tw, NttKernelPlan::SCALAR);
+            return;
+        }
         let p_d = vdup_n_s16(prime.p);
         let pinv_d = vdup_n_s16(prime.pinv);
         let p_q = vdupq_n_s16(prime.p);
@@ -535,6 +556,7 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
         let pinv_d = vdup_n_s16(pinv);
         let p_q = vdupq_n_s16(p);
         let pinv_q = vdupq_n_s16(pinv);
+        let prime = NttPrime::compute(p);
         let mut i = 0;
         while i + 8 <= d {
             let a = vld1q_s16(acc.add(i));
@@ -554,6 +576,15 @@ pub(crate) unsafe fn pointwise_mul_acc_i16(
             let sum_q = vcombine_s16(sum, vdup_n_s16(0));
             vst1_s16(acc.add(i), vget_low_s16(reduce_range_8x_i16(sum_q, p_q)));
             i += 4;
+        }
+        while i < d {
+            let prod = prime.mul(
+                MontCoeff::from_raw(*lhs.add(i)),
+                MontCoeff::from_raw(*rhs.add(i)),
+            );
+            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(prod.raw()));
+            *acc.add(i) = prime.reduce_range(sum).raw();
+            i += 1;
         }
     }
 }
@@ -602,6 +633,7 @@ pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16)
     // SAFETY: the caller upholds the `# Safety` contract above.
     unsafe {
         let p_q = vdupq_n_s16(p);
+        let prime = NttPrime::compute(p);
         let mut i = 0;
         while i + 8 <= d {
             let a = vld1q_s16(acc.add(i));
@@ -615,6 +647,11 @@ pub unsafe fn add_reduce_i16(acc: *mut i16, other: *const i16, d: usize, p: i16)
             let sum_q = vcombine_s16(vadd_s16(a, b), vdup_n_s16(0));
             vst1_s16(acc.add(i), vget_low_s16(reduce_range_8x_i16(sum_q, p_q)));
             i += 4;
+        }
+        while i < d {
+            let sum = MontCoeff::from_raw((*acc.add(i)).wrapping_add(*other.add(i)));
+            *acc.add(i) = prime.reduce_range(sum).raw();
+            i += 1;
         }
     }
 }

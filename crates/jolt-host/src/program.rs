@@ -137,7 +137,6 @@ impl Program {
     #[tracing::instrument(skip_all, name = "Program::build_with_features")]
     #[expect(
         clippy::expect_used,
-        clippy::panic,
         reason = "the infallible host build API reports CLI and I/O failures by panicking"
     )]
     pub fn build_with_features(&mut self, target_dir: &str, extra_features: &[&str]) {
@@ -294,9 +293,7 @@ impl Program {
                 .join(out_profile)
                 .join(&self.guest);
 
-            let elf = GuestElf::read(elf_path.clone()).unwrap_or_else(|error| {
-                panic!("Built ELF not readable at {}: {error}", elf_path.display())
-            });
+            let elf = GuestElf::read(elf_path).expect("read the built guest ELF");
             drop(build_lock);
 
             if cargo_features

@@ -1,4 +1,4 @@
-use jolt_riscv::{SourceInstructionKind, TraceRowError};
+use jolt_riscv::{JoltInstructionRow, SourceInstructionKind, TraceRowError};
 
 use crate::preprocess::PreprocessingError;
 
@@ -27,4 +27,10 @@ pub enum TraceError {
     InvalidFieldEvent { cycle: usize },
     #[error("RAM minimum address exceeds maximum address")]
     InvalidRamBounds,
+    #[error("executed instruction differs from bytecode at PC {pc}: expected {expected:?}, actual {actual:?}")]
+    BytecodeInstructionMismatch {
+        pc: u32,
+        expected: Box<JoltInstructionRow>,
+        actual: Box<JoltInstructionRow>,
+    },
 }

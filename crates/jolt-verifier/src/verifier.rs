@@ -46,7 +46,9 @@ use crate::stages::{
 #[cfg(not(all(feature = "akita", feature = "zk")))]
 use crate::{config::validate_proof_config, proof::JoltProof, stages::stage8};
 use crate::{
-    config::{ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE},
+    config::{
+        ZkConfig, JOLT_VERIFIER_CONFIG, JOLT_VERIFIER_INSTRUCTION_PROFILE, MIN_PADDED_TRACE_LENGTH,
+    },
     num,
     preprocessing::JoltVerifierPreprocessing,
     proof::{ProofCommitments, ProofHeader},
@@ -848,12 +850,7 @@ where
         });
     }
 
-    if !trace_length.is_power_of_two() || trace_length > program.max_padded_trace_length() {
-        return Err(VerifierError::InvalidTraceLength {
-            got: trace_length,
-            max: program.max_padded_trace_length(),
-        });
-    }
+    validate_trace_length(trace_length, program.max_padded_trace_length())?;
 
     let min_ram_k = compute_min_ram_k(
         program.min_bytecode_address(),
@@ -1017,12 +1014,31 @@ where
     Ok(got)
 }
 
-/// Fail closed on a zero-based RAM remap. Stage 2's RAF-evaluation unmap is
-/// `8k + lowest_address`, and the lattice digit-zero reconstruction relies on
-/// `unmap(0) = lowest_address ≠ 0` to distinguish "no RAM access" from an
-/// access at remapped word zero (see "Where the RAM activation is pinned" in
-/// `specs/lattice-claims.md`). Mirrors the prover-side
-/// `UnmapRamAddressPolynomial::new` assertion (`start_address > 8`).
+fn validate_trace_length(
+    trace_length: usize,
+    max_padded_trace_length: usize,
+) -> Result<(), VerifierError> {
+    if !trace_length.is_power_of_two()
+        || trace_length < MIN_PADDED_TRACE_LENGTH
+        || trace_length > max_padded_trace_length
+    {
+        return Err(VerifierError::InvalidTraceLength {
+            got: trace_length,
+            min: MIN_PADDED_TRACE_LENGTH,
+            max: max_padded_trace_length,
+        });
+    }
+    Ok(())
+}
+
+/// Fail closed on a RAM remap base that RAF evaluation cannot rely on. Stage
+/// 2's RAF-evaluation unmap is `8k + lowest_address`:
+/// - `lowest_address > 8` keeps `unmap(0) ≠ 0`, which the lattice digit-zero
+///   reconstruction relies on to distinguish "no RAM access" from an access
+///   at remapped word zero;
+/// - `lowest_address ≡ 0 (mod 8)` makes every admissible `RamAddress` a
+///   multiple of 8, which is how RAF evaluation rejects a memory access
+///   misaligned for its width (see R1CS constraint 0 in `jolt-claims`).
 fn validate_ram_remap_base(memory_layout: &MemoryLayout) -> Result<(), VerifierError> {
     let lowest_address = memory_layout.get_lowest_address();
     if lowest_address <= 8 {
@@ -1030,6 +1046,14 @@ fn validate_ram_remap_base(memory_layout: &MemoryLayout) -> Result<(), VerifierE
             reason: format!(
                 "lowest remapped RAM address {lowest_address:#x} must exceed 8 so the RAF \
                  unmap constant stays clear of the null-address range"
+            ),
+        });
+    }
+    if !lowest_address.is_multiple_of(8) {
+        return Err(VerifierError::InvalidMemoryLayout {
+            reason: format!(
+                "lowest remapped RAM address {lowest_address:#x} must be doubleword-aligned so \
+                 RAF evaluation rejects misaligned memory accesses"
             ),
         });
     }
@@ -1292,6 +1316,24 @@ mod tests {
     }
 
     #[test]
+    fn validate_inputs_rejects_misaligned_ram_remap_base() {
+        let mut memory_layout = test_memory_layout();
+        memory_layout.trusted_advice_start -= 4;
+        memory_layout.untrusted_advice_start -= 4;
+        let preprocessing = test_preprocessing_with_layout(memory_layout);
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &test_header(), false),
+            Err(VerifierError::InvalidMemoryLayout { reason })
+                if reason.contains("doubleword-aligned")
+        ));
+    }
+
+    #[test]
     fn validate_inputs_rejects_ram_domain_below_layout_minimum() {
         let preprocessing = test_preprocessing();
         let public_io = JoltDevice {
@@ -1328,6 +1370,26 @@ mod tests {
                 min: 4,
                 max,
             }) if got == 1 << 20 && max < got
+        ));
+    }
+
+    #[test]
+    fn validate_inputs_rejects_trace_length_below_pcs_floor() {
+        let preprocessing = test_preprocessing();
+        let public_io = JoltDevice {
+            memory_layout: preprocessing.program.memory_layout().clone(),
+            ..JoltDevice::default()
+        };
+        // A power of two below the fixture's maximum, so only the floor rejects it.
+        let undersized = MIN_PADDED_TRACE_LENGTH >> 1;
+        let header = ProofHeader {
+            trace_length: undersized,
+            ..test_header()
+        };
+
+        assert!(matches!(
+            validate_inputs(&preprocessing, &public_io, &header, false),
+            Err(VerifierError::InvalidTraceLength { got, .. }) if got == undersized
         ));
     }
 
@@ -1386,7 +1448,7 @@ mod tests {
 
     fn test_header() -> ProofHeader {
         ProofHeader {
-            trace_length: 1,
+            trace_length: MIN_PADDED_TRACE_LENGTH,
             ram_K: 4,
             rw_config: JoltReadWriteConfig {
                 ram_rw_phase1_num_rounds: 0,
@@ -1428,7 +1490,7 @@ mod tests {
             Vec::new(),
             memory_layout,
             RAM_START_ADDRESS,
-            16,
+            MIN_PADDED_TRACE_LENGTH,
             JOLT_VERIFIER_INSTRUCTION_PROFILE,
         )
         .expect("test program");

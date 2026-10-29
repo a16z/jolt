@@ -18,7 +18,7 @@ Large PRs are expensive to review. Code generation is cheap — human verificati
 A single PR carries a feature from spec to implementation:
 
 1. **Create a spec** using `/new-spec <feature-name>` in Claude Code, or copy [`specs/TEMPLATE.md`](specs/TEMPLATE.md) manually.
-2. **Open a PR** with just the spec file. A GitHub Action will add the `spec` label.
+2. **Open a PR** with just the spec file.
 3. **Spec analysis**: Adding the `claude-spec-review-request` label triggers an external analysis. Claude performs a single-pass analysis, posting all questions at once — ambiguities, missing invariants, unclear evaluation criteria. When satisfied, Claude adds the `claude-spec-approved` label.
 4. **Spec review**: Maintainers review and approve the spec.
 5. **Implementation**: Run `/implement-spec` in [Claude Code cloud](https://claude.ai/code) or locally. Claude generates a one-shot implementation from the approved spec.
@@ -42,15 +42,8 @@ Focus on **intent and evaluation**. Execution is downstream — the implementer 
 
 | Label | Meaning | Applied by |
 |-------|---------|------------|
-| `spec` | PR contains a spec file | GitHub Action (auto) |
-| `no-spec` | PR has no spec file | GitHub Action (auto) |
-| `implementation` | PR contains code alongside a spec | GitHub Action (auto) |
 | `claude-spec-review-request` | Triggers external Claude spec analysis | Maintainer (manual) |
 | `claude-spec-approved` | Claude's analysis found no ambiguities | Claude |
-
-### Soft Guardrails
-
-PRs exceeding 500 changed lines without a spec file get an automated warning comment. This is a suggestion, not a gate — use your judgment.
 
 ## Claude Skills
 

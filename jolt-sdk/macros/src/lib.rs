@@ -881,7 +881,7 @@ impl MacroBuilder {
                     ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);
                 }
                 // Never return - loop forever for clean termination
-                // The emulator detects termination via PC stall (prev_pc == pc)
+                // The emulator detects termination via PC stall
                 loop {
                     unsafe { ::core::arch::asm!("j .", options(noreturn)); }
                 }

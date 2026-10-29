@@ -102,29 +102,7 @@ impl<F: JoltField> BooleanityAddressKernel<F> {
         // `derive_output_term` both follow that convention. Use them as-is.
         let eq_cycle = eq_table(reference_cycle);
 
-        // Per-chunk masses of each checked one-hot polynomial, folded over the
-        // cycle dimension by the reference-cycle eq weights. The address-phase
-        // relation is column-agnostic (its output is the bare intermediate),
-        // so the checked-column set comes from the shape: the base `Ra`
-        // families plus, on the packed (lattice) build, the fused-inc one-hot
-        // columns at the tail — `lattice_booleanity_output_openings`' order,
-        // continuing the same `γ^{2i}` weight sequence.
-        let mut openings: Vec<_> = dimensions
-            .layout
-            .openings(JoltRelationId::Booleanity)
-            .collect();
-        if super::lattice_shape() {
-            let lattice_dimensions =
-                jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                    dimensions,
-                )
-                .map_err(|_| KernelError::InvariantViolation {
-                    reason: "the packed shape requires a lattice-compatible chunk width",
-                })?;
-            openings = jolt_claims::protocols::jolt::lattice::relations::booleanity::lattice_booleanity_output_openings(
-                lattice_dimensions,
-            );
-        }
+        let openings = dimensions.layout.openings(JoltRelationId::Booleanity);
         let mut linear = Vec::new();
         for opening in openings {
             let grid = dense_view(witness, opening)?;

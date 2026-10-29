@@ -174,9 +174,13 @@ pub struct ProofCommitments<C> {
     /// One commitment per committed trace polynomial.
     #[cfg(not(feature = "akita"))]
     pub trace: JoltCommitments<C>,
-    /// The single native `OneHotTrace` group commitment carrying every per-proof column.
+    /// The single native `OneHotTrace` group commitment carrying the RA columns.
     #[cfg(feature = "akita")]
     pub one_hot_trace: C,
+    /// The direct bounded-dense commitment to the fused RV64 increment
+    /// polynomial.
+    #[cfg(feature = "akita")]
+    pub fused_inc: C,
     /// The direct commitment to the full field-register increment polynomial.
     #[cfg(all(feature = "akita", feature = "field-inline"))]
     pub field_inc: C,
@@ -209,6 +213,7 @@ impl<C> ProofCommitments<C> {
         #[cfg(feature = "akita")]
         {
             PCS::send_commitment(&self.one_hot_trace, transcript);
+            PCS::send_commitment(&self.fused_inc, transcript);
             #[cfg(feature = "field-inline")]
             PCS::send_commitment(&self.field_inc, transcript);
         }
@@ -263,6 +268,8 @@ impl<C> ProofCommitments<C> {
         };
         #[cfg(feature = "akita")]
         let one_hot_trace = receive()?;
+        #[cfg(feature = "akita")]
+        let fused_inc = receive()?;
         #[cfg(all(feature = "akita", feature = "field-inline"))]
         let field_inc = receive()?;
         let untrusted_advice = header.untrusted_advice.then(&mut receive).transpose()?;
@@ -271,6 +278,8 @@ impl<C> ProofCommitments<C> {
             trace,
             #[cfg(feature = "akita")]
             one_hot_trace,
+            #[cfg(feature = "akita")]
+            fused_inc,
             #[cfg(all(feature = "akita", feature = "field-inline"))]
             field_inc,
             untrusted_advice,

@@ -2,14 +2,12 @@
 
 pub mod advice;
 pub mod advice_load;
-pub mod align_addr;
 pub mod assert_eq;
-pub mod assert_halfword_alignment;
 pub mod assert_lte;
 pub mod assert_mulu_no_overflow;
 pub mod assert_valid_div0;
 pub mod assert_valid_unsigned_remainder;
-pub mod assert_word_alignment;
+pub mod floor_access;
 pub mod host_io;
 pub mod movsign;
 pub mod muli;

@@ -1,7 +1,11 @@
 use crate::error::SumcheckError;
 use core::ops::Range;
 use jolt_algebra::Field;
+#[cfg(feature = "binary")]
+use jolt_algebra::F8;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
+#[cfg(feature = "binary")]
+use jolt_poly::lagrange::{f8_domain_nodes, F8DomainSize, F8DomainSizeError};
 use jolt_poly::UnivariatePoly;
 
 pub trait SumcheckDomain<F: Field> {
@@ -73,6 +77,46 @@ where
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BooleanHypercube;
+
+/// The first `size` elements of `F8` in raw order, embedded in the proof field.
+///
+/// The field's `From<F8>` must be a field embedding, as it is for `F64`, `F128`,
+/// and `F192`. Round-sum coefficients are power sums computed in the proof field.
+#[cfg(feature = "binary")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct F8Domain {
+    size: F8DomainSize,
+}
+
+#[cfg(feature = "binary")]
+impl F8Domain {
+    /// Returns [`F8DomainSizeError`] unless `1 <= size <= 256`.
+    pub fn new(size: usize) -> Result<Self, F8DomainSizeError> {
+        F8DomainSize::new(size).map(|size| Self { size })
+    }
+
+    pub const fn size(self) -> usize {
+        self.size.get()
+    }
+}
+
+#[cfg(feature = "binary")]
+impl<F: Field + From<F8>> SumcheckDomain<F> for F8Domain {
+    fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>> {
+        let count = degree
+            .checked_add(1)
+            .ok_or(SumcheckError::DegreeOverflow { degree })?;
+        let mut sums = vec![F::zero(); count];
+        for node in f8_domain_nodes::<F>(self.size) {
+            let mut power = F::one();
+            for sum in &mut sums {
+                *sum += power;
+                power *= node;
+            }
+        }
+        Ok(sums)
+    }
+}
 
 impl<F> SumcheckDomain<F> for BooleanHypercube
 where

@@ -20,6 +20,7 @@ mod commit;
 mod decomposition;
 mod digit_windows;
 mod kernels;
+mod ntt_commit;
 mod source;
 mod traversal;
 

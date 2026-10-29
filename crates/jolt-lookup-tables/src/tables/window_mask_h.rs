@@ -13,9 +13,9 @@ use crate::traits::LookupTable;
 /// At XLEN = 64 this is `0xFFFF << (8·(ea & 6))`, the byte mask of the
 /// halfword at offset `ea mod 8` within its containing doubleword. Only bits
 /// 1 and 2 of the (non-interleaved) effective address are read; bit 0 is zero
-/// on the halfword-aligned addresses the surrounding sequence asserts, and
-/// ignoring it keeps the maximum output `0xFFFF << 48` in `u64` range with a
-/// rank-1 decomposition.
+/// on the halfword-aligned addresses the sequence's `AddressOffsetH`
+/// floor-addressed rows enforce, and ignoring it keeps the maximum output
+/// `0xFFFF << 48` in `u64` range with a rank-1 decomposition.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct WindowMaskHTable<const XLEN: usize>;
 

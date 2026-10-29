@@ -37,7 +37,7 @@ fn zk_committed_muldiv_verifier_proof_is_accepted() {
     );
 }
 
-/// Golden masked shape of the muldiv fixture at trace_length 1024 /
+/// Golden masked shape of the muldiv fixture at trace_length 512 /
 /// ram_K 8192: the pad layout and the residual relation's row counts. The
 /// header is pinned alongside so a drift here reads as a protocol change
 /// rather than a fixture change.
@@ -51,7 +51,7 @@ fn zk_muldiv_masked_shape_matches_golden() {
         &case.proof.narg,
     );
     let header = ProofHeader::receive(&mut transcript).expect("decode proof header");
-    assert_eq!(header.trace_length, 1024);
+    assert_eq!(header.trace_length, 512);
     assert_eq!(header.ram_K, 8192);
 
     let mut transcript = VerifierTranscript::<JoltSponge>::new(
@@ -71,7 +71,7 @@ fn zk_muldiv_masked_shape_matches_golden() {
     // a pair of its stage's check row: stage 1's single pair, then the
     // multi-pair rows of stages 2–6, after the 26 single-pair rows of the
     // slots.
-    assert_eq!(layout.num_pads, 967);
+    assert_eq!(layout.num_pads, 940);
     assert_eq!(layout.auxiliary.len(), 26);
     assert_eq!(relation.affine.len(), 8);
     assert_eq!(relation.products.len(), 32);

@@ -4,8 +4,8 @@
 |-------------|--------------------------------|
 | Author(s)   | @mzhu, Claude                  |
 | Created     | 2026-07-30                     |
-| Status      | draft (design exploration)     |
-| PR          |                                |
+| Status      | Tiers 0 and 1 implemented      |
+| PR          | #1761, #1762, #1768 (Tier 0); Tier 1 for #2013 |
 
 ## Summary
 
@@ -49,8 +49,9 @@ cycles. Measured on `btreemap`, the trace shrinks ~17% (~21% with the optional f
 
 ### What Zicclsm does *not* require
 
-- Misaligned LR/SC/AMOs (the A extension is excluded from the EF target anyway; Jolt's AMO
-  expansions keep their alignment asserts).
+- Misaligned LR/SC/AMOs (the A extension is excluded from the EF target anyway; Jolt rejects
+  them, since every LR/SC/AMO expansion reaches RAM through `LD`/`SD` or a floor-addressed word
+  row).
 - Speed: a 5–10× slow path for crossing accesses is compliant. This asymmetry is the single most
   important design lever.
 
@@ -150,15 +151,16 @@ length for aligned code, without modifying the Twist memory argument.
   remain full 64-bit doubleword values.
 - Every sub-word or misaligned access is realized as 1–2 read-modify-write doubleword accesses,
   totally ordered in the single existing Twist instance (coherence for free).
-- `RamAddress = Rs1Value + Imm` stays the guest byte address; the new identity
-  `RamAddress − Offset = Σ_k ra(k)·(8k + lowest_address)` with `Offset ∈ [0, 8)` must hold on
-  memory cycles and `Offset = 0` on idle cycles.
+- On memory cycles `RamAddress = Rs1Value + Imm − Offset`, where `Offset ∈ [0, 8)` is the row's
+  lookup output (0 for `LD`/`SD`), and `RamAddress = 0` on idle cycles; the RAF identity
+  `RamAddress = Σ_k ra(k)·(8k + lowest_address)` is unchanged. (The design below first placed the
+  offset in the RAF input claim; see "Tier 1 as implemented".)
 - Each bytecode expansion variant is applicability-pinned: a prover cannot execute the
   non-crossing variant of an access that crosses a doubleword boundary, or vice versa
   (constraint-enforced, not tracer-enforced).
-- Any change to a sumcheck's `input_claim` (RAF evaluation gains the `−Offset` term) carries the
-  matching `input_claim_constraint` update (BlindFold), the akita/lattice mirror, and the
-  jolt-claims/legacy-r1cs pair — the standard two-R1CS sync obligation.
+- Any change to a sumcheck's `input_claim` carries the matching `input_claim_constraint` update
+  (BlindFold). Tier 1 as implemented changes only an R1CS row, which every consumer derives from
+  the jolt-claims matrices, plus the optimized Spartan outer kernel's hand-copied row values.
 - Guest-visible semantics match the RISC-V spec (byte-exact against the reference emulator),
   including sign extension and the store-merge value on both crossing halves.
 - `jolt-eval`'s `source_to_jolt_expansion_equivalence` invariant extends to the new expansions
@@ -166,8 +168,8 @@ length for aligned code, without modifying the Twist memory argument.
 
 ### Non-Goals
 
-- Misaligned LR/SC/AMO support (excluded from Zicclsm; A is not in the EF target). AMO
-  expansions keep their alignment asserts.
+- Misaligned LR/SC/AMO support (excluded from Zicclsm; A is not in the EF target). A misaligned
+  LR/SC/AMO is rejected like a misaligned `LD`/`SD`.
 - Byte-granular `Val`/`Inc` in Twist (see Alternatives).
 - Single-cycle *misaligned* accesses (dual-port Twist) — the crossing path is deliberately slow.
 - MMIO or device memory semantics.
@@ -216,7 +218,8 @@ a general `Pdep` table was analyzed and rejected (deposited bit positions depend
 popcount: prefix rank ~57). Total new machinery: 11 tables, 11 virtual instructions, 5 prefix
 and 9 suffix families across both registry sides. Realized traced cycles: LB/LBU 8→5,
 LH/LHU 9→6, LW 8→6, LWU 9→6, SB 13→8, SH 14→9, SW 15→9. Measured trace deltas:
-`btreemap` −8.9%, `sha2-chain` −7.2%, `fibonacci` ~0%. Measured prover wall-time: parity at
+`btreemap` −8.9%, `sha2-chain` −7.2%, `fibonacci` ~0%. (A later fusion, `VirtualAlignAddr`,
+brought loads to LB/LBU 4 and LH/LHU/LW/LWU 5 rows; Tier 1 retired it.) Measured prover wall-time: parity at
 fixed padded trace length (trace savings inside a power-of-two instance are invisible; the two
 extra globally-materialized prefixes cost nothing measurable); −27% at a padding-boundary
 crossing. The benefit unit is guest cycles per padded instance, not per-input wall time.
@@ -230,8 +233,8 @@ slot today** — `impl_lookup_table!(Ld, None)` with inputs `(0, 0)` and output 
 committed regardless. Repurpose it:
 
 1. Give each load/store kind an `AddressOffset` table riding the existing `AddOperands` path
-   (lookup input = `rs1 + imm = ea`, exactly how the alignment-assert tables already consume
-   effective addresses). Output: `ea & 7` **when the executing variant applies**, else
+   (lookup input = `rs1 + imm = ea`, exactly how the alignment-assert tables consumed effective
+   addresses). Output: `ea & 7` **when the executing variant applies**, else
    `(ea & 7) + 2^32` — an unsatisfiable marker (see soundness below). The table is a function of
    the low 3 bits of `y` plus a per-width boolean gate, the same MLE species as `Pow2`'s
    low-bits-of-`y` dependence.
@@ -248,7 +251,7 @@ committed regardless. Repurpose it:
    new term must share, and the non-zk `input_output_claims()` path
    (`raf_evaluation.rs:461-475`) must gain the same `− OffsetOrZero` term alongside the zk
    constraint.
-4. Introduce offset-tolerant virtual loads/stores (`VirtualLoadDw`/`VirtualStoreDw`): identical
+4. Introduce offset-tolerant virtual loads/stores (`VirtualLoad`/`VirtualStore`): identical
    to `LD`/`SD` except carrying an `AddressOffset` variant table — the one-hot `ra` encodes
    `floor((ea − lowest)/8)` (which `remap_address` already computes by truncation) and the
    lookup output absorbs `ea mod 8`.
@@ -272,14 +275,110 @@ every cycle regardless (`LD`/`SD` today commit index 0 with no table flag — th
 `AddOperands` path, whose lookup index is the raw non-interleaved sum (the `ADD` pattern) — a
 single-operand table over `ea`, the simplest possible MLE shape.
 
-Sequences become: sub-word loads `[VirtualLoadDw v ← RAM[floor(ea)]][Extract(v, ea)]` = **2
-cycles**; narrow stores `[VirtualLoadDw][ShiftData][MaskOld][ADD][VirtualStoreDw]` = **5
+Sequences become: sub-word loads `[VirtualLoad v ← RAM[floor(ea)]][Extract(v, ea)]` = **2
+cycles**; narrow stores `[VirtualLoad][ShiftData][MaskOld][ADD][VirtualStore]` = **5
 cycles**. The `Extract`/`ShiftData` lookups need `y = ea = rs2 + imm` with `rs2 = base` — this
 is **verified free**: the instruction-input identity is a plain sum
 (`RightInstructionInput = IsRs2·Rs2Value + IsImm·Imm`, `spartan/instruction_input.rs:479-490`)
 with no exclusivity constraint anywhere, so a virtual instruction that sets both flags gets
 `Rs2Value + Imm` as its operand; this is sound because the flags are deterministic bytecode
 read-values, not prover-chosen.
+
+### Tier 1 as implemented
+
+The implementation keeps Tier 1's mechanism: the memory row's idle lookup slot carries the
+intra-doubleword offset, and the offset table pins applicability. It deviates in where the offset
+enters and in how applicability is encoded; both deviations remove protocol surface.
+
+- **R1CS constraint 0, not the RAF input claim.** `RamAddrEqRs1PlusImmMinusLookupIfLoadStore` is
+  `(Load + Store)·(RamAddress − Rs1Value − Imm + LookupOutput) = 0`. Its guard already confines
+  it to memory rows, so the offset needs no product wire.
+  - On memory rows `RamAddress = ea − LookupOutput`, the address of the doubleword accessed, and
+    the RAF identity `RamAddress = Σ_k ra(k)·(8k + lowest_address)` is unchanged.
+  - `LD`/`SD` look up no table, so instruction read-RAF forces their `LookupOutput` to 0.
+  - There is no new R1CS input, product constraint, opening, RAF input-claim term, BlindFold
+    constraint or Akita mirror, and no proof-shape change beyond the lookup tables. The only
+    hand-copied evaluator is the optimized Spartan outer kernel's row 0.
+  - The steps 2–3 design above needs a new R1CS input and `JoltVirtualPolynomial`, a fourth
+    product-virtualization lane whose `Load`/`Store` factor openings bytecode read-RAF must
+    discharge, and the RAF term: roughly 40 files and a transcript change in three stages.
+  - A jolt-lookup-tables registry test pins that every `Load`/`Store` row looks up no table or an
+    `AddressOffset` table whose index is exactly `Rs1Value + Imm`; any other table would shift the
+    row's RAM address.
+- **Masked offsets, not a marker.** `AddressOffset{B,H,W}` output `ea & 7`, `ea & 6` and
+  `ea & 4`, dropping exactly the bits natural alignment clears. One generic
+  `AddressOffsetTable<XLEN, WIDTH>` provides all three (`P·1 + S`, one prefix and one suffix
+  family per width).
+  - **No-solution argument** (stated once, at constraint 0 in `rv64.rs`): the `AddOperands`
+    rows pin the lookup index to the integer `Rs1Value + Imm` (on Akita, whose modulus is below
+    2^128, instruction read-RAF also pins its canonical representative); constraint 0 then
+    leaves `RamAddress ≡ ea & (WIDTH − 1) (mod 8)`; every RAF-admissible address is a multiple of
+    8 because the verifier rejects a layout whose `lowest_address` is not
+    (`validate_ram_remap_base`); and every quantity is far below either field modulus, so field
+    equality is integer equality.
+  - It needs no bound on guest addresses. The `+2^32` marker does: `rs1 + imm` is any 64-bit
+    value, so a misaligned access at `ea = 2^32 + A + 1`, with `A` an aligned address, would
+    alias `A`.
+  - Tier 2's non-crossing variants can reuse the argument with any output `≢ ea (mod 8)` on an
+    inapplicable access, which resolves open question 4.
+- **Six kinds, three tables.** `VirtualLoad{B,H,W}` and `VirtualStore{B,H,W}` (tags
+  `0x00a2`–`0x00a7`) carry `[Load|Store, AddOperands]` and the operand flags
+  `[LeftOperandIsRs1Value, RightOperandIsImm]`.
+  - They keep the signed load/store immediate (`FormatLoad`/`FormatS`): constraint 0 reads the
+    same `Imm` column as the lookup index, so the `u64`-wrapped immediate of the other
+    `AddOperands` rows would put `RamAddress` `2^64` away.
+  - Constraint 0 adds `Rs1Value + Imm` unwrapped, so an access whose sum carries past 2^64 is
+    unprovable. Decoded offsets are signed 12-bit, and `materialize_inline` rejects an inline load
+    or store offset outside that range, so such an access lands within 2 KiB of 0 or 2^64, outside
+    the memory layout of any program the tracer can run. The tracer faults there or reads a load
+    as 0, which is unprovable anyway except in the no-access zero doubleword (the argument is
+    constraint 0's NOTE in `rv64.rs`).
+  - On main, narrow accesses formed the address with wrapping lookups (`AlignAddr` for loads,
+    `ADDI` for stores), so any inline offset worked and a narrow load carrying into the zero
+    doubleword proved; only carrying `LD`/`SD` accesses were unprovable. The inline bound is
+    static, since `rs1` is unknown at expansion, so it also rejects wider offsets that do not
+    carry, which main proved. No shipped inline uses one.
+  - Each row carries its own width's table, so a narrow store's load and store rows are pinned
+    independently.
+- **Sequences.** Tier 0 rejected the fused single-lookup extract, so loads keep the window-mask
+  step and stores the `ANDN` merge:
+  - loads `[VirtualLoad][VirtualWindowMask][VirtualPext|VirtualPextSigned]`, **3 rows** (from 4
+    for `LB`/`LBU` and 5 for `LH`/`LHU`/`LW`/`LWU`);
+  - stores `[VirtualLoad][VirtualWindowMask][ANDN][VirtualShiftData][ADD][VirtualStore]`,
+    **6 rows** (from 8 for `SB` and 9 for `SH`/`SW`).
+  - `VirtualShiftData{B,H,W}` read the effective address as `rs2 + imm` with both right-operand
+    flags set (open question 2), which drops the `ADDI` that materialized it.
+  - `LR.W`/`SC.W` embed `LW`/`SW` and inherit the floor rows. The word AMOs open the lane with
+    the load rows (`VirtualPextSigned` yields the old word sign-extended), apply the operation,
+    and close the lane with the store's merge rows: `AMOADD`/`AMOAND`/`AMOOR`/`AMOXOR.W` take
+    **9 rows** (from 19), `AMOSWAP.W` **8** (from 18), and `AMOMIN[U]`/`AMOMAX[U].W` **13**
+    (from 24), counting the two rows each register-amount shift expanded to. Min/max compare the
+    sign-extended words with `SLT` or `SLTU`, since sign extension preserves both orders. A
+    misaligned word AMO fails RAF evaluation like a misaligned `LW`.
+- **Retired rows.** `VirtualAlignAddr`, `VirtualAssertHalfwordAlignment` and
+  `VirtualAssertWordAlignment` lost their callers, and their tags `0x009a`, `0x0065` and `0x0066`
+  are retired. Their tables `AlignAddr`, `HalfwordAlignment` and `WordAlignment` are removed as
+  well, which renumbers every later `LookupTableKind` index; Tier 1 changes the proof format
+  regardless. Three tables in and three out leave 55 tables and the committed bytecode width at
+  462 of 512 lanes (472 with field-inline), as on main.
+- **Tracer.**
+  - The floor rows record `ea − AddressOffset(ea)` as the RAM address: the containing
+    doubleword for an aligned access.
+  - A misaligned halfword or word access aborts the trace, so a misaligned guest still fails at
+    trace time; misaligned support is Tier 2.
+  - The `test-utils` hook `allow_misaligned_floor_accesses` traces such an access with the
+    R1CS-consistent address. `jolt-prover/tests/misaligned_memory.rs` checks, for each of
+    `LH`/`LHU`/`LW`/`LWU`/`SH`/`SW`, that the witness satisfies every R1CS row and that the
+    stage-2 batch, which holds RAF evaluation, rejects it.
+  - The MMU now records every access against its containing doubleword, fixing the
+    `trace_load`/`trace_store*` defects listed in the acceptance criteria.
+- **Measured** at the profile harness's scale-20 inputs (exact trace rows, origin/main →
+  Tier 1): `btreemap` 515,547 → 489,836 (−4.99%), `sha2-chain` 589,186 → 572,466 (−2.84%),
+  `sha3-chain` 719,769 → 718,801 (−0.13%), `fibonacci` 787,425 → 787,317 (−0.01%). All stay
+  within the 2^20 padded size, and prover time is at parity (`btreemap` 5.01 s → 4.95 s,
+  `sha2-chain` 6.84 s → 6.85 s, means of four interleaved runs); the saving pays at padding
+  boundaries. On the recursion-guest histogram in #2013, the per-op savings project 2.81M fewer
+  rows (−4.0%), more than the 1.95M by which the guest without `fast-mem` exceeds 2^26.
 
 ### Tier 2 — dual-expansion dispatch (full Zicclsm)
 
@@ -289,8 +388,8 @@ variants into the static bytecode** at preprocessing, at distinct expanded PCs:
 
 ```
 guest PC X (LW):
-  variant A (non-crossing): [VirtualLoadDw][ExtractW]                 (2 rows)
-  variant B (crossing):     [VirtualLoadDw lo][VirtualLoadDw hi(+8)]
+  variant A (non-crossing): [VirtualLoad][ExtractW]                   (2 rows)
+  variant B (crossing):     [VirtualLoad lo][VirtualLoad hi(+8)]
                             [FunnelLo][FunnelHi][OR][ExtractW]        (~6 rows)
 ```
 
@@ -332,7 +431,7 @@ deterministically:
   `inline_sequence().len()` for checkpointing, which must count the chosen variant.
 - **Crossing sequences** (all use ordinary single-port RAM cycles, two RMWs in program order —
   coherence is inherited from the single Twist instance):
-  - loads: `[LoadDw lo][LoadDw hi][FunnelLo = SRL-by-offset(lo, ea)][FunnelHi = SLL-by-(8−offset)(hi, ea)][OR][Extract/sext]` ≈ 5–6 cycles;
+  - loads: `[VirtualLoad lo][VirtualLoad hi][FunnelLo = SRL-by-offset(lo, ea)][FunnelHi = SLL-by-(8−offset)(hi, ea)][OR][Extract/sext]` ≈ 5–6 cycles;
   - stores: RMW both doublewords ≈ 9–11 cycles;
   - `LB`/`LBU`/`SB` never cross — single variant.
 - **Bounds**: `ea + 7` may exceed the last mapped doubleword; reserve one guard doubleword above
@@ -383,15 +482,15 @@ stores — on btreemap ~4% more trace reduction.
 
 ### Per-op cycle costs
 
-| op | today (traced) | Tier 0 | Tier 1+2 non-crossing | Tier 3 non-crossing | crossing (Tier 2) |
-|---|---|---|---|---|---|
-| `LD`/`SD` aligned | 1 | 1 | 1 | 1 | — |
-| `LD` misaligned | ✗ unprovable | ✗ | — | — | ~5–6 |
-| `LB`/`LBU` | 8 | 4 | 2 | 1 | n/a (never crosses) |
-| `LH`/`LHU`, `LW`/`LWU` | 9 / 8 | 4–5 | 2 | 1 | ~6 |
-| `SB` | 13 | 7 | 5 | 2 | n/a |
-| `SH`, `SW` | 14 | 7 | 5 | 2 | ~9–11 |
-| `SD` misaligned | ✗ | ✗ | — | — | ~9–11 |
+| op | before Tier 0 (traced) | Tier 0 (implemented) | Tier 1 (implemented) | Tier 1+2 non-crossing (projected) | Tier 3 non-crossing | crossing (Tier 2) |
+|---|---|---|---|---|---|---|
+| `LD`/`SD` aligned | 1 | 1 | 1 | 1 | 1 | — |
+| `LD` misaligned | ✗ unprovable | ✗ | ✗ | — | — | ~5–6 |
+| `LB`/`LBU` | 8 | 4 | 3 | 2 | 1 | n/a (never crosses) |
+| `LH`/`LHU`, `LW`/`LWU` | 9 / 8 | 5 | 3 | 2 | 1 | ~6 |
+| `SB` | 13 | 8 | 6 | 5 | 2 | n/a |
+| `SH`, `SW` | 14 | 9 | 6 | 5 | 2 | ~9–11 |
+| `SD` misaligned | ✗ | ✗ | ✗ | — | — | ~9–11 |
 
 Projected trace deltas (from the measured mixes): `btreemap` −13% (Tier 0), −17% (Tier 2),
 −21% (Tier 3); `sha2-chain` −10–15%; `fibonacci` ~0%. (Tier 0 as implemented measures
@@ -402,11 +501,11 @@ size the measured effect is nil, and the benefit is guest cycles per instance.
 
 ### Verifier / proof-size impact
 
-Tiers 0–2: **zero new committed columns**; one new product wire (+1 R1CS input, 35→36) and one
-product constraint; ~10–18 new lookup tables (verifier cost is one MLE evaluation per table per
-read-raf check — negligible); one extra term in the RAF-evaluation input claim; bytecode-K
-growth as above (proof size +64–128 B, full-mode verifier's O(K) fold grows proportionally).
-No new sumcheck instances. Tier 3 adds its wiring flags and, if chosen, the three offset-bit
+Tiers 0–2: **zero new committed columns**; ~10–18 new lookup tables (verifier cost is one MLE
+evaluation per table per read-raf check — negligible); bytecode-K growth as above (proof size
++64–128 B, full-mode verifier's O(K) fold grows proportionally). No new sumcheck instances.
+Tier 1 as implemented adds no R1CS input, constraint or input-claim term: the offset enters an
+existing R1CS row instead of the product wire and RAF term this design first proposed. Tier 3 adds its wiring flags and, if chosen, the three offset-bit
 columns (+openings).
 
 ### Engineering sync obligations
@@ -428,17 +527,14 @@ Verified shape of the blast radius:
 - **akita is neutral to R1CS/Spartan changes** (no `cfg(akita)` in those trees; both modes share
   the claims path); it matters only for new committed polynomials and the packed witness
   (fused Inc column).
-- **Three hard budgets**: the legacy prover's suffix-accumulation hot path caps
-  `MAX_SUFFIXES` (`jolt-prover-legacy/src/zkvm/instruction_lookups/read_raf_checking.rs`,
-  a stack-scratch partition bound; raised 4→5 for `PextSigned`, the first 5-suffix table —
-  any table with more suffixes must bump it, and only the muldiv e2e catches the miss since
-  the assert is debug-only). The committed bytecode width is 447 of 512 lanes
-  (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` — `3·128 + 2 + 14 + 6 + 40 + 1`); every new lookup table and every new
-  circuit flag consumes a lane, and crossing 512 doubles the committed width. This design adds
-  ~15–22 tables + 0–2 flags — it fits, but economize the table family (parameterize widths
-  where the MLE allows). And `LC` caps at 5 variable terms per side
-  (`r1cs/ops.rs:45-60`, panics on overflow); `RightLookupEqRightInputOtherwise`'s guard is
-  already at 5, so any new flag joining an exclusion guard forces a restructure.
+- **Two hard budgets** (the legacy prover's `MAX_SUFFIXES` and `LC` term caps went away with
+  it): the optimized instruction read-RAF kernel packs the table index into 6 bits
+  (`PACKED_TABLE_BITS`, `jolt-kernels/src/optimized/instruction_read_raf.rs`), so
+  `LookupTableKind::COUNT ≤ 63` (55 after Tier 1). The committed bytecode width is 462 of 512
+  lanes after Tier 1 (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` —
+  `3·128 + 2 + 14 + 6 + 55 + 1`; 472 with field-inline); every new lookup table and every new
+  circuit flag consumes a lane, and crossing 512 doubles the committed width. Tier 2 adds tables
+  and possibly flags, so economize the table family (parameterize widths where the MLE allows).
 - New virtual instructions touch the known ring: `jolt-riscv` kind macros, tracer exec impls,
   `zkvm/instruction/` + the lookup-tables **hand-maintained mirror** (append-only enum — the
   discriminant is read by unsafe pointer cast), `jolt-program` expansion, and the z3-verifier's
@@ -564,17 +660,14 @@ Both-mode (`host`, `host,zk`) CI lanes as per `CLAUDE.md`; akita lane for the pa
 
 ## Implementation notes (verified traps)
 
-- **Three copies of the address remapper** must change together: `remap_address`
-  (`crates/jolt-prover-legacy/src/zkvm/ram/mod.rs:120`), `remap_word_address`
-  (`common/src/jolt_device.rs:444-463` — different name; a grep for `remap_address` misses
-  it), and `remap_address` (`crates/jolt-prover/src/config.rs:129-137`) — all truncate by 8
-  silently, which is exactly right for floor addressing but means nothing rejects
-  misalignment there. They diverge on the below-`lowest_address` case (panic vs
-  `Err(AddressBelowLowest)` vs `assert!`), which matters for the Tier 2 guard-doubleword
-  bounds.
-- **Recipe temp budget is 8** (`expand/grammar.rs:208-218`, hard error) and max sequence length
-  is 64 (`materialize.rs:19`). Current narrow stores use 4 temps; crossing-store variants need
-  ~5–6 — fits, but audit. Loads are `HAS_SIDE_EFFECTS = true`, so `rd = x0` loads consume a
+- **The address remappers** (`MemoryLayout::remap_word_address` in `common/src/jolt_device.rs`
+  and `checked_remap_address` in `crates/jolt-prover/src/config.rs`) truncate by 8 silently,
+  which is exactly right for floor addressing but means nothing rejects misalignment there; RAF
+  evaluation does. `remap_word_address` returns `Err(AddressBelowLowest)` below
+  `lowest_address`, which matters for the Tier 2 guard-doubleword bounds.
+- **Recipe temp budget is 8** (`ExpansionBuilder::allocate` in `expand/grammar.rs`, hard error)
+  and max sequence length is 64 (`materialize.rs`). Tier 1 narrow stores use 2 temps;
+  crossing-store variants need ~4–6 — fits, but audit. Loads are `HAS_SIDE_EFFECTS = true`, so `rd = x0` loads consume a
   temp via the rewrite path.
 - **`is_compressed` is stamped on the LAST row only** of an expansion (`expand/metadata.rs:52`)
   — each dual-expansion variant needs its own correctly-stamped terminal row, and
@@ -591,8 +684,10 @@ Both-mode (`host`, `host,zk`) CI lanes as per `CLAUDE.md`; akita lane for the pa
 - **Existing guest-side workarounds** become removable perf wins: `jolt-sdk/src/lib.rs:493-494`
   steps u8→u16→u32 to reach 8-byte alignment; `jolt-inlines/keccak256` carries
   `absorb_unaligned`.
-- `expand_byte_load` (`memory/shared.rs:35-83`) already assumes nothing about alignment — it is
-  the shape the Tier-1 lowering generalizes.
+- `expand_narrow_load` / `expand_narrow_store` (`expand/memory/shared.rs`) are the Tier 1
+  lowerings that Tier 2's crossing variants extend. One `AccessWidth` value selects every
+  width-specific row, because the halfword and word window-mask and shift-data tables ignore the
+  offset bits only the same sequence's floor rows reject.
 - The `TrapType::*AddressMisaligned` variants exist but are never constructed; this design
   keeps it that way (no trap machinery).
 
@@ -605,7 +700,9 @@ Both-mode (`host`, `host,zk`) CI lanes as per `CLAUDE.md`; akita lane for the pa
    replacement.
 2. ~~Instruction-input flags~~ **Resolved**: the operand mux identity is a plain sum with no
    exclusivity constraint anywhere; dual-set flags yield `Rs2Value + Imm` for free and soundly
-   (flags are bytecode read-values). Add an explicit regression test pinning this behavior.
+   (flags are bytecode read-values). Tier 1's `VirtualShiftData{B,H,W}` use it; the jolt-riscv
+   test `only_store_data_shifters_sum_both_right_operands` pins which instructions do, and the
+   jolt-lookup-tables instruction-input oracle sums both terms.
 3. ~~Extract-table decomposition~~ **Resolved** (see "Tier 0 as implemented"): the low-bits-of-y
    dependence itself is harmless (offset bits never straddle a phase boundary), but the fused
    per-offset form has intrinsic prefix rank ≥ 8 per width — a bilinear decomposition restricted
@@ -613,12 +710,12 @@ Both-mode (`host`, `host,zk`) CI lanes as per `CLAUDE.md`; akita lane for the pa
    (the 8 lane functionals, the 8 offset indicators) are each linearly independent. The
    implemented mask-form two-step costs one extra cycle and ~6× less machinery; its
    decompositions are total-domain (no `random_lookup_index` restriction). The fused form
-   remains an option for Tier 1's 2-cycle loads, ideally after the legacy registry mirror is
-   gone. The `AddressOffset` marker-table question (offset + width gate + marker term) remains
-   open for Tier 1.
-4. **Marker constant**: `2^32` assumes guest addresses < 2^32 − 8K − lowest; pick the marker
-   from `MemoryLayout` bounds (or use a field-huge constant) and prove the no-solution range
-   argument once, centrally.
+   remains an option for 2-cycle loads; Tier 1 kept the two-step extract (3-row loads).
+4. ~~Marker constant~~ **Resolved** (see "Tier 1 as implemented"): no range argument is needed.
+   Any table output `≢ ea (mod 8)` leaves `RamAddress ≢ 0 (mod 8)`, which RAF evaluation rejects
+   because every `8k + lowest_address` is a multiple of 8. Tier 1 masks the offset to the width's
+   alignment class; a Tier 2 variant can emit, for example, the offset plus 1 when it does not
+   apply.
 5. **Bytecode growth**: measure real `log(bytecode)` movement on Ethproofs-class guests; if a
    chunk boundary is crossed, consider variant-block placement or bytecode chunk-size tuning
    (the F_s scratch and committed-program preprocessing memory are the terms to watch).

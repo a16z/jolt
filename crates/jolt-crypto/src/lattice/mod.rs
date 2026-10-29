@@ -15,8 +15,8 @@ mod view;
 pub use ajtai::{commit, AjtaiLevel, GadgetDigits, PreparedMatrix, MAX_CENTERED_BOUND};
 pub use layout::{BlockGeometry, SliceCount, TwoLevelLayout, CHALLENGE_RING_DIM};
 pub use matrix::{
-    check_public_matrix_prefix, derive_public_matrix_prefix, PublicMatrixDerivation,
-    PublicMatrixSeed,
+    check_public_matrix_prefix, derive_public_matrix_prefix, derive_public_matrix_range,
+    PublicMatrixDerivation, PublicMatrixSeed,
 };
 #[cfg(feature = "sample")]
 pub use randomness::sample_box_digits;

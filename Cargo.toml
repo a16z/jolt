@@ -71,6 +71,7 @@ members = [
   "jolt-inlines/secp256k1",
   "jolt-inlines/grumpkin",
   "jolt-inlines/p256",
+  "jolt-inlines/ntt",
   "examples/btreemap/host",
   "examples/btreemap/guest",
   "examples/collatz",
@@ -151,7 +152,7 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
-rand.workspace = true
+rand = { workspace = true, features = ["std", "std_rng"] }
 sysinfo.workspace = true
 syn.workspace = true
 toml_edit.workspace = true
@@ -326,13 +327,15 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
   "zk",
 ] }
 # Immutable upstream revision containing the quotient-free relation and external schedule catalogs.
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "a4978d59f4b170ff3ad0b8f5c5ebe0172dc4be7e", default-features = false }
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "f594bfc0d812a9a1fba62f15b51885bd19e83a3d", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -422,9 +425,9 @@ object = { version = "0.40.0", features = [
   "elf",
 ], default-features = false }
 addr2line = "0.27.0"
-getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
+getrandom_v04 = { version = "0.4", package = "getrandom", default-features = false }
 
 # Build and Development
 ctor = { version = "0.6" }
@@ -455,10 +458,8 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.7", features = ["rayon", "serde"] }
-reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
-  "serde",
-] }
+reth-primitives-traits = { version = "0.8", features = ["rayon"] }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", default-features = false }
 secp256k1 = { version = "0.33", features = ["recovery", "rand"] }
 
 # Internal dependencies
@@ -499,6 +500,7 @@ jolt-sdk = { path = "./jolt-sdk", default-features = false }
 jolt-sdk-macros = { path = "./jolt-sdk/macros" }
 jolt-inlines-sdk = { path = "./jolt-inlines/sdk", default-features = false }
 jolt-inlines-sha2 = { path = "./jolt-inlines/sha2", default-features = false }
+jolt-inlines-ntt = { path = "./jolt-inlines/ntt", default-features = false }
 jolt-inlines-keccak256 = { path = "./jolt-inlines/keccak256", default-features = false }
 jolt-inlines-blake2 = { path = "./jolt-inlines/blake2", default-features = false }
 jolt-inlines-blake3 = { path = "./jolt-inlines/blake3", default-features = false }

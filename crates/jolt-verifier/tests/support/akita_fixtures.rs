@@ -6,7 +6,9 @@
 use std::sync::OnceLock;
 
 use common::jolt_device::JoltDevice;
-use jolt_akita::{AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+use jolt_akita::{
+    AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
+};
 use jolt_host::Program;
 use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
@@ -45,15 +47,15 @@ impl AkitaFixtureCase {
     }
 }
 
-/// The muldiv case: one `OneHotTrace` commitment object and no precommitted objects.
+/// The muldiv case: `OneHotTrace` and dense `FusedInc`, with no advice objects.
 #[cfg(not(feature = "zk"))]
 pub fn akita_muldiv_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
     CASE.get_or_init(generate_muldiv)
 }
 
-/// The advice case: both advice kinds, three commitment objects
-/// (`OneHotTrace`, `UntrustedAdvice`, `TrustedAdvice`) in one grouped opening.
+/// The advice case: both advice kinds alongside `OneHotTrace` and `FusedInc`
+/// in one grouped opening.
 #[cfg(not(feature = "zk"))]
 pub fn akita_advice_case() -> &'static AkitaFixtureCase {
     static CASE: OnceLock<AkitaFixtureCase> = OnceLock::new();
@@ -74,7 +76,7 @@ fn generate_muldiv() -> AkitaFixtureCase {
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
     let config = derive_config(&run);
     let preprocessing = preprocessing::preprocess_full(
-        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         run.program_preprocessing.clone(),
         &config,
     )
@@ -94,7 +96,7 @@ fn generate_advice() -> AkitaFixtureCase {
     );
     let config = derive_config(&run);
     let preprocessing = preprocessing::preprocess_full_with_advice(
-        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         run.program_preprocessing.clone(),
         &config,
         true,
@@ -109,7 +111,7 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
     let config = derive_config(&run);
     let preprocessing = preprocessing::preprocess_committed(
-        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         run.program_preprocessing.clone(),
         &config,
     )
@@ -158,7 +160,7 @@ fn generate_whiteout_muldiv() -> AkitaFixtureCase {
     let run = prepare_guest(Program::new("muldiv-guest"), &inputs, &[], &[]);
     let config = derive_config(&run);
     let preprocessing = preprocessing::preprocess_full(
-        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         run.program_preprocessing.clone(),
         &config,
     )
@@ -234,7 +236,7 @@ mod field_inline {
     use std::sync::Arc;
 
     use common::jolt_device::{MemoryConfig, MemoryLayout};
-    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_host::{JoltProgramSource, Program};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_program::preprocess::JoltProgramPreprocessing;
@@ -325,7 +327,7 @@ mod field_inline {
         .expect("derive config");
         let log_t = config.trace_length.ilog2() as usize;
         let prover_preprocessing = akita::preprocessing::preprocess_full(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             program_preprocessing,
             &config,
         )

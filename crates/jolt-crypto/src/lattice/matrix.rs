@@ -123,12 +123,60 @@ pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
     cfg_chunks_mut!(data, id.derivation.page_field_elements())
         .enumerate()
         .for_each(|(page_index, coeffs)| {
-            let mut page_rng = SetupSeedPageXof::new(id, &modulus, page_index);
-            for coeff in coeffs.iter_mut() {
-                *coeff = F::random(&mut page_rng);
-            }
+            fill_page(id, &modulus, page_index, 0, coeffs);
         });
     Ok(data)
+}
+
+/// Fill `output` with the public stream's coefficients starting at flat index
+/// `begin`, without materializing the preceding prefix.
+///
+/// Sampling within a page starts at the page's beginning, preserving the
+/// rejection sampling of [`derive_public_matrix_prefix`], so the result equals
+/// that prefix's `begin..begin + output.len()` slice.
+///
+/// Returns an error if the range end overflows `usize` or the field modulus
+/// exceeds 256 bits.
+pub fn derive_public_matrix_range<F: Field + CanonicalEncoding>(
+    begin: usize,
+    output: &mut [F],
+    id: &PublicMatrixSeed,
+) -> Result<(), CryptoError> {
+    if begin.checked_add(output.len()).is_none() {
+        return Err(CryptoError::InvalidSetup(
+            "public matrix range overflow".into(),
+        ));
+    }
+    let modulus = field_modulus_be_bytes::<F>()?;
+    let page_size = id.derivation.page_field_elements();
+    let mut position = begin;
+    let mut remaining = output;
+    while !remaining.is_empty() {
+        let offset = position % page_size;
+        let count = (page_size - offset).min(remaining.len());
+        let (page, rest) = remaining.split_at_mut(count);
+        fill_page(id, &modulus, position / page_size, offset, page);
+        position += count;
+        remaining = rest;
+    }
+    Ok(())
+}
+
+/// Fill `output` with page `page_index`'s coefficients from `offset` on.
+fn fill_page<F: Field + CanonicalEncoding>(
+    id: &PublicMatrixSeed,
+    modulus: &[u8; 32],
+    page_index: usize,
+    offset: usize,
+    output: &mut [F],
+) {
+    let mut page_rng = SetupSeedPageXof::new(id, modulus, page_index);
+    for _ in 0..offset {
+        let _ = F::random(&mut page_rng);
+    }
+    for value in output {
+        *value = F::random(&mut page_rng);
+    }
 }
 
 /// Check that `matrix` is exactly the prefix of the public stream derived
@@ -234,7 +282,9 @@ fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
 )]
 mod tests {
     use super::*;
-    use jolt_algebra::{Fp32, Fp64, One, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use jolt_algebra::{
+        Fp32, Fp64, One, Prime128Offset275, Prime32Offset99, Prime64Offset59, Zero,
+    };
 
     #[test]
     fn seed_canonical_bytes_are_tag_then_seed() {
@@ -280,6 +330,26 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn ranges_preserve_sampling_and_page_boundaries() {
+        type F = Fp32<251>;
+        for seed in [
+            PublicMatrixSeed::shake256_paged_v1([0u8; 32]),
+            PublicMatrixSeed::shake256_paged_v1([37u8; 32]),
+        ] {
+            let expected = derive_public_matrix_prefix::<F>(12345, &seed).unwrap();
+            for range in [0..0, 0..513, 63..129, 4095..8193, 12288..12345] {
+                let mut actual = vec![F::zero(); range.len()];
+                derive_public_matrix_range(range.start, &mut actual, &seed).unwrap();
+                assert_eq!(actual, expected[range]);
+            }
+            assert!(matches!(
+                derive_public_matrix_range(usize::MAX, &mut [F::zero()], &seed),
+                Err(CryptoError::InvalidSetup(_))
+            ));
+        }
     }
 
     #[test]

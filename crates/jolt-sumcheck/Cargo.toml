@@ -7,6 +7,7 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
 default = []
+binary = ["jolt-poly/binary", "jolt-algebra/binary"]
 parallel = ["jolt-algebra/parallel", "jolt-poly/parallel"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
@@ -32,7 +33,7 @@ jolt-transcript = { workspace = true, features = [
   "transcript-keccak",
 ] }
 num-traits = { workspace = true }
-rand_core = { workspace = true }
+rand_core = { workspace = true, features = ["getrandom"] }
 
 [[example]]
 name = "clear_custom_transcript"

@@ -294,7 +294,7 @@ impl AkitaNativeBatching {
             })?;
             group_claims.push(
                 PolynomialGroupClaims::new(
-                    entry.claim.point.clone(),
+                    reverse_point(&entry.claim.point),
                     entry.claim.evaluations.clone(),
                     backend_commitment,
                 )
@@ -380,7 +380,7 @@ impl AkitaNativeBatching {
         for (entry, backend) in auxiliary_groups.iter().zip(&auxiliary_backend) {
             group_claims.push(
                 PolynomialGroupClaims::new(
-                    entry.claim.point.clone(),
+                    reverse_point(&entry.claim.point),
                     entry.claim.evaluations.clone(),
                     backend,
                 )
@@ -529,14 +529,18 @@ fn single_group_batch<'a, Cfg>(
 where
     Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaField>,
 {
-    let group =
-        PolynomialGroupClaims::new(point.to_vec(), evaluations.to_vec(), backend_commitment)?;
+    // All source tables retain Jolt's order; Akita reads coordinates low-bit first.
+    let group = PolynomialGroupClaims::new(
+        reverse_point(point),
+        evaluations.to_vec(),
+        backend_commitment,
+    )?;
     let claims = OpeningClaims::from_groups(vec![group])?;
     SelectedProverOpeningData::from_committed_claims::<Cfg>(claims, vec![backend_hint], schedules)
 }
 
-/// The one-hot backend consumes the point in reversed variable order and uses
-/// the dedicated one-hot setup pair.
+/// Uses the dedicated one-hot setup pair. The shared opening builder converts
+/// coordinates for both dense and one-hot sources.
 fn one_hot_opening<'a>(
     setup: &AkitaProverSetup,
     point: &[AkitaField],
@@ -544,11 +548,10 @@ fn one_hot_opening<'a>(
     backend_commitment: AkitaBackendCommitment,
     backend_hint: AkitaBackendHint,
 ) -> Result<AkitaOpening<'a>, OpeningsError> {
-    let backend_point = reverse_point(point);
     let opening = with_one_hot_family!(scheme setup.verifier.one_hot_scheme()?, |scheme, Cfg| {
         single_group_batch::<Cfg>(
             scheme.schedules(),
-            &backend_point,
+            point,
             evaluations,
             backend_commitment,
             backend_hint,
@@ -663,10 +666,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
             setup.max_num_polys_per_commitment_group,
             setup.one_hot_k,
         )?;
-        let backend_point = match commitment.backend_flavor {
-            AkitaBackendFlavor::Dense => point.to_vec(),
-            AkitaBackendFlavor::OneHot => reverse_point(point),
-        };
+        let backend_point = reverse_point(point);
         let selection = bind_verifier_opening(transcript, setup, commitment.backend_flavor)?;
         // Deserializes the proof-controlled backend commitment only after its
         // shape is validated against the trusted schedule, so a malformed
@@ -728,6 +728,7 @@ mod tests {
     use jolt_openings::{CommitmentGroupRole, EvaluationClaim};
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
+    use crate::configs::AkitaChunkProfile;
     use crate::test_transcripts::new_verifier_transcript;
 
     fn commitment(
@@ -764,8 +765,10 @@ mod tests {
             default_layout_digest: [9; 32],
             one_hot_k: AKITA_ONE_HOT_K16,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
+                profile: AkitaChunkProfile::default(),
                 one_hot: Vec::new(),
-            },
+            }
+            .into(),
             backend_cache: Default::default(),
         };
         let mut serialized = serde_json::to_value(setup).unwrap();
@@ -796,9 +799,12 @@ mod tests {
             default_layout_digest: layout_digest,
             one_hot_k: AKITA_ONE_HOT_K256,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
+                dense_profile: AkitaChunkProfile::new(8, 2),
+                profile: AkitaChunkProfile::default(),
                 dense: Vec::new(),
                 one_hot: Vec::new(),
-            },
+            }
+            .into(),
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);

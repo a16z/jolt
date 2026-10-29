@@ -9,6 +9,11 @@ use jolt_witness::JoltWitnessPlane;
 
 use crate::{KernelError, ProofSession};
 
+pub struct FusedIncObject<PCS: CommitmentScheme> {
+    pub commitment: PCS::Output,
+    pub hint: PCS::OpeningHint,
+}
+
 #[cfg(feature = "field-inline")]
 pub struct FieldIncObject<PCS: CommitmentScheme> {
     pub commitment: PCS::Output,
@@ -42,7 +47,7 @@ impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
         }
         let required_batch_polys = precommitted_hints
             .len()
-            .checked_add(plan.ids().len())
+            .checked_add(plan.ids().len() + 1)
             .and_then(|count| count.checked_add(usize::from(cfg!(feature = "field-inline"))))
             .ok_or_else(|| {
                 OpeningsError::InvalidBatch("Akita batch polynomial count overflow".into())
@@ -83,6 +88,7 @@ impl<'a, PCS: CommitmentScheme> WitnessCommitRequest<'a, PCS> {
 
 /// Public commitments and private opening state retained by the coordinator.
 pub struct WitnessCommitment<PCS: CommitmentScheme> {
+    pub fused_inc: FusedIncObject<PCS>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
     #[cfg(feature = "field-inline")]

@@ -22,7 +22,7 @@ pub trait LookupTable: Clone + Debug + Send + Sync {
 
 /// Maps an instruction to the lookup table it decomposes into for the proving system.
 ///
-/// Returns `None` for instructions that don't use lookup tables (loads, stores,
+/// Returns `None` for instructions that don't use lookup tables (`LD`, `SD`,
 /// system instructions). The prover uses this to route instruction evaluations
 /// to the correct table during the instruction sumcheck.
 ///
@@ -242,8 +242,8 @@ jolt_riscv::for_each_jolt_instruction_kind!(impl_jolt_lookup_query);
 mod tests {
     use super::*;
     use jolt_riscv::{
-        Flags, InterleavedBitsMarker, JoltInstructionRow, JoltInstructionRowData,
-        NormalizedOperands,
+        CircuitFlags, Flags, InstructionFlags, InterleavedBitsMarker, JoltInstructionRow,
+        JoltInstructionRowData, NormalizedOperands,
     };
 
     #[derive(Clone, Copy, Debug)]
@@ -333,8 +333,10 @@ mod tests {
                 let mut checked = 0usize;
                 for _ in 0..256 {
                     // Immediates are drawn from `[0, 2^64)`: every format feeding a
-                    // non-interleaved lookup (I / U / J / Assert) stores `imm` as a
-                    // `u64`, so a negative normalized immediate is unreachable.
+                    // non-interleaved lookup (I / U / J) stores `imm` as a
+                    // `u64`. The floor-addressed memory rows keep a signed
+                    // immediate, but their index `rs1 + imm` is the effective
+                    // address itself, never negative on an honest trace.
                     let operands = NormalizedOperands {
                         rd: Some(1),
                         rs1: Some(2),
@@ -381,6 +383,66 @@ mod tests {
         };
     }
     jolt_riscv::for_each_jolt_instruction_kind!(assert_canonical_lookup_indices);
+
+    macro_rules! assert_memory_row_tables {
+        (
+            instructions: [$($(#[$meta:meta])* $kind:ident => $variant:ident => ($tag:expr, $canonical_name:expr)),* $(,)?]
+        ) => {
+            /// Registry invariant: R1CS constraint 0 subtracts a memory row's
+            /// `LookupOutput` from `Rs1Value + Imm` to form `RamAddress`.
+            ///
+            /// A `Load`/`Store` row may therefore look up nothing (output 0) or an
+            /// `AddressOffset` table, and an `AddressOffset` row's lookup index must
+            /// be exactly `Rs1Value + Imm`: `AddOperands` with the `rs1` and
+            /// immediate operands only. It must also not write or assert its lookup
+            /// output, which is an offset rather than a result.
+            #[test]
+            fn memory_rows_look_up_only_address_offsets() {
+                let mut floor_rows = 0;
+                $(
+                    $(#[$meta])*
+                    {
+                        let instruction =
+                            jolt_riscv::instructions::$variant(JoltInstructionRow::default());
+                        let circuit = Flags::circuit_flags(&instruction);
+                        let operands = Flags::instruction_flags(&instruction);
+                        let table = InstructionLookupTable::<64>::lookup_table(&instruction);
+                        let memory = circuit[CircuitFlags::Load] || circuit[CircuitFlags::Store];
+                        let address_offset = matches!(
+                            table,
+                            Some(
+                                LookupTableKind::AddressOffsetB(_)
+                                    | LookupTableKind::AddressOffsetH(_)
+                                    | LookupTableKind::AddressOffsetW(_)
+                            )
+                        );
+                        assert!(
+                            !memory || table.is_none() || address_offset,
+                            "{}: memory row looks up {table:?}",
+                            $canonical_name,
+                        );
+                        if address_offset {
+                            floor_rows += 1;
+                            assert!(
+                                memory
+                                    && circuit[CircuitFlags::AddOperands]
+                                    && !circuit[CircuitFlags::WriteLookupOutputToRD]
+                                    && !circuit[CircuitFlags::Assert]
+                                    && operands[InstructionFlags::LeftOperandIsRs1Value]
+                                    && !operands[InstructionFlags::LeftOperandIsPC]
+                                    && operands[InstructionFlags::RightOperandIsImm]
+                                    && !operands[InstructionFlags::RightOperandIsRs2Value],
+                                "{}: AddressOffset row must look up exactly Rs1Value + Imm",
+                                $canonical_name,
+                            );
+                        }
+                    }
+                )*
+                assert_eq!(floor_rows, 6, "expected the six floor-addressed rows");
+            }
+        };
+    }
+    jolt_riscv::for_each_jolt_instruction_kind!(assert_memory_row_tables);
 
     #[test]
     fn dynamic_lookup_query_dispatches_to_instruction_impl() {

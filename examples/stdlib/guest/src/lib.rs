@@ -35,3 +35,15 @@ fn parallel_sum_of_squares(n: u32) -> u64 {
     println!("Result: {result}");
     result
 }
+
+#[jolt::provable(max_trace_length = 262144, stack_size = 1048576)]
+fn memory_copy(n: u32) -> Vec<u8> {
+    assert!(n <= 2048);
+    let n = n as usize;
+    let mut data: Vec<u8> = (0..n + 8).map(|i| (i * 197 + i / 7) as u8).collect();
+    data.copy_within(..n, 1);
+    data.copy_within(2..n + 2, 0);
+    let mut result = vec![0; n + 8];
+    result[1..n + 1].copy_from_slice(&data[..n]);
+    result
+}

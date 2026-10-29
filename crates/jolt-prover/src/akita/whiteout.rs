@@ -162,7 +162,6 @@ where
         stage0.checked.one_hot_config,
         &stage0.commitment,
         &leaves,
-        #[cfg(feature = "field-inline")]
         &stage6b,
         &mut transcript,
     )?;
@@ -180,7 +179,7 @@ where
         reason: "a Whiteout opening has a trace group",
     })?;
     // The precommitted hints in the plan's canonical order: advice, then the
-    // field increments or the committed program.
+    // field increments or the committed program, then the RV64 increments.
     let hints = stage0
         .untrusted_advice
         .as_ref()
@@ -196,6 +195,7 @@ where
                 .iter()
                 .flat_map(|data| data.direct_program.objects().map(|object| &object.hint)),
         )
+        .chain(std::iter::once(&stage0.fused_inc.hint))
         .collect::<Vec<_>>();
     if hints.len() != groups.len() {
         return Err(ProverError::InvariantViolation {

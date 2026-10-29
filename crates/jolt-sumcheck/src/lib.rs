@@ -21,6 +21,9 @@
 //! [`CenteredIntegerDomain`] and the uni-skip provers reject domains whose
 //! integer points collide in the field, before transcript absorption. Thus
 //! binary fields support integer-domain sizes 1 and 2, but reject larger sizes.
+//! With the `binary` feature, `F8Domain` supports sizes 1 through 256,
+//! including sizes above 2, for full clear round verification. The uni-skip
+//! prover entry points remain integer-only.
 //!
 //! # Crate structure
 //!
@@ -111,6 +114,8 @@ mod tests;
 
 pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
+#[cfg(feature = "binary")]
+pub use domain::F8Domain;
 pub use domain::{
     BooleanHypercube, CenteredIntegerDomain, EqFactoredRound, SumcheckDomain, SumcheckDomainSpec,
 };

@@ -279,6 +279,7 @@ fn expected_absorbs(case: &AkitaFixtureCase) -> Expected {
             }
             #[cfg(feature = "field-inline")]
             WhiteoutObject::FieldInc { .. } => {}
+            WhiteoutObject::FusedInc { .. } => {}
         }
     }
     absorbs.extend(STAGE8_DIGESTS);
@@ -647,12 +648,12 @@ fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
     assert!(failures.is_empty(), "accepted tampers: {failures:#?}");
 }
 
-/// A47: the cut sends u_a compressed, one 8-coefficient payload per chunk
-/// of Whiteout's split chain, whose chunks hold up to 884 coefficients (O5,
-/// D34): muldiv's u_a is 19 × `R_64`, 1,216 coefficients, so two chunk
-/// payloads (byte tampers are the census sweep's).
+/// A47: the cut sends u_a compressed, one 16-coefficient payload per chunk
+/// of Whiteout's split chain, whose chunks hold up to 15,115 coefficients
+/// at the 169-bit SIS tables (O5, D34): muldiv's u_a is 19 × `R_64`, 1,216
+/// coefficients, so one chunk payload (byte tampers are the census sweep's).
 #[test]
-fn whiteout_compressed_residual_commitment_is_two_chunk_payloads() {
+fn whiteout_compressed_residual_commitment_is_one_chunk_payload() {
     let (_, trace) = honest();
     let cut = classify(&trace)
         .into_iter()
@@ -667,8 +668,8 @@ fn whiteout_compressed_residual_commitment_is_two_chunk_payloads() {
         .expect("the cut level's successor payload");
     assert_eq!(
         cut.bytes,
-        2 * 8 * FIELD_BYTES,
-        "the cut sends two chunk payloads"
+        16 * FIELD_BYTES,
+        "the cut sends one chunk payload"
     );
 }
 
@@ -719,14 +720,20 @@ fn whiteout_masked_level_and_auxiliary_block_tampers() {
 fn whiteout_rerun_reuses_nothing_from_the_aborted_attempt() {
     let (case, aborted) = whiteout_rerun_case();
     let trace = case.honest_trace();
-    // The trace commitment's header (layout digest and sizes) is public
-    // metadata; its image follows.
-    let header = trace
+    // Each commitment's header (layout digest and sizes) is public metadata
+    // of one fixed length; its image follows. The trace commitment's comes
+    // first, then the RV64 increments'.
+    let commitments: Vec<_> = trace
         .messages()
         .into_iter()
-        .find(|message| message.region == Region::Commitments)
-        .expect("the trace commitment")
-        .range;
+        .filter(|message| message.region == Region::Commitments)
+        .map(|message| message.range)
+        .collect();
+    let header_len = commitments.first().expect("the trace commitment").len();
+    let headers: Vec<_> = commitments
+        .into_iter()
+        .filter(|range| range.len() == header_len)
+        .collect();
     let mut compared = 0;
     for item in classify(&trace) {
         let fresh = matches!(
@@ -736,7 +743,11 @@ fn whiteout_rerun_reuses_nothing_from_the_aborted_attempt() {
         let Some(range) = trace.events[item.index].narg.clone() else {
             continue;
         };
-        if fresh && range != header && range.end <= aborted.len() && range.len() >= FIELD_BYTES {
+        if fresh
+            && !headers.contains(&range)
+            && range.end <= aborted.len()
+            && range.len() >= FIELD_BYTES
+        {
             assert_ne!(
                 case.proof().narg[range.clone()],
                 aborted[range.clone()],
@@ -933,19 +944,21 @@ mod shifts {
     /// are the EvaluationBatch challenges (drawn after t_p and every masked
     /// value). So a shift in that functional's kernel passes every row under
     /// these challenges: the binding is Schwartz–Zippel over the challenges,
-    /// not a row the shift could not satisfy.
+    /// not a row the shift could not satisfy. Jolt's rows see two
+    /// combinations: the trace group's claims and the RV64 increments' claim,
+    /// which the read-RAF increment opening pins.
     #[test]
     fn whiteout_final_openings_meet_akita_through_the_batch_challenges() {
-        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_muldiv_case(), 1);
+        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_muldiv_case(), 2);
     }
 
     /// The same with precommitted groups (W6f): untrusted and trusted
     /// advice's claims join the trace group's under the one functional.
     /// Their stage-4 openings also feed Jolt's RAM value check, so Jolt's
-    /// rows see two combinations of the claims.
+    /// rows see one more combination of the claims.
     #[test]
     fn whiteout_advice_final_openings_meet_akita_through_the_batch_challenges() {
-        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_advice_case(), 2);
+        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_advice_case(), 3);
     }
 
     /// `jolt_seen` is the rank of Jolt's rows on the final-opening claims.

@@ -280,24 +280,25 @@ remain akita-side fallback tracks.
 ## Current state and code map
 
 The measurements and proposals above describe historical formats. The current
-protocol is specified in [Akita Native Trace Batching](akita-native-trace-batching.md).
+protocol is specified in [Lattice Claims](lattice-claims.md).
 `OneHotTrace` is one native commitment group containing the actual trace columns,
 with each polynomial in `(cycle || address)` order. There are no selector slots
-or selector challenge for the trace. Instruction, bytecode, digit, and carry
+or selector challenge for the trace. Instruction and bytecode
 columns omit the public digit-zero row; Stage 7 recenters their semantic claims
 around that row. RAM columns retain digit zero on cycles with a remappable RAM
 access.
 Stage 8 binds the common point and ordered evaluations, then passes those claims
 to Akita's native batch opening.
 
-Advice objects retain singleton dense prefix layouts. Committed programs use one
+RV64 `FusedInc` is committed directly as one bounded-dense object; there are no
+increment digit/carry columns. Advice objects retain singleton dense prefix layouts. Committed programs use one
 direct bounded-dense `ProgramBytecode` object for the whole table plus one direct
 `ProgramImageInit` object. Each auxiliary logical polynomial is zero-prefix
 embedded only to Akita's physical arity floor. These objects join the native trace
 group in one role-bound opening. Field-inline additionally contributes one
 full-width field-register increment group.
 
-Production traces use K=16, actual widths 51–64, and column arities 16–34.
+Production traces use K=16, actual widths 34–56, and column arities 16–35.
 K=256 native trace rows cover explicit adapter, benchmark, and override fixtures.
 Single, W2R2, W4R2, and W8R2 profiles preserve first-fold cycle locality; later
 recursive ownership alignment remains tracked by Akita #175.

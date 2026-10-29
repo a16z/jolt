@@ -71,6 +71,8 @@ Both SHA-256 entries read a raw 64-byte block in SHA-256's big-endian byte order
 | SECP256K1_*   | 0x0B   | 0x05   | 0x00–0x07 | secp256k1 field ops + GLV advice        |
 | GRUMPKIN_*    | 0x0B   | 0x06   | 0x00–0x01 | grumpkin field division advice           |
 | P256_*        | 0x0B   | 0x07   | 0x00–0x07 | P-256 field ops + Fake GLV advice       |
+| NTT64_I32_FORWARD | 0x0B | 0x08 | 0x00 | 64-point negacyclic i32 Montgomery NTT |
+| NTT64_I32_POINTWISE_DOT6 | 0x0B | 0x09 | 0x00 | Six-product pointwise dot of NTT rows |
 
 ```rust
 unsafe {
@@ -181,6 +183,8 @@ Note that creating custom user-defined instructions is currently only available 
 
 Unlike standard RISC-V which limits immediate values to 12 or 20 bits, inlines can use full 64-bit immediate values. This eliminates the need for multiple instructions to load large constants, reducing both cycle count and register usage.
 
+Load and store offsets are the exception: they keep RISC-V's signed 12-bit range (-2048 to 2047), and Jolt rejects a wider one when it expands the inline. The proof computes a memory address as `rs1 + offset` without wrapping it modulo 2^64, so a wide offset could make an access unprovable. To reach a farther address, compute it into an inline virtual register and load or store from there.
+
 ## Creating Custom Inlines
 
 For implementing custom inlines, refer to the existing implementations in the `jolt-inlines/` directory, particularly the SHA2 implementation in `jolt-inlines/sha2/`.
@@ -209,6 +213,8 @@ When creating user-defined inlines, you must adhere to these critical requiremen
    - All custom instructions must have structured multilinear extensions (see [prefix-suffix sumcheck](../architecture/instruction_execution.md))
    - Complex operations may need to be broken down into simpler instructions that maintain this property
 
+6. **Memory Offsets**: load and store offsets must fit RISC-V's signed 12-bit range (see [64-bit Immediate Values](#3-64-bit-immediate-values))
+
 ### Implementation Structure
 
 A typical inline implementation consists of three main components:
@@ -223,7 +229,7 @@ When designing your inline, consider:
 
 - **Register Allocation**: Use the 80 inline virtual registers (48--127) to minimize memory operations
 - **Custom Instructions**: Identify patterns that could benefit from custom instructions (creating custom user-defined instructions is not available at this time)
-- **Immediate Values**: Leverage 64-bit immediate values to reduce instruction count
+- **Immediate Values**: Leverage 64-bit immediate values (except load and store offsets) to reduce instruction count
 - **Memory Access Patterns**: Structure your algorithm to minimize load/store operations
 
 For concrete examples and implementation patterns, study the existing inline implementations in the Jolt codebase.

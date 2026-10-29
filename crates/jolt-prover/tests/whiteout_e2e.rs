@@ -28,8 +28,8 @@ mod support;
 mod whiteout {
     use common::jolt_device::JoltDevice;
     use jolt_akita::{
-        AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme, HidingRandomness,
-        WhiteoutPlans,
+        AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
+        HidingRandomness, WhiteoutPlans,
     };
     use jolt_prover::akita;
     use jolt_prover::akita::preprocessing::{
@@ -94,7 +94,8 @@ mod whiteout {
         run: &PreparedGuest,
         config: &ProverConfig,
     ) -> AkitaProverPreprocessing {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let advice = matches!(setup, Setup::Advice);
         match setup {
             Setup::Muldiv | Setup::Advice => preprocessing::preprocess_full_with_advice(
@@ -270,7 +271,8 @@ mod whiteout {
             .pcs_setup
             .whiteout_plans()
             .expect("the proved setup's plans");
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let from_plans = |plans: WhiteoutPlans| {
             preprocessing::preprocess_full_from_plans(
                 &artifacts,
@@ -476,7 +478,8 @@ mod whiteout {
     fn whiteout_committed_program_reopens_from_shipped_randomness() {
         let run = prepare(Setup::Committed);
         let config = config(&run);
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let (verifier, bytecode, program_image) = {
             let trusted_party = preprocess(Setup::Committed, &run, &config);
             let openings = trusted_party

@@ -103,6 +103,7 @@ where
         seeded.checked.one_hot_config,
         preprocessing,
         &seeded.commitments.one_hot_trace,
+        &seeded.commitments.fused_inc,
         seeded.commitments.untrusted_advice.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]

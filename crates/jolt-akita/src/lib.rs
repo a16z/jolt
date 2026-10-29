@@ -25,7 +25,7 @@ pub mod configs;
 pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
-mod planning;
+mod schedule_artifacts;
 pub mod schedule_registry;
 pub mod schedules;
 mod scheme;
@@ -33,6 +33,8 @@ mod shape_guard;
 #[cfg(test)]
 mod test_transcripts;
 mod trace_onehot;
+mod verifier_resources;
+mod verifier_setup;
 #[cfg(feature = "zk")]
 mod whiteout;
 
@@ -48,13 +50,16 @@ pub use adapters::{
 };
 pub use adapters::{
     AkitaBackendFlavor, AkitaCommitment, AkitaField, AkitaProverHint, AkitaProverSetup,
-    AkitaScheduleArtifacts, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
-    AKITA_ONE_HOT_K256,
+    AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
+/// The shape argument of [`TraceOneHotCommitment::whiteout_commit_precommitted`].
+#[cfg(feature = "zk")]
+pub use jolt_zk::whiteout::{DenseSource, PrecommittedShape};
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
+pub use schedule_artifacts::{AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts};
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 #[cfg(feature = "zk-prover")]
 pub use scheme::WhiteoutPads;
@@ -68,4 +73,6 @@ pub use whiteout::{WhiteoutPlanError, WhiteoutPlans};
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.
 #[doc(hidden)]
-pub use adapters::{jolt_to_akita_evals, jolt_to_akita_index, reverse_point};
+pub use adapters::{jolt_to_akita_evals, reverse_point};
+
+pub use verifier_resources::AkitaVerifierResources;

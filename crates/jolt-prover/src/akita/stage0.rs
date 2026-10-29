@@ -7,7 +7,7 @@
 //! verifier's `seed_transcript` step for step.
 
 use common::jolt_device::JoltDevice;
-use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
+use jolt_kernels::akita::commitment::{FusedIncObject, WitnessCommitRequest, WitnessCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 
 use jolt_akita::TraceOneHotCommitment;
@@ -43,6 +43,7 @@ where
     pub transcript: ProverTranscript<H>,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
+    pub fused_inc: FusedIncObject<PCS>,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
     /// The field increment polynomial, committed on every Akita field-inline proof.
     #[cfg(feature = "field-inline")]
@@ -70,8 +71,9 @@ where
     VC: VectorCommitment<Field = F>,
     H: Sponge,
 {
-    if config.akita_chunk_profile.num_chunks()
-        != preprocessing.verifier.pcs_setup.one_hot_num_chunks()
+    let setup = &preprocessing.verifier.pcs_setup;
+    if config.akita_chunk_profile.num_chunks() != setup.one_hot_num_chunks()
+        || config.akita_chunk_profile.levels != setup.one_hot_num_chunked_levels()
     {
         return Err(ProverError::Unsupported {
             reason: "Akita chunk profile differs from preprocessing; reuse its configuration or regenerate preprocessing",
@@ -174,7 +176,7 @@ where
     };
 
     // Canonical batch order: advice, then field increments or direct committed-program
-    // objects (mutually exclusive), then OneHotTrace.
+    // objects (mutually exclusive), then FusedInc and OneHotTrace.
     let mut precommitted_hints: Vec<&PCS::OpeningHint> = untrusted_advice
         .as_ref()
         .map(|object| &object.hint)
@@ -189,6 +191,7 @@ where
         precommitted_hints.extend(program.objects().map(|object| &object.hint));
     }
     let WitnessCommitment {
+        fused_inc,
         commitment,
         hint,
         #[cfg(feature = "field-inline")]
@@ -204,6 +207,7 @@ where
     transcript.site(COMMITMENTS);
     ProofCommitments {
         one_hot_trace: commitment.clone(),
+        fused_inc: fused_inc.commitment.clone(),
         #[cfg(feature = "field-inline")]
         field_inc: field_inc.commitment.clone(),
         untrusted_advice: untrusted_advice
@@ -222,6 +226,7 @@ where
         transcript,
         commitment,
         hint,
+        fused_inc,
         untrusted_advice,
         #[cfg(feature = "field-inline")]
         field_inc,

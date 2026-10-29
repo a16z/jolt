@@ -27,6 +27,12 @@ We start from some ELF file, compiled from the guest program. For each instructi
 
 Then, we compute a [Reed-Solomon fingerprint](https://publish.obsidian.md/matteo/3.+Permanent+notes/Reed-Solomon+Fingerprinting) of some subset of the values in the tuple, depending on what $\widetilde{\textsf{rv}}$ claims are being proven. These fingerprints serve as the coefficients of the $\widetilde{\textsf{Val}}$ polynomial for that read-checking instance.
 
+### Trace-time validation
+
+The tracer's `cycle_to_trace_row` takes `BytecodePreprocessing` and checks each executed instruction against its preprocessed row before returning a trace row. The comparison includes the opcode, normalized operands, address, compression flag, and virtual-sequence metadata; runtime register values, memory observations, and advice are not part of this comparison. A difference returns `TraceError::BytecodeInstructionMismatch` with the bytecode PC and expected/actual instructions. An unavailable address or expansion position returns `MissingBytecodePc`.
+
+This is a host-side diagnostic in addition to the verifier's bytecode read-checking constraint. The emulator still fetches from mutable memory: self-modifying instructions that differ from the preprocessed ELF image remain unsupported. Eager tracing validates during row conversion; chunked execution validates during replay before returning the affected rows, not during its checkpoint-producing first pass.
+
 ## $\widetilde{\textsf{raf}}$-evaluation
 
 $\widetilde{\textsf{raf}}$-evaluation claims for the program counter are folded into the multi-stage read-checking sumcheck rather than being handled separately. There are two $\widetilde{\textsf{raf}}$ claims:

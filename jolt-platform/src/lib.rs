@@ -24,6 +24,9 @@ pub use field_inline::{FieldInlineModulus, FIELD_INLINE_MODULUS_ENV};
 mod spoil;
 pub use spoil::{spoil_proof, UnwrapOrSpoilProof};
 
+#[cfg(target_arch = "riscv64")]
+mod memory;
+
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64", test))]
 pub mod size_class_alloc;
 

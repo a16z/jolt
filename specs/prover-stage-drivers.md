@@ -111,9 +111,11 @@ Key abstractions introduced or modified:
   (proc-macro crate `jolt-kernels-derive`, following the
   `jolt-claims-derive`/`jolt-verifier-derive` pattern), which emits one delegating
   `PrepareKernel<F, R>` impl per field of type `Box<dyn PrepareKernel<F, R>>` and skips
-  all other fields (`commit`, `joint_opening`, the fronts). The field's own type IS the
-  relation→slot mapping — declared once, restated nowhere; a missing or mis-typed slot
-  surfaces as a missing-`PrepareKernel` bound error at the stage impl. This replaces v1's
+  fields whose type never names `PrepareKernel` (`commit`, `joint_opening`, the fronts).
+  The field's own type IS the relation→slot mapping — declared once, restated nowhere. A
+  field naming `PrepareKernel` in any other shape is a derive error at its declaration; a
+  missing slot, or one spelled through an alias, surfaces as a missing-`PrepareKernel`
+  bound error at the stage impl. This replaces v1's
   `BackendPreparer` (and the interim `HasKernel` lookup trait, folded into `PrepareKernel`);
   any other registry (a partial backend, a test double) implements `PrepareKernel` by hand.
 - **`StageProver<F>`** (jolt-prover): the driver trait, implemented for each stage batch

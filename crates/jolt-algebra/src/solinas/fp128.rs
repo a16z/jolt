@@ -21,7 +21,7 @@ use super::word::mul64_wide;
 use crate::PseudoMersenne;
 use crate::{
     CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, Fp128Accumulator,
-    Fp128SignedAccumulator, Ring, WithAccumulator,
+    Fp128SignedAccumulator, MulBaseUnreduced, Ring, WithAccumulator,
 };
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
@@ -1071,6 +1071,12 @@ impl<const P: u128> Ring for Fp128<P> {
 }
 
 impl<const P: u128> Field for Fp128<P> {
+    /// Accumulates the products unreduced and reduces once.
+    #[inline]
+    fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        <Self as MulBaseUnreduced<Self>>::dot_base(a, b)
+    }
+
     #[inline(always)]
     fn inverse(&self) -> Option<Self> {
         let inv = self.inv_or_zero();

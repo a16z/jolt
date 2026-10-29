@@ -80,7 +80,7 @@ use crate::adapters::AkitaBackendProverSetup;
 use crate::adapters::{
     AkitaBackend, AkitaBackendHint, AkitaCommitment, AkitaField, WhiteoutSource,
 };
-use crate::configs::{CatalogChunking, JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
+use crate::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
 use crate::schedule_registry::GroupedScheduleParams;
 
 type F = AkitaField;
@@ -145,7 +145,7 @@ pub(crate) fn sigma_matrix_rank(ring_dim: usize, width: usize) -> Result<usize, 
 /// [`AkitaError::UnsupportedSchedule`] if the table has no rank for the
 /// matrix.
 pub(crate) fn digit_matrix_rank(width: usize) -> Result<usize, ZkError> {
-    let policy = policy_of::<WhiteoutOneHot>(<JoltOneHotK16 as CatalogChunking>::CHUNKING);
+    let policy = policy_of::<WhiteoutOneHot>(ChunkedWitnessCfg::default_non_chunked());
     digit_commitment_min_rank(&policy, CHALLENGE_RING_DIM, width, RESPONSE_LOG_BASIS).ok_or_else(
         || {
             AkitaError::UnsupportedSchedule(format!(
@@ -441,7 +441,7 @@ impl WhiteoutCatalog {
         num_polys: usize,
         admitted: &BTreeSet<Vec<PrecommittedShape>>,
     ) -> Result<(Self, PlannedRows), AkitaError> {
-        let chunking = <JoltOneHotK16 as CatalogChunking>::CHUNKING;
+        let chunking = ChunkedWitnessCfg::default_non_chunked();
         let mut precommitted = BTreeMap::new();
         for shape in admitted.iter().flatten() {
             if let Entry::Vacant(entry) = precommitted.entry(*shape) {
@@ -522,7 +522,7 @@ impl WhiteoutCatalog {
             .collect::<Result<BTreeMap<_, _>, WhiteoutPlanError>>()?;
         let catalog = TrustedScheduleCatalog::<WhiteoutOneHot>::from_artifact_bytes(
             &plan.trace,
-            <JoltOneHotK16 as CatalogChunking>::CHUNKING,
+            ChunkedWitnessCfg::default_non_chunked(),
         )
         .map_err(WhiteoutPlanError::Inadmissible)?;
         let final_group =

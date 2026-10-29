@@ -691,3 +691,77 @@ identity_unreduced_suite!(
     u128::MAX - 274,
     0x1D07
 );
+
+/// The batched row kernels and `Field` sums equal their per-term reduced
+/// definitions, for an extension over a base field and for a base field
+/// whose `dot_product` defers reduction.
+#[test]
+fn batched_dot_kernels_match_per_term_sums() {
+    use two::Field;
+    type F = two::Prime64Offset59;
+    type E = two::FpExt2<F, two::TwoNr>;
+    type B = two::Prime128Offset275;
+    let mut rng = ChaCha20Rng::seed_from_u64(0x0E66_0001);
+    let base = |rng: &mut ChaCha20Rng| <F as Ring>::from_u64(rng.gen());
+    let ext = |rng: &mut ChaCha20Rng| E::new(base(rng), base(rng));
+    let dot = |pows: &[E], row: &[F]| {
+        pows.iter()
+            .zip(row)
+            .fold(E::zero(), |acc, (p, c)| acc + p.mul_base(*c))
+    };
+
+    let width = 37;
+    let pows: Vec<E> = (0..width).map(|_| ext(&mut rng)).collect();
+    let rows: Vec<Vec<F>> = (0..5)
+        .map(|_| (0..width).map(|_| base(&mut rng)).collect())
+        .collect();
+    let rows: Vec<&[F]> = rows.iter().map(Vec::as_slice).collect();
+    let weights: Vec<E> = (0..rows.len()).map(|_| ext(&mut rng)).collect();
+
+    assert_eq!(E::dot_base(&pows, rows[0]), dot(&pows, rows[0]));
+    let mut out = vec![E::zero(); rows.len()];
+    E::dot_base_rows(&pows, &rows, &mut out);
+    for (slot, row) in out.iter().zip(&rows) {
+        assert_eq!(*slot, dot(&pows, row));
+    }
+    let weighted = rows
+        .iter()
+        .zip(&weights)
+        .fold(E::zero(), |acc, (row, w)| acc + *w * dot(&pows, row));
+    assert_eq!(E::weighted_dot_base_rows(&rows, &weights, &pows), weighted);
+
+    let max = -B::one();
+    let xs: Vec<B> = (0..64).map(|_| <B as Ring>::from_u64(rng.gen())).collect();
+    for a in [xs.clone(), vec![max; 64]] {
+        let per_term = a
+            .iter()
+            .zip(&xs)
+            .fold(B::zero(), |acc, (x, y)| acc + *x * *y);
+        assert_eq!(B::dot_product(&a, &xs), per_term);
+    }
+    let triples: Vec<[B; 3]> = xs.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let products = triples
+        .iter()
+        .fold(B::zero(), |acc, [a, b, c]| acc + *a * *b * *c);
+    assert_eq!(B::sum_of_products(&triples), products);
+    assert_eq!(B::sum_of_products::<0>(&[[], []]), B::one() + B::one());
+    let signed =
+        xs.iter().enumerate().fold(
+            B::zero(),
+            |acc, (i, x)| if i % 3 == 0 { acc - *x } else { acc + *x },
+        );
+    assert_eq!(
+        B::signed_sum(xs.iter().enumerate().map(|(i, x)| (x, i % 3 == 0))),
+        signed
+    );
+}
+
+#[test]
+#[should_panic(expected = "every row matches the powers")]
+fn dot_base_rows_rejects_short_rows() {
+    type F = two::Prime64Offset59;
+    let pows = [F::one(); 3];
+    let row = [F::one(); 2];
+    let mut out = [F::zero()];
+    F::dot_base_rows(&pows, &[&row], &mut out);
+}

@@ -31,3 +31,12 @@ pub mod preprocess;
 
 pub use error::ProgramError;
 pub use execution::{build_jolt_program, build_jolt_program_with_inline_provider, JoltProgram};
+
+#[cfg(test)]
+use jolt_riscv::{JoltInstructionProfile, SourceExtension};
+
+#[cfg(test)]
+const RV64I: JoltInstructionProfile = JoltInstructionProfile {
+    source_extensions: &[SourceExtension::Rv64I],
+    inline_extensions: &[],
+};

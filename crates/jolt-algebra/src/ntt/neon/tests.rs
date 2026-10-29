@@ -390,6 +390,33 @@ fn neon_add_reduce_i32_handles_scalar_tail() {
     assert_eq!(neon_acc, scalar_acc);
 }
 
+#[cfg(feature = "parallel")]
+#[test]
+fn neon_add_reduce_i16_handles_scalar_tail() {
+    let prime = NttPrime::compute(TEST_PRIME_I16);
+    const D: usize = 6;
+    let acc_init = random_mont_array_i16::<D>(prime, 0x7777);
+    let other = random_mont_array_i16::<D>(prime, 0x8888);
+
+    let mut neon_acc = acc_init;
+    unsafe {
+        add_reduce_i16(
+            neon_acc.as_mut_ptr().cast::<i16>(),
+            other.as_ptr().cast::<i16>(),
+            D,
+            prime.p,
+        );
+    }
+
+    let mut scalar_acc = acc_init;
+    for i in 0..D {
+        let sum = MontCoeff::from_raw(scalar_acc[i].raw().wrapping_add(other[i].raw()));
+        scalar_acc[i] = prime.reduce_range(sum);
+    }
+
+    assert_eq!(neon_acc, scalar_acc);
+}
+
 fn assert_neon_ntt_i16_matches_scalar<const D: usize>() {
     let prime = NttPrime::compute(TEST_PRIME_I16);
     let tw = NttTwiddles::<i16, D>::compute(prime);
@@ -428,6 +455,9 @@ fn assert_neon_ntt_i16_matches_scalar<const D: usize>() {
 
 #[test]
 fn neon_ntt_i16_matches_scalar_at_fallback_and_target_dimensions() {
+    assert_neon_ntt_i16_matches_scalar::<2>();
+    assert_neon_ntt_i16_matches_scalar::<4>();
+    assert_neon_ntt_i16_matches_scalar::<8>();
     assert_neon_ntt_i16_matches_scalar::<16>();
     assert_neon_ntt_i16_matches_scalar::<64>();
     assert_neon_ntt_i16_matches_scalar::<128>();
@@ -456,11 +486,10 @@ fn neon_forward_inverse_roundtrip_i16() {
     }
 }
 
-#[test]
-fn neon_cyclic_i16_matches_scalar() {
+fn assert_neon_cyclic_i16_matches_scalar<const D: usize>() {
     let prime = NttPrime::compute(TEST_PRIME_I16);
-    let tw = NttTwiddles::<i16, 64>::compute(prime);
-    let input = random_mont_array_i16::<64>(prime, 0x9999);
+    let tw = NttTwiddles::<i16, D>::compute(prime);
+    let input = random_mont_array_i16::<D>(prime, 0x9999);
 
     let mut neon_fwd = input;
     unsafe { forward_ntt_cyclic_i16(&mut neon_fwd, prime, &tw) };
@@ -468,10 +497,10 @@ fn neon_cyclic_i16_matches_scalar() {
     let mut scalar_fwd = input;
     scalar_forward_ntt_cyclic(&mut scalar_fwd, prime, &tw, NttKernelPlan::SCALAR);
 
-    for i in 0..64 {
+    for i in 0..D {
         let n = prime.to_canonical(neon_fwd[i]);
         let s = prime.to_canonical(scalar_fwd[i]);
-        assert_eq!(n, s, "i16 fwd cyclic mismatch at {i}");
+        assert_eq!(n, s, "D={D} i16 fwd cyclic mismatch at {i}");
     }
 
     let mut neon_inv = neon_fwd;
@@ -480,17 +509,23 @@ fn neon_cyclic_i16_matches_scalar() {
     let mut scalar_inv = scalar_fwd;
     scalar_inverse_ntt_cyclic(&mut scalar_inv, prime, &tw, NttKernelPlan::SCALAR);
 
-    for i in 0..64 {
+    for i in 0..D {
         let n = prime.to_canonical(neon_inv[i]);
         let s = prime.to_canonical(scalar_inv[i]);
-        assert_eq!(n, s, "i16 inv cyclic mismatch at {i}");
+        assert_eq!(n, s, "D={D} i16 inv cyclic mismatch at {i}");
     }
 }
 
 #[test]
-fn neon_pointwise_mul_acc_i16_matches_scalar() {
+fn neon_cyclic_i16_matches_scalar() {
+    assert_neon_cyclic_i16_matches_scalar::<2>();
+    assert_neon_cyclic_i16_matches_scalar::<4>();
+    assert_neon_cyclic_i16_matches_scalar::<8>();
+    assert_neon_cyclic_i16_matches_scalar::<64>();
+}
+
+fn assert_neon_pointwise_mul_acc_i16_matches_scalar<const D: usize>() {
     let prime = NttPrime::compute(TEST_PRIME_I16);
-    const D: usize = 64;
     let acc_init = random_mont_array_i16::<D>(prime, 0xAAAA);
     let lhs = random_mont_array_i16::<D>(prime, 0xBBBB);
     let rhs = random_mont_array_i16::<D>(prime, 0xCCCC);
@@ -517,6 +552,14 @@ fn neon_pointwise_mul_acc_i16_matches_scalar() {
     for i in 0..D {
         let n = prime.to_canonical(neon_acc[i]);
         let s = prime.to_canonical(scalar_acc[i]);
-        assert_eq!(n, s, "i16 pointwise mul acc mismatch at {i}");
+        assert_eq!(n, s, "D={D} i16 pointwise mul acc mismatch at {i}");
     }
+}
+
+#[test]
+fn neon_pointwise_mul_acc_i16_matches_scalar() {
+    assert_neon_pointwise_mul_acc_i16_matches_scalar::<1>();
+    assert_neon_pointwise_mul_acc_i16_matches_scalar::<2>();
+    assert_neon_pointwise_mul_acc_i16_matches_scalar::<6>();
+    assert_neon_pointwise_mul_acc_i16_matches_scalar::<64>();
 }

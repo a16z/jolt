@@ -148,8 +148,10 @@ impl<F: Ring, O: Clone, P: Clone, C: Clone> Mul for Expr<F, O, P, C> {
         let mut terms = Vec::with_capacity(self.terms.len() * rhs.terms.len());
         for lhs_term in self.terms {
             for rhs_term in &rhs.terms {
-                let mut factors = lhs_term.factors.clone();
-                factors.extend(rhs_term.factors.clone());
+                let mut factors =
+                    Vec::with_capacity(lhs_term.factors.len() + rhs_term.factors.len());
+                factors.extend_from_slice(&lhs_term.factors);
+                factors.extend_from_slice(&rhs_term.factors);
                 terms.push(Term {
                     coefficient: lhs_term.coefficient * rhs_term.coefficient,
                     factors,

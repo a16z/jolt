@@ -1,9 +1,8 @@
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::instructions::{VirtualAdviceLoad, VirtualSignExtendWord, VirtualZeroExtendWord};
+use jolt_riscv::instructions::{VirtualAdviceLoad, VirtualSignExtendWord};
 use jolt_riscv::SourceInstructionKind as Kind;
 
 use super::*;
-use crate::jolt_asm;
 
 /// Computes SC success from the selected width's reservation register.
 ///
@@ -24,112 +23,155 @@ pub(in crate::expand) fn expand_sc_success(
     Ok(success)
 }
 
-/// Lowers `LB`/`LBU` by loading the containing doubleword and extracting a byte.
+/// Width class of a sub-doubleword access.
 ///
-/// The effective address is rounded down to the aligned 8-byte address for the
-/// `LD`. `VirtualWindowMaskB` turns the effective address into the byte mask of
-/// the addressed lane, and a single fused parallel-extract lookup (signed or
-/// unsigned) pulls the byte out of the loaded doubleword.
-pub(in crate::expand) fn expand_byte_load(
-    instruction: &SourceInstructionRow,
-    signed: bool,
-) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    let mut asm = ExpansionBuilder::new(*instruction);
-    let v0 = asm.allocate()?;
-    let v1 = asm.allocate()?;
-    let base = reg(rs1(instruction)?);
-    let destination = reg(rd(instruction)?);
-    let offset = format_i_imm(instruction.operands.imm);
-
-    // v1 = aligned address of the containing doubleword; the fused lookup
-    // computes `(rs1 + imm) & !7` in one row.
-    jolt_asm!(asm, {
-        align_addr v1, base, offset;
-        ld v1, v1, 0;
-        window_mask_b v0, base, offset;
-    });
-    if signed {
-        jolt_asm!(asm, { pext_signed destination, v1, v0; });
-    } else {
-        jolt_asm!(asm, { pext destination, v1, v0; });
-    }
-    asm.release_many([v0, v1]);
-
-    asm.finalize()
+/// One value selects every width-specific row of a sequence. `VirtualWindowMask`
+/// and `VirtualShiftData` for `H`/`W` ignore the offset bits that natural
+/// alignment clears, so they are sound only next to floor-addressed rows of the
+/// same class: those rows' `AddressOffset` output leaves the bits in
+/// `RamAddress`, which RAM RAF evaluation rejects (see R1CS constraint 0 in
+/// jolt-claims).
+#[derive(Clone, Copy)]
+pub(in crate::expand) enum AccessWidth {
+    Byte,
+    Halfword,
+    Word,
 }
 
-/// Lowers `LH`/`LHU` by loading the containing doubleword and extracting a halfword.
-///
-/// Halfword alignment is asserted first. The extraction mirrors byte loads:
-/// `VirtualWindowMaskH` builds the halfword lane's byte mask from the
-/// effective address, and a fused parallel-extract lookup (signed or unsigned)
-/// pulls the lane out of the loaded doubleword.
-pub(in crate::expand) fn expand_halfword_load(
-    instruction: &SourceInstructionRow,
-    signed: bool,
-) -> Result<ExpandedInstructionSequence, ExpansionError> {
-    let mut asm = ExpansionBuilder::new(*instruction);
-    let v0 = asm.allocate()?;
-    let v1 = asm.allocate()?;
-    let base = reg(rs1(instruction)?);
-    let destination = reg(rd(instruction)?);
-    let offset = instruction.operands.imm;
-    let formatted_offset = format_i_imm(offset);
-
-    // Halfword loads may start at byte offsets 0, 2, 4, or 6 within the
-    // containing doubleword.
-    // v1 = aligned address of the containing doubleword; the fused lookup
-    // computes `(rs1 + imm) & !7` in one row.
-    jolt_asm!(asm, {
-        assert_halfword_alignment base, offset;
-        align_addr v1, base, formatted_offset;
-        ld v1, v1, 0;
-        window_mask_h v0, base, formatted_offset;
-    });
-    if signed {
-        jolt_asm!(asm, { pext_signed destination, v1, v0; });
-    } else {
-        jolt_asm!(asm, { pext destination, v1, v0; });
+impl AccessWidth {
+    fn load(self) -> Kind {
+        match self {
+            Self::Byte => Kind::VirtualLoadB,
+            Self::Halfword => Kind::VirtualLoadH,
+            Self::Word => Kind::VirtualLoadW,
+        }
     }
-    asm.release_many([v0, v1]);
 
-    asm.finalize()
+    fn store(self) -> Kind {
+        match self {
+            Self::Byte => Kind::VirtualStoreB,
+            Self::Halfword => Kind::VirtualStoreH,
+            Self::Word => Kind::VirtualStoreW,
+        }
+    }
+
+    fn window_mask(self) -> Kind {
+        match self {
+            Self::Byte => Kind::VirtualWindowMaskB,
+            Self::Halfword => Kind::VirtualWindowMaskH,
+            Self::Word => Kind::VirtualWindowMaskW,
+        }
+    }
+
+    fn shift_data(self) -> Kind {
+        match self {
+            Self::Byte => Kind::VirtualShiftDataB,
+            Self::Halfword => Kind::VirtualShiftDataH,
+            Self::Word => Kind::VirtualShiftDataW,
+        }
+    }
 }
 
-/// Lowers `LW`/`LWU` by loading the containing doubleword and extracting a word.
-///
-/// The word alignment assertion is required by the source semantics; it also
-/// guarantees the effective address's bits 0-1 are zero, which
-/// `VirtualWindowMaskW` relies on (it reads only bit 2). A fused
-/// parallel-extract lookup (signed or unsigned) pulls the word lane out of the
-/// loaded doubleword.
-pub(in crate::expand) fn expand_word_load(
+/// The addressed lane of a floor-addressed access to `ea = base + offset`:
+/// `doubleword` holds the doubleword containing `ea` and `lane` the byte mask of
+/// the `width`-byte lane at `ea`.
+#[derive(Clone, Copy)]
+pub(in crate::expand) struct LaneWindow {
+    width: AccessWidth,
+    doubleword: RegisterOperand,
+    lane: RegisterOperand,
+    base: RegisterOperand,
+    offset: i128,
+}
+
+impl LaneWindow {
+    /// Emits `[VirtualLoad][VirtualWindowMask]`.
+    ///
+    /// The floor-addressed rows take the signed immediate: R1CS constraint 0
+    /// forms `RamAddress` from the same `Imm` column as their lookup index, so
+    /// the `u64`-wrapped form `format_i_imm` gives the window mask would put the
+    /// address `2^64` away.
+    pub(in crate::expand) fn open(
+        asm: &mut ExpansionBuilder,
+        width: AccessWidth,
+        doubleword: RegisterOperand,
+        lane: RegisterOperand,
+        base: RegisterOperand,
+        offset: i128,
+    ) -> Self {
+        asm.emit_ld(width.load(), doubleword, base, offset);
+        asm.emit_i(width.window_mask(), lane, base, format_i_imm(offset));
+        Self {
+            width,
+            doubleword,
+            lane,
+            base,
+            offset,
+        }
+    }
+
+    /// Emits the parallel extract of the lane into `destination`, sign- or
+    /// zero-extended.
+    pub(in crate::expand) fn extract(
+        self,
+        asm: &mut ExpansionBuilder,
+        destination: RegisterOperand,
+        signed: bool,
+    ) {
+        let extract = if signed {
+            Kind::VirtualPextSigned
+        } else {
+            Kind::VirtualPext
+        };
+        asm.emit_r(extract, destination, self.doubleword, self.lane);
+    }
+
+    /// Emits `[ANDN][VirtualShiftData][ADD][VirtualStore]`: replaces the lane
+    /// with the low `width` bytes of `value` and stores the doubleword back.
+    /// Overwrites `lane`.
+    ///
+    /// The shifter reads the effective address as `rs2 + imm` with the base in
+    /// its `rs2` slot, and its interleaved right operand must stay below
+    /// `2^64`. The shifted bytes lie inside the lane `ANDN` cleared, so a plain
+    /// `ADD` merges them without carries.
+    pub(in crate::expand) fn merge(self, asm: &mut ExpansionBuilder, value: RegisterOperand) {
+        let Self {
+            width,
+            doubleword,
+            lane,
+            base,
+            offset,
+        } = self;
+        asm.emit_r(Kind::ANDN, doubleword, doubleword, lane);
+        asm.emit_shift_data(width.shift_data(), lane, value, base, offset);
+        asm.emit_r(Kind::ADD, doubleword, doubleword, lane);
+        asm.emit_s(width.store(), base, doubleword, offset);
+    }
+}
+
+/// Lowers `LB`/`LBU`/`LH`/`LHU`/`LW`/`LWU`: the floor-addressed `VirtualLoad`
+/// row loads the doubleword containing `ea = rs1 + imm`, `VirtualWindowMask`
+/// turns `ea` into the byte mask of the addressed lane, and a parallel-extract
+/// lookup pulls the lane out of the doubleword.
+pub(in crate::expand) fn expand_narrow_load(
     instruction: &SourceInstructionRow,
+    width: AccessWidth,
     signed: bool,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
-    let v0 = asm.allocate()?;
-    let v1 = asm.allocate()?;
-    let base = reg(rs1(instruction)?);
-    let destination = reg(rd(instruction)?);
-    let offset = instruction.operands.imm;
-    let formatted_offset = format_i_imm(offset);
+    let doubleword = asm.allocate()?;
+    let mask = asm.allocate()?;
 
-    // v1 = aligned address of the containing doubleword; the fused lookup
-    // computes `(rs1 + imm) & !7` in one row.
-    jolt_asm!(asm, {
-        assert_word_alignment base, offset;
-        align_addr v1, base, formatted_offset;
-        ld v1, v1, 0;
-        window_mask_w v0, base, formatted_offset;
-    });
-    if signed {
-        jolt_asm!(asm, { pext_signed destination, v1, v0; });
-    } else {
-        jolt_asm!(asm, { pext destination, v1, v0; });
-    }
-    asm.release(v0);
-    asm.release(v1);
+    LaneWindow::open(
+        &mut asm,
+        width,
+        doubleword.operand(),
+        mask.operand(),
+        reg(rs1(instruction)?),
+        instruction.operands.imm,
+    )
+    .extract(&mut asm, reg(rd(instruction)?), signed);
+    asm.release_many([doubleword, mask]);
 
     asm.finalize()
 }
@@ -230,230 +272,121 @@ pub(in crate::expand) fn expand_amo_minmax_d(
     asm.finalize()
 }
 
-/// Lowers arithmetic/bitwise word AMOs by updating one word lane in a doubleword.
+/// Lowers arithmetic/bitwise word AMOs as a read-modify-write of the word lane.
 ///
-/// The pre-helper extracts the old word from the containing doubleword. The
-/// final operation is performed on that word, and the post-helper merges the
-/// low word of the result back into the containing doubleword while returning
-/// the old word sign-extended in `rd`.
+/// The old word is extracted sign-extended, `op(old, rs2)` supplies the new
+/// word, whose low 32 bits are merged back and stored, and `rd` receives the old
+/// word last because it may alias `rs1` or `rs2`. The floor-addressed rows
+/// reject an `rs1` that is not word-aligned.
 pub(in crate::expand) fn expand_amo_w(
     instruction: &SourceInstructionRow,
     op: SourceInstructionKind,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
-    let v_rd = asm.allocate()?;
-    let v_rs2 = asm.allocate()?;
-    let v_mask = asm.allocate()?;
-    let v_dword = asm.allocate()?;
-    let v_shift = asm.allocate()?;
+    let doubleword = asm.allocate()?;
+    let lane = asm.allocate()?;
+    let old = asm.allocate()?;
+    let new = asm.allocate()?;
 
-    expand_amo_pre64(
+    let window = LaneWindow::open(
         &mut asm,
+        AccessWidth::Word,
+        doubleword.operand(),
+        lane.operand(),
         reg(rs1(instruction)?),
-        v_rd.operand(),
-        v_dword.operand(),
-        v_shift.operand(),
-    )?;
-    asm.emit_r(op, v_rs2.operand(), v_rd.operand(), reg(rs2(instruction)?));
-    expand_amo_post64(
-        &mut asm,
-        AmoPost64 {
-            rs1: reg(rs1(instruction)?),
-            v_rs2: v_rs2.operand(),
-            v_dword: v_dword.operand(),
-            v_shift: v_shift.operand(),
-            v_mask: v_mask.operand(),
-            rd: reg(rd(instruction)?),
-            v_rd: v_rd.operand(),
-        },
-    )?;
-    asm.release_many([v_rd, v_rs2, v_mask, v_dword, v_shift]);
+        0,
+    );
+    window.extract(&mut asm, old.operand(), true);
+    asm.emit_r(op, new.operand(), old.operand(), reg(rs2(instruction)?));
+    window.merge(&mut asm, new.operand());
+    asm.emit_i(Kind::ADDI, reg(rd(instruction)?), old.operand(), 0);
+    asm.release_many([doubleword, lane, old, new]);
 
     asm.finalize()
 }
 
 /// Lowers signed or unsigned word AMO min/max.
 ///
-/// The old word and `rs2` are extended according to the comparison mode before
-/// `compare_op` runs. The stored value is still the selected low word, merged
-/// back into the containing doubleword by `expand_amo_post64`.
+/// `compare_op` (`SLT` or `SLTU`) compares the sign-extended old word with the
+/// sign-extended low word of `rs2`; sign extension preserves both the signed and
+/// the unsigned order of 32-bit words. The new value is computed as
+/// `old + take_rs2 * (rs2 - old)`, whose low word is the selected one, so the
+/// same arithmetic handles min and max once the comparison operands are ordered
+/// appropriately.
 pub(in crate::expand) fn expand_amo_minmax_w(
     instruction: &SourceInstructionRow,
     compare_op: SourceInstructionKind,
     min: bool,
-    signed: bool,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
-    let v_rd = asm.allocate()?;
-    let v_dword = asm.allocate()?;
-    let v_shift = asm.allocate()?;
-
-    expand_amo_pre64(
-        &mut asm,
-        reg(rs1(instruction)?),
-        v_rd.operand(),
-        v_dword.operand(),
-        v_shift.operand(),
-    )?;
-
+    let doubleword = asm.allocate()?;
+    let lane = asm.allocate()?;
+    let old = asm.allocate()?;
     let v_rs2 = asm.allocate()?;
-    let v0 = asm.allocate()?;
-    let extend_op = if signed {
-        Kind::VirtualSignExtendWord(VirtualSignExtendWord(()))
-    } else {
-        Kind::VirtualZeroExtendWord(VirtualZeroExtendWord(()))
-    };
-    // Compare normalized word values, but keep the original low-word payload
-    // for the value that will be merged back into memory.
-    asm.emit_i(extend_op, v_rs2.operand(), reg(rs2(instruction)?), 0);
-    asm.emit_i(extend_op, v0.operand(), v_rd.operand(), 0);
+    let take_rs2 = asm.allocate()?;
+
+    let window = LaneWindow::open(
+        &mut asm,
+        AccessWidth::Word,
+        doubleword.operand(),
+        lane.operand(),
+        reg(rs1(instruction)?),
+        0,
+    );
+    window.extract(&mut asm, old.operand(), true);
+    asm.emit_i(
+        Kind::VirtualSignExtendWord(VirtualSignExtendWord(())),
+        v_rs2.operand(),
+        reg(rs2(instruction)?),
+        0,
+    );
     let (cmp_rs1, cmp_rs2) = if min {
-        (v_rs2.operand(), v0.operand())
+        (v_rs2.operand(), old.operand())
     } else {
-        (v0.operand(), v_rs2.operand())
+        (old.operand(), v_rs2.operand())
     };
-    asm.emit_r(compare_op, v0.operand(), cmp_rs1, cmp_rs2);
+    asm.emit_r(compare_op, take_rs2.operand(), cmp_rs1, cmp_rs2);
     asm.emit_r(
         Kind::SUB,
         v_rs2.operand(),
         reg(rs2(instruction)?),
-        v_rd.operand(),
+        old.operand(),
     );
-    asm.emit_r(Kind::MUL, v_rs2.operand(), v_rs2.operand(), v0.operand());
-    asm.emit_r(Kind::ADD, v_rs2.operand(), v_rs2.operand(), v_rd.operand());
-    expand_amo_post64(
-        &mut asm,
-        AmoPost64 {
-            rs1: reg(rs1(instruction)?),
-            v_rs2: v_rs2.operand(),
-            v_dword: v_dword.operand(),
-            v_shift: v_shift.operand(),
-            v_mask: v0.operand(),
-            rd: reg(rd(instruction)?),
-            v_rd: v_rd.operand(),
-        },
-    )?;
-    asm.release_many([v_rd, v_dword, v_shift, v_rs2, v0]);
+    asm.emit_r(
+        Kind::MUL,
+        v_rs2.operand(),
+        v_rs2.operand(),
+        take_rs2.operand(),
+    );
+    asm.emit_r(Kind::ADD, v_rs2.operand(), v_rs2.operand(), old.operand());
+    window.merge(&mut asm, v_rs2.operand());
+    asm.emit_i(Kind::ADDI, reg(rd(instruction)?), old.operand(), 0);
+    asm.release_many([doubleword, lane, old, v_rs2, take_rs2]);
 
     asm.finalize()
 }
 
-/// Reads the containing doubleword and extracts the selected word for word AMOs.
-///
-/// `rs1` must be word-aligned. `v_dword` receives the containing aligned
-/// doubleword, `v_shift` receives the byte offset times eight, and `v_rd`
-/// receives the selected old word in its low 32 bits.
-pub(in crate::expand) fn expand_amo_pre64(
-    asm: &mut ExpansionBuilder,
-    rs1: RegisterOperand,
-    v_rd: RegisterOperand,
-    v_dword: RegisterOperand,
-    v_shift: RegisterOperand,
-) -> Result<(), ExpansionError> {
-    asm.emit_address(Kind::VirtualAssertWordAlignment, rs1, 0);
-    asm.emit_i(Kind::ANDI, v_shift, rs1, format_i_imm(-8));
-    asm.emit_i(Kind::LD, v_dword, v_shift, 0);
-    asm.emit_i(Kind::SLLI, v_shift, rs1, 3);
-    asm.emit_r(Kind::SRL, v_rd, v_dword, v_shift);
-    Ok(())
-}
-
-/// Register bundle consumed by `expand_amo_post64`.
-///
-/// The post-helper needs both the containing doubleword state and the selected
-/// lane metadata from `expand_amo_pre64`, plus the new word value and the
-/// architectural destination for the old word.
-pub(in crate::expand) struct AmoPost64 {
-    pub(in crate::expand) rs1: RegisterOperand,
-    pub(in crate::expand) v_rs2: RegisterOperand,
-    pub(in crate::expand) v_dword: RegisterOperand,
-    pub(in crate::expand) v_shift: RegisterOperand,
-    pub(in crate::expand) v_mask: RegisterOperand,
-    pub(in crate::expand) rd: RegisterOperand,
-    pub(in crate::expand) v_rd: RegisterOperand,
-}
-
-/// Merges a word-AMO result into its containing doubleword and returns old word.
-///
-/// `v_rs2` is shifted into the selected lane, XORed with the old doubleword,
-/// masked to that lane, and XORed back. This updates only the selected 32 bits
-/// before storing the containing doubleword and sign-extending the old word to
-/// `rd`.
-pub(in crate::expand) fn expand_amo_post64(
-    asm: &mut ExpansionBuilder,
-    registers: AmoPost64,
-) -> Result<(), ExpansionError> {
-    let AmoPost64 {
-        rs1,
-        v_rs2,
-        v_dword,
-        v_shift,
-        v_mask,
-        rd,
-        v_rd,
-    } = registers;
-
-    // Build a 32-bit lane mask, shift the new word into place, and use
-    // masked-XOR replacement: new_dword = old ^ ((old ^ new) & mask).
-    asm.emit_i(Kind::ORI, v_mask, reg(0), format_i_imm(-1));
-    asm.emit_i(Kind::SRLI, v_mask, v_mask, 32);
-    asm.emit_r(Kind::SLL, v_mask, v_mask, v_shift);
-    asm.emit_r(Kind::SLL, v_shift, v_rs2, v_shift);
-    asm.emit_r(Kind::XOR, v_shift, v_dword, v_shift);
-    asm.emit_r(Kind::AND, v_shift, v_shift, v_mask);
-    asm.emit_r(Kind::XOR, v_dword, v_dword, v_shift);
-    asm.emit_i(Kind::ANDI, v_mask, rs1, format_i_imm(-8));
-    asm.emit_s(Kind::SD, v_mask, v_dword, 0);
-    asm.emit_i(
-        Kind::VirtualSignExtendWord(VirtualSignExtendWord(())),
-        rd,
-        v_rd,
-        0,
-    );
-    Ok(())
-}
-
-/// Lowers a narrow store (`SB`/`SH`/`SW`) via a fused read-modify-write.
-///
-/// The containing doubleword is loaded, the addressed lane is cleared with the
-/// window mask (`ANDN`) and replaced by the store data shifted into position
-/// (`ShiftData`); the lane bits are disjoint from the cleared doubleword, so a
-/// plain `ADD` merges them before the `SD` writes the doubleword back.
+/// Lowers a narrow store (`SB`/`SH`/`SW`) via a read-modify-write of the
+/// containing doubleword: the addressed lane is cleared and replaced by the
+/// low bytes of `rs2`.
 pub(in crate::expand) fn expand_narrow_store(
     instruction: &SourceInstructionRow,
-    window_mask: SourceInstructionKind,
-    shift_data: SourceInstructionKind,
-    alignment: Option<SourceInstructionKind>,
+    width: AccessWidth,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let mut asm = ExpansionBuilder::new(*instruction);
-    let v0 = asm.allocate()?;
-    let v1 = asm.allocate()?;
-    let v2 = asm.allocate()?;
-    let v3 = asm.allocate()?;
-    let base = reg(rs1(instruction)?);
-    let source = reg(rs2(instruction)?);
-    let offset = instruction.operands.imm;
-    let formatted_offset = format_i_imm(offset);
+    let doubleword = asm.allocate()?;
+    let lane = asm.allocate()?;
 
-    if let Some(alignment) = alignment {
-        // `SH`/`SW` assert alignment; `SB` passes `None`. The asserts also
-        // guarantee the offset bits the window-mask and shift-data tables do
-        // not read are zero.
-        asm.emit_address(alignment, base, offset);
-    }
-    jolt_asm!(asm, {
-        addi v0, base, formatted_offset;
-        andi v1, v0, format_i_imm(-8);
-        ld v2, v1, 0;
-    });
-    asm.emit_i(window_mask, v3.operand(), v0.operand(), 0);
-    jolt_asm!(asm, { andn v2, v2, v3; });
-    asm.emit_r(shift_data, v3.operand(), source, v0.operand());
-    jolt_asm!(asm, {
-        add v2, v2, v3;
-        sd v1, v2, 0;
-    });
-    asm.release_many([v0, v1, v2, v3]);
+    LaneWindow::open(
+        &mut asm,
+        width,
+        doubleword.operand(),
+        lane.operand(),
+        reg(rs1(instruction)?),
+        instruction.operands.imm,
+    )
+    .merge(&mut asm, reg(rs2(instruction)?));
+    asm.release_many([doubleword, lane]);
 
     asm.finalize()
 }

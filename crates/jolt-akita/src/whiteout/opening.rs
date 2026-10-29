@@ -18,7 +18,7 @@ pub(crate) fn whiteout(setup: &AkitaVerifierSetup) -> Result<&WhiteoutSetup, ZkE
 /// Whether a setup of one-hot `one_hot_k` and `chunk_profile` has a masked
 /// opening: one single-chunk K=16 trace group.
 pub(crate) fn opens_whiteout(one_hot_k: usize, chunk_profile: AkitaChunkProfile) -> bool {
-    one_hot_k == AKITA_ONE_HOT_K16 && chunk_profile == AkitaChunkProfile::Single
+    one_hot_k == AKITA_ONE_HOT_K16 && chunk_profile == AkitaChunkProfile::default()
 }
 
 /// The masked opening of `groups`: a K=16 one-hot trace group on a
@@ -61,9 +61,9 @@ fn split_trace<T>(mut groups: Vec<T>) -> Result<(Vec<T>, T), ZkError> {
 }
 
 /// The decoded commitments at their points in Akita's order, and the
-/// claims' forms in group order. A precommitted group's point is already in
-/// Akita's order; the trace group's is reversed, as in the clear grouped
-/// opening (`native_batching`).
+/// claims' forms in group order. Every group's point is reversed, as in the
+/// clear grouped opening (`native_batching`): dense and one-hot sources both
+/// keep Jolt's row-major order.
 type DecodedGroups = (Vec<(CommittedGroup<F>, Vec<F>)>, Vec<AffineRow<F>>);
 
 fn decode(
@@ -81,7 +81,7 @@ fn decode(
     let mut decoded = Vec::with_capacity(precommitted.len() + 1);
     let mut forms = Vec::new();
     for (group, backend) in precommitted.into_iter().zip(precommitted_backend) {
-        decoded.push((backend, group.point));
+        decoded.push((backend, reverse_point(&group.point)));
         forms.extend(group.evaluations);
     }
     decoded.push((trace_backend, reverse_point(&trace.point)));

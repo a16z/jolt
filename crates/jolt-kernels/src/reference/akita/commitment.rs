@@ -37,17 +37,16 @@ where
             request.shape().log_t,
             assembled.increments.clone(),
         )?;
+        let fused_inc = super::increments::commit_fused_inc::<F, PCS>(
+            request.setup(),
+            request.shape().log_t,
+            witness,
+        )?;
+        let mut group_hints = request.precommitted_hints().to_vec();
         #[cfg(feature = "field-inline")]
-        let group_hints = request
-            .precommitted_hints()
-            .iter()
-            .copied()
-            .chain(std::iter::once(&field_inc.hint))
-            .collect::<Vec<_>>();
-        #[cfg(feature = "field-inline")]
+        group_hints.push(&field_inc.hint);
+        group_hints.push(&fused_inc.hint);
         let precommitted_hints = group_hints.as_slice();
-        #[cfg(not(feature = "field-inline"))]
-        let precommitted_hints = request.precommitted_hints();
         let committed = PCS::commit_trace_one_hot(
             request.setup(),
             request.plan().layout_digest(),
@@ -60,6 +59,7 @@ where
         #[cfg(feature = "field-inline")]
         _session.park(assembled.increments);
         Ok(WitnessCommitment {
+            fused_inc,
             commitment,
             hint,
             #[cfg(feature = "field-inline")]

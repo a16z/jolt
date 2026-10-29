@@ -1,13 +1,14 @@
 //! The Akita final opening.
 //!
 //! `OneHotTrace` batches its native columns at one common point. Advice,
-//! field increments, and direct committed-program objects
+//! RV64 increments, field-register increments, and direct committed-program objects
 //! join it as auxiliary Akita groups and are discharged by one joint opening.
 
 use std::collections::BTreeMap;
 
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+use jolt_claims::protocols::jolt::lattice::increments::{fused_inc_group_role, FusedIncLayout};
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, committed_program_packing_plan, OneHotTraceShape, PrefixPackedObjectPlan,
 };
@@ -43,6 +44,8 @@ use crate::VerifierError;
 use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::lattice::{field_inc_group_role, FieldIncLayout};
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_claims::protocols::jolt::geometry::bytecode::fused_inc_read_raf_opening;
 #[cfg(all(feature = "akita", feature = "zk"))]
 use jolt_claims::protocols::jolt::geometry::committed_openings::final_opening_id;
 #[cfg(all(feature = "akita", feature = "zk"))]
@@ -234,6 +237,24 @@ pub fn field_inc_claim<F: JoltField, C: Clone>(
     ))
 }
 
+/// The ReadRAF reduction already produces the increment claim at a cycle point.
+pub fn fused_inc_claim<F: JoltField, C: Clone>(
+    commitment: &C,
+    stage6b: &Stage6bClearOutput<F>,
+) -> Result<TaggedGroupOpeningClaim<F, C>, VerifierError> {
+    let point = stage6b.output_points.fused_inc_opening_point();
+    Ok(TaggedGroupOpeningClaim::new(
+        fused_inc_group_role(),
+        GroupOpeningClaim::new(
+            commitment.clone(),
+            FusedIncLayout::new(point.len())
+                .opening_point(point)
+                .map_err(batch_failed)?,
+            vec![stage6b.output_values.bytecode_read_raf.fused_inc],
+        ),
+    ))
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the stage inputs are passed separately by the verifier driver"
@@ -243,6 +264,7 @@ pub fn verify<PCS, VC, H>(
     one_hot_config: JoltOneHotConfig,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
+    fused_inc_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     #[cfg(feature = "field-inline")] field_inc_commitment: &PCS::Output,
@@ -261,7 +283,7 @@ where
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
-    // committed-program objects. Optional objects join exactly when their direct final
+    // committed-program objects, then FusedInc. Optional objects join exactly when their direct final
     // reductions exist; presence must agree with the proof/preprocessing commitment slots.
     let chunk_width = one_hot_config.committed_chunk_bits();
     let one_hot_trace_shape = OneHotTraceShape {
@@ -368,6 +390,16 @@ where
         }
     }
 
+    {
+        let layout = FusedIncLayout::new(formula_dimensions.trace.log_t());
+        validate_group_commitment_metadata(
+            fused_inc_commitment,
+            layout.layout_digest(),
+            layout.num_vars(),
+        )?;
+        auxiliary_groups.push(fused_inc_claim(fused_inc_commitment, stage6b)?);
+    }
+
     PCS::verify_batch(
         &preprocessing.pcs_setup,
         &auxiliary_groups,
@@ -394,6 +426,11 @@ pub enum WhiteoutObject<C> {
         layout: FieldIncLayout,
         commitment: C,
     },
+    /// The RV64 increment polynomial, committed bounded.
+    FusedInc {
+        layout: FusedIncLayout,
+        commitment: C,
+    },
 }
 
 #[cfg(all(feature = "akita", feature = "zk"))]
@@ -404,6 +441,7 @@ impl<C> WhiteoutObject<C> {
             Self::Packed { plan, .. } => plan.group_role(),
             #[cfg(feature = "field-inline")]
             Self::FieldInc { .. } => field_inc_group_role(),
+            Self::FusedInc { .. } => fused_inc_group_role(),
         }
     }
 
@@ -412,6 +450,7 @@ impl<C> WhiteoutObject<C> {
             Self::Packed { commitment, .. } => commitment,
             #[cfg(feature = "field-inline")]
             Self::FieldInc { commitment, .. } => commitment,
+            Self::FusedInc { commitment, .. } => commitment,
         }
     }
 
@@ -426,13 +465,18 @@ impl<C> WhiteoutObject<C> {
                 num_vars: layout.num_vars(),
                 source: DenseSource::FullField,
             },
+            Self::FusedInc { layout, .. } => PrecommittedShape {
+                num_vars: layout.num_vars(),
+                source: DenseSource::Bounded,
+            },
         }
     }
 }
 
 /// Whiteout's final opening, from the statement: the trace group's layout
 /// plan and the precommitted objects in the clear stage 8's canonical order
-/// (advice, then the field increments or the committed program), every
+/// (advice, then the field increments or the committed program, then the
+/// RV64 increments), every
 /// commitment's and the setup's metadata checked against them. The masked
 /// opening's shape is derived from this plan, never from a commitment
 /// header.
@@ -462,11 +506,19 @@ impl<C> WhiteoutOpeningPlan<C> {
 ///
 /// The errors of the clear stage 8's shape checks.
 #[cfg(all(feature = "akita", feature = "zk"))]
+#[cfg_attr(
+    feature = "field-inline",
+    expect(
+        clippy::too_many_arguments,
+        reason = "one commitment argument per precommitted object kind, the field increments included"
+    )
+)]
 pub fn whiteout_opening_plan<PCS, VC>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
+    fused_inc_commitment: &PCS::Output,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     #[cfg(feature = "field-inline")] field_inc_commitment: &PCS::Output,
@@ -554,6 +606,16 @@ where
             });
         }
     }
+    let layout = FusedIncLayout::new(formula_dimensions.trace.log_t());
+    validate_group_commitment_metadata(
+        fused_inc_commitment,
+        layout.layout_digest(),
+        layout.num_vars(),
+    )?;
+    objects.push(WhiteoutObject::FusedInc {
+        layout,
+        commitment: fused_inc_commitment.clone(),
+    });
     Ok(WhiteoutOpeningPlan { trace, objects })
 }
 
@@ -573,9 +635,9 @@ pub struct WhiteoutGroup<F, V, C> {
 type LinearCombination<'a, F, V> = dyn Fn(&[(F, &V)]) -> V + 'a;
 
 /// Whiteout's stage 8 over `plan`: each precommitted object's claim, then
-/// the trace group's, from the committed columns' `leaves` (and, with
-/// field-inline, the field increments' `field_inc` leaf) by the clear stage
-/// 8's leaf geometry. A packed object's reduction binds its layout and point
+/// the trace group's, from the committed columns' `leaves`, the RV64
+/// increments' `fused_inc` leaf (and, with field-inline, the field
+/// increments' `field_inc` leaf) by the clear stage 8's leaf geometry. A packed object's reduction binds its layout and point
 /// and absorbs no evaluation: its values are affine forms of masked messages
 /// already absorbed, under challenges that precede none of them, and Akita's
 /// masked root binds them without absorbing values (spec §8, D25). The
@@ -586,11 +648,19 @@ type LinearCombination<'a, F, V> = dyn Fn(&[(F, &V)]) -> V + 'a;
 ///
 /// The errors of the clear stage 8's leaf geometry.
 #[cfg(all(feature = "akita", feature = "zk"))]
+#[cfg_attr(
+    feature = "field-inline",
+    expect(
+        clippy::too_many_arguments,
+        reason = "one argument per precommitted object kind, the field increments included"
+    )
+)]
 fn whiteout_groups<F, V, C, Ch>(
     plan: &WhiteoutOpeningPlan<C>,
     chunk_width: usize,
     trace_commitment: &C,
     leaves: &BTreeMap<JoltCommittedPolynomial, Leaf<F, V>>,
+    fused_inc: Leaf<F, V>,
     #[cfg(feature = "field-inline")] field_inc: Leaf<F, V>,
     combine: &LinearCombination<'_, F, V>,
     transcript: &mut Ch,
@@ -616,6 +686,7 @@ where
         }
     }
     let mut groups = Vec::with_capacity(plan.objects.len().saturating_add(1));
+    let mut fused_inc = Some(fused_inc);
     #[cfg(feature = "field-inline")]
     let mut field_inc = Some(field_inc);
     for object in &plan.objects {
@@ -651,6 +722,15 @@ where
             WhiteoutObject::FieldInc { layout, .. } => {
                 let leaf = field_inc.take().ok_or_else(|| {
                     batch_failed("a Whiteout opening has one field-increment group")
+                })?;
+                (
+                    layout.opening_point(&leaf.point).map_err(batch_failed)?,
+                    leaf.value,
+                )
+            }
+            WhiteoutObject::FusedInc { layout, .. } => {
+                let leaf = fused_inc.take().ok_or_else(|| {
+                    batch_failed("a Whiteout opening has one RV64-increment group")
                 })?;
                 (
                     layout.opening_point(&leaf.point).map_err(batch_failed)?,
@@ -726,6 +806,10 @@ where
         one_hot_config.committed_chunk_bits(),
         one_hot_trace_commitment,
         &leaves,
+        Leaf {
+            point: stage6b_points.fused_inc_opening_point().to_vec(),
+            value: residual.opening_form(&fused_inc_read_raf_opening().into())?,
+        },
         #[cfg(feature = "field-inline")]
         Leaf {
             point: stage6b_points.field_registers_inc_opening_point().to_vec(),
@@ -750,7 +834,7 @@ where
 }
 
 /// Whiteout's stage 8 on the prover's side: [`whiteout_groups`] over the
-/// clear leaf claims (and field-increment claim), the decodings of the
+/// clear leaf claims and increment claims, the decodings of the
 /// verifier's forms, on the prover's transcript.
 ///
 /// # Errors
@@ -762,7 +846,7 @@ pub fn clear_group_claims<F, C, Ch>(
     one_hot_config: JoltOneHotConfig,
     one_hot_trace_commitment: &C,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-    #[cfg(feature = "field-inline")] stage6b: &Stage6bClearOutput<F>,
+    stage6b: &Stage6bClearOutput<F>,
     transcript: &mut Ch,
 ) -> Result<Vec<WhiteoutGroup<F, F, C>>, VerifierError>
 where
@@ -787,6 +871,10 @@ where
         one_hot_config.committed_chunk_bits(),
         one_hot_trace_commitment,
         &leaves,
+        Leaf {
+            point: stage6b.output_points.fused_inc_opening_point().to_vec(),
+            value: stage6b.output_values.bytecode_read_raf.fused_inc,
+        },
         #[cfg(feature = "field-inline")]
         Leaf {
             point: stage6b
@@ -950,11 +1038,9 @@ pub fn leaf_claims<F: JoltField>(
             Poly::InstructionRa(index) => indexed(&hamming.instruction_ra, index, polynomial),
             Poly::BytecodeRa(index) => indexed(&hamming.bytecode_ra, index, polynomial),
             Poly::RamRa(index) => indexed(&hamming.ram_ra, index, polynomial),
-            Poly::BalancedIncDigit(index) => {
-                indexed(&hamming.balanced_inc_digits, index, polynomial)
-            }
-            Poly::BalancedIncCarry => Ok(hamming.balanced_inc_carry),
-            Poly::RdInc
+            Poly::BalancedIncDigit(_)
+            | Poly::BalancedIncCarry
+            | Poly::RdInc
             | Poly::RamInc
             | Poly::Reserved4(_)
             | Poly::TrustedAdvice
@@ -1009,23 +1095,16 @@ pub(crate) fn leaves<F: JoltField, V>(
     };
     let hamming = &stage7_points.hamming_weight_claim_reduction;
     type Family<'a, F> = (&'a [Vec<F>], fn(usize) -> Poly);
-    let families: [Family<'_, F>; 4] = [
+    let families: [Family<'_, F>; 3] = [
         (&hamming.instruction_ra, Poly::InstructionRa),
         (&hamming.bytecode_ra, Poly::BytecodeRa),
         (&hamming.ram_ra, Poly::RamRa),
-        (&hamming.balanced_inc_digits, Poly::BalancedIncDigit),
     ];
     for (points, polynomial) in families {
         for (index, point) in points.iter().enumerate() {
             insert(polynomial(index), point, value(polynomial(index), None)?)?;
         }
     }
-    insert(
-        Poly::BalancedIncCarry,
-        &hamming.balanced_inc_carry,
-        value(Poly::BalancedIncCarry, None)?,
-    )?;
-
     for kind in [JoltAdviceKind::Untrusted, JoltAdviceKind::Trusted] {
         if let Some(leaf) = advice(kind)? {
             let polynomial = match kind {

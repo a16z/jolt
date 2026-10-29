@@ -1,4 +1,7 @@
 use super::*;
+use jolt_claims::protocols::jolt::TraceDimensions;
+use relations::ram::{RamValCheck, RamValCheckShape, RamValContribution};
+use relations::registers::ReadWriteChecking;
 
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
@@ -15,7 +18,7 @@ where
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let log_k = crate::num::ilog2(input.checked.ram_K);
-    let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+    let trace_dimensions = TraceDimensions::new(log_t);
     let register_dimensions = input
         .checked
         .rw_config
@@ -28,7 +31,7 @@ where
             stage: JoltRelationId::RegistersReadWriteChecking,
             reason: error.to_string(),
         })?;
-    let registers_claims = relations::registers::ReadWriteChecking::new(register_dimensions);
+    let registers_claims = ReadWriteChecking::new(register_dimensions);
     let ram_init = ram_val_check_init(input)?;
     // Supply the `Val_init` decomposition scalars as `Public` values (formerly
     // baked as `Term` constants in the expression); the advice / program-image
@@ -43,12 +46,12 @@ where
             contribution.neg_selector,
         )?;
     }
-    let ram_val_claims = relations::ram::RamValCheck::new(relations::ram::RamValCheckShape {
+    let ram_val_claims = RamValCheck::new(RamValCheckShape {
         dimensions: trace_dimensions,
         contributions: ram_init
             .contributions
             .iter()
-            .map(|contribution| relations::ram::RamValContribution {
+            .map(|contribution| RamValContribution {
                 selector: contribution.selector,
                 opening: contribution.opening,
             })

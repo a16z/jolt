@@ -67,6 +67,7 @@ where
         preprocessing,
         &stage0.commitment,
         stage0.hint,
+        &stage0.fused_inc,
         stage0.untrusted_advice.as_ref(),
         trusted_advice,
         #[cfg(feature = "field-inline")]
