@@ -694,3 +694,6 @@ pub(crate) mod scale {
         }
     }
 }
+
+#[cfg(feature = "setup-weight-tiles")]
+pub(crate) mod setup_weight_tiles;

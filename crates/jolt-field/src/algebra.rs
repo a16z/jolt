@@ -203,6 +203,8 @@ pub trait Field: Ring {
     crate::signed_byte_sum::field_methods!();
     #[cfg(feature = "fill-ingress")]
     crate::algebra::fill_ingress_field_method!();
+    #[cfg(feature = "setup-weight-tiles")]
+    crate::setup_weight_tiles::field_methods!();
     /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
     /// otherwise. Fields with a batched guest path (a register-resident sum
     /// read out once) override this.

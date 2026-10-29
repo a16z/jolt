@@ -170,6 +170,9 @@ mle-leaf-tiles = ["jolt-akita?/mle-leaf-tiles"]
 # signed-byte-sum: sparse challenge evaluation at powers through one signed-byte
 # field sum.
 signed-byte-sum = ["jolt-akita?/signed-byte-sum"]
+# setup-weight-tiles: the direct setup scan adds its setup weights by fixed
+# tiles on field-register addition.
+setup-weight-tiles = ["jolt-akita?/setup-weight-tiles"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }

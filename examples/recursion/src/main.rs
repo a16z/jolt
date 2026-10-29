@@ -958,6 +958,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("mle-leaf-tiles");
     #[cfg(all(feature = "akita", feature = "signed-byte-sum"))]
     program.add_guest_feature("signed-byte-sum");
+    #[cfg(all(feature = "akita", feature = "setup-weight-tiles"))]
+    program.add_guest_feature("setup-weight-tiles");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
 }

@@ -68,6 +68,9 @@ mle-leaf-tiles = ["akita-pcs/mle-leaf-tiles"]
 # Sparse challenge evaluation at powers through one signed-byte field sum
 # (default off; enables jolt-field/signed-byte-sum on the Akita side).
 signed-byte-sum = ["akita-pcs/signed-byte-sum"]
+# Direct setup scan weights added by fixed tiles on field-register addition
+# (default off; enables jolt-field/setup-weight-tiles on the Akita side).
+setup-weight-tiles = ["akita-pcs/setup-weight-tiles"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.

@@ -1089,6 +1089,12 @@ impl<const P: u128> Field for Fp128<P> {
     fn scale_slice_into(scale: Self, src: &[Self], dst: &mut [Self]) {
         Self::fill_ingress_scale(scale, src, dst);
     }
+    #[cfg(all(
+        feature = "setup-weight-tiles",
+        feature = "field-inline-guest",
+        target_arch = "riscv64"
+    ))]
+    crate::setup_weight_tiles::fp128_methods!();
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
     fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self

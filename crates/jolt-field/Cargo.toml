@@ -30,6 +30,7 @@ thiserror = { workspace = true }
 [features]
 terminal-contraction = []
 signed-byte-sum = []
+setup-weight-tiles = []
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []

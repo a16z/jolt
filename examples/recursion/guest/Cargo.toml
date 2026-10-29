@@ -63,6 +63,7 @@ setup-lane-streams = ["akita", "jolt-akita/setup-lane-streams"]
 carry-graph = ["akita", "jolt-akita/carry-graph"]
 mle-leaf-tiles = ["akita", "jolt-akita/mle-leaf-tiles"]
 signed-byte-sum = ["akita", "jolt-akita/signed-byte-sum"]
+setup-weight-tiles = ["akita", "jolt-akita/setup-weight-tiles"]
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
 # embedded_bytecode.rs imports jolt-riscv types when the host prepares an
