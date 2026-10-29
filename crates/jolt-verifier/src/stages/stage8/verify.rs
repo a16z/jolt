@@ -7,6 +7,8 @@ use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening}
 use super::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(not(feature = "akita"))]
+use crate::stages::pow::PowSite;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
@@ -96,7 +98,7 @@ where
     proof
         .stages
         .pow_nonces
-        .require_absent(crate::stages::pow::PowSite::Stage8)?;
+        .require_absent(PowSite::Stage8)?;
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
