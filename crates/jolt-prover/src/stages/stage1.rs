@@ -18,7 +18,8 @@ use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+
 use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
@@ -55,9 +56,9 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    let tau = draw_spartan_outer_tau(transcript, log_t);
+    let tau = draw_spartan_outer_tau(transcript, log_t)?;
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
     // kernel-seam contract.
@@ -138,7 +139,7 @@ mod field_inline_round_trip {
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
     use jolt_poly::Polynomial;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Keccak, ProverState};
     use jolt_verifier::stages::stage2::product_tau_low;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
@@ -150,12 +151,15 @@ mod field_inline_round_trip {
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
-        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline");
-        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline"),
+            b"",
+        );
+        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
             LOG_T,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
@@ -176,10 +180,16 @@ mod field_inline_round_trip {
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }
 
-        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline");
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline"),
+            b"",
+        );
         twins::replay_stage1(&mut transcript, &out);
 
-        assert_eq!(transcript.state(), prover_transcript.state());
+        assert_eq!(
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
+        );
     }
 
     #[test]
@@ -201,7 +211,7 @@ mod field_inline_zk {
     use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Keccak, ProverState};
     use jolt_verifier::stages::uniskip::{self, UniskipParams};
     use jolt_verifier::stages::PrecommittedSchedule;
     use jolt_verifier::CheckedInputs;
@@ -218,12 +228,15 @@ mod field_inline_zk {
         let mut context = backend.with_witness(&witness);
         let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
         let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
-        let mut prover_transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
-        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline-zk"),
+            b"",
+        );
+        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mode,
             LOG_T,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
@@ -268,6 +281,7 @@ mod field_inline_zk {
             ram_K: 1 << 4,
             entry_address: ENTRY,
             preprocessing_digest: [0u8; 32],
+            untrusted_advice_commitment_present: false,
             trusted_advice_commitment_present: false,
             vc_capacity: Some(CAPACITY),
             precommitted: PrecommittedSchedule {
@@ -277,8 +291,11 @@ mod field_inline_zk {
                 program_image: None,
             },
         };
-        let mut transcript = Blake2bTranscript::new(b"stage1-field-inline-zk");
-        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T);
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline-zk"),
+            b"",
+        );
+        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
         let uniskip_step = uniskip::verify_zk(
             &checked,
             &out.uniskip_proof,
@@ -297,6 +314,9 @@ mod field_inline_zk {
             .verify_zk(&out.sumcheck_proof, &mut transcript)
             .unwrap();
 
-        assert_eq!(transcript.state(), prover_transcript.state());
+        assert_eq!(
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
+        );
     }
 }

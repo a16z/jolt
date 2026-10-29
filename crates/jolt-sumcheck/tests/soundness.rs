@@ -6,8 +6,8 @@ use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
 use jolt_sumcheck::error::SumcheckError;
 use jolt_sumcheck::proof::{ClearSumcheckProof, CompressedSumcheckProof};
 use jolt_sumcheck::round_proof::RoundMessage;
-use jolt_sumcheck::{BooleanHypercube, SumcheckVerifier, SUMCHECK_ROUND_TRANSCRIPT_LABEL};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, LabelWithCount, Transcript};
+use jolt_sumcheck::{BooleanHypercube, SumcheckVerifier};
+use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, ProverState, Transcript};
 
 type F = Fr;
 
@@ -27,14 +27,14 @@ impl From<SumcheckError<F>> for OracleCheckError {
     }
 }
 
-fn new_transcript() -> Blake2bTranscript<F> {
-    Blake2bTranscript::new(b"soundness-test")
+fn new_transcript() -> ProverState<Blake2b512> {
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"soundness-test"), b"")
 }
 
 fn honest_prove(
     evals: &[F],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript<F>,
+    transcript: &mut ProverState<Blake2b512>,
 ) -> ClearSumcheckProof<F> {
     let mut buf = evals.to_vec();
     let mut round_polys = Vec::with_capacity(num_vars);
@@ -49,7 +49,7 @@ fn honest_prove(
         }
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
         <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
-        let r: F = transcript.challenge();
+        let r: F = transcript.challenge().unwrap();
         round_polys.push(round_poly);
         for i in 0..half {
             buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
@@ -225,7 +225,7 @@ fn verifier_transcript_desync_rejected() {
     };
 
     let mut vt = new_transcript();
-    F::from_u64(0xdead).append_to_transcript(&mut vt);
+    vt.append(&F::from_u64(0xdead));
 
     let result =
         SumcheckVerifier::verify(&claim, &proof.round_polynomials, BooleanHypercube, &mut vt);
@@ -258,15 +258,24 @@ fn num_vars_zero_accepts_any_claimed_sum() {
     assert!(challenges.is_empty());
 }
 
+/// Absorbs one compressed round exactly the way `verify_compressed` replays
+/// it: `(degree as u64)` then the stored coefficients `[c0, c2]`.
+fn absorb_compressed_round(round: &CompressedPoly<F>, transcript: &mut ProverState<Blake2b512>) {
+    let coeffs = round.coeffs_except_linear_term();
+    transcript.append(&(coeffs.len() as u64));
+    for coeff in coeffs {
+        transcript.append(coeff);
+    }
+}
+
 /// Honest degree-2 compressed prover for f = g * h (both multilinear,
 /// HighToLow binding), absorbing rounds exactly the way `verify_compressed`
-/// replays them: `LabelWithCount(label, degree)` then the stored
-/// coefficients `[c0, c2]`.
+/// replays them.
 fn honest_prove_product_compressed(
     g_evals: &[F],
     h_evals: &[F],
     num_vars: usize,
-    transcript: &mut Blake2bTranscript,
+    transcript: &mut ProverState<Blake2b512>,
 ) -> CompressedSumcheckProof<F> {
     let mut g = g_evals.to_vec();
     let mut h = h_evals.to_vec();
@@ -286,15 +295,8 @@ fn honest_prove_product_compressed(
         }
         let compressed = UnivariatePoly::new(vec![c0, c1, c2]).compress();
 
-        let coeffs = compressed.coeffs_except_linear_term();
-        transcript.append(&LabelWithCount(
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-            coeffs.len() as u64,
-        ));
-        for coeff in coeffs {
-            coeff.append_to_transcript(transcript);
-        }
-        let r: F = transcript.challenge();
+        absorb_compressed_round(&compressed, transcript);
+        let r: F = transcript.challenge().unwrap();
 
         for i in 0..half {
             g[i] = g[i] + r * (g[i + half] - g[i]);
@@ -333,14 +335,8 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
     // Harness sanity: the honest compressed proof verifies AND satisfies the
     // oracle check, so any failure below is attributable to the tamper.
     let mut vt = new_transcript();
-    let honest = SumcheckVerifier::verify_compressed(
-        &claim,
-        &proof,
-        BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-        &mut vt,
-    )
-    .unwrap();
+    let honest =
+        SumcheckVerifier::verify_compressed(&claim, &proof, BooleanHypercube, &mut vt).unwrap();
     assert_eq!(
         honest.value,
         product_eval(&g_evals, &h_evals, &honest.point)
@@ -359,13 +355,8 @@ fn tampered_compressed_nonlinear_coefficients_rejected_by_oracle_check() {
             tampered.round_polynomials[round] = CompressedPoly::new(coeffs);
 
             let mut vt = new_transcript();
-            let result = SumcheckVerifier::verify_compressed(
-                &claim,
-                &tampered,
-                BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-                &mut vt,
-            );
+            let result =
+                SumcheckVerifier::verify_compressed(&claim, &tampered, BooleanHypercube, &mut vt);
             // The compressed encoding re-derives each linear coefficient from
             // the running sum, so s(0)+s(1) == running_sum holds by
             // construction and the round loop CANNOT reject this tamper.

@@ -1,20 +1,19 @@
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, JoltField};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
+use jolt_transcript::{require_no_pow, FieldTranscript, ProverTranscript};
+use jolt_transcript::{Encoding, Transcript};
+#[cfg(all(feature = "committed", feature = "prover"))]
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
 use crate::error::SumcheckError;
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 use crate::proof::SumcheckProof;
 use crate::round_proof::RoundMessage;
-
-const SUMCHECK_COMMITMENT_LABEL: &[u8] = b"sumcheck_commitment";
-const OUTPUT_CLAIMS_LABEL: &[u8] = b"output_claims_coms";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedRound<C> {
@@ -22,40 +21,50 @@ pub struct CommittedRound<C> {
     pub degree: usize,
 }
 
-impl<C: AppendToTranscript> RoundMessage for CommittedRound<C> {
+impl<C: Encoding> RoundMessage for CommittedRound<C> {
     fn degree(&self) -> usize {
         self.degree
     }
 
     fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        // The degree is packed into the label word so the round's degree —
-        // which fixes the BlindFold R1CS coefficient layout — is
-        // Fiat-Shamir-bound, not free prover-chosen wire data.
-        transcript.append(&LabelWithCount(
-            SUMCHECK_COMMITMENT_LABEL,
-            self.degree as u64,
-        ));
-        self.commitment.append_to_transcript(transcript);
+        // The degree is absorbed as its own `u64` word so the round's
+        // degree — which fixes the BlindFold R1CS coefficient layout and which
+        // the prover chooses up to the bound — is Fiat-Shamir-bound, not free
+        // prover-chosen wire data.
+        transcript.append(&(self.degree as u64));
+        transcript.append(&self.commitment);
     }
 }
 
+/// Vector commitments to a committed sumcheck's hidden output claims.
+///
+/// # Security
+/// The [`Encoding`] absorbs the commitments with no count, so it binds them
+/// only when their number is already fixed. A caller that absorbs claims read
+/// from a proof must first check `commitments.len()` against the count its
+/// protocol fixes from bound data, as the Jolt verifier does with
+/// `hidden.div_ceil(capacity)`, or absorb that count as a `u64` word itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedOutputClaims<C> {
     pub commitments: Vec<C>,
 }
 
-impl<C: AppendToTranscript> AppendToTranscript for CommittedOutputClaims<C> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            OUTPUT_CLAIMS_LABEL,
-            self.commitments.len() as u64,
-        ));
+/// Each commitment, with no count: the verifier fixes the number of
+/// commitments from the hidden-claim count and the vector-commitment capacity
+/// and rejects any other count before the proof is accepted.
+impl<C: Encoding> Encoding for CommittedOutputClaims<C> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Vec::new();
         for commitment in &self.commitments {
-            commitment.append_to_transcript(transcript);
+            out.extend_from_slice(commitment.encode().as_ref());
         }
+        out
     }
 }
 
+/// A zero-knowledge sumcheck proof. It carries no proof-of-work nonces: the
+/// committed path runs only where challenges need none, which both sides
+/// check with [`require_no_pow`](jolt_transcript::require_no_pow).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommittedSumcheckProof<C> {
     pub rounds: Vec<CommittedRound<C>>,
@@ -189,7 +198,7 @@ pub struct CommittedSumcheckWitness<F> {
 }
 
 impl<F> CommittedSumcheckWitness<F> {
-    #[cfg(feature = "committed")]
+    #[cfg(all(feature = "committed", feature = "prover"))]
     fn new() -> Self {
         Self {
             round_coefficients: Vec::new(),
@@ -206,7 +215,7 @@ impl<F> CommittedSumcheckWitness<F> {
 /// flattened output-claim values and absorb those commitments. Blindings are
 /// drawn from the caller-supplied `rng` and retained in the witness — the
 /// caller owns the randomness source, so a fixed seed reproduces the proof.
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub struct CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: JoltField,
@@ -219,7 +228,7 @@ where
     witness: CommittedSumcheckWitness<F>,
 }
 
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 impl<'a, F, VC, R> CommittedSumcheckBuilder<'a, F, VC, R>
 where
     F: JoltField,
@@ -240,14 +249,19 @@ where
 
     /// Commit one round polynomial, absorb the commitment, and squeeze the
     /// round challenge.
+    ///
+    /// # Errors
+    /// [`SumcheckError::NeedsProofOfWork`] if the transcript's challenges
+    /// would need proof of work, which committed proofs do not carry.
     pub fn commit_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
         transcript: &mut T,
     ) -> Result<F, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
+        require_no_pow(T::CHALLENGE_SET).map_err(|_| SumcheckError::NeedsProofOfWork)?;
         let coefficients = round_poly.coefficients().to_vec();
         if coefficients.len() > VC::capacity(self.setup) {
             return Err(SumcheckError::RoundExceedsCommitmentCapacity {
@@ -263,7 +277,7 @@ where
         };
         let round = witness.commit::<VC>(self.setup)?;
         round.append_to_transcript(transcript);
-        let challenge = transcript.challenge();
+        let challenge = transcript.challenge()?;
 
         self.rounds.push(round);
         self.witness.round_coefficients.push(coefficients);
@@ -284,7 +298,7 @@ where
         transcript: &mut T,
     ) -> Result<(SumcheckProof<F, VC::Output>, CommittedSumcheckWitness<F>), SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F> + ProverTranscript,
     {
         let capacity = VC::capacity(self.setup);
         let mut commitments = Vec::with_capacity(output_claim_values.len().div_ceil(capacity));
@@ -297,7 +311,7 @@ where
         }
 
         let output_claims = CommittedOutputClaims { commitments };
-        output_claims.append_to_transcript(transcript);
+        transcript.append(&output_claims);
         Ok((
             SumcheckProof::Committed(CommittedSumcheckProof {
                 rounds: self.rounds,

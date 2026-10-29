@@ -24,7 +24,7 @@ use akita_types::{
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{BytesMsg, Encoding, FieldTranscript, Transcript, TAG_BYTES};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -704,20 +704,17 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     flavor: AkitaBackendFlavor,
 ) -> Result<(), OpeningsError> {
     let akita_chunk_profile = setup.akita_chunk_profile();
-    transcript.append(&Label(b"akita_setup_key"));
-    transcript.append_bytes(b"akita/fp128");
-    transcript.append_bytes(flavor.transcript_label());
-    transcript.append(&U64Word(setup.max_num_vars as u64));
-    transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
-    transcript.append(&U64Word(setup.max_total_batch_polys as u64));
-    transcript.append(&U64Word(setup.one_hot_k as u64));
+    transcript.append(&flavor.transcript_word());
+    transcript.append(&(setup.max_num_vars as u64));
+    transcript.append(&(setup.max_num_polys_per_commitment_group as u64));
+    transcript.append(&(setup.max_total_batch_polys as u64));
+    transcript.append(&(setup.one_hot_k as u64));
+    // The flavor word before them fixes whether these two words are present.
     if flavor == AkitaBackendFlavor::OneHot {
-        transcript.append(&Label(b"akita_chunk_profile"));
-        transcript.append(&U64Word(akita_chunk_profile.chunks as u64));
-        transcript.append(&Label(b"akita_chunked_levels"));
-        transcript.append(&U64Word(akita_chunk_profile.levels as u64));
+        transcript.append(&(akita_chunk_profile.chunks as u64));
+        transcript.append(&(akita_chunk_profile.levels as u64));
     }
-    transcript.append_bytes(&setup.default_layout_digest);
+    transcript.append(&setup.default_layout_digest);
     let catalog_digest = match flavor {
         AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
         AkitaBackendFlavor::OneHot => {
@@ -726,25 +723,28 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
                 .catalog_digest())
         }
     };
-    transcript.append_bytes(&catalog_digest);
+    transcript.append(&catalog_digest);
     Ok(())
 }
 
 /// Binds the batch statement (commitment group, point, per-claim data) into
-/// the transcript.
+/// the transcript. The verifier builds `statement` and fixes the point's
+/// length, so neither carries a count word.
+///
+/// # Security
+/// The caller must check `point.len()` and `statement.len()` against the
+/// lengths fixed by bound data before calling, since neither is absorbed.
 pub(crate) fn append_batch_statement<T: Transcript>(
     transcript: &mut T,
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
     commitment: &AkitaCommitment,
     point: &[AkitaField],
 ) {
-    transcript.append(&Label(b"akita_batch_statement"));
-    commitment.append_to_transcript(transcript);
-    transcript.append_values(b"akita_pcs_point", point);
-    transcript.append(&LabelWithCount(b"akita_claims", statement.len() as u64));
+    transcript.append(&commitment);
+    transcript.append_values(point);
     for claim in statement {
-        claim.commitment.append_to_transcript(transcript);
-        claim.evaluation.value.append_to_transcript(transcript);
+        transcript.append(&claim.commitment);
+        transcript.append(&claim.evaluation.value);
     }
 }
 
@@ -757,10 +757,11 @@ pub enum AkitaBackendFlavor {
 }
 
 impl AkitaBackendFlavor {
-    pub(crate) const fn transcript_label(self) -> &'static [u8] {
+    /// The flavor's absorbed `u64` word.
+    pub(crate) const fn transcript_word(self) -> u64 {
         match self {
-            Self::Dense => b"dense",
-            Self::OneHot => b"one_hot",
+            Self::Dense => 0,
+            Self::OneHot => 1,
         }
     }
 }
@@ -883,20 +884,22 @@ impl AkitaCommitment {
     }
 }
 
-impl AppendToTranscript for AkitaCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_commitment"));
-        transcript.append_bytes(self.backend_flavor.transcript_label());
-        transcript.append_bytes(&self.layout_digest);
-        transcript.append(&U64Word(self.num_vars as u64));
-        transcript.append(&U64Word(self.poly_count as u64));
-        transcript.append(&U64Word(self.one_hot_k as u64));
-        transcript.append(&U64Word(self.backend_coeff_len as u64));
-        transcript.append(&LabelWithCount(
-            b"akita_commitment_bytes",
-            self.serialized_backend_bytes.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_backend_bytes);
+impl Encoding for AkitaCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = self.backend_flavor.transcript_word().to_le_bytes().to_vec();
+        out.extend_from_slice(&self.layout_digest);
+        for word in [
+            self.num_vars,
+            self.poly_count,
+            self.one_hot_k,
+            self.backend_coeff_len,
+        ] {
+            out.extend_from_slice(&(word as u64).to_le_bytes());
+        }
+        // The backend bytes keep their length word: nothing bound fixes it.
+        let backend = BytesMsg(&self.serialized_backend_bytes);
+        out.extend_from_slice(backend.encode().as_ref());
+        out
     }
 }
 
@@ -948,14 +951,11 @@ impl AkitaHidingCommitment {
     }
 }
 
-impl AppendToTranscript for AkitaHidingCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_hiding_commitment"));
-        transcript.append(&LabelWithCount(
-            b"akita_hiding_eval",
-            self.eval.len() as u64,
-        ));
-        transcript.append_bytes(&self.eval);
+impl Encoding for AkitaHidingCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Vec::new();
+        out.extend_from_slice(BytesMsg(&self.eval).encode().as_ref());
+        out
     }
 }
 
@@ -1221,19 +1221,22 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
 /// subsequent Jolt challenge consumes the terminal opening proof, so
 /// reabsorbing that proof into the outer transcript could not affect
 /// acceptance.
-pub(crate) fn bridged_akita_session<T>(jolt_transcript: &mut T, session_label: &[u8]) -> Vec<u8>
+pub(crate) fn bridged_akita_session<T>(
+    jolt_transcript: &mut T,
+    session_tag: &[u8; TAG_BYTES],
+) -> Result<Vec<u8>, OpeningsError>
 where
-    T: Transcript<Challenge = AkitaField>,
+    T: FieldTranscript<AkitaField>,
 {
-    let bridge = jolt_transcript.challenge_scalar();
+    let bridge = jolt_transcript.challenge()?;
     let bridge_bytes = bridge.to_bytes_le_vec();
     // Akita binds the concrete instance into its own Fiat-Shamir state but
     // keeps the session bytes as domain separator, so the cross-protocol
     // bridge belongs here.
-    let mut bridged_session = Vec::with_capacity(session_label.len() + bridge_bytes.len());
-    bridged_session.extend_from_slice(session_label);
+    let mut bridged_session = Vec::with_capacity(session_tag.len() + bridge_bytes.len());
+    bridged_session.extend_from_slice(session_tag);
     bridged_session.extend_from_slice(&bridge_bytes);
-    bridged_session
+    Ok(bridged_session)
 }
 
 #[cfg(test)]

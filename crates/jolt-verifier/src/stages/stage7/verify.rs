@@ -11,7 +11,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{
@@ -60,7 +60,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
@@ -90,7 +90,7 @@ where
         clear,
     )?;
 
-    // Draw the hamming-weight reduction's batching gamma (a single `challenge_scalar`,
+    // Draw the hamming-weight reduction's batching gamma (a single `challenge()`,
     // matching the relation's default `draw_challenges`) path-agnostically before the
     // ZK/clear branch; the advice and committed-program address phases draw nothing
     // (`NoChallenges`). BlindFold sources the gamma from

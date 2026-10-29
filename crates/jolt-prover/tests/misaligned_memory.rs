@@ -33,7 +33,7 @@ mod clear {
     use jolt_field::{Fr, Ring};
     use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig, ProverError};
     use jolt_sumcheck::SumcheckError;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, TraceBackend};
     use tracer::instruction::floor_access::allow_misaligned_floor_accesses;
 
@@ -102,7 +102,7 @@ mod clear {
         );
         assert_r1cs_satisfied(&witness);
 
-        match dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        match dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -119,16 +119,18 @@ mod clear {
                 ),
                 "kind {kind}: unexpected prover error {error:?}",
             ),
-            Ok(proof) => assert!(
-                jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
-                    &preprocessing.verifier,
-                    &public_io,
-                    &proof,
-                    None,
+            Ok(proof) => {
+                assert!(
+                    jolt_verifier::verify::<
+                        Fr,
+                        DoryScheme,
+                        Pedersen<Bn254G1>,
+                        VerifierState<'_, Keccak>,
+                    >(&preprocessing.verifier, &public_io, &proof, None,)
+                    .is_err(),
+                    "kind {kind}: a misaligned access produced an accepted proof",
                 )
-                .is_err(),
-                "kind {kind}: a misaligned access produced an accepted proof",
-            ),
+            }
         }
     }
 

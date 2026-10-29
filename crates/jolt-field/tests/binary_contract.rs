@@ -273,8 +273,6 @@ fn check_encoding<F: JoltField>(value: F, frozen: &[u8], short: F, display: &str
         (long.as_slice(), value),
     ] {
         assert_eq!(F::from_bytes_le_reduced(bytes), expected);
-        assert_eq!(F::from_challenge_bytes(bytes), expected);
-        assert_eq!(F::from_scalar_challenge_bytes(bytes), expected);
     }
 }
 

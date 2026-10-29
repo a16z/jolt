@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, 
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_val_evaluation::{
@@ -90,7 +90,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = formula_dimensions.trace;

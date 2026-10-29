@@ -23,7 +23,7 @@ use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
 use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError};
 
 use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
@@ -129,7 +129,7 @@ pub struct VerifierFixtureCase {
 #[cfg(not(feature = "zk"))]
 impl VerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -150,7 +150,7 @@ pub struct ZkVerifierFixtureCase {
 #[cfg(feature = "zk")]
 impl ZkVerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &self.preprocessing,
             &self.public_io,
             &self.proof,
@@ -392,11 +392,11 @@ impl VerifierFixtureKind {
             // cache, so a ZK transcript change must rename them or stale cached
             // proofs fail verification instead of regenerating.
             #[cfg(feature = "zk")]
-            Self::ZkMulDivSmall => "zk-muldiv-small-degree-bound",
+            Self::ZkMulDivSmall => "zk-muldiv-small-word-aligned-sha3",
             #[cfg(feature = "zk")]
-            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-degree-bound",
+            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-word-aligned-sha3",
             #[cfg(feature = "zk")]
-            Self::ZkAdviceConsumer => "zk-advice-consumer-degree-bound",
+            Self::ZkAdviceConsumer => "zk-advice-consumer-word-aligned-sha3",
         }
     }
 }
@@ -530,7 +530,7 @@ fn assert_verifier_accepts(
     proof: VerifierFixtureProof,
     public_io: JoltDevice,
 ) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
         &fixture.preprocessing,
         &public_io,
         &proof,
@@ -722,7 +722,7 @@ fn prove_prepared(
         jolt_prover::dory::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
         JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
         &config,
@@ -748,7 +748,7 @@ mod field_inline {
     use jolt_field::Fr;
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_prover::{JoltBackend, ProverConfig};
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_transcript::{Keccak, ProverState};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -826,7 +826,7 @@ mod field_inline {
         let witness = Arc::new(witness);
 
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             backend.with_witness(&witness),
             &prover_preprocessing,
             &config,

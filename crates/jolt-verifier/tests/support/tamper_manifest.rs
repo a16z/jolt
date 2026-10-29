@@ -1385,6 +1385,9 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::UnsupportedInstruction { .. }
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
+        // A refused draw or unread NARG bytes are observed wherever the
+        // transcript stops; neither names a phase.
+        VerifierError::TranscriptRejected | VerifierError::NargNotConsumed => None,
         VerifierError::MissingProofPayload { field } => match *field {
             "commitments.field_inline" | "field_inc_commitment" | "fused_inc_commitment" => {
                 Some(VerifierPhase::Preamble)

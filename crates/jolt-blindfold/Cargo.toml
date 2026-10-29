@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 
+[features]
+# The prove side. Verifier builds leave it off.
+prover = ["jolt-sumcheck/prover", "dep:rayon"]
+
 [lints]
 workspace = true
 
@@ -18,15 +22,37 @@ jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rand_core.workspace = true
-rayon.workspace = true
+rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
 
 [dev-dependencies]
-jolt-field = { workspace = true, features = ["bn254"] }
+jolt-field = { workspace = true, features = ["bn254", "solinas"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
+  "solinas",
   "transcript-blake2b",
+  "test-utils",
 ] }
 rand_chacha.workspace = true
 rand_core.workspace = true
+
+[[test]]
+name = "assignment_pipeline"
+required-features = ["prover"]
+
+[[test]]
+name = "proof_pipeline"
+required-features = ["prover"]
+
+[[test]]
+name = "r1cs_pipeline"
+required-features = ["prover"]
+
+[[test]]
+name = "real_prover"
+required-features = ["prover"]
+
+[[test]]
+name = "sumcheck_pipeline"
+required-features = ["prover"]

@@ -16,7 +16,8 @@ use jolt_openings::CommitmentScheme;
 #[cfg(feature = "zk")]
 use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
-use jolt_transcript::Transcript;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::{
@@ -53,7 +54,7 @@ where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let log_t = config.trace_length.ilog2() as usize;
     let trace_dimensions = TraceDimensions::new(log_t);

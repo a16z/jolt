@@ -3339,7 +3339,6 @@ version = "0.1.0"
 dependencies = [
  "allocative",
  "bincode 2.0.1",
- "blake2 0.11.0",
  "derive_more",
  "jolt-claims-derive",
  "jolt-field",
@@ -3348,12 +3347,14 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-riscv",
+ "jolt-transcript",
  "jolt-utils",
  "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "sha3 0.12.0",
  "thiserror 2.0.20",
 ]
 
@@ -3492,6 +3493,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish 0.8.0",
  "thiserror 2.0.20",
 ]
 
@@ -3957,7 +3959,6 @@ dependencies = [
 name = "jolt-spartan-verifier"
 version = "0.1.0"
 dependencies = [
- "blake2 0.11.0",
  "jolt-field",
  "jolt-openings",
  "jolt-poly",
@@ -3965,6 +3966,7 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "serde",
+ "sha3 0.12.0",
  "thiserror 2.0.20",
 ]
 
@@ -3978,7 +3980,6 @@ dependencies = [
  "jolt-poly",
  "jolt-r1cs",
  "jolt-transcript",
- "num-traits",
  "rand_core 0.6.4",
  "serde",
  "thiserror 2.0.20",
@@ -4011,12 +4012,12 @@ dependencies = [
  "ark-ff 0.5.0",
  "blake2 0.11.0",
  "criterion",
- "digest 0.11.3",
  "getrandom 0.4.3",
  "jolt-field",
  "light-poseidon",
  "num-bigint 0.4.6",
- "rayon",
+ "sha3 0.12.0",
+ "shake",
  "spongefish 0.8.0",
 ]
 
@@ -4036,7 +4037,6 @@ dependencies = [
  "allocative",
  "ark-serialize 0.5.0",
  "bincode 2.0.1",
- "blake2 0.11.0",
  "common",
  "jolt-akita",
  "jolt-blindfold",
@@ -4061,6 +4061,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
+ "sha3 0.12.0",
  "syn 3.0.9",
  "thiserror 2.0.20",
  "tracer",
@@ -6733,8 +6734,6 @@ dependencies = [
  "digest 0.11.3",
  "getrandom 0.4.3",
  "keccak 0.2.0",
- "shake",
- "turboshake",
  "zeroize",
 ]
 
@@ -7359,17 +7358,6 @@ name = "triomphe"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d15f4f5898bcfc5d8a8e45ed30b2f108d710c1a2e5489dbf80e078f707181bc"
-
-[[package]]
-name = "turboshake"
-version = "0.7.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f892c6904b0bd5a9241eac848347abcbbbd2b9f3892bad23ac3e6efab8d6f06a"
-dependencies = [
- "digest 0.11.3",
- "keccak 0.2.0",
- "sponge-cursor",
-]
 
 [[package]]
 name = "twox-hash"
@@ -8180,6 +8168,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "spongefish 0.8.0",
  "strum 0.28.0",
  "tracer",
 ]

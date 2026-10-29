@@ -9,7 +9,6 @@ description = "PCS-generic clear Spartan verification for sparse R1CS"
 workspace = true
 
 [dependencies]
-blake2.workspace = true
 jolt-field.workspace = true
 jolt-openings.workspace = true
 jolt-poly.workspace = true
@@ -17,4 +16,5 @@ jolt-r1cs = { path = "../jolt-r1cs", default-features = false }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 serde = { workspace = true, features = ["derive"] }
+sha3.workspace = true
 thiserror.workspace = true

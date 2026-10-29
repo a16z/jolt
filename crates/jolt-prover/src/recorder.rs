@@ -21,7 +21,7 @@ use jolt_sumcheck::{prove_uniskip_clear, ClearSumcheckRecorder};
 use jolt_sumcheck::{
     prove_uniskip_committed, CommittedSumcheckRecorder, CommittedSumcheckWitness, RecordedSumcheck,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 #[cfg(feature = "zk")]
 use rand_core::OsRng;
 
@@ -103,8 +103,8 @@ impl<'a, VC: VectorCommitment> ProofMode<'a, VC> {
         transcript: &mut T,
     ) -> Result<ProvedUniskipMode<VC::Field, VC::Output>, ProverError<VC::Field>>
     where
-        VC::Output: Clone + AppendToTranscript,
-        T: Transcript<Challenge = VC::Field>,
+        VC::Output: Clone + Encoding,
+        T: FieldTranscript<VC::Field> + ProverTranscript,
     {
         #[cfg(feature = "zk")]
         {

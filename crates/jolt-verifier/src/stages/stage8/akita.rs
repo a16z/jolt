@@ -22,7 +22,7 @@ use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_poly::Point;
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use super::precommitted::precommitted_final_openings;
 #[cfg(feature = "akita")]
@@ -151,7 +151,7 @@ fn reduce_object<PCS, T>(
 ) -> Result<EvaluationClaim<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let claims = object_leaf_claims(&object.plan, leaves)?;
     let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
@@ -254,10 +254,10 @@ pub fn verify<PCS, VC, T>(
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: Clone + AppendToTranscript + OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
@@ -299,19 +299,6 @@ where
         JoltAdviceKind::Trusted,
     )?;
 
-    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-    let trusted_claim = if let Some(object) = trusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-
     let program = preprocessing
         .program
         .committed()
@@ -325,6 +312,20 @@ where
             .map_err(batch_failed)
         })
         .transpose()?;
+
+    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+    let trusted_claim = if let Some(object) = trusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+
     let mut auxiliary_groups = Vec::with_capacity(5);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),
