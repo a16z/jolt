@@ -5,6 +5,9 @@
 //! - **Tracing subscriber setup** — configures `tracing-chrome` (Perfetto/Chrome JSON)
 //!   and `tracing-subscriber` (console output) for the host binary.
 //! - **Memory profiling** — tracks memory deltas across proving stages via `memory-stats`.
+//! - **Instruction counts** — samples a process-wide hardware counter of
+//!   user-space instructions retired at the same stage boundaries (Linux
+//!   `perf_event_open`; absent elsewhere).
 //! - **System metrics monitoring** (`monitor` feature) — background thread sampling
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
 //!   rewritten into native Perfetto counter tracks at flush (`summary::finalize_trace`).
@@ -56,7 +59,10 @@ pub mod taxonomy;
 pub mod memory;
 
 #[cfg(not(target_arch = "wasm32"))]
-pub mod stage_memory;
+mod instructions;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod stage_boundary;
 
 #[cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 pub mod summary;
@@ -88,7 +94,7 @@ pub use memory::{
     print_current_memory_usage, report_memory_usage, start_memory_tracing_span, PeakMemory,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use stage_memory::{report_stage_memory, take_stage_memory_rows, StageMemoryLayer};
+pub use stage_boundary::{report_stage_boundaries, take_stage_boundary_rows, StageBoundaryLayer};
 
 #[cfg(target_arch = "wasm32")]
 pub fn peak_rss_bytes() -> Option<u64> {
@@ -96,7 +102,7 @@ pub fn peak_rss_bytes() -> Option<u64> {
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn report_stage_memory() {}
+pub fn report_stage_boundaries() {}
 
 #[cfg(target_arch = "wasm32")]
 pub fn start_memory_tracing_span(_label: &'static str) {}

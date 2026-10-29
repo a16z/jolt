@@ -161,6 +161,10 @@ jq '.stages | map({label, s: (.wall_time_ns/1e9)})' $S
 # Per-stage memory: boundary-RSS delta (retained growth) and windowed
 # sample-max (null when the stage closed between monitor samples)
 jq '.stages | map({label, rss_delta_gib, peak_memory_gib})' $S
+
+# User-space instructions retired, whole prove and per stage (null without
+# a hardware counter; see Measurement semantics)
+jq '{root: .root.instructions, stages: (.stages | map({label, instructions}))}' $S
 ```
 
 Arbitrary ad-hoc queries go through Perfetto's `trace_processor` SQL against
@@ -202,6 +206,24 @@ for row in q:
   memory across runs. On Linux it equals `peak_rss_gib`. The monitor's
   `counters.footprint_gib` samples the same measure over time (macOS only);
   `memory_gib` and `root.peak_memory_gib` remain resident-set based.
+- **Instruction counts** (`root.instructions`, `stages[].instructions`) are
+  user-space instructions retired, read from a Linux hardware counter
+  (`perf_event_open`) at the same span boundaries as the boundary RSS. The
+  counter is process-wide: it covers every thread spawned after tracing
+  setup (rayon's pool included) and excludes the chrome writer and monitor
+  threads, so like wallclock a stage's count is not additive across
+  parallel spans. Counts are native, unlike Callgrind's: the AVX-512/IFMA
+  kernels Valgrind hides run as in production. The counter needs a PMU the
+  kernel exposes and `perf_event_paranoid` ≤ 2; elsewhere (macOS, most CI
+  VMs) the fields are `null` and setup logs a warning, and a counter the
+  kernel multiplexed yields `null` rather than a partial count. Idle rayon
+  workers spin before sleeping, so multi-threaded counts vary with
+  scheduling: on fibonacci 2^16 (optimized backend), repeated runs spread
+  ~0.1% at the root and up to a few percent on sub-second stages, against
+  ~0.01% everywhere under `RAYON_NUM_THREADS=1` — use that for A/B
+  comparisons. The counter's kernel-side cost (PMU save/restore on context
+  switches) measured under 1% of CPU time on fibonacci 2^20, below
+  wallclock noise.
 
 ## Overhead and dark-time budgets
 
@@ -279,8 +301,10 @@ the per-stage RSS table there.)
 
 Every summary metric is reachable as a string-keyed `jolt-eval` objective
 (`telemetry:<workload>:<metric>`), so optimization agents can target any
-span without editing `jolt-eval`; deterministic instruction counts are
-available through the opt-in iai-callgrind lane
+span without editing `jolt-eval`. End-to-end instruction counts are
+`telemetry:<workload>:instructions` and
+`telemetry:<workload>:stage_instructions:<stage-label>`; deterministic
+microbenchmark counts are available through the opt-in iai-callgrind lane
 (`callgrind:<bench-name>:instructions`). See `jolt-eval/README.md`.
 
 ```bash

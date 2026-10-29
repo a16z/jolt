@@ -9,6 +9,8 @@
 //! <metric>   ::= prover_time_s         (root-span duration, seconds)
 //!              | peak_rss_gib          (process-lifetime getrusage high-water mark)
 //!              | peak_memory_gib       (max over memory samples in the root span)
+//!              | instructions          (user-space instructions retired in the root span)
+//!              | stage_instructions:<stage-label> (the same, summed over a stage's instances)
 //!              | total:<span-label>    (inclusive time summed over all instances, seconds)
 //!              | self:<span-label>     (exclusive time summed over all instances, seconds)
 //!              | heap:<snapshot>       (allocative snapshot total, exact bytes)
@@ -54,6 +56,11 @@ pub enum TelemetryMetric {
     PeakRssGib,
     /// Max over memory samples inside the root span, GiB.
     PeakMemoryGib,
+    /// User-space instructions the process retired inside the root span.
+    Instructions,
+    /// User-space instructions the process retired inside one stage span,
+    /// summed over its instances.
+    StageInstructions(&'static str),
     /// Inclusive time of one span label summed over all instances, seconds.
     Total(&'static str),
     /// Exclusive time of one span label summed over all instances, seconds.
@@ -170,8 +177,11 @@ impl TelemetryObjective {
             "prover_time_s" => TelemetryMetric::ProverTimeS,
             "peak_rss_gib" => TelemetryMetric::PeakRssGib,
             "peak_memory_gib" => TelemetryMetric::PeakMemoryGib,
+            "instructions" => TelemetryMetric::Instructions,
             other => {
-                if let Some(label) = other.strip_prefix("total:") {
+                if let Some(label) = other.strip_prefix("stage_instructions:") {
+                    TelemetryMetric::StageInstructions(intern(label))
+                } else if let Some(label) = other.strip_prefix("total:") {
                     TelemetryMetric::Total(intern(label))
                 } else if let Some(label) = other.strip_prefix("self:") {
                     TelemetryMetric::SelfTime(intern(label))
@@ -222,6 +232,9 @@ impl TelemetryObjective {
             | TelemetryMetric::SelfTime(_) => Some("s"),
             TelemetryMetric::PeakRssGib | TelemetryMetric::PeakMemoryGib => Some("GiB"),
             TelemetryMetric::Heap { .. } => Some("bytes"),
+            TelemetryMetric::Instructions | TelemetryMetric::StageInstructions(_) => {
+                Some("instructions")
+            }
         }
     }
 
@@ -377,6 +390,39 @@ impl TelemetryObjective {
                         "summary has no root peak_memory_gib (no monitor samples in the root span)",
                     )
                 }),
+            TelemetryMetric::Instructions => summary
+                .pointer("/root/instructions")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| {
+                    MeasurementError::new(
+                        "summary has no root instruction count (no hardware counter, or the \
+                         kernel multiplexed it)",
+                    )
+                }),
+            TelemetryMetric::StageInstructions(label) => {
+                let counts: Vec<Option<f64>> = summary
+                    .get("stages")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter(|stage| stage.get("label").and_then(Value::as_str) == Some(label))
+                    .map(|stage| stage.get("instructions").and_then(Value::as_f64))
+                    .collect();
+                if counts.is_empty() {
+                    return Err(MeasurementError::new(format!(
+                        "stage {label:?} absent from summary (key {}); absent stages are an \
+                         error, never 0.0",
+                        self.key
+                    )));
+                }
+                counts.into_iter().sum::<Option<f64>>().ok_or_else(|| {
+                    MeasurementError::new(format!(
+                        "stage {label:?} has no instruction count (key {}): no hardware \
+                         counter, or the kernel multiplexed it",
+                        self.key
+                    ))
+                })
+            }
             TelemetryMetric::Total(label) | TelemetryMetric::SelfTime(label) => {
                 let field = match self.metric {
                     TelemetryMetric::Total(_) => "total_ns",
@@ -561,6 +607,43 @@ mod tests {
         );
         let rss = TelemetryObjective::parse("telemetry:fibonacci:peak_rss_gib").unwrap();
         assert_eq!(rss.extract(&summary).unwrap(), 4.0);
+    }
+
+    #[test]
+    fn instruction_extraction_reads_root_and_sums_stages_and_errors_on_null() {
+        let summary: Value = serde_json::json!({
+            "schema_version": 1,
+            "root": { "wall_time_ns": 1u64, "instructions": 9_000u64 },
+            "stages": [
+                { "label": "prove_stage1", "instructions": 2_000u64 },
+                { "label": "prove_stage1", "instructions": 3_000u64 },
+                { "label": "prove_stage2", "instructions": null },
+            ],
+        });
+        let root = TelemetryObjective::parse("telemetry:fibonacci:instructions").unwrap();
+        assert_eq!(root.units(), Some("instructions"));
+        assert_eq!(root.extract(&summary).unwrap(), 9_000.0);
+        let stage =
+            TelemetryObjective::parse("telemetry:fibonacci:stage_instructions:prove_stage1")
+                .unwrap();
+        assert_eq!(
+            stage.metric,
+            TelemetryMetric::StageInstructions("prove_stage1")
+        );
+        assert_eq!(stage.extract(&summary).unwrap(), 5_000.0);
+
+        let null = TelemetryObjective::parse("telemetry:fibonacci:stage_instructions:prove_stage2")
+            .unwrap();
+        assert!(null.extract(&summary).is_err(), "null is an error, not 0.0");
+        let absent =
+            TelemetryObjective::parse("telemetry:fibonacci:stage_instructions:prove_stage9")
+                .unwrap();
+        assert!(absent.extract(&summary).is_err());
+        let counter_off: Value = serde_json::json!({
+            "schema_version": 1,
+            "root": { "wall_time_ns": 1u64, "instructions": null },
+        });
+        assert!(root.extract(&counter_off).is_err());
     }
 
     #[test]

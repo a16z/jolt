@@ -158,6 +158,16 @@
           "format": "uint64",
           "minimum": 0
         },
+        "instructions": {
+          "description": "User-space instructions retired by the process while the root span\nwas open (all counted threads); `null` without a hardware counter or\nwhen the kernel multiplexed it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
         "label": {
           "type": "string"
         },
@@ -250,6 +260,16 @@
     "StageSummary": {
       "type": "object",
       "properties": {
+        "instructions": {
+          "description": "User-space instructions retired by the process while the stage span\nwas open, from [`StageBoundaryRow`]; `null` without a hardware counter\nor when the kernel multiplexed it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
         "label": {
           "type": "string"
         },
@@ -276,7 +296,7 @@
           "format": "double"
         },
         "rss_open_gib": {
-          "description": "Boundary RSS from [`StageMemoryRow`]: process RSS when the stage span\nopened / closed (retained growth, not within-stage peak).",
+          "description": "Boundary RSS from [`StageBoundaryRow`]: process RSS when the stage span\nopened / closed (retained growth, not within-stage peak).",
           "type": [
             "number",
             "null"
