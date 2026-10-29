@@ -643,12 +643,13 @@ fn growth_and_anchors_start_from_an_irregular_reserve() {
 /// run converts for the next tick, refreshes the allowance for it, or ends
 /// after a registered inline the refusal cut short. Each guest copies 1 MiB
 /// of itself to the tape where its accumulated ticks fit with half of that
-/// to spare; without a limit, each writes it all, as the tape-only run shows
-/// (a trace that converts the registered inline's host I/O row fails main's
-/// bytecode check; see [`advice_writing_guest`]). A write may not take the
-/// conversion its tick reserved either: the last guest's write would fit
-/// beside the longest tick's conversion, which the limit funds, but not
-/// within it.
+/// to spare; without a limit, each writes it all. The limited trace at the
+/// maximum limit shows that for the guests that write through their own host
+/// I/O. The registered inline's guest shows it through the tape-only run: its
+/// I-format host I/O row fails main's bytecode check once a trace converts it
+/// (see [`advice_writing_guest`]). A write may not take the conversion its
+/// tick reserved either: the last guest's write would fit beside the longest
+/// tick's conversion, which the limit funds, but not within it.
 #[test]
 fn refused_advice_write_outlives_the_next_tick() {
     reserve_rows(1 << 18);
@@ -663,8 +664,13 @@ fn refused_advice_write_outlives_the_next_tick() {
         ([host_io, STALL], longest + (1 << 20)),
     ] {
         let (program, inputs) = guest(&[&call[..], &tail, &[STALL]].concat());
-        let unlimited = TracerBackend::execute_advice_tape(&program, inputs.clone(), usize::MAX);
-        assert_eq!(unlimited.unwrap().len(), 1 << 20);
+        let unlimited = if tail[0] == HOST_WRITE_INLINE_WORD {
+            TracerBackend::execute_advice_tape(&program, inputs.clone(), usize::MAX).unwrap()
+        } else {
+            let output = limited(usize::MAX).trace(&program, inputs.clone()).unwrap();
+            output.advice_tape.unwrap()
+        };
+        assert_eq!(unlimited.len(), 1 << 20);
         let limit = setup_bytes(&program, &inputs) + (size_of::<Cycle>() << 18) + room;
         let refusal = rejection(limited(limit).trace(&program, inputs));
         assert_eq!(
