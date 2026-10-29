@@ -15,11 +15,8 @@
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying s(1).
 //! - **Deferred-reduction accumulation** of the triple products.
 //!
-//! The increment column is the field-inline oracle's single committed polynomial
-//! (`FieldRdInc`), materialized dense at prepare — there is no slice-backed deferral
-//! like the integer sibling's because the field-inline oracle serves whole tables only,
-//! and the column is all-zero exactly when the trace has no field-inline activity (a
-//! cheap bind).
+//! The committed increment column is shared across the field-register kernels.
+//! Its zero suffix stays implicit when the sumcheck binds cycle variables.
 
 use crate::field_inline::{FieldIncrementColumn, IncrementRounds};
 use jolt_claims::protocols::field_inline::{
@@ -169,7 +166,11 @@ impl<F: JoltField> ProveRounds<F> for FieldValEvaluationKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let half = (self.inc.len() / 2).min(self.wa.prefix_len().div_ceil(2));
+        let half = self
+            .inc
+            .prefix_len()
+            .div_ceil(2)
+            .min(self.wa.prefix_len().div_ceil(2));
         let evals = triple_product_round_evals(
             half,
             |y| self.inc.pair(y),
