@@ -305,12 +305,13 @@ impl AkitaNativeBatching {
             )
             .map_err(akita_error)?,
         );
-        // Auxiliary objects were committed on their own setups' dense
-        // backends, but a handle only proves on the backend that owns it and the
-        // grouped argument runs on the trace backend. Akita re-derives each
-        // imported handle from its retained source and checks the recomputed
-        // commitment against this setup's public matrix (shared by every Jolt
-        // setup through the deterministic setup seed).
+        // A handle only proves on the backend that owns it, and the grouped
+        // argument runs on the trace backend. FusedInc and full-width objects
+        // are committed on that backend already, so their import returns the
+        // same handle. Akita re-derives any foreign handle from its retained
+        // source and checks the recomputed commitment against this setup's
+        // public matrix (shared by every Jolt setup through the deterministic
+        // setup seed).
         let (_, backend) = setup.one_hot_backend()?;
         let mut handles = with_backend_pool(|| {
             let _span = info_span!("AkitaNativeBatching::import_auxiliary_handles").entered();

@@ -228,6 +228,10 @@ impl<F: JoltField> MultilinearPoly<F> for DenseTraceColumnPoly<F> {
         })
     }
 
+    fn dense_evaluation_prefix(&self) -> Option<&[F]> {
+        (self.placement.t_stride == 1).then(|| self.values.evaluation_prefix())
+    }
+
     fn for_each_row(&self, sigma: usize, f: &mut dyn FnMut(usize, &[F])) {
         emit_sorted_rows(self.entries().collect(), self.num_vars(), sigma, f);
     }
