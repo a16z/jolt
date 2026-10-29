@@ -112,14 +112,4 @@ impl TwoLevelLayout {
         }
         Ok(())
     }
-
-    /// Whether N on this commitment is linear over Whiteout's challenge ring:
-    /// restriction of scalars needs every multiplication to act on
-    /// stride-embedded inputs, and Akita's consecutive-coefficient split from
-    /// d_A to d_B is not a module map, so both dimensions must be equal
-    /// multiples of 64.
-    pub fn is_module_over_challenge_ring(&self) -> bool {
-        let inner_dim = self.inner.matrix.ring_dim;
-        inner_dim == self.outer.matrix.ring_dim && inner_dim.is_multiple_of(CHALLENGE_RING_DIM)
-    }
 }
