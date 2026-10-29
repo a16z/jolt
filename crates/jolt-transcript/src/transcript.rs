@@ -379,6 +379,8 @@ where
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "tests")]
 mod tests {
+    use core::cmp::Ordering;
+
     use super::{short_scalar_bytes, short_scalar_squeeze};
     use crate::{challenge_bits_for_loss, SECURITY_BITS};
 
@@ -390,9 +392,9 @@ mod tests {
             .iter()
             .enumerate()
             .all(|(i, &byte)| match i.cmp(&full) {
-                core::cmp::Ordering::Less => true,
-                core::cmp::Ordering::Equal => u32::from(byte) < 1 << partial,
-                core::cmp::Ordering::Greater => byte == 0,
+                Ordering::Less => true,
+                Ordering::Equal => u32::from(byte) < 1 << partial,
+                Ordering::Greater => byte == 0,
             })
     }
 
