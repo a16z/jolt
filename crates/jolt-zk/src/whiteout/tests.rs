@@ -19,7 +19,7 @@ use jolt_transcript::{Blake2b512, ProverTranscript, Sponge, VerifierTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
-use super::challenge::{challenge_ring, challenge_times_i64, challenge_times_ring};
+use super::challenge::{challenge_ring, challenge_times_i64_into, challenge_times_ring};
 use super::fixture::RawImages;
 use super::fixture::{
     digits, layout, lengths, pad_commitment, residual_matrices, residual_segments, stream,
@@ -506,7 +506,8 @@ fn quadratic_polar_quotient_and_linearity_identities() {
     for coefficient in c.iter_mut().take(20) {
         *coefficient = (rng.next_u32() % 5) as i8 - 2;
     }
-    let shift = challenge_times_i64(&c, 256, s).unwrap();
+    let mut shift = vec![0i64; s.len()];
+    challenge_times_i64_into(&c, 256, s, &mut shift).unwrap();
     let z: Vec<i64> = y.iter().zip(&shift).map(|(y, v)| y + v).collect();
     let c_ring = challenge_ring::<F>(&c);
     let parts_s = aggregated.linear_parts(&tables, &s[..], false).unwrap();

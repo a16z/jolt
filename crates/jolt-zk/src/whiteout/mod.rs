@@ -35,7 +35,6 @@ mod pad_commitment;
 mod params;
 mod placement;
 mod response;
-mod ring;
 #[cfg(feature = "whiteout-prover")]
 mod sample;
 mod segments;
@@ -47,7 +46,7 @@ mod sigma;
 pub mod test_support;
 mod weights;
 
-pub use challenge::{challenge_times_i64, DenseChallenge};
+pub use challenge::DenseChallenge;
 #[cfg(feature = "whiteout-prover")]
 pub use committed_pads::{commit_lattice_pads, WhiteoutPadOpening};
 pub use committed_pads::{receive_lattice_pads, LatticePadPayload};
@@ -65,17 +64,14 @@ pub use params::{
     binding_collision_radius, GaussianBlock, SigmaParams, ALPHA, BINDING_RESPONSE_DIGITS,
     EPSILON_BITS, MAX_RESPONSE_NUM_VARS, RESPONSE_LOG_BASIS,
 };
-pub use placement::{
-    PadPlace, PadPlacement, OPERAND_LEVELS, OPERAND_LOG_BASIS, PAD_LEVELS, PAD_LOG_BASIS,
-};
+pub use placement::PadPlacement;
 pub use response::{
     CompressedTarget, ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows,
-    ResponseSegment, ResponseStatement, ResponseWeights, ResponseWitness, FIELD_LEVELS,
+    ResponseSegment, ResponseStatement, ResponseWeights, ResponseWitness,
 };
-pub use ring::LiftedFunctional;
 #[cfg(feature = "whiteout-prover")]
 pub use sample::sample_zero_constant_term;
-pub use segments::{balanced_range, Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable};
+pub use segments::{Segment, SegmentMask, SegmentRole, SegmentShape, SegmentTable};
 #[cfg(feature = "whiteout-prover")]
 pub use sigma::prove_sigma;
 #[cfg(feature = "whiteout-test-support")]

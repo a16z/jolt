@@ -448,13 +448,10 @@ fn headline_two_level(outer_dim: usize) -> TwoLevelLayout {
 }
 
 #[test]
-fn two_level_layout_checks_shape_and_module_structure() {
+fn two_level_layout_checks_its_shape() {
     let layout = headline_two_level(256);
     layout.validate::<F>().unwrap();
-    assert!(layout.is_module_over_challenge_ring());
-    let split = headline_two_level(64);
-    split.validate::<F>().unwrap();
-    assert!(!split.is_module_over_challenge_ring());
+    headline_two_level(64).validate::<F>().unwrap();
     let mut bad = layout;
     bad.outer.message_rings += 1;
     assert!(bad.validate::<F>().is_err());

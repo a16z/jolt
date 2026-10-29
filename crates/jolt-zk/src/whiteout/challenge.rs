@@ -9,7 +9,9 @@
 use jolt_algebra::{lift_ct, CyclotomicRing, Field};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 
+#[cfg(feature = "whiteout-prover")]
 use super::WhiteoutError;
+#[cfg(feature = "whiteout-prover")]
 use rayon::prelude::*;
 
 /// The dense 64-coefficient form of a challenge, from
@@ -19,6 +21,7 @@ pub type DenseChallenge = [i8; CHALLENGE_RING_DIM];
 /// `c·a` in `Z[X]/(X^64 + 1)`, exactly, for one challenge-ring element:
 /// `out[j..] += c_j·a[..64−j]` and `out[..j] −= c_j·a[64−j..]`, at public
 /// offsets, in loops the compiler vectorizes.
+#[cfg(feature = "whiteout-prover")]
 fn negacyclic_i64(c: &DenseChallenge, a: &[i64], out: &mut [i64]) {
     out.fill(0);
     for (j, &cj) in c.iter().enumerate() {
@@ -35,18 +38,9 @@ fn negacyclic_i64(c: &DenseChallenge, a: &[i64], out: &mut [i64]) {
 }
 
 /// `c(Y^m)·x` for native coefficients `x` of elements of dimension
-/// `native_dim = 64m`, exactly over the integers, in parallel over elements.
-pub fn challenge_times_i64(
-    c: &DenseChallenge,
-    native_dim: usize,
-    x: &[i64],
-) -> Result<Vec<i64>, WhiteoutError> {
-    let mut out = vec![0i64; x.len()];
-    challenge_times_i64_into(c, native_dim, x, &mut out)?;
-    Ok(out)
-}
-
-/// [`challenge_times_i64`] into a caller-owned buffer.
+/// `native_dim = 64m`, exactly over the integers, in parallel over elements,
+/// into a caller-owned buffer.
+#[cfg(feature = "whiteout-prover")]
 pub(crate) fn challenge_times_i64_into(
     c: &DenseChallenge,
     native_dim: usize,
