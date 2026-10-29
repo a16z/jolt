@@ -223,8 +223,9 @@ for row in q:
   inside rayon closures overlap their siblings and are not sampled; a label
   is `null` unless every instance ran on the orchestrating thread. Work a
   span leaves running in the background (e.g. `drop_in_background_thread`)
-  is charged to whichever span is open when it executes. Counts are native, unlike Callgrind's: the AVX-512/IFMA
-  kernels Valgrind hides run as in production. The counter needs a PMU the
+  is charged to whichever span is open when it executes. Counts are native,
+  unlike Callgrind's: the AVX-512/IFMA kernels Valgrind hides run as in
+  production. The counter needs a PMU the
   kernel exposes and `perf_event_paranoid` ≤ 2; elsewhere (macOS, most CI
   VMs) the fields are `null` and setup logs a warning, and a counter the
   kernel multiplexed yields `null` rather than a partial count. Idle rayon
