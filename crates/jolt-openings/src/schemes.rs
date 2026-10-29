@@ -9,8 +9,8 @@
 use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::{JoltField, Ring};
-use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
+use jolt_field::{JoltField, Ring, Zero};
+use jolt_poly::{MultilinearPoly, Point, Polynomial, RlcSource, HIGH_TO_LOW};
 use jolt_transcript::{AppendToTranscript, Transcript};
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -151,6 +151,35 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Commit under the default transparent object's coefficient contract for a
+    /// later native group-batch opening on `setup`. Backends may retain the
+    /// source on the eventual opening owner and consume its evaluation buffer.
+    /// `values` is a prefix of a `2^num_vars` table; omitted evaluations are zero.
+    /// Preprocessing must admit this object's arity and coefficient bound.
+    fn commit_bounded_object(
+        setup: &Self::ProverSetup,
+        num_vars: usize,
+        mut values: Vec<Self::Field>,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        let domain_len = u32::try_from(num_vars)
+            .ok()
+            .and_then(|shift| 1usize.checked_shl(shift))
+            .ok_or_else(|| OpeningsError::InvalidBatch("object domain overflows usize".into()))?;
+        if values.len() > domain_len {
+            return Err(OpeningsError::InvalidBatch(
+                "object prefix exceeds its domain".into(),
+            ));
+        }
+        let (object_setup, _) = Self::transparent_object_setup(
+            Self::transparent_setup_context(setup),
+            num_vars,
+            layout_digest,
+        )?;
+        values.resize(domain_len, Self::Field::zero());
+        Self::commit(&Polynomial::new(values), &object_setup)
+    }
 
     /// Commit an arbitrary field-valued object for a later native group-batch opening.
     /// Its source bound is independent of the default object setup's bound.

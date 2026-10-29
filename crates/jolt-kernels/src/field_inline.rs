@@ -69,6 +69,9 @@ impl<F: JoltField> FieldIncrementColumn<F> {
     pub fn value(&self, cycle: usize) -> F {
         self.values.get(cycle).copied().unwrap_or_else(F::zero)
     }
+    pub(crate) fn evaluation_prefix(&self) -> &[F] {
+        &self.values
+    }
     pub fn is_zero(&self) -> bool {
         self.values.is_empty()
     }

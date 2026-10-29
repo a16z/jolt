@@ -145,6 +145,13 @@ pub trait MultilinearPoly<F: JoltField>: Send + Sync {
         None
     }
 
+    /// A stored evaluation prefix with an implicit zero suffix through `2^num_vars`.
+    /// Unlike `dense_evaluations`, this slice need not cover the full domain.
+    /// Backends supporting compact sources can avoid materializing those zeros.
+    fn dense_evaluation_prefix(&self) -> Option<&[F]> {
+        None
+    }
+
     /// Dense evaluation table: borrowed when the source exposes
     /// [`dense_evaluations`](Self::dense_evaluations), materialized via
     /// [`for_each_row`](Self::for_each_row) otherwise.
