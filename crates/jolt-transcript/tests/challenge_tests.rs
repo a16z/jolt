@@ -7,9 +7,9 @@
 use jolt_field::CanonicalBytes;
 use jolt_transcript::{
     protocol_tag, prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec,
-    FieldTranscript, ProverTranscript, MAX_CHALLENGE_BYTES,
+    FieldTranscript, ProverTranscript, Transcript, MAX_CHALLENGE_BYTES,
 };
-use spongefish::instantiations::Keccak;
+use spongefish::{instantiations::Keccak, Encoding};
 use std::fmt::{Debug, Write};
 
 #[cfg(feature = "solinas")]
@@ -462,8 +462,7 @@ fn keccak_rate_boundary_known_answers() {
 
 /// `append_values` against one absorb per value: the challenge after each is
 /// the same exactly when every value's encoding is a whole number of words.
-fn append_values_matches_per_value_absorbs<M: spongefish::Encoding>(values: &[M]) {
-    use jolt_transcript::Transcript;
+fn append_values_matches_per_value_absorbs<M: Encoding>(values: &[M]) {
     let width = values[0].encode().as_ref().len();
     assert_eq!(width % 8, 0, "{width}-byte encoding");
     let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
@@ -504,7 +503,7 @@ fn append_values_is_unchanged_for_whole_word_encodings() {
     for len in [32usize, 64, 384] {
         let group: Vec<u8> = (0..len).map(|i| i as u8 ^ 0x5a).collect();
         let mut batched = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
-        jolt_transcript::Transcript::append_values(&mut batched, &group);
+        Transcript::append_values(&mut batched, &group);
         let mut separate = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
         for byte in &group {
             separate.public_message(byte);
@@ -528,8 +527,6 @@ fn append_values_is_unchanged_for_whole_word_encodings() {
 #[test]
 fn append_values_pads_an_odd_count_of_four_byte_values() {
     use jolt_field::Ring;
-    use jolt_transcript::Transcript;
-    use spongefish::Encoding;
     let values: Vec<Prime32Offset99> = (1..=3).map(|i| Prime32Offset99::from_u64(i * 77)).collect();
     let mut padded = [0u8; 16];
     for (chunk, value) in padded.chunks_mut(4).zip(&values) {
@@ -563,7 +560,6 @@ fn append_values_pads_an_odd_count_of_four_byte_values() {
 #[should_panic(expected = "whole number of words")]
 fn append_rejects_a_sub_word_encoding() {
     use jolt_field::Ring;
-    use jolt_transcript::Transcript;
     let mut transcript = prover_transcript::<Keccak>(&SESSION, &INSTANCE);
     transcript.append(&Prime32Offset99::from_u64(77));
 }
