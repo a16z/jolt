@@ -149,10 +149,8 @@ Key abstractions:
 ### Non-Goals
 
 - **Protocol proof-of-work sites.** In this PR, no Jolt protocol step calls
-  `grind`, `check_grind` or `public_grind`. Sumcheck-round and stage-site
-  nonces are #2108. Until #2108 lands, Akita clear proofs (128-bit field)
-  carry no proof of work. Each degree-`d` sumcheck round therefore gives
-  about `128 - log2(d)` bits per hash call instead of 128.
+  `grind`, `check_grind` or `public_grind`. #2108 adds the sumcheck-round and
+  stage-site nonces; the book chapter's *Where Jolt grinds* describes them.
 - **Moving Akita's opening into Jolt's sponge.** Akita's opening still runs
   its own nested Fiat-Shamir session. That session's tag is extended with one
   Jolt challenge (`bridged_akita_session` in `crates/jolt-akita/src/adapters.rs`).

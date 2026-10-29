@@ -196,10 +196,30 @@ and the committed (ZK) sumcheck refuse a field whose challenges would need
 proof of work at the largest possible loss. BN254 passes this check, and
 128-bit fields do not.
 
-No protocol step grinds yet. The planned sites are sumcheck rounds, priced by
-their degree, and a fixed set of stage sites. They are tracked in
-[#2108](https://github.com/a16z/jolt/pull/2108) and matter for Akita's
-128-bit field. On BN254 they price to zero bits.
+### Where Jolt grinds
+
+Jolt grinds only where a challenge set is too small on its own. Today that is
+Akita's 128-bit field. Every BN254 site prices to 0 bits, and a BN254 proof
+carries no nonces. Jolt carries its nonces in the proof structure and absorbs
+them as public messages, not through the NARG string.
+
+- **Sumcheck rounds.** Each round of a clear sumcheck grinds after its round
+  message and before its challenge. The loss is the verifier's degree bound
+  for the round, never a degree the prover declares, so a proof cannot lower
+  its own difficulty. The nonces sit next to the round messages, one per
+  round when the difficulty is positive and none otherwise
+  (`crates/jolt-sumcheck/src/pow.rs`).
+- **Stage sites.** After some prover messages, the verifier draws a burst of
+  challenges: stage 1's `tau`, the relation challenges and batching
+  coefficients of stages 1 to 7, stage 2's `tau_high`, and Akita's stage-8
+  selector points. One nonce, ground before the burst's first draw, covers
+  the whole burst. Every site has the same flat loss, `SITE_LOSS = 1023`,
+  about 4.5 times the largest burst's actual loss. A per-site count that
+  drifted below the true loss would be a silent soundness bug; overpricing
+  costs only a few extra hash calls. Over Akita's field this is 10 bits.
+  The nonces sit in `StagePowNonces`, one slot per site. A slot holds a nonce
+  exactly when the site is visited and its difficulty is positive
+  (`crates/jolt-verifier/src/stages/pow.rs`).
 
 ## Testing
 
