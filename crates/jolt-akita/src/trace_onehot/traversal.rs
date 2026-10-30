@@ -299,13 +299,42 @@ where
                 .map(|_| ring_start % positions_per_block)
                 .collect::<Vec<_>>();
             let mut sums = vec![E::zero(); num_columns * D];
-            visit_segment_ring_range::<D>(source, ring_start, ring_end, |ring, contributions| {
-                let offset = ring - ring_start;
-                for &(column, coefficient) in contributions {
-                    sums[column * D + coefficient] +=
-                        position_weights[first_positions[column] + offset];
-                }
-            })?;
+            if source.one_hot_k < D && source.rows.num_rows().is_multiple_of(D / source.one_hot_k) {
+                visit_segment_ring_row_range::<D>(
+                    source,
+                    ring_start,
+                    ring_end,
+                    |ring, selected_rows, masks| {
+                        let weight = position_weights[ring % positions_per_block];
+                        for (row_offset, (row, &mask)) in selected_rows
+                            .chunks_exact(num_columns)
+                            .zip(masks)
+                            .enumerate()
+                        {
+                            for (column, &hot) in row.iter().enumerate() {
+                                if row_is_committed(hot, mask, column) {
+                                    let coefficient =
+                                        row_offset * source.one_hot_k + usize::from(hot);
+                                    sums[column * D + coefficient] += weight;
+                                }
+                            }
+                        }
+                    },
+                )?;
+            } else {
+                visit_segment_ring_range::<D>(
+                    source,
+                    ring_start,
+                    ring_end,
+                    |ring, contributions| {
+                        let offset = ring - ring_start;
+                        for &(column, coefficient) in contributions {
+                            sums[column * D + coefficient] +=
+                                position_weights[first_positions[column] + offset];
+                        }
+                    },
+                )?;
+            }
             let mut blocks = vec![E::zero(); num_columns * subring_dimension];
             for (column_sums, column_blocks) in sums
                 .chunks_exact(D)
