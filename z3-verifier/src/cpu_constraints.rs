@@ -275,6 +275,7 @@ impl JoltState {
             InstructionFlags::RightOperandIsRs2Value,
             InstructionFlags::Branch,
             InstructionFlags::IsNoop,
+            InstructionFlags::RightOperandIsRdWriteValue,
         ];
         self.instruction_flags
             .iter()
