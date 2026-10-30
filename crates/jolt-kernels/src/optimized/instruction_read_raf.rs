@@ -775,8 +775,8 @@ enum SuffixScan<F: JoltField> {
     General(Suffixes, Vec<F::Accumulator>),
 }
 
-/// Split Boolean rows only when the field supplies a smaller sum accumulator.
-/// Other fields retain the contiguous product-accumulator allocation.
+/// Accumulators in `table.suffixes()` order. Boolean rows use separate compact
+/// allocations only when the field supplies a smaller sum accumulator.
 enum TableScan<F: JoltField> {
     Flat {
         suffixes: Vec<SuffixRow>,
@@ -786,8 +786,14 @@ enum TableScan<F: JoltField> {
 }
 
 impl<F: JoltField> TableScan<F> {
+    /// Separate row allocations must reduce the accumulator footprint;
+    /// otherwise keep one contiguous allocation for the table.
+    const fn uses_compact_rows() -> bool {
+        std::mem::size_of::<F::SumAccumulator>() < std::mem::size_of::<F::Accumulator>()
+    }
+
     fn new(table: LookupTableKind<RISCV_XLEN>) -> Self {
-        if std::mem::size_of::<F::SumAccumulator>() < std::mem::size_of::<F::Accumulator>() {
+        if Self::uses_compact_rows() {
             Self::Compact(
                 table
                     .suffixes()
