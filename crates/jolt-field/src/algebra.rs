@@ -192,11 +192,10 @@ pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
-    /// `Σ a[i]·b[i]` for equal-length slices (checked in debug builds). Fields
-    /// with a batched guest path override this.
+    /// `Σ a[i]·b[i]` over the shorter of the two slices. Fields with a batched
+    /// guest path (register-resident field-inline accumulation) override this.
     #[inline]
     fn dot_product(a: &[Self], b: &[Self]) -> Self {
-        debug_assert_eq!(a.len(), b.len());
         a.iter()
             .zip(b)
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
