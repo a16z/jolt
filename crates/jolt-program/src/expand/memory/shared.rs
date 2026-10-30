@@ -81,11 +81,12 @@ impl AccessWidth {
 /// would add `RdWriteValue` to the `AddressOffset` index `Rs1Value + Imm` that
 /// R1CS constraint 0 turns into `RamAddress`, and on an `AddOperands` row
 /// instruction read-RAF bounds only the operands' sum. `extract` and `merge`
-/// supply the check instead: they read `doubleword` only as the interleaved
+/// supply the check instead: they read the loaded word only as the interleaved
 /// `rs1` operand of `VirtualPext`/`VirtualPextSigned` or `ANDN`, which
-/// instruction read-RAF proves is a `u64`. A RAM word outside `[0, 2^64)`, such
-/// as a malformed untrusted-advice word, therefore has no accepting proof. Any
-/// other read of `doubleword` must also take it as an interleaved operand.
+/// instruction read-RAF proves is a `u64` (`merge`'s later `ADD` reads the
+/// `ANDN` output, a table value). A RAM word outside `[0, 2^64)`, such as a
+/// malformed untrusted-advice word, therefore has no accepting proof. Any other
+/// read of the loaded word must also take it as an interleaved operand.
 #[derive(Clone, Copy)]
 pub(in crate::expand) struct LaneWindow {
     width: AccessWidth,
