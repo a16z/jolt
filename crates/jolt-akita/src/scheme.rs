@@ -1310,7 +1310,8 @@ mod tests {
 
     #[test]
     fn prepared_verifier_verifies_the_selected_row_after_transport() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
             14,
             1,
@@ -1330,7 +1331,10 @@ mod tests {
             commitment,
             evaluation: EvaluationClaim::new(point, value),
         }];
-        let mut prover_transcript = jolt_transcript::prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"prepared"), b"");
+        let mut prover_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"prepared"),
+            b"",
+        );
         let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
             &prover_setup,
             statement.clone(),
@@ -1355,7 +1359,10 @@ mod tests {
         let (mut transported, _): (AkitaVerifierSetup, _) =
             bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
         let verify = |setup: &AkitaVerifierSetup| {
-            let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"prepared"), b"");
+            let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+                &jolt_transcript::protocol_tag(b"prepared"),
+                b"",
+            );
             <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
                 setup,
                 &statement,

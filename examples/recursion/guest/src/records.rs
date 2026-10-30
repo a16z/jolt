@@ -16,7 +16,12 @@ pub(crate) struct Records<'a> {
 
 impl<'a> Records<'a> {
     pub(crate) fn new(buffer: &'a [u8], limits: RecordLimits) -> Result<Self, RecordError> {
-        let mut records = Self { buffer, offset: 0, base: 0, limits };
+        let mut records = Self {
+            buffer,
+            offset: 0,
+            base: 0,
+            limits,
+        };
         let pad = records.len_prefix()?;
         if pad >= 8 {
             return Err(RecordError);
@@ -24,7 +29,11 @@ impl<'a> Records<'a> {
         let end = records.offset.checked_add(pad).ok_or(RecordError)?;
         let padding = buffer.get(records.offset..end).ok_or(RecordError)?;
         if padding.iter().any(|byte| *byte != 0)
-            || (buffer.as_ptr() as usize).checked_add(end).ok_or(RecordError)? % 8 != 0
+            || (buffer.as_ptr() as usize)
+                .checked_add(end)
+                .ok_or(RecordError)?
+                % 8
+                != 0
         {
             return Err(RecordError);
         }
@@ -46,7 +55,8 @@ impl<'a> Records<'a> {
         let len = self.len_prefix()?;
         let end = self.offset.checked_add(len).ok_or(RecordError)?;
         let bytes = self.buffer.get(self.offset..end).ok_or(RecordError)?;
-        let padded = end.checked_sub(self.base)
+        let padded = end
+            .checked_sub(self.base)
             .and_then(|len| len.checked_next_multiple_of(8))
             .and_then(|len| self.base.checked_add(len))
             .ok_or(RecordError)?;
@@ -89,24 +99,40 @@ impl<'a> Records<'a> {
 
     /// Authenticate the complete input setup, including framed detached bodies,
     /// before any setup decoder or trusted view sees it. The pin is image data.
-    pub(crate) fn authenticate_setup(&self, expected: Option<&[u8; 64]>) -> Result<(), RecordError> {
+    pub(crate) fn authenticate_setup(
+        &self,
+        expected: Option<&[u8; 64]>,
+    ) -> Result<(), RecordError> {
         let expected = expected.ok_or(RecordError)?;
-        let mut setup = Self { buffer: self.buffer, offset: self.offset, base: self.base, limits: self.limits };
+        let mut setup = Self {
+            buffer: self.buffer,
+            offset: self.offset,
+            base: self.base,
+            limits: self.limits,
+        };
         setup.raw()?;
         let count: u32 = setup.record()?;
         setup.check_count(count, 1)?;
         for _ in 0..count {
             setup.raw()?;
         }
-        let section = self.buffer.get(self.offset..setup.offset).ok_or(RecordError)?;
+        let section = self
+            .buffer
+            .get(self.offset..setup.offset)
+            .ok_or(RecordError)?;
         if &Blake2b::digest(section) != expected {
             return Err(RecordError);
         }
         Ok(())
     }
 
-    pub(crate) fn check_count(&self, count: u32, records_per_item: usize) -> Result<(), RecordError> {
-        let minimum = usize::try_from(count).ok()
+    pub(crate) fn check_count(
+        &self,
+        count: u32,
+        records_per_item: usize,
+    ) -> Result<(), RecordError> {
+        let minimum = usize::try_from(count)
+            .ok()
             .and_then(|count| count.checked_mul(records_per_item))
             .and_then(|count| count.checked_mul(8))
             .ok_or(RecordError)?;
@@ -120,9 +146,9 @@ impl<'a> Records<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_sdk::JoltDevice;
     #[cfg(feature = "akita")]
     use jolt_akita::AkitaField as TestField;
+    use jolt_sdk::JoltDevice;
     #[cfg(not(feature = "akita"))]
     use jolt_sdk::VerifierField as TestField;
 
@@ -142,8 +168,10 @@ mod tests {
     }
 
     fn verdict<T: DeserializeOwned>(bytes: &[u8]) -> u32 {
-        parse_records(bytes).and_then(|mut records| records.record::<T>())
-            .map(|_| 1).unwrap_or(0)
+        parse_records(bytes)
+            .and_then(|mut records| records.record::<T>())
+            .map(|_| 1)
+            .unwrap_or(0)
     }
 
     #[test]
@@ -163,7 +191,10 @@ mod tests {
         *padding.last_mut().unwrap() = 1;
         assert_eq!(verdict::<u8>(&padding), 0);
         assert_eq!(verdict::<u8>(&frame(&[42, 43])), 0);
-        assert!(parse_records(&valid).unwrap().check_count(u32::MAX, 2).is_err());
+        assert!(parse_records(&valid)
+            .unwrap()
+            .check_count(u32::MAX, 2)
+            .is_err());
     }
 
     #[test]
@@ -173,7 +204,8 @@ mod tests {
         assert_eq!(verdict::<Vec<Vec<u8>>>(&frame(&body)), 0);
         assert_eq!(verdict::<Vec<()>>(&frame(&body)), 0);
         // A compact wire length must not reserve a large vector of large items.
-        let body = bincode::serde::encode_to_vec(100_000usize, bincode::config::standard()).unwrap();
+        let body =
+            bincode::serde::encode_to_vec(100_000usize, bincode::config::standard()).unwrap();
         assert_eq!(verdict::<Vec<[[u64; 32]; 32]>>(&frame(&body)), 0);
         let count = 400_000usize;
         let mut body = bincode::serde::encode_to_vec(count, bincode::config::standard()).unwrap();
@@ -196,7 +228,9 @@ mod tests {
         let mut huge_vector = vec![253];
         huge_vector.extend_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(verdict::<JoltDevice>(&frame(&huge_vector)), 0);
-        let device = bincode::serde::encode_to_vec(JoltDevice::default(), bincode::config::standard()).unwrap();
+        let device =
+            bincode::serde::encode_to_vec(JoltDevice::default(), bincode::config::standard())
+                .unwrap();
         assert_eq!(verdict::<JoltDevice>(&frame(&device)), 1);
         for end in 0..device.len() {
             assert_eq!(verdict::<JoltDevice>(&frame(&device[..end])), 0);
@@ -230,7 +264,10 @@ mod tests {
         // Setup record, key matrix, catalog view, and terminal cache respectively.
         for offset in [8, 40, 56, 72] {
             bytes[base + offset] ^= 1;
-            assert!(parse_records(&bytes).unwrap().authenticate_setup(Some(&expected)).is_err());
+            assert!(parse_records(&bytes)
+                .unwrap()
+                .authenticate_setup(Some(&expected))
+                .is_err());
             bytes[base + offset] ^= 1;
         }
     }
@@ -254,5 +291,4 @@ mod tests {
         records.raw().unwrap();
         assert!(records.finish().is_err());
     }
-
 }

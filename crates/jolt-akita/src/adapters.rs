@@ -628,7 +628,9 @@ impl AkitaVerifierSetup {
                     return Ok(shared);
                 }
             }
-            let (profile, _) = self.schedule_artifacts.dense()
+            let (profile, _) = self
+                .schedule_artifacts
+                .dense()
                 .ok_or_else(|| "Akita verifier setup has no dense schedule artifact".to_string())?;
             match self.catalog_source(AkitaBackendFlavor::Dense)? {
                 CatalogSource::Artifact(bytes) => {
@@ -636,8 +638,10 @@ impl AkitaVerifierSetup {
                 }
                 CatalogSource::VerifierView(view) => {
                     TrustedScheduleCatalog::<AkitaConfig>::from_verifier_view(
-                        view, profile.witness_cfg(),
-                    ).map(AkitaCommitmentScheme::new)
+                        view,
+                        profile.witness_cfg(),
+                    )
+                    .map(AkitaCommitmentScheme::new)
                 }
             }
             .map(Arc::new)
@@ -706,7 +710,8 @@ impl AkitaVerifierSetup {
                         scheme.schedules().clone(),
                         prepared.selection(),
                         Some(prepared.terminal_cache()?),
-                    ).map_err(invalid_setup)
+                    )
+                    .map_err(invalid_setup)
                 })?;
                 let _ = self.backend_cache.dense.get_or_init(|| Arc::new(verifier));
             } else {
@@ -727,13 +732,18 @@ impl AkitaVerifierSetup {
             if let Some(prepared) = self.prepared_for(AkitaBackendFlavor::OneHot) {
                 let scheme = self.one_hot_scheme()?;
                 let verifier = with_backend_pool(|| {
-                    scheme.verifier_for_selection(
-                        prepared.backend_key()?,
-                        prepared.selection(),
-                        prepared.terminal_cache()?,
-                    ).map_err(invalid_setup)
+                    scheme
+                        .verifier_for_selection(
+                            prepared.backend_key()?,
+                            prepared.selection(),
+                            prepared.terminal_cache()?,
+                        )
+                        .map_err(invalid_setup)
                 })?;
-                let _ = self.backend_cache.one_hot.get_or_init(|| Arc::new(verifier));
+                let _ = self
+                    .backend_cache
+                    .one_hot
+                    .get_or_init(|| Arc::new(verifier));
             } else {
                 let log_k = validate_one_hot_k(self.one_hot_k)?;
                 if self.max_num_vars < log_k {
@@ -742,7 +752,10 @@ impl AkitaVerifierSetup {
                 PREPARED_VERIFIER_RESOURCES.attach(self)?;
             }
         }
-        self.backend_cache.one_hot.get().map(|verifier| &**verifier)
+        self.backend_cache
+            .one_hot
+            .get()
+            .map(|verifier| &**verifier)
             .ok_or_else(|| invalid_setup("Akita verifier setup has no one-hot backend"))
     }
 

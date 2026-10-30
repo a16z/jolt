@@ -308,17 +308,16 @@ impl AkitaVerifierSetup {
         bodies: &[TrustedBytes],
     ) -> Result<(), OpeningsError> {
         let mut bodies = bodies.iter();
-        let slots =
-            Arc::make_mut(&mut self.schedule_artifacts)
-                .slots()
-                .into_iter()
-                .chain(self.prepared.iter_mut().flat_map(|prepared| {
-                    [
-                        &mut prepared.key,
-                        &mut prepared.catalog,
-                        &mut prepared.terminal_ntt,
-                    ]
-                }));
+        let slots = Arc::make_mut(&mut self.schedule_artifacts)
+            .slots()
+            .into_iter()
+            .chain(self.prepared.iter_mut().flat_map(|prepared| {
+                [
+                    &mut prepared.key,
+                    &mut prepared.catalog,
+                    &mut prepared.terminal_ntt,
+                ]
+            }));
         for slot in slots.filter(|slot| matches!(slot, PreparedBytes::Detached)) {
             let body = bodies.next().ok_or_else(|| {
                 invalid_setup("fewer prepared payload bodies than detached slots")
@@ -352,10 +351,8 @@ mod wire_tests {
         // OneHot catalog Some(b"abc"), no prepared verifier. Catalog validity
         // is checked by the backend separately from this wire-format contract.
         const BYTES: &[u8] = &[
-            2, 1, 1,
-            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-            3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
-            16, 1, 1, 0, 1, 3, 97, 98, 99, 0,
+            2, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+            3, 3, 3, 3, 3, 3, 16, 1, 1, 0, 1, 3, 97, 98, 99, 0,
         ];
         let config = bincode::config::standard();
         let (setup, consumed): (AkitaVerifierSetup, _) =
@@ -376,10 +373,15 @@ mod wire_tests {
         };
         assert_eq!(consumed, BYTES.len());
         assert_eq!(setup, expected);
-        assert_eq!(bincode::serde::encode_to_vec(&setup, config).unwrap(), BYTES);
+        assert_eq!(
+            bincode::serde::encode_to_vec(&setup, config).unwrap(),
+            BYTES
+        );
         assert!(bincode::serde::decode_from_slice::<AkitaVerifierSetup, _>(
-            &BYTES[..BYTES.len() - 1], config
-        ).is_err());
+            &BYTES[..BYTES.len() - 1],
+            config
+        )
+        .is_err());
 
         let mut prepared_bytes = BYTES[..BYTES.len() - 1].to_vec();
         prepared_bytes.extend_from_slice(&[1, 1]); // Some, OneHot
@@ -396,7 +398,10 @@ mod wire_tests {
             bincode::serde::decode_from_slice(&prepared_bytes, config).unwrap();
         assert_eq!(consumed, prepared_bytes.len());
         assert_eq!(setup, expected);
-        assert_eq!(bincode::serde::encode_to_vec(&setup, config).unwrap(), prepared_bytes);
+        assert_eq!(
+            bincode::serde::encode_to_vec(&setup, config).unwrap(),
+            prepared_bytes
+        );
         assert!(setup.prepared.unwrap().catalog.trusted_bytes().is_err());
     }
 }

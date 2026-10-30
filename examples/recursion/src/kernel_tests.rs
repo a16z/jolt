@@ -21,7 +21,8 @@ fn next_field(seed: &mut u64, index: usize) -> F {
 }
 
 fn product_sum<const K: usize>(terms: &[[F; 4]]) -> F {
-    let factors: Vec<[F; K]> = terms.iter()
+    let factors: Vec<[F; K]> = terms
+        .iter()
         .map(|term| core::array::from_fn(|i| term[i]))
         .collect();
     F::sum_of_products(&factors)
@@ -34,26 +35,50 @@ pub(super) fn run() {
         // every zero-to-three-element tail, including empty and multi-block dots.
         for row_count in 1..=10 {
             for width in 0..12 {
-                let rows: Vec<Vec<F>> = (0..row_count).map(|row| {
-                    (0..width).map(|column| next_field(&mut seed, row + column)).collect()
-                }).collect();
+                let rows: Vec<Vec<F>> = (0..row_count)
+                    .map(|row| {
+                        (0..width)
+                            .map(|column| next_field(&mut seed, row + column))
+                            .collect()
+                    })
+                    .collect();
                 let shared: Vec<F> = (0..width).map(|i| next_field(&mut seed, i)).collect();
                 let weights: Vec<F> = (0..row_count).map(|i| next_field(&mut seed, i)).collect();
-                let products: Vec<[F; 4]> = (0..width).map(|i| {
-                    core::array::from_fn(|j| next_field(&mut seed, i + j))
-                }).collect();
-                let dots: Vec<F> = rows.iter().map(|row| F::dot_product(row, &shared)).collect();
+                let products: Vec<[F; 4]> = (0..width)
+                    .map(|i| core::array::from_fn(|j| next_field(&mut seed, i + j)))
+                    .collect();
+                let dots: Vec<F> = rows
+                    .iter()
+                    .map(|row| F::dot_product(row, &shared))
+                    .collect();
                 let weighted = F::dot_product(&weights, &dots);
-                let signed = F::signed_sum(shared.iter().enumerate().map(|(i, value)| (value, i % 2 == 0)));
+                let signed = F::signed_sum(
+                    shared
+                        .iter()
+                        .enumerate()
+                        .map(|(i, value)| (value, i % 2 == 0)),
+                );
                 let product_sums = [
-                    product_sum::<0>(&products), product_sum::<1>(&products),
-                    product_sum::<2>(&products), product_sum::<3>(&products),
+                    product_sum::<0>(&products),
+                    product_sum::<1>(&products),
+                    product_sum::<2>(&products),
+                    product_sum::<3>(&products),
                     product_sum::<4>(&products),
                 ];
                 let squares = shared.iter().map(|value| *value * *value).collect();
                 let inverses = shared.iter().map(Field::inverse).collect();
-                cases.push(KernelCase { rows, shared, weights, products, dots, weighted,
-                    signed, product_sums, squares, inverses });
+                cases.push(KernelCase {
+                    rows,
+                    shared,
+                    weights,
+                    products,
+                    dots,
+                    weighted,
+                    signed,
+                    product_sums,
+                    squares,
+                    inverses,
+                });
             }
         }
     }
@@ -62,7 +87,11 @@ pub(super) fn run() {
     let config = GuestProgram::Fibonacci.get_memory_config(true, input.len());
     let output_dir = super::get_guest_src_dir();
     super::generate_provable_macro(
-        GuestProgram::Fibonacci, true, &config, &output_dir, super::RecordLimits::default(),
+        GuestProgram::Fibonacci,
+        true,
+        &config,
+        &output_dir,
+        super::RecordLimits::default(),
     );
     super::clear_embedded_bytes(&output_dir, &[]);
     let mut program = super::configured_recursion_program(config);

@@ -167,11 +167,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
     /// public values and challenges alone, so the openings are listed
     /// without expanding the output.
     fn expected_output_openings<F: Ring>(&self) -> BTreeSet<JoltOpeningId> {
-        self.shape
-            .layout
-            .polynomials()
-            .map(reduced_claim)
-            .collect()
+        self.shape.layout.polynomials().map(reduced_claim).collect()
     }
 }
 

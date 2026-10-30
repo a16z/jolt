@@ -128,7 +128,9 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
     let mut verifier_preprocessing = if EMBEDDED_BYTES.is_empty() {
         setup.record()?
     } else {
-        setup.preprocessing().expect("corrupt embedded preprocessing")
+        setup
+            .preprocessing()
+            .expect("corrupt embedded preprocessing")
     };
 
     // Setup payloads the host detached from the record (Akita's expanded
@@ -136,7 +138,9 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
     let payload_count: u32 = setup_result(setup.record())?;
     setup_result(setup.check_count(payload_count, 1))?;
     let payloads: Vec<&[u8]> = setup_result(
-        (0..payload_count).map(|_| setup.raw()).collect::<Result<_, _>>(),
+        (0..payload_count)
+            .map(|_| setup.raw())
+            .collect::<Result<_, _>>(),
     )?;
     #[cfg(feature = "akita")]
     {
@@ -184,12 +188,12 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
         >(&verifier_preprocessing, &device, &proof, None)
         .is_ok();
         #[cfg(feature = "akita")]
-        let is_valid = jolt::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, jolt::VerifierTranscript<'_>>(
-            &verifier_preprocessing,
-            &device,
-            &proof,
-            None,
-        )
+        let is_valid = jolt::jolt_verifier::verify::<
+            AkitaField,
+            AkitaScheme,
+            AkitaVc,
+            jolt::VerifierTranscript<'_>,
+        >(&verifier_preprocessing, &device, &proof, None)
         .is_ok();
         end_cycle_tracking("verification");
         all_valid = all_valid && is_valid;

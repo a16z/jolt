@@ -1,18 +1,20 @@
-use jolt_sdk as jolt;
+#[cfg(not(feature = "akita"))]
+use jolt::VerifierField as F;
+#[cfg(feature = "akita")]
+use jolt_akita::AkitaField as F;
 use jolt_field::Field;
 #[cfg(feature = "akita")]
 use jolt_field::{PseudoMersenne, Ring};
-#[cfg(feature = "akita")]
-use jolt_akita::AkitaField as F;
-#[cfg(not(feature = "akita"))]
-use jolt::VerifierField as F;
+use jolt_sdk as jolt;
 
 #[path = "../../src/kernel_cases.rs"]
 mod kernel_cases;
 use kernel_cases::KernelCase;
 
 fn check_products<const K: usize>(case: &KernelCase<F>) {
-    let terms: Vec<[F; K]> = case.products.iter()
+    let terms: Vec<[F; K]> = case
+        .products
+        .iter()
         .map(|term| core::array::from_fn(|i| term[i]))
         .collect();
     assert_eq!(F::sum_of_products(&terms), case.product_sums[K]);

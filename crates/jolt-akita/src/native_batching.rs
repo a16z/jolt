@@ -778,8 +778,8 @@ mod tests {
     use jolt_transcript::{prover_transcript, Blake2b512};
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
-    use crate::prepared::PreparedBytes;
     use crate::configs::AkitaChunkProfile;
+    use crate::prepared::PreparedBytes;
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,

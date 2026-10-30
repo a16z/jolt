@@ -7,12 +7,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheme, TrustedBytes};
 use jolt_field::Ring;
 use jolt_inlines_blake2::Blake2b;
-use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_sumcheck::{ClearProof, SumcheckProof};
-use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
+use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_riscv::JoltInstructionRow;
 #[cfg(feature = "akita")]
 use jolt_sdk::host::JoltProgramSource;
@@ -20,11 +18,13 @@ use jolt_sdk::host::Program;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
+use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode};
 #[cfg(not(feature = "akita"))]
 use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof};
+use jolt_sumcheck::{ClearProof, SumcheckProof};
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
@@ -122,9 +122,15 @@ impl RecordLimits {
             .ok_or("record allocation budget overflow")?;
         self.allocation = self.allocation.max(allocation);
         self.bytes = self.bytes.max(
-            bytes.len().checked_next_power_of_two().ok_or("record byte limit overflow")?,
+            bytes
+                .len()
+                .checked_next_power_of_two()
+                .ok_or("record byte limit overflow")?,
         );
-        info!("Record: {} encoded bytes, {charged} charged bytes", bytes.len());
+        info!(
+            "Record: {} encoded bytes, {charged} charged bytes",
+            bytes.len()
+        );
         Ok(value)
     }
 }
@@ -282,7 +288,8 @@ impl GuestProgram {
     fn get_memory_config(&self, use_embed: bool, input_section_len: usize) -> MemoryConfig {
         // Eight bytes for the pad prefix, at most seven pad bytes, ten for
         // postcard's length, and one byte for the strict input-size bound.
-        let max_input_size = input_section_len.checked_add(26)
+        let max_input_size = input_section_len
+            .checked_add(26)
             .and_then(usize::checked_next_power_of_two)
             .and_then(|size| u64::try_from(size).ok())
             .expect("recursion input size overflow");
@@ -412,8 +419,12 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
     info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        let _: GuestProof = limits.read_record(all_groups_data, &mut offset).expect("decode proof");
-        let _: JoltDevice = limits.read_record(all_groups_data, &mut offset).expect("decode device");
+        let _: GuestProof = limits
+            .read_record(all_groups_data, &mut offset)
+            .expect("decode proof");
+        let _: JoltDevice = limits
+            .read_record(all_groups_data, &mut offset)
+            .expect("decode device");
         info!("Decoded proof and device {i}");
     }
 
@@ -488,7 +499,8 @@ fn collect_guest_proofs(
         )
         .expect("inner program preprocessing"),
     );
-    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+    let schedule_artifacts =
+        AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let mut all_groups_data = Vec::new();
     let n = inputs.len() as u32;
     let mut verifier_preprocessing = None;
@@ -586,9 +598,12 @@ fn collect_guest_proofs(
         .attach_prepared_payloads(&bodies)
         .expect("attach prepared Akita payloads");
     for (proof, public_io) in &records {
-        jolt_sdk::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, jolt_sdk::VerifierTranscript<'_>>(
-            &attached, public_io, proof, None,
-        )
+        jolt_sdk::jolt_verifier::verify::<
+            AkitaField,
+            AkitaScheme,
+            AkitaVc,
+            jolt_sdk::VerifierTranscript<'_>,
+        >(&attached, public_io, proof, None)
         .expect("verify proof against prepared guest setup");
         info!("  Verification result: true");
     }
@@ -975,7 +990,11 @@ fn tamper_proof(
     let count: u32 = read_record(&bytes, &mut offset).unwrap();
     assert!(count > 0, "tamper fixture requires a proof");
     assert!(proof_index < count, "tamper proof index is out of range");
-    let output_count = if target == TamperTarget::Empty { 0 } else { count };
+    let output_count = if target == TamperTarget::Empty {
+        0
+    } else {
+        count
+    };
     let mut tampered = bytes[..count_offset].to_vec();
     push_record(&mut tampered, &output_count);
     for index in 0..count {
@@ -986,28 +1005,29 @@ fn tamper_proof(
         }
         if index == proof_index {
             match target {
-                TamperTarget::Sumcheck => {
-                    match &mut proof.stages.stage1_sumcheck_proof {
-                        SumcheckProof::Clear(ClearProof::Full(sumcheck)) => {
-                            let round = sumcheck.round_polynomials.first_mut().expect("first round");
-                            let mut coefficients = round.coefficients().to_vec();
-                            *coefficients.first_mut().expect("round coefficient") += GuestField::from_u64(1);
-                            *round = UnivariatePoly::new(coefficients);
-                        }
-                        SumcheckProof::Clear(ClearProof::Compressed(sumcheck)) => {
-                            let round = sumcheck.round_polynomials.first_mut().expect("first round");
-                            let mut coefficients = round.coeffs_except_linear_term().to_vec();
-                            *coefficients.first_mut().expect("round coefficient") += GuestField::from_u64(1);
-                            *round = CompressedPoly::new(coefficients);
-                        }
-                        SumcheckProof::Committed(_) => panic!("tamper requires a clear proof"),
+                TamperTarget::Sumcheck => match &mut proof.stages.stage1_sumcheck_proof {
+                    SumcheckProof::Clear(ClearProof::Full(sumcheck)) => {
+                        let round = sumcheck.round_polynomials.first_mut().expect("first round");
+                        let mut coefficients = round.coefficients().to_vec();
+                        *coefficients.first_mut().expect("round coefficient") +=
+                            GuestField::from_u64(1);
+                        *round = UnivariatePoly::new(coefficients);
                     }
-                }
+                    SumcheckProof::Clear(ClearProof::Compressed(sumcheck)) => {
+                        let round = sumcheck.round_polynomials.first_mut().expect("first round");
+                        let mut coefficients = round.coeffs_except_linear_term().to_vec();
+                        *coefficients.first_mut().expect("round coefficient") +=
+                            GuestField::from_u64(1);
+                        *round = CompressedPoly::new(coefficients);
+                    }
+                    SumcheckProof::Committed(_) => panic!("tamper requires a clear proof"),
+                },
                 TamperTarget::Claim => {
                     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
                         panic!("tamper requires clear claims");
                     };
-                    claims.stage1.outer.outer_remainder.left_instruction_input += GuestField::from_u64(1);
+                    claims.stage1.outer.outer_remainder.left_instruction_input +=
+                        GuestField::from_u64(1);
                 }
                 TamperTarget::Output => {
                     *device.outputs.first_mut().expect("device output byte") ^= 1;
@@ -1019,14 +1039,17 @@ fn tamper_proof(
                     // AkitaBatchProof encodes a fixed selection followed by a byte body.
                     // Decode the envelope so the mutation cannot hit a length prefix.
                     let config = bincode::config::standard();
-                    let encoded = bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
+                    let encoded =
+                        bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
                     let ((selection, mut body), consumed): (([u8; 32], Vec<u8>), _) =
                         bincode::serde::decode_from_slice(&encoded, config).unwrap();
                     assert_eq!(consumed, encoded.len());
                     let middle = body.len() / 2;
                     *body.get_mut(middle).expect("opening proof body") ^= 1;
                     let encoded = bincode::serde::encode_to_vec((selection, body), config).unwrap();
-                    proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config).unwrap().0;
+                    proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config)
+                        .unwrap()
+                        .0;
                 }
             }
         }
@@ -1161,7 +1184,9 @@ fn verify_proofs(
     };
     let mut memory_config = guest.get_memory_config(use_embed, input_section.len());
     // Setup, proof, and device coexist; retain space for geometric growth and verification.
-    let decode_heap = layout.limits.allocation
+    let decode_heap = layout
+        .limits
+        .allocation
         .checked_mul(8)
         .and_then(|bytes| u64::try_from(bytes).ok())
         .expect("recursion decode heap size overflow");
@@ -1193,7 +1218,11 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
-        Some(Commands::CheckInputFraming { example, workdir, embed }) => {
+        Some(Commands::CheckInputFraming {
+            example,
+            workdir,
+            embed,
+        }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
             verify_proofs(
                 guest,
@@ -1203,7 +1232,13 @@ fn main() {
                 RunConfig::CheckInputFraming,
             );
         }
-        Some(Commands::Tamper { example, workdir, output, target, proof_index }) => {
+        Some(Commands::Tamper {
+            example,
+            workdir,
+            output,
+            target,
+            proof_index,
+        }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
             tamper_proof(guest, workdir, output, *target, *proof_index);
         }

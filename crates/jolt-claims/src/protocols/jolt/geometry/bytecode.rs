@@ -620,7 +620,10 @@ fn read_raf_flag_terms(
         ),
         (instruction_flags[InstructionFlags::RightOperandIsImm], 5),
         (instruction_flags[InstructionFlags::IsNoop], 6),
-        (instruction_flags[InstructionFlags::RightOperandIsRdWriteValue], 7),
+        (
+            instruction_flags[InstructionFlags::RightOperandIsRdWriteValue],
+            7,
+        ),
         (circuit_flags[CircuitFlags::VirtualInstruction], 8),
         (circuit_flags[CircuitFlags::IsFirstInSequence], 9),
     ] {
