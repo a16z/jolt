@@ -160,8 +160,7 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
     end_cycle_tracking("deserialize preprocessing");
 
     start_cycle_tracking("deserialize count of proofs");
-    let n: u32 = input.record()?;
-    input.check_count(n, 2)?;
+    let n = input.proof_count()?;
     end_cycle_tracking("deserialize count of proofs");
 
     let mut all_valid = true;
@@ -195,5 +194,6 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
         all_valid = all_valid && is_valid;
     }
 
+    input.finish()?;
     Ok(all_valid as u32)
 }

@@ -72,6 +72,22 @@ impl<'a> Records<'a> {
         Ok(value)
     }
 
+    pub(crate) fn proof_count(&mut self) -> Result<u32, RecordError> {
+        let count: u32 = self.record()?;
+        if count == 0 {
+            return Err(RecordError);
+        }
+        self.check_count(count, 2)?;
+        Ok(count)
+    }
+
+    pub(crate) fn finish(&self) -> Result<(), RecordError> {
+        if self.offset != self.buffer.len() {
+            return Err(RecordError);
+        }
+        Ok(())
+    }
+
     /// Authenticate the complete input setup, including framed detached bodies,
     /// before any setup decoder or trusted view sees it. The pin is image data.
     pub(crate) fn authenticate_setup(&self, expected: Option<&[u8; 64]>) -> Result<(), RecordError> {
@@ -214,6 +230,26 @@ mod tests {
             assert!(Records::new(&bytes).unwrap().authenticate_setup(Some(&expected)).is_err());
             bytes[base + offset] ^= 1;
         }
+    }
+
+    #[test]
+    fn batch_requires_a_proof_and_exact_end_of_input() {
+        let empty = frame(&[0]);
+        assert!(Records::new(&empty).unwrap().proof_count().is_err());
+        let mut batch = frame(&[1]);
+        // A count followed by two minimal records exercises the framing contract.
+        batch.extend_from_slice(&[0; 16]);
+        let mut records = Records::new(&batch).unwrap();
+        assert_eq!(records.proof_count().unwrap(), 1);
+        records.raw().unwrap();
+        records.raw().unwrap();
+        assert!(records.finish().is_ok());
+        batch.push(0);
+        let mut records = Records::new(&batch).unwrap();
+        records.proof_count().unwrap();
+        records.raw().unwrap();
+        records.raw().unwrap();
+        assert!(records.finish().is_err());
     }
 
 }

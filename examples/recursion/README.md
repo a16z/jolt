@@ -32,6 +32,15 @@ counts are for embedded mode.
 
 ### Acceptance and rejection
 
+The recursive statement is: under the setup bound by this guest image, the
+entire runtime input contains a nonempty batch of valid inner proof/device
+pairs. The count must be at least one and no bytes may follow the last padded
+record. Malformed records return `0`; acceptance returns `1`. The output is
+still one `u32` and does not commit separately to the count or inner devices.
+A consumer checking a particular computation must bind the runtime input and
+inspect the intended count and devices; checking the verdict alone establishes
+only that some nonempty batch verifies under the image's setup.
+
 `trace` requires the guest's verdict to match `--expect` (default `accept`); a
 guest panic is neither verdict. `tamper-opening` changes one typed Stage1
 opening by one and reserializes the proof, so the stream still decodes and the
