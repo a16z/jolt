@@ -18,8 +18,6 @@
 //! - **Eval-at-1 recovery** and **rayon walks** (module docs on
 //!   [`crate::optimized`]).
 
-use std::sync::Arc;
-
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
@@ -37,9 +35,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
-use super::instruction_read_raf::{
-    InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
-};
+use super::instruction_read_raf::InstructionCycleRow;
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
     BundleAccess, RoundProgress,
@@ -85,6 +81,7 @@ fn pushforwards<F: JoltField>(
     k_chunk: usize,
     omit_digit_zero: bool,
 ) -> Result<Vec<Vec<F>>, WitnessError> {
+    debug_assert_eq!(rows.len(), 1usize << point.len());
     pushforward_access(
         |index| {
             let row = &rows[index];
@@ -258,16 +255,7 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,
         )?;
-        let cached = session
-            .state::<SharedInstructionRows>()
-            .filter(|rows| rows.0.len() == cycles)
-            .map(|rows| Arc::clone(&rows.0))
-            .or_else(|| {
-                session
-                    .state::<SharedInstructionRowsWeak>()
-                    .and_then(|rows| rows.0.upgrade())
-                    .filter(|rows| rows.len() == cycles)
-            });
+        let cached = InstructionCycleRow::cached(session, witness, cycles);
         let direct = witness
             .random_access()
             .filter(|access| cycles <= access.cycles() && cached.is_none());
@@ -573,18 +561,22 @@ mod tests {
 #[cfg(all(test, feature = "akita"))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod akita_tests {
+    use crate::optimized::instruction_read_raf::{
+        SharedInstructionRows, SharedInstructionRowsWeak,
+    };
     use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_field::{Fr, Ring};
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };
+    use std::sync::Arc;
 
     use super::*;
     use crate::optimized::booleanity::testing::with_booleanity_backend;
     use crate::optimized::parity::{probe_input_claim, run_lockstep, synthetic_point};
     use crate::{ProofSession, ReferenceBackend};
 
-    fn hamming_weight_parity(log_t: usize, log_k_chunk: u8) {
+    fn hamming_weight_parity(log_t: usize, log_k_chunk: u8, cached: bool) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
             let dimensions = HammingWeightClaimReductionDimensions::new(
                 base_dimensions.layout,
@@ -605,6 +597,12 @@ mod akita_tests {
             let input_points = HammingWeightClaimReductionInputClaims::<Vec<Fr>>::default();
 
             let mut session = ProofSession::default();
+            let cached_rows = cached.then(|| {
+                Arc::new(InstructionCycleRow::collect::<Fr>(backend, 1 << log_t).unwrap())
+            });
+            if let Some(rows) = &cached_rows {
+                session.park(SharedInstructionRows(Arc::clone(rows)));
+            }
             let mut reference = ReferenceBackend
                 .prepare(
                     &mut session,
@@ -630,6 +628,17 @@ mod akita_tests {
                 )
                 .unwrap();
 
+            if let Some(rows) = cached_rows {
+                let retained = session
+                    .state::<SharedInstructionRowsWeak>()
+                    .unwrap()
+                    .0
+                    .upgrade()
+                    .unwrap();
+                assert!(Arc::ptr_eq(&rows, &retained));
+                assert!(session.state::<SharedInstructionRows>().is_none());
+            }
+
             let claim = probe_input_claim(reference.as_mut());
             run_lockstep(
                 reference.as_mut(),
@@ -645,13 +654,32 @@ mod akita_tests {
     }
 
     #[test]
+    fn stale_instruction_carry_is_released_before_cache_lookup() {
+        with_booleanity_backend(2, 4, |backend, _| {
+            let rows = Arc::new(InstructionCycleRow::collect::<Fr>(backend, 4).unwrap());
+            let mut session = ProofSession::default();
+            let stale = Arc::new(ConstantSuffix::new(vec![rows[0]], 8));
+            let stale_weak = Arc::downgrade(&stale);
+            session.park(SharedInstructionRows(stale));
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+            let cached = InstructionCycleRow::cached::<Fr>(&mut session, backend, 4).unwrap();
+            assert!(Arc::ptr_eq(&rows, &cached));
+            assert!(stale_weak.upgrade().is_none());
+        });
+    }
+
+    #[test]
     fn hamming_weight_reduction_matches_reference_k16() {
-        hamming_weight_parity(2, 4);
+        for cached in [false, true] {
+            hamming_weight_parity(2, 4, cached);
+        }
     }
 
     #[test]
     fn hamming_weight_reduction_matches_reference_k256() {
-        hamming_weight_parity(3, 8);
+        for cached in [false, true] {
+            hamming_weight_parity(3, 8, cached);
+        }
     }
 }
 
