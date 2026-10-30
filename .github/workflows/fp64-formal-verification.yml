@@ -201,8 +201,14 @@ jobs:
       - name: Build HOL Light as an OCaml module
         working-directory: ${{ runner.temp }}/hol-light
         run: |
-          make switch-5
+          # `make switch-5` with camlp5 pinned first. Its order installs ledit and
+          # then rebuilds it for the pin, and opam >= 2.6 hands that rebuild an
+          # empty directory because removing ledit consumes its temporary source.
+          opam update
+          opam switch create . ocaml-base-compiler.5.4.0 --no-install
           eval "$(opam env --switch . --set-switch)"
+          opam pin -y add camlp5 8.04.00
+          opam install -y zarith ledit
           HOLLIGHT_USE_MODULE=1 make -j2
 
       - name: Check bytes and run HOL Light proofs
