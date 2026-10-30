@@ -62,7 +62,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
+use jolt_claims::protocols::jolt::geometry::ra::{JoltRaPolynomial, JoltRaPolynomialLayout};
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
 use jolt_claims::OutputClaims;
@@ -165,33 +165,21 @@ impl BooleanityColumns {
     }
 }
 
-/// The one-hot pushforward `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`
-/// (legacy `compute_all_G` / `one_hot_pushforwards`): per `E_out` block,
-/// the `E_in` weights scatter into per-polynomial `K`-sized
-/// deferred-reduction buckets (an unreduced add per hot polynomial, no
-/// per-cycle multiply); each block then reduces its touched buckets and
-/// folds them by `e_out` into the running partials. Equals the reference's
-/// per-chunk cycle masses exactly — same terms, regrouped through the
-/// `eq = E_out ⊗ E_in` factorization.
+/// Canonical-layout masses `G_i[k] = Σ_{j : hot_i(j) = k} eq(point, j)`.
+/// Instruction and bytecode digit-zero masses follow from total weight one;
+/// RAM may be cold, so every RAM bucket is accumulated directly.
 fn cycle_pushforward<F: JoltField>(
     rows: &ConstantSuffix<InstructionCycleRow>,
-    selectors: &[ColumnSelector],
+    layout: JoltRaPolynomialLayout,
     k_chunk: usize,
     point: &[F],
 ) -> Result<Vec<Vec<F>>, KernelError<F>> {
-    let counts = selectors.iter().fold((0, 0, 0), |mut counts, selector| {
-        match selector {
-            ColumnSelector::Instruction(_) => counts.0 += 1,
-            ColumnSelector::Bytecode(_) => counts.1 += 1,
-            ColumnSelector::Ram(_) => counts.2 += 1,
-        }
-        counts
-    });
-    let families = FamilySelectors::new::<F>(counts, k_chunk.trailing_zeros() as usize)?;
+    let families = FamilySelectors::new::<F>(
+        (layout.instruction(), layout.bytecode(), layout.ram()),
+        k_chunk.trailing_zeros() as usize,
+    )?;
     let mut masses = pushforwards(rows, point, &families, k_chunk, true)?;
-    // Instruction/bytecode have one hot digit in every row, and the equality
-    // weights sum to one. RAM can be cold, so its zero bucket is accumulated.
-    for mass in &mut masses[..counts.0 + counts.1] {
+    for mass in &mut masses[..layout.instruction() + layout.bytecode()] {
         mass[0] = F::one() - mass[1..].iter().copied().sum::<F>();
     }
     Ok(masses)
@@ -222,11 +210,11 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
             });
         }
 
-        let columns = BooleanityColumns::new(witness, dimensions)?;
+        drop(BooleanityColumns::new(witness, dimensions)?);
         let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
         let masses = cycle_pushforward(
             &rows,
-            &columns.selectors,
+            dimensions.layout,
             1usize << dimensions.log_k_chunk,
             &reference_cycle,
         )?;
@@ -1033,6 +1021,8 @@ mod tests {
     use crate::optimized::parity::ExceptionalEq;
     use jolt_claims::protocols::jolt::JoltChallengeId;
     use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
     use jolt_field::{Fr, Ring, Zero};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
@@ -1044,17 +1034,20 @@ mod tests {
     use super::*;
     use crate::ReferenceBackend;
 
-    #[test]
-    fn address_masses_include_constant_suffix_at_exceptional_points() {
+    fn check_address_masses<F: JoltField>() {
         with_booleanity_backend(6, 4, |backend, dimensions| {
             let columns = BooleanityColumns::new::<Fr>(backend, dimensions).unwrap();
             let original = InstructionCycleRow::collect::<Fr>(backend, 64).unwrap();
             for prefix in [0, 1, 7, 8, 9, 33, 63] {
                 let mut rows: Vec<_> = (0..original.len()).map(|i| original[i]).collect();
                 rows[prefix..].fill(original[0]);
-                for point in [point(19, 6), vec![Fr::zero(); 6], vec![Fr::from_u64(1); 6]] {
-                    let weights = EqPolynomial::<Fr>::evals(&point, None);
-                    let expected: Vec<Vec<Fr>> = columns
+                for point in [
+                    (0..6).map(|i| F::from_u64(19 + 3 * i)).collect(),
+                    vec![F::zero(); 6],
+                    vec![F::one(); 6],
+                ] {
+                    let weights = EqPolynomial::<F>::evals(&point, None);
+                    let expected: Vec<Vec<F>> = columns
                         .selectors
                         .iter()
                         .map(|selector| {
@@ -1070,13 +1063,24 @@ mod tests {
                         })
                         .collect();
                     assert_eq!(
-                        cycle_pushforward(&rows.clone().into(), &columns.selectors, 16, &point)
+                        cycle_pushforward(&rows.clone().into(), dimensions.layout, 16, &point)
                             .unwrap(),
                         expected,
                     );
                 }
             }
         });
+    }
+
+    #[test]
+    fn address_masses_include_constant_suffix_at_exceptional_points() {
+        check_address_masses::<Fr>();
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn address_masses_include_constant_suffix_at_exceptional_points_akita() {
+        check_address_masses::<Prime128OffsetA7F7>();
     }
 
     #[expect(clippy::type_complexity)]
