@@ -295,10 +295,8 @@ where
             let (part_start, part_end) = schedule.part_range(task % schedule.parts);
             let ring_start = task / schedule.parts * span + part_start;
             let ring_end = task / schedule.parts * span + part_end;
-            let first_positions = (0..num_columns)
-                .map(|_| ring_start % positions_per_block)
-                .collect::<Vec<_>>();
             let mut sums = vec![E::zero(); num_columns * D];
+            // segment_ring_elems above checks the logical domain's alignment at D.
             if source.one_hot_k < D && source.rows.num_rows().is_multiple_of(D / source.one_hot_k) {
                 visit_segment_ring_row_range::<D>(
                     source,
@@ -322,6 +320,7 @@ where
                     },
                 )?;
             } else {
+                let first_position = ring_start % positions_per_block;
                 visit_segment_ring_range::<D>(
                     source,
                     ring_start,
@@ -330,7 +329,7 @@ where
                         let offset = ring - ring_start;
                         for &(column, coefficient) in contributions {
                             sums[column * D + coefficient] +=
-                                position_weights[first_positions[column] + offset];
+                                position_weights[first_position + offset];
                         }
                     },
                 )?;
