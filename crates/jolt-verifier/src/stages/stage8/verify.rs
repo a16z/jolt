@@ -46,6 +46,8 @@ use jolt_openings::{
     AdditivelyHomomorphic, EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim,
     ZkOpeningScheme,
 };
+#[cfg(feature = "akita")]
+use jolt_openings::{GroupOpeningClaim, OpeningsError, TaggedGroupOpeningClaim};
 #[cfg(not(feature = "akita"))]
 use jolt_poly::Point;
 #[cfg(feature = "akita")]
@@ -662,7 +664,7 @@ mod tests {
     reason = "same signature as the homomorphic build's verify"
 )]
 #[jolt_verifier_derive::fs_scope(Stage8)]
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify_with_akita_opening<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -672,6 +674,13 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage4: &Stage4Output<F, VC::Output>,
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
+    opening: impl FnOnce(
+        &PCS::VerifierSetup,
+        &[TaggedGroupOpeningClaim<F, PCS::Output>],
+        &GroupOpeningClaim<F, PCS::Output>,
+        &PCS::Proof,
+        &mut T,
+    ) -> Result<(), OpeningsError>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: JoltField,
@@ -698,6 +707,7 @@ where
         stage4.clear()?,
         stage6.clear()?,
         stage7.clear()?,
+        opening,
     )?;
 
     Ok(Stage8Output::Clear)

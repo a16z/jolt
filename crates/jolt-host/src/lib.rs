@@ -27,6 +27,7 @@ pub struct Program {
     profile: Option<String>,
     instruction_profile: JoltInstructionProfile,
     guest_features: Vec<String>,
+    linker_memory_size: Option<u64>,
     heap_size: u64,
     stack_size: u64,
     max_input_size: u64,
