@@ -76,8 +76,8 @@ use super::eq_prefix::EqPrefix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
-    bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, par_sum_pair_groups_reusing,
-    round_poly_from_skipped_evals, RoundProgress,
+    bind_all, eq_table, gamma_powers, map_reduce_chunks, merge_evals, pair, par_sum_pair_groups,
+    par_sum_pair_groups_reusing, round_poly_from_skipped_evals, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -1074,6 +1074,54 @@ struct BytecodePcChunks {
     selectors: Vec<RaChunkSelector>,
 }
 
+const CYCLE_GROUP_CACHE_SLOTS: usize = 256;
+const CYCLE_GROUP_BATCH: usize = 4096;
+
+impl BytecodePcChunks {
+    #[inline]
+    fn group_slot(&self, y: usize, width: usize) -> usize {
+        let mut hash = 0x9e37_79b9_7f4a_7c15u64;
+        for offset in 0..2 * width {
+            hash = (hash ^ self.rows[2 * width * y + offset].bytecode_pc() as u64)
+                .wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            hash ^= hash >> 31;
+        }
+        (hash as usize) & (CYCLE_GROUP_CACHE_SLOTS - 1)
+    }
+
+    #[inline]
+    fn same_group(&self, left: usize, right: usize, width: usize) -> bool {
+        (0..2 * width).all(|offset| {
+            self.rows[2 * width * left + offset].bytecode_pc()
+                == self.rows[2 * width * right + offset].bytecode_pc()
+        })
+    }
+
+    fn repeats_often(&self, groups: usize, width: usize) -> bool {
+        const SAMPLE_BLOCKS: usize = 32;
+        const SAMPLE_GROUPS: usize = 64;
+        if groups < CYCLE_GROUP_BATCH {
+            return false;
+        }
+        let blocks = groups.div_ceil(SAMPLE_GROUPS);
+        let mut cache = vec![None; CYCLE_GROUP_CACHE_SLOTS];
+        let mut hits = 0;
+        let mut samples = 0;
+        for sample in 0..SAMPLE_BLOCKS {
+            cache.fill(None);
+            let start = (sample * blocks / SAMPLE_BLOCKS) * SAMPLE_GROUPS;
+            for y in start..(start + SAMPLE_GROUPS).min(groups) {
+                let slot = self.group_slot(y, width);
+                hits += usize::from(cache[slot].is_some_and(|old| self.same_group(old, y, width)));
+                cache[slot] = Some(y);
+                samples += 1;
+            }
+        }
+        // Sampling only chooses the evaluation algorithm. Both paths are exact.
+        4 * hits >= samples
+    }
+}
+
 impl ChunkIndexSource for BytecodePcChunks {
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
@@ -1126,21 +1174,41 @@ impl<F: JoltField> CycleKernel<F> {
     /// `t · (hi − lo)` multiplication.
     #[inline]
     fn accumulate_group(&self, y: usize, acc: &mut [F], ra_pairs: &mut [(F, F)]) {
+        self.accumulate_coefficient(y, self.coefficient(y), acc, ra_pairs);
+    }
+
+    /// `[C(0), C(1) - C(0), 2 * quadratic_coefficient(C)]`; each coordinate
+    /// is linear in C, so adding these arrays adds coefficient polynomials.
+    #[inline]
+    fn coefficient(&self, y: usize) -> [F; 3] {
         let (c_lo, c_hi) = self.combined.pair(y);
         #[cfg(not(feature = "akita"))]
-        let coefficient_at_zero = c_lo;
-        #[cfg(not(feature = "akita"))]
-        let coefficient_delta = c_hi - c_lo;
+        {
+            [c_lo, c_hi - c_lo, F::zero()]
+        }
         #[cfg(feature = "akita")]
-        let (coefficient_at_zero, mut coefficient_delta, second_difference) = {
+        {
             let (fused_coefficient_lo, fused_coefficient_hi) = self.fused_combined.pair(y);
             let (fused_inc_lo, fused_inc_hi) = self.fused_inc.lo_hi(y);
             let at_zero = c_lo + fused_inc_lo * fused_coefficient_lo;
             let at_one = c_hi + fused_inc_hi * fused_coefficient_hi;
             let leading =
                 (fused_inc_hi - fused_inc_lo) * (fused_coefficient_hi - fused_coefficient_lo);
-            (at_zero, at_one - at_zero, leading + leading)
-        };
+            [at_zero, at_one - at_zero, leading + leading]
+        }
+    }
+
+    #[inline]
+    fn accumulate_coefficient(
+        &self,
+        y: usize,
+        coefficient: [F; 3],
+        acc: &mut [F],
+        ra_pairs: &mut [(F, F)],
+    ) {
+        let [coefficient_at_zero, coefficient_delta, _second_difference] = coefficient;
+        #[cfg(feature = "akita")]
+        let (mut coefficient_delta, second_difference) = (coefficient_delta, _second_difference);
         self.ra.lo_hi_all(y, ra_pairs);
         for (lo, hi) in ra_pairs.iter_mut() {
             *hi -= *lo;
@@ -1173,6 +1241,55 @@ impl<F: JoltField> CycleKernel<F> {
     }
 }
 
+impl<F: JoltField> CycleKernel<F> {
+    fn grouped_evals(&self, half: usize) -> Option<Vec<F>> {
+        let LazyFoldedRa::Lazy { source, width, .. } = &self.ra else {
+            return None;
+        };
+        let width = *width;
+        if width > 8 || !source.repeats_often(half, width) {
+            return None;
+        }
+        // Equal ordered PC tuples have identical RA factors at this round. Only
+        // their coefficient polynomials are added; fused increments may differ.
+        // Every collision and batch end flushes the old contribution. The cache
+        // is local to this call, so it cannot survive a binding challenge.
+        Some(map_reduce_chunks(
+            half,
+            CYCLE_GROUP_BATCH,
+            |range| {
+                let mut acc = vec![F::zero(); self.degree];
+                let mut pairs = vec![(F::zero(), F::zero()); self.ra.num_polys()];
+                let mut cache: Vec<Option<(usize, [F; 3])>> = vec![None; CYCLE_GROUP_CACHE_SLOTS];
+                for y in range {
+                    let slot = source.group_slot(y, width);
+                    let coefficients = self.coefficient(y);
+                    if let Some((old, sum)) = &mut cache[slot] {
+                        if source.same_group(*old, y, width) {
+                            for (sum, value) in sum
+                                .iter_mut()
+                                .zip(coefficients)
+                                .take(if cfg!(feature = "akita") { 3 } else { 2 })
+                            {
+                                *sum += value;
+                            }
+                            continue;
+                        }
+                        self.accumulate_coefficient(*old, *sum, &mut acc, &mut pairs);
+                    }
+                    cache[slot] = Some((y, coefficients));
+                }
+                for (y, coefficients) in cache.into_iter().flatten() {
+                    self.accumulate_coefficient(y, coefficients, &mut acc, &mut pairs);
+                }
+                acc
+            },
+            merge_evals,
+            || vec![F::zero(); self.degree],
+        ))
+    }
+}
+
 impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
@@ -1191,12 +1308,14 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
-        let mut evals = par_sum_pair_groups_reusing(
-            half,
-            slots,
-            || vec![(F::zero(), F::zero()); num_ra],
-            |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
-        );
+        let mut evals = self.grouped_evals(half).unwrap_or_else(|| {
+            par_sum_pair_groups_reusing(
+                half,
+                slots,
+                || vec![(F::zero(), F::zero()); num_ra],
+                |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
+            )
+        });
 
         let (tail_lo, tail_hi) = self.combined.suffix_pair_sums(half);
         #[cfg(feature = "akita")]
@@ -2030,5 +2149,140 @@ mod cycle_group_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, clippy::expect_used)]
+mod grouped_cycle_tests {
+    use super::*;
+    use jolt_field::Fr;
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_poly::BindingOrder;
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
+
+    fn check<F: JoltField>() {
+        let n = 1 << 16;
+        let mut rng = ChaCha20Rng::seed_from_u64(2187);
+        let pcs: Vec<usize> = (0..n)
+            .map(|j| if j < n - 17 { (j % 31) * 7 % 256 } else { 0 })
+            .collect();
+        let rows = Arc::new(ConstantSuffix::from(
+            pcs.iter()
+                .map(|pc| {
+                    InstructionCycleRow::new(
+                        0,
+                        None,
+                        false,
+                        *pc,
+                        None,
+                        #[cfg(feature = "akita")]
+                        FusedInc::default(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+        ));
+        let tables: Vec<Vec<F>> = (0..2)
+            .map(|_| (0..16).map(|_| F::random(&mut rng)).collect())
+            .collect();
+        // The oracle constructs the original dense tables directly from PC bits.
+        let mut dense: Vec<Polynomial<F>> = (0..2)
+            .map(|column| {
+                Polynomial::new(
+                    pcs.iter()
+                        .map(|pc| tables[column][(pc >> (4 * (1 - column))) & 15])
+                        .collect(),
+                )
+            })
+            .collect();
+        let source = BytecodePcChunks {
+            prefix_len: rows.prefix_len().max(1),
+            rows,
+            selectors: (0..2)
+                .map(|i| RaChunkSelector::new(i, 2, 4).unwrap())
+                .collect(),
+        };
+        let mut slots = [None; CYCLE_GROUP_CACHE_SLOTS];
+        let mut collision = false;
+        for y in 0..31 {
+            let slot = source.group_slot(y, 1);
+            collision |= slots[slot].is_some_and(|old| !source.same_group(old, y, 1));
+            slots[slot] = Some(y);
+        }
+        assert!(
+            collision,
+            "fixture must exercise a full-key collision check"
+        );
+        let mut combined = Polynomial::new((0..n).map(|_| F::random(&mut rng)).collect());
+        #[cfg(feature = "akita")]
+        let mut fused_inc = Polynomial::new((0..n).map(|_| F::random(&mut rng)).collect());
+        #[cfg(feature = "akita")]
+        let mut fused_combined = Polynomial::new((0..n).map(|_| F::random(&mut rng)).collect());
+        let degree = 2 + if cfg!(feature = "akita") { 2 } else { 1 };
+        let mut kernel = CycleKernel {
+            progress: RoundProgress::new(16),
+            degree,
+            ra: LazyFoldedRa::new(tables, source),
+            combined: EqPrefix::from_evals(combined.evals().to_vec()),
+            #[cfg(feature = "akita")]
+            fused_inc: LazyFusedInc::Prefix {
+                values: fused_inc.evals().to_vec(),
+                tail: F::zero(),
+            },
+            #[cfg(feature = "akita")]
+            fused_combined: EqPrefix::from_evals(fused_combined.evals().to_vec()),
+            output_openings: Vec::new(),
+        };
+        for round in 0..4 {
+            let groups = combined.len() / 2;
+            let actual = kernel
+                .grouped_evals(groups)
+                .expect("fixture must select grouped evaluation");
+            let at = |poly: &Polynomial<F>, y: usize, t: F| {
+                let (lo, hi) = pair(poly, y);
+                lo + t * (hi - lo)
+            };
+            for (slot, actual) in actual.into_iter().enumerate() {
+                let t = F::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
+                let expected: F = (0..groups)
+                    .map(|y| {
+                        let coefficient = at(&combined, y, t);
+                        #[cfg(feature = "akita")]
+                        let coefficient =
+                            coefficient + at(&fused_inc, y, t) * at(&fused_combined, y, t);
+                        dense
+                            .iter()
+                            .fold(coefficient, |acc, poly| acc * at(poly, y, t))
+                    })
+                    .sum();
+                assert_eq!(actual, expected, "round {round}, slot {slot}");
+            }
+            let challenge = match round {
+                0 => F::zero(),
+                1 => F::one(),
+                _ => F::random(&mut rng),
+            };
+            kernel.bind(challenge);
+            combined.bind_with_order(challenge, BindingOrder::LowToHigh);
+            for poly in &mut dense {
+                poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+            }
+            #[cfg(feature = "akita")]
+            {
+                fused_inc.bind_with_order(challenge, BindingOrder::LowToHigh);
+                fused_combined.bind_with_order(challenge, BindingOrder::LowToHigh);
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_pc_groups_preserve_independent_coefficients() {
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 }
