@@ -581,6 +581,8 @@ fn collect_guest_proofs(
 
     info!("Creating program...");
     let mut program = Program::new(guest.name());
+    #[cfg(feature = "field-inline")]
+    program.enable_field_inline();
     program.set_func(guest.func());
     program.set_std(false);
     program.set_memory_config(memory_config);
