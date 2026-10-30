@@ -14,7 +14,7 @@
 //! - **Sparse one-hot access.** Each `ra_i(·, j)` is one-hot in the chunk
 //!   domain, so the per-cycle hot index is a chunk of that cycle's lookup
 //!   index / mapped PC / remapped RAM address. Both phases gather through
-//!   [`RaChunkSelector`]s over the packed stage-5 rows
+//!   the canonical address chunks of the packed stage-5 rows
 //!   (`SharedInstructionRows`, reclaimed from the [`ProofSession`] or
 //!   collected in one streaming pass) and never materialize the `K × T`
 //!   grids the naive tier's `oracle_table` walks, nor per-polynomial index
@@ -23,9 +23,9 @@
 //!   eq(r_ref_cycle, j) · ra_i(k, j)` collapses to a scatter of the
 //!   tensor-factored eq weights into a `K`-sized accumulator per
 //!   polynomial: per `E_out` block, the `E_in` weights accumulate
-//!   *unreduced* into the hot buckets (no per-cycle multiply at all), and
-//!   each block reduces and folds by its `e_out` once (legacy
-//!   `compute_all_G`).
+//!   *unreduced* into nonzero instruction/bytecode buckets and all hot RAM
+//!   buckets. Each block reduces and folds by its `e_out` once. The omitted
+//!   instruction/bytecode zero buckets are recovered from total mass one.
 //! - **Shared expanded-eq gather (cycle phase).** The address-folded row
 //!   `x_i(j) = eq(r_address)[hot_i(j)]` is a lookup into a `K`-sized table
 //!   pre-scaled by `γ^i`, so `γ^{2i}(x² − x) = H(H − γ^i)` needs no
@@ -67,10 +67,7 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltOpeningId};
 use jolt_claims::OutputClaims;
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{
-    try_eq_mle, BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, TensorEqTable,
-    UnivariatePoly,
-};
+use jolt_poly::{try_eq_mle, BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
@@ -82,12 +79,11 @@ use jolt_verifier::stages::stage6a::booleanity::{
 use jolt_verifier::stages::stage6b::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use jolt_witness::witnesses::RaChunkSelector;
 use jolt_witness::JoltWitnessPlane;
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::one_hot_histograms::{pushforwards, FamilySelectors};
 use super::support::{gamma_powers, pin_derived_term_if_derived, GruenRoundMessage, RoundProgress};
 use crate::reference::views::eq_table;
 use crate::{
@@ -182,79 +178,23 @@ fn cycle_pushforward<F: JoltField>(
     selectors: &[ColumnSelector],
     k_chunk: usize,
     point: &[F],
-) -> Vec<Vec<F>> {
-    let eq = TensorEqTable::new(point);
-    debug_assert_eq!(eq.len(), rows.len());
-    let e_out = eq.e_out();
-    let e_in = eq.e_in();
-    let in_len = e_in.len();
-    let suffix_start = rows.prefix_len();
-    let blocks = suffix_start.div_ceil(in_len);
-
-    struct State<F: JoltField> {
-        partial: Vec<Vec<F::Accumulator>>,
-        block: Vec<Vec<F::Accumulator>>,
+) -> Result<Vec<Vec<F>>, KernelError<F>> {
+    let counts = selectors.iter().fold((0, 0, 0), |mut counts, selector| {
+        match selector {
+            ColumnSelector::Instruction(_) => counts.0 += 1,
+            ColumnSelector::Bytecode(_) => counts.1 += 1,
+            ColumnSelector::Ram(_) => counts.2 += 1,
+        }
+        counts
+    });
+    let families = FamilySelectors::new::<F>(counts, k_chunk.trailing_zeros() as usize)?;
+    let mut masses = pushforwards(rows, point, &families, k_chunk, true)?;
+    // Instruction/bytecode have one hot digit in every row, and the equality
+    // weights sum to one. RAM can be cold, so its zero bucket is accumulated.
+    for mass in &mut masses[..counts.0 + counts.1] {
+        mass[0] = F::one() - mass[1..].iter().copied().sum::<F>();
     }
-    let zero = || State::<F> {
-        partial: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
-        block: vec![vec![F::Accumulator::default(); k_chunk]; selectors.len()],
-    };
-    let scatter = |mut state: State<F>, x_out: usize| {
-        let base = x_out * in_len;
-        for (x_in, e) in e_in.iter().take(suffix_start - base).enumerate() {
-            let row = &rows[base + x_in];
-            for (selector, block) in selectors.iter().zip(state.block.iter_mut()) {
-                if let Some(k) = selector.index(row) {
-                    block[k].add(*e);
-                }
-            }
-        }
-        let e_out = e_out[x_out];
-        for (partial, block) in state.partial.iter_mut().zip(state.block.iter_mut()) {
-            for (partial, block) in partial.iter_mut().zip(block.iter_mut()) {
-                let value = std::mem::take(block).reduce();
-                if value != F::zero() {
-                    partial.fmadd(e_out, value);
-                }
-            }
-        }
-        state
-    };
-    let finish = |state: State<F>| -> Vec<Vec<F>> {
-        state
-            .partial
-            .into_iter()
-            .map(|buckets| buckets.into_iter().map(|bucket| bucket.reduce()).collect())
-            .collect()
-    };
-    let merge = |mut left: State<F>, right: State<F>| {
-        for (left, right) in left.partial.iter_mut().zip(right.partial) {
-            for (left, right) in left.iter_mut().zip(right) {
-                left.merge(right);
-            }
-        }
-        left
-    };
-
-    #[cfg(feature = "parallel")]
-    let mut masses = finish(
-        (0..blocks)
-            .into_par_iter()
-            .fold(zero, scatter)
-            .reduce(zero, merge),
-    );
-    #[cfg(not(feature = "parallel"))]
-    let mut masses = {
-        let _ = merge;
-        finish((0..blocks).fold(zero(), scatter))
-    };
-    let suffix_mass = EqPolynomial::suffix_sum(point, suffix_start);
-    for (selector, mass) in selectors.iter().zip(&mut masses) {
-        if let Some(k) = selector.index(&rows[suffix_start]) {
-            mass[k] += suffix_mass;
-        }
-    }
-    masses
+    Ok(masses)
 }
 
 pub struct OptimizedBooleanityAddress;
@@ -289,7 +229,7 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
             &columns.selectors,
             1usize << dimensions.log_k_chunk,
             &reference_cycle,
-        );
+        )?;
 
         Ok(Box::new(OptimizedBooleanityAddressKernel::new(
             relation.rounds(),
@@ -1130,7 +1070,8 @@ mod tests {
                         })
                         .collect();
                     assert_eq!(
-                        cycle_pushforward(&rows.clone().into(), &columns.selectors, 16, &point),
+                        cycle_pushforward(&rows.clone().into(), &columns.selectors, 16, &point)
+                            .unwrap(),
                         expected,
                     );
                 }
