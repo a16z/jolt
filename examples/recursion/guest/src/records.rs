@@ -1,5 +1,6 @@
 #[path = "bounded.rs"]
 mod bounded;
+use jolt_inlines_blake2::Blake2b;
 use serde::de::DeserializeOwned;
 
 // Bound decoded records and bincode's byte budget before allocating.
@@ -69,6 +70,24 @@ impl<'a> Records<'a> {
             return Err(RecordError);
         }
         Ok(value)
+    }
+
+    /// Authenticate the complete input setup, including framed detached bodies,
+    /// before any setup decoder or trusted view sees it. The pin is image data.
+    pub(crate) fn authenticate_setup(&self, expected: Option<&[u8; 64]>) -> Result<(), RecordError> {
+        let expected = expected.ok_or(RecordError)?;
+        let mut setup = Self { buffer: self.buffer, offset: self.offset, base: self.base };
+        setup.raw()?;
+        let count: u32 = setup.record()?;
+        setup.check_count(count, 1)?;
+        for _ in 0..count {
+            setup.raw()?;
+        }
+        let section = self.buffer.get(self.offset..setup.offset).ok_or(RecordError)?;
+        if &Blake2b::digest(section) != expected {
+            return Err(RecordError);
+        }
+        Ok(())
     }
 
     pub(crate) fn check_count(&self, count: u32, records_per_item: usize) -> Result<(), RecordError> {
@@ -164,4 +183,37 @@ mod tests {
             assert_eq!(verdict::<JoltDevice>(&frame(&device[..end])), 0);
         }
     }
+    #[test]
+    fn setup_pin_rejects_substitution_of_each_detached_body() {
+        let mut bytes = frame(&[7; 8]);
+        let base = Records::new(&bytes).unwrap().base;
+        let mut section = bytes[base..].to_vec();
+        let mut append = |body: &[u8]| {
+            section.extend_from_slice(&(body.len() as u64).to_le_bytes());
+            section.extend_from_slice(body);
+            section.resize(section.len().next_multiple_of(8), 0);
+        };
+        append(&[3]);
+        for value in [11, 22, 33] {
+            append(&[value; 8]);
+        }
+        let expected = Blake2b::digest(&section);
+        // Reserve before computing the alignment of the final input buffer.
+        bytes = vec![0; section.len() + 15];
+        let pad = (8 - (bytes.as_ptr() as usize + 8) % 8) % 8;
+        let base = 8 + pad;
+        bytes[..8].copy_from_slice(&(pad as u64).to_le_bytes());
+        bytes[base..base + section.len()].copy_from_slice(&section);
+        bytes.truncate(base + section.len());
+        let records = Records::new(&bytes).unwrap();
+        assert!(records.authenticate_setup(Some(&expected)).is_ok());
+        assert!(records.authenticate_setup(None).is_err());
+        // Setup record, key matrix, catalog view, and terminal cache respectively.
+        for offset in [8, 40, 56, 72] {
+            bytes[base + offset] ^= 1;
+            assert!(Records::new(&bytes).unwrap().authenticate_setup(Some(&expected)).is_err());
+            bytes[base + offset] ^= 1;
+        }
+    }
+
 }

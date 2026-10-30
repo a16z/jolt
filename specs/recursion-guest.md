@@ -29,9 +29,14 @@ The guest distinguishes two kinds of input.
 
 Trusted setup data must be bound to the program identity. With `--embed` the
 host bakes it into the guest image, so the ELF digest is the binding. In input
-mode the setup arrives through the guest input, and whoever consumes the
-execution must authenticate those bytes. The preprocessing digest alone does not
-cover the detached payloads. Embedded mode is the configuration the row count
+mode the host bakes a BLAKE2b-512 digest into the image at build time. It covers
+the entire framed setup section: the preprocessing record, detached-body count,
+and every detached body (key matrix, catalog view, and terminal NTT cache),
+including their lengths and padding. The leading input-alignment record is
+excluded. The guest checks this pin before decoding setup or constructing any
+`TrustedBytes`; a missing digest or mismatch returns verdict `0`. Rebuilding
+with a different setup changes the image identity, which the consumer must pin.
+The preprocessing digest alone does not cover the detached payloads. Embedded mode is the configuration the row count
 refers to.
 
 What the guest still checks on setup data:

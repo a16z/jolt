@@ -32,6 +32,7 @@ hash-inlines = [
 ignored = ["jolt-field", "jolt-riscv"]
 
 [dependencies]
+jolt-inlines-blake2.workspace = true
 jolt-riscv = { path = "../../../crates/jolt-riscv" }
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "guest-verifier",

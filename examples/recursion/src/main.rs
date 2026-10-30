@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheme, TrustedBytes};
-use jolt_inlines_blake2 as _;
+use jolt_inlines_blake2::Blake2b;
 use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
@@ -687,7 +687,8 @@ fn generate_embedded_bytes(guest: GuestProgram, setup_section: &[u8], output_dir
          #[repr(C, align(8))]\n\
          struct Aligned<T: ?Sized>(T);\n\
          static ALIGNED: Aligned<[u8; {len}]> = Aligned(*include_bytes!(\"embedded.bin\"));\n\
-         pub static EMBEDDED_BYTES: &[u8] = &ALIGNED.0;\n",
+         pub static EMBEDDED_BYTES: &[u8] = &ALIGNED.0;\n\
+         pub const SETUP_DIGEST: Option<[u8; 64]> = None;\n",
         len = image.len()
     );
     std::fs::write(
@@ -722,7 +723,7 @@ fn render_embedded_bytecode(rows: &[JoltInstructionRow]) -> String {
 
 /// Undo [`generate_embedded_bytes`]: an input-mode build must not carry a
 /// stale baked setup.
-fn clear_embedded_bytes(output_dir: &Path) {
+fn clear_embedded_bytes(output_dir: &Path, setup_section: &[u8]) {
     std::fs::create_dir_all(output_dir).unwrap();
     std::fs::write(
         output_dir.join("embedded_bytecode.rs"),
@@ -731,7 +732,10 @@ fn clear_embedded_bytes(output_dir: &Path) {
     .unwrap();
     std::fs::write(
         output_dir.join("embedded_bytes.rs"),
-        "pub static EMBEDDED_BYTES: &[u8] = &[];\n",
+        format!(
+            "pub static EMBEDDED_BYTES: &[u8] = &[];\npub const SETUP_DIGEST: Option<[u8; 64]> = Some({:?});\n",
+            Blake2b::digest(setup_section),
+        ),
     )
     .unwrap();
     let _ = std::fs::remove_file(output_dir.join("embedded.bin"));
@@ -1020,7 +1024,7 @@ fn verify_proofs(
         proof_section
     } else {
         info!("Running {} recursion with input data...", guest.name());
-        clear_embedded_bytes(output_dir);
+        clear_embedded_bytes(output_dir, &all_groups_data[..layout.setup_len]);
         all_groups_data.as_slice()
     };
     let input_bytes = frame_guest_input(input_section, &memory_config);

@@ -22,9 +22,12 @@ For the Dory verifier, build with `--features field-inline`; its `verify`
 command also proves and verifies the outer execution.
 
 Add `--embed` to `trace` (or Dory `verify`) to bake the verifier setup into the
-guest image; proofs remain runtime inputs. The setup is trusted data, so in
-input mode the caller must authenticate it (see the trust model in
-[`specs/recursion-guest.md`](../../specs/recursion-guest.md)). The spec's row
+guest image; proofs remain runtime inputs. In input mode the host
+bakes a BLAKE2b-512 digest of the complete setup section into the guest image.
+The guest authenticates the setup record and every detached key, catalog, and
+terminal-cache body before decoding or trusting them; a missing pin or mismatch
+returns `0`. Consumers must pin the intended guest image, including this digest
+(see [`specs/recursion-guest.md`](../../specs/recursion-guest.md)). The spec's row
 counts are for embedded mode.
 
 ### Acceptance and rejection

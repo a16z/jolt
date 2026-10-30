@@ -4,7 +4,7 @@ extern crate alloc;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use embedded_bytecode::EMBEDDED_BYTECODE;
-use embedded_bytes::EMBEDDED_BYTES;
+use embedded_bytes::{EMBEDDED_BYTES, SETUP_DIGEST};
 use jolt::jolt_verifier::preprocessing::ProgramPreprocessing;
 use jolt::jolt_verifier::VerifierPreprocessingWire;
 #[cfg(feature = "akita")]
@@ -113,6 +113,9 @@ fn setup_result<T>(result: Result<T, RecordError>) -> Result<T, RecordError> {
 
 fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
     let mut input = Records::new(bytes)?;
+    if EMBEDDED_BYTES.is_empty() {
+        input.authenticate_setup(SETUP_DIGEST.as_ref())?;
+    }
     // The verifier setup comes from this image when the host baked it in
     // (then the input carries only the proofs), else from the input.
     let mut embedded = (!EMBEDDED_BYTES.is_empty())
@@ -139,9 +142,8 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
         let payloads: Vec<TrustedBytes> = payloads
             .iter()
             // SAFETY: every payload slice lies in the image or input region,
-            // and is a body the recursion host detached from its own prepared
-            // setup, bound by this image (embedded mode) or by the statement
-            // that pins the guest input (input mode; see specs/recursion-guest.md).
+            // and is bound by the image: embedded bytes directly, or the
+            // complete input setup authenticated against SETUP_DIGEST above.
             .map(|payload| unsafe { TrustedBytes::new(assume_static(payload)) })
             .collect();
         setup_result(
