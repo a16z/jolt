@@ -1075,6 +1075,7 @@ impl<const P: u128> Ring for Fp128<P> {
 impl<const P: u128> Field for Fp128<P> {
     #[inline]
     fn dot_product(a: &[Self], b: &[Self]) -> Self {
+        debug_assert_eq!(a.len(), b.len());
         <Self as MulBaseUnreduced<Self>>::dot_base(a, b)
     }
 
