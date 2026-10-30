@@ -21,6 +21,9 @@ akita = [
 ]
 
 [dependencies]
+jolt-field.workspace = true
+jolt-poly.workspace = true
+jolt-sumcheck.workspace = true
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
 jolt-program = { path = "../../crates/jolt-program", optional = true }
 jolt-witness = { path = "../../crates/jolt-witness", optional = true }

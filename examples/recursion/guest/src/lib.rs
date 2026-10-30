@@ -197,3 +197,6 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
     input.finish()?;
     Ok(all_valid as u32)
 }
+
+#[cfg(feature = "kernel-tests")]
+mod kernel_tests;

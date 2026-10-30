@@ -54,3 +54,20 @@ recursion trace --embed --expect reject --example fibonacci --workdir tampered
 ```
 
 These commands test guest verification, not an Akita outer recursive proof.
+
+`tamper --target sumcheck|claim|output|panic|empty` writes a fixture with one
+Stage1 round coefficient changed, one Stage1 opening claim changed, one device
+output byte flipped, the panic bit flipped, or a zero-proof batch. Run each
+through `trace --embed --expect reject`. Generate with `--proofs 2` and trace
+normally to test batch acceptance. Input-mode traces authenticate the setup
+against the digest baked into the newly built guest.
+
+With `--features field-inline`, `check-field-kernels` runs a separate compiled
+guest under the same tracer. Native software folds supply the expected results
+for deterministic full-width values and zero, one, and minus one. It covers
+row counts 1 through 10 and vector lengths 0 through 11, including every
+five-row block tail and four-element tail, product arities 0 through 4, nested
+signed-sum iterators, and zero/nonzero inverses. The Akita build requires the
+Fp128 row kernels to dispatch; the Dory build checks the BN254 arithmetic
+wrappers. CI runs both. The `kernel-tests` guest feature is used only for this
+entry point.

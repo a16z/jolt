@@ -1,7 +1,11 @@
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheme, TrustedBytes};
+use jolt_field::Ring;
 use jolt_inlines_blake2::Blake2b;
+use jolt_poly::{CompressedPoly, UnivariatePoly};
+use jolt_sumcheck::{ClearProof, SumcheckProof};
+use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
@@ -34,6 +38,11 @@ type GuestVerifierPreprocessing = JoltVerifierPreprocessing;
 type GuestProof = JoltProof<AkitaScheme, AkitaVc>;
 #[cfg(feature = "akita")]
 type GuestVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
+
+#[cfg(feature = "akita")]
+type GuestField = AkitaField;
+#[cfg(not(feature = "akita"))]
+type GuestField = jolt_sdk::VerifierField;
 
 /// Guest records are `[u64 length][body][zero padding to 8 bytes]`, so every
 /// body starts 8-byte aligned relative to the stream: raw payloads (the
@@ -105,6 +114,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Write a typed negative fixture from an existing proof stream.
+    Tamper {
+        #[arg(long)]
+        example: String,
+        #[arg(long)]
+        workdir: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, value_enum)]
+        target: TamperTarget,
+    },
+    /// Compare compiled field kernels with native software results under the tracer.
+    #[cfg(feature = "field-inline")]
+    CheckFieldKernels,
+
     /// Write a parseable proof stream with one bit of its first Akita opening proof flipped.
     #[cfg(feature = "akita")]
     TamperOpening {
@@ -865,8 +889,18 @@ enum ExpectedVerification {
     Reject,
 }
 
-#[cfg(feature = "akita")]
-fn tamper_opening(guest: GuestProgram, workdir: &Path, output: &Path) {
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TamperTarget {
+    Sumcheck,
+    Claim,
+    Output,
+    Panic,
+    Empty,
+    #[cfg(feature = "akita")]
+    Opening,
+}
+
+fn tamper_proof(guest: GuestProgram, workdir: &Path, output: &Path, target: TamperTarget) {
     let bytes = load_proof_data(guest, workdir);
     let mut offset = 0;
     let _: GuestVerifierPreprocessing = read_record(&bytes, &mut offset).unwrap();
@@ -874,31 +908,70 @@ fn tamper_opening(guest: GuestProgram, workdir: &Path, output: &Path) {
     for _ in 0..payloads {
         let _ = read_raw(&bytes, &mut offset).unwrap();
     }
+    let count_offset = offset;
     let count: u32 = read_record(&bytes, &mut offset).unwrap();
     assert!(count > 0, "tamper fixture requires a proof");
-    let mut tampered = bytes[..offset].to_vec();
+    let output_count = if target == TamperTarget::Empty { 0 } else { count };
+    let mut tampered = bytes[..count_offset].to_vec();
+    push_record(&mut tampered, &output_count);
     for index in 0..count {
         let mut proof: GuestProof = read_record(&bytes, &mut offset).unwrap();
-        let device: JoltDevice = read_record(&bytes, &mut offset).unwrap();
+        let mut device: JoltDevice = read_record(&bytes, &mut offset).unwrap();
+        if target == TamperTarget::Empty {
+            continue;
+        }
         if index == 0 {
-            // Flip one bit in the middle of the Akita opening proof body, so
-            // the proof still decodes and the guest rejects inside the PCS
-            // verifier rather than at an earlier stage.
-            let config = bincode::config::standard();
-            let mut encoded =
-                bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
-            let middle = encoded.len() / 2;
-            encoded[middle] ^= 1;
-            proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config)
-                .unwrap()
-                .0;
+            match target {
+                TamperTarget::Sumcheck => {
+                    match &mut proof.stages.stage1_sumcheck_proof {
+                        SumcheckProof::Clear(ClearProof::Full(sumcheck)) => {
+                            let round = sumcheck.round_polynomials.first_mut().expect("first round");
+                            let mut coefficients = round.coefficients().to_vec();
+                            *coefficients.first_mut().expect("round coefficient") += GuestField::from_u64(1);
+                            *round = UnivariatePoly::new(coefficients);
+                        }
+                        SumcheckProof::Clear(ClearProof::Compressed(sumcheck)) => {
+                            let round = sumcheck.round_polynomials.first_mut().expect("first round");
+                            let mut coefficients = round.coeffs_except_linear_term().to_vec();
+                            *coefficients.first_mut().expect("round coefficient") += GuestField::from_u64(1);
+                            *round = CompressedPoly::new(coefficients);
+                        }
+                        SumcheckProof::Committed(_) => panic!("tamper requires a clear proof"),
+                    }
+                }
+                TamperTarget::Claim => {
+                    let JoltProofClaims::Clear(claims) = &mut proof.claims else {
+                        panic!("tamper requires clear claims");
+                    };
+                    claims.stage1.outer.outer_remainder.left_instruction_input += GuestField::from_u64(1);
+                }
+                TamperTarget::Output => {
+                    *device.outputs.first_mut().expect("device output byte") ^= 1;
+                }
+                TamperTarget::Panic => device.panic = !device.panic,
+                TamperTarget::Empty => unreachable!(),
+                #[cfg(feature = "akita")]
+                TamperTarget::Opening => {
+                    // AkitaBatchProof encodes a fixed selection followed by a byte body.
+                    // Decode the envelope so the mutation cannot hit a length prefix.
+                    let config = bincode::config::standard();
+                    let encoded = bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
+                    let ((selection, mut body), consumed): (([u8; 32], Vec<u8>), _) =
+                        bincode::serde::decode_from_slice(&encoded, config).unwrap();
+                    assert_eq!(consumed, encoded.len());
+                    let middle = body.len() / 2;
+                    *body.get_mut(middle).expect("opening proof body") ^= 1;
+                    let encoded = bincode::serde::encode_to_vec((selection, body), config).unwrap();
+                    proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config).unwrap().0;
+                }
+            }
         }
         push_record(&mut tampered, &proof);
         push_record(&mut tampered, &device);
     }
     assert_eq!(offset, bytes.len(), "trailing proof stream bytes");
     // A successful typed decode is distinct from the guest's verification result.
-    assert_eq!(check_data_integrity(&tampered).proof_count, count);
+    assert_eq!(check_data_integrity(&tampered).proof_count, output_count);
     std::fs::create_dir(output).expect("fresh tampered proof directory");
     save_proof_data(guest, &tampered, output);
 }
@@ -1027,6 +1100,12 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
+        Some(Commands::Tamper { example, workdir, output, target }) => {
+            let guest = GuestProgram::from_str(example).expect("supported guest example");
+            tamper_proof(guest, workdir, output, *target);
+        }
+        #[cfg(feature = "field-inline")]
+        Some(Commands::CheckFieldKernels) => kernel_tests::run(),
         #[cfg(feature = "akita")]
         Some(Commands::TamperOpening {
             example,
@@ -1034,7 +1113,7 @@ fn main() {
             output,
         }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
-            tamper_opening(guest, workdir, output);
+            tamper_proof(guest, workdir, output, TamperTarget::Opening);
         }
         Some(Commands::Generate {
             example,
@@ -1183,3 +1262,8 @@ mod input_size_tests {
         }
     }
 }
+
+#[cfg(feature = "field-inline")]
+mod kernel_cases;
+#[cfg(feature = "field-inline")]
+mod kernel_tests;
