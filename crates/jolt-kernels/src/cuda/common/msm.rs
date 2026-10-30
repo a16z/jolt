@@ -55,6 +55,11 @@
 //! use batched affine addition.
 //! Device one-hot rows count and scatter base indices with flat atomics or
 //! shared-memory tallies; the host scans the histogram and selects segment classes.
+//! Host planning avoids extra device passes between counting and scattering.
+//! On L4s, device scan/classification lowered planning time without improving
+//! stage-0 or proof medians for SHA-2-chain at 2^24 (one or two GPUs) and 2^26
+//! (two GPUs). Larger synthetic histograms can favor device planning, so
+//! evaluate complete commitment timings rather than scan timings alone.
 //! Fully covered chunks can reconstruct a dominant bucket from the total base sum
 //! minus the other buckets. Chunks containing cold cycles use direct segment sums.
 //!
