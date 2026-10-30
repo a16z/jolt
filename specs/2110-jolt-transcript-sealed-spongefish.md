@@ -140,11 +140,11 @@ Key abstractions:
 - **Protocol proof-of-work sites.** In this PR, no Jolt protocol step calls
   `grind`, `check_grind` or `public_grind`. #2108 adds the sumcheck-round and
   stage-site nonces; the book chapter's *Where Jolt grinds* describes them.
-- **Moving Akita's opening into Jolt's sponge.** Akita's opening still runs
-  its own nested Fiat-Shamir session. That session's tag is extended with one
-  Jolt challenge (`bridged_akita_session` in `crates/jolt-akita/src/adapters.rs`).
-  Running the opening in Jolt's sponge with `GroupBatchOpening` and
-  `check_eof` is #2111.
+- **Moving Akita's opening into Jolt's sponge.** In this PR, Akita's opening
+  runs its own nested Fiat-Shamir session, whose tag is extended with one Jolt
+  challenge. #2111 runs the opening in Jolt's sponge through
+  `GroupBatchOpening` and `check_eof`, so the Akita opening proof is carried
+  in the NARG string.
 - **A protocol Poseidon transcript.** `PoseidonSponge` is kept for symmetry
   tests and absorb-only use. A native-`Fr` Poseidon sponge is #2113.
 - **Wire compatibility with earlier proofs.** Every challenge changes, and
@@ -254,12 +254,12 @@ spongefish::ProverState<H, Shake128>      spongefish::VerifierState<'_, H>
   and writes nothing to the NARG string. A prover message (`send` and
   `prover_message`) is absorbed the same way and written to the NARG string.
   `JoltProof` is a serialized structure: every field the verifier reads is
-  absorbed as a public message, so `proof.narg` is empty for the current
-  protocol, and the verifier still requires it to be read to the end.
+  absorbed as a public message. `proof.narg` is empty for Dory proofs and,
+  after #2111, holds the Akita opening proof. The verifier requires it to be
+  read to the end.
 - **Challenges.** `draw_challenges` squeezes `challenge_bytes(len)` bytes and
-  decodes them with the field's codec. Requests
-  over `MAX_CHALLENGE_BYTES` (16 MiB) are rejected before any sponge
-  operation.
+  decodes them with the field's codec. Requests over `MAX_CHALLENGE_BYTES`
+  (16 MiB) are rejected before any sponge operation.
 - **Proof of work.** `SpongePow` (`src/pow.rs`) owns the layout.
   `verifier_message_oracle` clones the public sponge state into an owned
   closure; it holds no private coins and no proof bytes. `grind` scans nonces

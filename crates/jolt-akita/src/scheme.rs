@@ -2,15 +2,17 @@ use crate::AkitaScheduleArtifacts;
 use akita_params::PrecommittedGroupProfiles;
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
+use akita_transcript::TranscriptSponge;
+use akita_types::PendingEof;
 use jolt_crypto::Commitment;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
-    BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupOpeningClaim,
-    GroupOpeningWithHint, OpeningsError, TaggedGroupOpeningClaim, TransparentObjectSetup,
-    VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
+    BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupBatchOpening,
+    GroupOpeningClaim, GroupOpeningWithHint, OpeningsError, TaggedGroupOpeningClaim,
+    TransparentObjectSetup, VerifierOpeningClaim, ZkBatchOpeningScheme, ZkOpeningScheme,
 };
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
-use jolt_transcript::FieldTranscript;
+use jolt_transcript::{FieldTranscript, ProverState, VerifierState};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -306,7 +308,7 @@ impl AkitaScheme {
             let (auxiliary_group, _) = hint.backend.as_ref().ok_or_else(|| {
                 invalid_batch("Akita auxiliary group is missing backend opening data")
             })?;
-            profiles.push(auxiliary_group.profile);
+            profiles.push(*auxiliary_group.profile());
         }
         PrecommittedGroupProfiles::from_profiles(profiles).map_err(akita_error)
     }
@@ -628,13 +630,19 @@ impl CommitmentScheme for AkitaScheme {
             },
         )
     }
+}
+
+/// Jolt's trace batch, run inside Jolt's own sponge.
+impl GroupBatchOpening for AkitaScheme {
+    type Sponge = TranscriptSponge;
+    type PendingEof = PendingEof;
 
     fn prove_batch(
         setup: &Self::ProverSetup,
         auxiliary_groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         final_group: GroupOpeningClaim<Self::Field, Self::Output>,
         final_hint: Self::OpeningHint,
-        transcript: &mut impl FieldTranscript<Self::Field>,
+        transcript: &mut ProverState<Self::Sponge>,
     ) -> Result<Self::Proof, OpeningsError> {
         AkitaNativeBatching::prove_trace_batch(
             setup,
@@ -650,8 +658,8 @@ impl CommitmentScheme for AkitaScheme {
         auxiliary_groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
         final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         proof: &Self::Proof,
-        transcript: &mut impl FieldTranscript<Self::Field>,
-    ) -> Result<(), OpeningsError> {
+        transcript: &mut VerifierState<'_, Self::Sponge>,
+    ) -> Result<PendingEof, OpeningsError> {
         AkitaNativeBatching::verify_trace_batch(
             setup,
             auxiliary_groups,
@@ -659,6 +667,16 @@ impl CommitmentScheme for AkitaScheme {
             proof,
             transcript,
         )
+    }
+
+    fn check_eof(
+        pending: PendingEof,
+        transcript: VerifierState<'_, Self::Sponge>,
+    ) -> Result<(), OpeningsError> {
+        pending
+            .check_eof(transcript)
+            .map(|_| ())
+            .map_err(|_| OpeningsError::VerificationFailed)
     }
 }
 
@@ -817,10 +835,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests reject impossible fixture variants")]
 
     use super::*;
-    use crate::adapters::AkitaVerifierScheduleArtifacts;
-    use crate::adapters::{
-        append_verifier_setup, AkitaBackendFlavor, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
-    };
+    use crate::adapters::{AkitaVerifierScheduleArtifacts, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
     use crate::configs::JoltDenseBounded;
     use crate::one_hot_family::OneHotFamily;
     use crate::AkitaOneHotScheduleArtifact;
@@ -849,69 +864,6 @@ mod tests {
             AkitaScheme::commit_full_width_object(&bounded, &polynomial, [7; 32]).unwrap();
         assert_eq!(commitment, hint.commitment);
         assert_eq!(commitment.num_vars, polynomial.num_vars());
-    }
-
-    #[test]
-    fn setup_key_transcript_binds_backend_shape() {
-        let artifacts =
-            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
-        let setup = AkitaVerifierSetup {
-            max_num_vars: 4,
-            max_num_polys_per_commitment_group: 1,
-            max_total_batch_polys: 1,
-            default_layout_digest: [7; 32],
-            one_hot_k: AKITA_ONE_HOT_K256,
-            schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
-                dense_profile: artifacts.dense_profile(),
-                profile: AkitaChunkProfile::default(),
-                dense: artifacts
-                    .dense_catalog()
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
-                one_hot: artifacts
-                    .one_hot_catalog(AKITA_ONE_HOT_K256)
-                    .unwrap()
-                    .to_artifact_bytes()
-                    .unwrap(),
-            }
-            .into(),
-            backend_cache: Default::default(),
-        };
-        // The next squeeze after binding `setup` under `flavor`: equal for
-        // two bindings exactly when they absorbed the same bytes.
-        let bound = |setup: &AkitaVerifierSetup, flavor| {
-            let mut transcript = prover_transcript::<Blake2b512>(
-                &jolt_transcript::protocol_tag(b"akita-setup-key-test"),
-                b"",
-            );
-            append_verifier_setup(&mut transcript, setup, flavor).unwrap();
-            transcript.verifier_message::<[u8; 32]>()
-        };
-        let baseline = bound(&setup, AkitaBackendFlavor::Dense);
-        assert_ne!(
-            baseline,
-            prover_transcript::<Blake2b512>(
-                &jolt_transcript::protocol_tag(b"akita-setup-key-test"),
-                b""
-            )
-            .verifier_message::<[u8; 32]>()
-        );
-        assert_eq!(baseline, bound(&setup, AkitaBackendFlavor::Dense));
-        assert_ne!(baseline, bound(&setup, AkitaBackendFlavor::OneHot));
-
-        let mut changed_shape = setup.clone();
-        changed_shape.max_num_vars = 5;
-        assert_ne!(baseline, bound(&changed_shape, AkitaBackendFlavor::Dense));
-
-        let mut changed_digest = setup;
-        changed_digest.default_layout_digest = [8; 32];
-        let digest = bound(&changed_digest, AkitaBackendFlavor::Dense);
-        assert_ne!(baseline, digest);
-
-        let mut changed_k = changed_digest;
-        changed_k.one_hot_k = AKITA_ONE_HOT_K16;
-        assert_ne!(digest, bound(&changed_k, AkitaBackendFlavor::Dense));
     }
 
     #[test]

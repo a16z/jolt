@@ -31,12 +31,11 @@ mod clear {
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
     use jolt_field::Ring;
-    use jolt_openings::{CommitmentScheme, GroupCommitmentMetadata};
+    use jolt_openings::GroupCommitmentMetadata;
     use jolt_prover::JoltBackend;
     use jolt_prover::ProverConfig;
     use jolt_verifier::proof::JoltProofClaims;
     use jolt_witness::field_inline::FieldInlineWitnessOracle;
-    use serde_json::Value;
 
     use crate::support::field_inline::akita::Proof;
     use crate::support::field_inline::{akita, field_ops, muldiv};
@@ -218,20 +217,13 @@ mod clear {
                 }),
             ),
             (
-                "batched opening proof mutation",
+                "argument-string byte flip",
                 Box::new(|proof| {
-                    let mut value = serde_json::to_value(&proof.joint_opening_proof)
-                        .expect("serialize batch proof");
-                    let bytes = value
-                        .get_mut("backend_proof")
-                        .and_then(Value::as_array_mut)
-                        .expect("batch proof carries the headerless backend proof body");
-                    let mid = bytes.len() / 2;
-                    let byte = bytes.get_mut(mid).expect("nonempty backend proof");
-                    let flipped = byte.as_u64().expect("byte value") ^ 0x01;
-                    *byte = Value::from(flipped);
-                    proof.joint_opening_proof =
-                        serde_json::from_value(value).expect("deserialize mutated batch proof");
+                    // The embedded Akita opening writes its messages into
+                    // Jolt's argument string.
+                    let mid = proof.narg.len() / 2;
+                    let byte = proof.narg.get_mut(mid).expect("nonempty argument string");
+                    *byte ^= 0x01;
                 }),
             ),
             (
@@ -258,8 +250,8 @@ mod clear {
     #[test]
     fn akita_field_inline_duplicate_inc_group_is_rejected() {
         use jolt_claims::protocols::field_inline::lattice::field_inc_group_role;
-        use jolt_openings::{GroupOpeningClaim, TaggedGroupOpeningClaim};
-        use jolt_transcript::{prover_transcript, Keccak};
+        use jolt_openings::{GroupBatchOpening, GroupOpeningClaim, TaggedGroupOpeningClaim};
+        use jolt_transcript::{verifier_transcript, Keccak};
 
         let (output, ()) = akita::prove(&field_ops(), JoltBackend::optimized(), |_, _, _| ());
         let commitment = output
@@ -280,11 +272,12 @@ mod clear {
             ],
             vec![AkitaField::from_u64(0)],
         );
-        let mut transcript = prover_transcript::<Keccak>(
+        let mut transcript = verifier_transcript::<Keccak>(
             &jolt_transcript::protocol_tag(b"spurious-field_inline-group"),
             b"",
+            &[],
         );
-        let error = <AkitaScheme as CommitmentScheme>::verify_batch(
+        let error = <AkitaScheme as GroupBatchOpening>::verify_batch(
             &output.verifier_preprocessing.pcs_setup,
             &[field_claim.clone(), field_claim],
             &main,

@@ -38,11 +38,14 @@ in the last owner. When the schedule reduces the chunk count, it merges owners.
 This behavior is provided by
 [Akita #175](https://github.com/LayerZero-Labs/akita/pull/175).
 
-The canonical layout checks column order and dimensions. Commitments, their
-polynomial counts, group points, and ordered evaluations are bound to the
-transcript before Akita derives batching challenges. The streaming witness
-uses a `u64` mask to distinguish selected address zero from an empty row, so
-the layout rejects more than 64 trace columns.
+The canonical layout checks column order and dimensions. Akita runs inside
+Jolt's Fiat-Shamir transcript: its messages go into Jolt's proof bytes and its
+challenges come from Jolt's sponge. At stage 0, Jolt absorbs each commitment's
+metadata and its committed rows. Before deriving batching challenges, Akita
+absorbs an instance descriptor, each group's opening point, and the ordered
+evaluations. The streaming witness uses a `u64` mask to distinguish selected
+address zero from an empty row, so the layout rejects more than 64 trace
+columns.
 
 At stage 8, the trace group joins the advice and committed-program groups in
 one native Akita opening proof. Each group can have its own evaluation point
@@ -61,7 +64,7 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
-The workspace pins Akita to `f594bfc0d812a9a1fba62f15b51885bd19e83a3d`.
+The workspace pins Akita to `9f8ad8a91b7118e7bac6e97cd6f727abf0de1c0b`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
 and uses the CPU backend for every fold. Verifier preprocessing streams
 setup-prefix commitments from the public seed and materializes only the
@@ -72,7 +75,7 @@ Akita's planner admits a Module-SIS instance only when its ADPS16 quantum
 Core-SVP estimate is at least 169 bits, the cost of the ML-DSA-65 forgery
 attack (NIST security category 3). Fiat-Shamir grinding and the challenge
 spaces separately target 128 bits. Akita's
-[policy spec](https://github.com/LayerZero-Labs/akita/blob/f594bfc0d812a9a1fba62f15b51885bd19e83a3d/specs/sis-nist-level3-policy.md)
+[policy spec](https://github.com/LayerZero-Labs/akita/blob/9f8ad8a91b7118e7bac6e97cd6f727abf0de1c0b/specs/sis-nist-level3-policy.md)
 states both targets and their evidence.
 
 `ProverConfig::derive_from_dimensions` selects the single-chunk geometry
@@ -89,9 +92,9 @@ named `jolt-fp128-onehot-k<K>-w<chunks>r<levels>.aks`; an unsuffixed filename de
 and distribute their own production coverage.
 
 The same upstream verifier consumes the selected catalog and geometry embedded
-in public verifier preprocessing. Every one-hot setup binds both
-`akita_chunk_profile` (chunks) and `akita_chunked_levels` (levels) into the
-transcript. Verification does not read source catalog files.
+in public verifier preprocessing. Akita's instance descriptor binds the selected
+schedule, so a one-hot opening binds both its chunk count and its chunked
+level count. Verification does not read source catalog files.
 
 Both prover and verifier must be built for the same protocol. The `akita` feature selects native grouped commitments and little-endian scalar challenges. A compiled verifier accepts only its selected protocol configuration and rejects a mismatching proof. Dory and Akita proofs therefore require matching preprocessing and verifier builds.
 
