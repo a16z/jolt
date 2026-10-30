@@ -5,6 +5,11 @@
 //! checks witness identity, device, window base, and covered length before reuse.
 //! A window includes its successor row when one exists, so next-row flags agree
 //! at device boundaries; consumers process only the window's logical cycles.
+//!
+//! Keeping the cache through the joint opening avoids deallocation work on that
+//! stage's critical path. For SHA-2-chain at 2^24 on one and two L4s, retiring it
+//! after building the opening views slowed stage 8 even with background
+//! destruction, without reducing the peak live allocation reached earlier.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
