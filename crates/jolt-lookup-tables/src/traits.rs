@@ -408,15 +408,16 @@ mod tests {
             ///
             /// A `Load`/`Store` row may therefore look up nothing (output 0) or an
             /// `AddressOffset` table. A table-free load must carry its `RdWriteValue`
-            /// as a bytecode-selected right instruction input; row 10 copies that to
-            /// the interleaved right lookup operand, whose read-RAF decomposition
-            /// proves it is a `u64`. An `AddressOffset` row's lookup index must be
-            /// exactly `Rs1Value + Imm`: `AddOperands` with the `rs1` and immediate
-            /// operands only. It must also not write or assert its lookup output,
-            /// which is an offset rather than a result. An `AddressOffset` load
-            /// therefore leaves its RAM word unchecked; its sequence must read the
-            /// loaded doubleword only as an interleaved operand (jolt-program's
-            /// `LaneWindow`), which this per-row registry cannot check.
+            /// as its only bytecode-selected right instruction input; row 10 copies
+            /// that to the interleaved right lookup operand, whose read-RAF
+            /// decomposition proves it is a `u64` (an extra `Rs2Value` or `Imm` term
+            /// would move the bound onto the sum). An `AddressOffset` row's lookup
+            /// index must be exactly `Rs1Value + Imm`: `AddOperands` with the `rs1`
+            /// and immediate operands only. It must also not write or assert its
+            /// lookup output, which is an offset rather than a result. An
+            /// `AddressOffset` load therefore leaves its RAM word unchecked; its
+            /// sequence must read the loaded doubleword only as an interleaved operand
+            /// (jolt-program's `LaneWindow`), which this per-row registry cannot check.
             #[test]
             fn memory_rows_look_up_only_address_offsets() {
                 let mut floor_rows = 0;
@@ -455,8 +456,10 @@ mod tests {
                                 circuit[CircuitFlags::Load]
                                     && !circuit[CircuitFlags::Store]
                                     && table.is_none()
-                                    && circuit.is_interleaved_operands(),
-                                "{}: RightOperandIsRdWriteValue must select a table-free interleaved load row",
+                                    && circuit.is_interleaved_operands()
+                                    && !operands[InstructionFlags::RightOperandIsRs2Value]
+                                    && !operands[InstructionFlags::RightOperandIsImm],
+                                "{}: RightOperandIsRdWriteValue must select a table-free interleaved load row whose only right operand is RdWriteValue",
                                 $canonical_name,
                             );
                         }
