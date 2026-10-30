@@ -456,7 +456,7 @@ mod guest {
     pub fn signed_sum<'a, const N: usize>(
         terms: impl IntoIterator<Item = (&'a [u64; N], bool)>,
     ) -> [u64; N] {
-        debug_assert!(accumulators_free());
+        assert!(accumulators_free(), "field accumulators are already lent");
         ACC_LENT.store(true, Ordering::Relaxed);
         emit::acc_zero();
         for (term, negative) in terms {
