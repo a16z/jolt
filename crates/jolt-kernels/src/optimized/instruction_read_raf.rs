@@ -636,6 +636,9 @@ const SCAN_CLASSES: usize = 2 * (LookupTableKind::<RISCV_XLEN>::COUNT + 1);
 /// Cycles per scan block: a block's rows and weights stay cache-resident
 /// while its class runs gather from them.
 const SCAN_BLOCK: usize = 1 << 10;
+const COALESCE_SAMPLE_BLOCKS: usize = 32;
+// Require at least a quarter repeated rows to amortize building the map.
+const COALESCE_MIN_DUPLICATE_PERCENT: usize = 25;
 
 const _: () = assert!(SCAN_BLOCK <= u16::MAX as usize, "block offsets are u16");
 
@@ -677,7 +680,7 @@ impl ScanBlock {
             return false;
         }
         let blocks = rows.len().div_ceil(SCAN_BLOCK);
-        let samples = blocks.min(32);
+        let samples = blocks.min(COALESCE_SAMPLE_BLOCKS);
         let mut seen = HashSet::with_capacity(SCAN_BLOCK);
         let mut total = 0;
         let mut distinct = 0;
@@ -689,7 +692,7 @@ impl ScanBlock {
                 distinct += usize::from(seen.insert((row.lookup_index(), Self::class(row))));
             }
         }
-        4 * distinct <= 3 * total
+        100 * (total - distinct) >= COALESCE_MIN_DUPLICATE_PERCENT * total
     }
 
     /// Address phases are linear in the cycle weights. Equal lookup keys
@@ -991,8 +994,8 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     r_reduction: Vec<F>,
     rows: Arc<ConstantSuffix<InstructionCycleRow>>,
     blocks: Vec<ScanBlock>,
-    /// The final weight aggregates the constant row suffix. Every address
-    /// phase is linear in these weights and condenses identical rows equally.
+    /// The final weight aggregates the constant row suffix. After coalescing,
+    /// only offsets retained in `blocks` are live; merged-away weights are stale.
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -1767,7 +1770,7 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel, ScanBlock};
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
@@ -2006,35 +2009,43 @@ mod tests {
         );
     }
 
+    fn check_repeated_lookup_rows<F: JoltField>(log_t: usize, prefix: usize, constant: Option<F>) {
+        let dimensions =
+            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+        let mut pattern = fixture_rows(5, 97531);
+        pattern[1].lookup_index = pattern[0].lookup_index;
+        pattern[2].lookup_index = pattern[0].lookup_index;
+        pattern[2].table_index = pattern[0].table_index;
+        pattern[2].raf_flag = InstructionRafFlag(!pattern[0].raf_flag.0);
+        let rows: Vec<_> = (0..1 << log_t)
+            .map(|i| pattern[if i < prefix { i % pattern.len() } else { 0 }])
+            .collect();
+        assert!(ScanBlock::should_coalesce(&pack(&rows)));
+        let point: Vec<F> = (0..log_t)
+            .map(|i| constant.unwrap_or_else(|| challenge(i)))
+            .collect();
+        assert_parity_rows(dimensions, &point, rows);
+    }
+
     #[test]
     fn repeated_lookup_rows_match_reference() {
         fn check<F: JoltField>() {
-            let log_t = 11;
-            let dimensions = InstructionReadRafDimensions::new(
-                log_t,
-                2 * RISCV_XLEN,
-                NonZeroUsize::new(8).unwrap(),
-            );
-            let mut pattern = fixture_rows(5, 97531);
-            pattern[1].lookup_index = pattern[0].lookup_index;
-            pattern[2].lookup_index = pattern[0].lookup_index;
-            pattern[2].table_index = pattern[0].table_index;
-            pattern[2].raf_flag = InstructionRafFlag(!pattern[0].raf_flag.0);
-            for prefix in [1027, 1 << log_t] {
-                let rows: Vec<_> = (0..1 << log_t)
-                    .map(|i| pattern[if i < prefix { i % pattern.len() } else { 0 }])
-                    .collect();
+            for prefix in [1027, 1 << 11] {
                 for constant in [None, Some(F::zero()), Some(F::one())] {
-                    let point: Vec<F> = (0..log_t)
-                        .map(|i| constant.unwrap_or_else(|| challenge(i)))
-                        .collect();
-                    assert_parity_rows(dimensions, &point, rows.clone());
+                    check_repeated_lookup_rows(11, prefix, constant);
                 }
             }
         }
         check::<Fr>();
         #[cfg(feature = "akita")]
         check::<Prime128OffsetA7F7>();
+    }
+
+    #[test]
+    fn repeated_lookup_rows_match_reference_across_scan_tasks() {
+        check_repeated_lookup_rows::<Fr>(14, 1 << 14, None);
+        #[cfg(feature = "akita")]
+        check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, 1 << 14, None);
     }
 
     #[test]
