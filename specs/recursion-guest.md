@@ -16,7 +16,11 @@ proof of it is generated.
 The guest distinguishes two kinds of input.
 
 - **Proof data** (the inner proof and its I/O device) is untrusted and goes
-  through the ordinary verifier unchanged.
+  through fallible record decoding and the ordinary verifier. Malformed framing,
+  noncanonical fields, and decoding failures return `0`. Each encoded record is
+  limited to 16 MiB, with a conservative 16 MiB aggregate collection-storage
+  budget during decoding; excess lengths reject before collection allocation.
+  Raw setup bodies are borrowed within the checked stream bounds.
 - **Setup data** is trusted. It is the verifier preprocessing, the Akita
   verifier key with its public matrix, a catalog view of the selected schedule
   row, and that row's terminal-matrix NTT cache. The guest takes the matrix as

@@ -1183,3 +1183,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "../guest/src/records.rs"]
+mod guest_records;
