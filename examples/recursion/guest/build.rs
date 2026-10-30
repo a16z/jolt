@@ -26,6 +26,7 @@ pub static SETUP_DIGEST: Option<[u8; 64]> = None;"#;
         let fallback_content = r#"macro_rules! provable_with_config {
     ($item: item) => {
         #[jolt::provable(
+            input_error = 0,
             max_input_size = 4096,
             max_output_size = 4096,
             heap_size = 33554432,

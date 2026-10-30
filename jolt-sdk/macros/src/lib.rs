@@ -805,23 +805,53 @@ impl MacroBuilder {
         };
 
         let pub_args_fetch = self.pub_func_args.iter().map(|(name, ty)| {
-            quote! {
-                let (#name, __jolt_input_slice) =
-                    jolt::postcard::take_from_bytes::<#ty>(__jolt_input_slice).unwrap();
+            if let Some(input_error) = &attributes.input_error {
+                quote! {
+                    let (#name, __jolt_input_slice) =
+                        match jolt::postcard::take_from_bytes::<#ty>(__jolt_input_slice) {
+                            Ok(value) => value,
+                            Err(_) => break '__jolt_decode { #input_error },
+                        };
+                }
+            } else {
+                quote! {
+                    let (#name, __jolt_input_slice) =
+                        jolt::postcard::take_from_bytes::<#ty>(__jolt_input_slice).unwrap();
+                }
             }
         });
 
         let untrusted_advice_args_fetch = self.untrusted_func_args.iter().map(|(name, ty)| {
-            quote! {
-                let (#name, __jolt_untrusted_advice_slice) =
-                    jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice).unwrap();
+            if let Some(input_error) = &attributes.input_error {
+                quote! {
+                    let (#name, __jolt_untrusted_advice_slice) =
+                        match jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice) {
+                            Ok(value) => value,
+                            Err(_) => break '__jolt_decode { #input_error },
+                        };
+                }
+            } else {
+                quote! {
+                    let (#name, __jolt_untrusted_advice_slice) =
+                        jolt::postcard::take_from_bytes::<#ty>(__jolt_untrusted_advice_slice).unwrap();
+                }
             }
         });
 
         let trusted_advice_args_fetch = self.trusted_func_args.iter().map(|(name, ty)| {
-            quote! {
-                let (#name, __jolt_trusted_advice_slice) =
-                    jolt::postcard::take_from_bytes::<#ty>(__jolt_trusted_advice_slice).unwrap();
+            if let Some(input_error) = &attributes.input_error {
+                quote! {
+                    let (#name, __jolt_trusted_advice_slice) =
+                        match jolt::postcard::take_from_bytes::<#ty>(__jolt_trusted_advice_slice) {
+                            Ok(value) => value,
+                            Err(_) => break '__jolt_decode { #input_error },
+                        };
+                }
+            } else {
+                quote! {
+                    let (#name, __jolt_trusted_advice_slice) =
+                        jolt::postcard::take_from_bytes::<#ty>(__jolt_trusted_advice_slice).unwrap();
+                }
             }
         });
 
@@ -840,6 +870,24 @@ impl MacroBuilder {
             #(#attrs)*
             fn #inner_fn_name(#inputs) #output #body
             let __jolt_to_return = #inner_fn_name(#(#all_names),*);
+        };
+
+        let decode_and_call = quote! {
+            #(#pub_args_fetch;)*
+            #(#untrusted_advice_args_fetch;)*
+            #(#trusted_advice_args_fetch;)*
+            #check_input_len
+            #block
+        };
+        let decode_and_call = if attributes.input_error.is_some() {
+            quote! {
+                let __jolt_to_return = '__jolt_decode: {
+                    #decode_and_call
+                    __jolt_to_return
+                };
+            }
+        } else {
+            decode_and_call
         };
 
         let handle_return = match &self.func.sig.output {
@@ -873,11 +921,7 @@ impl MacroBuilder {
                 #get_input_slice
                 #get_untrusted_advice_slice
                 #get_trusted_advice_slice
-                #(#pub_args_fetch;)*
-                #(#untrusted_advice_args_fetch;)*
-                #(#trusted_advice_args_fetch;)*
-                #check_input_len
-                #block
+                #decode_and_call
                 #handle_return
                 unsafe {
                     ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);

@@ -53,6 +53,13 @@ recursion tamper-opening --example fibonacci --workdir proofs --output tampered
 recursion trace --embed --expect reject --example fibonacci --workdir tampered
 ```
 
+`check-input-framing --embed --example fibonacci --workdir proofs` builds one
+verifier image, checks the honest input, then requires verdict `0` without a
+panic for a ten-byte `0xff` length prefix and a length exceeding the input
+region. Recursion opts into `#[jolt::provable(input_error = 0)]`; decoding errors
+skip the verifier body and serialize that return value. Other guests retain
+the default decoding behavior.
+
 These commands test guest verification, not an Akita outer recursive proof.
 
 `tamper --target sumcheck|claim|output|panic|empty` writes a fixture with one

@@ -1092,7 +1092,7 @@ jobs:
           work="$RUNNER_TEMP/recursion"
           "$recursion" check-field-kernels
           "$recursion" generate --example fibonacci --workdir "$work/proofs"
-          "$recursion" trace --embed --example fibonacci --workdir "$work/proofs"
+          "$recursion" check-input-framing --embed --example fibonacci --workdir "$work/proofs"
           "$recursion" trace --example fibonacci --workdir "$work/proofs"
           for target in sumcheck claim output panic empty; do
             "$recursion" tamper --target "$target" --example fibonacci --workdir "$work/proofs" --output "$work/$target"

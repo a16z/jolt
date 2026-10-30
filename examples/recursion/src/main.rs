@@ -125,6 +125,15 @@ enum Commands {
         #[arg(long, value_enum)]
         target: TamperTarget,
     },
+    /// Check malformed transport inputs against one compiled verifier image.
+    CheckInputFraming {
+        #[arg(long)]
+        example: String,
+        #[arg(long)]
+        workdir: PathBuf,
+        #[arg(long)]
+        embed: bool,
+    },
     /// Compare compiled field kernels with native software results under the tracer.
     #[cfg(feature = "field-inline")]
     CheckFieldKernels,
@@ -197,6 +206,7 @@ enum RunConfig {
     Prove,
     Trace(ExpectedVerification),
     TraceToFile(ExpectedVerification),
+    CheckInputFraming,
 }
 
 impl GuestProgram {
@@ -289,6 +299,7 @@ fn generate_provable_macro(
         r#"macro_rules! provable_with_config {{
     ($item: item) => {{
         #[jolt::provable(
+            input_error = 0,
             max_input_size = {},
             max_output_size = {},
             max_untrusted_advice_size = {},
@@ -988,6 +999,20 @@ fn run_recursion_proof(
     let mut program = configured_recursion_program(memory_config);
     program.build(target_dir);
     match run_config {
+        RunConfig::CheckInputFraming => {
+            // Build once: malformed inputs must not change the image or its capacity.
+            let oversized = postcard::to_stdvec(&memory_config.max_input_size).unwrap();
+            for (name, input, expected) in [
+                ("honest", input_bytes, 1),
+                ("overflowing length", vec![0xff; 10], 0),
+                ("oversize length", oversized, 0),
+            ] {
+                let (rows, device) = program.execute_with_output(&input, &[], &[]);
+                assert!(!device.panic, "{name}: recursion verifier guest panicked");
+                assert_eq!(decode_verifier_output(&device.outputs), expected, "{name}");
+                info!("  {name}: verdict {expected}, trace length {rows}");
+            }
+        }
         RunConfig::Trace(expected) | RunConfig::TraceToFile(expected) => {
             let io_device = if matches!(run_config, RunConfig::Trace(_)) {
                 let (rows, device) = program.execute_with_output(&input_bytes, &[], &[]);
@@ -1100,6 +1125,16 @@ fn main() {
     let cli = Cli::parse();
 
     match &cli.command {
+        Some(Commands::CheckInputFraming { example, workdir, embed }) => {
+            let guest = GuestProgram::from_str(example).expect("supported guest example");
+            verify_proofs(
+                guest,
+                *embed,
+                workdir,
+                &get_guest_src_dir(),
+                RunConfig::CheckInputFraming,
+            );
+        }
         Some(Commands::Tamper { example, workdir, output, target }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
             tamper_proof(guest, workdir, output, *target);
