@@ -12,7 +12,8 @@ fn main() {
     let embedded_bytes_path = Path::new("src/embedded_bytes.rs");
 
     if !embedded_bytes_path.exists() {
-        let fallback_content = r#"pub static EMBEDDED_BYTES: &[u8] = &[];"#;
+        let fallback_content = r#"pub static EMBEDDED_BYTES: &[u8] = &[];
+pub static SETUP_DIGEST: Option<[u8; 64]> = None;"#;
         fs::write(embedded_bytes_path, fallback_content).unwrap();
         println!("cargo:warning=Created fallback embedded_bytes.rs with empty bytes");
     } else {
