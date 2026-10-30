@@ -39,7 +39,7 @@ weekly-seconds = 2700
 
 [dependencies]
 libfuzzer-sys = "0.4"
-dory = { package = "dory-pcs", version = "0.4.0" }
+dory = { package = "dory-pcs", git = "https://github.com/a16z/dory", rev = "a3f9a700f20432f770fa6a07504af0f53cd674a8" }
 jolt-dory = { path = ".." }
 jolt-field = { path = "../../jolt-field" }
 jolt-openings = { path = "../../jolt-openings" }
