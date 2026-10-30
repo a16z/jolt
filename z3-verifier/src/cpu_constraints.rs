@@ -213,6 +213,7 @@ impl JoltState {
         }
     }
 
+    /// Hand copy of jolt-claims' `InputVirtualization` relation; keep it in sync.
     fn add_input_constraints(&self, solver: &mut Solver) {
         *solver += (&self.instruction_flags[InstructionFlags::LeftOperandIsRs1Value as usize]
             * &self.rs1_value
@@ -221,7 +222,9 @@ impl JoltState {
 
         *solver += (&self.instruction_flags[InstructionFlags::RightOperandIsRs2Value as usize]
             * &self.rs2_value
-            + &self.instruction_flags[InstructionFlags::RightOperandIsImm as usize] * &self.imm)
+            + &self.instruction_flags[InstructionFlags::RightOperandIsImm as usize] * &self.imm
+            + &self.instruction_flags[InstructionFlags::RightOperandIsRdWriteValue as usize]
+                * &self.rd_write_value)
             .eq(&self.right_input);
     }
 
@@ -290,23 +293,31 @@ impl JoltState {
 
         *solver += self.imm.eq(&other.imm);
 
+        // Only operands are matched: the instruction inputs follow from them through
+        // `add_input_constraints`, and matching those too would assume a direct load's
+        // result, which is its right input.
         *solver += self.rs1_value.eq(&other.rs1_value);
         *solver += self.rs2_value.eq(&other.rs2_value);
-
-        *solver += self.left_input.eq(&other.left_input);
-        *solver += self.right_input.eq(&other.right_input);
 
         *solver += self.pc.eq(&other.pc);
         *solver += self.unexpanded_pc.eq(&other.unexpanded_pc);
         *solver += self.next_is_noop.eq(&other.next_is_noop);
 
-        // for now we don't emulate the lookup table, just use addition arbitrarily for everything
-        *solver += self
-            .lookup_output
-            .eq(&self.left_lookup + &self.right_lookup);
-        *solver += other
-            .lookup_output
-            .eq(&other.left_lookup + &other.right_lookup);
+        // Direct loads look up no table (pinned by jolt-lookup-tables' registry test), so
+        // instruction read-RAF forces their LookupOutput to 0. The addition stand-in would
+        // move R1CS constraint 0's RamAddress by the loaded word.
+        if instruction_flags.get(InstructionFlags::RightOperandIsRdWriteValue) {
+            *solver += self.lookup_output.eq(Int::from(0));
+            *solver += other.lookup_output.eq(Int::from(0));
+        } else {
+            // for now we don't emulate the other lookup tables, just use addition arbitrarily
+            *solver += self
+                .lookup_output
+                .eq(&self.left_lookup + &self.right_lookup);
+            *solver += other
+                .lookup_output
+                .eq(&other.left_lookup + &other.right_lookup);
+        }
 
         if let Instruction::VirtualAdvice(instruction) = instr {
             let zero = Int::from(0);
