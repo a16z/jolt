@@ -6,9 +6,9 @@
 //! then the prefix challenges fold the native values into three suffix columns
 //! without a full field-valued copy of each register column.
 //!
-//! CUDA performs the witness folds over aligned resident windows and assembles
-//! the reduced tables on GPU 0. The suffix handoff scans each column separately;
-//! optimized folds all three in one scan. Only one- or two-cycle domains
+//! The suffix handoff likewise shares each weight across the three native
+//! columns. CUDA folds aligned resident windows and assembles the reduced
+//! tables on GPU 0. Only one- or two-cycle domains
 //! (`log_t < 2`) use the reference kernel; optimized rejects the one-cycle case.
 
 #[cfg(feature = "allocative")]
@@ -32,9 +32,11 @@ use std::sync::Arc;
 
 use jolt_witness::backend::cuda::{DeviceTrace, EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2, EXTRA_WORDS};
 
-use crate::cuda::common::context::context_for;
+use crate::cuda::common::context::{context_for, CudaKernelContext};
+use crate::cuda::common::device::DeviceFrVec;
 use crate::cuda::common::devices::{witness_windows, CycleWindow};
-use crate::cuda::common::half_fold::{NarrowColumn, NarrowKind};
+use crate::cuda::common::error::CudaError;
+use crate::cuda::common::half_fold::{u64_suffix_folds, NarrowColumn, NarrowKind};
 use crate::cuda::common::prefix_suffix::{NarrowColumns, PrefixSuffixWindow};
 use crate::cuda::witness::session_window_residency;
 
@@ -124,6 +126,18 @@ struct ExtraWordColumns {
     entries: usize,
 }
 
+impl ExtraWordColumns {
+    fn columns(&self) -> [NarrowColumn<'_>; COLUMNS] {
+        [EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2].map(|offset| NarrowColumn {
+            words: self.trace.extras(),
+            kind: NarrowKind::U64,
+            len: self.entries,
+            stride: EXTRA_WORDS,
+            offset,
+        })
+    }
+}
+
 impl NarrowColumns for ExtraWordColumns {
     fn count(&self) -> usize {
         COLUMNS
@@ -134,14 +148,15 @@ impl NarrowColumns for ExtraWordColumns {
     }
 
     fn column(&self, index: usize) -> Option<NarrowColumn<'_>> {
-        let word = *[EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2].get(index)?;
-        Some(NarrowColumn {
-            words: self.trace.extras(),
-            kind: NarrowKind::U64,
-            len: self.entries,
-            stride: EXTRA_WORDS,
-            offset: word,
-        })
+        self.columns().get(index).copied()
+    }
+
+    fn fused_suffix_folds(
+        &self,
+        context: &CudaKernelContext,
+        weights: &DeviceFrVec,
+    ) -> Result<Option<Vec<DeviceFrVec>>, CudaError> {
+        u64_suffix_folds(context, self.columns(), weights).map(Some)
     }
 }
 impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend {

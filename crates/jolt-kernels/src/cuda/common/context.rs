@@ -207,6 +207,7 @@ pub struct CudaKernelContext {
     hf_combined_pairs: CudaFunction,
     hf_combined_u64: CudaFunction,
     hf_row_fold: CudaFunction,
+    hf_u64_suffix_folds: CudaFunction,
     hf_bind_low_to_high: CudaFunction,
     sopg_round: CudaFunction,
     ii_flag_words: CudaFunction,
@@ -427,6 +428,7 @@ impl CudaKernelContext {
             hf_combined_pairs: module.load_function("hf_combined_pairs_kernel")?,
             hf_combined_u64: module.load_function("hf_combined_u64_kernel")?,
             hf_row_fold: module.load_function("hf_row_fold_kernel")?,
+            hf_u64_suffix_folds: module.load_function("hf_u64_suffix_folds_kernel")?,
             hf_bind_low_to_high: module.load_function("hf_bind_low_to_high_kernel")?,
             sopg_round: module.load_function("sopg_round_kernel")?,
             ii_flag_words: module.load_function("ii_flag_words_kernel")?,
@@ -1073,6 +1075,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn hf_combined_u64(&self) -> &CudaFunction {
         &self.hf_combined_u64
+    }
+
+    pub(crate) const fn hf_u64_suffix_folds(&self) -> &CudaFunction {
+        &self.hf_u64_suffix_folds
     }
 
     pub(crate) const fn hf_combined_pairs(&self) -> &CudaFunction {

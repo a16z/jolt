@@ -247,6 +247,65 @@ pub fn combined_u64_fold<F: JoltField>(
     Ok(out)
 }
 
+/// Fold three native u64 columns over the low half in one scan, returning
+/// separate suffix tables in column order.
+pub fn u64_suffix_folds(
+    context: &CudaKernelContext,
+    columns: [NarrowColumn<'_>; 3],
+    weights: &DeviceFrVec,
+) -> Result<Vec<DeviceFrVec>, CudaError> {
+    let entries = columns[0].len;
+    if entries == 0
+        || weights.is_empty()
+        || !entries.is_multiple_of(weights.len())
+        || columns.iter().any(|column| {
+            column.kind != NarrowKind::U64 || !FoldColumn::Narrow(*column).covers(entries)
+        })
+    {
+        return Err(CudaError::InvariantViolation {
+            reason: "native suffix folds require three matching u64 columns and a non-empty dividing weight table",
+        });
+    }
+    let geometry = columns
+        .iter()
+        .map(|column| FoldColumn::Narrow(*column).geometry())
+        .collect::<Result<Vec<_>, _>>()?;
+    let out_len = entries / weights.len();
+    let blocks = CudaKernelContext::count_of(out_len)?;
+    let sum_count = CudaKernelContext::count_of(weights.len())?;
+    let mut out = (0..columns.len())
+        .map(|_| context.alloc(out_len))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut builder = context
+        .stream()
+        .launch_builder(context.hf_u64_suffix_folds());
+    for column in &columns {
+        let _ = builder.arg(column.words);
+    }
+    let _ = builder.arg(weights.limbs());
+    for column in &mut out {
+        let _ = builder.arg(column.limbs_mut());
+    }
+    let _ = builder.arg(&sum_count);
+    for (stride, offset, _) in &geometry {
+        let _ = builder.arg(stride);
+        let _ = builder.arg(offset);
+    }
+    // SAFETY: block a reads entries a * sum_count + b for b < sum_count.
+    // Each column's strided reach is checked by covers, and weights has
+    // sum_count fields. Outputs are distinct out_len-field allocations.
+    // Every thread reaches every barrier; the power-of-two block reduction
+    // uses BLOCK * LIMBS shared u64s, reused for each output column.
+    let _ = unsafe {
+        builder.launch(LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (BLOCK, 1, 1),
+            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+        })
+    }?;
+    Ok(out)
+}
+
 pub fn combined_pair_folds<F: JoltField>(
     context: &CudaKernelContext,
     columns: [(FoldColumn<'_>, F); 4],
@@ -520,8 +579,8 @@ mod tests {
     use super::super::context::shared_context;
     use super::super::testing::fr;
     use super::{
-        combined_pair_folds, combined_u64_fold, half_fold, half_fold_into, FoldColumn,
-        NarrowColumn, NarrowKind, SummedHalf,
+        combined_pair_folds, combined_u64_fold, half_fold, half_fold_into, u64_suffix_folds,
+        FoldColumn, NarrowColumn, NarrowKind, SummedHalf,
     };
 
     fn zero() -> Fr {
@@ -965,6 +1024,66 @@ mod tests {
                 .to_host()
                 .expect("download");
             assert_eq!(got, expected, "sum_len={sum_len}");
+        }
+    }
+
+    #[test]
+    fn u64_suffix_folds_match_native_dot_products() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for sum_len in [1, 17, 4096, 4096 * 256 + 1] {
+            let out_len = if sum_len > 4096 { 1 } else { 3 };
+            let entries = out_len * sum_len;
+            let stride = 5;
+            let offsets = [3, 0, 2];
+            let mut words = vec![u64::MAX; entries * stride];
+            for i in 0..entries {
+                for (column, offset) in offsets.iter().enumerate() {
+                    words[i * stride + offset] = match (i + column) % 4 {
+                        0 => 0,
+                        1 => u64::MAX,
+                        2 => 1u64 << 63,
+                        _ => (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ column as u64,
+                    };
+                }
+            }
+            let weights: Vec<Fr> = (0..sum_len)
+                .map(|i| {
+                    if i % 2 == 0 {
+                        -fr(1)
+                    } else {
+                        fr(i as u64 + 71)
+                    }
+                })
+                .collect();
+            let mut expected = vec![[zero(); 3]; out_len];
+            for (a, totals) in expected.iter_mut().enumerate() {
+                for (b, weight) in weights.iter().enumerate() {
+                    for (total, offset) in totals.iter_mut().zip(offsets) {
+                        *total +=
+                            *weight * Fr::from_u64(words[(a * sum_len + b) * stride + offset]);
+                    }
+                }
+            }
+            let device_words = context.upload_u64_slice(&words).expect("upload columns");
+            let device_weights = context.upload(&weights).expect("upload weights");
+            let columns = offsets.map(|offset| NarrowColumn {
+                words: &device_words,
+                kind: NarrowKind::U64,
+                len: entries,
+                stride,
+                offset,
+            });
+            let got = u64_suffix_folds(context, columns, &device_weights).expect("suffix folds");
+            for (column, table) in got.iter().enumerate() {
+                let expected: Vec<Fr> = expected.iter().map(|row| row[column]).collect();
+                assert_eq!(
+                    table.to_host().expect("download"),
+                    expected,
+                    "sum_len={sum_len}"
+                );
+            }
         }
     }
 

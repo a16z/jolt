@@ -308,6 +308,66 @@ extern "C" __global__ void hf_row_fold_kernel(const u64 *__restrict__ column,
     store4(out + (unsigned long long)a * LIMBS, result);
 }
 
+extern "C" __global__ void hf_u64_suffix_folds_kernel(
+    const u64 *__restrict__ column0, const u64 *__restrict__ column1,
+    const u64 *__restrict__ column2, const u64 *__restrict__ weights,
+    u64 *__restrict__ out0, u64 *__restrict__ out1, u64 *__restrict__ out2,
+    unsigned int sum_len,
+    unsigned int stride0, unsigned int offset0,
+    unsigned int stride1, unsigned int offset1,
+    unsigned int stride2, unsigned int offset2) {
+    extern __shared__ u64 scratch[];
+    unsigned int a = blockIdx.x, tid = threadIdx.x;
+    unsigned long long base = (unsigned long long)a * sum_len;
+    u64 acc[3][LIMBS] = {};
+    unsigned long long b = tid;
+    while (b < sum_len) {
+        u64 folded[3][2 * UNR_SLOTS] = {};
+        // One u64 product per slot per term; the 4096-term batch limit
+        // keeps each split accumulator lane below 2^44.
+        for (unsigned int n = 0; n < 4096 && b < sum_len; n++, b += blockDim.x) {
+            u64 weight[LIMBS];
+            load4(weights + b * LIMBS, weight);
+            u64 v0 = column0[offset0 + (base + b) * stride0];
+            u64 v1 = column1[offset1 + (base + b) * stride1];
+            u64 v2 = column2[offset2 + (base + b) * stride2];
+            unr_mul_words(weight, &v0, 1, folded[0]);
+            unr_mul_words(weight, &v1, 1, folded[1]);
+            unr_mul_words(weight, &v2, 1, folded[2]);
+        }
+        #pragma unroll
+        for (int c = 0; c < 3; c++) {
+            u64 partial[LIMBS], sum[LIMBS];
+            unr_finalize(folded[c], partial);
+            fr_add(acc[c], partial, sum);
+            #pragma unroll
+            for (int l = 0; l < LIMBS; l++) acc[c][l] = sum[l];
+        }
+    }
+    u64 *outputs[3] = {out0, out1, out2};
+    #pragma unroll
+    for (int c = 0; c < 3; c++) {
+        store4(scratch + tid * LIMBS, acc[c]);
+        __syncthreads();
+        for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+            if (tid < stride) {
+                u64 x[LIMBS], y[LIMBS], sum[LIMBS];
+                load4(scratch + tid * LIMBS, x);
+                load4(scratch + (tid + stride) * LIMBS, y);
+                fr_add(x, y, sum);
+                store4(scratch + tid * LIMBS, sum);
+            }
+            __syncthreads();
+        }
+        if (tid == 0) {
+            u64 sum[LIMBS];
+            load4(scratch, sum);
+            store4(outputs[c] + (unsigned long long)a * LIMBS, sum);
+        }
+        __syncthreads();
+    }
+}
+
 extern "C" __global__ void hf_bind_low_to_high_kernel(const u64 *__restrict__ column,
                                                      unsigned int kind,
                                                      unsigned int entry_stride,
