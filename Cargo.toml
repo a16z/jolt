@@ -307,16 +307,16 @@ dory = { package = "dory-pcs", version = "0.4.2", features = [
 ] }
 # LayerZero-Labs/akita feat/embedded-transcript (#254). Move to Akita main once
 # the #253/#255/#260/#254 stack merges.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "62b532e6c5b35a7c5ceaa357fc68e7fec04e6e5b", default-features = false }
+akita-algebra = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-config = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-error = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-pcs = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-planner = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-schedules = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "0f40a7ed85eb2e76617b105cb2faf509e6f02c5b", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
