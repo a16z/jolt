@@ -53,6 +53,10 @@
 //! checks index ranges and selects thread, warp, block, or size-class reductions.
 //! One-hot chunks use Jacobian accumulators on CUDA; CPU streaming commitments
 //! use batched affine addition.
+//! Jacobian accumulation avoids affine intermediate arrays and per-level batch
+//! inversions. On L4s, the tested affine tree and one-round affine/Jacobian
+//! hybrid increased stage-0 and whole-proof time for SHA-2-chain at 2^24
+//! on one and two GPUs.
 //! Device one-hot rows count and scatter base indices with flat atomics or
 //! shared-memory tallies; the host scans the histogram and selects segment classes.
 //! Host planning avoids extra device passes between counting and scattering.
