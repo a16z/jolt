@@ -30,7 +30,7 @@ is an account with write, maintain or admin access to the repository.
 | 2 | The pull request adds, changes, renames or removes `.github/workflows/ai-merge-gate-events.yml` | Fail, even when approved: merge it with the gate off | None |
 | 3 | A writer has requested changes, on any commit, and has not since approved or had that review dismissed | Fail | None |
 | 4 | A writer other than the author approved from a personal account, has not since requested changes, and GitHub has not dismissed the approval | Pass | None |
-| 5 | The author is not a core member, and no core member has posted `AI gate: AUTHORIZED <head>` | Fail: human approval required | None, and the diff is not read |
+| 5 | The author is not a core member, and no core member has posted `AI gate: AUTHORIZED <head>` | Fail: human approval required | None |
 | 6 | The pull request is a draft | Fail | None |
 | 7 | The pull request changes a gate input: a file under `.github/workflows/` or `scripts/ci/`, either skill, or `specs/verifier-closure-lints.md` | Fail: human approval required | None |
 | 8 | The head has no classifier verdict yet | The classifier runs | Classifier |
@@ -114,12 +114,19 @@ The gate never runs code from a pull request. Two workflows divide the work:
   from the default branch, mints a token for the gate's GitHub App, reads the pull request, its
   comments and its reviews through the API, and publishes check runs as the App.
 
+Each evaluation first fixes the head it read and that head's merge base with `main` by SHA, and
+compares the two commits' complete tree listings. The changed paths, old and new names of a
+rename included, are the paths whose file, link or submodule differs between them. Rows 2 and 7
+and the model's input all use that set. The gate does not use the pull request's file list,
+which follows the branch: a push and a revert during an evaluation could make it describe
+another commit with the same number of files.
+
 The model's input is the pull request's diff from its merge base with `main`, followed by every
 changed file in full, with line numbers, as the head has it. The gate reads the diff only after
 rows 2 through 7 have passed. Two tools let the model read the rest of the repository:
 `read_file` returns a file with line numbers or lists a directory, and `search` returns the
-lines that contain a literal string. Each reads either the merge base or the head, both fixed by
-SHA when the gate reads the diff. The gate answers them from GitHub's archive of each commit,
+lines that contain a literal string. Each reads either the merge base or the head. The gate
+answers them from GitHub's archive of each commit,
 which it holds in memory and checks against the commit's tree: every file must hash to its blob
 in that tree, so `export-ignore` or `export-subst` attributes in the pull request cannot hide or
 alter a file, and a mismatch fails the gate. Nothing from the pull request is checked out,
@@ -127,7 +134,8 @@ written to disk or run.
 
 The gate refuses rather than truncates. It fails, without calling the model, on an input over
 1,000,000 characters, on a diff whose parsed file, addition and deletion counts differ from the
-pull request's, and on a commit holding more than 500,000,000 bytes of files. A tool answer over
+pull request's, on a truncated tree listing, and on a commit holding more than 500,000,000 bytes
+of files. A tool answer over
 200,000 characters, a search with more than 200 matching lines, and a binary file or one over
 1,000,000 bytes come back to the model as errors, not as partial text. After 1,000,000
 characters of answers or 40 tool turns for one question, the gate withholds the tools and the
@@ -369,6 +377,13 @@ request with a native approval, then turn the gate back on.
 - The model reads the source but does not build or run it, and it reads only text files up to
   1,000,000 bytes. A change it cannot read, such as a binary file in a verifier crate, should
   make the classifier answer `UNCERTAIN`, which sends the pull request to human review.
+- The size limits bound what the model receives and what the gate keeps, not the evaluation's
+  peak memory: the gate downloads a commit's whole archive before checking its files, and builds
+  a search's matches before refusing more than 200 of them. A very large tree can exhaust the
+  runner, which fails the run without a pass.
+- Withdrawing an authorization while the classifier runs stops the pass, not the paid work
+  already under way: the run can still request the CI review the `ai-review` label asked for
+  before its final re-read fails the gate.
 - A verdict covers the diff from the head's merge base with `main`. A later change to `main` does
   not void it, just as it does not void a human approval when branches need not be up to date.
 - An author's `Review: CONFIRMED` line is an attestation. The gate checks who wrote it and for

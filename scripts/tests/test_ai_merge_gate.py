@@ -46,7 +46,7 @@ def review(login, state, sha=HEAD, body="", kind="User"):
 
 def git_tree(files):
     """GitHub's recursive tree listing and tarball for a commit holding `files`."""
-    entries = [{"path": path, "type": "blob", "size": len(text.encode()),
+    entries = [{"path": path, "type": "blob", "mode": "100644", "size": len(text.encode()),
                 "sha": hashlib.sha1(b"blob %d\0" % len(text.encode()) + text.encode()).hexdigest()}
                for path, text in files.items()]
     buffer = io.BytesIO()
@@ -56,6 +56,21 @@ def git_tree(files):
             info.size = len(text.encode())
             tar.addfile(info, io.BytesIO(text.encode()))
     return {"truncated": False, "tree": entries}, buffer.getvalue()
+
+
+def trees_for(files):
+    """Merge base and head contents in which exactly the pull request file entries `files` changed."""
+    base, head = {}, {}
+    for entry in files:
+        new, status = entry["filename"], entry.get("status", "modified")
+        if status == "renamed":
+            base[entry["previous_filename"]] = head[new] = f"moved to {new}\n"
+            continue
+        if status != "added":
+            base[new] = f"old {new}\n"
+        if status != "removed":
+            head[new] = f"new {new}\n"
+    return {BASE: base, HEAD: head}
 
 
 def unified_diff(path, old, new):
@@ -69,13 +84,15 @@ class FakeApis:
     def __init__(self, author="core-a", comments=(), reviews=(), labels=(), draft=False,
                  records=(), heads=(HEAD,), diff=PLAIN_DIFF, files=("crates/jolt-prover/src/lib.rs",),
                  counts=(1, 1, 1), verdict="SAFE", review_answer=None, answer_text=None,
-                 served_model="gpt-6-astra-2026-09-30", trees=TREES, tool_calls=()) -> None:
+                 served_model="gpt-6-astra-2026-09-30", trees=None, tool_calls=()) -> None:
+        # The pull request's file list, which follows its branch; the commits' trees do not move.
         self.files = [entry if isinstance(entry, dict) else {"filename": entry} for entry in files]
         self.author, self.comments, self.reviews = author, list(comments), list(reviews)
         self.labels, self.draft, self.heads, self.diff, self.counts = list(labels), draft, list(heads), diff, counts
         self.verdict, self.review_answer, self.answer_text = verdict, review_answer, answer_text
-        self.served_model, self.trees, self.tool_calls = served_model, dict(trees), tool_calls
-        self.exported, self.during_model = dict(self.trees), None
+        self.served_model, self.tool_calls = served_model, tool_calls
+        self.trees = dict(trees) if trees is not None else trees_for(self.files)
+        self.exported, self.during_model, self.truncated = dict(self.trees), None, False
         self.core, self.writers = {"core-a", "core-b"}, {"core-a", "core-b", "maintainer", "ci-bot"}
         self.check_runs = [{"id": index, "name": name, "head_sha": sha, "conclusion": conclusion,
                             "status": "completed", "completed_at": "2026-10-30T00:00:00Z",
@@ -119,7 +136,7 @@ class FakeApis:
             assert headers["Accept"] == "application/vnd.github.diff"
             return 200, self.diff.encode()
         if method == "GET" and path.startswith(f"/repos/{REPO}/git/trees/"):
-            return self.ok(git_tree(self.trees[path.rsplit("/", 1)[1]])[0])
+            return self.ok(dict(git_tree(self.trees[path.rsplit("/", 1)[1]])[0], truncated=self.truncated))
         if method == "GET" and path.startswith(f"/repos/{REPO}/tarball/"):
             return 200, git_tree(self.exported[path.rsplit("/", 1)[1]])[1]
         if method == "GET" and path.endswith("/check-runs"):
@@ -200,7 +217,7 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(apis.gate(), ("failure", title))
                 self.assertEqual(apis.model_requests, [])
                 self.assertFalse([url for _, url in apis.requests
-                                  if any(part in url for part in ("api.openai.com", "/compare/", "/tarball/"))])
+                                  if any(part in url for part in ("api.openai.com", f"/compare/{BASE}...", "/tarball/"))])
 
     def test_core_sign_off_admits_author_attestation_and_pr_content_stays_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -248,8 +265,8 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_tool_reads_are_pinned_to_the_merge_base_and_head_and_bounded(self) -> None:
         manifest = '[package]\nname = "jolt-verifier"\n'
-        trees = {BASE: {**TREES[BASE], "crates/jolt-verifier/Cargo.toml": manifest},
-                 HEAD: {**TREES[HEAD], "crates/jolt-verifier/Cargo.toml": manifest, "crates/big.rs": "x" * 500}}
+        unchanged = {"crates/jolt-verifier/Cargo.toml": manifest, "crates/big.rs": "x" * 500}
+        trees = {BASE: {**TREES[BASE], **unchanged}, HEAD: {**TREES[HEAD], **unchanged}}
         calls = [("read_file", {"revision": "base", "path": "crates/jolt-verifier/Cargo.toml"}),
                  ("search", {"revision": "head", "text": "fn helper", "path_prefix": "crates/"}),
                  ("read_file", {"revision": "head", "path": "crates/big.rs"})]
@@ -271,7 +288,7 @@ class AiMergeGateTests(unittest.TestCase):
         # An archive that differs from the commit's tree, as export-ignore makes it, is refused.
         dropped = FakeApis(trees=trees, tool_calls=calls[:1], comments=attested)
         dropped.exported[BASE] = TREES[BASE]
-        with self.assertRaisesRegex(GATE.GateError, "lacks 1 files"):
+        with self.assertRaisesRegex(GATE.GateError, "lacks 2 files"):
             evaluate(dropped)
         self.assertEqual(dropped.gate(), ("failure", "Gate error: human approval required"))
 
@@ -384,10 +401,11 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_incomplete_or_oversized_input_fails_closed_before_the_model(self) -> None:
         two_files = ("crates/jolt-prover/src/lib.rs", "crates/jolt-prover/src/stages.rs")
-        hidden_workflow = PLAIN_DIFF + PLAIN_DIFF.replace("crates/jolt-prover/src/lib.rs", ".github/workflows/ci.yml")
+        truncated = FakeApis()
+        truncated.truncated = True
         for case, apis, limit in [
             ("diff misses a file", FakeApis(counts=(2, 1, 1), files=two_files), GATE.MAX_INPUT_CHARS),
-            ("file list misses a file", FakeApis(counts=(2, 2, 2), diff=hidden_workflow), GATE.MAX_INPUT_CHARS),
+            ("tree listing truncated", truncated, GATE.MAX_INPUT_CHARS),
             ("over the size limit", FakeApis(), 100),
         ]:
             with self.subTest(case=case), mock.patch.object(GATE, "MAX_INPUT_CHARS", limit):
@@ -406,15 +424,61 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(apis.gate(), ("failure", "Changes the gate's event workflow: merge it with the gate off"))
                 self.assertEqual(apis.model_requests, [])
 
+    def test_path_rows_and_model_input_read_the_evaluated_commits(self) -> None:
+        # While the gate evaluates head A, the author pushes B and then restores A. The pull
+        # request's file list follows the branch, so it answers with B's one file, matching A's
+        # file count; the gate must still judge A's own changes.
+        class BranchMovesToBAndBack(FakeApis):
+            def __init__(self, a_files, b_files, **kwargs):
+                super().__init__(files=a_files, **kwargs)
+                self.a_files, self.b_files, self.pull_reads = self.files, b_files, 0
+
+            def __call__(self, method, url, headers, body):
+                if (method, urlsplit(url).path) != ("GET", f"/repos/{REPO}/pulls/7"):
+                    return super().__call__(method, url, headers, body)
+                self.pull_reads += 1
+                if self.pull_reads > 1:
+                    self.files = self.a_files
+                response = super().__call__(method, url, headers, body)
+                if self.pull_reads == 1:
+                    self.files = self.b_files
+                return response
+
+        b_files = [{"filename": "CONTRIBUTING.md", "status": "modified"}]
+        attested = [comment("core-a", f"Review: CONFIRMED {HEAD}")]
+        for case, apis, expected in [
+            ("event workflow deleted on A", BranchMovesToBAndBack(
+                [{"filename": GATE.EVENT_SOURCE, "status": "removed"}], b_files, author="outsider",
+                reviews=[review("maintainer", "APPROVED", sha=OLD)], counts=(1, 0, 20)),
+             ("failure", "Changes the gate's event workflow: merge it with the gate off")),
+            ("gate import added on A", BranchMovesToBAndBack(
+                [{"filename": "scripts/ci/json.py", "status": "added"}], b_files, comments=attested),
+             ("failure", "Human approval required: the change edits the gate's inputs")),
+            ("prover file changed on A", BranchMovesToBAndBack(
+                ["crates/jolt-prover/src/lib.rs"], b_files, comments=attested),
+             ("success", "Verifier-safe; Astra Max review attested by core-a")),
+        ]:
+            with self.subTest(case=case):
+                evaluate(apis)
+                [gate] = [run for run in apis.created if run["name"] == GATE.GATE]
+                self.assertEqual((gate["head_sha"], gate["status"], gate["conclusion"], gate["output"]["title"]),
+                                 (HEAD, "completed", *expected))
+                inputs = [request["input"] for request in apis.model_requests]
+                self.assertEqual(len(inputs), expected[0] == "success")
+                for material in inputs:
+                    self.assertIn("## crates/jolt-prover/src/lib.rs at the head", material)
+                    self.assertNotIn("CONTRIBUTING.md", material)
+                trees = {urlsplit(url).path.rsplit("/", 1)[1] for _, url in apis.requests if "/git/trees/" in url}
+                self.assertEqual(trees, {BASE, HEAD})
+
     def test_changes_to_gate_inputs_need_human_approval(self) -> None:
         attested = [comment("core-a", f"Review: CONFIRMED {HEAD}")]
         renamed = {"filename": "docs/ci.yml", "previous_filename": ".github/workflows/ci.yml", "status": "renamed"}
-        crowd = [f"crates/jolt-prover/src/f{index}.rs" for index in range(100)]
         for case, files in [("workflow renamed away", [renamed]),
                             ("gate script", ["scripts/ci/ai_merge_gate.py"]),
-                            ("module the gate's imports would find", ["scripts/ci/json.py"]),
-                            ("classifier skill", [".claude/skills/verifier-classifier/SKILL.md"]),
-                            ("second page of files", crowd + [".github/workflows/new.yml"])]:
+                            ("module the gate's imports would find", [{"filename": "scripts/ci/json.py",
+                                                                       "status": "added"}]),
+                            ("classifier skill", [".claude/skills/verifier-classifier/SKILL.md"])]:
             with self.subTest(case=case):
                 apis = evaluate(FakeApis(comments=attested, files=files, counts=(len(files), 1, 1)))
                 self.assertEqual(apis.gate(), ("failure", "Human approval required: the change edits the gate's inputs"))
