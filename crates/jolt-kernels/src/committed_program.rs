@@ -26,6 +26,7 @@ const INSTRUCTION_FLAG_ORDER: [InstructionFlags; NUM_INSTRUCTION_FLAGS] = [
     InstructionFlags::RightOperandIsRs2Value,
     InstructionFlags::Branch,
     InstructionFlags::IsNoop,
+    InstructionFlags::RightOperandIsRdWriteValue,
 ];
 
 fn for_each_active_lane_value<F: JoltField>(

@@ -440,17 +440,9 @@ where
                     polynomial,
                     id,
                 )?,
-                JoltCommittedPolynomial::Reserved4(retired) => match retired {},
-                JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry => {
-                    // Lattice-mode polynomials open through the fixed-prefix
-                    // path in `stage8::akita`, never the homomorphic RLC batch.
-                    return Err(VerifierError::FinalOpeningBatchFailed {
-                        reason: format!(
-                            "polynomial {polynomial:?} is not part of the stage 8 prover order"
-                        ),
-                    });
-                }
+                JoltCommittedPolynomial::Reserved4(retired)
+                | JoltCommittedPolynomial::Reserved9(retired)
+                | JoltCommittedPolynomial::Reserved10(retired) => match retired {},
             };
         let embedding = match polynomial {
             JoltCommittedPolynomial::RamInc
@@ -465,13 +457,9 @@ where
             | JoltCommittedPolynomial::UntrustedAdvice
             | JoltCommittedPolynomial::ProgramBytecode
             | JoltCommittedPolynomial::ProgramImageInit => CommitmentEmbedding::Precommitted,
-            JoltCommittedPolynomial::Reserved4(retired) => match retired {},
-            JoltCommittedPolynomial::BalancedIncDigit(_)
-            | JoltCommittedPolynomial::BalancedIncCarry => {
-                return Err(VerifierError::FinalOpeningBatchFailed {
-                    reason: "Akita objects have no homomorphic embedding".to_string(),
-                });
-            }
+            JoltCommittedPolynomial::Reserved4(retired)
+            | JoltCommittedPolynomial::Reserved9(retired)
+            | JoltCommittedPolynomial::Reserved10(retired) => match retired {},
         };
         entries.push(Stage8BatchEntry {
             id: id.into(),
