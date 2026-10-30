@@ -285,9 +285,11 @@ fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn Fn
         rs2_value,
         right_operand_is_imm,
         imm,
+        right_operand_is_rd_write_value,
+        rd_write_value: ii_rd_write_value,
     } = instruction_input;
     let RegistersClaimReductionOutputClaims {
-        rd_write_value,
+        rd_write_value: rcr_rd_write_value,
         rs1_value: rcr_rs1_value,
         rs2_value: rcr_rs2_value,
     } = registers_claim_reduction;
@@ -305,7 +307,9 @@ fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn Fn
         rs2_value,
         right_operand_is_imm,
         imm,
-        rd_write_value,
+        right_operand_is_rd_write_value,
+        ii_rd_write_value,
+        rcr_rd_write_value,
         rcr_rs1_value,
         rcr_rs2_value,
     ] {
