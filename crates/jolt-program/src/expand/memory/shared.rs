@@ -75,6 +75,17 @@ impl AccessWidth {
 /// The addressed lane of a floor-addressed access to `ea = base + offset`:
 /// `doubleword` holds the doubleword containing `ea` and `lane` the byte mask of
 /// the `width`-byte lane at `ea`.
+///
+/// The `VirtualLoad` row does not range-check the RAM word it copies into
+/// `doubleword`. It cannot carry `RightOperandIsRdWriteValue` like `LD`: that
+/// would add `RdWriteValue` to the `AddressOffset` index `Rs1Value + Imm` that
+/// R1CS constraint 0 turns into `RamAddress`, and on an `AddOperands` row
+/// instruction read-RAF bounds only the operands' sum. `extract` and `merge`
+/// supply the check instead: they read `doubleword` only as the interleaved
+/// `rs1` operand of `VirtualPext`/`VirtualPextSigned` or `ANDN`, which
+/// instruction read-RAF proves is a `u64`. A RAM word outside `[0, 2^64)`, such
+/// as a malformed untrusted-advice word, therefore has no accepting proof. Any
+/// other read of `doubleword` must also take it as an interleaved operand.
 #[derive(Clone, Copy)]
 pub(in crate::expand) struct LaneWindow {
     width: AccessWidth,

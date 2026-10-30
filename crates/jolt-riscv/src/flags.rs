@@ -125,6 +125,10 @@ pub enum InstructionFlags {
     IsNoop,
     /// Routes `RdWriteValue` into the right instruction input. Used by direct
     /// loads so instruction read-RAF supplies the `u64` range proof.
+    /// Floor-addressed `VirtualLoad{B,H,W}` rows cannot set it, since their
+    /// right operand feeds the `AddressOffset` index; their sequences read the
+    /// loaded doubleword only as an interleaved operand instead (see
+    /// `LaneWindow` in jolt-program).
     RightOperandIsRdWriteValue,
 }
 

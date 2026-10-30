@@ -413,7 +413,10 @@ mod tests {
             /// proves it is a `u64`. An `AddressOffset` row's lookup index must be
             /// exactly `Rs1Value + Imm`: `AddOperands` with the `rs1` and immediate
             /// operands only. It must also not write or assert its lookup output,
-            /// which is an offset rather than a result.
+            /// which is an offset rather than a result. An `AddressOffset` load
+            /// therefore leaves its RAM word unchecked; its sequence must read the
+            /// loaded doubleword only as an interleaved operand (jolt-program's
+            /// `LaneWindow`), which this per-row registry cannot check.
             #[test]
             fn memory_rows_look_up_only_address_offsets() {
                 let mut floor_rows = 0;
