@@ -12,7 +12,7 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
-# Guest verifiers: the claim layout digests over the jolt-inlines Blake2b.
+# Guest transcript acceleration through the shared claims feature.
 blake2-inline = ["jolt-claims/blake2-inline"]
 default = ["transcript-blake2b"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
@@ -36,15 +36,6 @@ zk = ["jolt-prover/zk"]
 # objects share one batch opening. Mutually exclusive with
 # `zk` — one PIOP per compiled verifier.
 akita = ["jolt-prover/akita", "jolt-claims/akita", "tracer/fp128-field-inline"]
-transcript-blake2b = [
-  "jolt-transcript/bn254",
-  "jolt-transcript/transcript-blake2b",
-]
-transcript-keccak = [
-  "jolt-transcript/bn254",
-  "jolt-transcript/transcript-keccak",
-]
-transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
@@ -66,9 +57,15 @@ jolt-transcript.workspace = true
 jolt-verifier-derive.workspace = true
 num-traits.workspace = true
 serde.workspace = true
+sha3.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "test-utils",
+  "transcript-keccak",
+] }
 jolt-host.workspace = true
 jolt-prover.workspace = true
 jolt-witness.workspace = true

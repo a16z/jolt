@@ -3,8 +3,8 @@
 ## Guest × mode acceptance matrix
 
 `crates/jolt-prover/tests/e2e_matrix.rs` holds one guest table per instruction
-profile. The ordinary profile has nine cases: muldiv, fibonacci, memory-ops,
-stdlib, sha2, sha3 through both its unaligned and aligned entry points,
+profile. The ordinary profile has ten cases: muldiv, fibonacci, memory-ops,
+stdlib, memory-copy, sha2, sha3 through both its unaligned and aligned entry points,
 advice-consumer, and btreemap. Enabling `field-inline` selects `field_ops`,
 `field_limbs`, and `muldiv`, covering active field operations, the SDK's
 checked limb conversions, and an ordinary guest proved under the field-inline
@@ -79,9 +79,11 @@ scripts/ci/fs-soundness.sh
 `fs_obligations` assigns stable identities to transcript absorption expressions,
 challenge-shaped calls, scope annotations, generated sumcheck batching draws,
 and serialized verifier inputs in the production dependency closure. The
-absorption inventory includes normalized call expressions, so changing either a
-label or its bound value requires review. A reviewed protocol change may
-regenerate the inventories with:
+absorption inventory identifies each absorb by its function, its ordinal among
+like calls in that function, and its normalized call expression; transcript messages carry
+no labels. Changing a bound expression, or adding, removing or reordering
+absorbs within a function, therefore requires review. A reviewed protocol
+change may regenerate the inventories with:
 
 ```bash
 JOLT_FS_BLESS=1 cargo nextest run -p jolt-verifier \

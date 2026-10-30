@@ -14,6 +14,8 @@
 //! the transcript binds. Callers must bind the payload bytes to the verifier
 //! program identity, for example by embedding them in the guest image.
 
+use std::sync::Arc;
+
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_pcs::{
     build_riscv64_terminal_ntt_cache, AkitaDeserialize, AkitaSerialize, Compress, TrustedBytes,
@@ -123,6 +125,12 @@ impl PreparedBytes {
             .skip(skew)
             .ok_or_else(|| invalid_setup("truncated prepared payload body"))?;
         Ok(Self::Attached(payload))
+    }
+}
+
+impl From<Vec<u8>> for PreparedBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Owned(bytes)
     }
 }
 
@@ -257,7 +265,7 @@ impl AkitaVerifierSetup {
     pub fn detach_prepared_payloads(&mut self) -> Result<Vec<Vec<u8>>, OpeningsError> {
         // Check every payload before moving any, so an error leaves the setup
         // as it was.
-        for slot in self.schedule_artifacts.slots() {
+        for slot in Arc::make_mut(&mut self.schedule_artifacts).slots() {
             let _ = slot.bytes()?;
         }
         // Aligning the key's coefficients lets the guest view them in place.
@@ -273,7 +281,7 @@ impl AkitaVerifierSetup {
             None => None,
         };
         let mut bodies = Vec::new();
-        for slot in self.schedule_artifacts.slots() {
+        for slot in Arc::make_mut(&mut self.schedule_artifacts).slots() {
             bodies.push(slot.detach(0)?);
         }
         if let (Some(prepared), Some(offset)) = (&mut self.prepared, key_offset) {
@@ -301,7 +309,7 @@ impl AkitaVerifierSetup {
     ) -> Result<(), OpeningsError> {
         let mut bodies = bodies.iter();
         let slots =
-            self.schedule_artifacts
+            Arc::make_mut(&mut self.schedule_artifacts)
                 .slots()
                 .into_iter()
                 .chain(self.prepared.iter_mut().flat_map(|prepared| {

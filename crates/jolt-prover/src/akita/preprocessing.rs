@@ -1,4 +1,5 @@
 use akita_params::PolynomialGroupLayout;
+use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use std::sync::Arc;
 
 use jolt_akita::{
@@ -12,7 +13,6 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
 use jolt_program::preprocess::JoltProgramPreprocessing;
-use jolt_transcript::LegacyBlake2bTranscript;
 use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
@@ -25,7 +25,6 @@ use super::one_hot_trace_setup_shape;
 use super::witness::{commit_advice, commit_direct_program, AdviceObject};
 
 pub type AkitaVc = NoVectorCommitment<AkitaField>;
-pub type AkitaTranscript = LegacyBlake2bTranscript<AkitaField>;
 pub type AkitaProverPreprocessing = JoltProverPreprocessing<AkitaScheme, AkitaVc>;
 pub type AkitaVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc>;
 
@@ -108,7 +107,7 @@ pub(crate) fn grouped_setup_params(
         .then(|| advice_physical_num_vars(program, JoltAdviceKind::Trusted))
         .transpose()?;
     let mut mandatory_dense_layouts = Vec::with_capacity(
-        usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
+        1 + usize::from(cfg!(feature = "field-inline")) + direct_program_physical_vars.len(),
     );
     #[cfg(feature = "field-inline")]
     mandatory_dense_layouts.push(DenseGroupLayout::FullWidth {
@@ -119,6 +118,9 @@ pub(crate) fn grouped_setup_params(
             .iter()
             .map(|&num_vars| DenseGroupLayout::Bounded { num_vars }),
     );
+    mandatory_dense_layouts.push(DenseGroupLayout::Bounded {
+        num_vars: FusedIncLayout::new(config.trace_length.ilog2() as usize).num_vars(),
+    });
     let group_count = usize::from(untrusted_physical_vars.is_some())
         + usize::from(trusted_physical_vars.is_some())
         + mandatory_dense_layouts.len();

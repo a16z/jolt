@@ -179,6 +179,11 @@ impl RandomAccessRows {
         self.cycles
     }
 
+    /// Number of physical proof rows, excluding the implicit no-op suffix.
+    pub fn physical_cycles(&self) -> usize {
+        self.rows.proof_len()
+    }
+
     /// Extracts one bundle with padding and one-row lookahead semantics.
     #[inline]
     pub fn window<B: WitnessBundle>(&self, index: usize) -> Result<B, WitnessError> {

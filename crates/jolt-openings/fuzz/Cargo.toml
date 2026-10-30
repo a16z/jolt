@@ -29,7 +29,10 @@ jolt-dory = { path = "../../jolt-dory" }
 jolt-field = { path = "../../jolt-field", features = ["bn254"] }
 jolt-openings = { path = ".." }
 jolt-poly = { path = "../../jolt-poly" }
-jolt-transcript = { path = "../../jolt-transcript" }
+jolt-transcript = { path = "../../jolt-transcript", features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 
 [[bin]]
 name = "dory_homomorphic_batch_must_reject"

@@ -15,21 +15,11 @@ use jolt_akita::AkitaChunkProfile;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig, TracePolynomialOrder};
 use jolt_field::JoltField;
 use jolt_program::execution::ExecutionDimensions;
+use jolt_verifier::config::MIN_PADDED_TRACE_LENGTH;
 
 use crate::ProverError;
 
 const LOOKUP_ADDRESS_BITS: usize = 2 * XLEN;
-
-/// The minimum padded trace length — the compiled protocol's PCS floor
-/// (legacy's `PCS::MIN_PADDED_TRACE_LENGTH`). Dory needs `T >= K^(1/D)`
-/// (256); Akita's folded-only protocol cannot schedule the K=16
-/// `OneHotTrace` group below 16 variables, and column arity is
-/// `log_k_chunk + log_T`, so the Akita pipeline pads every trace to at
-/// least 2^12 cycles.
-#[cfg(not(feature = "akita"))]
-const MIN_PADDED_TRACE_LENGTH: usize = 256;
-#[cfg(feature = "akita")]
-const MIN_PADDED_TRACE_LENGTH: usize = 1 << 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[expect(non_snake_case)]
@@ -141,7 +131,7 @@ impl ProverConfig {
             one_hot_config: one_hot_config(log_T),
             trace_polynomial_order: TracePolynomialOrder::CycleMajor,
             #[cfg(feature = "akita")]
-            akita_chunk_profile: AkitaChunkProfile::Single,
+            akita_chunk_profile: AkitaChunkProfile::new(1, 0),
         })
     }
 
@@ -376,6 +366,24 @@ mod dimension_tests {
             if cfg!(feature = "akita") { 4 } else { 8 }
         );
         assert_eq!(derive((1 << 24) - 1, None, 0).one_hot_config.log_k_chunk, 4);
+    }
+
+    /// Pins both widths across the `log_T = 25` threshold: every mode uses
+    /// 4/16 below it; at or above it Akita uses 4/32 and the others 8/32.
+    #[test]
+    fn one_hot_defaults_across_chunk_threshold() {
+        for log_t in [24, 25, 26] {
+            let config = one_hot_config(log_t);
+            let widths = (config.log_k_chunk, config.lookups_ra_virtual_log_k_chunk);
+            let expected = if log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+                (4, 16)
+            } else if cfg!(feature = "akita") {
+                (4, 32)
+            } else {
+                (8, 32)
+            };
+            assert_eq!(widths, expected, "log_T = {log_t}");
+        }
     }
 
     #[test]

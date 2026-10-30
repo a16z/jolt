@@ -25,21 +25,23 @@ at compile time. Jolt's Akita integration currently supports
 non-zero-knowledge proofs only; `akita` and `zk` cannot be enabled together.
 The Akita harness loads its schedule catalogs from
 `crates/jolt-akita/schedules/` by default. Set `JOLT_AKITA_SCHEDULE_DIR` to
-use another directory containing those `.aks` files.
+use another directory containing those `.aks` files. Packaged multichunk catalogs
+cover only small test fixtures. Multichunk profiling requires a catalog bundle
+generated for the selected geometry and workload, supplied through that environment variable.
 
 For `profile` with the `akita` feature, `--akita-chunk-profile` selects
-`single` (default), `w2r2`, `w4r2`, or `w8r2`. For example:
+`w<chunks>r<levels>` (`w1r0` by default). For example:
 
 ```bash
 cargo run --release -p jolt-prover --features profiling,akita -- \
     profile --name fibonacci --backend optimized --akita-chunk-profile w4r2
 ```
 
-Chunked profiles append `_w2r2`, `_w4r2`, or `_w8r2` to the artifact name,
+Chunked profiles append `_w<chunks>r<levels>` to the artifact name,
 after the optional `_optimized` suffix, so their latest symlinks remain
 independent. The CSV workload name and `summary.json`'s `run.workload`
-also carry the chunk-profile suffix. Single keeps its existing names.
-The `benchmark` sweep uses Single.
+also carry the chunk-profile suffix. `w1r0` has no workload suffix.
+The `benchmark` sweep uses `w1r0`.
 
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
@@ -103,7 +105,7 @@ cargo run --release -p jolt-prover --features profiling,akita -- \
 
 Results accumulate in `benchmark-runs/modular_timings.csv` (per-run CSVs live
 in the run directories). Akita Single rows append `_akita` to the workload
-name; chunked rows also append `_w2r2`, `_w4r2`, or `_w8r2`, for example
+name; chunked rows also append `_w<chunks>r<levels>`, for example
 `fibonacci_akita_w4r2`. The summary table defaults to Single; select a
 chunked profile with `--protocol akita --akita-chunk-profile w4r2`.
 `--resume` checks the selected protocol and kernel implementation's
@@ -159,6 +161,15 @@ jq '.stages | map({label, s: (.wall_time_ns/1e9)})' $S
 # Per-stage memory: boundary-RSS delta (retained growth) and windowed
 # sample-max (null when the stage closed between monitor samples)
 jq '.stages | map({label, rss_delta_gib, peak_memory_gib})' $S
+
+# User-space instructions retired, whole prove and per stage (null without
+# a hardware counter; see Measurement semantics)
+jq '{root: .root.instructions, stages: (.stages | map({label, instructions}))}' $S
+
+# Top 10 span labels by instructions retired (orchestrating-thread spans only)
+jq '.spans | to_entries | map(select(.value.instructions != null))
+    | sort_by(-.value.instructions) | .[:10]
+    | map({label: .key, count: .value.count, instructions: .value.instructions})' $S
 ```
 
 Arbitrary ad-hoc queries go through Perfetto's `trace_processor` SQL against
@@ -200,6 +211,31 @@ for row in q:
   memory across runs. On Linux it equals `peak_rss_gib`. The monitor's
   `counters.footprint_gib` samples the same measure over time (macOS only);
   `memory_gib` and `root.peak_memory_gib` remain resident-set based.
+- **Instruction counts** (`root.instructions`, `stages[].instructions`,
+  `spans.<label>.instructions`) are user-space instructions retired, read
+  from a Linux hardware counter (`perf_event_open`) at every enter and exit
+  of a span on the orchestrating thread — the thread that set up tracing —
+  however the span is declared (`#[tracing::instrument]` or an inline
+  `info_span!`). The counter is process-wide: it covers every thread spawned
+  after tracing setup (rayon's pool included) and excludes the chrome writer
+  and monitor threads, so a span's count includes the parallel work it fans
+  out, and like wallclock counts are not additive across nested spans. Spans
+  inside rayon closures overlap their siblings and are not sampled; a label
+  is `null` unless every instance ran on the orchestrating thread. Work a
+  span leaves running in the background (e.g. `drop_in_background_thread`)
+  is charged to whichever span is open when it executes. Counts are native,
+  unlike Callgrind's: the AVX-512/IFMA kernels Valgrind hides run as in
+  production. The counter needs a PMU the
+  kernel exposes and `perf_event_paranoid` ≤ 2; elsewhere (macOS, most CI
+  VMs) the fields are `null` and setup logs a warning, and a counter the
+  kernel multiplexed yields `null` rather than a partial count. Idle rayon
+  workers spin before sleeping, so multi-threaded counts vary with
+  scheduling: on fibonacci 2^16 (optimized backend), repeated runs spread
+  ~0.1% at the root and up to a few percent on sub-second stages, against
+  ~0.01% everywhere under `RAYON_NUM_THREADS=1` — use that for A/B
+  comparisons. The counter's kernel-side cost (PMU save/restore on context
+  switches) measured under 1% of CPU time on fibonacci 2^20, below
+  wallclock noise.
 
 ## Overhead and dark-time budgets
 
@@ -277,8 +313,10 @@ the per-stage RSS table there.)
 
 Every summary metric is reachable as a string-keyed `jolt-eval` objective
 (`telemetry:<workload>:<metric>`), so optimization agents can target any
-span without editing `jolt-eval`; deterministic instruction counts are
-available through the opt-in iai-callgrind lane
+span without editing `jolt-eval`. End-to-end instruction counts are
+`telemetry:<workload>:instructions` and
+`telemetry:<workload>:instructions:<span-label>`; deterministic
+microbenchmark counts are available through the opt-in iai-callgrind lane
 (`callgrind:<bench-name>:instructions`). See `jolt-eval/README.md`.
 
 ```bash

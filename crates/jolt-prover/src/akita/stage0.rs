@@ -1,5 +1,5 @@
 use common::jolt_device::JoltDevice;
-use jolt_kernels::akita::commitment::{WitnessCommitRequest, WitnessCommitment};
+use jolt_kernels::akita::commitment::{FusedIncObject, WitnessCommitRequest, WitnessCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 
 use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
@@ -7,10 +7,10 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomi
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::{
-    absorb_akita_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
-    CheckedInputs, ProofTranscriptConfig,
+    absorb_akita_commitments, validate_inputs_from_parts, CheckedInputs, JoltStatement,
+    ProofTranscriptConfig, JOLT_SESSION,
 };
 
 use super::witness::{commit_advice, AdviceObject};
@@ -26,6 +26,7 @@ where
     pub transcript: T,
     pub commitment: PCS::Output,
     pub hint: PCS::OpeningHint,
+    pub fused_inc: FusedIncObject<PCS>,
     pub untrusted_advice: Option<AdviceObject<PCS>>,
     /// The field increment polynomial, committed on every Akita field-inline proof.
     #[cfg(feature = "field-inline")]
@@ -46,12 +47,13 @@ where
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + Encoding,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverInit,
 {
-    if config.akita_chunk_profile.num_chunks()
-        != preprocessing.verifier.pcs_setup.one_hot_num_chunks()
+    let setup = &preprocessing.verifier.pcs_setup;
+    if config.akita_chunk_profile.num_chunks() != setup.one_hot_num_chunks()
+        || config.akita_chunk_profile.levels != setup.one_hot_num_chunked_levels()
     {
         return Err(ProverError::Unsupported {
             reason: "Akita chunk profile differs from preprocessing; reuse its configuration or regenerate preprocessing",
@@ -102,18 +104,20 @@ where
         config.trace_polynomial_order,
         config.one_hot_config,
         trusted_advice.is_some(),
+        untrusted_advice_present,
         false,
     )?;
 
-    let mut transcript = T::new(b"Jolt");
-    absorb_transcript_preamble(
-        &checked,
-        ProofTranscriptConfig {
-            rw_config: config.rw_config,
-            one_hot_config: config.one_hot_config,
-            trace_polynomial_order: config.trace_polynomial_order,
+    let mut transcript = T::init(
+        &JOLT_SESSION,
+        &JoltStatement {
+            checked: &checked,
+            config: ProofTranscriptConfig {
+                rw_config: config.rw_config,
+                one_hot_config: config.one_hot_config,
+                trace_polynomial_order: config.trace_polynomial_order,
+            },
         },
-        &mut transcript,
     );
 
     let log_t = config.trace_length.ilog2() as usize;
@@ -143,7 +147,7 @@ where
     };
 
     // Canonical batch order: advice, then field increments or direct committed-program
-    // objects (mutually exclusive), then OneHotTrace.
+    // objects (mutually exclusive), then FusedInc and OneHotTrace.
     let mut precommitted_hints: Vec<&PCS::OpeningHint> = untrusted_advice
         .as_ref()
         .map(|object| &object.hint)
@@ -158,6 +162,7 @@ where
         precommitted_hints.extend(program.objects().map(|object| &object.hint));
     }
     let WitnessCommitment {
+        fused_inc,
         commitment,
         hint,
         #[cfg(feature = "field-inline")]
@@ -172,6 +177,7 @@ where
 
     absorb_akita_commitments(
         &commitment,
+        Some(&fused_inc.commitment),
         untrusted_advice.as_ref().map(|object| &object.commitment),
         trusted_advice.map(|object| &object.commitment),
         #[cfg(feature = "field-inline")]
@@ -190,6 +196,7 @@ where
         transcript,
         commitment,
         hint,
+        fused_inc,
         untrusted_advice,
         #[cfg(feature = "field-inline")]
         field_inc,

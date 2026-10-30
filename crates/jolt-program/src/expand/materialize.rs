@@ -1,8 +1,9 @@
 use jolt_riscv::{
-    JoltInstructionProfile, JoltInstructionRow, NormalizedOperands, SourceInstruction,
-    SourceInstructionRow,
+    CircuitFlags, Flags, JoltInstruction, JoltInstructionProfile, JoltInstructionRow,
+    NormalizedOperands, SourceInstruction, SourceInstructionRow,
 };
 use std::marker::PhantomData;
+use std::ops::RangeInclusive;
 
 use crate::expand::{
     allocator::{ExpansionAllocator, NUM_INLINE_REGISTERS, NUM_VIRTUAL_INSTRUCTION_REGISTERS},
@@ -18,6 +19,9 @@ use crate::expand::{
 
 pub(super) const MAX_FINAL_ROWS_PER_SOURCE: usize = 64;
 pub(super) const MAX_INLINE_ROWS_PER_SOURCE: usize = u16::MAX as usize;
+
+/// RISC-V load and store offsets: signed 12-bit.
+const MEMORY_OFFSET_RANGE: RangeInclusive<i128> = -2048..=2047;
 
 type StampSequenceFn = fn(
     Vec<JoltInstructionRow>,
@@ -133,18 +137,34 @@ impl ExpansionState {
     /// they use the full `u16` virtual-sequence range. Reset rows are appended
     /// here, after all provider-owned inline registers have been released, so
     /// virtual-register cleanup is centralized and independent of tracer RAII.
+    ///
+    /// Loads and stores must keep RISC-V's signed 12-bit offsets. R1CS
+    /// constraint 0 forms `RamAddress` from the unwrapped `rs1 + imm`, so a
+    /// wider offset could wrap the tracer's effective address into mapped
+    /// memory and leave the access unprovable (see constraint 0 in jolt-claims).
     pub(super) fn materialize_inline(
         &mut self,
         sequence: ExpandedInstructionSequence,
     ) -> Result<Vec<JoltInstructionRow>, ExpansionError> {
-        self.materialize_with_options(
+        let rows = self.materialize_with_options(
             sequence,
             MaterializeOptions {
                 capacity: MAX_INLINE_ROWS_PER_SOURCE,
                 append_inline_resets: true,
                 stamp: stamp_inline_sequence,
             },
-        )
+        )?;
+        for row in &rows {
+            let flags = JoltInstruction::from(*row).circuit_flags();
+            if (flags[CircuitFlags::Load] || flags[CircuitFlags::Store])
+                && !MEMORY_OFFSET_RANGE.contains(&row.operands.imm)
+            {
+                return Err(ExpansionError::InlineMemoryOffsetOutOfRange {
+                    offset: row.operands.imm,
+                });
+            }
+        }
+        Ok(rows)
     }
 
     fn materialize_with_options(

@@ -125,7 +125,7 @@ impl<F: JoltField> ProveRounds<F> for FieldIncKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let half = self.inc.len() / 2;
+        let half = self.inc.prefix_len().div_ceil(2);
 
         let evals = par_sum_pair_groups(half, 2, |acc, y| {
             let group = self.group_evals(y);

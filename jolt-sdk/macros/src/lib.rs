@@ -280,7 +280,7 @@ impl MacroBuilder {
                         jolt::VerifierField,
                         jolt::VerifierPCS,
                         jolt::VerifierVC,
-                        jolt::VerifierTranscript,
+                        jolt::VerifierTranscript<'_>,
                     >(
                         &__jolt_preprocessing,
                         &__jolt_io_device,
@@ -883,7 +883,7 @@ impl MacroBuilder {
                     ::core::ptr::write_volatile(#termination_bit as *mut u8, 1);
                 }
                 // Never return - loop forever for clean termination
-                // The emulator detects termination via PC stall (prev_pc == pc)
+                // The emulator detects termination via PC stall
                 loop {
                     unsafe { ::core::arch::asm!("j .", options(noreturn)); }
                 }
@@ -1157,7 +1157,7 @@ impl MacroBuilder {
                     jolt::VerifierField,
                     jolt::VerifierPCS,
                     jolt::VerifierVC,
-                    jolt::VerifierTranscript,
+                    jolt::VerifierTranscript<'_>,
                 >(
                     &preprocessing,
                     &io_device,

@@ -3,8 +3,17 @@ use serde::{Deserialize, Serialize};
 use crate::{Point, HIGH_TO_LOW};
 
 #[cfg(feature = "transcript")]
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::Encoding;
 
+/// A claim that a polynomial takes `value` at `point`.
+///
+/// # Security
+/// With the `transcript` feature, a claim is absorbed as its coordinates and
+/// then its value, with no count. Claims whose points differ in length can
+/// then absorb as the same bytes, so the encoding binds a claim only when the
+/// point's length is already fixed. A caller that absorbs a claim built from
+/// proof data must first check `point.len()` against the length its protocol
+/// fixes from bound data, or absorb that length as a `u64` word itself.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvaluationClaim<F> {
     pub point: Point<HIGH_TO_LOW, F>,
@@ -20,17 +29,16 @@ impl<F> EvaluationClaim<F> {
     }
 }
 
+/// The coordinates, then the value. Positional: the caller binds the point's
+/// length before the claim is absorbed.
 #[cfg(feature = "transcript")]
-impl<F> AppendToTranscript for EvaluationClaim<F>
-where
-    F: AppendToTranscript,
-{
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(b"opening_point", self.point.len() as u64));
+impl<F: Encoding> Encoding for EvaluationClaim<F> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Vec::new();
         for coordinate in self.point.as_slice() {
-            coordinate.append_to_transcript(transcript);
+            out.extend_from_slice(coordinate.encode().as_ref());
         }
-        transcript.append(&Label(b"opening_eval"));
-        self.value.append_to_transcript(transcript);
+        out.extend_from_slice(self.value.encode().as_ref());
+        out
     }
 }

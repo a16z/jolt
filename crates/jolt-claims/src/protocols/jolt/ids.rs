@@ -143,7 +143,8 @@ pub enum HammingWeightClaimReductionPublic {
     /// Akita path: `eq(r_virtualization_address_i, 0)` — the digit-zero
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
-    BalancedIncValueAtAddress,
+    /// Reserved ordinal for the retired balanced-increment representation.
+    ReservedBalancedIncValueAtAddress,
     /// `gamma^k` for `k >= 2` as one derived leaf: the batching coefficient of
     /// the k-th leg.
     GammaPow(usize),
@@ -355,10 +356,9 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed polynomials (columns of the native trace group); base
-    // mode never constructs these. Appended for codec stability.
-    BalancedIncDigit(usize),
-    BalancedIncCarry,
+    // Reserved codec slots; uninhabited and rejected during deserialization.
+    Reserved9(RetiredIdentifier),
+    Reserved10(RetiredIdentifier),
     ProgramBytecode,
 }
 

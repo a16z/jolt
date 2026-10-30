@@ -19,8 +19,8 @@ pub struct RightLookupOperand(pub u128);
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LeftInstructionInput(pub u64);
 
-/// Right instruction input (rs2 value or immediate, per the instruction
-/// shape).
+/// Right instruction input (rs2 value, immediate, or a direct load's rd write
+/// value, per the instruction shape).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RightInstructionInput(pub i128);
 

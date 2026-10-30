@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaField, AkitaScheme, TrustedBytes};
+use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheme, TrustedBytes};
 use jolt_inlines_blake2 as _;
 use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
@@ -402,7 +402,7 @@ fn collect_guest_proofs(
     use jolt_program::execution::{ExecutionBackend, TraceInputs};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_sdk::jolt_prover::akita;
-    use jolt_sdk::jolt_prover::akita::preprocessing::{self, AkitaTranscript};
+    use jolt_sdk::jolt_prover::akita::preprocessing;
     use jolt_sdk::jolt_prover::{JoltBackend, ProverConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
@@ -434,7 +434,7 @@ fn collect_guest_proofs(
         )
         .expect("inner program preprocessing"),
     );
-    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let schedule_artifacts = AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let mut all_groups_data = Vec::new();
     let n = inputs.len() as u32;
     let mut verifier_preprocessing = None;
@@ -479,7 +479,7 @@ fn collect_guest_proofs(
         #[cfg(feature = "field-inline")]
         let witness = witness.with_field_inline().expect("field witness");
         let now = Instant::now();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, jolt_sdk::ProofTranscript>(
             JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
             &config,
@@ -532,7 +532,7 @@ fn collect_guest_proofs(
         .attach_prepared_payloads(&bodies)
         .expect("attach prepared Akita payloads");
     for (proof, public_io) in &records {
-        jolt_sdk::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_sdk::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, jolt_sdk::VerifierTranscript<'_>>(
             &attached, public_io, proof, None,
         )
         .expect("verify proof against prepared guest setup");
@@ -636,7 +636,7 @@ fn collect_guest_proofs(
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
-            jolt_sdk::VerifierTranscript,
+            jolt_sdk::VerifierTranscript<'_>,
         >(&guest_verifier_preprocessing, &io_device, &proof, None)
         .is_ok();
         info!("  Verification result: {is_valid}");
@@ -984,7 +984,7 @@ fn run_recursion_proof(
                     jolt_sdk::VerifierField,
                     jolt_sdk::VerifierPCS,
                     jolt_sdk::VerifierVC,
-                    jolt_sdk::VerifierTranscript,
+                    jolt_sdk::VerifierTranscript<'_>,
                 >(&verifier, &io_device, &proof, None)
                 .expect("verify outer recursion proof");
                 let rv = decode_verifier_output(&io_device.outputs);

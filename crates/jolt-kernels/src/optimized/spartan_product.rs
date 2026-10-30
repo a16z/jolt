@@ -37,7 +37,7 @@ use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
     centered_lagrange_evals, centered_lagrange_kernel, interpolate_to_coeffs, poly_mul,
 };
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_riscv::{CircuitFlags, InstructionFlags};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -56,13 +56,14 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::prefix_product::PrefixColumn;
 #[cfg(feature = "field-inline")]
 use super::spartan_outer::{FieldInlineRowCursor, FieldSpartanCarry};
 #[cfg(feature = "field-inline")]
 use super::support::map_reduce_chunks;
 use super::support::{
-    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    RoundChallenges,
+    pin_derived_term_if_derived, prefix_cycle_weights, try_par_sum_vecs, BundleAccess, BundleStore,
+    GruenRoundMessage, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -76,7 +77,7 @@ const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
 
 /// The per-cycle product-virtualization witness: the three left/right factor
 /// lanes plus the two wire passengers, as native small scalars.
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct SpartanProductRow {
     #[opening(LeftInstructionInput)]
     pub left_instruction_input: LeftInstructionInput,
@@ -204,6 +205,7 @@ fn extension_coefficient_fields<F: JoltField>() -> [[F; DOMAIN]; EXTENDED_SIZE] 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct SpartanProductCarry<F: JoltField> {
     log_t: usize,
+    prefix_cycles: usize,
     tau_low: Vec<F>,
     rows: BundleStore<SpartanProductRow>,
     #[cfg(feature = "field-inline")]
@@ -214,6 +216,7 @@ struct SpartanProductCarry<F: JoltField> {
 
 fn extended_t1_values<F: JoltField>(
     rows: &BundleAccess<'_, SpartanProductRow>,
+    prefix_cycles: usize,
     tau_low: &[F],
     #[cfg(feature = "field-inline")] field_rows: &[(usize, FieldInlineSpartanRow<F>)],
 ) -> Result<Vec<F>, WitnessError> {
@@ -233,7 +236,11 @@ fn extended_t1_values<F: JoltField>(
         let mut field_sums = vec![F::zero(); EXTENDED_SIZE];
         #[cfg(feature = "field-inline")]
         let mut field_cursor = FieldInlineRowCursor::seek(field_rows, x_out * in_len);
-        for (x_in, &e) in e_in.iter().enumerate() {
+        for (x_in, &e) in e_in
+            .iter()
+            .take(prefix_cycles.saturating_sub(x_out * in_len))
+            .enumerate()
+        {
             let t = x_out * in_len + x_in;
             let row = rows.row(t)?;
             #[cfg(feature = "field-inline")]
@@ -261,7 +268,17 @@ fn extended_t1_values<F: JoltField>(
             .map(|accumulator| e_out[x_out] * accumulator.reduce())
             .collect())
     };
-    try_par_sum_vecs(e_out.len(), EXTENDED_SIZE, block)
+    let mut values = try_par_sum_vecs(prefix_cycles.div_ceil(in_len), EXTENDED_SIZE, block)?;
+    if prefix_cycles < 1usize << tau_low.len() {
+        let mass = EqPolynomial::suffix_sum(tau_low, prefix_cycles);
+        let products = extended_products(&rows.row(prefix_cycles)?, &coefficients);
+        for (value, product) in values.iter_mut().zip(products) {
+            let mut accumulator = <F as WithAccumulator>::SignedProductAccumulator::default();
+            accumulator.fmadd_s256(mass, &product);
+            *value += accumulator.reduce();
+        }
+    }
+    Ok(values)
 }
 
 /// The stage-2 product uni-skip front. `prepare` runs on `τ_low` only;
@@ -304,14 +321,22 @@ impl OptimizedProductUniskip {
                 reason: "Spartan product tau_low must carry log_t challenges",
             });
         }
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
+        let mut prefix_cycles = rows.access().constant_suffix_start(1 << log_t)?;
+        #[cfg(feature = "field-inline")]
+        if let Some((cycle, _)) = field_rows.last() {
+            prefix_cycles = prefix_cycles.max(cycle.saturating_add(1)).min(1 << log_t);
+        }
         let t1_values = extended_t1_values(
             &rows.access(),
+            prefix_cycles,
             tau_low,
             #[cfg(feature = "field-inline")]
             &field_rows,
         )?;
         session.park(SpartanProductCarry {
             log_t,
+            prefix_cycles,
             tau_low: tau_low.to_vec(),
             rows,
             #[cfg(feature = "field-inline")]
@@ -408,8 +433,9 @@ impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRem
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ProductRemainderKernel<F: JoltField> {
-    left: Polynomial<F>,
-    right: Polynomial<F>,
+    left: PrefixColumn<F>,
+    right: PrefixColumn<F>,
+    prefix_cycles: usize,
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -428,6 +454,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     ) -> Result<Self, KernelError<F>> {
         let SpartanProductCarry {
             log_t,
+            prefix_cycles,
             tau_low,
             rows,
             #[cfg(feature = "field-inline")]
@@ -459,8 +486,10 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         // weight draws that the composed 5-node Lagrange weights actually
         // hit). Right's i128 lane goes through the signed-product path.
         let cycles = 1usize << log_t;
-        let mut left: Vec<F> = unsafe_allocate_zero_vec(cycles);
-        let mut right: Vec<F> = unsafe_allocate_zero_vec(cycles);
+        // Keep the odd boundary pair explicit; its second row is a tail representative.
+        let stored_cycles = prefix_cycles.div_ceil(2) * 2;
+        let mut left: Vec<F> = unsafe_allocate_zero_vec(stored_cycles);
+        let mut right: Vec<F> = unsafe_allocate_zero_vec(stored_cycles);
         let e_out = split_eq.e_out_current();
         let e_in = split_eq.e_in_current();
         let in_len = e_in.len();
@@ -477,6 +506,11 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             right_acc.fmadd_u64(weights_ref[1], u64::from(row.branch_flag.0));
             right_acc.fmadd_u64(weights_ref[2], 1 - u64::from(row.next_is_noop.0));
             (left_acc.reduce(), right_acc.reduce())
+        };
+        let (left_tail, right_tail) = if prefix_cycles < cycles {
+            cell(&access.row(prefix_cycles)?)
+        } else {
+            (F::zero(), F::zero())
         };
         #[cfg(feature = "field-inline")]
         let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
@@ -515,7 +549,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                     None => (left, right),
                 })
             };
-            for (x_in, &e) in e_in.iter().enumerate() {
+            for (x_in, &e) in e_in.iter().take(left_chunk.len() / 2).enumerate() {
                 let pair = x_out * in_len + x_in;
                 #[cfg(feature = "field-inline")]
                 let (left_low, right_low) = cell(2 * pair, &mut field_cursor)?;
@@ -559,9 +593,20 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             folded
         };
 
+        let endpoints = (
+            endpoints.0 + split_eq.suffix_weight(stored_cycles / 2) * left_tail * right_tail,
+            endpoints.1,
+        );
         Ok(Self {
-            left: Polynomial::new(left),
-            right: Polynomial::new(right),
+            left: PrefixColumn {
+                values: left,
+                tail: [left_tail; 2],
+            },
+            right: PrefixColumn {
+                values: right,
+                tail: [right_tail; 2],
+            },
+            prefix_cycles,
             purged: false,
             split_eq,
             pending_endpoints: Some(endpoints),
@@ -574,8 +619,8 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        let shrunk = self.left.bind_low_to_high_in_place(challenge);
-        let _ = self.right.bind_low_to_high_in_place(challenge);
+        let shrunk = self.left.bind(challenge);
+        let _ = self.right.bind(challenge);
         if shrunk && !self.purged {
             self.purged = true;
             crate::mem::purge_retained_memory(self.challenges.total());
@@ -587,7 +632,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
 
     fn cycle_weights(&self) -> Vec<F> {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
-        EqPolynomial::<F>::evals(&reversed, None)
+        prefix_cycle_weights(&reversed, self.prefix_cycles)
     }
 
     /// The eight produced opening values at the bound cycle point: one
@@ -672,11 +717,11 @@ impl<F: JoltField> ProveRounds<F> for ProductRemainderKernel<F> {
         }
         let (q_zero, q_infinity) = match self.pending_endpoints.take() {
             Some(endpoints) => endpoints,
-            None => self.split_eq.product_endpoints(&self.left, &self.right),
+            None => self.left.product_endpoints(&self.right, &self.split_eq),
         };
         self.split_eq
             .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.split_eq.product_at_one(&self.left, &self.right)
+                self.left.product_at_one(&self.right, &self.split_eq)
             })
     }
 
@@ -1013,7 +1058,7 @@ mod tests {
     }
 
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        parity_case_with_eq(dummy_plane, log_t, seed, None, false);
+        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None);
     }
 
     fn parity_case_with_eq(
@@ -1022,15 +1067,33 @@ mod tests {
         seed: u64,
         exceptional: Option<ExceptionalEq>,
         zero_scale: bool,
+        prefix: Option<usize>,
     ) {
+        let mut rows = synthetic_rows(log_t, seed);
+        if let Some(prefix) = prefix {
+            let tail = rows[rows.len() - 1];
+            rows[prefix..].fill(tail);
+        }
+        #[cfg(feature = "field-inline")]
+        let mut field_rows = synthetic_field_rows(log_t, seed ^ 0xF1E1D);
+        #[cfg(feature = "field-inline")]
+        if let Some(prefix) = prefix {
+            // Odd seeds keep field rows past the integer suffix boundary.
+            crate::optimized::testing::trim_field_rows(
+                &mut field_rows,
+                log_t,
+                prefix,
+                seed % 2 == 1,
+            );
+        }
         parity_run(
             dummy_plane,
             ParityInputs {
                 log_t,
                 seed,
-                rows: synthetic_rows(log_t, seed),
+                rows,
                 #[cfg(feature = "field-inline")]
-                field_rows: synthetic_field_rows(log_t, seed ^ 0xF1E1D),
+                field_rows,
                 tau_low: exceptional.map_or_else(
                     || {
                         (0..log_t)
@@ -1138,7 +1201,13 @@ mod tests {
             .unwrap();
 
         let challenges: Vec<Fr> = (0..log_t)
-            .map(|i| Fr::from_u64(1201 + seed + 43 * i as u64))
+            .map(|i| {
+                if seed.is_multiple_of(2) && i < 2 {
+                    Fr::from_u64(i as u64)
+                } else {
+                    Fr::from_u64(1201 + seed + 43 * i as u64)
+                }
+            })
             .collect();
         let mut bind = None;
         let mut previous = input_claim;
@@ -1178,9 +1247,24 @@ mod tests {
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
         with_sample_backend(|dummy| {
             for case in ExceptionalEq::ALL {
-                parity_case_with_eq(dummy, 4, 379, Some(case), false);
+                parity_case_with_eq(dummy, 4, 379, Some(case), false, None);
             }
-            parity_case_with_eq(dummy, 4, 379, None, true);
+            parity_case_with_eq(dummy, 4, 379, None, true, None);
+        });
+    }
+
+    #[test]
+    fn constant_tails_match_reference_rounds_and_openings() {
+        with_sample_backend(|dummy| {
+            for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
+                for seed in [379, 380] {
+                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix));
+                    for case in ExceptionalEq::ALL {
+                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix));
+                    }
+                }
+                parity_case_with_eq(dummy, 4, 379, None, true, Some(prefix));
+            }
         });
     }
 

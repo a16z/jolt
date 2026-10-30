@@ -27,7 +27,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_riscv::JoltInstructionRow;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use super::booleanity::{Booleanity, BooleanityCyclePhaseChallenges};
 use super::bytecode_read_raf::{
@@ -122,20 +122,22 @@ pub struct Stage6bDraws<F> {
 }
 
 impl<F: JoltField> Stage6bDraws<F> {
-    pub fn draw<T: Transcript<Challenge = F>>(
+    pub fn draw<T: FieldTranscript<F>>(
         transcript: &mut T,
         committed_bytecode: bool,
-    ) -> Self {
+    ) -> Result<Self, VerifierError> {
         // Field order is draw order: the struct literal evaluates in
         // declaration order.
-        Self {
-            instruction_ra_gamma: transcript.challenge_scalar(),
+        Ok(Self {
+            instruction_ra_gamma: transcript.challenge()?,
             #[cfg(not(feature = "akita"))]
-            inc_gamma: transcript.challenge_scalar(),
+            inc_gamma: transcript.challenge()?,
             #[cfg(feature = "field-inline")]
-            field_registers_inc_gamma: transcript.challenge_scalar(),
-            eta: committed_bytecode.then(|| transcript.challenge_scalar()),
-        }
+            field_registers_inc_gamma: transcript.challenge()?,
+            eta: committed_bytecode
+                .then(|| transcript.challenge())
+                .transpose()?,
+        })
     }
 }
 
@@ -427,15 +429,6 @@ impl<F: JoltField> Stage6bSumchecks<F> {
             })?
         };
 
-        #[cfg(feature = "akita")]
-        let booleanity_dimensions =
-            jolt_claims::protocols::jolt::lattice::relations::booleanity::LatticeBooleanityDimensions::new(
-                booleanity_dimensions,
-            )
-            .map_err(|error| VerifierError::StageClaimPublicInputFailed {
-                stage: JoltRelationId::Booleanity,
-                reason: error.to_string(),
-            })?;
         // The little-endian reference cycle is construction geometry (the
         // reversed stage-5 instruction cycle, no draw of its own), so it is
         // rederived from the stage-5 point rather than carried with the
@@ -564,11 +557,12 @@ impl<F: JoltField> Stage6bSumchecks<F> {
 #[cfg(test)]
 #[expect(
     clippy::as_conversions,
-    reason = "tests use plain arithmetic on fixture data"
+    clippy::unwrap_used,
+    reason = "tests use plain arithmetic and unwrap on fixture data"
 )]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, squeeze};
     use jolt_field::Fr;
 
     /// Pins the post-6a draw schedule to member declaration order: the instruction-RA gamma,
@@ -591,16 +585,17 @@ mod tests {
 
             let (inline_events, inline_values) = record(|t| {
                 (0..expected_squeezes)
-                    .map(|_| t.challenge_scalar())
+                    .map(|_| t.challenge().unwrap())
                     .collect::<Vec<Fr>>()
             });
-            let (draw_events, draws) = record(|t| Stage6bDraws::<Fr>::draw(t, committed_bytecode));
+            let (draw_events, draws) =
+                record(|t| Stage6bDraws::<Fr>::draw(t, committed_bytecode).unwrap());
 
             assert_eq!(draw_events, inline_events);
             assert_eq!(
                 draw_events,
                 (1..=expected_squeezes as u64)
-                    .map(DrawEvent::Squeeze)
+                    .map(squeeze)
                     .collect::<Vec<_>>()
             );
             let mut ordered = vec![draws.instruction_ra_gamma];

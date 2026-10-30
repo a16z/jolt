@@ -5,17 +5,17 @@
 use std::sync::Arc;
 
 use jolt_akita::{
-    AkitaField, AkitaNativeBatching, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AkitaChunkProfile, AkitaField, AkitaNativeBatching, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
     AkitaVerifierSetup, TrustedBytes,
 };
 use jolt_field::Ring;
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, EvaluationClaim, VerifierOpeningClaim};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::Blake2b512;
 
 #[test]
 fn detached_payloads_verify_once_attached_in_place() {
-    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+    let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
         14,
         1,
@@ -35,7 +35,7 @@ fn detached_payloads_verify_once_attached_in_place() {
         commitment,
         evaluation: EvaluationClaim::new(point, value),
     }];
-    let mut prover_transcript = Blake2bTranscript::<AkitaField>::new(b"prepared");
+    let mut prover_transcript = jolt_transcript::prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"prepared"), b"");
     let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
@@ -65,7 +65,7 @@ fn detached_payloads_verify_once_attached_in_place() {
         .attach_prepared_payloads(&bodies[1..])
         .is_err());
     transported.attach_prepared_payloads(&bodies).unwrap();
-    let mut transcript = Blake2bTranscript::<AkitaField>::new(b"prepared");
+    let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"prepared"), b"");
     <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &transported,
         &statement,

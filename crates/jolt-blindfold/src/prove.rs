@@ -2,10 +2,8 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpeni
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
 use jolt_r1cs::{ConstraintMatrices, ConstraintMatrixEvalError, SparseRow};
-use jolt_sumcheck::{
-    append_round_coefficients, CompressedSumcheckProof, SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_sumcheck::{append_compressed_round, CompressedSumcheckProof};
+use jolt_transcript::{require_no_pow, Encoding, FieldTranscript, Transcript};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
@@ -13,7 +11,6 @@ use crate::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
 const INNER_SUMCHECK_DEGREE: usize = 2;
-const INNER_SUMCHECK_LABEL: &[u8] = b"inner_sumcheck_poly";
 
 #[derive(Clone, Copy, Debug)]
 pub struct BlindFoldWitness<'a, F: JoltField> {
@@ -160,10 +157,10 @@ pub fn prove<F, VC, T, R>(
     rng: &mut R,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     VC: VectorCommitment<Field = F>,
-    VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F>,
     R: RngCore,
 {
     let mut row_committer = DirectBlindFoldRowCommitter;
@@ -186,13 +183,15 @@ pub fn prove_with_row_committer<F, VC, T, R, C>(
     row_committer: &mut C,
 ) -> Result<BlindFoldProof<F, VC::Output>, ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     VC: VectorCommitment<Field = F>,
-    VC::Output: HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F>,
     R: RngCore,
     C: BlindFoldRowCommitter<F, VC>,
 {
+    // BlindFold runs over wide challenge sets only; no draw here grinds.
+    require_no_pow(T::CHALLENGE_SET).map_err(|_| ProverError::NeedsProofOfWork)?;
     validate_witness::<F, VC>(setup, protocol, witness)?;
 
     let auxiliary_range = protocol.dimensions.witness_rows.auxiliary.clone();
@@ -411,12 +410,6 @@ where
 
     append_relaxed_instance(
         transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_committed_u",
-            witness: b"bf_committed_w",
-            error: b"bf_committed_e",
-            eval: b"bf_committed_eval",
-        },
         committed.u,
         &committed.witness_row_commitments,
         &committed.error_row_commitments,
@@ -424,19 +417,13 @@ where
     );
     append_relaxed_instance(
         transcript,
-        RelaxedInstanceLabels {
-            u: b"bf_random_u",
-            witness: b"bf_random_w",
-            error: b"bf_random_e",
-            eval: b"bf_random_eval",
-        },
         random_u,
         &random_instance.witness_row_commitments,
         &random_instance.error_row_commitments,
         &random_instance.eval_commitments,
     );
-    append_values(transcript, b"bf_cross_e", &cross_term_error_row_commitments);
-    let folding_challenge = transcript.challenge();
+    transcript.append_values(&cross_term_error_row_commitments);
+    let folding_challenge = transcript.challenge()?;
 
     let folded_u = F::one() + folding_challenge * random_u;
     let folded_witness_rows = row_committer.fold_rows(
@@ -508,12 +495,7 @@ where
             }
             // Absorb per binding (output, then blinding), in the order the
             // verifier reads them.
-            append_vector_opening(
-                transcript,
-                b"bf_eval_out_open",
-                b"bf_eval_out_blind",
-                &opening,
-            );
+            append_vector_opening(transcript, &opening);
             folded_eval_output_openings.push(opening);
         }
         if let Some(coordinate) = coordinates.blinding {
@@ -533,17 +515,11 @@ where
                     actual: opened,
                 });
             }
-            append_vector_opening(
-                transcript,
-                b"bf_eval_blind_open",
-                b"bf_eval_blind_bl",
-                &opening,
-            );
+            append_vector_opening(transcript, &opening);
             folded_eval_blinding_openings.push(opening);
         }
     }
 
-    transcript.append(&Label(b"bf_spartan"));
     let outer_num_vars = log2_power_of_two("error row count", protocol.dimensions.error.row_count)?
         + log2_power_of_two("error row length", protocol.dimensions.error.row_len)?;
     if outer_num_vars == 0 {
@@ -551,7 +527,7 @@ where
             name: "outer folded R1CS sumcheck",
         });
     }
-    let tau = transcript.challenge_vector(outer_num_vars);
+    let tau = transcript.challenge_vector(outer_num_vars)?;
     let flattened_folded_witness = flatten(&folded_witness_rows);
     let flattened_folded_error = flatten(&folded_error_rows);
     let outer_trace = prove_outer_sumcheck(
@@ -580,17 +556,12 @@ where
         "folded error row opening",
     )?;
 
-    append_values(transcript, b"bf_az_bz_cz", &[az_rx, bz_rx, cz_rx]);
-    append_vector_opening(
-        transcript,
-        b"bf_error_opening",
-        b"bf_error_blind",
-        &error_opening,
-    );
+    transcript.append_values(&[az_rx, bz_rx, cz_rx]);
+    append_vector_opening(transcript, &error_opening);
 
-    let ra = transcript.challenge();
-    let rb = transcript.challenge();
-    let rc = transcript.challenge();
+    let ra = transcript.challenge()?;
+    let rb = transcript.challenge()?;
+    let rc = transcript.challenge()?;
     let inner_num_vars =
         log2_power_of_two("witness row count", protocol.dimensions.witness.row_count)?
             + log2_power_of_two("witness row length", protocol.dimensions.witness.row_len)?;
@@ -820,8 +791,8 @@ fn prove_outer_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    F: JoltField + Encoding,
+    T: FieldTranscript<F>,
 {
     let num_vars = log2_power_of_two("outer folded R1CS sumcheck", error_values.len())?;
     ensure_len("outer challenge vector", num_vars, tau.len())?;
@@ -846,7 +817,7 @@ where
     let mut rounds = Vec::with_capacity(num_vars);
     let mut point = Vec::with_capacity(num_vars);
 
-    for _round in 0..num_vars {
+    for _ in 0..num_vars {
         let half = az.len() / 2;
         let mut evals = [F::zero(); OUTER_SUMCHECK_DEGREE + 1];
         for i in 0..half {
@@ -891,12 +862,8 @@ where
             });
         }
         let compressed = round_poly.compress();
-        append_round_coefficients(
-            transcript,
-            SUMCHECK_ROUND_TRANSCRIPT_LABEL,
-            compressed.coeffs_except_linear_term(),
-        );
-        let challenge = transcript.challenge();
+        append_compressed_round(transcript, compressed.coeffs_except_linear_term());
+        let challenge = transcript.challenge()?;
         running_sum = round_poly.evaluate(challenge);
         az.bind_with_order(challenge, BindingOrder::HighToLow);
         bz.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -910,6 +877,7 @@ where
     Ok(SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces: Vec::new(),
         },
         point,
     })
@@ -930,8 +898,8 @@ fn prove_inner_sumcheck<F, T>(
     transcript: &mut T,
 ) -> Result<SumcheckTrace<F>, ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    F: JoltField + Encoding,
+    T: FieldTranscript<F>,
 {
     let witness_values = flatten(witness_rows);
     let num_vars = log2_power_of_two("inner folded R1CS sumcheck", witness_values.len())?;
@@ -945,7 +913,7 @@ where
     let mut rounds = Vec::with_capacity(num_vars);
     let mut point = Vec::with_capacity(num_vars);
 
-    for _round in 0..num_vars {
+    for _ in 0..num_vars {
         let half = l_w.len() / 2;
         let mut evals = [F::zero(); INNER_SUMCHECK_DEGREE + 1];
         for i in 0..half {
@@ -973,12 +941,8 @@ where
             });
         }
         let compressed = round_poly.compress();
-        append_round_coefficients(
-            transcript,
-            INNER_SUMCHECK_LABEL,
-            compressed.coeffs_except_linear_term(),
-        );
-        let challenge = transcript.challenge();
+        append_compressed_round(transcript, compressed.coeffs_except_linear_term());
+        let challenge = transcript.challenge()?;
         running_sum = round_poly.evaluate(challenge);
         l_w.bind_with_order(challenge, BindingOrder::HighToLow);
         witness.bind_with_order(challenge, BindingOrder::HighToLow);
@@ -989,6 +953,7 @@ where
     Ok(SumcheckTrace {
         proof: CompressedSumcheckProof {
             round_polynomials: rounds,
+            pow_nonces: Vec::new(),
         },
         point,
     })
@@ -1105,56 +1070,32 @@ where
     )
 }
 
-#[derive(Clone, Copy, Debug)]
-struct RelaxedInstanceLabels {
-    u: &'static [u8],
-    witness: &'static [u8],
-    error: &'static [u8],
-    eval: &'static [u8],
-}
-
 fn append_relaxed_instance<F, C, T>(
     transcript: &mut T,
-    labels: RelaxedInstanceLabels,
     u: F,
     witness_commitments: &[C],
     error_commitments: &[C],
     eval_commitments: &[C],
 ) where
-    F: AppendToTranscript,
-    C: AppendToTranscript,
+    F: Encoding,
+    C: Encoding,
     T: Transcript,
 {
-    transcript.append(&Label(labels.u));
-    u.append_to_transcript(transcript);
-    append_values(transcript, labels.witness, witness_commitments);
-    append_values(transcript, labels.error, error_commitments);
-    append_values(transcript, labels.eval, eval_commitments);
+    transcript.append(&u);
+    transcript.append_values(witness_commitments);
+    transcript.append_values(error_commitments);
+    transcript.append_values(eval_commitments);
 }
 
-fn append_values<A, T>(transcript: &mut T, label: &'static [u8], values: &[A])
+fn append_vector_opening<F, T>(transcript: &mut T, opening: &VectorCommitmentOpening<F>)
 where
-    A: AppendToTranscript,
+    F: Encoding,
     T: Transcript,
 {
-    transcript.append(&LabelWithCount(label, values.len() as u64));
-    for value in values {
-        value.append_to_transcript(transcript);
-    }
-}
-
-fn append_vector_opening<F, T>(
-    transcript: &mut T,
-    row_label: &'static [u8],
-    blinding_label: &'static [u8],
-    opening: &VectorCommitmentOpening<F>,
-) where
-    F: AppendToTranscript,
-    T: Transcript,
-{
-    append_values(transcript, row_label, &opening.combined_vector);
-    transcript.append(&Label(blinding_label));
-    opening.combined_blinding.append_to_transcript(transcript);
+    // The prover chooses the vector's length, so a count word comes first.
+    transcript.append(&(opening.combined_vector.len() as u64));
+    transcript.append_values(&opening.combined_vector);
+    transcript.append(&opening.combined_blinding);
 }
 
 fn random_rows<F, R>(row_count: usize, row_len: usize, rng: &mut R) -> Vec<Vec<F>>

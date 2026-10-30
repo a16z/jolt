@@ -22,7 +22,7 @@ use super::registers::{
 use super::spartan::{pc_shift, unexpanded_pc_shift};
 
 /// Per-stage (1..=5) gamma-power vector lengths for the bytecode read-RAF stage
-/// folds — the arities of the prover's `challenge_scalar_powers` draws. The
+/// folds — the arities of the prover's `challenge_powers` draws. The
 /// verifier stores each stage's single drawn scalar and expands it with
 /// [`stage_gamma_powers`], so these lengths are single-sourced with the
 /// fold-side `require_len` guards.
@@ -34,9 +34,10 @@ pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
     // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
     // product-virtualization flags.
     4,
-    // Stage 3: Imm (instruction input), UnexpandedPC (shift), the four
-    // operand-source flags, IsNoop, VirtualInstruction, IsFirstInSequence.
-    9,
+    // Stage 3: Imm (instruction input), UnexpandedPC (shift), the five
+    // operand-source flags (including RdWriteValue), IsNoop,
+    // VirtualInstruction, IsFirstInSequence.
+    10,
     // Stage 4: the RdWa, Rs1Ra, Rs2Ra register read-write openings.
     3,
     // Stage 5: RdWa (registers val evaluation), InstructionRafFlag, then one
@@ -619,8 +620,9 @@ fn read_raf_flag_terms(
         ),
         (instruction_flags[InstructionFlags::RightOperandIsImm], 5),
         (instruction_flags[InstructionFlags::IsNoop], 6),
-        (circuit_flags[CircuitFlags::VirtualInstruction], 7),
-        (circuit_flags[CircuitFlags::IsFirstInSequence], 8),
+        (instruction_flags[InstructionFlags::RightOperandIsRdWriteValue], 7),
+        (circuit_flags[CircuitFlags::VirtualInstruction], 8),
+        (circuit_flags[CircuitFlags::IsFirstInSequence], 9),
     ] {
         if selected {
             gamma(STAGE3, index);
@@ -899,8 +901,12 @@ where
         + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 6)
             * opening(instruction_flag_shift(InstructionFlags::IsNoop))
         + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 7)
-            * opening(op_flag_shift(CircuitFlags::VirtualInstruction))
+            * opening(instruction_flag_input(
+                InstructionFlags::RightOperandIsRdWriteValue,
+            ))
         + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 8)
+            * opening(op_flag_shift(CircuitFlags::VirtualInstruction))
+        + challenge_pow_expr(BytecodeReadRafChallenge::Stage3Gamma, 9)
             * opening(op_flag_shift(CircuitFlags::IsFirstInSequence))
 }
 
@@ -1099,7 +1105,7 @@ mod tests {
         };
         let stage1_gammas = gammas(2 + NUM_CIRCUIT_FLAGS, 1);
         let stage2_gammas = gammas(4, 11);
-        let stage3_gammas = gammas(9, 17);
+        let stage3_gammas = gammas(BYTECODE_STAGE_GAMMA_COUNTS[2], 17);
         let stage4_gammas = gammas(3, 29);
         let stage5_gammas = gammas(2 + LookupTableKind::<XLEN>::COUNT, 37);
         let register_read_write_point = gammas(4, 43);

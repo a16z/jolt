@@ -35,6 +35,7 @@ ignored = ["jolt-field", "jolt-riscv"]
 jolt-riscv = { path = "../../../crates/jolt-riscv" }
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "guest-verifier",
+  "transcript-blake2b",
   "thread",
   "random",
 ] }

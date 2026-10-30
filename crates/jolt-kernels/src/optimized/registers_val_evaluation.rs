@@ -11,9 +11,9 @@
 //!   serves `wa(j) = eq(r_address)[rd_j]` straight from the per-cycle hot
 //!   indices and the K-sized eq table — the `K × T` grid is never
 //!   materialized, and the reference's prepare-time `address_fold` over it is
-//!   gone. The dense bound vector (T/2) appears only at the first bind.
+//!   gone. Only the explicit prefix is materialized at the first bind.
 //! - **Rows-until-first-bind increments**: round 0 reads `RdInc` from typed
-//!   rows; the first bind creates a dense `T/2` table.
+//!   rows; the first bind retains an explicit prefix and a constant suffix.
 //! - **Split LT** ([`SplitLt`], legacy `LtPolynomial`): `LT(j, r_cycle)` is
 //!   served from three ~√T tables instead of a dense `T`-sized one.
 //! - **Eval-at-{0,2,3} sampling** with the engine hint supplying s(1)
@@ -27,8 +27,10 @@ use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{bind_prefix_in_place, EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -40,6 +42,7 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
+use super::prefix_product::PrefixColumn;
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
 use super::support::{
     collect_rows, pin_derived_term, triple_product_round_evals, BundleStore, RoundProgress, SplitLt,
@@ -49,7 +52,7 @@ use crate::{
 };
 
 /// The write-address column: hot indices plus the address eq table until the first
-/// bind, a dense bound vector afterwards. The `K × T` grid never exists. Shared with
+/// bind, an explicit bound prefix with an implicit zero suffix afterwards. The `K × T` grid never exists. Shared with
 /// the field-register value-evaluation kernel, whose write column has the same
 /// lazy-fold shape at the field-register address width.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -58,29 +61,53 @@ pub(crate) enum WaState<F: JoltField> {
         rd: Vec<Option<u8>>,
         eq_address: Vec<F>,
     },
-    Dense(Polynomial<F>),
+    Bound(Vec<F>),
 }
 
 impl<F: JoltField> WaState<F> {
+    pub(crate) fn new(mut rd: Vec<Option<u8>>, eq_address: Vec<F>) -> Self {
+        let prefix = rd.iter().rposition(Option::is_some).map_or(0, |i| i + 1);
+        rd.truncate(prefix);
+        rd.shrink_to_fit();
+        Self::Indices { rd, eq_address }
+    }
+
+    pub(crate) fn prefix_len(&self) -> usize {
+        match self {
+            Self::Indices { rd, .. } => rd.len(),
+            Self::Bound(values) => values.len(),
+        }
+    }
+
     #[inline]
     pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {
             Self::Indices { rd, eq_address } => {
-                let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
+                let value = |j: usize| {
+                    rd.get(j)
+                        .copied()
+                        .flatten()
+                        .map_or(F::zero(), |k| eq_address[k as usize])
+                };
                 (value(2 * y), value(2 * y + 1))
             }
-            Self::Dense(table) => {
-                let evals = table.evals();
-                (evals[2 * y], evals[2 * y + 1])
-            }
+            Self::Bound(values) => (
+                values.get(2 * y).copied().unwrap_or(F::zero()),
+                values.get(2 * y + 1).copied().unwrap_or(F::zero()),
+            ),
         }
     }
 
     pub(crate) fn bind(&mut self, r: F) {
         match self {
             Self::Indices { rd, eq_address } => {
-                let value = |j: usize| rd[j].map_or(F::zero(), |k| eq_address[k as usize]);
-                let half = rd.len() / 2;
+                let value = |j: usize| {
+                    rd.get(j)
+                        .copied()
+                        .flatten()
+                        .map_or(F::zero(), |k| eq_address[k as usize])
+                };
+                let half = rd.len().div_ceil(2);
                 let bind_pair = |y: usize| {
                     let lo = value(2 * y);
                     lo + r * (value(2 * y + 1) - lo)
@@ -89,17 +116,19 @@ impl<F: JoltField> WaState<F> {
                 let dense: Vec<F> = (0..half).into_par_iter().map(bind_pair).collect();
                 #[cfg(not(feature = "parallel"))]
                 let dense: Vec<F> = (0..half).map(bind_pair).collect();
-                *self = Self::Dense(Polynomial::new(dense));
+                *self = Self::Bound(dense);
             }
-            Self::Dense(table) => table.bind_with_order(r, BindingOrder::LowToHigh),
+            Self::Bound(values) => {
+                let _ = bind_prefix_in_place(values, r, F::zero());
+            }
         }
     }
 
     pub(crate) fn final_value(&self) -> F {
         match self {
-            Self::Dense(table) => {
-                debug_assert_eq!(table.len(), 1);
-                table.evals()[0]
+            Self::Bound(values) => {
+                debug_assert!(values.len() <= 1);
+                values.first().copied().unwrap_or(F::zero())
             }
             Self::Indices { .. } => unreachable!("bound at least once before extraction"),
         }
@@ -141,12 +170,26 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
                 got: rows,
             });
         }
-        let inc = IncState::Rows(BundleStore::resolve(witness, cycles)?);
+        let store: BundleStore<RdIncRow> = BundleStore::resolve(witness, cycles)?;
+        let prefix_len = store.access().constant_suffix_start(cycles)?;
+        let tail = if prefix_len < cycles {
+            store.access().row(prefix_len)?.rd_inc.to_field::<F>()
+        } else {
+            F::zero()
+        };
+        let inc = IncState::Rows {
+            store,
+            prefix_len,
+            tail,
+        };
 
         // Reclaim the rd hot indices the stage-4 kernel parked; collect them
         // from the row source otherwise (reference-only stage 4, tests).
         let rd = match session.take::<SharedRdIndices>() {
-            Some(SharedRdIndices(rd)) if rd.len() == cycles => rd,
+            Some(SharedRdIndices {
+                indices,
+                cycles: rows,
+            }) if rows == cycles => indices,
             _ => collect_rows::<RegisterCycleRow>(witness, cycles)?
                 .iter()
                 .map(|row| row.rd.map(|(k, ..)| k))
@@ -156,10 +199,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
         Ok(Box::new(ValEvaluationKernel {
             progress: RoundProgress::new(log_t),
             inc,
-            wa: WaState::Indices {
-                rd,
-                eq_address: EqPolynomial::<F>::evals(r_address, None),
-            },
+            wa: WaState::new(rd, EqPolynomial::<F>::evals(r_address, None)),
             lt: SplitLt::new(r_cycle),
         }))
     }
@@ -167,11 +207,15 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum IncState<F: JoltField> {
-    Rows(BundleStore<RdIncRow>),
-    Dense(Polynomial<F>),
+    Rows {
+        store: BundleStore<RdIncRow>,
+        prefix_len: usize,
+        tail: F,
+    },
+    Dense(PrefixColumn<F>),
 }
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 struct RdIncRow {
     rd_inc: RdInc,
 }
@@ -193,10 +237,16 @@ fn row_unavailable<F: JoltField>() -> SumcheckError<F> {
 impl<F: JoltField> ValEvaluationKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
         match &mut self.inc {
-            IncState::Dense(inc) => inc.bind_with_order(challenge, BindingOrder::LowToHigh),
-            IncState::Rows(store) => {
+            IncState::Dense(inc) => {
+                let _ = inc.bind(challenge);
+            }
+            IncState::Rows {
+                store,
+                prefix_len,
+                tail,
+            } => {
                 debug_assert_eq!(self.progress.bound(), 0);
-                let half = (1usize << self.progress.total()) / 2;
+                let half = prefix_len.div_ceil(2);
                 let access = store.access();
                 let bound = |y: usize| -> Result<F, SumcheckError<F>> {
                     let even: RdIncRow = access.row(2 * y).map_err(|_| row_unavailable())?;
@@ -205,13 +255,13 @@ impl<F: JoltField> ValEvaluationKernel<F> {
                     Ok(lo + challenge * (hi - lo))
                 };
                 #[cfg(feature = "parallel")]
-                let table = (0..half)
-                    .into_par_iter()
-                    .map(bound)
-                    .collect::<Result<Vec<F>, _>>()?;
+                let table = par_collect_windows(half, bound)?;
                 #[cfg(not(feature = "parallel"))]
                 let table = (0..half).map(bound).collect::<Result<Vec<F>, _>>()?;
-                self.inc = IncState::Dense(Polynomial::new(table));
+                self.inc = IncState::Dense(PrefixColumn {
+                    values: table,
+                    tail: [*tail; 2],
+                });
             }
         }
         self.wa.bind(challenge);
@@ -239,9 +289,9 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
         // Evaluate at 0, 2, 3; the engine supplies s(1).
         // Round 0 reads rows fallibly; later rounds read the dense table.
         let evals = match &self.inc {
-            IncState::Rows(store) => {
+            IncState::Rows { store, .. } => {
                 debug_assert_eq!(self.progress.bound(), 0);
-                let half = (1usize << self.progress.total()) / 2;
+                let half = self.wa.prefix_len().div_ceil(2);
                 let access = store.access();
                 let group = |y: usize,
                              acc: &mut [F::Accumulator; 3]|
@@ -265,7 +315,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
                         || [F::Accumulator::default(); 3],
                         |mut acc, y| {
                             group(y, &mut acc)?;
-                            Ok(acc)
+                            Ok::<_, SumcheckError<F>>(acc)
                         },
                     )
                     .map(|acc| acc.map(|acc| acc.map(F::Accumulator::reduce)))
@@ -283,15 +333,12 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
                 };
                 evals
             }
-            IncState::Dense(inc_poly) => {
-                let inc = inc_poly.evals();
-                triple_product_round_evals(
-                    inc_poly.len() / 2,
-                    |y| (inc[2 * y], inc[2 * y + 1]),
-                    |y| self.wa.pair(y),
-                    |y| self.lt.pair(y),
-                )
-            }
+            IncState::Dense(inc) => triple_product_round_evals(
+                self.wa.prefix_len().div_ceil(2),
+                |y| inc.pair(y),
+                |y| self.wa.pair(y),
+                |y| self.lt.pair(y),
+            ),
         };
 
         Ok(UnivariatePoly::from_evals_and_hint(previous_claim, &evals))
@@ -316,7 +363,7 @@ impl<F: JoltField> SumcheckKernel<F> for ValEvaluationKernel<F> {
             });
         };
         Ok(RegistersValEvaluationOutputClaims {
-            rd_inc: inc.evals()[0],
+            rd_inc: inc.pair(0).0,
             rd_wa: self.wa.final_value(),
         })
     }
@@ -392,12 +439,16 @@ mod tests {
                 IndexSource::Collect => {}
                 IndexSource::Parked => {
                     let rows: Vec<RegisterCycleRow> = collect_bundles(backend, 1 << log_t).unwrap();
-                    session.park(SharedRdIndices(
+                    session.park(SharedRdIndices::new(
                         rows.iter().map(|row| row.rd.map(|(k, ..)| k)).collect(),
+                        1 << log_t,
                     ));
                 }
                 IndexSource::StaleParked => {
-                    session.park(SharedRdIndices(vec![None; (1 << log_t) + 1]));
+                    session.park(SharedRdIndices::new(
+                        vec![None; (1 << log_t) + 1],
+                        (1 << log_t) + 1,
+                    ));
                 }
             }
 
@@ -420,6 +471,18 @@ mod tests {
                 &round_challenges,
             );
         });
+    }
+
+    #[test]
+    fn zero_suffix_boundaries_match_reference() {
+        for prefix in [1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32] {
+            run_parity(
+                structured_fixture(prefix),
+                5,
+                601 + prefix as u64,
+                &IndexSource::Parked,
+            );
+        }
     }
 
     #[test]

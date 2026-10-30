@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use bytemuck::checked::CheckedBitPattern;
 use bytemuck::{NoUninit, Pod, Zeroable};
 use jolt_field::solinas::{Ext2, Fp128, Fp64};
-use jolt_field::Field;
+use jolt_field::{Field, PseudoMersenne};
 
 use crate::runtime::MslType;
 
@@ -21,7 +21,7 @@ impl<const P: u128> MetalField for Fp128<P> {}
 
 impl<const P: u64> MetalField for Fp64<P> {}
 
-impl<F: MetalField> MetalField for Ext2<F> where F::Bits: Pod {}
+impl<F: MetalField + PseudoMersenne> MetalField for Ext2<F> where F::Bits: Pod {}
 
 /// `Fp128<P>` is `jolt::Fp128<C>` in MSL, with `C = 2^128 − P` spelled from
 /// `P` at compile time, so no offset is written by hand: `jolt::Fp128<0xffffa7f7u>`

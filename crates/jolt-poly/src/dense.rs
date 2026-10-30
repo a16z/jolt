@@ -37,6 +37,55 @@ pub struct Polynomial<T> {
     num_vars: usize,
 }
 
+/// Binds adjacent evaluation pairs in place, with `boundary` supplying the
+/// missing high entry of an odd-length prefix. The implicit suffix itself
+/// is the caller's responsibility. Returns whether backing storage shrank.
+///
+/// Each dyadic wave writes below its source window, so parallel writes never
+/// overwrite an unread entry. No second field buffer is allocated.
+pub fn bind_prefix_in_place<F: JoltField>(values: &mut Vec<F>, scalar: F, boundary: F) -> bool {
+    let len = values.len();
+    if len == 0 {
+        return false;
+    }
+    let lo = values[0];
+    let hi = values.get(1).copied().unwrap_or(boundary);
+    values[0] = scalar.mul_add(hi - lo, lo);
+    let mut start = 2;
+    while start < len {
+        let count = (len - start).min(start);
+        let (head, tail) = values.split_at_mut(start);
+        let dst = &mut head[start / 2..start / 2 + count.div_ceil(2)];
+        let src = &tail[..count];
+        let write = |(k, out): (usize, &mut F)| {
+            let lo = src[2 * k];
+            *out = scalar.mul_add(src[2 * k + 1] - lo, lo);
+        };
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            dst[..count / 2]
+                .par_iter_mut()
+                .enumerate()
+                .with_min_len(if F::NUM_BYTES <= 16 { 1 << 14 } else { 1 << 10 })
+                .for_each(write);
+        }
+        #[cfg(not(feature = "parallel"))]
+        dst[..count / 2].iter_mut().enumerate().for_each(write);
+        if count % 2 != 0 {
+            let lo = src[count - 1];
+            dst[count / 2] = scalar.mul_add(boundary - lo, lo);
+        }
+        start *= 2;
+    }
+    values.truncate(len.div_ceil(2));
+    let shrink = values.capacity() >= 8 * values.len().max(1);
+    if shrink {
+        values.shrink_to_fit();
+    }
+    shrink
+}
+
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "T: for<'a> Deserialize<'a>"))]
 struct PolynomialRaw<T> {
@@ -131,7 +180,7 @@ impl<T: Copy> Polynomial<T> {
         for i in 0..half {
             let lo: F = self.evals[i].into();
             let hi: F = self.evals[i + half].into();
-            result.push(lo + scalar * (hi - lo));
+            result.push(scalar.mul_add(hi - lo, lo));
         }
         Polynomial {
             evals: result,
@@ -184,14 +233,17 @@ impl<F: JoltField> Polynomial<F> {
             if half >= PAR_THRESHOLD {
                 use rayon::prelude::*;
                 let (lo, hi) = self.evals.split_at_mut(half);
-                lo.par_iter_mut().zip(hi.par_iter()).for_each(|(a, b)| {
-                    *a = *a + scalar * (*b - *a);
-                });
+                lo.par_iter_mut()
+                    .zip(hi.par_iter())
+                    .with_min_len(PAR_THRESHOLD)
+                    .for_each(|(a, b)| {
+                        *a = scalar.mul_add(*b - *a, *a);
+                    });
             } else {
                 for i in 0..half {
                     let lo = self.evals[i];
                     let hi = self.evals[i + half];
-                    self.evals[i] = lo + scalar * (hi - lo);
+                    self.evals[i] = scalar.mul_add(hi - lo, lo);
                 }
             }
         }
@@ -201,7 +253,7 @@ impl<F: JoltField> Polynomial<F> {
             for i in 0..half {
                 let lo = self.evals[i];
                 let hi = self.evals[i + half];
-                self.evals[i] = lo + scalar * (hi - lo);
+                self.evals[i] = scalar.mul_add(hi - lo, lo);
             }
         }
 
@@ -222,10 +274,11 @@ impl<F: JoltField> Polynomial<F> {
                 let coeffs = &self.evals;
                 let new: Vec<F> = (0..half)
                     .into_par_iter()
+                    .with_min_len(PAR_THRESHOLD)
                     .map(|i| {
                         let lo = coeffs[2 * i];
                         let hi = coeffs[2 * i + 1];
-                        lo + scalar * (hi - lo)
+                        scalar.mul_add(hi - lo, lo)
                     })
                     .collect();
                 self.evals = new;
@@ -233,7 +286,7 @@ impl<F: JoltField> Polynomial<F> {
                 for i in 0..half {
                     let lo = self.evals[2 * i];
                     let hi = self.evals[2 * i + 1];
-                    self.evals[i] = lo + scalar * (hi - lo);
+                    self.evals[i] = scalar.mul_add(hi - lo, lo);
                 }
                 self.evals.truncate(half);
             }
@@ -244,7 +297,7 @@ impl<F: JoltField> Polynomial<F> {
             for i in 0..half {
                 let lo = self.evals[2 * i];
                 let hi = self.evals[2 * i + 1];
-                self.evals[i] = lo + scalar * (hi - lo);
+                self.evals[i] = scalar.mul_add(hi - lo, lo);
             }
             self.evals.truncate(half);
         }
@@ -264,39 +317,9 @@ impl<F: JoltField> Polynomial<F> {
     pub fn bind_low_to_high_in_place(&mut self, scalar: F) -> bool {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         debug_assert!(self.evals.len().is_power_of_two());
-        let half = self.evals.len() / 2;
-
-        let (lo, hi) = (self.evals[0], self.evals[1]);
-        self.evals[0] = lo + scalar * (hi - lo);
-        let mut e = 2;
-        while e <= half {
-            let (head, tail) = self.evals.split_at_mut(e);
-            let dst = &mut head[e / 2..];
-            let src = &tail[..e];
-            let write = |(k, out): (usize, &mut F)| {
-                let lo = src[2 * k];
-                *out = lo + scalar * (src[2 * k + 1] - lo);
-            };
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                dst.par_iter_mut()
-                    .enumerate()
-                    .with_min_len(1 << 10)
-                    .for_each(write);
-            }
-            #[cfg(not(feature = "parallel"))]
-            dst.iter_mut().enumerate().for_each(write);
-            e *= 2;
-        }
-        self.evals.truncate(half);
-
+        let shrunk = bind_prefix_in_place(&mut self.evals, scalar, F::zero());
         self.num_vars -= 1;
-        let shrink = self.evals.capacity() >= 8 * self.evals.len().max(1);
-        if shrink {
-            self.evals.shrink_to_fit();
-        }
-        shrink
+        shrunk
     }
 
     /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
@@ -324,7 +347,7 @@ impl<F: JoltField> Polynomial<F> {
                     .into_par_iter()
                     .with_min_len(PAR_THRESHOLD)
                     .for_each(|(dest, pair)| {
-                        let _ = dest.write(pair[0] + scalar * (pair[1] - pair[0]));
+                        let _ = dest.write(scalar.mul_add(pair[1] - pair[0], pair[0]));
                     });
                 // SAFETY: every spare slot in `0..half` is written exactly once above.
                 unsafe { scratch.set_len(half) };
@@ -335,7 +358,7 @@ impl<F: JoltField> Polynomial<F> {
         }
 
         for pair in self.evals.chunks_exact(2) {
-            scratch.push(pair[0] + scalar * (pair[1] - pair[0]));
+            scratch.push(scalar.mul_add(pair[1] - pair[0], pair[0]));
         }
         std::mem::swap(&mut self.evals, scratch);
         self.num_vars -= 1;
@@ -880,5 +903,27 @@ mod tests {
         }
         assert_eq!(lo_to_hi.len(), 1);
         assert_eq!(lo_to_hi.evaluations()[0], poly.evaluate(&point));
+    }
+    #[test]
+    fn prefix_in_place_binding_preserves_constant_extension() {
+        for live in [0usize, 1, 2, 3, 7, 8, 9, 15, 16, 17, 4095, 4096, 4097] {
+            for tail in [Fr::from_u64(0), Fr::from_u64(97)] {
+                let mut prefix: Vec<_> =
+                    (0..live).map(|i| Fr::from_u64(13 * i as u64 + 5)).collect();
+                let len = live.max(2).next_power_of_two();
+                let mut full = prefix.clone();
+                full.resize(len, tail);
+                let mut full = Polynomial::new(full);
+                for round in 0..len.ilog2() {
+                    let challenge = Fr::from_u64(u64::from(round) + 19);
+                    let _ = bind_prefix_in_place(&mut prefix, challenge, tail);
+                    full.bind_with_order(challenge, BindingOrder::LowToHigh);
+                    assert_eq!(&full.evals()[..prefix.len()], prefix.as_slice());
+                    assert!(full.evals()[prefix.len()..]
+                        .iter()
+                        .all(|value| *value == tail));
+                }
+            }
+        }
     }
 }

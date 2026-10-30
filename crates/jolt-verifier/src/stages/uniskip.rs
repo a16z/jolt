@@ -19,9 +19,9 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::JoltField;
 use jolt_sumcheck::{
     CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
-    SumcheckStatement, OPENING_CLAIM_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    SumcheckStatement,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
 use crate::verifier::CheckedInputs;
@@ -89,29 +89,29 @@ impl UniskipParams {
 /// uni-skip round (the Spartan outer relation's cycle variables plus the two
 /// uni-skip-collapsed row variables). Both fronts call this, so the draw is
 /// single-sourced.
-pub fn draw_spartan_outer_tau<F, T>(transcript: &mut T, log_t: usize) -> Vec<F>
+pub fn draw_spartan_outer_tau<F, T>(
+    transcript: &mut T,
+    log_t: usize,
+) -> Result<Vec<F>, VerifierError>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
     )]
-    transcript.challenge_vector(log_t + 2)
+    Ok(transcript.challenge_vector(log_t + 2)?)
 }
 
 /// The stage-2 product tau_high, drawn before the product uni-skip round.
-/// Both fronts call this, so the draw is single-sourced. MUST stay the raw
-/// `challenge()` (not `challenge_scalar()`): both decode the same 16-byte
-/// squeeze, but differently, so switching would silently change the value
-/// without changing the transcript bytes.
-pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> F
+/// Both fronts call this, so the draw is single-sourced.
+pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> Result<F, VerifierError>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
-    transcript.challenge()
+    Ok(transcript.challenge()?)
 }
 
 /// The ZK uni-skip step's outputs: the committed round consistency and output
@@ -129,8 +129,8 @@ pub struct UniskipZk<F: JoltField, C> {
 /// Protocol contract (byte-exact; the prover's uni-skip round must mirror it):
 /// the wire proof is verified as a one-round sumcheck of `params`' degree over
 /// `params`' centered integer domain, the reduced value is hard-checked
-/// against `output_claim`, and `output_claim` is then absorbed under the
-/// `b"opening_claim"` label — BEFORE any post-uni-skip draw (the remainder
+/// against `output_claim`, and `output_claim` is then absorbed — BEFORE any
+/// post-uni-skip draw (the remainder
 /// batch's coefficient squeeze in particular). Errors are attributed to
 /// `params`' stage.
 pub fn verify_clear<F, C, T>(
@@ -142,13 +142,12 @@ pub fn verify_clear<F, C, T>(
 ) -> Result<F, VerifierError>
 where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     let reduction = proof
         .verify(
             &SumcheckClaim::new(UNISKIP_ROUNDS, params.degree, input_claim),
             CenteredIntegerDomain::new(params.domain_size),
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
             transcript,
         )
         .map_err(|error| params.sumcheck_failed(error))?;
@@ -161,7 +160,7 @@ where
     // Match the prover transcript: the uni-skip output is absorbed as an
     // opening claim before any post-uni-skip draw (the remainder batch's RLC
     // coefficient squeeze in particular).
-    transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &output_claim);
+    transcript.append(&output_claim);
 
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));
@@ -180,8 +179,8 @@ pub fn verify_zk<F, C, T>(
 ) -> Result<UniskipZk<F, C>, VerifierError>
 where
     F: JoltField,
-    C: Clone + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    C: Clone + Encoding,
+    T: FieldTranscript<F>,
 {
     let consistency = proof
         .verify_committed_consistency(

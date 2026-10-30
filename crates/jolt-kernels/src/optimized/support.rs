@@ -1,8 +1,12 @@
+mod product_sum;
+pub(crate) use product_sum::{LowDegreeProductSum, TailFactorProducts};
+
 use std::ops::Range;
 
 use jolt_field::{Accumulator, JoltField};
 use jolt_poly::{
-    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, UnivariatePoly,
+    BindingOrder, EqPolynomial, GruenSplitEqPolynomial, LtPolynomial, Polynomial, TensorEqTable,
+    UnivariatePoly,
 };
 use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "parallel")]
@@ -146,7 +150,7 @@ fn accumulate_product<F: JoltField>(factors: &[F], lane: &mut F::Accumulator) {
 /// differences (additions only). That costs `O(n log n)` multiplications
 /// instead of the `n · (n − 2)` of multiplying every factor at every point;
 /// the root's multiplications fuse into the deferred-reduction lanes.
-/// Four and eight factors take unrolled forms of the same tree that keep
+/// Four, five, eight, and nine factors take unrolled forms of the same tree that keep
 /// every table on the stack.
 /// `scratch` must hold [`product_grid_scratch_len`]`(n)` elements.
 #[inline]
@@ -161,6 +165,63 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
     debug_assert_eq!(evals.len(), n);
     debug_assert_eq!(steps.len(), n);
     match (evals, steps, lanes) {
+        (
+            [a, b, c, d, e, f, g, h, i],
+            [da, db, dc, dd, de, df, dg, dh, di],
+            lanes @ [_, _, _, _, _, _, _, _, _],
+        ) if db.is_zero() && dc.is_zero() && dd.is_zero() && de.is_zero() => {
+            let constant = *b * *c * *d * *e;
+            let samples = quintic_product_samples([*a, *f, *g, *h, *i], [*da, *df, *dg, *dh, *di]);
+            let mut grid = [F::zero(); 8];
+            grid[..5].copy_from_slice(&samples[..5]);
+            extend_by_differences(&mut grid, 5, samples[5], scratch);
+            for (lane, value) in lanes[..8].iter_mut().zip(grid) {
+                lane.fmadd(constant, value);
+            }
+        }
+        (
+            [a, b, c, d, e, f, g, h, i],
+            [da, db, dc, dd, de, df, dg, dh, di],
+            lanes @ [_, _, _, _, _, _, _, _, _],
+        ) => {
+            let left = quartic_product_samples([*a, *b, *c, *d], [*da, *db, *dc, *dd]);
+            let right = quintic_product_samples([*e, *f, *g, *h, *i], [*de, *df, *dg, *dh, *di]);
+            let mut left_grid = [F::zero(); 8];
+            let mut right_grid = [F::zero(); 8];
+            left_grid[..4].copy_from_slice(&left[..4]);
+            right_grid[..5].copy_from_slice(&right[..5]);
+            extend_by_differences(&mut left_grid, 4, left[4], scratch);
+            extend_by_differences(&mut right_grid, 5, right[5], scratch);
+            for ((lane, left), right) in lanes[..8].iter_mut().zip(left_grid).zip(right_grid) {
+                lane.fmadd(left, right);
+            }
+            lanes[8].fmadd(left[4], right[5]);
+        }
+        ([a, b, c, d, e], [da, db, dc, dd, de], lanes @ [_, _, _, _, _]) => {
+            let left = quadratic_product_samples([*a, *b], [*da, *db]);
+            let right = quadratic_product_samples([*d, *e], [*dd, *de]);
+            let left_third = quadratic_next(left);
+            let right_third = quadratic_next(right);
+            let c_second = *c + *dc;
+            let c_third = c_second + *dc;
+            let cubic = [
+                *c * right[0],
+                c_second * right[1],
+                c_third * right_third,
+                *dc * right[2],
+            ];
+            let third_difference = cubic[3].mul_u64(6);
+            let cubic_next = cubic[2] - cubic[1];
+            let cubic_next = cubic_next + cubic_next + cubic_next + cubic[0] + third_difference;
+            let left_fourth = left_third + left[2];
+            let left_fourth = left_fourth + left_fourth - left[1];
+            lanes[0].fmadd(left[0], cubic[0]);
+            lanes[1].fmadd(left[1], cubic[1]);
+            lanes[2].fmadd(left_third, cubic[2]);
+            lanes[3].fmadd(left_fourth, cubic_next);
+            lanes[4].fmadd(left[2], cubic[3]);
+        }
+
         ([a, b, c, d], [da, db, dc, dd], lanes @ [_, _, _, _]) => {
             let left = quadratic_product_samples([*a, *b], [*da, *db]);
             let right = quadratic_product_samples([*c, *d], [*dc, *dd]);
@@ -224,6 +285,34 @@ pub(crate) fn accumulate_product_grid<F: JoltField>(
             lanes[n - 1].fmadd(left_lead, right_lead);
         }
     }
+}
+
+#[inline]
+fn quintic_product_samples<F: JoltField>(values: [F; 5], steps: [F; 5]) -> [F; 6] {
+    let left = quadratic_product_samples([values[0], values[1]], [steps[0], steps[1]]);
+    let right = quadratic_product_samples([values[3], values[4]], [steps[3], steps[4]]);
+    let c_second = values[2] + steps[2];
+    let c_third = c_second + steps[2];
+    let mut cubic = [
+        values[2] * right[0],
+        c_second * right[1],
+        c_third * quadratic_next(right),
+        F::zero(),
+        F::zero(),
+    ];
+    let lead = steps[2] * right[2];
+    let mut scratch = [F::zero(); 6];
+    extend_by_differences(&mut cubic, 3, lead, &mut scratch);
+    let mut quad = [left[0], left[1], F::zero(), F::zero(), F::zero()];
+    extend_by_differences(&mut quad, 2, left[2], &mut scratch);
+    [
+        quad[0] * cubic[0],
+        quad[1] * cubic[1],
+        quad[2] * cubic[2],
+        quad[3] * cubic[3],
+        quad[4] * cubic[4],
+        left[2] * lead,
+    ]
 }
 
 #[inline]
@@ -298,6 +387,7 @@ fn linear_product<F: JoltField>(values: &[F], steps: &[F], out: &mut [F], scratc
 /// `t ≤ values.len()`: the `degree`-th difference is the constant
 /// `degree! · lead`, so each new point costs `degree` additions after one
 /// backward-difference table at `t = degree`.
+#[inline(always)]
 fn extend_by_differences<F: JoltField>(
     values: &mut [F],
     degree: usize,
@@ -424,7 +514,7 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     let half = table.len() / 2;
     for y in 0..half {
         let even = table[2 * y];
-        table[y] = even + r * (table[2 * y + 1] - even);
+        table[y] = r.mul_add(table[2 * y + 1] - even, even);
     }
     table.truncate(half);
 }
@@ -563,14 +653,6 @@ pub(crate) trait GruenRoundMessage<F: JoltField> {
         round: usize,
         q_at_zero: impl FnOnce() -> F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>>;
-
-    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F;
-
-    /// `(q(0), q(∞))` of the two-table product summand
-    /// `Σ_y E(y) · a(y) · b(y)` over the remaining low-to-high `(lo, hi)`
-    /// pairs — the endpoints `gruen_poly_deg_3` completes into the cubic
-    /// round message with the running claim.
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F);
 }
 
 impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
@@ -645,39 +727,6 @@ impl<F: JoltField> GruenRoundMessage<F> for GruenSplitEqPolynomial<F> {
                 expected: previous_claim,
                 actual,
             })
-    }
-
-    fn product_at_one(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> F {
-        self.par_fold_out_in(
-            F::zero,
-            |sum, row, _, weight| {
-                *sum += weight * a.evals()[2 * row + 1] * b.evals()[2 * row + 1];
-            },
-            |_, weight, sum| weight * sum,
-            |left, right| left + right,
-        )
-    }
-
-    fn product_endpoints(&self, a: &Polynomial<F>, b: &Polynomial<F>) -> (F, F) {
-        let a = a.evals();
-        let b = b.evals();
-        debug_assert_eq!(
-            self.e_out_current_len() * self.e_in_current_len() * 2,
-            a.len()
-        );
-        debug_assert_eq!(a.len(), b.len());
-        let [zero, infinity] = self.par_fold_out_in(
-            || [F::zero(); 2],
-            |accumulator, row, _x_in, e| {
-                let (a_low, a_high) = (a[2 * row], a[2 * row + 1]);
-                let (b_low, b_high) = (b[2 * row], b[2 * row + 1]);
-                accumulator[0] += e * (a_low * b_low);
-                accumulator[1] += e * ((a_high - a_low) * (b_high - b_low));
-            },
-            |_x_out, e_out, accumulator| [e_out * accumulator[0], e_out * accumulator[1]],
-            |left, right| [left[0] + right[0], left[1] + right[1]],
-        );
-        (zero, infinity)
     }
 }
 
@@ -1042,6 +1091,43 @@ impl<B: WitnessBundle + Copy> BundleAccess<'_, B> {
     }
 }
 
+impl<B: WitnessBundle + Copy + PartialEq> BundleAccess<'_, B> {
+    pub(crate) fn constant_suffix_start(&self, cycles: usize) -> Result<usize, WitnessError> {
+        match self {
+            Self::View(view) => {
+                let prefix = view.physical_cycles().min(cycles);
+                // Only the final padding window lacks a next row. Compare it to
+                // the ordinary padding window before treating that suffix as constant.
+                if prefix < cycles && self.row(prefix)? != self.row(cycles - 1)? {
+                    Ok(cycles)
+                } else {
+                    Ok(prefix)
+                }
+            }
+            Self::Retained(rows) => {
+                let last = &rows[cycles - 1];
+                Ok(rows[..cycles]
+                    .iter()
+                    .rposition(|row| row != last)
+                    .map_or(0, |i| i + 1))
+            }
+        }
+    }
+}
+
+pub(crate) fn prefix_cycle_weights<F: JoltField>(point: &[F], prefix_cycles: usize) -> Vec<F> {
+    let prefix = prefix_cycles.min((1usize << point.len()) - 1);
+    let eq = TensorEqTable::new(point);
+    let tail_mass = EqPolynomial::suffix_sum(point, prefix);
+    map_indices(prefix + 1, |row| {
+        if row == prefix {
+            tail_mass
+        } else {
+            eq.evaluate_index(row)
+        }
+    })
+}
+
 #[inline(always)]
 pub(crate) fn mul_0_optimized<F: JoltField>(left: F, right: F) -> F {
     if left.is_zero() || right.is_zero() {
@@ -1060,24 +1146,52 @@ pub(crate) fn bound_pair<F: JoltField>(raw: impl Fn(usize) -> F, r1: F, y: usize
     lo + mul_0_optimized(r1, hi - lo)
 }
 
-/// Two LSB binds of a raw `len`-entry column materialized directly at
-/// `len / 4`, skipping the half-size intermediate.
-pub(crate) fn bind_raw_twice<F: JoltField>(
-    raw: impl Fn(usize) -> F + Sync,
-    len: usize,
-    r1: F,
-    r2: F,
-) -> Polynomial<F> {
-    let pair = |z: usize| {
-        let lo = bound_pair(&raw, r1, 2 * z);
-        let hi = bound_pair(&raw, r1, 2 * z + 1);
-        lo + mul_0_optimized(r2, hi - lo)
-    };
-    #[cfg(feature = "parallel")]
-    let bound: Vec<F> = (0..len / 4).into_par_iter().map(pair).collect();
-    #[cfg(not(feature = "parallel"))]
-    let bound: Vec<F> = (0..len / 4).map(pair).collect();
-    Polynomial::new(bound)
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test fixture and extraction assertions")]
+mod bundle_access_tests {
+    use jolt_claims::protocols::jolt::JoltPolynomialId;
+    use jolt_witness::__private::TraceRow;
+    use jolt_witness::testing::with_sample_backend;
+    use jolt_witness::witnesses::WitnessEnv;
+
+    use super::{BundleAccess, RowSource, WitnessBundle, WitnessError};
+    use crate::optimized::instruction_input::InstructionInputRow;
+
+    #[derive(Clone, Copy, PartialEq)]
+    struct SuccessorPresent(bool);
+
+    impl WitnessBundle for SuccessorPresent {
+        fn from_row(
+            _row: &TraceRow,
+            next: Option<&TraceRow>,
+            _env: &WitnessEnv<'_>,
+        ) -> Result<Self, WitnessError> {
+            Ok(Self(next.is_some()))
+        }
+
+        fn annotated_ids() -> Vec<JoltPolynomialId> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn padding_suffix_keeps_terminal_lookahead_difference() {
+        with_sample_backend(|witness| {
+            let rows = witness.random_access().unwrap();
+            assert_eq!(
+                BundleAccess::<InstructionInputRow>::View(&rows)
+                    .constant_suffix_start(4)
+                    .unwrap(),
+                2
+            );
+            assert_eq!(
+                BundleAccess::<SuccessorPresent>::View(&rows)
+                    .constant_suffix_start(4)
+                    .unwrap(),
+                4
+            );
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1088,7 +1202,10 @@ mod product_grid_tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    use super::{accumulate_product_grid, product_grid_scratch_len, MAX_GRID_FACTORS};
+    use super::{
+        accumulate_product_grid, product_grid_scratch_len, LowDegreeProductSum, TailFactorProducts,
+        MAX_GRID_FACTORS,
+    };
 
     /// Accumulates several rows into shared lanes and compares every lane to
     /// the factors multiplied one by one at that lane's point. The scratch is
@@ -1098,6 +1215,10 @@ mod product_grid_tests {
         let mut rng = ChaCha20Rng::seed_from_u64(431);
         let mut lanes = vec![F::Accumulator::default(); factors];
         let mut expected = vec![F::zero(); factors];
+        let mut deferred_lanes = vec![F::Accumulator::default(); factors];
+        let mut low_degree = LowDegreeProductSum::default();
+        let mut uncached = LowDegreeProductSum::default();
+        let mut uncached_lanes = vec![F::Accumulator::default(); factors];
         let mut scratch = vec![F::zero(); product_grid_scratch_len(factors)];
         let mut random = |zero: bool| -> Vec<F> {
             (0..factors)
@@ -1111,13 +1232,39 @@ mod product_grid_tests {
                 })
                 .collect()
         };
+        let mut tail_values = random(false);
+        if factors > 4 {
+            tail_values[4] = F::zero();
+        }
+        let tail_products = TailFactorProducts::new(&tail_values[1..]);
         for row in 0..32 {
-            let values = random(row == 1);
-            let steps = random(row == 0);
+            let mut values = random(row == 1);
+            let mut steps = random(row == 0);
+            if factors == 9 && row == 2 {
+                steps[1..5].fill(F::zero());
+            }
+            if factors == 9 && row >= 3 {
+                let degree = (row - 3) % 10;
+                for index in 0..9 - degree {
+                    steps[index] = F::zero();
+                    if index != 0 && row % 2 == 0 {
+                        values[index] = tail_values[index];
+                    }
+                }
+                if row == 13 {
+                    values[0] = F::zero();
+                }
+            }
             for (slot, value) in scratch.iter_mut().zip(random(false).iter().cycle()) {
                 *slot = *value;
             }
             accumulate_product_grid(&values, &steps, &mut lanes, &mut scratch);
+            if !low_degree.try_accumulate(&values, &steps, tail_products.as_ref()) {
+                accumulate_product_grid(&values, &steps, &mut deferred_lanes, &mut scratch);
+            }
+            if !uncached.try_accumulate(&values, &steps, None) {
+                accumulate_product_grid(&values, &steps, &mut uncached_lanes, &mut scratch);
+            }
             for (index, expected) in expected.iter_mut().enumerate() {
                 *expected += if index == factors - 1 {
                     steps.iter().copied().product::<F>()
@@ -1131,12 +1278,28 @@ mod product_grid_tests {
                 };
             }
         }
-        for (index, (lane, expected)) in lanes.iter().zip(expected).enumerate() {
+        low_degree.merge_into(&mut deferred_lanes, &mut scratch);
+        uncached.merge_into(&mut uncached_lanes, &mut scratch);
+        for (index, (lane, expected)) in uncached_lanes.iter().zip(&expected).enumerate() {
+            assert_eq!(
+                lane.reduce(),
+                *expected,
+                "{factors} factors, uncached lane {index}"
+            );
+        }
+        for (index, ((lane, deferred), expected)) in
+            lanes.iter().zip(deferred_lanes).zip(expected).enumerate()
+        {
             assert_eq!(lane.reduce(), expected, "{factors} factors, lane {index}");
+            assert_eq!(
+                deferred.reduce(),
+                expected,
+                "{factors} factors, adaptive lane {index}"
+            );
         }
     }
 
-    /// Covers the direct walk (2, 3), the unrolled forms (4, 8), and the
+    /// Covers the direct walk (2, 3), the unrolled forms (4, 5, 8, 9), and the
     /// balanced tree at every other length up to the largest supported one,
     /// odd splits included.
     #[test]

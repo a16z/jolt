@@ -2,7 +2,7 @@ use jolt_claims::protocols::jolt::{geometry::dimensions::TraceDimensions, JoltRe
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use super::{
     instruction_input::{instruction_input_input_values_from_upstream, InstructionInput},
@@ -17,6 +17,7 @@ use super::{
 use crate::{
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage1::{Stage1BatchOutputClaims, Stage1Output},
         stage2::{Stage2BatchOutputClaims, Stage2Output},
         zk::committed,
@@ -51,7 +52,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = TraceDimensions::new(log_t);
@@ -72,9 +73,10 @@ where
     };
 
     // Draw each relation's batching gamma in declaration order (shift, instruction
-    // input, register reduction); each is a single `challenge_scalar`. The drawn
+    // input, register reduction); each is a single `challenge()`. The drawn
     // challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
+    check_pow(PowSite::Stage3, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

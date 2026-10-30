@@ -1,8 +1,8 @@
 //! Verifier-selected protocol configuration.
 //!
 //! Every protocol axis is fixed at compile time — the `zk` feature selects
-//! BlindFold, the `akita` feature selects Akita commitments and little-endian
-//! scalar challenges, the `field-inline` feature enables the native
+//! BlindFold, the `akita` feature selects Akita commitments, the
+//! `field-inline` feature enables the native
 //! field-register extension — so one compiled verifier runs exactly one
 //! protocol. A proof self-describes its axes and [`validate_proof_config`]
 //! rejects a mismatch fail-closed.
@@ -41,18 +41,10 @@ pub enum CommitmentConfig {
     Akita,
 }
 
-/// Byte order used to decode scalar Fiat-Shamir challenges.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ScalarChallengeEndianness {
-    Big,
-    Little,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
     pub commitment: CommitmentConfig,
-    pub scalar_challenge_endianness: ScalarChallengeEndianness,
     pub field_inline: FieldInlineConfig,
 }
 
@@ -65,7 +57,6 @@ impl JoltProtocolConfig {
                 ZkConfig::Transparent
             },
             commitment: SELECTED_COMMITMENT_CONFIG,
-            scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
             field_inline: SELECTED_FIELD_INLINE_CONFIG,
         }
     }
@@ -93,25 +84,28 @@ pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Akita
 #[cfg(not(feature = "akita"))]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Homomorphic;
 
-#[cfg(feature = "akita")]
-pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
-    ScalarChallengeEndianness::Little;
-
-#[cfg(not(feature = "akita"))]
-pub const SELECTED_SCALAR_CHALLENGE_ENDIANNESS: ScalarChallengeEndianness =
-    ScalarChallengeEndianness::Big;
-
 #[cfg(feature = "field-inline")]
 pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::enabled();
 
 #[cfg(not(feature = "field-inline"))]
 pub const SELECTED_FIELD_INLINE_CONFIG: FieldInlineConfig = FieldInlineConfig::disabled();
 
+/// The minimum padded trace length — the compiled protocol's PCS floor
+/// (legacy's `PCS::MIN_PADDED_TRACE_LENGTH`). Dory needs `T >= K^(1/D)`
+/// (256); Akita's folded-only protocol cannot schedule the K=16
+/// `OneHotTrace` group below 16 variables, and column arity is
+/// `log_k_chunk + log_T`, so the Akita pipeline pads every trace to at
+/// least 2^12 cycles. The prover pads to this floor and the verifier rejects
+/// shorter traces.
+#[cfg(not(feature = "akita"))]
+pub const MIN_PADDED_TRACE_LENGTH: usize = 256;
+#[cfg(feature = "akita")]
+pub const MIN_PADDED_TRACE_LENGTH: usize = 1 << 12;
+
 /// The one protocol this build verifies.
 pub const JOLT_VERIFIER_CONFIG: JoltProtocolConfig = JoltProtocolConfig {
     zk: SELECTED_ZK_CONFIG,
     commitment: SELECTED_COMMITMENT_CONFIG,
-    scalar_challenge_endianness: SELECTED_SCALAR_CHALLENGE_ENDIANNESS,
     field_inline: SELECTED_FIELD_INLINE_CONFIG,
 };
 
@@ -139,26 +133,24 @@ mod tests {
         let protocol = JoltProtocolConfig {
             zk: ZkConfig::Transparent,
             commitment: CommitmentConfig::Homomorphic,
-            scalar_challenge_endianness: ScalarChallengeEndianness::Big,
             field_inline: FieldInlineConfig::disabled(),
         };
-        assert_eq!(postcard::to_stdvec(&protocol).unwrap(), [0, 0, 0, 0, 4, 0]);
+        assert_eq!(postcard::to_stdvec(&protocol).unwrap(), [0, 0, 0, 4, 0]);
         assert_eq!(
-            postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0, 0, 4, 0]).unwrap(),
+            postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0, 4, 0]).unwrap(),
             protocol
         );
         assert!(postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0]).is_err());
         let akita_protocol = JoltProtocolConfig {
             commitment: CommitmentConfig::Akita,
-            scalar_challenge_endianness: ScalarChallengeEndianness::Little,
             ..protocol
         };
         assert_eq!(
             postcard::to_stdvec(&akita_protocol).unwrap(),
-            [0, 1, 1, 0, 4, 0]
+            [0, 1, 0, 4, 0]
         );
         assert_eq!(
-            postcard::from_bytes::<JoltProtocolConfig>(&[0, 1, 1, 0, 4, 0]).unwrap(),
+            postcard::from_bytes::<JoltProtocolConfig>(&[0, 1, 0, 4, 0]).unwrap(),
             akita_protocol
         );
     }

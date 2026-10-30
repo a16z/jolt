@@ -1,8 +1,6 @@
+use super::accumulator::F192Accumulator;
 use super::{arithmetic, inverse, F64};
-use crate::{
-    CanonicalBytes, CanonicalEncoding, ExtField, Field, NaiveAccumulator, One, Ring,
-    WithAccumulator, Zero,
-};
+use crate::{CanonicalBytes, CanonicalEncoding, ExtField, Field, One, Ring, WithAccumulator, Zero};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use rand_core::RngCore;
@@ -118,6 +116,8 @@ impl CanonicalBytes for F192 {
 
 impl CanonicalEncoding for F192 {
     const MODULUS_BITS: u32 = 193;
+    /// The canonical encoding: a bijection onto the field.
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [0, 0, 0, 1];
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut coefficients = [F64::zero(); 3];
@@ -156,16 +156,12 @@ impl CanonicalEncoding for F192 {
             .find_map(|(i, c)| (!c.is_zero()).then(|| i as u32 * 64 + c.num_bits()))
             .unwrap_or(0)
     }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl WithAccumulator for F192 {
-    type Accumulator = NaiveAccumulator<Self>;
-    type SmallScalarAccumulator = NaiveAccumulator<Self>;
-    type SignedProductAccumulator = NaiveAccumulator<Self>;
+    type Accumulator = F192Accumulator;
+    type SmallScalarAccumulator = F192Accumulator;
+    type SignedProductAccumulator = F192Accumulator;
 }
 
 crate::impl_serde_bytes!(impl[] F192, 24);

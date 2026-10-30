@@ -7,7 +7,7 @@
 //! value becomes the prefix's checkpoint for the next phase. Checkpoints are
 //! initialized via [`SparseDensePrefix::default_checkpoint`].
 
-pub mod align_addr;
+pub mod address_offset;
 pub mod and;
 pub mod andn;
 pub mod div_by_zero;
@@ -43,7 +43,6 @@ pub mod sign_extension_right_operand;
 pub mod sign_extension_upper_half;
 pub mod sign_extension_w;
 pub mod srlw_sext;
-pub mod two_lsb;
 pub mod upper_word;
 pub mod window_sign;
 pub mod window_sign_pow2;
@@ -58,7 +57,7 @@ use std::fmt::Display;
 use std::ops::Index;
 
 use crate::lookup_bits::LookupBits;
-use align_addr::AlignAddrPrefix;
+use address_offset::AddressOffsetPrefix;
 use pow2_offset::Pow2OffsetPrefix;
 
 /// A prefix polynomial evaluated at binary points during materialization.
@@ -139,7 +138,6 @@ pub enum Prefixes {
     SignExtension,
     LeftShift,
     LeftShiftHelper,
-    TwoLsb,
     SignExtensionUpperHalf,
     RightOperand,
     LeftMsbRightOperand,
@@ -172,7 +170,6 @@ pub enum Prefixes {
     SrlwSext,
     Pow2OffsetB,
     Pow2OffsetH,
-    AlignAddr,
     ShiftDataB,
     ShiftDataH,
     ShiftDataW,
@@ -182,6 +179,9 @@ pub enum Prefixes {
     XorRotL1Acc,
     XorRotL1Straddle,
     XorRotL1Wrap,
+    AddressOffsetB,
+    AddressOffsetH,
+    AddressOffsetW,
 }
 
 /// All prefix variants in discriminant order.
@@ -215,7 +215,6 @@ macro_rules! dispatch_prefix {
             Prefixes::SignExtension => sign_extension::SignExtensionPrefix::$method($($args),*),
             Prefixes::LeftShift => left_shift::LeftShiftPrefix::$method($($args),*),
             Prefixes::LeftShiftHelper => left_shift_helper::LeftShiftHelperPrefix::$method($($args),*),
-            Prefixes::TwoLsb => two_lsb::TwoLsbPrefix::$method($($args),*),
             Prefixes::SignExtensionUpperHalf => sign_extension_upper_half::SignExtensionUpperHalfPrefix::$method($($args),*),
             Prefixes::RightOperand => right_operand::RightOperandPrefix::$method($($args),*),
             Prefixes::LeftMsbRightOperand => left_msb_right_operand::LeftMsbRightOperandPrefix::$method($($args),*),
@@ -245,7 +244,6 @@ macro_rules! dispatch_prefix {
             Prefixes::SrlwSext => srlw_sext::SrlwSextPrefix::$method($($args),*),
             Prefixes::Pow2OffsetB => Pow2OffsetPrefix::<0>::$method($($args),*),
             Prefixes::Pow2OffsetH => Pow2OffsetPrefix::<1>::$method($($args),*),
-            Prefixes::AlignAddr => AlignAddrPrefix::$method($($args),*),
             Prefixes::ShiftDataB => shift_data::ShiftDataPrefix::<1>::$method($($args),*),
             Prefixes::ShiftDataH => shift_data::ShiftDataPrefix::<2>::$method($($args),*),
             Prefixes::ShiftDataW => shift_data::ShiftDataPrefix::<4>::$method($($args),*),
@@ -255,6 +253,9 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRotL1Acc => xor_rotl1::XorRotL1AccPrefix::$method($($args),*),
             Prefixes::XorRotL1Straddle => xor_rotl1::XorRotL1StraddlePrefix::$method($($args),*),
             Prefixes::XorRotL1Wrap => xor_rotl1::XorRotL1WrapPrefix::$method($($args),*),
+            Prefixes::AddressOffsetB => AddressOffsetPrefix::<1>::$method($($args),*),
+            Prefixes::AddressOffsetH => AddressOffsetPrefix::<2>::$method($($args),*),
+            Prefixes::AddressOffsetW => AddressOffsetPrefix::<4>::$method($($args),*),
         }
     };
 }

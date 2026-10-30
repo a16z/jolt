@@ -60,7 +60,7 @@ jolt-dory = { path = "../../jolt-dory" }
 jolt-field = { path = "../../jolt-field", features = ["bn254"] }
 jolt-poly = { path = "../../jolt-poly" }
 jolt-sumcheck = { path = "../../jolt-sumcheck" }
-jolt-transcript = { path = "../../jolt-transcript" }
+jolt-transcript = { path = "../../jolt-transcript", features = ["bn254"] }
 common = { path = "../../../common" }
 bincode = { version = "2", features = ["serde"] }
 

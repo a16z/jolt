@@ -18,4 +18,4 @@ pub mod thread;
 pub use alloc::unsafe_allocate_zero_vec;
 pub use math::{checked_log2_power_of_two, log2_power_of_two, Math};
 #[cfg(feature = "parallel")]
-pub use thread::{par_collect_windows, FirstErrorLatch};
+pub use thread::{par_collect_windows, par_concat, FirstErrorLatch};

@@ -26,7 +26,8 @@ jolt_inlines_sdk::register_inlines! {
     ops: [ForwardNtt64, PointwiseDot64],
 }
 
-/// Twist, then forward DIF NTT, with bit-reversed output in Montgomery form.
+/// Twist, then forward DIF NTT, with bit-reversed output in the input's
+/// representation (Montgomery-form tables preserve it).
 ///
 /// `psi[i]` is the Montgomery form of psi^i. Stage twiddles occupy
 /// `twiddles[len - 1..2*len - 1]`, for half-lengths 32 down to 1.
@@ -48,7 +49,10 @@ pub fn forward_ntt64(
 ) {
     #[cfg(target_arch = "riscv64")]
     {
-        if (state.as_ptr() as usize | psi.as_ptr() as usize | twiddles.as_ptr() as usize) & 7 == 0 {
+        if (state.as_ptr() as usize).trailing_zeros() >= 3
+            && (psi.as_ptr() as usize).trailing_zeros() >= 3
+            && (twiddles.as_ptr() as usize).trailing_zeros() >= 3
+        {
             // SAFETY: the guard establishes alignment for all paired accesses.
             unsafe { forward_aligned(state, psi, twiddles, p, pinv) };
         } else {
@@ -65,8 +69,8 @@ pub fn forward_ntt64(
                     &aligned_twiddles.0,
                     p,
                     pinv,
-                )
-            };
+                );
+            }
             *state = aligned_state.0;
         }
     }

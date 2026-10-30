@@ -1,10 +1,11 @@
 //! Direct Akita commitment layout for the field-register increment polynomial.
 
-use crate::blake2b256::{Blake2b256, Digest};
 use jolt_field::Field;
 #[cfg(feature = "akita")]
 use jolt_openings::CommitmentGroupRole;
 use jolt_openings::OpeningsError;
+use jolt_transcript::DigestHasher;
+use sha3::Digest;
 
 use crate::lattice::MIN_DENSE_OBJECT_NUM_VARS;
 
@@ -26,7 +27,7 @@ impl FieldIncLayout {
     }
 
     pub fn layout_digest(self) -> [u8; 32] {
-        let mut hasher = Blake2b256::new();
+        let mut hasher = DigestHasher::new();
         hasher.update(b"jolt/field-inline/akita/inc/v1");
         hasher.update((self.log_t as u64).to_le_bytes());
         hasher.update((self.num_vars() as u64).to_le_bytes());

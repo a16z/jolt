@@ -1,7 +1,7 @@
 #![expect(unused_results)]
 
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use jolt_field::{Field, Fr};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
+use jolt_field::{Field, Fr, JoltField, Prime128OffsetA7F7};
 use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -23,7 +23,37 @@ fn bench_bind(c: &mut Criterion) {
                         p.bind(std::hint::black_box(scalar));
                         p
                     },
-                    criterion::BatchSize::LargeInput,
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
+fn bench_bind_low_to_high_in_place(c: &mut Criterion) {
+    bench_inplace_field::<Fr>(c, "Fr");
+    bench_inplace_field::<Prime128OffsetA7F7>(c, "Prime128OffsetA7F7");
+}
+
+fn bench_inplace_field<F: JoltField>(c: &mut Criterion, field: &str) {
+    let mut group = c.benchmark_group(format!("Polynomial::bind_low_to_high_in_place/{field}"));
+    for num_vars in [14, 20, 24] {
+        let mut rng = ChaCha20Rng::seed_from_u64(num_vars as u64);
+        let poly = Polynomial::<F>::random(num_vars, &mut rng);
+        let scalar = F::random(&mut rng);
+
+        group.bench_with_input(
+            BenchmarkId::from_parameter(num_vars),
+            &num_vars,
+            |bench, _| {
+                bench.iter_batched(
+                    || poly.clone(),
+                    |mut p| {
+                        p.bind_low_to_high_in_place(std::hint::black_box(scalar));
+                        p
+                    },
+                    BatchSize::LargeInput,
                 );
             },
         );
@@ -98,6 +128,7 @@ fn bench_univariate_interpolation(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_bind,
+    bench_bind_low_to_high_in_place,
     bench_eq_evaluations,
     bench_evaluate,
     bench_eq_evals,

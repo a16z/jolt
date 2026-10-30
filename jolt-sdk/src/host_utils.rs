@@ -26,26 +26,18 @@ use jolt_prover::JoltProverPreprocessing as GenericJoltProverPreprocessing;
 use jolt_prover::ProverConfig;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-keccak"
+    feature = "transcript-blake2b"
 ))]
-use jolt_transcript::KeccakTranscript;
+use jolt_transcript::Blake2b512;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
-    any(
-        feature = "transcript-blake2b",
-        not(any(
-            feature = "transcript-poseidon",
-            feature = "transcript-keccak",
-            feature = "transcript-blake2b"
-        ))
-    )
+    not(feature = "transcript-blake2b")
 ))]
-use jolt_transcript::LegacyBlake2bTranscript;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-poseidon"
-))]
-use jolt_transcript::PoseidonTranscript;
+use jolt_transcript::Keccak;
+#[cfg(feature = "host")]
+use jolt_transcript::ProverState;
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+use jolt_transcript::VerifierState;
 #[cfg(feature = "host")]
 use jolt_verifier::ProgramPreprocessing as GenericProgramPreprocessing;
 #[cfg(all(feature = "host", not(feature = "akita")))]
@@ -55,32 +47,20 @@ use tracer::TracerInlineExpansionProvider;
 
 #[cfg(feature = "host")]
 pub use jolt_host as host;
+/// The duplex sponge of the Fiat-Shamir transcript: Keccak, or Blake2b512 with
+/// the `transcript-blake2b` feature.
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-poseidon"
+    not(feature = "transcript-blake2b")
 ))]
-pub type ProtocolTranscript = PoseidonTranscript<Fr>;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    feature = "transcript-keccak"
-))]
-pub type ProtocolTranscript = KeccakTranscript<Fr>;
+pub type ProtocolSponge = Keccak;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
     feature = "transcript-blake2b"
 ))]
-pub type ProtocolTranscript = LegacyBlake2bTranscript<Fr>;
-#[cfg(all(
-    any(feature = "host", feature = "guest-verifier"),
-    not(any(
-        feature = "transcript-poseidon",
-        feature = "transcript-keccak",
-        feature = "transcript-blake2b"
-    ))
-))]
-pub type ProtocolTranscript = LegacyBlake2bTranscript<Fr>;
+pub type ProtocolSponge = Blake2b512;
 #[cfg(feature = "host")]
-pub type ProofTranscript = ProtocolTranscript;
+pub type ProofTranscript = ProverState<ProtocolSponge>;
 #[cfg(feature = "host")]
 pub use jolt_program::execution::{ExecutionBackend, TraceError, TraceInputs, TraceOutput};
 #[cfg(feature = "host")]
@@ -111,7 +91,7 @@ pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(feature = "host")]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(feature = "host")]
-pub type VerifierTranscript = ProtocolTranscript;
+pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
 #[cfg(feature = "host")]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;
@@ -196,7 +176,7 @@ pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierField = jolt_field::Fr;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierTranscript = ProtocolTranscript;
+pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type JoltVerifierPreprocessing =
     jolt_verifier::JoltVerifierPreprocessing<VerifierPCS, VerifierVC>;

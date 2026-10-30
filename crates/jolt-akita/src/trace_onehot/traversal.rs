@@ -115,7 +115,7 @@ pub(super) fn visit_segment_ring_range<const D: usize>(
         let row_start = ring_start / rings_per_row;
         let row_end = ring_end.div_ceil(rings_per_row);
         let mut buckets = vec![Vec::new(); rings_per_row];
-        for row in row_start..row_end.min(source.rows.num_rows()) {
+        for row in row_start..row_end.min(source.rows.nonzero_prefix_len()) {
             source.rows.fill_row(row, &mut selected_rows);
             let committed_zero_mask = source.rows.committed_digit_zero_mask(row);
             for bucket in &mut buckets {
@@ -143,11 +143,12 @@ pub(super) fn visit_segment_ring_range<const D: usize>(
     } else {
         let rows_per_ring = D / k;
         let mut contributions = Vec::with_capacity(num_columns * rows_per_ring);
+        let ring_end = ring_end.min(source.rows.nonzero_prefix_len().div_ceil(rows_per_ring));
         for ring in ring_start..ring_end {
             contributions.clear();
             for row_offset in 0..rows_per_ring {
                 let row = ring * rows_per_ring + row_offset;
-                if row >= source.rows.num_rows() {
+                if row >= source.rows.nonzero_prefix_len() {
                     break;
                 }
                 source.rows.fill_row(row, &mut selected_rows);
@@ -206,19 +207,19 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
     })?;
     let mut selected_rows = vec![NO_SELECTED_ROW; row_index_count];
     let mut committed_zero_masks = vec![0u64; rows_per_ring];
+    let ring_end = ring_end.min(source.rows.nonzero_prefix_len().div_ceil(rows_per_ring));
     for ring in ring_start..ring_end {
         let row_start = ring * rows_per_ring;
         let populated_rows = source
             .rows
-            .num_rows()
+            .nonzero_prefix_len()
             .saturating_sub(row_start)
             .min(rows_per_ring);
         let populated_indices = &mut selected_rows[..populated_rows * num_columns];
         let populated_masks = &mut committed_zero_masks[..populated_rows];
-        source.rows.fill_rows(row_start, populated_indices);
         source
             .rows
-            .fill_committed_digit_zero_masks(row_start, populated_masks);
+            .fill_rows_with_masks(row_start, populated_indices, populated_masks);
         for &hot in populated_indices.iter() {
             if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
                 return Err(AkitaError::InvalidInput(format!(
@@ -240,7 +241,7 @@ where
     E: ExtField<AkitaField> + FpExtEncoding<AkitaField>,
 {
     plan.validate::<D>(source.num_vars)?;
-    let point = plan.point;
+    let point = plan.tables.point();
     let expected = point.num_live_positions();
     let actual = RootPolyShape::<AkitaField, D>::num_ring_elems(source);
     if actual != expected {
@@ -256,7 +257,7 @@ where
     let num_blocks = point.num_live_blocks();
     let subring_dimension = geometry.challenge_subring_dimension();
     let stride = geometry.subring_embedding_stride();
-    if point.packing_weights().len() != stride {
+    if plan.tables.packing_weights().len() != stride {
         return Err(AkitaError::InvalidSetup(
             "coefficient-packing weight width disagrees with its geometry".to_string(),
         ));
@@ -268,18 +269,28 @@ where
     let positions_per_block = point.num_positions_per_block();
     let segment_rings = source.segment_ring_elems::<D>()?;
     let num_columns = source.rows.num_columns();
-    let position_weights = point.position_weights();
-    let packing_weights = point.packing_weights();
+    let position_weights = plan.tables.position_weights();
+    let packing_weights = plan.tables.packing_weights();
 
     // Segments and blocks are both powers of two, so a ring range inside one
     // `span` meets exactly one block per column, at consecutive positions.
     // Summing position weights per `(column, coefficient)` first leaves one
     // packing-weight multiplication per coefficient instead of per nonzero.
     let span = positions_per_block.min(segment_rings);
-    let spans = segment_rings / span;
-    let schedule = trace_block_task_schedule::<D>(source.one_hot_k, span, spans);
+    let prefix_rings = source.nonzero_ring_prefix::<D>()?;
+    let spans = prefix_rings.div_ceil(span);
+    let schedule = trace_block_task_schedule::<D>(
+        source.one_hot_k,
+        span,
+        spans.max(1),
+        TASKS_PER_RAYON_WORKER,
+    );
     let partials = (0..spans * schedule.parts)
         .into_par_iter()
+        .filter(|&task| {
+            let (part_start, _) = schedule.part_range(task % schedule.parts);
+            task / schedule.parts * span + part_start < prefix_rings
+        })
         .map(|task| {
             let (part_start, part_end) = schedule.part_range(task % schedule.parts);
             let ring_start = task / schedule.parts * span + part_start;
@@ -400,22 +411,27 @@ impl TraceBlockTaskSchedule {
     }
 }
 
+/// Split each block into enough position parts that the blocks holding work
+/// (`live_blocks`, the rest lying wholly past a constant suffix) give every
+/// Rayon worker `tasks_per_worker` tasks.
 pub(super) fn trace_block_task_schedule<const D: usize>(
     one_hot_k: usize,
     num_positions: usize,
-    blocks_per_column: usize,
+    live_blocks: usize,
+    tasks_per_worker: usize,
 ) -> TraceBlockTaskSchedule {
     debug_assert!(num_positions > 0);
-    debug_assert!(blocks_per_column > 0);
     let ring_alignment = (one_hot_k / D).max(1).min(num_positions);
     debug_assert_eq!(num_positions % ring_alignment, 0);
     let max_parts = num_positions / ring_alignment;
     let target_tasks = rayon::current_num_threads()
-        .saturating_mul(TASKS_PER_RAYON_WORKER)
+        .saturating_mul(tasks_per_worker)
         .max(1);
     TraceBlockTaskSchedule {
         num_positions,
         ring_alignment,
-        parts: target_tasks.div_ceil(blocks_per_column).clamp(1, max_parts),
+        parts: target_tasks
+            .div_ceil(live_blocks.max(1))
+            .clamp(1, max_parts),
     }
 }

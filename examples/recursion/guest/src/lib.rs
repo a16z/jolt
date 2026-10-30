@@ -13,8 +13,6 @@ use jolt::jolt_verifier::{JoltProof, JoltVerifierPreprocessing as GenericVerifie
 use jolt_akita::TrustedBytes;
 #[cfg(feature = "akita")]
 use jolt_crypto::NoVectorCommitment;
-#[cfg(feature = "akita")]
-use jolt_transcript::LegacyBlake2bTranscript;
 
 use jolt::JoltDevice;
 #[cfg(not(feature = "akita"))]
@@ -23,8 +21,6 @@ use jolt::{JoltVerifierPreprocessing, RV64IMACProof};
 use jolt_akita::{AkitaField, AkitaScheme};
 #[cfg(feature = "akita")]
 type AkitaVc = NoVectorCommitment<AkitaField>;
-#[cfg(feature = "akita")]
-type AkitaTranscript = LegacyBlake2bTranscript<AkitaField>;
 #[cfg(feature = "akita")]
 type RV64IMACProof = JoltProof<AkitaScheme, AkitaVc>;
 #[cfg(feature = "akita")]
@@ -219,11 +215,11 @@ fn verify(bytes: &[u8]) -> u32 {
             jolt::VerifierField,
             jolt::VerifierPCS,
             jolt::VerifierVC,
-            jolt::VerifierTranscript,
+            jolt::VerifierTranscript<'_>,
         >(&verifier_preprocessing, &device, &proof, None)
         .is_ok();
         #[cfg(feature = "akita")]
-        let is_valid = jolt::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let is_valid = jolt::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, jolt::VerifierTranscript<'_>>(
             &verifier_preprocessing,
             &device,
             &proof,

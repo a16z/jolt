@@ -103,6 +103,11 @@ mod algebra;
 mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
+#[cfg(all(
+    feature = "spongefish",
+    any(feature = "bn254", feature = "solinas", feature = "binary")
+))]
+mod encoding;
 mod extension;
 #[cfg(feature = "solinas")]
 mod fp128_accumulators;
@@ -117,7 +122,7 @@ mod unreduced;
 
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
-    MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
+    MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 mod field_inline;
