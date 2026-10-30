@@ -1,9 +1,16 @@
 //! CUDA committed-program-image claim reduction.
 //!
-//! The canonical host builder pads program words; CUDA uploads their field
-//! values and evaluates shifted RAM equality weights on the device.
-//! Optimized builds those weights by aligned blocks. Both consume the shared
-//! reduction layout for permutation and active rounds.
+//! Shifted RAM equality weights share each aligned block's prefix product and
+//! expand its suffix with the same recurrence as optimized. CUDA caps blocks at
+//! 256 entries so each expansion stays in shared memory, with one launch for
+//! the entire image. L4 measurements favor this cap over 1,024-entry blocks for
+//! small images and 64-entry blocks for large ones; optimized uses maximal
+//! aligned blocks.
+//!
+//! The canonical host builder pads program words. CUDA converts them serially
+//! before upload and permutes field rows on device; optimized permutes native
+//! words and parallelizes large conversions. Both consume the shared reduction
+//! layout for permutation and active rounds.
 //!
 //! The shared device engine parks the bound rows for the matching CUDA address
 //! phase, avoiding a host-table handoff between the two phases.
@@ -192,6 +199,7 @@ mod tests {
         committed_program_plane, drive, precommitted_cycle_variables,
         precommitted_round_challenges, precommitted_synthetic_point, CommittedProgramFixture,
     };
+    use crate::precommitted_reduction::lsb_permutation;
     use crate::reference::precommitted_reduction::ReferencePrecommittedAddress;
     use crate::reference::ReferenceBackend;
 
@@ -201,11 +209,24 @@ mod tests {
     const MIN_BYTECODE_ADDRESS: u64 = 0x8000_0000;
     const RAM_LOG_K: usize = 12;
 
-    const CONFIGS: [(usize, usize); 2] = [(8, 37), (8, (1 << RAM_LOG_K) - 512)];
+    const CONFIGS: [(usize, usize, TracePolynomialOrder); 3] = [
+        (8, 37, TracePolynomialOrder::CycleMajor),
+        (8, (1 << RAM_LOG_K) - 512, TracePolynomialOrder::CycleMajor),
+        (
+            8,
+            (1 << RAM_LOG_K) - 512,
+            TracePolynomialOrder::AddressMajor,
+        ),
+    ];
 
-    fn schedule(log_t: usize, start_index: usize, bytecode_len: usize) -> PrecommittedSchedule {
+    fn schedule(
+        log_t: usize,
+        start_index: usize,
+        bytecode_len: usize,
+        trace_order: TracePolynomialOrder,
+    ) -> PrecommittedSchedule {
         PrecommittedSchedule::new(
-            TracePolynomialOrder::CycleMajor,
+            trace_order,
             log_t,
             LOG_K_CHUNK,
             Some(4096),
@@ -230,8 +251,9 @@ mod tests {
     fn fixture_program_image_geometry_covers_the_address_phase_and_the_wrapping_block() {
         let fixture = committed_program_plane(BYTECODE_ROWS, IMAGE_WORDS, MIN_BYTECODE_ADDRESS, 7);
         let mut wrapping = 0usize;
-        for (log_t, start_index) in CONFIGS {
-            let schedule = schedule(log_t, start_index, fixture.bytecode_len);
+        let mut permuted = 0usize;
+        for (log_t, start_index, trace_order) in CONFIGS {
+            let schedule = schedule(log_t, start_index, fixture.bytecode_len, trace_order);
             let layout = layout(&schedule);
             let reduction = layout.precommitted();
             let vars = reduction.poly_opening_round_permutation_be().len();
@@ -258,11 +280,18 @@ mod tests {
             if start_index + (1usize << vars) > (1usize << RAM_LOG_K) {
                 wrapping += 1;
             }
+            if lsb_permutation(reduction.poly_opening_round_permutation_be()).is_some() {
+                permuted += 1;
+            }
         }
         assert!(
             wrapping > 0,
             "no config puts the padded image block across the top of the RAM domain, so the \
              wrapping branch of the shifted eq slice is untested",
+        );
+        assert!(
+            permuted > 0,
+            "the image fixtures must exercise a nonidentity permutation"
         );
     }
 
@@ -296,10 +325,10 @@ mod tests {
             claim_seed in any::<u64>(),
         ) {
             let Some(_) = shared_context() else { return Ok(()); };
-            for (log_t, start_index) in CONFIGS {
+            for (log_t, start_index, trace_order) in CONFIGS {
                 let CommittedProgramFixture { plane, bytecode_len, .. } =
                     committed_program_plane(BYTECODE_ROWS, IMAGE_WORDS, MIN_BYTECODE_ADDRESS, seed);
-                let schedule = schedule(log_t, start_index, bytecode_len);
+                let schedule = schedule(log_t, start_index, bytecode_len, trace_order);
                 let layout = layout(&schedule);
                 let reduction = layout.precommitted();
                 let input_claim = precommitted_synthetic_point(1, claim_seed)[0];
@@ -354,10 +383,10 @@ mod tests {
             claim_seed in any::<u64>(),
         ) {
             let Some(_) = shared_context() else { return Ok(()); };
-            for (log_t, start_index) in CONFIGS {
+            for (log_t, start_index, trace_order) in CONFIGS {
                 let CommittedProgramFixture { plane, bytecode_len, .. } =
                     committed_program_plane(BYTECODE_ROWS, IMAGE_WORDS, MIN_BYTECODE_ADDRESS, seed);
-                let schedule = schedule(log_t, start_index, bytecode_len);
+                let schedule = schedule(log_t, start_index, bytecode_len, trace_order);
                 let layout = layout(&schedule);
                 let reduction = layout.precommitted();
                 let input_claim = precommitted_synthetic_point(1, claim_seed)[0];

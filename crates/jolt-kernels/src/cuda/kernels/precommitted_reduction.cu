@@ -78,26 +78,48 @@ extern "C" __global__ void pcr_shift_eq_kernel(const u64 *__restrict__ challenge
                                                unsigned int num_vars, unsigned int start_index,
                                                unsigned int domain_mask, unsigned int table_len,
                                                u64 *__restrict__ out) {
-    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= table_len) return;
-    unsigned int index = (start_index + i) & domain_mask;
-    u64 acc[LIMBS];
-    load4(FR_ONE, acc);
-    for (unsigned int bit = 0; bit < num_vars; bit++) {
-        u64 challenge[LIMBS], factor[LIMBS], product[LIMBS];
-        load4(challenges_be + (unsigned long long)bit * LIMBS, challenge);
-        unsigned int shift = num_vars - 1 - bit;
-        if ((index >> shift) & 1u) {
-            for (int l = 0; l < LIMBS; l++) factor[l] = challenge[l];
-        } else {
-            u64 one[LIMBS];
-            load4(FR_ONE, one);
-            fr_sub(one, challenge, factor);
+    extern __shared__ u64 values[];
+    const unsigned int lane = threadIdx.x;
+    const unsigned int suffix_vars = __ffs(blockDim.x) - 1;
+    const unsigned int base =
+        ((start_index & ~(blockDim.x - 1)) + blockIdx.x * blockDim.x) & domain_mask;
+    if (lane == 0) {
+        u64 acc[LIMBS];
+        load4(FR_ONE, acc);
+        for (unsigned int bit = 0; bit < num_vars - suffix_vars; bit++) {
+            u64 challenge[LIMBS], factor[LIMBS], product[LIMBS];
+            load4(challenges_be + (unsigned long long)bit * LIMBS, challenge);
+            if ((base >> (num_vars - 1 - bit)) & 1u) {
+                load4(challenge, factor);
+            } else {
+                fr_sub(FR_ONE, challenge, factor);
+            }
+            fr_mul(acc, factor, product);
+            load4(product, acc);
         }
-        fr_mul(acc, factor, product);
-        for (int l = 0; l < LIMBS; l++) acc[l] = product[l];
+        store4(values, acc);
     }
-    store4(out + (unsigned long long)i * LIMBS, acc);
+    __syncthreads();
+    for (unsigned int level = 0; level < suffix_vars; level++) {
+        const unsigned int half = 1u << level;
+        if (lane < half) {
+            u64 parent[LIMBS], challenge[LIMBS], left[LIMBS], right[LIMBS];
+            load4(values + lane * LIMBS, parent);
+            load4(challenges_be + (unsigned long long)(num_vars - 1 - level) * LIMBS,
+                  challenge);
+            fr_mul(parent, challenge, right);
+            fr_sub(parent, right, left);
+            store4(values + lane * LIMBS, left);
+            store4(values + (lane + half) * LIMBS, right);
+        }
+        __syncthreads();
+    }
+    const unsigned int offset = (base + lane - start_index) & domain_mask;
+    if (offset < table_len) {
+        u64 value[LIMBS];
+        load4(values + lane * LIMBS, value);
+        store4(out + (unsigned long long)offset * LIMBS, value);
+    }
 }
 
 extern "C" __global__ void pcr_place_row_kernel(const u64 *__restrict__ src,

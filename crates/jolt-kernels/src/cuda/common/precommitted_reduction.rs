@@ -496,12 +496,32 @@ pub fn shifted_block_eq(
     domain_mask: usize,
     table_len: usize,
 ) -> Result<DeviceFrVec, CudaError> {
-    let challenges = context.upload(challenges_be)?;
-    let mut out = context.alloc(table_len)?;
     let count = CudaKernelContext::count_of(table_len)?;
     let num_vars = CudaKernelContext::count_of(challenges_be.len())?;
     let start = CudaKernelContext::count_of(start_index)?;
     let mask = CudaKernelContext::count_of(domain_mask)?;
+    let domain_len = domain_mask
+        .checked_add(1)
+        .filter(|len| len.is_power_of_two() && len.ilog2() == num_vars)
+        .ok_or(CudaError::InvariantViolation {
+            reason: "shifted equality mask must match the challenge domain",
+        })?;
+    if start_index >= domain_len || table_len > domain_len {
+        return Err(CudaError::InvariantViolation {
+            reason: "shifted equality start and length must fit the challenge domain",
+        });
+    }
+    if table_len == 0 {
+        return context.alloc(0);
+    }
+    let challenges = context.upload(challenges_be)?;
+    let mut out = context.alloc(table_len)?;
+    let width = table_len.min(BLOCK as usize).next_power_of_two();
+    let blocks = (start_index % width + table_len)
+        .div_ceil(width)
+        .min(domain_len / width);
+    let width = CudaKernelContext::count_of(width)?;
+    let blocks = CudaKernelContext::count_of(blocks)?;
     let mut builder = context.stream().launch_builder(context.pcr_shift_eq());
     let _ = builder.arg(challenges.limbs());
     let _ = builder.arg(&num_vars);
@@ -509,11 +529,20 @@ pub fn shifted_block_eq(
     let _ = builder.arg(&mask);
     let _ = builder.arg(&count);
     let _ = builder.arg(out.limbs_mut());
-    // SAFETY: thread `i < table_len` reads `challenges_be[bit]` for
-    // `bit < num_vars`, inside the uploaded `num_vars` elements, and writes only
-    // `out[i]` of the `table_len` just allocated. `index` is masked to the RAM
-    // domain, so the per-bit product visits exactly `num_vars` factors.
-    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+    // SAFETY: the domain checks above make each block a distinct aligned
+    // `width`-entry interval, including at wraparound. Capping the grid by the
+    // domain's block count prevents duplicate writers for a full-domain range
+    // with an unaligned start. Only offsets below `table_len` are stored.
+    // `width` is a power of two no larger than the domain, so suffix expansion
+    // reads valid challenges and stays within `width * LIMBS` shared u64s.
+    // Every thread participates in every expansion barrier.
+    let _ = unsafe {
+        builder.launch(LaunchConfig {
+            grid_dim: (blocks, 1, 1),
+            block_dim: (width, 1, 1),
+            shared_mem_bytes: width * LIMBS as u32 * size_of::<u64>() as u32,
+        })
+    }?;
     Ok(out)
 }
 
@@ -525,4 +554,65 @@ pub fn reclaim_carry<F: JoltField, R: 'static>(
         .take::<DevicePrecommittedReductionCarry<F, R>>()
         .map(DeviceAddressReductionKernel::new)
         .ok_or(KernelError::InvariantViolation { reason: missing })
+}
+
+#[cfg(test)]
+#[expect(clippy::expect_used)]
+mod tests {
+    use super::shifted_block_eq;
+    use crate::cuda::common::context::shared_context;
+    use jolt_field::{Field, Fr, Ring};
+    use jolt_poly::{boolean_point_msb, EqPolynomial};
+
+    #[test]
+    fn shifted_blocks_match_equality_polynomial() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for vars in [0, 1, 8, 9, 12, 32] {
+            let domain = 1usize << vars;
+            let full_width: Vec<_> = (0..vars)
+                .map(|bit| Fr::from_u64(bit as u64 + 17).inverse().expect("nonzero"))
+                .collect();
+            let boolean: Vec<_> = (0..vars)
+                .map(|bit| Fr::from_u64((bit % 2) as u64))
+                .collect();
+            for point in [&full_width, &boolean] {
+                for len in [0, 1, 2, 31, 255, 256, 257, 511, 512, 513, 1024, 4096] {
+                    if len > domain {
+                        continue;
+                    }
+                    let mut starts = vec![0, 1 % domain, 37 % domain, domain - 1];
+                    starts.sort_unstable();
+                    starts.dedup();
+                    for start in starts {
+                        let got = shifted_block_eq(context, point, start, domain - 1, len)
+                            .expect("shifted equality")
+                            .to_host()
+                            .expect("download");
+                        let expected: Vec<_> = (0..len)
+                            .map(|offset| {
+                                EqPolynomial::mle(
+                                    point,
+                                    &boolean_point_msb(vars, (start + offset) % domain),
+                                )
+                            })
+                            .collect();
+                        assert_eq!(got, expected, "vars={vars}, start={start}, len={len}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shifted_blocks_reject_inconsistent_domains() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let point = [Fr::from_u64(7); 8];
+        for (start, mask, len) in [(0, 127, 32), (0, 254, 32), (256, 255, 1), (0, 255, 257)] {
+            assert!(shifted_block_eq(context, &point, start, mask, len).is_err());
+        }
+    }
 }
