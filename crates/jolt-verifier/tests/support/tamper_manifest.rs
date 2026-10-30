@@ -1604,6 +1604,8 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage3.instruction_input.rs2_value",
             "claims.stage3.instruction_input.right_operand_is_imm",
             "claims.stage3.instruction_input.imm",
+            "claims.stage3.instruction_input.right_operand_is_rd_write_value",
+            "claims.stage3.instruction_input.rd_write_value",
         ],
         "claims.stage3.registers_claim_reduction.*" => vec![
             "claims.stage3.registers_claim_reduction.rd_write_value",
@@ -1728,6 +1730,8 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rs2_value: zero,
                 right_operand_is_imm: zero,
                 imm: zero,
+                right_operand_is_rd_write_value: zero,
+                rd_write_value: zero,
             },
             registers_claim_reduction: stage3::outputs::RegistersClaimReductionOutputClaims {
                 rd_write_value: zero,

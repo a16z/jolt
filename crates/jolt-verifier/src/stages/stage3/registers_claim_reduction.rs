@@ -3,7 +3,7 @@
 //! Owns the register-reduction opening-point derivation and the `EqSpartan`
 //! public-value computation (against the product uni-skip `tau_low`).
 //!
-//! The reduced `rs1_value`/`rs2_value` outputs alias the instruction-input
+//! The reduced `rd_write_value`/`rs1_value`/`rs2_value` outputs alias the instruction-input
 //! virtualization's: all stage-3 members bind the same batch-point suffix (equal
 //! rounds, default offsets) and derive the same reversed opening point. Declared
 //! in `aliased_output_openings` below; the generated drivers absorb each via its
@@ -68,6 +68,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for RegistersClaimReduction<F> {
 
     fn aliased_output_openings() -> Vec<(JoltOpeningId, JoltOpeningId)> {
         vec![
+            (
+                registers_geometry::rd_write_value_reduced(),
+                instruction::rd_write_value(),
+            ),
             (
                 registers_geometry::rs1_value_reduced(),
                 instruction::rs1_value(),

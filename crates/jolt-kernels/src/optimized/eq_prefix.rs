@@ -1,9 +1,9 @@
 //! A materialized prefix with an implicit linear combination of equality
 //! polynomials beyond it. Low-bit-first binding preserves that representation.
 
-use super::support::{bind_prefix_pairs, map_indices};
+use super::support::map_indices;
 use jolt_field::JoltField;
-use jolt_poly::{eq_index_msb, EqPolynomial, TensorEqTable};
+use jolt_poly::{bind_prefix_in_place, eq_index_msb, EqPolynomial, TensorEqTable};
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct EqPrefix<F: JoltField> {
@@ -71,7 +71,7 @@ impl<F: JoltField> EqPrefix<F> {
         } else {
             F::zero()
         };
-        bind_prefix_pairs(&mut self.values, challenge, boundary);
+        let _ = bind_prefix_in_place(&mut self.values, challenge, boundary);
         for (point, weight) in &mut self.terms {
             let r = point[self.num_vars - 1];
             *weight *= (F::one() - r) * (F::one() - challenge) + r * challenge;

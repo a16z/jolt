@@ -1818,6 +1818,8 @@ mod tests {
                     rs2_value: zero,
                     right_operand_is_imm: zero,
                     imm: zero,
+                    right_operand_is_rd_write_value: zero,
+                    rd_write_value: zero,
                 },
                 registers_claim_reduction: stage3::outputs::RegistersClaimReductionOutputClaims {
                     rd_write_value: zero,

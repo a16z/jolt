@@ -54,7 +54,7 @@ use crate::{
 /// Per-cycle shift columns as native small scalars: the two PCs plus the
 /// three flags the summand references (all at cycle `j`, unshifted — the
 /// shift lives in the `eq+1` factors).
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, WitnessBundle)]
 struct SpartanShiftRow {
     #[opening(UnexpandedPC)]
     unexpanded_pc: UnexpandedPc,
@@ -94,12 +94,29 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
         let cycles = 1usize << log_t;
         let rows = BundleStore::<SpartanShiftRow>::resolve(witness, cycles)?;
         let access = rows.access();
+        let prefix_cycles = access.constant_suffix_start(cycles)?;
+        let tail = access.row(prefix_cycles.min(cycles - 1))?;
 
         let gamma_powers: [F; 5] = gamma_powers_array(inputs.challenges.gamma);
 
         let outer = EqPlusOnePrefixSuffix::new(r_outer);
         let product = EqPlusOnePrefixSuffix::new(r_product);
         let prefix_vars = outer.prefix_0.len().trailing_zeros() as usize;
+        let width = 1usize << prefix_vars;
+        let live_high = prefix_cycles.div_ceil(width);
+        let partial = prefix_cycles % width;
+        let tail_outer = F::from_u64(tail.unexpanded_pc.0)
+            + gamma_powers[1] * F::from_u64(tail.pc.0)
+            + if tail.is_virtual.0 {
+                gamma_powers[2]
+            } else {
+                F::zero()
+            }
+            + if tail.is_first_in_sequence.0 {
+                gamma_powers[3]
+            } else {
+                F::zero()
+            };
 
         const BLOCK: usize = 32;
         let suffix_rows: Vec<[F; 4]> = (0..outer.suffix_0.len())
@@ -112,15 +129,24 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
                 ]
             })
             .collect();
+        // A live prefix cuts each strided Q column at one of two high indices.
+        let tail_weights: [F; 4] =
+            core::array::from_fn(|i| suffix_rows[live_high..].iter().map(|row| row[i]).sum());
+        let partial_weights = suffix_rows
+            .get(prefix_cycles / width)
+            .copied()
+            .unwrap_or([F::zero(); 4]);
         let build_q_block =
             |(block_index, q_block): (usize, &mut [[F; 4]])| -> Result<(), WitnessError> {
                 let mut outer_folds = vec![[F::Accumulator::default(); 2]; q_block.len()];
                 let mut product_folds = vec![[F::zero(); 2]; q_block.len()];
-                for (x_hi, suffix) in suffix_rows.iter().enumerate() {
+                for (x_hi, suffix) in suffix_rows.iter().take(live_high).enumerate() {
                     let base = x_hi << prefix_vars;
+                    let live = prefix_cycles.saturating_sub(base + block_index * BLOCK);
                     for (i, (outer_fold, product_fold)) in outer_folds
                         .iter_mut()
                         .zip(product_folds.iter_mut())
+                        .take(live)
                         .enumerate()
                     {
                         let x_lo = block_index * BLOCK + i;
@@ -141,14 +167,36 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
                         }
                     }
                 }
-                for (q, (outer_fold, product_fold)) in q_block
+                for (i, (q, (outer_fold, product_fold))) in q_block
                     .iter_mut()
                     .zip(outer_folds.into_iter().zip(product_folds))
+                    .enumerate()
                 {
-                    q[0] = outer_fold[0].reduce();
-                    q[1] = outer_fold[1].reduce();
-                    q[2] = gamma_powers[4] * product_fold[0];
-                    q[3] = gamma_powers[4] * product_fold[1];
+                    let x_lo = block_index * BLOCK + i;
+                    let weights: [F; 4] = core::array::from_fn(|i| {
+                        tail_weights[i]
+                            + if partial != 0 && x_lo >= partial {
+                                partial_weights[i]
+                            } else {
+                                F::zero()
+                            }
+                    });
+                    q[0] = outer_fold[0].reduce() + weights[0] * tail_outer;
+                    q[1] = outer_fold[1].reduce() + weights[1] * tail_outer;
+                    q[2] = gamma_powers[4]
+                        * (product_fold[0]
+                            + if tail.is_noop.0 {
+                                F::zero()
+                            } else {
+                                weights[2]
+                            });
+                    q[3] = gamma_powers[4]
+                        * (product_fold[1]
+                            + if tail.is_noop.0 {
+                                F::zero()
+                            } else {
+                                weights[3]
+                            });
                 }
                 Ok(())
             };
@@ -175,6 +223,7 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
 
         Ok(Box::new(ShiftKernel {
             log_t,
+            prefix_cycles,
             gamma_powers,
             r_outer: r_outer.to_vec(),
             r_product: r_product.to_vec(),
@@ -205,6 +254,7 @@ enum Phase<F> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ShiftKernel<F: JoltField> {
     log_t: usize,
+    prefix_cycles: usize,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma_powers: [F; 5],
     r_outer: Vec<F>,
@@ -223,13 +273,28 @@ impl<F: JoltField> ShiftKernel<F> {
         let chunk = eq_prefix.len();
         let remaining = 1usize << (self.log_t - bound);
         let access = self.rows.access();
+        let tail_row = access.row(self.prefix_cycles.min((1usize << self.log_t) - 1))?;
+        let tail = [
+            F::from_u64(tail_row.unexpanded_pc.0),
+            F::from_u64(tail_row.pc.0),
+            F::from_u64(u64::from(tail_row.is_virtual.0)),
+            F::from_u64(u64::from(tail_row.is_first_in_sequence.0)),
+            F::from_u64(u64::from(tail_row.is_noop.0)),
+        ];
+        let boundary_mass = EqPolynomial::<F>::suffix_sum(&r_prefix, self.prefix_cycles % chunk);
 
         let fold_chunk = |chunk_index: usize| -> Result<[F; 5], WitnessError> {
             let base = chunk_index * chunk;
+            let live = self.prefix_cycles.saturating_sub(base).min(chunk);
+            if live == 0 {
+                return Ok(tail);
+            }
             let mut pc_folds = [F::SmallScalarAccumulator::default(); 2];
             let mut flag_folds = [F::zero(); 3];
-            for (offset, (&eq, &eq_shifted)) in
-                eq_prefix.iter().zip(eq_prefix_shifted.iter()).enumerate()
+            for (offset, (&eq, &eq_shifted)) in eq_prefix[..live]
+                .iter()
+                .zip(&eq_prefix_shifted[..live])
+                .enumerate()
             {
                 let row = access.row(base + offset)?;
                 fmadd_u64_split(&mut pc_folds[0], eq, eq_shifted, row.unexpanded_pc.0);
@@ -244,13 +309,19 @@ impl<F: JoltField> ShiftKernel<F> {
                     flag_folds[2] += eq;
                 }
             }
-            Ok([
+            let mut values = [
                 pc_folds[0].reduce(),
                 pc_folds[1].reduce(),
                 flag_folds[0],
                 flag_folds[1],
                 flag_folds[2],
-            ])
+            ];
+            if live < chunk {
+                for (value, tail) in values.iter_mut().zip(tail) {
+                    *value += boundary_mass * tail;
+                }
+            }
+            Ok(values)
         };
         #[cfg(feature = "parallel")]
         let folds: Vec<[F; 5]> = (0..remaining)
@@ -524,7 +595,11 @@ mod tests {
         }
     }
 
-    fn with_shift_plane<R>(log_t: usize, f: impl FnOnce(&TraceBackend) -> R) -> R {
+    fn with_shift_plane<R>(
+        log_t: usize,
+        real_rows: usize,
+        f: impl FnOnce(&TraceBackend) -> R,
+    ) -> R {
         let plain_a = instruction(0x8000_0000, None, false);
         let virtual_first = instruction(0x8000_0004, Some(1), true);
         let virtual_last = instruction(0x8000_0004, Some(0), false);
@@ -536,10 +611,6 @@ mod tests {
         let bytecode = vec![plain_a, virtual_first, virtual_last, plain_b];
 
         let script = [plain_a, virtual_first, virtual_last, noop, plain_b, plain_a];
-        // At log_t = 1 both cycles must be real instructions: the summand
-        // weights only cycle 1 (`eq+1` vanishes at 0), and a no-op there
-        // zeroes the input claim.
-        let real_rows = if log_t == 1 { 2 } else { (1 << log_t) - 1 };
 
         use std::sync::Arc;
         let preprocessing = Arc::new(JoltProgramPreprocessing {
@@ -555,6 +626,7 @@ mod tests {
         });
         let rows: Vec<TraceRow> = script
             .iter()
+            .cycle()
             .take(real_rows)
             .map(|&instruction| {
                 TraceRow::new(
@@ -589,8 +661,13 @@ mod tests {
         f(&backend)
     }
 
-    fn run_parity(log_t: usize, seed: u64) {
-        with_shift_plane(log_t, |backend| {
+    fn run_parity(log_t: usize, seed: u64, prefix: Option<usize>) {
+        let real_rows = prefix.unwrap_or(if log_t == 1 {
+            2
+        } else {
+            ((1 << log_t) - 1).min(6)
+        });
+        with_shift_plane(log_t, real_rows, |backend| {
             let r_outer = challenge_sequence(log_t, seed ^ 0x07E5);
             let r_product = challenge_sequence(log_t, seed ^ 0xFACE);
             let gamma = Fr::from_u64(0x5EED_0F0F_1234_5678);
@@ -634,7 +711,9 @@ mod tests {
                         + gamma_4 * eq1_product[j] * (Fr::from_u64(1) - is_noop[j])
                 })
                 .sum();
-            assert_nontrivial(input_claim);
+            if real_rows > 1 {
+                assert_nontrivial(input_claim);
+            }
 
             let round_challenges = challenge_sequence(log_t, seed);
             assert_kernel_parity(
@@ -652,21 +731,27 @@ mod tests {
 
     #[test]
     fn parity_even_log_t() {
-        run_parity(4, 211);
+        run_parity(4, 211, None);
     }
 
     #[test]
     fn parity_odd_log_t() {
-        run_parity(3, 223);
+        run_parity(3, 223, None);
     }
 
     #[test]
     fn parity_deep_phase2() {
-        run_parity(5, 227);
+        run_parity(5, 227, None);
     }
 
     #[test]
     fn parity_minimal_single_round() {
-        run_parity(1, 229);
+        run_parity(1, 229, None);
+    }
+    #[test]
+    fn padding_at_prefix_and_fold_boundaries_matches_reference() {
+        for prefix in [0, 1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64] {
+            run_parity(6, 233 + prefix as u64, Some(prefix));
+        }
     }
 }

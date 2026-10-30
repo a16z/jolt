@@ -295,11 +295,13 @@ fn claim_mut_from_stage3_outputs<F: JoltField>(
         spartan::is_first_in_sequence_shift(),
         spartan::is_noop_shift(),
     ];
-    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] = [
+    let [right_operand_is_rs2, rs2_value_input, right_operand_is_imm, imm_input, right_operand_is_rd_write_value, rd_write_value_input, left_operand_is_rs1, rs1_value_input, left_operand_is_pc, unexpanded_pc_input] = [
         instruction::right_operand_is_rs2(),
         instruction::rs2_value(),
         instruction::right_operand_is_imm(),
         instruction::imm(),
+        instruction::right_operand_is_rd_write_value(),
+        instruction::rd_write_value(),
         instruction::left_operand_is_rs1(),
         instruction::rs1_value(),
         instruction::left_operand_is_pc(),
@@ -329,6 +331,10 @@ fn claim_mut_from_stage3_outputs<F: JoltField>(
             Some(&mut claims.instruction_input.right_operand_is_imm)
         }
         id if id == imm_input => Some(&mut claims.instruction_input.imm),
+        id if id == right_operand_is_rd_write_value => {
+            Some(&mut claims.instruction_input.right_operand_is_rd_write_value)
+        }
+        id if id == rd_write_value_input => Some(&mut claims.instruction_input.rd_write_value),
         id if id == rd_write_value_reduced => {
             Some(&mut claims.registers_claim_reduction.rd_write_value)
         }
