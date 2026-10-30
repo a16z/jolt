@@ -1,8 +1,9 @@
 # Publishes the required `ai-merge-gate` check through the gate's GitHub App; policy and
 # admin setup: .github/ai-merge-gate.md. Both triggers run this file and the checked-out
 # scripts and skills from the default branch. Pull request bytes are read through the API as
-# data and never checked out or executed. Secrets live in the `ai-merge-gate` environment,
-# whose deployment branch policy admits only the default branch.
+# data, the commits' archives included, and never checked out, written or executed. Secrets
+# live in the `ai-merge-gate` environment, whose deployment branch policy admits only the
+# default branch.
 name: AI merge gate
 
 on:
@@ -71,6 +72,7 @@ jobs:
           client-id: ${{ vars.AI_MERGE_GATE_CLIENT_ID }}
           private-key: ${{ secrets.AI_MERGE_GATE_APP_PRIVATE_KEY }}
           permission-checks: write
+          permission-contents: read
           permission-pull-requests: write
           permission-members: read
       - env:

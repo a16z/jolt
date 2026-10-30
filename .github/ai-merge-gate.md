@@ -8,7 +8,8 @@ pull requests still need, are folded into one required check, `ai-merge-gate`, b
 cannot make its native review requirement depend on who wrote a pull request.
 
 Astra Max means OpenAI's `gpt-6-astra` model at reasoning effort `max`. The gate calls it
-through the Responses API with no tools.
+through the Responses API, with two read-only tools that read the pull request's merge base and
+head from GitHub.
 
 This file is the policy, the contributor guide and the admin procedure. The gate's code is
 `scripts/ci/ai_merge_gate.py`, `.github/workflows/ai-merge-gate.yml` and
@@ -26,21 +27,34 @@ is an account with write, maintain or admin access to the repository.
 | # | Condition | Result | Paid model work |
 |---|---|---|---|
 | 1 | The pull request is closed, or its base is not `main` | No check | None |
-| 2 | A writer has requested changes, on any commit, and has not since approved or had that review dismissed | Fail | None |
-| 3 | A writer other than the author approved the head from a personal account, and has not since requested changes or had the approval dismissed | Pass | None |
-| 4 | The author is not a core member, and no core member has posted `AI gate: AUTHORIZED <head>` | Fail: human approval required | None, and the diff is not read |
-| 5 | The pull request is a draft | Fail | None |
-| 6 | The pull request changes a gate input: a file under `.github/`, `scripts/ci/ai_merge_gate.py`, `scripts/ci/diff_classifier.py`, either skill, or `specs/verifier-closure-lints.md` | Fail: human approval required | None |
-| 7 | The head has no classifier verdict yet | The classifier runs | Classifier |
-| 8 | The classifier verdict for the head is not `SAFE` | Fail: human approval required | None |
-| 9 | The author or a core member posted `Review: CONFIRMED <head>` | Pass | None |
-| 10 | The pull request has the `ai-review` label and the head has no CI review yet | The CI review runs | Review |
-| 11 | The CI review of the head found no issues | Pass | None |
-| 12 | Otherwise | Fail: needs an Astra Max review | None |
+| 2 | The pull request adds, changes, renames or removes `.github/workflows/ai-merge-gate-events.yml` | Fail, even when approved: merge it with the gate off | None |
+| 3 | A writer has requested changes, on any commit, and has not since approved or had that review dismissed | Fail | None |
+| 4 | A writer other than the author approved from a personal account, has not since requested changes, and GitHub has not dismissed the approval | Pass | None |
+| 5 | The author is not a core member, and no core member has posted `AI gate: AUTHORIZED <head>` | Fail: human approval required | None, and the diff is not read |
+| 6 | The pull request is a draft | Fail | None |
+| 7 | The pull request changes a gate input: a file under `.github/workflows/` or `scripts/ci/`, either skill, or `specs/verifier-closure-lints.md` | Fail: human approval required | None |
+| 8 | The head has no classifier verdict yet | The classifier runs | Classifier |
+| 9 | The classifier verdict for the head is not `SAFE` | Fail: human approval required | None |
+| 10 | The author or a core member posted `Review: CONFIRMED <head>` | Pass | None |
+| 11 | The pull request has the `ai-review` label and the head has no CI review yet | The CI review runs | Review |
+| 12 | The CI review of the head found no issues | Pass | None |
+| 13 | Otherwise | Fail: needs an Astra Max review | None |
 
-Every piece of evidence names the head, so a push voids all earlier approvals, sign-offs,
-attestations, classifier verdicts and reviews. Unlike the research lab's `check_review.py`,
-the gate keeps no exception for a rebase that leaves the patch unchanged.
+While an evaluation runs, its `ai-merge-gate` check run is in progress, which the required check
+does not count as passing, so a pass published for an earlier state of the head does not stand
+during the re-evaluation. Before it publishes a pass, the gate reads the pull request, its
+comments and reviews, team membership and permissions again and evaluates the table once more,
+reusing the model results it already has. It publishes the pass only if that second evaluation
+passes too. When the new state needs a model result the run does not have, for example after an
+attestation was replaced by the `ai-review` label, the check fails with "The pull request
+changed while the gate ran", and the next pull request event runs the gate again.
+
+The AI evidence names the head: a push voids every sign-off, attestation, classifier verdict and
+CI review of an earlier head. Unlike the research lab's `check_review.py`, the gate keeps no
+exception for a rebase that leaves the patch unchanged. Human approvals follow GitHub's own
+review state, as GitHub's approval requirement does: an approval of an earlier commit counts
+until GitHub dismisses it, which happens on a push only when the branch protection dismisses
+stale approvals.
 
 The two gate lines follow the research lab's convention for `Review: CONFIRMED`. A line counts
 only when all of these hold:
@@ -71,9 +85,14 @@ the change. Each push needs a new line. After that, the author's own `Review: CO
 counts.
 
 **Verifier and gate changes.** A pull request that the classifier finds `AFFECTS` or
-`UNCERTAIN`, or that changes a gate input listed in row 6, needs an approving review from a
-writer, as before. The approval must be of the head: approve again after
-each push.
+`UNCERTAIN`, or that changes a gate input listed in row 7, needs an approving review from a
+writer, as before. Whether a push voids that approval depends on the branch protection's
+dismiss-stale setting, as before.
+
+**The events workflow.** The gate fails every pull request that changes
+`.github/workflows/ai-merge-gate-events.yml`, approved or not (row 2). An admin merges such a
+change with the gate off, as [Changing the events workflow](#changing-the-events-workflow)
+describes.
 
 **Re-running the gate.** Any pull request comment or review re-runs the gate. You can also re-run
 the `AI merge gate` workflow run in the Actions tab. The Re-run button on the gate's own check
@@ -86,16 +105,34 @@ The gate never runs code from a pull request. Two workflows divide the work:
 - `ai-merge-gate-events.yml` runs on `pull_request` and `pull_request_review` events. GitHub runs
   the pull request's own copy of this file, without secrets and with a token that has no
   permissions. The file does nothing except finish, which tells the gate that something changed.
+  Because the pull request's copy runs, a pull request that changed it could keep its own review
+  events from reaching the gate. Row 2 fails every such pull request, so the copy that runs is
+  always the one on `main`.
 - `ai-merge-gate.yml` runs on `issue_comment` and on `workflow_run` after the events workflow.
   GitHub always takes both of these workflows from the default branch. Its `resolve` job maps
   the event to a pull request number. Its `evaluate` job checks out the gate script and skills
   from the default branch, mints a token for the gate's GitHub App, reads the pull request, its
   comments and its reviews through the API, and publishes check runs as the App.
 
-The diff reaches the model as a string inside an API request, and the model has no tools. The
-gate reads the diff only after rows 2 through 6 have passed. It refuses a diff larger than
-400,000 characters, and a diff whose parsed file, addition and deletion counts differ from the
-pull request's, rather than truncating it.
+The model's input is the pull request's diff from its merge base with `main`, followed by every
+changed file in full, with line numbers, as the head has it. The gate reads the diff only after
+rows 2 through 7 have passed. Two tools let the model read the rest of the repository:
+`read_file` returns a file with line numbers or lists a directory, and `search` returns the
+lines that contain a literal string. Each reads either the merge base or the head, both fixed by
+SHA when the gate reads the diff. The gate answers them from GitHub's archive of each commit,
+which it holds in memory and checks against the commit's tree: every file must hash to its blob
+in that tree, so `export-ignore` or `export-subst` attributes in the pull request cannot hide or
+alter a file, and a mismatch fails the gate. Nothing from the pull request is checked out,
+written to disk or run.
+
+The gate refuses rather than truncates. It fails, without calling the model, on an input over
+1,000,000 characters, on a diff whose parsed file, addition and deletion counts differ from the
+pull request's, and on a commit holding more than 500,000,000 bytes of files. A tool answer over
+200,000 characters, a search with more than 200 matching lines, and a binary file or one over
+1,000,000 bytes come back to the model as errors, not as partial text. After 1,000,000
+characters of answers or 40 tool turns for one question, the gate withholds the tools and the
+model must answer from what it has read; the classifier skill tells it to answer `UNCERTAIN`
+when that is not enough.
 
 The `ai-merge-gate` check run counts only when the gate's App created it. The ruleset below
 binds the required check to the App's ID, so a job named `ai-merge-gate` in a pull request's
@@ -103,10 +140,13 @@ workflow, which GitHub Actions would report, cannot satisfy it. The App's privat
 OpenAI key live in an environment that only the default branch can use, so a workflow pushed to
 any other branch cannot read them.
 
-Row 6 keeps the AI path from changing the gate itself. Any workflow merged into the default
-branch could use the gate's environment, and the listed files decide the gate's verdicts, so
-a change to them could weaken every later evaluation. Those changes always need a writer's
-approval, whatever the classifier would say.
+Row 7 keeps the AI path from changing the gate itself. Any workflow merged into the default
+branch can use the gate's environment. Python looks up the gate's imports in `scripts/ci`
+first, so any file merged there, such as a `json.py` that shadows the standard library or a
+`__pycache__` entry, would run with the gate's credentials. The skills and the closure spec are
+the model's instructions. Changes to any of these always need a writer's approval, whatever the
+classifier would say. Other files under `.github/`, such as issue templates, go to the
+classifier like any other change.
 
 The gate stores each classifier verdict and CI review as a check run on the head, created by
 the App. Only the App can create or change those, which a comment would not guarantee, since
@@ -142,8 +182,10 @@ the last push and conversation resolution. Also record every required status che
 gate's setup changes only the approval count and leaves the status checks alone.
 
 Stop and ask the repository owner before continuing if the review settings require more than
-one approval, a code owner review or approval of the last push. Row 3 of the table counts one
-approval of the head by a writer other than the author, and implements none of those three.
+one approval, a code owner review or approval of the last push. Row 4 of the table counts one
+undismissed approval by a writer other than the author, and implements none of those three. The
+gate takes an approval's freshness from GitHub's own dismissal of stale reviews, so step 8 keeps
+the recorded dismiss-stale value.
 
 Decide one more thing before step 7. The gate reads no other check, and `main` required no
 status check when last read. On the human path a reviewer sees CI before approving; on the AI
@@ -157,8 +199,9 @@ As an organization owner, create an App under the a16z organization's Developer 
 
 - Name it, for example, `jolt-ai-merge-gate`, and clear "Active" under Webhook: the gate
   receives no events.
-- Repository permissions: Checks read and write, Pull requests read and write, and the
-  mandatory Metadata read-only.
+- Repository permissions: Checks read and write, Contents read-only, Pull requests read and
+  write, and the mandatory Metadata read-only. Contents covers the comparison, tree and archive
+  reads that give the model the merge base and head.
 - Organization permissions: Members read-only, which the team membership lookup needs.
 - Allow installation only on this account.
 
@@ -260,7 +303,7 @@ gh api -X POST repos/a16z/jolt/rulesets --input ai-merge-gate-ruleset.json
 ```
 
 From this point a pull request needs both the existing approval and a passing gate. A writer's
-approval of the head satisfies both.
+approval satisfies both.
 
 ### 8. Hand the approval requirement to the gate
 
@@ -299,22 +342,37 @@ review. To turn the gate back on, activate the gate ruleset, wait until open pul
 the check, then disable the human-review ruleset. To remove the gate, turn it off, delete the
 gate ruleset, then delete the workflows, script, skill, environment, variables, label and App.
 
+### Changing the events workflow
+
+The gate fails every pull request that changes `.github/workflows/ai-merge-gate-events.yml`,
+approved or not (row 2), because GitHub runs the pull request's own copy of that file for its
+reviews. To merge such a change, turn the gate off with both commands above, merge the pull
+request with a native approval, then turn the gate back on.
+
 ## Limits
 
-- A result can stay stale briefly. Evidence that disappears without a push, such as a dismissed
-  approval or an edited comment, takes effect when the next evaluation publishes. Evaluations of
-  one pull request run one at a time and the newest runs last, so the final published result
-  matches the final state. A head that returns to an earlier SHA shows that SHA's last result
-  until its re-evaluation finishes.
-- The gate reads team membership on each evaluation. Removing someone from the core team does
-  not re-evaluate open pull requests until their next event.
-- In CI the classifier and the review see only the diff, with git's hunk headers, and the
-  default branch's `specs/verifier-closure-lints.md`. When safety depends on code outside the
-  diff, the classifier should answer UNCERTAIN, which sends the pull request to human review.
+- Event delivery bounds how fast withdrawn evidence takes effect. A dismissed approval, an
+  edited or deleted comment or a removed label counts once an evaluation that starts after it
+  publishes; until then the earlier result stands. Comments reach the gate directly. Reviews and
+  pull request changes reach it through the events workflow, which GitHub holds while a
+  first-time contributor's workflow runs await a maintainer's approval, and does not run for
+  `pull_request` activity while the pull request has a merge conflict; a comment still triggers
+  the gate in both cases. Evaluations of one pull request run one at a time, and a pass rests on
+  state read just before it is published. A change in the seconds between that read and the
+  publication, or one GitHub delivers late, takes effect when the next evaluation publishes. If
+  the gate cannot reach GitHub, the last published result stands.
+- Team changes trigger no event. Removing someone from the core team does not re-evaluate open
+  pull requests until their next event.
+- Check runs belong to a commit, not to a pull request. Open pull requests whose heads are the
+  same commit share the gate's check runs, its cached model results included, and the latest
+  evaluation of any of them sets the result for all. Each of them would merge that same commit.
+- The model reads the source but does not build or run it, and it reads only text files up to
+  1,000,000 bytes. A change it cannot read, such as a binary file in a verifier crate, should
+  make the classifier answer `UNCERTAIN`, which sends the pull request to human review.
 - A verdict covers the diff from the head's merge base with `main`. A later change to `main` does
   not void it, just as it does not void a human approval when branches need not be up to date.
 - An author's `Review: CONFIRMED` line is an attestation. The gate checks who wrote it and for
   which head, not which model ran the review.
-- A fork pull request from a first-time contributor may need a maintainer to approve its
-  workflow runs before the events workflow runs. Until then, a pull request comment still
-  triggers the gate.
+- The gate does not reproduce code owner review, more than one required approval, or approval of
+  the last push. A maintain-permission read cannot show whether the current protection requires
+  them; step 1 reads them with admin permission and stops if any is required.

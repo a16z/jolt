@@ -62,7 +62,7 @@ Spec analysis can also be triggered externally by adding the `claude-spec-review
 ## AI Merge Gate
 
 Once its admin setup is in place, merging into `main` requires the `ai-merge-gate` check. It
-passes on a human approval of the pull request's head, or, for a pull request written or
+passes on a writer's approval that GitHub has not dismissed, or, for a pull request written or
 authorized by a core contributor, when a CI classifier finds the change cannot alter which
 proofs the verifier accepts and an Astra Max review of the head found no issues.
 [`.github/ai-merge-gate.md`](.github/ai-merge-gate.md) has the rules, the
