@@ -179,7 +179,9 @@ pub struct CudaKernelContext {
     pairing_miller: CudaFunction,
     pairing_miller_warp: CudaFunction,
     pairing_prepare_g2: CudaFunction,
-    pairing_miller_prepared: CudaFunction,
+    pairing_miller_prepared_1: CudaFunction,
+    pairing_miller_prepared_2: CudaFunction,
+    pairing_miller_prepared_8: CudaFunction,
     pairing_fq12_product: CudaFunction,
     pub(super) fq6_mul_probe: CudaFunction,
     pub(super) fq6_mul_by_01_probe: CudaFunction,
@@ -401,7 +403,9 @@ impl CudaKernelContext {
             pairing_miller: module.load_function("pairing_miller_kernel")?,
             pairing_miller_warp: module.load_function("pairing_miller_warp_kernel")?,
             pairing_prepare_g2: module.load_function("pairing_prepare_g2_kernel")?,
-            pairing_miller_prepared: module.load_function("pairing_miller_prepared_kernel")?,
+            pairing_miller_prepared_1: module.load_function("pairing_miller_prepared_1_kernel")?,
+            pairing_miller_prepared_2: module.load_function("pairing_miller_prepared_2_kernel")?,
+            pairing_miller_prepared_8: module.load_function("pairing_miller_prepared_8_kernel")?,
             pairing_fq12_product: module.load_function("pairing_fq12_product_kernel")?,
             fq6_mul_probe: module.load_function("fq6_mul_probe")?,
             fq6_mul_by_01_probe: module.load_function("fq6_mul_by_01_probe")?,
@@ -1019,8 +1023,16 @@ impl CudaKernelContext {
         &self.pairing_prepare_g2
     }
 
-    pub(crate) const fn pairing_miller_prepared(&self) -> &CudaFunction {
-        &self.pairing_miller_prepared
+    pub(crate) const fn pairing_miller_prepared_1(&self) -> &CudaFunction {
+        &self.pairing_miller_prepared_1
+    }
+
+    pub(crate) const fn pairing_miller_prepared_2(&self) -> &CudaFunction {
+        &self.pairing_miller_prepared_2
+    }
+
+    pub(crate) const fn pairing_miller_prepared_8(&self) -> &CudaFunction {
+        &self.pairing_miller_prepared_8
     }
 
     pub(crate) const fn pairing_fq12_product(&self) -> &CudaFunction {

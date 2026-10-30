@@ -1,3 +1,13 @@
+//! Batched BN254 Miller loops.
+//!
+//! Optimized groups four pairs per accumulator. CUDA uses smaller groups for
+//! batches with little parallel work, and eight for large shared-G2 batches to
+//! amortize Fq12 squaring. Fixed groups of four raised stage-8 and whole-proof
+//! medians for SHA-2-chain at 2^24 on one and two L4s versus size-dependent groups.
+//! Shared-G2 segments reuse one coefficient table; other segments prepare their
+//! own. Tables above the 512 MiB budget use per-pair evaluation instead, while
+//! tiny batches use the cooperative warp path.
+
 use std::cell::RefCell;
 
 use ark_bn254::{Fq, Fq2};
@@ -73,7 +83,9 @@ const MILLER_WARP_WARPS: u32 = 4;
 
 const MILLER_WARP_MAX_PAIRS: usize = 256;
 
-const PREPARED_PAIRS_PER_THREAD: usize = 4;
+const GROUPED_MILLER_MIN_PAIRS: usize = 1 << 14;
+
+const LARGE_SHARED_MILLER_MIN_PAIRS: usize = 1 << 18;
 
 const MAX_PREPARED_BYTES: usize = 512 * 1024 * 1024;
 
@@ -295,16 +307,29 @@ impl CudaKernelContext {
 
         let (lanes, reduced_pairs) = self.with_pairing_constants(|constants| {
             let ate_len = Self::count_of(constants.ate_len)?;
-            let prepared_words = count
+            let shared = g2_offsets
+                .first()
+                .is_some_and(|offset| g2_offsets.iter().all(|candidate| candidate == offset));
+            let tables = if shared { 1 } else { segments.len() };
+            let prepared = count
                 .checked_mul(constants.line_count)
                 .and_then(|words| words.checked_mul(3 * FQ2_LIMBS))
-                .filter(|&words| words <= MAX_PREPARED_BYTES / size_of::<u64>());
-            let shared_offset = g2_offsets.first().copied().filter(|offset| {
-                g2_offsets.len() > 1 && g2_offsets.iter().all(|candidate| candidate == offset)
-            });
-            let prepared = shared_offset.zip(prepared_words);
+                .and_then(|line_words| {
+                    line_words
+                        .checked_mul(tables)
+                        .filter(|&words| words <= MAX_PREPARED_BYTES / size_of::<u64>())
+                        .map(|words| (line_words, words))
+                });
+            let total_pairs = count.saturating_mul(segments.len());
+            let (kernel, pack) = if shared && total_pairs >= LARGE_SHARED_MILLER_MIN_PAIRS {
+                (self.pairing_miller_prepared_8(), 8)
+            } else if total_pairs >= GROUPED_MILLER_MIN_PAIRS {
+                (self.pairing_miller_prepared_2(), 2)
+            } else {
+                (self.pairing_miller_prepared_1(), 1)
+            };
             let reduced_count = if prepared.is_some() {
-                count.div_ceil(PREPARED_PAIRS_PER_THREAD)
+                count.div_ceil(pack)
             } else {
                 count
             };
@@ -317,39 +342,48 @@ impl CudaKernelContext {
                 })?;
             let mut lanes = self.alloc_u64_unset(lanes_len)?;
             let reduced_pairs = Self::count_of(reduced_count)?;
-            if let Some((offset, words)) = prepared {
+            if let Some((line_words, words)) = prepared {
+                let line_words = line_words as u64;
+                let shared = u32::from(shared);
                 let mut lines = self.alloc_u64_unset(words)?;
                 let mut prepare = self.stream().launch_builder(self.pairing_prepare_g2());
                 let _ = prepare.arg(g2);
-                let _ = prepare.arg(&offset);
+                let _ = prepare.arg(&device_g2_offsets);
+                let _ = prepare.arg(&line_words);
                 let _ = prepare.arg(&constants.values);
                 let _ = prepare.arg(&constants.ate);
                 let _ = prepare.arg(&ate_len);
                 let _ = prepare.arg(&pairs);
                 let _ = prepare.arg(&mut lines);
-                // SAFETY: the G2 span was checked above. Each pair writes its
-                // own lane of every coefficient, with line_count derived from
-                // the same ATE digits as the kernel. Identity lanes stay unset;
-                // the consumer checks the same G2 identity before reading them.
-                let _ = unsafe { prepare.launch(Self::launch_config(pairs)) }?;
+                let mut config = Self::launch_config(pairs);
+                config.grid_dim.1 = Self::count_of(tables)?;
+                // SAFETY: every G2 span was checked above. Grid y selects one
+                // table for shared G2, or one per segment otherwise; each table
+                // owns line_words limbs, sized from the same ATE digits as the
+                // kernel. Each pair writes distinct coefficient lanes. Identity
+                // lanes stay unset and the consumer skips the same identities.
+                let _ = unsafe { prepare.launch(config) }?;
 
-                let mut apply = self.stream().launch_builder(self.pairing_miller_prepared());
+                let mut apply = self.stream().launch_builder(kernel);
                 let _ = apply.arg(g1);
                 let _ = apply.arg(g2);
                 let _ = apply.arg(&lines);
                 let _ = apply.arg(&constants.ate);
                 let _ = apply.arg(&ate_len);
                 let _ = apply.arg(&device_g1_offsets);
-                let _ = apply.arg(&offset);
+                let _ = apply.arg(&device_g2_offsets);
+                let _ = apply.arg(&shared);
+                let _ = apply.arg(&line_words);
                 let _ = apply.arg(&pairs);
                 let _ = apply.arg(&mut lanes);
                 let mut config = Self::launch_config(reduced_pairs);
                 config.grid_dim.1 = lanes_of;
-                // SAFETY: the checked G1 spans and common G2 span cover the
-                // grid. Preparation runs first on this stream, and every
-                // nonidentity pair's coefficient lanes are initialized. Each
-                // (segment, group) writes one distinct Fq12 in lanes. The
-                // kernel groups four strided pairs, matching reduced_count.
+                // SAFETY: the checked G1/G2 spans cover the grid. Preparation
+                // initializes the shared table or every segment's table on this
+                // stream before consumption, except identity lanes which are
+                // skipped. Each (segment, group) writes a distinct Fq12 in lanes.
+                // The selected wrapper fixes PACK to the same pack used to size
+                // reduced_count and the grid, including partially filled groups.
                 let _ = unsafe { apply.launch(config) }?;
                 return Ok((lanes, reduced_pairs));
             }
@@ -528,7 +562,7 @@ mod tests {
     use ark_bn254::{Bn254, Fq12, Fq6, G1Projective, G2Projective};
     use ark_ec::pairing::MillerLoopOutput;
     use ark_ec::pairing::Pairing;
-    use ark_ec::CurveGroup;
+    use ark_ec::{CurveGroup, PrimeGroup};
     use ark_ff::{BigInt, UniformRand};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -956,6 +990,63 @@ mod tests {
                 fq12(&actual[segment * FQ12_LIMBS..(segment + 1) * FQ12_LIMBS]),
                 expected
             );
+        }
+    }
+
+    #[test]
+    fn miller_products_distribute_over_repeated_pairs() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let p = G1Projective::generator().double();
+        let q = G2Projective::generator().double();
+        let ps = [p, p + G1Projective::generator()];
+        let qs = [q, q + G2Projective::generator()];
+        let zero_p = g1_words(&G1Projective::default());
+        let zero_q = g2_words(&G2Projective::default());
+
+        for (count, segments, shared) in [(4097usize, 4usize, false), (8193, 33, true)] {
+            let mut g1 = Vec::with_capacity(count * segments * 3 * FQ_LIMBS);
+            for segment in 0..segments {
+                let words = g1_words(&ps[segment % ps.len()]);
+                for i in 0..count {
+                    g1.extend_from_slice(if segment == segments - 1 || i % 17 == 3 {
+                        &zero_p
+                    } else {
+                        &words
+                    });
+                }
+            }
+            let tables = if shared { 1 } else { segments };
+            let mut g2 = Vec::with_capacity(count * tables * 6 * FQ_LIMBS);
+            for table in 0..tables {
+                let words = g2_words(&qs[table % qs.len()]);
+                for i in 0..count {
+                    g2.extend_from_slice(if i % 29 == 5 { &zero_q } else { &words });
+                }
+            }
+            let device_g1 = context.upload_raw_u64(&g1).unwrap();
+            let device_g2 = context.upload_raw_u64(&g2).unwrap();
+            let ranges: Vec<_> = (0..segments)
+                .map(|segment| (segment * count, if shared { 0 } else { segment * count }))
+                .collect();
+            let actual = context
+                .multi_miller_batch(&device_g1, &device_g2, &ranges, count)
+                .unwrap();
+            assert_eq!(actual.len(), segments * FQ12_LIMBS);
+            let nonidentity = (0..count).filter(|i| i % 17 != 3 && i % 29 != 5).count();
+            for (segment, words) in actual.chunks_exact(FQ12_LIMBS).enumerate() {
+                let expected = if segment == segments - 1 {
+                    Fq12::ONE
+                } else {
+                    let p = ps[segment % ps.len()];
+                    let q = qs[if shared { 0 } else { segment % qs.len() }];
+                    Bn254::multi_miller_loop([p], [q])
+                        .0
+                        .pow([nonidentity as u64])
+                };
+                assert_eq!(fq12(words), expected, "segment {segment}, shared={shared}");
+            }
         }
     }
 

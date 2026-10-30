@@ -467,10 +467,11 @@ __device__ __forceinline__ void miller_load_coeff(const u64 *lines, u64 *coeff,
     }
 }
 
-// Shared G2 segments reuse these coefficients for every G1 column. The
-// step/limb/pair layout coalesces coefficient traffic across adjacent threads.
+// Shared G2 segments reuse a table; otherwise grid y selects a table per
+// segment. The step/limb/pair layout coalesces adjacent threads' coefficient loads.
 extern "C" __global__ void pairing_prepare_g2_kernel(const u64 *__restrict__ g2,
-                                                     unsigned int offset,
+                                                     const unsigned int *__restrict__ offsets,
+                                                     unsigned long long line_words,
                                                      const u64 *__restrict__ consts,
                                                      const u64 *__restrict__ ate,
                                                      unsigned int ate_len,
@@ -478,6 +479,8 @@ extern "C" __global__ void pairing_prepare_g2_kernel(const u64 *__restrict__ g2,
                                                      u64 *__restrict__ lines) {
     unsigned int pair = blockIdx.x * blockDim.x + threadIdx.x;
     if (pair >= count) return;
+    unsigned int offset = offsets[blockIdx.y];
+    lines += blockIdx.y * line_words;
     const u64 *q = g2 + ((unsigned long long)offset + pair) * 3 * FQ2_LIMBS;
     if (jac2_is_zero(q)) return;
 
@@ -521,16 +524,21 @@ extern "C" __global__ void pairing_prepare_g2_kernel(const u64 *__restrict__ g2,
     miller_store_coeff(lines, coeff, step, pair, count);
 }
 
-extern "C" __global__ void pairing_miller_prepared_kernel(
+template<unsigned PACK>
+__device__ __forceinline__ void miller_prepared(
     const u64 *__restrict__ g1, const u64 *__restrict__ g2,
     const u64 *__restrict__ lines, const u64 *__restrict__ ate,
     unsigned int ate_len, const unsigned int *__restrict__ g1_offsets,
-    unsigned int g2_offset, unsigned int count, u64 *__restrict__ out) {
-    constexpr unsigned PACK = 4;
+    const unsigned int *__restrict__ g2_offsets,
+    unsigned int shared, unsigned long long line_words,
+    unsigned int count, u64 *__restrict__ out) {
     unsigned int groups = count / PACK + (count % PACK != 0);
     unsigned int group = blockIdx.x * blockDim.x + threadIdx.x;
     if (group >= groups) return;
     unsigned int segment = blockIdx.y;
+    unsigned int table = shared ? 0 : segment;
+    unsigned int g2_offset = g2_offsets[table];
+    lines += table * line_words;
     unsigned long long idx = (unsigned long long)segment * groups + group;
     u64 px[PACK][LIMBS], py[PACK][LIMBS];
     bool active[PACK], any = false;
@@ -592,6 +600,36 @@ extern "C" __global__ void pairing_miller_prepared_kernel(
         }
     }
     for (int i = 0; i < FQ12_LIMBS; i++) out[idx * FQ12_LIMBS + i] = f[i];
+}
+
+extern "C" __global__ void pairing_miller_prepared_1_kernel(
+    const u64 *__restrict__ g1, const u64 *__restrict__ g2,
+    const u64 *__restrict__ lines, const u64 *__restrict__ ate,
+    unsigned int ate_len, const unsigned int *__restrict__ g1_offsets,
+    const unsigned int *__restrict__ g2_offsets, unsigned int shared,
+    unsigned long long line_words, unsigned int count, u64 *__restrict__ out) {
+    miller_prepared<1>(g1, g2, lines, ate, ate_len, g1_offsets,
+        g2_offsets, shared, line_words, count, out);
+}
+
+extern "C" __global__ void pairing_miller_prepared_2_kernel(
+    const u64 *__restrict__ g1, const u64 *__restrict__ g2,
+    const u64 *__restrict__ lines, const u64 *__restrict__ ate,
+    unsigned int ate_len, const unsigned int *__restrict__ g1_offsets,
+    const unsigned int *__restrict__ g2_offsets, unsigned int shared,
+    unsigned long long line_words, unsigned int count, u64 *__restrict__ out) {
+    miller_prepared<2>(g1, g2, lines, ate, ate_len, g1_offsets,
+        g2_offsets, shared, line_words, count, out);
+}
+
+extern "C" __global__ void pairing_miller_prepared_8_kernel(
+    const u64 *__restrict__ g1, const u64 *__restrict__ g2,
+    const u64 *__restrict__ lines, const u64 *__restrict__ ate,
+    unsigned int ate_len, const unsigned int *__restrict__ g1_offsets,
+    const unsigned int *__restrict__ g2_offsets, unsigned int shared,
+    unsigned long long line_words, unsigned int count, u64 *__restrict__ out) {
+    miller_prepared<8>(g1, g2, lines, ate, ate_len, g1_offsets,
+        g2_offsets, shared, line_words, count, out);
 }
 
 #define MW_COEFFS 6
