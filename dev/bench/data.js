@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793383422422,
+  "lastUpdate": 1793384255830,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -210826,6 +210826,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 782292,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "8365992+moodlezoup@users.noreply.github.com",
+            "name": "Michael Zhu",
+            "username": "moodlezoup"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1976ced1bb8777af51c706c9c2fee15b3de5a10a",
+          "message": "feat(profiling): count instructions retired per span via perf_event_open (#2187)\n\n* feat(profiling): count instructions retired at stage boundaries\n\nThe stage-boundary layer (renamed from StageMemoryLayer, since it now\nsamples more than RSS) reads a process-wide hardware counter of\nuser-space instructions retired when each prove_stage* span and the\njolt_prover::prove root open and close. summary.json gains\nroot.instructions and stages[].instructions; the root pairs with its\nboundary row by close order like the stages already do.\n\nThe counter is a Linux perf_event_open counter with inherit set, opened\nat the end of setup_tracing: it covers every thread spawned afterwards\n(rayon's pool included) and leaves out the chrome writer and monitor\nthreads. Counts are null without a PMU, with perf_event_paranoid > 2,\noff Linux, or when the kernel multiplexed the counter.\n\njolt-eval gains telemetry:<workload>:instructions and\nstage_instructions:<stage-label> keys.\n\nMeasured on fibonacci 2^16 (optimized backend): repeated runs spread\n~0.1% at the root with 16 threads and ~0.004% with RAYON_NUM_THREADS=1.\nKernel-side cost at 2^20: +0.8 s system CPU on ~100 s user CPU; the\nwallclock A/B is within noise.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* feat(profiling): count instructions for every orchestrating-thread span\n\nThe boundary layer (now SpanBoundaryLayer) samples the process\ninstruction counter at every span enter and exit on the thread that\nopened it, the instance boundaries tracing-chrome records, so any span\ndeclared with #[tracing::instrument] or an inline info_span! is counted\nwithout registration. summary.json's spans.<label>.instructions sums a\nlabel's per-instance deltas and is reported only when the layer sampled\nevery instance the trace holds; a label with any instance on a rayon\nworker, where concurrent siblings share the process-wide delta, is null.\nStage RSS rows move to enter/exit too and share the same instruction\nsamples, so stage rows and span totals agree by construction.\n\njolt-eval's instructions:<span-label> key replaces\nstage_instructions:<stage-label>.\n\nOn fibonacci 2^16 (optimized backend) 136 labels get totals from 1079\nsampled instances; root wallclock is unchanged within noise.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs(profiling): rewrap the instruction-count bullet\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(profiling): skip multiplexed hardware test measurements\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-30T10:05:01-07:00",
+          "tree_id": "b15b272b2e44f8e888106d5f1be1b1f9251981c7",
+          "url": "https://github.com/a16z/jolt/commit/1976ced1bb8777af51c706c9c2fee15b3de5a10a"
+        },
+        "date": 1793384249990,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.5083,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 781360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.783,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 428272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 425972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 428388,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8935,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 425636,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871712,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 2.0244,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 5.0131,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 425740,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.8757,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 120400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.1268,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 781732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8598,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 425824,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.6191,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428380,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.56,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 428116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.166,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 425972,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.9289,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 702900,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 19.0811,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 602940,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 66.3458,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 703288,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9938,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 428348,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.3622,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 425248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.3147,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 782120,
             "unit": "KB",
             "extra": ""
           }
