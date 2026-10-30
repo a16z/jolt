@@ -42,6 +42,7 @@ mod embedded_bytes {
 
 include!("./provable_macro.rs");
 
+mod bounded;
 mod records;
 use records::{RecordError, Records};
 
@@ -112,14 +113,14 @@ fn setup_result<T>(result: Result<T, RecordError>) -> Result<T, RecordError> {
 }
 
 fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
-    let mut input = Records::new(bytes)?;
+    let mut input = Records::new(bytes, RECORD_LIMITS)?;
     if EMBEDDED_BYTES.is_empty() {
         input.authenticate_setup(SETUP_DIGEST.as_ref())?;
     }
     // The verifier setup comes from this image when the host baked it in
     // (then the input carries only the proofs), else from the input.
     let mut embedded = (!EMBEDDED_BYTES.is_empty())
-        .then(|| Records::new(EMBEDDED_BYTES).expect("corrupt embedded framing"));
+        .then(|| Records::new(EMBEDDED_BYTES, RECORD_LIMITS).expect("corrupt embedded framing"));
     let setup = embedded.as_mut().unwrap_or(&mut input);
 
     start_cycle_tracking("deserialize preprocessing");

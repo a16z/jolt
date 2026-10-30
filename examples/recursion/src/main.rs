@@ -1,3 +1,7 @@
+#[path = "../guest/src/bounded.rs"]
+mod bounded;
+use bounded::RecordLimits;
+
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
 use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheme, TrustedBytes};
@@ -96,6 +100,33 @@ fn read_record<T: DeserializeOwned>(buffer: &[u8], offset: &mut usize) -> Result
         .map_err(|error| error.to_string())?;
     assert_eq!(consumed, bytes.len(), "record decoder left trailing bytes");
     Ok(value)
+}
+
+impl RecordLimits {
+    // Image construction already trusts these files. Runtime input never sets limits.
+    fn read_record<T: DeserializeOwned>(
+        &mut self,
+        buffer: &[u8],
+        offset: &mut usize,
+    ) -> Result<T, String> {
+        let bytes = read_raw(buffer, offset)?;
+        let mut remaining = usize::MAX;
+        let (value, consumed) =
+            bounded::decode(bytes, &mut remaining).map_err(|error| error.to_string())?;
+        assert_eq!(consumed, bytes.len(), "record decoder left trailing bytes");
+        let charged = usize::MAX - remaining;
+        // Reserve headroom for other honest proofs with the same image's setup.
+        let allocation = charged
+            .checked_mul(2)
+            .and_then(usize::checked_next_power_of_two)
+            .ok_or("record allocation budget overflow")?;
+        self.allocation = self.allocation.max(allocation);
+        self.bytes = self.bytes.max(
+            bytes.len().checked_next_power_of_two().ok_or("record byte limit overflow")?,
+        );
+        info!("Record: {} encoded bytes, {charged} charged bytes", bytes.len());
+        Ok(value)
+    }
 }
 
 fn get_guest_src_dir() -> PathBuf {
@@ -295,11 +326,16 @@ fn generate_provable_macro(
     use_embed: bool,
     memory_config: &MemoryConfig,
     output_dir: &Path,
+    limits: RecordLimits,
 ) {
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
     let macro_content = format!(
-        r#"macro_rules! provable_with_config {{
+        r#"const RECORD_LIMITS: bounded::RecordLimits = bounded::RecordLimits {{
+    bytes: {record_bytes},
+    allocation: {record_allocation},
+}};
+macro_rules! provable_with_config {{
     ($item: item) => {{
         #[jolt::provable(
             input_error = 0,
@@ -320,7 +356,9 @@ fn generate_provable_macro(
         memory_config.max_trusted_advice_size,
         memory_config.heap_size,
         memory_config.stack_size,
-        max_trace_length
+        max_trace_length,
+        record_bytes = limits.bytes,
+        record_allocation = limits.allocation,
     );
 
     let provable_macro_path = output_dir.join("provable_macro.rs");
@@ -346,14 +384,16 @@ fn generate_provable_macro(
 struct StreamLayout {
     setup_len: usize,
     proof_count: u32,
+    limits: RecordLimits,
 }
 
 fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
     info!("Checking data integrity...");
 
     let mut offset = 0;
+    let mut limits = RecordLimits::default();
     let verifier_preprocessing: GuestVerifierPreprocessing =
-        read_record(all_groups_data, &mut offset).unwrap();
+        limits.read_record(all_groups_data, &mut offset).unwrap();
     let verifier_bytes =
         bincode::serde::encode_to_vec(&verifier_preprocessing, bincode::config::standard())
             .unwrap();
@@ -361,19 +401,19 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
         "✓ Verifier preprocessing deserialized successfully ({} bytes)",
         verifier_bytes.len()
     );
-    let payload_count: u32 = read_record(all_groups_data, &mut offset).unwrap();
+    let payload_count: u32 = limits.read_record(all_groups_data, &mut offset).unwrap();
     for i in 0..payload_count {
         let payload = read_raw(all_groups_data, &mut offset).expect("decode setup payload");
         info!("Setup payload {i}: {} bytes", payload.len());
     }
     let setup_len = offset;
 
-    let n: u32 = read_record(all_groups_data, &mut offset).unwrap();
+    let n: u32 = limits.read_record(all_groups_data, &mut offset).unwrap();
     info!("✓ Number of proofs deserialized: {n}");
 
     for i in 0..n {
-        let _: GuestProof = read_record(all_groups_data, &mut offset).expect("decode proof");
-        let _: JoltDevice = read_record(all_groups_data, &mut offset).expect("decode device");
+        let _: GuestProof = limits.read_record(all_groups_data, &mut offset).expect("decode proof");
+        let _: JoltDevice = limits.read_record(all_groups_data, &mut offset).expect("decode device");
         info!("Decoded proof and device {i}");
     }
 
@@ -387,6 +427,7 @@ fn check_data_integrity(all_groups_data: &[u8]) -> StreamLayout {
     StreamLayout {
         setup_len,
         proof_count: n,
+        limits,
     }
 }
 
@@ -1118,8 +1159,14 @@ fn verify_proofs(
         clear_embedded_bytes(output_dir, &all_groups_data[..layout.setup_len]);
         all_groups_data.as_slice()
     };
-    let memory_config = guest.get_memory_config(use_embed, input_section.len());
-    generate_provable_macro(guest, use_embed, &memory_config, output_dir);
+    let mut memory_config = guest.get_memory_config(use_embed, input_section.len());
+    // Setup, proof, and device coexist; retain space for geometric growth and verification.
+    let decode_heap = layout.limits.allocation
+        .checked_mul(8)
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .expect("recursion decode heap size overflow");
+    memory_config.heap_size = memory_config.heap_size.max(decode_heap);
+    generate_provable_macro(guest, use_embed, &memory_config, output_dir, layout.limits);
     let input_bytes = frame_guest_input(input_section, &memory_config);
     info!(
         "Serialized input size: {} bytes ({} proofs)",
@@ -1323,3 +1370,42 @@ mod input_size_tests {
 mod kernel_cases;
 #[cfg(feature = "field-inline")]
 mod kernel_tests;
+
+#[cfg(test)]
+mod record_limit_tests {
+    use super::guest_records::Records;
+    use super::*;
+
+    #[test]
+    fn honest_field_record_exceeding_default_budget_uses_image_limits() {
+        let fields = vec![GuestField::from_u64(7); (1 << 18) + 1];
+        let mut record = Vec::new();
+        push_record(&mut record, &fields);
+        let mut limits = RecordLimits::default();
+        let mut offset = 0;
+        let decoded: Vec<GuestField> = limits.read_record(&record, &mut offset).unwrap();
+        assert_eq!(decoded, fields);
+        assert_eq!(offset, record.len());
+        assert!(limits.allocation > RecordLimits::default().allocation);
+
+        let mut framed = vec![0; record.len() + 15];
+        let pad = (8 - (framed.as_ptr() as usize + 8) % 8) % 8;
+        let base = 8 + pad;
+        framed[..8].copy_from_slice(&(pad as u64).to_le_bytes());
+        framed[base..base + record.len()].copy_from_slice(&record);
+        framed.truncate(base + record.len());
+        assert!(Records::new(&framed, RecordLimits::default())
+            .unwrap()
+            .record::<Vec<GuestField>>()
+            .is_err());
+        let mut records = Records::new(&framed, limits).unwrap();
+        assert_eq!(records.record::<Vec<GuestField>>().unwrap(), fields);
+        records.finish().unwrap();
+
+        // Runtime lengths cannot increase the limits baked into the image.
+        let mut huge_length = vec![253];
+        huge_length.extend_from_slice(&u64::MAX.to_le_bytes());
+        let mut budget = limits.allocation;
+        assert!(bounded::decode::<Vec<GuestField>>(&huge_length, &mut budget).is_err());
+    }
+}

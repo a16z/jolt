@@ -61,7 +61,9 @@ pub(super) fn run() {
     let input = postcard::to_stdvec(&encoded.as_slice()).unwrap();
     let config = GuestProgram::Fibonacci.get_memory_config(true, input.len());
     let output_dir = super::get_guest_src_dir();
-    super::generate_provable_macro(GuestProgram::Fibonacci, true, &config, &output_dir);
+    super::generate_provable_macro(
+        GuestProgram::Fibonacci, true, &config, &output_dir, super::RecordLimits::default(),
+    );
     super::clear_embedded_bytes(&output_dir, &[]);
     let mut program = super::configured_recursion_program(config);
     program.set_func("check_field_kernels");

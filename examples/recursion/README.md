@@ -79,6 +79,11 @@ The Dory lane also checks framing and rejects a changed claim. Input-mode
 traces authenticate the setup
 against the digest baked into the newly built guest.
 
+The builder logs record byte lengths and allocation charges, then pins finite
+record limits and sizes the heap in the guest image. This admits larger honest
+records without letting runtime lengths raise the limits; see the spec's
+[record-limit arithmetic](../../specs/recursion-guest.md#record-limits).
+
 With `--features field-inline`, `check-field-kernels` runs a separate compiled
 guest under the same tracer. Native software folds supply the expected results
 for deterministic full-width values and zero, one, and minus one. It covers

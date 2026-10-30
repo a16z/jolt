@@ -1,10 +1,7 @@
-#[path = "bounded.rs"]
-mod bounded;
+use crate::bounded;
+use crate::bounded::RecordLimits;
 use jolt_inlines_blake2::Blake2b;
 use serde::de::DeserializeOwned;
-
-// Bound decoded records and bincode's byte budget before allocating.
-const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RecordError;
@@ -14,11 +11,12 @@ pub(crate) struct Records<'a> {
     buffer: &'a [u8],
     offset: usize,
     base: usize,
+    limits: RecordLimits,
 }
 
 impl<'a> Records<'a> {
-    pub(crate) fn new(buffer: &'a [u8]) -> Result<Self, RecordError> {
-        let mut records = Self { buffer, offset: 0, base: 0 };
+    pub(crate) fn new(buffer: &'a [u8], limits: RecordLimits) -> Result<Self, RecordError> {
+        let mut records = Self { buffer, offset: 0, base: 0, limits };
         let pad = records.len_prefix()?;
         if pad >= 8 {
             return Err(RecordError);
@@ -62,10 +60,11 @@ impl<'a> Records<'a> {
 
     pub(crate) fn record<T: DeserializeOwned>(&mut self) -> Result<T, RecordError> {
         let bytes = self.raw()?;
-        if bytes.len() > MAX_RECORD_BYTES {
+        if bytes.len() > self.limits.bytes {
             return Err(RecordError);
         }
-        let (value, consumed) = bounded::decode(bytes).map_err(|_| RecordError)?;
+        let mut budget = self.limits.allocation;
+        let (value, consumed) = bounded::decode(bytes, &mut budget).map_err(|_| RecordError)?;
         if consumed != bytes.len() {
             return Err(RecordError);
         }
@@ -92,7 +91,7 @@ impl<'a> Records<'a> {
     /// before any setup decoder or trusted view sees it. The pin is image data.
     pub(crate) fn authenticate_setup(&self, expected: Option<&[u8; 64]>) -> Result<(), RecordError> {
         let expected = expected.ok_or(RecordError)?;
-        let mut setup = Self { buffer: self.buffer, offset: self.offset, base: self.base };
+        let mut setup = Self { buffer: self.buffer, offset: self.offset, base: self.base, limits: self.limits };
         setup.raw()?;
         let count: u32 = setup.record()?;
         setup.check_count(count, 1)?;
@@ -127,6 +126,10 @@ mod tests {
     #[cfg(not(feature = "akita"))]
     use jolt_sdk::VerifierField as TestField;
 
+    fn parse_records(bytes: &[u8]) -> Result<Records<'_>, RecordError> {
+        Records::new(bytes, RecordLimits::default())
+    }
+
     fn frame(body: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0; 23 + body.len().next_multiple_of(8)];
         let pad = (8 - (bytes.as_ptr() as usize + 8) % 8) % 8;
@@ -139,7 +142,7 @@ mod tests {
     }
 
     fn verdict<T: DeserializeOwned>(bytes: &[u8]) -> u32 {
-        Records::new(bytes).and_then(|mut records| records.record::<T>())
+        parse_records(bytes).and_then(|mut records| records.record::<T>())
             .map(|_| 1).unwrap_or(0)
     }
 
@@ -150,7 +153,7 @@ mod tests {
         for end in 0..valid.len() {
             assert_eq!(verdict::<u8>(&valid[..end]), 0, "truncation at {end}");
         }
-        let base = Records::new(&valid).unwrap().base;
+        let base = parse_records(&valid).unwrap().base;
         let mut oversized = valid.clone();
         oversized[base..base + 8].copy_from_slice(&u64::MAX.to_le_bytes());
         assert_eq!(verdict::<u8>(&oversized), 0);
@@ -160,7 +163,7 @@ mod tests {
         *padding.last_mut().unwrap() = 1;
         assert_eq!(verdict::<u8>(&padding), 0);
         assert_eq!(verdict::<u8>(&frame(&[42, 43])), 0);
-        assert!(Records::new(&valid).unwrap().check_count(u32::MAX, 2).is_err());
+        assert!(parse_records(&valid).unwrap().check_count(u32::MAX, 2).is_err());
     }
 
     #[test]
@@ -178,7 +181,7 @@ mod tests {
         assert_eq!(verdict::<Vec<Vec<u8>>>(&frame(&body)), 0);
         let nested = vec![vec![1u8, 2, 3], vec![], vec![4]];
         let body = bincode::serde::encode_to_vec(&nested, bincode::config::standard()).unwrap();
-        let decoded: Vec<Vec<u8>> = Records::new(&frame(&body)).unwrap().record().unwrap();
+        let decoded: Vec<Vec<u8>> = parse_records(&frame(&body)).unwrap().record().unwrap();
         assert_eq!(decoded, nested);
     }
 
@@ -202,7 +205,7 @@ mod tests {
     #[test]
     fn setup_pin_rejects_substitution_of_each_detached_body() {
         let mut bytes = frame(&[7; 8]);
-        let base = Records::new(&bytes).unwrap().base;
+        let base = parse_records(&bytes).unwrap().base;
         let mut section = bytes[base..].to_vec();
         let mut append = |body: &[u8]| {
             section.extend_from_slice(&(body.len() as u64).to_le_bytes());
@@ -221,13 +224,13 @@ mod tests {
         bytes[..8].copy_from_slice(&(pad as u64).to_le_bytes());
         bytes[base..base + section.len()].copy_from_slice(&section);
         bytes.truncate(base + section.len());
-        let records = Records::new(&bytes).unwrap();
+        let records = parse_records(&bytes).unwrap();
         assert!(records.authenticate_setup(Some(&expected)).is_ok());
         assert!(records.authenticate_setup(None).is_err());
         // Setup record, key matrix, catalog view, and terminal cache respectively.
         for offset in [8, 40, 56, 72] {
             bytes[base + offset] ^= 1;
-            assert!(Records::new(&bytes).unwrap().authenticate_setup(Some(&expected)).is_err());
+            assert!(parse_records(&bytes).unwrap().authenticate_setup(Some(&expected)).is_err());
             bytes[base + offset] ^= 1;
         }
     }
@@ -235,17 +238,17 @@ mod tests {
     #[test]
     fn batch_requires_a_proof_and_exact_end_of_input() {
         let empty = frame(&[0]);
-        assert!(Records::new(&empty).unwrap().proof_count().is_err());
+        assert!(parse_records(&empty).unwrap().proof_count().is_err());
         let mut batch = frame(&[1]);
         // A count followed by two minimal records exercises the framing contract.
         batch.extend_from_slice(&[0; 16]);
-        let mut records = Records::new(&batch).unwrap();
+        let mut records = parse_records(&batch).unwrap();
         assert_eq!(records.proof_count().unwrap(), 1);
         records.raw().unwrap();
         records.raw().unwrap();
         assert!(records.finish().is_ok());
         batch.push(0);
-        let mut records = Records::new(&batch).unwrap();
+        let mut records = parse_records(&batch).unwrap();
         records.proof_count().unwrap();
         records.raw().unwrap();
         records.raw().unwrap();

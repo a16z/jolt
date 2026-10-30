@@ -5,17 +5,31 @@ use serde::de::{
     SeqAccess, VariantAccess, Visitor,
 };
 
-// Bincode's serde sequence decoder forwards untrusted size hints without
-// charging its byte limit for the collection allocation. Budget those hints
-// separately, and hide them from visitors until their element type is known.
-const ALLOCATION_BUDGET: usize = 16 * 1024 * 1024;
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RecordLimits {
+    pub(crate) bytes: usize,
+    pub(crate) allocation: usize,
+}
 
-pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<(T, usize), DecodeError> {
-    let mut budget = ALLOCATION_BUDGET;
+impl Default for RecordLimits {
+    fn default() -> Self {
+        Self {
+            bytes: 16 * 1024 * 1024,
+            allocation: 16 * 1024 * 1024,
+        }
+    }
+}
+
+// Bincode's serde decoder forwards untrusted collection size hints without
+// charging their allocation. The adapter charges before growth and hides hints.
+pub(crate) fn decode<T: DeserializeOwned>(
+    bytes: &[u8],
+    budget: &mut usize,
+) -> Result<(T, usize), DecodeError> {
     bincode::serde::seed_decode_from_slice(
-        Bounded { inner: PhantomData::<T>, budget: &mut budget },
+        Bounded { inner: PhantomData::<T>, budget },
         bytes,
-        bincode::config::standard().with_limit::<ALLOCATION_BUDGET>(),
+        bincode::config::standard(),
     )
 }
 

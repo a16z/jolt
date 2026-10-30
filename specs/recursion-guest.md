@@ -64,6 +64,41 @@ A consumer checking a particular computation must bind the runtime input and
 inspect the intended count and devices; checking the verdict alone establishes
 only that some nonempty batch verifies under the image's setup.
 
+## Record limits
+
+The image builder runs the same bounded serde adapter over each supplied setup,
+count, proof, and device record and logs both its encoded length and its charged
+size. The byte cap is the next power of two of the largest record, with a 16 MiB
+floor. The allocation-charge cap is the next power of two of twice the largest
+charge, also with a 16 MiB floor. Both caps are constants in the generated guest;
+untrusted runtime lengths cannot raise them. Detached setup bodies are borrowed
+and are not decoded records. Embedded setup removes the bytecode vector before
+encoding, so using the full input-mode setup to size its cap is conservative;
+the additional embedded digest record is only 32 bytes.
+
+A trace of `2^20` rows does not bound the size of the program image, bytecode,
+public I/O, or schedule catalog. There is consequently no universal largest
+honest record at that trace length. In full-program mode the setup can dominate:
+`JoltInstructionRow` contains at least an eight-byte address and a sixteen-byte
+immediate, so a `2^20`-row bytecode vector alone incurs at least
+`2 * 24 * 2^20 = 48 MiB` of charge before the nested struct/operand charges,
+PC map, RAM image, and setup metadata. A `2^20`-word RAM vector adds
+`2 * 8 * 2^20 = 16 MiB`. These terms alone exceed the former 16 MiB cap.
+For comparison, a vector of `2^20` Fp128 values has 16 MiB of field bytes but
+costs `2 * 16 * 2^20` for vector storage plus `2 * 16 * 2^20` for the fixed
+byte-array decodes: 64 MiB of charge. This is a type-based estimate, not a claim
+that sumcheck proofs contain one scalar per trace row.
+
+Image-specific sizing avoids guessing a universal cap from trace length. It
+admits the records supplied to the builder under the supported 64-bit host and
+guest layouts, including the input-mode setup; other record shapes must fit the
+pinned limits or need a newly sized image. The builder reserves at least eight
+times the charge cap for the heap, accounting for the resident setup, proof,
+and device plus growth and verifier work. The charge is not a peak-heap proof:
+custom deserializers and backend verification can allocate outside the adapter,
+and transient vector growth can exceed its factor-of-two charge. Runtime peak
+memory and acceptance at large sizes still require Linux validation.
+
 ## Mechanisms
 
 ### Field arithmetic on the field-inline ISA

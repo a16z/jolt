@@ -23,7 +23,11 @@ pub static SETUP_DIGEST: Option<[u8; 64]> = None;"#;
     let provable_macro_path = Path::new("src/provable_macro.rs");
 
     if !provable_macro_path.exists() {
-        let fallback_content = r#"macro_rules! provable_with_config {
+        let fallback_content = r#"const RECORD_LIMITS: bounded::RecordLimits = bounded::RecordLimits {
+    bytes: 16 * 1024 * 1024,
+    allocation: 16 * 1024 * 1024,
+};
+macro_rules! provable_with_config {
     ($item: item) => {
         #[jolt::provable(
             input_error = 0,
