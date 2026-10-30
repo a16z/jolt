@@ -183,7 +183,11 @@ impl Blake2b {
     /// created with (the leading bytes of the state).
     #[inline(always)]
     pub fn finalize_into(mut self, out: &mut [u8]) {
-        assert_eq!(out.len(), self.output_len, "Blake2b output length mismatch");
+        assert_eq!(
+            out.len(),
+            self.output_len,
+            "Blake2b::finalize_into buffer must match the digest length"
+        );
         self.compress_final();
         let len = out.len();
         if len.is_multiple_of(WORD_BYTES) && (out.as_mut_ptr() as usize).is_multiple_of(WORD_BYTES)
@@ -261,14 +265,6 @@ impl Blake2b {
         self.buffer.compress(&mut self.h, true);
     }
 
-    /// Compresses the buffered bytes, zero-padded, as the final block.
-    #[inline(always)]
-    fn compress_final(&mut self) {
-        self.counter += self.buffer_len as u64;
-        self.buffer[self.buffer_len..].fill(0);
-        compression_caller(&mut self.h, &self.buffer, self.counter, true);
-    }
-
     /// Finalize a 64-byte-digest hasher.
     ///
     /// # Panics
@@ -276,7 +272,10 @@ impl Blake2b {
     /// [`Self::finalize_into`] for those.
     #[inline(always)]
     pub fn finalize(mut self) -> [u8; OUTPUT_SIZE] {
-        assert_eq!(self.output_len, OUTPUT_SIZE, "use finalize_into for shorter digests");
+        assert_eq!(
+            self.output_len, OUTPUT_SIZE,
+            "Blake2b::finalize needs a 64-byte digest; use finalize_into"
+        );
         self.compress_final();
         to_bytes(self.h)
     }

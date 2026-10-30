@@ -1,5 +1,6 @@
 #[cfg(test)]
-#[cfg(feature = "host")]
+// These fixtures contain Dory proofs; Akita uses a different proof envelope.
+#[cfg(all(feature = "host", not(feature = "akita")))]
 mod tests {
     use jolt_sdk::{
         deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,

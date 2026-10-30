@@ -153,6 +153,38 @@ mod tests {
         assert!(super::super::CompiledProgram::compile_with(&program, &set).is_err());
     }
 
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_rows_are_declined_before_emission() {
+        for kind in [
+            JoltInstructionKind::FIELD_ADD,
+            JoltInstructionKind::FIELD_SUB,
+            JoltInstructionKind::FIELD_MUL,
+            JoltInstructionKind::FIELD_INV,
+            JoltInstructionKind::FIELD_ASSERT_EQ,
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_REGISTER,
+            JoltInstructionKind::FIELD_ASSERT_ZERO,
+            JoltInstructionKind::FIELD_LOAD_IMM,
+            JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+            JoltInstructionKind::FIELD_ADVICE_LIMB,
+        ] {
+            let mut row = add_row();
+            row.instruction_kind = kind;
+            let program = single_row_program(row);
+            let error = match super::super::CompiledProgram::compile_with(
+                &program,
+                &EmitterSet::dynasm(),
+            ) {
+                Err(error) => format!("{error:?}"),
+                Ok(_) => String::from("compiled successfully"),
+            };
+            assert!(
+                error.contains("unsupported instruction kind"),
+                "expected an unsupported kind without partial emission, got: {error}"
+            );
+        }
+    }
+
     /// An emitter that emits bytes and then declines would double-count rows
     /// once a later emitter claims the kind; the set must reject it.
     struct EmitThenDecline;
