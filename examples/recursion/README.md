@@ -33,9 +33,14 @@ counts are for embedded mode.
 ### Acceptance and rejection
 
 The recursive statement is: under the setup bound by this guest image, the
-entire runtime input contains a nonempty batch of valid inner proof/device
-pairs. The count must be at least one and no bytes may follow the last padded
-record. Malformed records return `0`; acceptance returns `1`. The output is
+postcard-decoded record slice contains a nonempty batch of valid inner
+proof/device pairs. The count must be at least one and no bytes may follow the
+last padded record within that slice. The entry point also requires every byte
+from the end of the postcard envelope to the end of the input capacity to be
+zero. The runtime exposes a zero-padded region, not the submitted input length,
+so an explicit zero suffix is indistinguishable from unused capacity and is
+allowed. A nonzero transport suffix, malformed envelope, or malformed record
+returns `0`; acceptance returns `1`. The output is
 still one `u32` and does not commit separately to the count or inner devices.
 A consumer checking a particular computation must bind the runtime input and
 inspect the intended count and devices; checking the verdict alone establishes
@@ -56,8 +61,10 @@ recursion trace --embed --expect reject --example fibonacci --workdir tampered
 `check-input-framing --embed --example fibonacci --workdir proofs` builds one
 verifier image, checks the honest input, then requires verdict `0` without a
 panic for a ten-byte `0xff` length prefix and a length exceeding the input
-region. Recursion opts into `#[jolt::provable(input_error = 0)]`; decoding errors
-skip the verifier body and serialize that return value. Other guests retain
+region. It also rejects a nonzero suffix immediately after the envelope or at
+the last capacity byte, and accepts explicit zero padding. Recursion opts into `#[jolt::provable(input_error = 0)]`; decoding errors
+and nonzero public-input padding skip the verifier body and serialize that
+return value. Other guests retain
 the default decoding behavior.
 
 These commands test guest verification, not an Akita outer recursive proof.

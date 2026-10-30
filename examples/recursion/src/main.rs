@@ -1002,10 +1002,19 @@ fn run_recursion_proof(
         RunConfig::CheckInputFraming => {
             // Build once: malformed inputs must not change the image or its capacity.
             let oversized = postcard::to_stdvec(&memory_config.max_input_size).unwrap();
+            let mut suffix = input_bytes.clone();
+            suffix.push(1);
+            let mut zero_padding = input_bytes.clone();
+            zero_padding.resize(memory_config.max_input_size as usize, 0);
+            let mut last_byte = zero_padding.clone();
+            *last_byte.last_mut().unwrap() = 1;
             for (name, input, expected) in [
                 ("honest", input_bytes, 1),
                 ("overflowing length", vec![0xff; 10], 0),
                 ("oversize length", oversized, 0),
+                ("nonzero suffix", suffix, 0),
+                ("zero transport padding", zero_padding, 1),
+                ("nonzero final capacity byte", last_byte, 0),
             ] {
                 let (rows, device) = program.execute_with_output(&input, &[], &[]);
                 assert!(!device.panic, "{name}: recursion verifier guest panicked");

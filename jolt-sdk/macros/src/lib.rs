@@ -855,7 +855,16 @@ impl MacroBuilder {
             }
         });
 
-        let check_input_len = quote! {};
+        let check_input_len = if let Some(input_error) = &attributes.input_error {
+            quote! {
+                // The device zero-fills unused input capacity; no logical length is exposed.
+                if __jolt_input_slice.iter().any(|byte| *byte != 0) {
+                    break '__jolt_decode { #input_error };
+                }
+            }
+        } else {
+            quote! {}
+        };
 
         let attrs = &self.func.attrs;
         let output = &self.func.sig.output;

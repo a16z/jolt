@@ -10,7 +10,7 @@ pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
     pub guest_only: bool,
-    /// Guest return expression used when argument decoding fails; opt-in.
+    /// Opt-in guest return expression for decoding errors or nonzero public-input padding.
     pub input_error: Option<Expr>,
     /// Optional cargo profile name to use for guest builds (e.g. "guest", "release").
     pub profile: Option<String>,

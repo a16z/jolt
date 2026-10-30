@@ -51,9 +51,14 @@ What the guest still checks on setup data:
 ## Recursive statement
 
 The recursive statement is: under the setup bound by this guest image, the
-entire runtime input contains a nonempty batch of valid inner proof/device
-pairs. The count must be at least one and no bytes may follow the last padded
-record. Malformed records return `0`; acceptance returns `1`. The output is
+postcard-decoded record slice contains a nonempty batch of valid inner
+proof/device pairs. The count must be at least one and no bytes may follow the
+last padded record within that slice. The entry point also requires every byte
+from the end of the postcard envelope to the end of the input capacity to be
+zero. The runtime exposes a zero-padded region, not the submitted input length,
+so an explicit zero suffix is indistinguishable from unused capacity and is
+allowed. A nonzero transport suffix, malformed envelope, or malformed record
+returns `0`; acceptance returns `1`. The output is
 still one `u32` and does not commit separately to the count or inner devices.
 A consumer checking a particular computation must bind the runtime input and
 inspect the intended count and devices; checking the verdict alone establishes
