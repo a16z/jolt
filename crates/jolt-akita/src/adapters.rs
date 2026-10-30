@@ -605,7 +605,10 @@ impl AkitaVerifierSetup {
             .ok_or_else(|| {
                 format!(
                     "Akita verifier setup has no {} schedule artifact",
-                    String::from_utf8_lossy(flavor.transcript_label())
+                    match flavor {
+                        AkitaBackendFlavor::Dense => "dense",
+                        AkitaBackendFlavor::OneHot => "one_hot",
+                    }
                 )
             })?
             .bytes()

@@ -190,7 +190,7 @@ mod tests {
     fn expected_output_openings_match_expanded_output() {
         let layout = JoltRaPolynomialLayout::new(2, 3, 2).unwrap();
         let relation = LatticeDigitZeroClaimReduction::new(
-            LatticeDigitZeroClaimReductionDimensions::new(layout, 32).unwrap(),
+            HammingWeightClaimReductionDimensions::new(layout, 5),
         );
         assert_eq!(
             relation.expected_output_openings::<Fr>(),
