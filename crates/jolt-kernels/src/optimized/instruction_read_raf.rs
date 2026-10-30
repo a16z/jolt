@@ -37,7 +37,8 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
-use std::collections::{hash_map::Entry, HashMap, HashSet};
+use std::collections::HashSet;
+use std::num::NonZeroU16;
 use std::sync::{Arc, Weak};
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
@@ -637,8 +638,9 @@ const SCAN_CLASSES: usize = 2 * (LookupTableKind::<RISCV_XLEN>::COUNT + 1);
 /// while its class runs gather from them.
 const SCAN_BLOCK: usize = 1 << 10;
 const COALESCE_SAMPLE_BLOCKS: usize = 32;
-// Require at least a quarter repeated rows to amortize building the map.
+// Require at least a quarter repeated rows to amortize coalescing.
 const COALESCE_MIN_DUPLICATE_PERCENT: usize = 25;
+const COALESCE_CACHE_SLOTS: usize = 1 << 12;
 
 const _: () = assert!(SCAN_BLOCK <= u16::MAX as usize, "block offsets are u16");
 
@@ -701,27 +703,35 @@ impl ScanBlock {
     fn coalesced<F: JoltField>(
         rows: &[InstructionCycleRow],
         weights: &mut [F],
-        seen: &mut HashMap<u128, u16>,
+        seen: &mut [Option<NonZeroU16>],
     ) -> Self {
         let mut block = Self::new(rows);
         let starts = block.starts;
         let mut end = 0;
+        seen.fill(None);
         for (class, range) in starts.windows(2).enumerate() {
             block.starts[class] = end as u16;
-            seen.clear();
             for position in usize::from(range[0])..usize::from(range[1]) {
                 let offset = block.offsets[position];
-                match seen.entry(rows[usize::from(offset)].lookup_index()) {
-                    Entry::Vacant(entry) => {
-                        let _ = entry.insert(offset);
-                        block.offsets[end] = offset;
-                        end += 1;
-                    }
-                    Entry::Occupied(entry) => {
+                let key = rows[usize::from(offset)].lookup_index();
+                let mut hash = (key as u64) ^ ((key >> 64) as u64).rotate_left(32);
+                hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                let slot = ((hash ^ (hash >> 31)) as usize) & (COALESCE_CACHE_SLOTS - 1);
+                if let Some(previous) = seen[slot] {
+                    let previous = usize::from(previous.get() - 1);
+                    if Self::class(&rows[previous]) == class && rows[previous].lookup_index() == key
+                    {
                         let weight = weights[usize::from(offset)];
-                        weights[usize::from(*entry.get())] += weight;
+                        weights[previous] += weight;
+                        continue;
                     }
                 }
+                // Collisions leave another live representative; only exact
+                // key-and-class matches combine weights. One probe per row.
+                seen[slot] = NonZeroU16::new(offset + 1);
+                block.offsets[end] = offset;
+                end += 1;
             }
         }
         block.starts[SCAN_CLASSES] = end as u16;
@@ -1102,7 +1112,8 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             let chunks = u_evals.par_chunks_mut(SCAN_BLOCK);
             #[cfg(not(feature = "parallel"))]
             let chunks = u_evals.chunks_mut(SCAN_BLOCK);
-            let coalesce = |seen: &mut HashMap<u128, u16>, (block, weights): (usize, &mut [F])| {
+            let coalesce = |seen: &mut Vec<Option<NonZeroU16>>,
+                            (block, weights): (usize, &mut [F])| {
                 ScanBlock::coalesced(
                     &scan_rows[block * SCAN_BLOCK..block * SCAN_BLOCK + weights.len()],
                     weights,
@@ -1112,11 +1123,11 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             #[cfg(feature = "parallel")]
             let blocks = chunks
                 .enumerate()
-                .map_init(|| HashMap::with_capacity(SCAN_BLOCK), coalesce)
+                .map_init(|| vec![None; COALESCE_CACHE_SLOTS], coalesce)
                 .collect();
             #[cfg(not(feature = "parallel"))]
             let blocks = {
-                let mut seen = HashMap::with_capacity(SCAN_BLOCK);
+                let mut seen = vec![None; COALESCE_CACHE_SLOTS];
                 chunks
                     .enumerate()
                     .map(|item| coalesce(&mut seen, item))
@@ -1770,7 +1781,9 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel, ScanBlock};
+    use super::{
+        InstructionCycleRow, OptimizedInstructionReadRafKernel, ScanBlock, COALESCE_CACHE_SLOTS,
+    };
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
@@ -2025,6 +2038,59 @@ mod tests {
             .map(|i| constant.unwrap_or_else(|| challenge(i)))
             .collect();
         assert_parity_rows(dimensions, &point, rows);
+    }
+
+    #[test]
+    fn coalescing_preserves_weight_for_colliding_keys_and_classes() {
+        fn check<F: JoltField>() {
+            let mut cache = vec![None; COALESCE_CACHE_SLOTS];
+            for length in [64, 17] {
+                let rows: Vec<_> = (0..length)
+                    .map(|i| {
+                        // These distinct keys all hash to the same cache slot.
+                        let high = [0u64, 0, 1, 2, 0, 3, 3, 4][i % 8];
+                        let key = (u128::from(high) << 64) | u128::from(high.rotate_left(32));
+                        InstructionCycleRow::new(
+                            key,
+                            None,
+                            i >= length / 2,
+                            0,
+                            None,
+                            #[cfg(feature = "akita")]
+                            FusedInc::default(),
+                        )
+                    })
+                    .collect();
+                let original: Vec<F> = (0..length)
+                    .map(|i| F::from_u64((i * i + 1) as u64))
+                    .collect();
+                let mut weights = original.clone();
+                let block = ScanBlock::coalesced(&rows, &mut weights, &mut cache);
+                for (class, range) in block.starts.windows(2).enumerate() {
+                    for high in 0..5u64 {
+                        let key = (u128::from(high) << 64) | u128::from(high.rotate_left(32));
+                        let expected: F = rows
+                            .iter()
+                            .zip(&original)
+                            .filter(|(row, _)| {
+                                ScanBlock::class(row) == class && row.lookup_index() == key
+                            })
+                            .map(|(_, weight)| *weight)
+                            .sum();
+                        let actual: F = block.offsets[usize::from(range[0])..usize::from(range[1])]
+                            .iter()
+                            .map(|offset| usize::from(*offset))
+                            .filter(|offset| rows[*offset].lookup_index() == key)
+                            .map(|offset| weights[offset])
+                            .sum();
+                        assert_eq!(actual, expected);
+                    }
+                }
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 
     #[test]
