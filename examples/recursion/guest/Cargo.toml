@@ -27,10 +27,10 @@ hash-inlines = [
 ]
 
 [package.metadata.cargo-machete]
-# The jolt-field edge selects the guest's field-inline arithmetic; generated
-# embedded_bytecode.rs imports jolt-riscv types when the host prepares an
+# The jolt-transcript edge selects BLAKE2b and its guest inline implementation.
+# Generated embedded_bytecode.rs imports jolt-riscv when the host prepares an
 # embedded guest.
-ignored = ["jolt-field", "jolt-riscv"]
+ignored = ["jolt-riscv", "jolt-transcript"]
 
 [dependencies]
 jolt-inlines-blake2.workspace = true

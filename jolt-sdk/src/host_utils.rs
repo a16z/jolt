@@ -89,7 +89,7 @@ pub type VerifierPCS = DoryScheme;
 #[cfg(feature = "host")]
 pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(feature = "host")]
-pub type VerifierField = jolt_field::Fr;
+pub type VerifierField = Fr;
 #[cfg(feature = "host")]
 pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
 #[cfg(feature = "host")]
@@ -174,7 +174,7 @@ pub type VerifierPCS = DoryScheme;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierField = jolt_field::Fr;
+pub type VerifierField = Fr;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]

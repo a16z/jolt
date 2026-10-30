@@ -1,5 +1,5 @@
 use super::kernel_cases::KernelCase;
-use super::{GuestField as F, GuestProgram};
+use super::{GuestField as F, GuestProgram, RecordLimits};
 use jolt_field::{CanonicalEncoding, Field, Ring};
 
 fn next_field(seed: &mut u64, index: usize) -> F {
@@ -91,7 +91,7 @@ pub(super) fn run() {
         true,
         &config,
         &output_dir,
-        super::RecordLimits::default(),
+        RecordLimits::default(),
     );
     super::clear_embedded_bytes(&output_dir, &[]);
     let mut program = super::configured_recursion_program(config);

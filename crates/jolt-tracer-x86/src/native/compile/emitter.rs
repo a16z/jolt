@@ -102,6 +102,7 @@ impl EmitterSet {
 
 #[cfg(test)]
 mod tests {
+    use super::super::CompiledProgram;
     use super::*;
     use crate::native::harness::{single_row_program, TEST_ADDR};
     use jolt_riscv::{JoltInstructionKind, NormalizedOperands};
@@ -143,14 +144,14 @@ mod tests {
             Box::new(DeclineAll),
             Box::new(super::super::emit::DynasmEmitter),
         ]);
-        assert!(super::super::CompiledProgram::compile_with(&program, &set).is_ok());
+        assert!(CompiledProgram::compile_with(&program, &set).is_ok());
     }
 
     #[test]
     fn unclaimed_kind_fails_compilation() {
         let program = single_row_program(add_row());
         let set = EmitterSet::from_emitters(vec![Box::new(DeclineAll)]);
-        assert!(super::super::CompiledProgram::compile_with(&program, &set).is_err());
+        assert!(CompiledProgram::compile_with(&program, &set).is_err());
     }
 
     #[cfg(feature = "field-inline")]
@@ -171,10 +172,7 @@ mod tests {
             let mut row = add_row();
             row.instruction_kind = kind;
             let program = single_row_program(row);
-            let error = match super::super::CompiledProgram::compile_with(
-                &program,
-                &EmitterSet::dynasm(),
-            ) {
+            let error = match CompiledProgram::compile_with(&program, &EmitterSet::dynasm()) {
                 Err(error) => format!("{error:?}"),
                 Ok(_) => String::from("compiled successfully"),
             };
@@ -210,7 +208,7 @@ mod tests {
             Box::new(EmitThenDecline),
             Box::new(super::super::emit::DynasmEmitter),
         ]);
-        let error = match super::super::CompiledProgram::compile_with(&program, &set) {
+        let error = match CompiledProgram::compile_with(&program, &set) {
             Err(error) => format!("{error:?}"),
             Ok(_) => String::from("compiled successfully"),
         };

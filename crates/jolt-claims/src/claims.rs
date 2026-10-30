@@ -284,10 +284,10 @@ mod tests {
         assert_eq!(
             expr.terms,
             vec![
-                term(1, vec![offset.clone(), b.clone(), alpha.clone()]),
-                term(1, vec![offset, a.clone()]),
-                term(2, vec![a.clone(), b, alpha]),
-                term(2, vec![a.clone(), a]),
+                term(1, vec![offset, b, alpha]),
+                term(1, vec![offset, a]),
+                term(2, vec![a, b, alpha]),
+                term(2, vec![a, a]),
             ]
         );
     }

@@ -21,9 +21,13 @@ use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProg
 use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode};
+#[cfg(feature = "akita")]
+use jolt_sdk::ProofTranscript;
+use jolt_sdk::{
+    JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode, VerifierTranscript,
+};
 #[cfg(not(feature = "akita"))]
-use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof};
+use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof, VerifierField};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
@@ -46,7 +50,7 @@ type GuestVerifierPreprocessing = JoltVerifierPreprocessing<AkitaScheme, AkitaVc
 #[cfg(feature = "akita")]
 type GuestField = AkitaField;
 #[cfg(not(feature = "akita"))]
-type GuestField = jolt_sdk::VerifierField;
+type GuestField = VerifierField;
 
 /// Guest records are `[u64 length][body][zero padding to 8 bytes]`, so every
 /// body starts 8-byte aligned relative to the stream: raw payloads (the
@@ -545,7 +549,7 @@ fn collect_guest_proofs(
         #[cfg(feature = "field-inline")]
         let witness = witness.with_field_inline().expect("field witness");
         let now = Instant::now();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, jolt_sdk::ProofTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProofTranscript>(
             JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
             &config,
@@ -602,7 +606,7 @@ fn collect_guest_proofs(
             AkitaField,
             AkitaScheme,
             AkitaVc,
-            jolt_sdk::VerifierTranscript<'_>,
+            VerifierTranscript<'_>,
         >(&attached, public_io, proof, None)
         .expect("verify proof against prepared guest setup");
         info!("  Verification result: true");
@@ -707,7 +711,7 @@ fn collect_guest_proofs(
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
-            jolt_sdk::VerifierTranscript<'_>,
+            VerifierTranscript<'_>,
         >(&guest_verifier_preprocessing, &io_device, &proof, None)
         .is_ok();
         info!("  Verification result: {is_valid}");
@@ -1146,7 +1150,7 @@ fn run_recursion_proof(
                     jolt_sdk::VerifierField,
                     jolt_sdk::VerifierPCS,
                     jolt_sdk::VerifierVC,
-                    jolt_sdk::VerifierTranscript<'_>,
+                    VerifierTranscript<'_>,
                 >(&verifier, &io_device, &proof, None)
                 .expect("verify outer recursion proof");
                 let rv = decode_verifier_output(&io_device.outputs);
