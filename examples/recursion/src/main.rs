@@ -124,6 +124,9 @@ enum Commands {
         output: PathBuf,
         #[arg(long, value_enum)]
         target: TamperTarget,
+        /// Zero-based proof index to modify; other proofs remain valid.
+        #[arg(long, default_value_t = 0)]
+        proof_index: u32,
     },
     /// Check malformed transport inputs against one compiled verifier image.
     CheckInputFraming {
@@ -913,7 +916,13 @@ enum TamperTarget {
     Opening,
 }
 
-fn tamper_proof(guest: GuestProgram, workdir: &Path, output: &Path, target: TamperTarget) {
+fn tamper_proof(
+    guest: GuestProgram,
+    workdir: &Path,
+    output: &Path,
+    target: TamperTarget,
+    proof_index: u32,
+) {
     let bytes = load_proof_data(guest, workdir);
     let mut offset = 0;
     let _: GuestVerifierPreprocessing = read_record(&bytes, &mut offset).unwrap();
@@ -924,6 +933,7 @@ fn tamper_proof(guest: GuestProgram, workdir: &Path, output: &Path, target: Tamp
     let count_offset = offset;
     let count: u32 = read_record(&bytes, &mut offset).unwrap();
     assert!(count > 0, "tamper fixture requires a proof");
+    assert!(proof_index < count, "tamper proof index is out of range");
     let output_count = if target == TamperTarget::Empty { 0 } else { count };
     let mut tampered = bytes[..count_offset].to_vec();
     push_record(&mut tampered, &output_count);
@@ -933,7 +943,7 @@ fn tamper_proof(guest: GuestProgram, workdir: &Path, output: &Path, target: Tamp
         if target == TamperTarget::Empty {
             continue;
         }
-        if index == 0 {
+        if index == proof_index {
             match target {
                 TamperTarget::Sumcheck => {
                     match &mut proof.stages.stage1_sumcheck_proof {
@@ -1146,9 +1156,9 @@ fn main() {
                 RunConfig::CheckInputFraming,
             );
         }
-        Some(Commands::Tamper { example, workdir, output, target }) => {
+        Some(Commands::Tamper { example, workdir, output, target, proof_index }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
-            tamper_proof(guest, workdir, output, *target);
+            tamper_proof(guest, workdir, output, *target, *proof_index);
         }
         #[cfg(feature = "field-inline")]
         Some(Commands::CheckFieldKernels) => kernel_tests::run(),
@@ -1159,7 +1169,7 @@ fn main() {
             output,
         }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
-            tamper_proof(guest, workdir, output, TamperTarget::Opening);
+            tamper_proof(guest, workdir, output, TamperTarget::Opening, 0);
         }
         Some(Commands::Generate {
             example,

@@ -1100,6 +1100,8 @@ jobs:
           done
           "$recursion" generate --example fibonacci --proofs 2 --workdir "$work/two-proofs"
           "$recursion" trace --embed --example fibonacci --workdir "$work/two-proofs"
+          "$recursion" tamper --target claim --proof-index 1 --example fibonacci --workdir "$work/two-proofs" --output "$work/two-proofs-tampered"
+          "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/two-proofs-tampered"
           "$recursion" tamper-opening --example fibonacci --workdir "$work/proofs" --output "$work/tampered"
           "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/tampered"
           "$recursion" generate --example muldiv --workdir "$work/muldiv"
@@ -1113,4 +1115,6 @@ jobs:
           export JOLT_PATH="$(command -v jolt)"
           target/ci/recursion check-field-kernels
           target/ci/recursion generate --example muldiv --workdir "$RUNNER_TEMP/recursion-dory-muldiv"
-          target/ci/recursion trace --embed --example muldiv --workdir "$RUNNER_TEMP/recursion-dory-muldiv"
+          target/ci/recursion check-input-framing --embed --example muldiv --workdir "$RUNNER_TEMP/recursion-dory-muldiv"
+          target/ci/recursion tamper --target claim --example muldiv --workdir "$RUNNER_TEMP/recursion-dory-muldiv" --output "$RUNNER_TEMP/recursion-dory-tampered"
+          target/ci/recursion trace --embed --expect reject --example muldiv --workdir "$RUNNER_TEMP/recursion-dory-tampered"

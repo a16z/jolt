@@ -73,7 +73,10 @@ These commands test guest verification, not an Akita outer recursive proof.
 Stage1 round coefficient changed, one Stage1 opening claim changed, one device
 output byte flipped, the panic bit flipped, or a zero-proof batch. Run each
 through `trace --embed --expect reject`. Generate with `--proofs 2` and trace
-normally to test batch acceptance. Input-mode traces authenticate the setup
+normally to test batch acceptance; `tamper --target claim --proof-index 1`
+then changes only the second proof, and the batch must return `0`.
+The Dory lane also checks framing and rejects a changed claim. Input-mode
+traces authenticate the setup
 against the digest baked into the newly built guest.
 
 With `--features field-inline`, `check-field-kernels` runs a separate compiled
