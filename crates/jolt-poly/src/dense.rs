@@ -67,7 +67,7 @@ pub fn bind_prefix_in_place<F: JoltField>(values: &mut Vec<F>, scalar: F, bounda
             dst[..count / 2]
                 .par_iter_mut()
                 .enumerate()
-                .with_min_len(1 << 10)
+                .with_min_len(if F::NUM_BYTES <= 16 { 1 << 14 } else { 1 << 10 })
                 .for_each(write);
         }
         #[cfg(not(feature = "parallel"))]
