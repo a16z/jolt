@@ -46,6 +46,7 @@ pub(crate) fn pushforwards<F: JoltField>(
     k_chunk: usize,
     omit_digit_zero: bool,
 ) -> Result<Vec<Vec<F>>, WitnessError> {
+    debug_assert_eq!(rows.len(), 1usize << point.len());
     pushforward_access(
         |index| {
             let row = &rows[index];
