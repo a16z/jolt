@@ -27,7 +27,7 @@ use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
 use super::common::precommitted_reduction::{
     lane_cycle_eq, reclaim_carry, DeviceAddressReductionKernel, DeviceCycleReductionKernel,
-    DevicePrecommittedTables, DeviceRowPlan,
+    DevicePrecommittedTables, DeviceRowPlan, DeviceRowSource,
 };
 use super::{require_context, CudaBackend};
 use crate::committed_program::build_committed_bytecode_coeffs;
@@ -78,12 +78,12 @@ fn bytecode_tables<F: JoltField>(
         len,
         &[
             DeviceRowPlan {
-                source: &value,
+                source: DeviceRowSource::Fields(&value),
                 source_row: 0,
                 permute: true,
             },
             DeviceRowPlan {
-                source: &eq,
+                source: DeviceRowSource::Fields(&eq),
                 source_row: 0,
                 permute: true,
             },

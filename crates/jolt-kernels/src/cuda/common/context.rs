@@ -203,6 +203,7 @@ pub struct CudaKernelContext {
     pcr_lane_eq: CudaFunction,
     pcr_shift_eq: CudaFunction,
     pcr_place_row: CudaFunction,
+    pcr_place_u64_row: CudaFunction,
     hf_half_fold: CudaFunction,
     hf_combined_pairs: CudaFunction,
     hf_combined_u64: CudaFunction,
@@ -424,6 +425,7 @@ impl CudaKernelContext {
             pcr_lane_eq: module.load_function("pcr_lane_eq_kernel")?,
             pcr_shift_eq: module.load_function("pcr_shift_eq_kernel")?,
             pcr_place_row: module.load_function("pcr_place_row_kernel")?,
+            pcr_place_u64_row: module.load_function("pcr_place_u64_row_kernel")?,
             hf_half_fold: module.load_function("hf_half_fold_kernel")?,
             hf_combined_pairs: module.load_function("hf_combined_pairs_kernel")?,
             hf_combined_u64: module.load_function("hf_combined_u64_kernel")?,
@@ -1067,6 +1069,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn pcr_place_row(&self) -> &CudaFunction {
         &self.pcr_place_row
+    }
+
+    pub(crate) const fn pcr_place_u64_row(&self) -> &CudaFunction {
+        &self.pcr_place_u64_row
     }
 
     pub(crate) const fn hf_half_fold(&self) -> &CudaFunction {

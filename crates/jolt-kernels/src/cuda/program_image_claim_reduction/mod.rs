@@ -7,10 +7,13 @@
 //! small images and 64-entry blocks for large ones; optimized uses maximal
 //! aligned blocks.
 //!
-//! The canonical host builder pads program words. CUDA converts them serially
-//! before upload and permutes field rows on device; optimized permutes native
-//! words and parallelizes large conversions. Both consume the shared reduction
-//! layout for permutation and active rounds.
+//! The canonical host builder pads program words. CUDA uploads native words
+//! and fuses field conversion with their placement into the permuted device
+//! row; optimized permutes native words and then converts them on the host.
+//! This keeps the upload at eight bytes per word and avoids an intermediate
+//! device field row. L4 preparation measurements favor this over host
+//! permutation/conversion, especially for large images. Both consume the
+//! shared reduction layout for permutation and active rounds.
 //!
 //! The shared device engine parks the bound rows for the matching CUDA address
 //! phase, avoiding a host-table handoff between the two phases.
@@ -30,7 +33,7 @@ use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
 use super::common::precommitted_reduction::{
     reclaim_carry, shifted_block_eq, DeviceAddressReductionKernel, DeviceCycleReductionKernel,
-    DevicePrecommittedTables, DeviceRowPlan,
+    DevicePrecommittedTables, DeviceRowPlan, DeviceRowSource,
 };
 use super::{require_context, CudaBackend};
 use crate::committed_program::program_image_words_padded;
@@ -65,8 +68,7 @@ fn program_image_tables<F: JoltField>(
         });
     }
 
-    let host_value: Vec<F> = words.iter().map(|word| F::from_u64(*word)).collect();
-    let value = context.upload(require_fr_slice(&host_value)?)?;
+    let value = context.upload_u64_slice(&words)?;
     let eq = shifted_block_eq(
         context,
         require_fr_slice(r_addr_rw)?,
@@ -80,12 +82,12 @@ fn program_image_tables<F: JoltField>(
         len,
         &[
             DeviceRowPlan {
-                source: &value,
+                source: DeviceRowSource::Words(&value),
                 source_row: 0,
                 permute: true,
             },
             DeviceRowPlan {
-                source: &eq,
+                source: DeviceRowSource::Fields(&eq),
                 source_row: 0,
                 permute: true,
             },

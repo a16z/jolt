@@ -122,11 +122,12 @@ extern "C" __global__ void pcr_shift_eq_kernel(const u64 *__restrict__ challenge
     }
 }
 
-extern "C" __global__ void pcr_place_row_kernel(const u64 *__restrict__ src,
-                                                const unsigned int *__restrict__ new_lsb_to_old_lsb,
-                                                unsigned int num_vars, unsigned int permute,
-                                                unsigned int src_row, unsigned int table_len,
-                                                unsigned int dst_row, u64 *__restrict__ out) {
+template <bool NativeWords>
+__device__ __forceinline__ void pcr_place_row(const u64 *__restrict__ src,
+                                             const unsigned int *__restrict__ new_lsb_to_old_lsb,
+                                             unsigned int num_vars, unsigned int permute,
+                                             unsigned int src_row, unsigned int table_len,
+                                             unsigned int dst_row, u64 *__restrict__ out) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= table_len) return;
     unsigned int source = i;
@@ -137,6 +138,28 @@ extern "C" __global__ void pcr_place_row_kernel(const u64 *__restrict__ src,
         }
     }
     u64 value[LIMBS];
-    load4(src + ((unsigned long long)src_row * table_len + source) * LIMBS, value);
+    const unsigned long long index = (unsigned long long)src_row * table_len + source;
+    if (NativeWords) {
+        u64 raw[LIMBS] = {src[index], 0, 0, 0};
+        fr_to_mont(raw, value);
+    } else {
+        load4(src + index * LIMBS, value);
+    }
     store4(out + ((unsigned long long)dst_row * table_len + i) * LIMBS, value);
+}
+
+extern "C" __global__ void pcr_place_row_kernel(const u64 *__restrict__ src,
+                                                const unsigned int *__restrict__ new_lsb_to_old_lsb,
+                                                unsigned int num_vars, unsigned int permute,
+                                                unsigned int src_row, unsigned int table_len,
+                                                unsigned int dst_row, u64 *__restrict__ out) {
+    pcr_place_row<false>(src, new_lsb_to_old_lsb, num_vars, permute, src_row, table_len, dst_row, out);
+}
+
+extern "C" __global__ void pcr_place_u64_row_kernel(const u64 *__restrict__ src,
+                                                    const unsigned int *__restrict__ new_lsb_to_old_lsb,
+                                                    unsigned int num_vars, unsigned int permute,
+                                                    unsigned int src_row, unsigned int table_len,
+                                                    unsigned int dst_row, u64 *__restrict__ out) {
+    pcr_place_row<true>(src, new_lsb_to_old_lsb, num_vars, permute, src_row, table_len, dst_row, out);
 }

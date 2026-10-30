@@ -27,7 +27,7 @@ use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
 use super::common::precommitted_reduction::{
     permuted_eq_point, reclaim_carry, DeviceAddressReductionKernel, DeviceCycleReductionKernel,
-    DevicePrecommittedTables, DeviceRowPlan,
+    DevicePrecommittedTables, DeviceRowPlan, DeviceRowSource,
 };
 use super::{require_context, CudaBackend};
 use crate::{
@@ -67,12 +67,12 @@ fn advice_tables<F: JoltField>(
         len,
         &[
             DeviceRowPlan {
-                source: &value,
+                source: DeviceRowSource::Fields(&value),
                 source_row: 0,
                 permute: true,
             },
             DeviceRowPlan {
-                source: &eq,
+                source: DeviceRowSource::Fields(&eq),
                 source_row: 0,
                 permute: false,
             },

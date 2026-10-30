@@ -14,7 +14,7 @@ use crate::ProofSession;
 use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::Visitor;
-use cudarc::driver::{LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::PrecommittedClaimReduction;
 use jolt_field::{Fr, JoltField};
 use jolt_poly::UnivariatePoly;
@@ -28,8 +28,13 @@ use super::primitives::reduce_lanes;
 use crate::precommitted_reduction::{lsb_permutation, permute_challenges};
 use crate::{KernelError, SumcheckKernelError};
 
+pub enum DeviceRowSource<'a> {
+    Fields(&'a DeviceFrVec),
+    Words(&'a CudaSlice<u64>),
+}
+
 pub struct DeviceRowPlan<'a> {
-    pub source: &'a DeviceFrVec,
+    pub source: DeviceRowSource<'a>,
     pub source_row: usize,
     pub permute: bool,
 }
@@ -95,6 +100,27 @@ impl<F: JoltField> DevicePrecommittedTables<F> {
         num_vars: usize,
         new_to_old: Option<&[u32]>,
     ) -> Result<(), CudaError> {
+        let (source, source_len, kernel) = match row.source {
+            DeviceRowSource::Fields(source) => {
+                (source.limbs(), source.len(), self.context.pcr_place_row())
+            }
+            DeviceRowSource::Words(source) => {
+                (source, source.len(), self.context.pcr_place_u64_row())
+            }
+        };
+        let required = row
+            .source_row
+            .checked_add(1)
+            .and_then(|rows| rows.checked_mul(self.len))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "precommitted source row range overflows",
+            })?;
+        if source_len < required {
+            return Err(CudaError::LengthMismatch {
+                expected: required,
+                got: source_len,
+            });
+        }
         let permute = u32::from(row.permute && new_to_old.is_some());
         let identity = [0u32; 1];
         let map = self
@@ -104,11 +130,8 @@ impl<F: JoltField> DevicePrecommittedTables<F> {
         let vars = CudaKernelContext::count_of(num_vars)?;
         let source_row = CudaKernelContext::count_of(row.source_row)?;
         let destination_row = CudaKernelContext::count_of(destination)?;
-        let mut builder = self
-            .context
-            .stream()
-            .launch_builder(self.context.pcr_place_row());
-        let _ = builder.arg(row.source.limbs());
+        let mut builder = self.context.stream().launch_builder(kernel);
+        let _ = builder.arg(source);
         let _ = builder.arg(&map);
         let _ = builder.arg(&vars);
         let _ = builder.arg(&permute);
@@ -123,8 +146,9 @@ impl<F: JoltField> DevicePrecommittedTables<F> {
         // bit permutation of `i` built from `new_lsb_to_old_lsb`, whose entries
         // are a permutation of `0..num_vars` (`lsb_permutation` returns a
         // bijection), so `source < table_len` and the read is inside `src`'s
-        // `(src_row + 1) * table_len` elements. `map` holds `num_vars` entries
-        // when `permute` is set, and is not read otherwise.
+        // checked `(src_row + 1) * table_len` elements (four limbs for Fields,
+        // one u64 for Words). `map` holds `num_vars` entries when `permute` is
+        // set, and is not read otherwise.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
         Ok(())
     }
@@ -559,10 +583,106 @@ pub fn reclaim_carry<F: JoltField, R: 'static>(
 #[cfg(test)]
 #[expect(clippy::expect_used)]
 mod tests {
-    use super::shifted_block_eq;
+    use super::{shifted_block_eq, DevicePrecommittedTables, DeviceRowPlan, DeviceRowSource};
     use crate::cuda::common::context::shared_context;
-    use jolt_field::{Field, Fr, Ring};
+    use jolt_field::{Field, Fr, One, Ring};
     use jolt_poly::{boolean_point_msb, EqPolynomial};
+
+    #[test]
+    fn place_native_and_field_rows_in_opening_order() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let words = [
+            0,
+            1,
+            u64::MAX,
+            1 << 63,
+            u32::MAX as u64,
+            1 << 32,
+            0x1234_5678_9abc_def0,
+            0,
+        ];
+        let mut source_words = vec![17; 8];
+        source_words.extend(words);
+        let source_fields: Vec<_> = (1..=16)
+            .map(|i| Fr::from_u64(i).inverse().expect("nonzero"))
+            .collect();
+        let native = context.upload_u64_slice(&source_words).expect("words");
+        let fields = context.upload(&source_fields).expect("fields");
+        for (permute, order) in [
+            (false, [0, 1, 2, 3, 4, 5, 6, 7]),
+            (true, [0, 4, 1, 5, 2, 6, 3, 7]),
+        ] {
+            let mut tables = DevicePrecommittedTables {
+                context,
+                packed: context.alloc(16).expect("packed"),
+                len: 8,
+                scale: Fr::one(),
+                scale_inv: Fr::one(),
+                two_inv: Fr::from_u64(2).inverse().expect("two"),
+            };
+            for (destination, source) in [
+                (0, DeviceRowSource::Fields(&fields)),
+                (1, DeviceRowSource::Words(&native)),
+            ] {
+                tables
+                    .place_row(
+                        &DeviceRowPlan {
+                            source,
+                            source_row: 1,
+                            permute,
+                        },
+                        destination,
+                        3,
+                        Some(&[2, 0, 1]),
+                    )
+                    .expect("placement");
+            }
+            let expected: Vec<_> = order
+                .iter()
+                .map(|&i| source_fields[8 + i])
+                .chain(order.iter().map(|&i| Fr::from_u64(words[i])))
+                .collect();
+            assert_eq!(tables.packed.to_host().expect("download"), expected);
+        }
+    }
+
+    #[test]
+    fn row_placement_rejects_out_of_bounds_sources() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let native = context.upload_u64_slice(&[0; 8]).expect("words");
+        let fields = context.alloc(8).expect("fields");
+        let mut tables = DevicePrecommittedTables {
+            context,
+            packed: context.alloc(16).expect("packed"),
+            len: 8,
+            scale: Fr::one(),
+            scale_inv: Fr::one(),
+            two_inv: Fr::from_u64(2).inverse().expect("two"),
+        };
+        for source_row in [1, usize::MAX] {
+            for source in [
+                DeviceRowSource::Fields(&fields),
+                DeviceRowSource::Words(&native),
+            ] {
+                assert!(tables
+                    .place_row(
+                        &DeviceRowPlan {
+                            source,
+                            source_row,
+                            permute: false,
+                        },
+                        0,
+                        3,
+                        None,
+                    )
+                    .is_err());
+            }
+        }
+    }
 
     #[test]
     fn shifted_blocks_match_equality_polynomial() {
