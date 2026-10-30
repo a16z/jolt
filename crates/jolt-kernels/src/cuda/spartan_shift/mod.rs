@@ -6,9 +6,11 @@
 //! witness columns into suffix tables.
 //!
 //! As in optimized, the outer Q tables combine the four outer columns per cycle
-//! and share that value across both suffix weights. CUDA folds the no-op terms
-//! and the phase-boundary columns in separate launches; optimized combines them
-//! in its row scans.
+//! and share that value across both suffix weights. No-op terms use separate
+//! folds: on SHA-2-chain at 2^24 on one L4, sharing the outer scan increased
+//! preparation time by 8.5–16.1%, depending on the Boolean accumulation method,
+//! with no whole-proof gain measured on one or two L4s. Phase-boundary columns
+//! also use separate launches; optimized combines them in one row scan.
 //!
 //! CUDA uses the shared device prefix/suffix engine: witness folds run over
 //! aligned resident windows, and the reduced tables run on GPU 0. The shift
