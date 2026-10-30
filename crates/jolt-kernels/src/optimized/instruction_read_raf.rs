@@ -37,6 +37,8 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
+use std::collections::HashSet;
+use std::num::NonZeroU16;
 use std::sync::{Arc, Weak};
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
@@ -635,6 +637,10 @@ const SCAN_CLASSES: usize = 2 * (LookupTableKind::<RISCV_XLEN>::COUNT + 1);
 /// Cycles per scan block: a block's rows and weights stay cache-resident
 /// while its class runs gather from them.
 const SCAN_BLOCK: usize = 1 << 10;
+const COALESCE_SAMPLE_BLOCKS: usize = 32;
+// Require at least a quarter repeated rows to amortize coalescing.
+const COALESCE_MIN_DUPLICATE_PERCENT: usize = 25;
+const COALESCE_CACHE_SLOTS: usize = 1 << 12;
 
 const _: () = assert!(SCAN_BLOCK <= u16::MAX as usize, "block offsets are u16");
 
@@ -669,6 +675,67 @@ impl ScanBlock {
             *position += 1;
         }
         Self { starts, offsets }
+    }
+
+    fn should_coalesce(rows: &[InstructionCycleRow]) -> bool {
+        if rows.len() < SCAN_BLOCK {
+            return false;
+        }
+        let blocks = rows.len().div_ceil(SCAN_BLOCK);
+        let samples = blocks.min(COALESCE_SAMPLE_BLOCKS);
+        let mut seen = HashSet::with_capacity(SCAN_BLOCK);
+        let mut total = 0;
+        let mut distinct = 0;
+        for sample in 0..samples {
+            let start = sample * blocks / samples * SCAN_BLOCK;
+            seen.clear();
+            for row in &rows[start..(start + SCAN_BLOCK).min(rows.len())] {
+                total += 1;
+                distinct += usize::from(seen.insert((row.lookup_index(), Self::class(row))));
+            }
+        }
+        100 * (total - distinct) >= COALESCE_MIN_DUPLICATE_PERCENT * total
+    }
+
+    /// Address phases are linear in the cycle weights. Equal lookup keys
+    /// within a class receive identical updates, so retain their summed weight
+    /// at one offset. The cycle rounds still use the original witness rows.
+    fn coalesced<F: JoltField>(
+        rows: &[InstructionCycleRow],
+        weights: &mut [F],
+        seen: &mut [Option<NonZeroU16>],
+    ) -> Self {
+        let mut block = Self::new(rows);
+        let starts = block.starts;
+        let mut end = 0;
+        seen.fill(None);
+        for (class, range) in starts.windows(2).enumerate() {
+            block.starts[class] = end as u16;
+            for position in usize::from(range[0])..usize::from(range[1]) {
+                let offset = block.offsets[position];
+                let key = rows[usize::from(offset)].lookup_index();
+                let mut hash = (key as u64) ^ ((key >> 64) as u64).rotate_left(32);
+                hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+                hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+                let slot = ((hash ^ (hash >> 31)) as usize) & (COALESCE_CACHE_SLOTS - 1);
+                if let Some(previous) = seen[slot] {
+                    let previous = usize::from(previous.get() - 1);
+                    if Self::class(&rows[previous]) == class && rows[previous].lookup_index() == key
+                    {
+                        let weight = weights[usize::from(offset)];
+                        weights[previous] += weight;
+                        continue;
+                    }
+                }
+                // Collisions leave another live representative; only exact
+                // key-and-class matches combine weights. One probe per row.
+                seen[slot] = NonZeroU16::new(offset + 1);
+                block.offsets[end] = offset;
+                end += 1;
+            }
+        }
+        block.starts[SCAN_CLASSES] = end as u16;
+        block
     }
 
     fn class(row: &InstructionCycleRow) -> usize {
@@ -842,8 +909,17 @@ impl<F: JoltField> PhaseScan<'_, F> {
             .zip(u_evals.chunks_mut(SCAN_BLOCK))
         {
             if let Some((shift, v_prev)) = self.condense {
-                for (row, u) in rows.iter().zip(u_evals.iter_mut()) {
-                    *u *= v_prev[((row.lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                let active = usize::from(block.starts[SCAN_CLASSES]);
+                if active == rows.len() {
+                    for (row, u) in rows.iter().zip(u_evals.iter_mut()) {
+                        *u *= v_prev[((row.lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                    }
+                } else {
+                    for &offset in &block.offsets[..active] {
+                        let offset = usize::from(offset);
+                        u_evals[offset] *= v_prev
+                            [((rows[offset].lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                    }
                 }
             }
             for (class, range) in block.starts.windows(2).enumerate() {
@@ -928,8 +1004,8 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     r_reduction: Vec<F>,
     rows: Arc<ConstantSuffix<InstructionCycleRow>>,
     blocks: Vec<ScanBlock>,
-    /// The final weight aggregates the constant row suffix. Every address
-    /// phase is linear in these weights and condenses identical rows equally.
+    /// The final weight aggregates the constant row suffix. After coalescing,
+    /// only offsets retained in `blocks` are live; merged-away weights are stale.
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -994,7 +1070,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let u_evals = prefix_cycle_weights(r_reduction, rows.prefix_len());
+        let mut u_evals = prefix_cycle_weights(r_reduction, rows.prefix_len());
         let scan_rows = &rows.representatives()[..u_evals.len()];
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
         let present_tables = map_reduce_chunks(
@@ -1031,11 +1107,40 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .filter_map(|(index, present)| present.then_some(index))
             .collect();
 
-        let blocks = map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
-            ScanBlock::new(
-                &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
-            )
-        });
+        let blocks = if ScanBlock::should_coalesce(scan_rows) {
+            #[cfg(feature = "parallel")]
+            let chunks = u_evals.par_chunks_mut(SCAN_BLOCK);
+            #[cfg(not(feature = "parallel"))]
+            let chunks = u_evals.chunks_mut(SCAN_BLOCK);
+            let coalesce = |seen: &mut Vec<Option<NonZeroU16>>,
+                            (block, weights): (usize, &mut [F])| {
+                ScanBlock::coalesced(
+                    &scan_rows[block * SCAN_BLOCK..block * SCAN_BLOCK + weights.len()],
+                    weights,
+                    seen,
+                )
+            };
+            #[cfg(feature = "parallel")]
+            let blocks = chunks
+                .enumerate()
+                .map_init(|| vec![None; COALESCE_CACHE_SLOTS], coalesce)
+                .collect();
+            #[cfg(not(feature = "parallel"))]
+            let blocks = {
+                let mut seen = vec![None; COALESCE_CACHE_SLOTS];
+                chunks
+                    .enumerate()
+                    .map(|item| coalesce(&mut seen, item))
+                    .collect()
+            };
+            blocks
+        } else {
+            map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
+                ScanBlock::new(
+                    &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
+                )
+            })
+        };
         let mut kernel = Self {
             dimensions,
             gamma,
@@ -1661,7 +1766,9 @@ mod tests {
         InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
     };
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
-    use jolt_field::{Fr, Ring};
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Fr, JoltField, Ring};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
     #[cfg(feature = "akita")]
@@ -1674,7 +1781,9 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{
+        InstructionCycleRow, OptimizedInstructionReadRafKernel, ScanBlock, COALESCE_CACHE_SLOTS,
+    };
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
@@ -1696,8 +1805,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn challenge(round: usize) -> Fr {
-        fr(0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11)
+    fn challenge<F: JoltField>(round: usize) -> F {
+        F::from_u64(
+            0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11,
+        )
     }
 
     fn splitmix(state: &mut u64) -> u64 {
@@ -1766,7 +1877,11 @@ mod tests {
     /// point-mass `ra` collapsed at each cycle's lookup index. Pins both
     /// kernels to the protocol, not merely to each other (each kernel's own
     /// `s(0) + s(1) = claim` self-check would reject a drifted round 0).
-    fn input_claim(rows: &[InstructionReadRafWitness], r_reduction: &[Fr], gamma: Fr) -> Fr {
+    fn input_claim<F: JoltField>(
+        rows: &[InstructionReadRafWitness],
+        r_reduction: &[F],
+        gamma: F,
+    ) -> F {
         let tables: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::iter().collect();
         let gamma_sqr = gamma * gamma;
         let address_bits = 2 * RISCV_XLEN;
@@ -1775,15 +1890,16 @@ mod tests {
             .zip(rows)
             .map(|(&u, row)| {
                 let k = row.lookup_index.0;
-                let value = row
-                    .table_index
-                    .0
-                    .map_or_else(|| fr(0), |index| fr(tables[index].materialize_entry(k)));
+                let value = row.table_index.0.map_or_else(
+                    || F::from_u64(0),
+                    |index| F::from_u64(tables[index].materialize_entry(k)),
+                );
                 let raf = if !row.raf_flag.0 {
                     let (left, right) = LookupBits::new(k, address_bits).uninterleave();
-                    gamma * fr(u64::from(left)) + gamma_sqr * fr(u64::from(right))
+                    gamma * F::from_u64(u64::from(left)) + gamma_sqr * F::from_u64(u64::from(right))
                 } else {
-                    let mut raf = gamma_sqr * (fr(k as u64) + fr((k >> 64) as u64).mul_pow_2(64));
+                    let mut raf = gamma_sqr
+                        * (F::from_u64(k as u64) + F::from_u64((k >> 64) as u64).mul_pow_2(64));
                     if CANONICAL_INSTRUCTION_ADDRESS
                         && (k >> (address_bits / 2)) == (1u128 << (address_bits / 2)) - 1
                     {
@@ -1848,13 +1964,21 @@ mod tests {
             || (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect(),
             |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),
         );
-        let gamma = fr(0xACE1_57EF);
+        assert_parity_rows(dimensions, &r_reduction, rows);
+    }
+
+    fn assert_parity_rows<F: JoltField>(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        rows: Vec<InstructionReadRafWitness>,
+    ) {
+        let gamma = F::from_u64(0xACE1_57EF);
 
         let mut reference =
-            InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
+            InstructionReadRafKernel::new(dimensions, r_reduction, rows.clone(), gamma).unwrap();
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
-            &r_reduction,
+            r_reduction,
             Arc::new(pack(&rows).into()),
             gamma,
         )
@@ -1862,7 +1986,7 @@ mod tests {
 
         let rounds = reference.num_rounds();
         assert_eq!(rounds, optimized.num_rounds());
-        let mut claim = input_claim(&rows, &r_reduction, gamma);
+        let mut claim = input_claim(&rows, r_reduction, gamma);
         for round in 0..rounds {
             let bind = round.checked_sub(1).map(challenge);
             let reference_poly = reference.prove_round(bind, round, claim).unwrap();
@@ -1870,7 +1994,7 @@ mod tests {
             assert_eq!(
                 reference_poly.coefficients(),
                 optimized_poly.coefficients(),
-                "round {round} polynomial mismatch (log_t={log_t}, ra={num_virtual_ra_polys})"
+                "round {round} polynomial mismatch"
             );
             claim = reference_poly.evaluate(challenge(round));
         }
@@ -1878,9 +2002,9 @@ mod tests {
         optimized.finish_rounds(challenge(rounds - 1)).unwrap();
 
         let inputs = InstructionReadRafInputClaims {
-            lookup_output: fr(0),
-            left_lookup_operand: fr(0),
-            right_lookup_operand: fr(0),
+            lookup_output: F::from_u64(0),
+            left_lookup_operand: F::from_u64(0),
+            right_lookup_operand: F::from_u64(0),
         };
         let reference_outputs = reference.output_claims(&inputs).unwrap();
         let optimized_outputs = optimized.output_claims(&inputs).unwrap();
@@ -1896,6 +2020,98 @@ mod tests {
             reference_outputs.instruction_raf_flag,
             optimized_outputs.instruction_raf_flag
         );
+    }
+
+    fn check_repeated_lookup_rows<F: JoltField>(log_t: usize, prefix: usize, constant: Option<F>) {
+        let dimensions =
+            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+        let mut pattern = fixture_rows(5, 97531);
+        pattern[1].lookup_index = pattern[0].lookup_index;
+        pattern[2].lookup_index = pattern[0].lookup_index;
+        pattern[2].table_index = pattern[0].table_index;
+        pattern[2].raf_flag = InstructionRafFlag(!pattern[0].raf_flag.0);
+        let rows: Vec<_> = (0..1 << log_t)
+            .map(|i| pattern[if i < prefix { i % pattern.len() } else { 0 }])
+            .collect();
+        assert!(ScanBlock::should_coalesce(&pack(&rows)));
+        let point: Vec<F> = (0..log_t)
+            .map(|i| constant.unwrap_or_else(|| challenge(i)))
+            .collect();
+        assert_parity_rows(dimensions, &point, rows);
+    }
+
+    #[test]
+    fn coalescing_preserves_weight_for_colliding_keys_and_classes() {
+        fn check<F: JoltField>() {
+            let mut cache = vec![None; COALESCE_CACHE_SLOTS];
+            for length in [64, 17] {
+                let rows: Vec<_> = (0..length)
+                    .map(|i| {
+                        // These distinct keys all hash to the same cache slot.
+                        let high = [0u64, 0, 1, 2, 0, 3, 3, 4][i % 8];
+                        let key = (u128::from(high) << 64) | u128::from(high.rotate_left(32));
+                        InstructionCycleRow::new(
+                            key,
+                            None,
+                            i >= length / 2,
+                            0,
+                            None,
+                            #[cfg(feature = "akita")]
+                            FusedInc::default(),
+                        )
+                    })
+                    .collect();
+                let original: Vec<F> = (0..length)
+                    .map(|i| F::from_u64((i * i + 1) as u64))
+                    .collect();
+                let mut weights = original.clone();
+                let block = ScanBlock::coalesced(&rows, &mut weights, &mut cache);
+                for (class, range) in block.starts.windows(2).enumerate() {
+                    for high in 0..5u64 {
+                        let key = (u128::from(high) << 64) | u128::from(high.rotate_left(32));
+                        let expected: F = rows
+                            .iter()
+                            .zip(&original)
+                            .filter(|(row, _)| {
+                                ScanBlock::class(row) == class && row.lookup_index() == key
+                            })
+                            .map(|(_, weight)| *weight)
+                            .sum();
+                        let actual: F = block.offsets[usize::from(range[0])..usize::from(range[1])]
+                            .iter()
+                            .map(|offset| usize::from(*offset))
+                            .filter(|offset| rows[*offset].lookup_index() == key)
+                            .map(|offset| weights[offset])
+                            .sum();
+                        assert_eq!(actual, expected);
+                    }
+                }
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
+    }
+
+    #[test]
+    fn repeated_lookup_rows_match_reference() {
+        fn check<F: JoltField>() {
+            for prefix in [1027, 1 << 11] {
+                for constant in [None, Some(F::zero()), Some(F::one())] {
+                    check_repeated_lookup_rows(11, prefix, constant);
+                }
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
+    }
+
+    #[test]
+    fn repeated_lookup_rows_match_reference_across_scan_tasks() {
+        check_repeated_lookup_rows::<Fr>(14, 1 << 14, None);
+        #[cfg(feature = "akita")]
+        check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, 1 << 14, None);
     }
 
     #[test]
