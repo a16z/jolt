@@ -1,3 +1,5 @@
+#[cfg(all(feature = "cuda", not(feature = "akita")))]
+use crate::cuda::CudaError;
 use crate::SumcheckKernelError;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::jolt::JoltOpeningId;
@@ -89,4 +91,8 @@ pub enum KernelError<F: Field> {
     /// gap, so never worth retrying against another backend.
     #[error("kernel invariant violated: {reason}")]
     InvariantViolation { reason: &'static str },
+
+    #[cfg(all(feature = "cuda", not(feature = "akita")))]
+    #[error(transparent)]
+    Cuda(#[from] CudaError),
 }

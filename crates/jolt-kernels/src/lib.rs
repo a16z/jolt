@@ -42,6 +42,8 @@ pub mod akita;
 mod backend;
 mod commitment;
 pub mod committed_program;
+#[cfg(all(feature = "cuda", not(feature = "akita")))]
+pub mod cuda;
 mod error;
 #[cfg(feature = "field-inline")]
 pub mod field_inline;

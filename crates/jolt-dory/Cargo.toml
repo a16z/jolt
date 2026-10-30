@@ -24,6 +24,7 @@ ark-ec = { workspace = true }
 ark-serialize = { workspace = true }
 
 [features]
+cuda = []
 default = ["parallel"]
 parallel = ["jolt-crypto/parallel", "jolt-poly/parallel"]
 profiling = ["jolt-akita/profiling"]

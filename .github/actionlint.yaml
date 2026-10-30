@@ -1,0 +1,4 @@
+# actionlint lists custom larger-runner labels under this key as well.
+self-hosted-runner:
+  labels:
+    - jolt-cuda-t4

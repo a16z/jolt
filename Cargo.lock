@@ -2057,6 +2057,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cudarc"
+version = "0.19.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7359bf1de037ddada72729c3acec9b040f3468400c6e9e740b01ba0cd2e89562"
+dependencies = [
+ "libloading",
+]
+
+[[package]]
 name = "darling"
 version = "0.21.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3672,16 +3681,30 @@ name = "jolt-kernels"
 version = "0.1.0"
 dependencies = [
  "allocative",
+ "ark-bn254",
+ "ark-ec",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "bincode 2.0.1",
+ "clap",
  "common",
+ "cudarc",
+ "dory-pcs",
  "jolt-akita",
  "jolt-claims",
+ "jolt-crypto",
  "jolt-dory",
  "jolt-field",
+ "jolt-host",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
  "jolt-kernels-derive",
  "jolt-lookup-tables",
  "jolt-openings",
  "jolt-poly",
+ "jolt-profiling",
  "jolt-program",
+ "jolt-prover",
  "jolt-r1cs",
  "jolt-riscv",
  "jolt-sumcheck",
@@ -3690,10 +3713,19 @@ dependencies = [
  "jolt-verifier",
  "jolt-witness",
  "libc",
+ "postcard",
+ "proptest",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "sha3 0.12.0",
+ "strum 0.28.0",
  "thiserror 2.0.20",
+ "tracer",
  "tracing",
 ]
 
@@ -4081,6 +4113,7 @@ name = "jolt-witness"
 version = "0.1.0"
 dependencies = [
  "common",
+ "cudarc",
  "jolt-claims",
  "jolt-field",
  "jolt-lookup-tables",
@@ -4088,6 +4121,7 @@ dependencies = [
  "jolt-riscv",
  "jolt-utils",
  "jolt-witness-derive",
+ "proptest",
  "rayon",
  "thiserror 2.0.20",
  "tracing",
@@ -4184,6 +4218,16 @@ name = "libc"
 version = "0.2.190"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78"
+
+[[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
 
 [[package]]
 name = "libm"
