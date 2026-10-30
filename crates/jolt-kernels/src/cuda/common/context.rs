@@ -210,6 +210,7 @@ pub struct CudaKernelContext {
     sopg_round: CudaFunction,
     ii_flag_words: CudaFunction,
     ss_packed_columns: CudaFunction,
+    ss_fold_suffix: CudaFunction,
     bap_bind_squared: CudaFunction,
     bap_message: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
@@ -428,6 +429,7 @@ impl CudaKernelContext {
             sopg_round: module.load_function("sopg_round_kernel")?,
             ii_flag_words: module.load_function("ii_flag_words_kernel")?,
             ss_packed_columns: module.load_function("ss_packed_columns_kernel")?,
+            ss_fold_suffix: module.load_function("ss_fold_suffix_kernel")?,
             bap_bind_squared: module.load_function("bap_bind_squared_kernel")?,
             bap_message: module.load_function("bap_message_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -798,6 +800,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn ii_flag_words(&self) -> &CudaFunction {
         &self.ii_flag_words
+    }
+
+    pub(crate) const fn ss_fold_suffix(&self) -> &CudaFunction {
+        &self.ss_fold_suffix
     }
 
     pub(crate) const fn ss_packed_columns(&self) -> &CudaFunction {

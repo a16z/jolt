@@ -225,6 +225,16 @@ pub trait NarrowColumns: Send + Sync {
 
     fn column(&self, index: usize) -> Option<NarrowColumn<'_>>;
 
+    /// Returns one weighted suffix table per column, in column order, or `None`
+    /// to use separate folds. Each table has `entries() / weights.len()` values.
+    fn fused_suffix_folds(
+        &self,
+        _context: &CudaKernelContext,
+        _weights: &DeviceFrVec,
+    ) -> Result<Option<Vec<DeviceFrVec>>, CudaError> {
+        Ok(None)
+    }
+
     #[cfg(feature = "allocative")]
     fn device_bytes(&self) -> usize {
         0
@@ -261,6 +271,17 @@ impl ColumnSet {
                 .column(index)
                 .map(FoldColumn::Narrow)
                 .ok_or_else(absent),
+        }
+    }
+
+    fn fused_suffix_folds(
+        &self,
+        context: &CudaKernelContext,
+        weights: &DeviceFrVec,
+    ) -> Result<Option<Vec<DeviceFrVec>>, CudaError> {
+        match self {
+            Self::Field(_) => Ok(None),
+            Self::Narrow(columns) => columns.fused_suffix_folds(context, weights),
         }
     }
 
@@ -689,14 +710,21 @@ impl<F: JoltField> PrefixSuffixRounds<F> {
         }
         let column_offset = tables.len();
         if self.windows.is_empty() {
-            for index in 0..self.columns.count() {
-                tables.push(half_fold(
-                    self.context,
-                    self.columns.column(index)?,
-                    &device_eq_lo,
-                    SummedHalf::Low,
-                    F::one(),
-                )?);
+            if let Some(folded) = self
+                .columns
+                .fused_suffix_folds(self.context, &device_eq_lo)?
+            {
+                tables.extend(folded);
+            } else {
+                for index in 0..self.columns.count() {
+                    tables.push(half_fold(
+                        self.context,
+                        self.columns.column(index)?,
+                        &device_eq_lo,
+                        SummedHalf::Low,
+                        F::one(),
+                    )?);
+                }
             }
         } else {
             for folded in self.windowed_column_folds(&eq_lo)? {
@@ -757,6 +785,9 @@ impl<F: JoltField> PrefixSuffixRounds<F> {
                             reason: "a prefix-suffix window names an absent device",
                         })?;
                     let weights = device.upload(require_fr_slice(eq_lo)?)?;
+                    if let Some(folded) = window.columns.fused_suffix_folds(device, &weights)? {
+                        return folded.iter().map(DeviceFrVec::to_host).collect();
+                    }
                     let mut folded = Vec::with_capacity(window.columns.count());
                     for index in 0..window.columns.count() {
                         folded.push(
