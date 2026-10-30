@@ -111,6 +111,64 @@ __device__ __forceinline__ void hf_fold(const u64 *column, const u64 *weights,
     }
 }
 
+extern "C" __global__ void hf_combined_pairs_kernel(
+    const unsigned long long *__restrict__ columns,
+    const unsigned int *__restrict__ descriptors,
+    const u64 *__restrict__ coefficients,
+    const u64 *__restrict__ weights0, const u64 *__restrict__ weights1,
+    u64 *__restrict__ out0, u64 *__restrict__ out1,
+    unsigned int out_len, unsigned int sum_len,
+    u64 bias00, u64 bias01, u64 bias02, u64 bias03,
+    u64 bias10, u64 bias11, u64 bias12, u64 bias13) {
+    unsigned int a = blockIdx.x * blockDim.x + threadIdx.x;
+    if (a >= out_len) return;
+    u64 acc0[LIMBS] = {bias00, bias01, bias02, bias03};
+    u64 acc1[LIMBS] = {bias10, bias11, bias12, bias13};
+    unsigned long long b = 0;
+    while (b < sum_len) {
+        u64 folded0[2 * PA_SLOTS], folded1[2 * PA_SLOTS];
+        pa_zero(folded0);
+        pa_zero(folded1);
+        // At most eight 32-bit pieces per slot per product keep each lane
+        // below 2^47 over this batch, including full-width field operands.
+        for (unsigned int n = 0; n < 4096 && b < sum_len; n++, b++) {
+            unsigned long long index = a + b * out_len;
+            u64 combined[2 * UNR_SLOTS];
+            unr_zero(combined);
+            for (unsigned int c = 0; c < 4; c++) {
+                const u64 *column = reinterpret_cast<const u64 *>(columns[c]);
+                const unsigned int *desc = descriptors + 4 * c;
+                u64 coefficient[LIMBS];
+                load4(coefficients + c * LIMBS, coefficient);
+                if (desc[0] == HF_KIND_FIELD) {
+                    u64 value[LIMBS], term[LIMBS];
+                    load4(column + index * LIMBS, value);
+                    fr_mul(coefficient, value, term);
+                    unr_add_field(combined, term);
+                } else {
+                    hf_accumulate_native(column + desc[2] + index * desc[1],
+                                         coefficient, desc[0], desc[3], combined);
+                }
+            }
+            u64 value[LIMBS], weight[LIMBS];
+            unr_finalize(combined, value);
+            load4(weights0 + b * LIMBS, weight);
+            pa_fold_mul_accum(value, weight, folded0);
+            load4(weights1 + b * LIMBS, weight);
+            pa_fold_mul_accum(value, weight, folded1);
+        }
+        u64 partial[LIMBS], sum[LIMBS];
+        pa_finalize(folded0, partial);
+        fr_add(acc0, partial, sum);
+        for (int l = 0; l < LIMBS; l++) acc0[l] = sum[l];
+        pa_finalize(folded1, partial);
+        fr_add(acc1, partial, sum);
+        for (int l = 0; l < LIMBS; l++) acc1[l] = sum[l];
+    }
+    store4(out0 + (unsigned long long)a * LIMBS, acc0);
+    store4(out1 + (unsigned long long)a * LIMBS, acc1);
+}
+
 extern "C" __global__ void hf_half_fold_kernel(const u64 *__restrict__ column,
                                               const u64 *__restrict__ weights,
                                               u64 *__restrict__ out,

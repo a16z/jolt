@@ -5,6 +5,11 @@
 //! summands. At the phase boundary, the bound prefix weights fold five native
 //! witness columns into suffix tables.
 //!
+//! As in optimized, the outer Q tables combine the four outer columns per cycle
+//! and share that value across both suffix weights. CUDA folds the no-op terms
+//! and the phase-boundary columns in separate launches; optimized combines them
+//! in its row scans.
+//!
 //! CUDA uses the shared device prefix/suffix engine: witness folds run over
 //! aligned resident windows, and the reduced tables run on GPU 0. The shift
 //! opening points come from `jolt-claims`. Domains too small for the split use

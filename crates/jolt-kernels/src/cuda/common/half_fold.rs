@@ -4,9 +4,12 @@
 //! field reduction and Boolean entries select weights to add. Device batches
 //! bound the unreduced accumulator; signed entries negate the weight before
 //! multiplying by the unsigned magnitude.
+//!
+//! Four-column paired folds combine each row before applying either weight,
+//! sharing the row value as in optimized's Spartan shift Q construction.
+//! Their full-field products also accumulate in bounded unreduced batches.
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
-#[cfg(test)]
 use jolt_field::Fr;
 use jolt_field::JoltField;
 
@@ -177,6 +180,67 @@ pub fn half_fold<F: JoltField>(
         false,
     )?;
     Ok(out)
+}
+
+pub fn combined_pair_folds<F: JoltField>(
+    context: &CudaKernelContext,
+    columns: [(FoldColumn<'_>, F); 4],
+    weights: [&DeviceFrVec; 2],
+    out_len: usize,
+    biases: [F; 2],
+) -> Result<[DeviceFrVec; 2], CudaError> {
+    let sum_len = weights[0].len();
+    let entries = out_len
+        .checked_mul(sum_len)
+        .ok_or(CudaError::InvariantViolation {
+            reason: "combined fold geometry overflows",
+        })?;
+    if out_len == 0
+        || sum_len == 0
+        || weights[1].len() != sum_len
+        || columns.iter().any(|(column, _)| !column.covers(entries))
+    {
+        return Err(CudaError::InvariantViolation {
+            reason: "combined folds need four matching columns and two matching weight tables",
+        });
+    }
+    let handles = columns.map(|(column, _)| column);
+    let coefficients: Vec<Fr> = columns
+        .iter()
+        .map(|(_, coefficient)| require_fr(*coefficient))
+        .collect::<Result<_, _>>()?;
+    let coefficients = context.upload(&coefficients)?;
+    let (pointers, descriptors) = context.device_columns(&handles)?;
+    let out_count = CudaKernelContext::count_of(out_len)?;
+    let sum_count = CudaKernelContext::count_of(sum_len)?;
+    let biases = [
+        fr_limbs(require_fr(biases[0])?),
+        fr_limbs(require_fr(biases[1])?),
+    ];
+    let mut out0 = context.alloc(out_len)?;
+    let mut out1 = context.alloc(out_len)?;
+    let mut builder = context.stream().launch_builder(context.hf_combined_pairs());
+    let _ = builder.arg(&pointers);
+    let _ = builder.arg(&descriptors);
+    let _ = builder.arg(coefficients.limbs());
+    let _ = builder.arg(weights[0].limbs());
+    let _ = builder.arg(weights[1].limbs());
+    let _ = builder.arg(out0.limbs_mut());
+    let _ = builder.arg(out1.limbs_mut());
+    let _ = builder.arg(&out_count);
+    let _ = builder.arg(&sum_count);
+    for bias in &biases {
+        for limb in bias {
+            let _ = builder.arg(limb);
+        }
+    }
+    // SAFETY: every column covers out_len * sum_len entries under its descriptor,
+    // and both weights cover sum_len. Thread a < out_len reads a + b * out_len
+    // for b < sum_len and writes only out0[a] and out1[a] in separate allocations.
+    // There are exactly four pointer/descriptor/coefficient entries. All source
+    // buffers and pointer tables stay alive through the launch on this stream.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(out_count)) }?;
+    Ok([out0, out1])
 }
 
 pub fn bind_column<F: JoltField>(
@@ -390,7 +454,10 @@ mod tests {
 
     use super::super::context::shared_context;
     use super::super::testing::fr;
-    use super::{half_fold, half_fold_into, FoldColumn, NarrowColumn, NarrowKind, SummedHalf};
+    use super::{
+        combined_pair_folds, half_fold, half_fold_into, FoldColumn, NarrowColumn, NarrowKind,
+        SummedHalf,
+    };
 
     fn zero() -> Fr {
         Fr::from_u64(0)
@@ -767,6 +834,80 @@ mod tests {
                         .expect("download fold");
                     assert_eq!(got, expected, "{kind:?}, {summed:?}, length {sum_len}");
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn combined_pair_folds_match_independent_native_dot_products() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for sum_len in [13, 4095, 4096, 4097] {
+            let out_len = 7;
+            let len = out_len * sum_len;
+            let kinds = [
+                NarrowKind::U64,
+                NarrowKind::U32,
+                NarrowKind::Bit(32),
+                NarrowKind::Bit(63),
+            ];
+            let entries = kinds.map(|kind| narrow_entries(kind, len, u64::MAX));
+            let buffers: Vec<_> = entries
+                .iter()
+                .map(|(words, _)| {
+                    let strided: Vec<_> = words
+                        .iter()
+                        .flat_map(|&word| [u64::MAX, word, u64::MAX])
+                        .collect();
+                    context.upload_u64_slice(&strided).expect("strided column")
+                })
+                .collect();
+            let coefficients = [fr(11), -fr(29), zero(), fr(57)];
+            let columns = std::array::from_fn(|index| {
+                (
+                    FoldColumn::Narrow(NarrowColumn {
+                        words: &buffers[index],
+                        kind: kinds[index],
+                        len,
+                        stride: 3,
+                        offset: 1,
+                    }),
+                    coefficients[index],
+                )
+            });
+            let weights = [
+                (0..sum_len).map(|i| fr(i as u64 + 41)).collect::<Vec<_>>(),
+                (0..sum_len).map(|i| -fr(i as u64 + 71)).collect::<Vec<_>>(),
+            ];
+            let uploaded = weights
+                .each_ref()
+                .map(|values| context.upload(values).expect("weights"));
+            let biases = [fr(3), -fr(5)];
+            let got = combined_pair_folds(
+                context,
+                columns,
+                [&uploaded[0], &uploaded[1]],
+                out_len,
+                biases,
+            )
+            .expect("combined pair folds");
+            for pair in 0..2 {
+                let mut expected = vec![biases[pair]; out_len];
+                for column in 0..4 {
+                    let terms = cpu_half_fold(
+                        &entries[column].1,
+                        &weights[pair],
+                        out_len,
+                        SummedHalf::High,
+                        coefficients[column],
+                        zero(),
+                    );
+                    for (total, term) in expected.iter_mut().zip(terms) {
+                        *total += term;
+                    }
+                }
+                assert_eq!(got[pair].to_host().expect("fold readback"), expected);
             }
         }
     }

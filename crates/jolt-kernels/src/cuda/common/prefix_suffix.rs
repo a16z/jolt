@@ -21,7 +21,9 @@ use super::context::{context_for, CudaKernelContext};
 use super::device::{require_fr_slice, DeviceFrVec};
 use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
-use super::half_fold::{half_fold, half_fold_into, FoldColumn, NarrowColumn, SummedHalf};
+use super::half_fold::{
+    combined_pair_folds, half_fold, half_fold_into, FoldColumn, NarrowColumn, SummedHalf,
+};
 use super::sum_of_products::{DeviceSumOfProducts, SumOfProducts};
 
 #[derive(Clone, Debug)]
@@ -35,6 +37,55 @@ pub struct PrefixSuffixGroup<F: JoltField> {
     pub pairs: Vec<PrefixSuffixPair<F>>,
     pub columns: Vec<(usize, F)>,
     pub constant: F,
+}
+
+impl<F: JoltField> PrefixSuffixGroup<F> {
+    fn combined_accumulators(
+        &self,
+        context: &CudaKernelContext,
+        columns: &ColumnSet,
+        prefix_len: usize,
+        suffix_offset: usize,
+        suffix_len: usize,
+    ) -> Result<Option<[DeviceFrVec; 2]>, CudaError> {
+        if self.columns.len() != 4 || self.pairs.len() != 2 {
+            return Ok(None);
+        }
+        let mut weights = Vec::with_capacity(2);
+        let mut biases = Vec::with_capacity(2);
+        for pair in &self.pairs {
+            let slice = pair
+                .suffix
+                .get(suffix_offset..suffix_offset + suffix_len)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a prefix-suffix window lies outside the suffix table",
+                })?;
+            weights.push(context.upload(require_fr_slice(slice)?)?);
+            let mut sum = F::zero();
+            for value in slice {
+                sum += *value;
+            }
+            biases.push(self.constant * sum);
+        }
+        let terms = self
+            .columns
+            .iter()
+            .map(|&(column, coefficient)| Ok((columns.column(column)?, coefficient)))
+            .collect::<Result<Vec<_>, CudaError>>()?;
+        let terms = terms
+            .try_into()
+            .map_err(|_| CudaError::InvariantViolation {
+                reason: "a combined fold needs four columns",
+            })?;
+        combined_pair_folds(
+            context,
+            terms,
+            [&weights[0], &weights[1]],
+            prefix_len,
+            [biases[0], biases[1]],
+        )
+        .map(Some)
+    }
 }
 
 pub const fn prefix_rounds_ceil(log_t: usize) -> Option<usize> {
@@ -106,6 +157,18 @@ fn window_accumulators<F: JoltField>(
 ) -> Result<Vec<Vec<Fr>>, CudaError> {
     let mut out = Vec::new();
     for group in groups {
+        if let Some(accumulators) = group.combined_accumulators(
+            context,
+            &window.columns,
+            prefix_len,
+            window.suffix_offset,
+            window.suffix_len,
+        )? {
+            for accumulator in accumulators {
+                out.push(accumulator.to_host()?);
+            }
+            continue;
+        }
         for pair in &group.pairs {
             let slice = pair
                 .suffix
@@ -266,27 +329,42 @@ impl<F: JoltField> PrefixSuffixRounds<F> {
             Vec::with_capacity(2 * groups.iter().map(|g| g.pairs.len()).sum::<usize>());
         let mut form = SumOfProducts::<F>::new();
         for group in &groups {
+            let mut combined = group
+                .combined_accumulators(
+                    context,
+                    &columns,
+                    prefix_len,
+                    0,
+                    columns.entries() / prefix_len,
+                )?
+                .map(IntoIterator::into_iter);
             for pair in &group.pairs {
                 let prefix = context.upload(require_fr_slice(&pair.prefix)?)?;
-                let suffix = context.upload(require_fr_slice(&pair.suffix)?)?;
-                let mut suffix_sum = F::zero();
-                for value in &pair.suffix {
-                    suffix_sum += *value;
-                }
-                let bias = group.constant * suffix_sum;
-                let mut accumulator = context.alloc(prefix_len)?;
-                for (index, &(column, coefficient)) in group.columns.iter().enumerate() {
-                    half_fold_into(
-                        context,
-                        columns.column(column)?,
-                        &suffix,
-                        &mut accumulator,
-                        SummedHalf::High,
-                        coefficient,
-                        bias,
-                        index > 0,
-                    )?;
-                }
+                let accumulator =
+                    if let Some(accumulator) = combined.as_mut().and_then(Iterator::next) {
+                        accumulator
+                    } else {
+                        let suffix = context.upload(require_fr_slice(&pair.suffix)?)?;
+                        let mut suffix_sum = F::zero();
+                        for value in &pair.suffix {
+                            suffix_sum += *value;
+                        }
+                        let bias = group.constant * suffix_sum;
+                        let mut accumulator = context.alloc(prefix_len)?;
+                        for (index, &(column, coefficient)) in group.columns.iter().enumerate() {
+                            half_fold_into(
+                                context,
+                                columns.column(column)?,
+                                &suffix,
+                                &mut accumulator,
+                                SummedHalf::High,
+                                coefficient,
+                                bias,
+                                index > 0,
+                            )?;
+                        }
+                        accumulator
+                    };
                 let base = tables.len();
                 tables.push(prefix);
                 tables.push(accumulator);
