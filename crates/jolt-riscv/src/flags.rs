@@ -123,6 +123,9 @@ pub enum InstructionFlags {
     RightOperandIsRs2Value,
     Branch,
     IsNoop,
+    /// Routes `RdWriteValue` into the right instruction input. Used by direct
+    /// loads so instruction read-RAF supplies the `u64` range proof.
+    RightOperandIsRdWriteValue,
 }
 
 pub const NUM_INSTRUCTION_FLAGS: usize = InstructionFlags::COUNT;

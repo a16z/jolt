@@ -122,6 +122,8 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub right_operand_is_rs2_value: C,
     #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm), from = InstructionInputVirtualization)]
     pub right_operand_is_imm: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRdWriteValue), from = InstructionInputVirtualization)]
+    pub right_operand_is_rd_write_value: C,
     #[opening(InstructionFlags(InstructionFlags::IsNoop), from = SpartanShift)]
     pub is_noop: C,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanShift)]

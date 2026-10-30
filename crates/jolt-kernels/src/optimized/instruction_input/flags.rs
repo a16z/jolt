@@ -1,7 +1,7 @@
 //! Bound Boolean columns represented by their original bit patterns.
 //!
-//! All four columns share a lookup table for the multilinear evaluation of a
-//! bit pattern at the challenges bound so far. A row holds four patterns in
+//! All five columns share a lookup table for the multilinear evaluation of a
+//! bit pattern at the challenges bound so far. A row holds five patterns in
 //! one word. After four binds, a further lookup table would be too large, so
 //! the caller switches to ordinary field columns.
 
@@ -11,14 +11,14 @@ use rayon::prelude::*;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct PackedFlags<F: JoltField> {
-    words: Vec<u64>,
+    words: Vec<u128>,
     bits: u32,
-    tail: u64,
+    tail: u128,
     values: Vec<F>,
 }
 
 impl<F: JoltField> PackedFlags<F> {
-    pub(super) fn new(words: Vec<u64>, tail: [bool; 4], challenge: F) -> Self {
+    pub(super) fn new(words: Vec<u128>, tail: [bool; 5], challenge: F) -> Self {
         Self {
             words,
             bits: 2,
@@ -28,9 +28,9 @@ impl<F: JoltField> PackedFlags<F> {
     }
 
     #[inline]
-    pub(super) fn encode(even: [bool; 4], odd: [bool; 4]) -> u64 {
-        (0..4).fold(0, |word, i| {
-            word | ((u64::from(even[i]) | (u64::from(odd[i]) << 1)) << (2 * i))
+    pub(super) fn encode(even: [bool; 5], odd: [bool; 5]) -> u128 {
+        (0..5).fold(0, |word, i| {
+            word | ((u128::from(even[i]) | (u128::from(odd[i]) << 1)) << (2 * i))
         })
     }
 
@@ -49,9 +49,9 @@ impl<F: JoltField> PackedFlags<F> {
     pub(super) fn bind(&mut self, challenge: F) {
         debug_assert!(!self.saturated());
         let bits = self.bits;
-        let mask = (1u64 << bits) - 1;
-        let merge = |even: u64, odd: u64| {
-            (0..4).fold(0, |word, column| {
+        let mask = (1u128 << bits) - 1;
+        let merge = |even: u128, odd: u128| {
+            (0..5).fold(0, |word, column| {
                 let shift = column * bits;
                 word | ((((even >> shift) & mask) | (((odd >> shift) & mask) << bits))
                     << (2 * shift))
@@ -83,7 +83,7 @@ impl<F: JoltField> PackedFlags<F> {
         self.values = values;
     }
 
-    pub(super) fn materialize_bound(&self, challenge: F) -> [Vec<F>; 4] {
+    pub(super) fn materialize_bound(&self, challenge: F) -> [Vec<F>; 5] {
         let half = self.words.len().div_ceil(2);
         core::array::from_fn(|column| {
             let entry = |row: usize| {
