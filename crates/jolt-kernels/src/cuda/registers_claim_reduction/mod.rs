@@ -1,13 +1,15 @@
 //! CUDA reduction of register-value claims.
 //!
-//! The prefix/suffix decomposition matches optimized: prefix rounds bind small
-//! `(P, Q)` tables, then the prefix challenges fold the native `rd`, `rs1`, and
-//! `rs2` values into three suffix columns. No full field-valued copy of each
-//! register column is needed before the switch.
+//! The prefix/suffix decomposition matches optimized. Initial Q construction
+//! folds `rd`, `rs1`, and `rs2` together, applying the gamma coefficients after
+//! reducing their native dot products. Prefix rounds bind small `(P, Q)` tables,
+//! then the prefix challenges fold the native values into three suffix columns
+//! without a full field-valued copy of each register column.
 //!
 //! CUDA performs the witness folds over aligned resident windows and assembles
-//! the reduced tables on GPU 0. Domains too small for the split use the
-//! reference kernel.
+//! the reduced tables on GPU 0. The suffix handoff scans each column separately;
+//! optimized folds all three in one scan. Only one- or two-cycle domains
+//! (`log_t < 2`) use the reference kernel; optimized rejects the one-cycle case.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

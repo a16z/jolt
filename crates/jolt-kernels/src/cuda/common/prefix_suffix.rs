@@ -22,7 +22,8 @@ use super::device::{require_fr_slice, DeviceFrVec};
 use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
 use super::half_fold::{
-    combined_pair_folds, half_fold, half_fold_into, FoldColumn, NarrowColumn, SummedHalf,
+    combined_pair_folds, combined_u64_fold, half_fold, half_fold_into, FoldColumn, NarrowColumn,
+    NarrowKind, SummedHalf,
 };
 use super::sum_of_products::{DeviceSumOfProducts, SumOfProducts};
 
@@ -40,6 +41,37 @@ pub struct PrefixSuffixGroup<F: JoltField> {
 }
 
 impl<F: JoltField> PrefixSuffixGroup<F> {
+    fn native_accumulator(
+        &self,
+        context: &CudaKernelContext,
+        columns: &ColumnSet,
+        suffix: &DeviceFrVec,
+        prefix_len: usize,
+        bias: F,
+    ) -> Result<Option<DeviceFrVec>, CudaError> {
+        let [first, second, third] = self.columns.as_slice() else {
+            return Ok(None);
+        };
+        let mut native = Vec::with_capacity(3);
+        for &(index, coefficient) in [first, second, third] {
+            let FoldColumn::Narrow(column) = columns.column(index)? else {
+                return Ok(None);
+            };
+            if column.kind != NarrowKind::U64 {
+                return Ok(None);
+            }
+            native.push((column, coefficient));
+        }
+        combined_u64_fold(
+            context,
+            [native[0], native[1], native[2]],
+            suffix,
+            prefix_len,
+            bias,
+        )
+        .map(Some)
+    }
+
     fn combined_accumulators(
         &self,
         context: &CudaKernelContext,
@@ -182,6 +214,12 @@ fn window_accumulators<F: JoltField>(
                 suffix_sum += *value;
             }
             let bias = group.constant * suffix_sum;
+            if let Some(accumulator) =
+                group.native_accumulator(context, &window.columns, &suffix, prefix_len, bias)?
+            {
+                out.push(accumulator.to_host()?);
+                continue;
+            }
             let mut accumulator = context.alloc(prefix_len)?;
             for (index, &(column, coefficient)) in group.columns.iter().enumerate() {
                 half_fold_into(
@@ -361,16 +399,22 @@ impl<F: JoltField> PrefixSuffixRounds<F> {
                 .map(IntoIterator::into_iter);
             for pair in &group.pairs {
                 let prefix = context.upload(require_fr_slice(&pair.prefix)?)?;
-                let accumulator =
-                    if let Some(accumulator) = combined.as_mut().and_then(Iterator::next) {
+                let accumulator = if let Some(accumulator) =
+                    combined.as_mut().and_then(Iterator::next)
+                {
+                    accumulator
+                } else {
+                    let suffix = context.upload(require_fr_slice(&pair.suffix)?)?;
+                    let mut suffix_sum = F::zero();
+                    for value in &pair.suffix {
+                        suffix_sum += *value;
+                    }
+                    let bias = group.constant * suffix_sum;
+                    if let Some(accumulator) =
+                        group.native_accumulator(context, &columns, &suffix, prefix_len, bias)?
+                    {
                         accumulator
                     } else {
-                        let suffix = context.upload(require_fr_slice(&pair.suffix)?)?;
-                        let mut suffix_sum = F::zero();
-                        for value in &pair.suffix {
-                            suffix_sum += *value;
-                        }
-                        let bias = group.constant * suffix_sum;
                         let mut accumulator = context.alloc(prefix_len)?;
                         for (index, &(column, coefficient)) in group.columns.iter().enumerate() {
                             half_fold_into(
@@ -385,7 +429,8 @@ impl<F: JoltField> PrefixSuffixRounds<F> {
                             )?;
                         }
                         accumulator
-                    };
+                    }
+                };
                 let base = tables.len();
                 tables.push(prefix);
                 tables.push(accumulator);

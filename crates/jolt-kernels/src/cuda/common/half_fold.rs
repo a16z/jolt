@@ -182,6 +182,71 @@ pub fn half_fold<F: JoltField>(
     Ok(out)
 }
 
+/// Fold three native u64 columns over the high half, then combine their field
+/// sums with the supplied coefficients and bias.
+pub fn combined_u64_fold<F: JoltField>(
+    context: &CudaKernelContext,
+    columns: [(NarrowColumn<'_>, F); 3],
+    weights: &DeviceFrVec,
+    out_len: usize,
+    bias: F,
+) -> Result<DeviceFrVec, CudaError> {
+    let sum_len = weights.len();
+    let entries = out_len
+        .checked_mul(sum_len)
+        .ok_or(CudaError::InvariantViolation {
+            reason: "combined u64 fold geometry overflows",
+        })?;
+    if out_len == 0
+        || sum_len == 0
+        || columns.iter().any(|(column, _)| {
+            column.kind != NarrowKind::U64 || !FoldColumn::Narrow(*column).covers(entries)
+        })
+    {
+        return Err(CudaError::InvariantViolation {
+            reason: "a combined u64 fold needs three matching native columns and non-empty weights",
+        });
+    }
+    let geometry = columns
+        .iter()
+        .map(|(column, _)| FoldColumn::Narrow(*column).geometry())
+        .collect::<Result<Vec<_>, _>>()?;
+    let coefficients = columns
+        .iter()
+        .map(|(_, coefficient)| require_fr(*coefficient).map(fr_limbs))
+        .collect::<Result<Vec<_>, _>>()?;
+    let bias = fr_limbs(require_fr(bias)?);
+    let out_count = CudaKernelContext::count_of(out_len)?;
+    let sum_count = CudaKernelContext::count_of(sum_len)?;
+    let mut out = context.alloc(out_len)?;
+    let mut builder = context.stream().launch_builder(context.hf_combined_u64());
+    for (column, _) in &columns {
+        let _ = builder.arg(column.words);
+    }
+    let _ = builder.arg(weights.limbs());
+    let _ = builder.arg(out.limbs_mut());
+    let _ = builder.arg(&out_count);
+    let _ = builder.arg(&sum_count);
+    for (stride, offset, _) in &geometry {
+        let _ = builder.arg(stride);
+        let _ = builder.arg(offset);
+    }
+    for coefficient in &coefficients {
+        for limb in coefficient {
+            let _ = builder.arg(limb);
+        }
+    }
+    for limb in &bias {
+        let _ = builder.arg(limb);
+    }
+    // SAFETY: thread a < out_len reads entry a + b * out_len for b < sum_len.
+    // Each u64 column's reach was checked by covers, and weights has sum_len
+    // fields. Threads write distinct fields in the fresh out allocation.
+    // All coefficients and geometry are by-value kernel arguments.
+    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(out_count)) }?;
+    Ok(out)
+}
+
 pub fn combined_pair_folds<F: JoltField>(
     context: &CudaKernelContext,
     columns: [(FoldColumn<'_>, F); 4],
@@ -455,8 +520,8 @@ mod tests {
     use super::super::context::shared_context;
     use super::super::testing::fr;
     use super::{
-        combined_pair_folds, half_fold, half_fold_into, FoldColumn, NarrowColumn, NarrowKind,
-        SummedHalf,
+        combined_pair_folds, combined_u64_fold, half_fold, half_fold_into, FoldColumn,
+        NarrowColumn, NarrowKind, SummedHalf,
     };
 
     fn zero() -> Fr {
@@ -835,6 +900,71 @@ mod tests {
                     assert_eq!(got, expected, "{kind:?}, {summed:?}, length {sum_len}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn combined_u64_fold_matches_native_dot_products() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for sum_len in [1, 13, 4095, 4096, 4097] {
+            let out_len = 7;
+            let len = out_len * sum_len;
+            let stride = 5;
+            let offsets = [3, 0, 2];
+            let mut words = vec![u64::MAX; len * stride];
+            for i in 0..len {
+                for (column, offset) in offsets.iter().enumerate() {
+                    words[i * stride + offset] = match (i + column) % 4 {
+                        0 => 0,
+                        1 => u64::MAX,
+                        2 => 1u64 << 63,
+                        _ => (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (column as u64),
+                    };
+                }
+            }
+            let weights: Vec<Fr> = (0..sum_len)
+                .map(|i| match i % 3 {
+                    0 => -Fr::from_u64(1),
+                    1 => Fr::from_u128(u128::MAX - i as u128),
+                    _ => zero(),
+                })
+                .collect();
+            let coefficients = [fr(7), -fr(11), fr(17)];
+            let bias = fr(23);
+            let expected: Vec<Fr> = (0..out_len)
+                .map(|a| {
+                    let mut sum = bias;
+                    for (b, weight) in weights.iter().enumerate() {
+                        for (offset, coefficient) in offsets.iter().zip(coefficients) {
+                            sum += *weight
+                                * coefficient
+                                * Fr::from_u64(words[(a + b * out_len) * stride + offset]);
+                        }
+                    }
+                    sum
+                })
+                .collect();
+            let device_words = context.upload_u64_slice(&words).expect("upload columns");
+            let device_weights = context.upload(&weights).expect("upload weights");
+            let columns = std::array::from_fn(|c| {
+                (
+                    NarrowColumn {
+                        words: &device_words,
+                        kind: NarrowKind::U64,
+                        len,
+                        stride,
+                        offset: offsets[c],
+                    },
+                    coefficients[c],
+                )
+            });
+            let got = combined_u64_fold(context, columns, &device_weights, out_len, bias)
+                .expect("combined native fold")
+                .to_host()
+                .expect("download");
+            assert_eq!(got, expected, "sum_len={sum_len}");
         }
     }
 

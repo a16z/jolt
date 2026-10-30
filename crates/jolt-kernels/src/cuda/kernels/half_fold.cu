@@ -111,6 +111,60 @@ __device__ __forceinline__ void hf_fold(const u64 *column, const u64 *weights,
     }
 }
 
+extern "C" __global__ void hf_combined_u64_kernel(
+    const u64 *__restrict__ column0, const u64 *__restrict__ column1,
+    const u64 *__restrict__ column2, const u64 *__restrict__ weights,
+    u64 *__restrict__ out, unsigned int out_len, unsigned int sum_len,
+    unsigned int stride0, unsigned int offset0,
+    unsigned int stride1, unsigned int offset1,
+    unsigned int stride2, unsigned int offset2,
+    u64 c00, u64 c01, u64 c02, u64 c03,
+    u64 c10, u64 c11, u64 c12, u64 c13,
+    u64 c20, u64 c21, u64 c22, u64 c23,
+    u64 bias0, u64 bias1, u64 bias2, u64 bias3) {
+    unsigned int a = blockIdx.x * blockDim.x + threadIdx.x;
+    if (a >= out_len) return;
+    u64 acc[3][LIMBS] = {};
+    unsigned long long b = 0;
+    while (b < sum_len) {
+        u64 folded[3][2 * UNR_SLOTS] = {};
+        // One native product per slot per term; reducing every 4096 terms
+        // keeps each split accumulator lane below 2^44 for full-width u64s.
+        for (unsigned int n = 0; n < 4096 && b < sum_len; n++, b++) {
+            unsigned long long index = a + b * out_len;
+            u64 weight[LIMBS];
+            load4(weights + b * LIMBS, weight);
+            u64 v0 = column0[offset0 + index * stride0];
+            u64 v1 = column1[offset1 + index * stride1];
+            u64 v2 = column2[offset2 + index * stride2];
+            unr_mul_words(weight, &v0, 1, folded[0]);
+            unr_mul_words(weight, &v1, 1, folded[1]);
+            unr_mul_words(weight, &v2, 1, folded[2]);
+        }
+        #pragma unroll
+        for (int c = 0; c < 3; c++) {
+            u64 partial[LIMBS], sum[LIMBS];
+            unr_finalize(folded[c], partial);
+            fr_add(acc[c], partial, sum);
+            #pragma unroll
+            for (int l = 0; l < LIMBS; l++) acc[c][l] = sum[l];
+        }
+    }
+    const u64 coefficients[3][LIMBS] = {
+        {c00, c01, c02, c03}, {c10, c11, c12, c13}, {c20, c21, c22, c23}
+    };
+    u64 total[LIMBS] = {bias0, bias1, bias2, bias3};
+    #pragma unroll
+    for (int c = 0; c < 3; c++) {
+        u64 term[LIMBS], sum[LIMBS];
+        fr_mul(acc[c], coefficients[c], term);
+        fr_add(total, term, sum);
+        #pragma unroll
+        for (int l = 0; l < LIMBS; l++) total[l] = sum[l];
+    }
+    store4(out + (unsigned long long)a * LIMBS, total);
+}
+
 extern "C" __global__ void hf_combined_pairs_kernel(
     const unsigned long long *__restrict__ columns,
     const unsigned int *__restrict__ descriptors,
