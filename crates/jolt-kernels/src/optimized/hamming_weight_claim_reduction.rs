@@ -18,6 +18,8 @@
 //! - **Eval-at-1 recovery** and **rayon walks** (module docs on
 //!   [`crate::optimized`]).
 
+use std::sync::Arc;
+
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
@@ -29,16 +31,18 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheck, SumcheckInputClaims, SumcheckOutputClaims,
 };
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::HammingWeightClaimReduction;
-use jolt_witness::witnesses::RaChunkSelector;
-use jolt_witness::JoltWitnessPlane;
+use jolt_witness::witnesses::{BytecodePc, LookupIndex, RaChunkSelector, RemappedRamAddress};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
-use super::instruction_read_raf::InstructionCycleRow;
+use super::instruction_read_raf::{
+    InstructionCycleRow, SharedInstructionRows, SharedInstructionRowsWeak,
+};
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, round_poly_from_skipped_evals,
-    RoundProgress,
+    BundleAccess, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -80,15 +84,45 @@ fn pushforwards<F: JoltField>(
     selectors: &FamilySelectors,
     k_chunk: usize,
     omit_digit_zero: bool,
-) -> Vec<Vec<F>> {
+) -> Result<Vec<Vec<F>>, WitnessError> {
+    pushforward_access(
+        |index| {
+            let row = &rows[index];
+            Ok(HistogramRow {
+                lookup_index: LookupIndex(row.lookup_index()),
+                bytecode_pc: BytecodePc(row.bytecode_pc()),
+                remapped_ram_address: RemappedRamAddress(row.remapped_ram_address()),
+            })
+        },
+        rows.prefix_len(),
+        point,
+        selectors,
+        k_chunk,
+        omit_digit_zero,
+    )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
+struct HistogramRow {
+    lookup_index: LookupIndex,
+    bytecode_pc: BytecodePc,
+    remapped_ram_address: RemappedRamAddress,
+}
+
+fn pushforward_access<F: JoltField>(
+    row_at: impl Fn(usize) -> Result<HistogramRow, WitnessError> + Sync,
+    prefix: usize,
+    point: &[F],
+    selectors: &FamilySelectors,
+    k_chunk: usize,
+    omit_digit_zero: bool,
+) -> Result<Vec<Vec<F>>, WitnessError> {
     let instruction = selectors.instruction.len();
     let bytecode = selectors.bytecode.len();
     let ram = selectors.ram.len();
     let total = instruction + bytecode + ram;
     let eq = TensorEqTable::new(point);
-    debug_assert_eq!(eq.len(), rows.len());
     let in_len = eq.e_in().len();
-    let prefix = rows.prefix_len();
     let bits = k_chunk.trailing_zeros();
     let mask = (k_chunk - 1) as u128;
     let native_decode = bits.is_power_of_two() && bits <= 32 && instruction <= 128 / bits as usize;
@@ -100,10 +134,10 @@ fn pushforwards<F: JoltField>(
         block: vec![vec![F::Accumulator::default(); k_chunk]; total],
         sums: vec![vec![F::Accumulator::default(); k_chunk]; total],
     };
-    let add_row = |buckets: &mut [Vec<F::Accumulator>], row: &InstructionCycleRow, weight: F| {
+    let add_row = |buckets: &mut [Vec<F::Accumulator>], row: &HistogramRow, weight: F| {
         let (instruction_buckets, other) = buckets.split_at_mut(instruction);
         let (bytecode_buckets, ram_buckets) = other.split_at_mut(bytecode);
-        let index = row.lookup_index();
+        let index = row.lookup_index.0;
         if native_decode {
             for (buckets, mut limb) in instruction_buckets
                 .rchunks_mut(64 / bits as usize)
@@ -130,7 +164,7 @@ fn pushforwards<F: JoltField>(
                 index >>= bits;
             }
         }
-        let mut pc = row.bytecode_pc();
+        let mut pc = row.bytecode_pc.0;
         for bucket in bytecode_buckets.iter_mut().rev() {
             let digit = pc & (k_chunk - 1);
             if !omit_digit_zero || digit != 0 {
@@ -138,17 +172,17 @@ fn pushforwards<F: JoltField>(
             }
             pc >>= bits;
         }
-        if let Some(mut address) = row.remapped_ram_address() {
+        if let Some(mut address) = row.remapped_ram_address.0 {
             for bucket in ram_buckets.iter_mut().rev() {
                 bucket[address as usize & (k_chunk - 1)].add(weight);
                 address >>= bits;
             }
         }
     };
-    let scatter = |mut state: State<F>, outer: usize| {
+    let scatter = |mut state: State<F>, outer: usize| -> Result<State<F>, WitnessError> {
         let base = outer * in_len;
         for (inner, &weight) in eq.e_in().iter().take(prefix - base).enumerate() {
-            add_row(&mut state.block, &rows[base + inner], weight);
+            add_row(&mut state.block, &row_at(base + inner)?, weight);
         }
         let outer_weight = eq.e_out()[outer];
         for (sums, block) in state.sums.iter_mut().zip(&mut state.block) {
@@ -157,7 +191,7 @@ fn pushforwards<F: JoltField>(
                 sum.fmadd(outer_weight, value);
             }
         }
-        state
+        Ok(state)
     };
     let merge = |mut left: State<F>, right: State<F>| {
         for (left, right) in left.sums.iter_mut().zip(right.sums) {
@@ -171,23 +205,23 @@ fn pushforwards<F: JoltField>(
     #[cfg(feature = "parallel")]
     let mut state = (0..blocks)
         .into_par_iter()
-        .fold(zero, scatter)
-        .reduce(zero, merge);
+        .try_fold(zero, scatter)
+        .try_reduce(zero, |left, right| Ok(merge(left, right)))?;
     #[cfg(not(feature = "parallel"))]
     let mut state = {
         let _ = merge;
-        (0..blocks).fold(zero(), scatter)
+        (0..blocks).try_fold(zero(), scatter)?
     };
     add_row(
         &mut state.sums,
-        &rows[prefix],
+        &row_at(prefix)?,
         EqPolynomial::suffix_sum(point, prefix),
     );
-    state
+    Ok(state
         .sums
         .into_iter()
         .map(|buckets| buckets.into_iter().map(|bucket| bucket.reduce()).collect())
-        .collect()
+        .collect())
 }
 
 /// Stage-7 Hamming-weight claim reduction: `PrepareKernel` front of the
@@ -220,12 +254,38 @@ impl<F: JoltField> PrepareKernel<F, HammingWeightClaimReduction<F>>
         let k_chunk = 1usize << dimensions.log_k_chunk;
         let cycles = 1usize << r_cycle.len();
 
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
         let selectors = FamilySelectors::new(
             (layout.instruction(), layout.bytecode(), layout.ram()),
             dimensions.log_k_chunk,
         )?;
-        let g_evals = pushforwards(&rows, r_cycle, &selectors, k_chunk, cfg!(feature = "akita"));
+        let cached = session
+            .state::<SharedInstructionRows>()
+            .filter(|rows| rows.0.len() == cycles)
+            .map(|rows| Arc::clone(&rows.0))
+            .or_else(|| {
+                session
+                    .state::<SharedInstructionRowsWeak>()
+                    .and_then(|rows| rows.0.upgrade())
+                    .filter(|rows| rows.len() == cycles)
+            });
+        let direct = witness
+            .random_access()
+            .filter(|access| cycles <= access.cycles() && cached.is_none());
+        let g_evals = if let Some(view) = direct {
+            let access = BundleAccess::<HistogramRow>::View(&view);
+            let prefix = access.constant_suffix_start(cycles)?.min(cycles - 1);
+            pushforward_access(
+                |index| access.row(index),
+                prefix,
+                r_cycle,
+                &selectors,
+                k_chunk,
+                cfg!(feature = "akita"),
+            )?
+        } else {
+            let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+            pushforwards(&rows, r_cycle, &selectors, k_chunk, cfg!(feature = "akita"))?
+        };
         let g_tables = g_evals.into_iter().map(Polynomial::new).collect();
 
         #[cfg(not(feature = "akita"))]
@@ -702,7 +762,8 @@ mod pushforward_tests {
                                         &selectors,
                                         1 << bits,
                                         omit_zero
-                                    ),
+                                    )
+                                    .unwrap(),
                                     expected
                                 );
                             }
