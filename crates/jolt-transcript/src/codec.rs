@@ -167,8 +167,10 @@ impl<M: FromNarg> FromNarg for Units<M> {
 }
 
 /// Bytes absorbed as they are: the byte encoding of a message given as bytes.
+#[cfg(feature = "prover-grinding")]
 pub(crate) struct RawBytes<'a>(pub(crate) &'a [u8]);
 
+#[cfg(feature = "prover-grinding")]
 impl Encoding for RawBytes<'_> {
     fn encode(&self) -> impl AsRef<[u8]> {
         self.0
@@ -272,7 +274,7 @@ mod tests {
 
     #[test]
     fn byte_units_read_a_check_from_one_le_word() {
-        assert_eq!(u8::CHECK_LEN, 8);
+        assert_eq!(<u8 as SpongeUnit>::CHECK_LEN, 8);
         assert_eq!(
             u8::low_word(&0x0102_0304u64.to_le_bytes()),
             Some(0x0102_0304)
