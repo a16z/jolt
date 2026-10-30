@@ -211,54 +211,25 @@ impl GuestProgram {
             .collect()
     }
 
-    fn get_memory_config(&self, use_embed: bool) -> MemoryConfig {
-        match self {
-            GuestProgram::Fibonacci => {
-                if use_embed {
-                    MemoryConfig {
-                        max_input_size: 16_000_000,
-                        max_output_size: 4096,
-                        max_untrusted_advice_size: 0,
-                        max_trusted_advice_size: 0,
-                        heap_size: 134217728,
-                        stack_size: 33554432,
-                        program_size: None,
-                    }
-                } else {
-                    MemoryConfig {
-                        max_input_size: 40_000_000,
-                        max_output_size: 4096,
-                        max_untrusted_advice_size: 0,
-                        max_trusted_advice_size: 0,
-                        heap_size: 134217728,
-                        stack_size: 33554432,
-                        program_size: None,
-                    }
-                }
-            }
-            GuestProgram::Muldiv => {
-                if use_embed {
-                    MemoryConfig {
-                        max_input_size: 1024,
-                        max_output_size: 4096,
-                        max_untrusted_advice_size: 0,
-                        max_trusted_advice_size: 0,
-                        heap_size: 134217728,
-                        stack_size: 33554432,
-                        program_size: None,
-                    }
-                } else {
-                    MemoryConfig {
-                        max_input_size: 2000000,
-                        max_output_size: 4096,
-                        max_untrusted_advice_size: 0,
-                        max_trusted_advice_size: 0,
-                        heap_size: 33554432,
-                        stack_size: 33554432,
-                        program_size: None,
-                    }
-                }
-            }
+    fn get_memory_config(&self, use_embed: bool, input_section_len: usize) -> MemoryConfig {
+        // Eight bytes for the pad prefix, at most seven pad bytes, ten for
+        // postcard's length, and one byte for the strict input-size bound.
+        let max_input_size = input_section_len.checked_add(26)
+            .and_then(usize::checked_next_power_of_two)
+            .and_then(|size| u64::try_from(size).ok())
+            .expect("recursion input size overflow");
+        MemoryConfig {
+            max_input_size,
+            max_output_size: 4096,
+            max_untrusted_advice_size: 0,
+            max_trusted_advice_size: 0,
+            heap_size: if *self == GuestProgram::Muldiv && !use_embed {
+                33554432
+            } else {
+                134217728
+            },
+            stack_size: 33554432,
+            program_size: None,
         }
     }
 
@@ -282,8 +253,12 @@ impl GuestProgram {
     }
 }
 
-fn generate_provable_macro(guest: GuestProgram, use_embed: bool, output_dir: &Path) {
-    let memory_config = guest.get_memory_config(use_embed);
+fn generate_provable_macro(
+    guest: GuestProgram,
+    use_embed: bool,
+    memory_config: &MemoryConfig,
+    output_dir: &Path,
+) {
     let max_trace_length = guest.get_max_trace_length(use_embed);
 
     let macro_content = format!(
@@ -1008,11 +983,8 @@ fn verify_proofs(
     info!("Verifying proofs for {} guest program...", guest.name());
     info!("Using embed mode: {use_embed}");
 
-    generate_provable_macro(guest, use_embed, output_dir);
-
     let all_groups_data = load_proof_data(guest, workdir);
     let layout = check_data_integrity(&all_groups_data);
-    let memory_config = guest.get_memory_config(use_embed);
 
     let input_section = if use_embed {
         info!(
@@ -1027,6 +999,8 @@ fn verify_proofs(
         clear_embedded_bytes(output_dir, &all_groups_data[..layout.setup_len]);
         all_groups_data.as_slice()
     };
+    let memory_config = guest.get_memory_config(use_embed, input_section.len());
+    generate_provable_macro(guest, use_embed, &memory_config, output_dir);
     let input_bytes = frame_guest_input(input_section, &memory_config);
     info!(
         "Serialized input size: {} bytes ({} proofs)",
@@ -1191,3 +1165,21 @@ mod tests {
 #[cfg(test)]
 #[path = "../guest/src/records.rs"]
 mod guest_records;
+
+#[cfg(test)]
+mod input_size_tests {
+    use super::*;
+
+    #[test]
+    fn framed_proof_sections_fit_every_example() {
+        for guest in [GuestProgram::Fibonacci, GuestProgram::Muldiv] {
+            for embed in [false, true] {
+                for len in [0, 1, 127, 128, 1120, 16383, 16384, 32768] {
+                    let config = guest.get_memory_config(embed, len);
+                    let input = frame_guest_input(&vec![0; len], &config);
+                    assert!(input.len() < config.max_input_size as usize);
+                }
+            }
+        }
+    }
+}
