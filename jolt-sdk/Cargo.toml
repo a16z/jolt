@@ -70,6 +70,7 @@ guest-verifier = [
 
 malloc-shim = ["jolt-platform/malloc-shim"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
+transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 
 # Jolt-SDK native features (optional capabilities)
 #
