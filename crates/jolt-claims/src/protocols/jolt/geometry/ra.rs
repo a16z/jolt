@@ -159,3 +159,10 @@ mod tests {
         Ok(())
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(JoltRaPolynomialLayout {
+    instruction,
+    bytecode,
+    ram
+});

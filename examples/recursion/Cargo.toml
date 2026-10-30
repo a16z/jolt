@@ -8,6 +8,21 @@ name = "recursion"
 path = "src/main.rs"
 
 [features]
+terminal-contraction = ["jolt-akita?/terminal-contraction"]
+segment-setup = ["jolt-akita?/segment-setup"]
+immutable-recipes = [
+  "akita",
+  "field-inline",
+  "jolt-sdk/immutable-recipes",
+  "jolt-sdk/immutable-recipes-record",
+  "dep:jolt-claims",
+  "jolt-claims/immutable-recipes-record",
+  "dep:jolt-field",
+  "dep:sha2",
+  "dep:hex",
+]
+immutable-recipes-record = ["immutable-recipes", "dep:serde_json"]
+word-memory = []
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default: default workspace builds must not unify field-inline into the
 # verifier stack. The recursion flow needs it.
@@ -19,8 +34,163 @@ akita = [
   "dep:jolt-witness",
   "dep:tracer",
 ]
+# L3 compression-weight factoring and the L2 terminal quotient certificate,
+# both default on and both effective only with `akita`. L3: the verifier guest
+# (and the host's Akita) evaluate the compression relation weights by factor;
+# same field values. L2: the inner Akita proofs carry the terminal A-row
+# quotient (protocol identifier v7-l2tq1) and the guest checks it at two
+# points instead of the exact product. Word decoding: the guest decodes
+# fixed-wire field elements by word with the same canonicality checks. Turn
+# all three off with --no-default-features. guest-codegen: the verifier guest
+# is built with -Cllvm-args=-inline-threshold=1750, -Cllvm-args=-enable-gvn-hoist,
+# -Cllvm-args=-enable-dfa-jump-thread, -Cllvm-args=-enable-ext-tsp-block-placement,
+# -Cllvm-args=-enable-tail-merge=false, -Cllvm-args=-split-spill-mode=size,
+# -Cllvm-args=-riscv-disable-cost-per-use=true,
+# -Cllvm-args=-phi-elim-split-all-critical-edges=true,
+# -Cllvm-args=-no-phi-elim-live-out-early-exit=true, -Cllvm-args=-enable-spill-copy-elim=true,
+# -Cllvm-args=-enable-post-misched=true, one codegen unit and release debug = 0
+# (host side only; RECURSION_GUEST_CODEGEN=off restores the stock guest build).
+# tensor-no-carry: the verifier guest (and the host's Akita) separate dense
+# residual equality weights into a high-part sum and a no-carry low span; same
+# field values. Default on; effective only with `akita`.
+# rowptr-registers: the verifier guest keeps the weighted-dot row base pointers in
+# registers (jolt-field field-inline-rowptr); same field values. Default on.
+# tensor-eq-runs: the verifier guest (and the host's Akita) traverse the
+# constant-high runs of dense tensor equality materialization; same field
+# values. Default on; effective only with `akita`.
+# setup-sop-structured: the verifier guest (and the host's Akita) sum the cached
+# structured E, T and Z contractions of the setup scan as sums of products;
+# same field values. Default on; effective only with `akita`.
+# segment-setup: the verifier guest (and the host's Akita) evaluate the
+# ratio-one reduced setup scan once over its shared linear functional, segment
+# by segment; same field values. Default on; effective only with `akita`.
+# weighted-dot-horner: the verifier guest evaluates each weighted dot whose 64
+# powers are geometric, with at least five rows, by a five-row reverse Horner
+# recurrence in field registers; same field values. Default on.
+# terminal-contraction: the verifier guest (and the host's Akita) contract the
+# terminal ring relations by signed 16-bit coefficients and evaluate the fused
+# setup scan with its jobs and weighted dots inline; same field values. Default on.
+# prevalidated-catalog: the host records the embedded setup's one-hot catalog
+# view and the verifier guest rebuilds a byte-equal view from that record
+# instead of validating it again; same field values. Default on; effective only
+# with `akita`.
+# weighted-dot-horner-triplet: inside each full five-row block of 64 two-limb
+# elements, the verifier guest's Horner weighted dot advances every row by three
+# coefficients per pointer and branch group; same field values. Default on.
+# lazy-scan-errors, digest-nozero, golomb-word, bytecode-fold, fill-ingress: the
+# verifier guest (and the host's Akita) build the setup-scan InvalidProof error
+# only on the failure path, copy the prevalidated row digests without a zero
+# fill, decode the terminal z Golomb-Rice stream by doubleword, index the stage
+# 6b bytecode fold by flag class directly and scale each bounded equality-fill
+# run once; same field values. Default on; effective only with `akita`.
+# setup-lane-streams: the verifier guest (and the host's Akita) stream each lane
+# of the root setup scan with its row scales hoisted; same field values. Default
+# on; effective only with `akita`.
+# carry-graph: the host emits Akita's fixed carry-state graphs for the inner
+# proofs' padded trace size and the verifier guest evaluates the eq-pair tensor
+# recurrences through them (no graph for another size: recurrence path); same
+# field values. Default on; effective only with `akita`.
+# mle-leaf-tiles: the verifier guest (and the host's Akita) evaluate the
+# low-variable multilinear extensions by fixed leaf tiles; same field values.
+# Default on; effective only with `akita`.
+# signed-byte-sum: the verifier guest (and the host's Akita) take the signed
+# byte coefficients of a sparse challenge in through one field sum when
+# evaluating it at powers; same field values. Default on; effective only with
+# `akita`.
+# setup-weight-tiles: the verifier guest's direct setup scan adds the setup
+# weights by fixed tiles on field-register addition; same field values. Default
+# on; effective only with `akita`.
+# challenge-word-decode: the verifier guest (and the host's Akita) decode the
+# signed sparse challenges from whole SHAKE output words; same consumption,
+# rejection and field values. Default on; effective only with `akita`.
+default = [
+  "l3-compression-weights",
+  "l2-terminal-quotient",
+  "word-decode",
+  "word-memory",
+  "guest-codegen",
+  "tensor-no-carry",
+  "rowptr-registers",
+  "tensor-eq-runs",
+  "setup-sop-structured",
+  "segment-setup",
+  "weighted-dot-horner",
+  "terminal-contraction",
+  "prevalidated-catalog",
+  "weighted-dot-horner-triplet",
+  "lazy-scan-errors",
+  "digest-nozero",
+  "golomb-word",
+  "bytecode-fold",
+  "fill-ingress",
+  "setup-lane-streams",
+  "carry-graph",
+  "mle-leaf-tiles",
+  "signed-byte-sum",
+  "setup-weight-tiles",
+  "challenge-word-decode",
+]
+guest-codegen = []
+l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
+l2-terminal-quotient = ["jolt-akita?/l2-terminal-quotient"]
+word-decode = ["jolt-akita?/word-decode"]
+tensor-no-carry = ["jolt-akita?/tensor-no-carry"]
+tensor-eq-runs = ["jolt-akita?/tensor-eq-runs"]
+# Each remaining arm is selected independently and forwarded to the guest.
+word-transcript = ["akita", "jolt-akita/word-transcript"]
+ont-static-base = ["akita", "jolt-akita/ont-static-base"]
+# Row pointers (default on): forwards `rowptr-registers` to the verifier guest.
+rowptr-registers = []
+# Structured setup sums of products (default on): structured-site sums of products in the Akita setup scan.
+setup-sop-structured = ["jolt-akita?/setup-sop-structured"]
+weighted-dot-horner = []
+weighted-dot-horner-triplet = ["weighted-dot-horner"]
+# Prevalidated catalog: the host prevalidates the embedded one-hot catalog view
+# and the guest rebuilds it from that record when its bytes are equal. Effective
+# only with `akita`.
+prevalidated-catalog = [
+  "jolt-akita?/prevalidated-catalog",
+  "dep:sha2",
+  "dep:hex",
+]
+# Verifier features (effective only with `akita`), each forwarded to the
+# verifier guest and to the host's Akita; same field values, proofs and
+# transcripts.
+# lazy-scan-errors: the setup-scan kernels build InvalidProof only on failure.
+lazy-scan-errors = ["jolt-akita?/lazy-scan-errors"]
+# digest-nozero: the prevalidated catalog rebuild copies its row digests
+# directly instead of zero-filling first (needs prevalidated-catalog).
+digest-nozero = ["prevalidated-catalog", "jolt-akita?/digest-nozero"]
+# golomb-word: doubleword trailing-ones table and packed doubleword stores in
+# the terminal z Golomb-Rice decoder.
+golomb-word = ["jolt-akita?/golomb-word"]
+# bytecode-fold: direct flag-class index in the stage 6b bytecode fold.
+bytecode-fold = ["jolt-akita?/bytecode-fold"]
+# fill-ingress: one scale ingress per bounded run in the Akita equality fill.
+fill-ingress = ["jolt-akita?/fill-ingress"]
+# setup-lane-streams: the root setup scan streams each lane with its row
+# scales hoisted.
+setup-lane-streams = ["jolt-akita?/setup-lane-streams"]
+# carry-graph: compiled carry-state graphs for the eq-pair tensor recurrences.
+carry-graph = ["jolt-akita?/carry-graph"]
+# mle-leaf-tiles: low-variable multilinear evaluation by fixed leaf tiles.
+mle-leaf-tiles = ["jolt-akita?/mle-leaf-tiles"]
+# signed-byte-sum: sparse challenge evaluation at powers through one signed-byte
+# field sum.
+signed-byte-sum = ["jolt-akita?/signed-byte-sum"]
+# setup-weight-tiles: the direct setup scan adds its setup weights by fixed
+# tiles on field-register addition.
+setup-weight-tiles = ["jolt-akita?/setup-weight-tiles"]
+# challenge-word-decode: signed sparse challenges decoded from whole SHAKE
+# output words.
+challenge-word-decode = ["jolt-akita?/challenge-word-decode"]
 
 [dependencies]
+jolt-claims = { path = "../../crates/jolt-claims", optional = true }
+jolt-field = { path = "../../crates/jolt-field", optional = true }
+sha2 = { workspace = true, optional = true }
+hex = { workspace = true, optional = true }
+serde_json = { workspace = true, features = ["std"], optional = true }
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
 jolt-program = { path = "../../crates/jolt-program", optional = true }
 jolt-witness = { path = "../../crates/jolt-witness", optional = true }

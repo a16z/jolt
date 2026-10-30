@@ -220,7 +220,7 @@ where
         stage4,
         &stage5.output_values,
     )?;
-    let cycle_points = sumchecks.verify_clear(
+    let cycle_points = crate::recipe_verify_clear!(checked; sumchecks(
         &input_values,
         &input_points,
         &cycle_challenges,
@@ -228,7 +228,7 @@ where
         &proof.stages.stage6b_sumcheck_proof,
         transcript,
         6,
-    )?;
+    ))?;
 
     let booleanity_opening_point = cycle_points
         .booleanity_opening_point()

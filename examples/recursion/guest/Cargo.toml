@@ -4,8 +4,19 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+terminal-contraction = [
+  "jolt-akita?/terminal-contraction",
+  "jolt-field/terminal-contraction",
+]
+segment-setup = ["jolt-akita?/segment-setup"]
+immutable-recipes = [
+  "akita",
+  "field-inline-fp128",
+  "jolt_sdk/immutable-recipes",
+]
 ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
+word-memory = ["jolt_sdk/word-memory"]
 field-inline = ["jolt_sdk/field-inline"]
 # The field the field-inline unit computes in: BN254 `Fr` under Dory, the
 # Fp128 protocol prime under Akita. The host selects the one its tracer uses.
@@ -18,13 +29,42 @@ akita = [
   "dep:jolt-transcript",
 ]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
+# L2 terminal quotient certificate (see the host feature).
+l2-terminal-quotient = ["akita", "jolt-akita/l2-terminal-quotient"]
 hash-inlines = [
   "jolt_sdk/blake2-inline",
   "jolt-transcript?/blake2-inline",
   "jolt-akita?/blake2-inline",
   "jolt-akita?/keccak-inline",
 ]
+# L3 recursion experiment: factorized compression-weight evaluation.
+l3-compression-weights = ["akita", "jolt-akita/l3-compression-weights"]
 
+word-transcript = ["akita", "jolt-akita/word-transcript"]
+word-decode = ["akita", "jolt-akita/word-decode"]
+ont-static-base = ["akita", "jolt-akita/ont-static-base"]
+tensor-no-carry = ["akita", "jolt-akita/tensor-no-carry"]
+# Row pointers (default off): weighted-dot row pointers held in registers.
+rowptr-registers = ["jolt-field/field-inline-rowptr"]
+weighted-dot-horner = ["jolt-field/field-inline-horner"]
+weighted-dot-horner-triplet = [
+  "weighted-dot-horner",
+  "jolt-field/field-inline-horner-triplet",
+]
+tensor-eq-runs = ["akita", "jolt-akita/tensor-eq-runs"]
+setup-sop-structured = ["akita", "jolt-akita/setup-sop-structured"]
+prevalidated-catalog = ["akita", "jolt-akita/prevalidated-catalog"]
+lazy-scan-errors = ["akita", "jolt-akita/lazy-scan-errors"]
+digest-nozero = ["prevalidated-catalog", "jolt-akita/digest-nozero"]
+golomb-word = ["akita", "jolt-akita/golomb-word"]
+bytecode-fold = ["akita", "jolt-akita/bytecode-fold"]
+fill-ingress = ["akita", "jolt-akita/fill-ingress"]
+setup-lane-streams = ["akita", "jolt-akita/setup-lane-streams"]
+carry-graph = ["akita", "jolt-akita/carry-graph"]
+mle-leaf-tiles = ["akita", "jolt-akita/mle-leaf-tiles"]
+signed-byte-sum = ["akita", "jolt-akita/signed-byte-sum"]
+setup-weight-tiles = ["akita", "jolt-akita/setup-weight-tiles"]
+challenge-word-decode = ["akita", "jolt-akita/challenge-word-decode"]
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
 # embedded_bytecode.rs imports jolt-riscv types when the host prepares an

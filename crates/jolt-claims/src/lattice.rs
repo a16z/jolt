@@ -223,3 +223,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(BalancedIncChunking { chunk_width });

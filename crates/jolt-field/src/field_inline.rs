@@ -98,7 +98,8 @@ mod emit {
             }
         };
     }
-
+    #[cfg(feature = "terminal-contraction")]
+    include!("field_inline/terminal_emit.rs");
     /// Accumulate one word into a destination previously cleared by `clear`.
     #[inline(always)]
     pub fn load_accumulate(dst: u32, offset: usize, base: *const u64) {
@@ -315,7 +316,8 @@ mod emit {
 
 mod guest {
     use super::*;
-
+    #[cfg(feature = "terminal-contraction")]
+    include!("field_inline/terminal_guest.rs");
     static READY: AtomicBool = AtomicBool::new(false);
 
     /// Prove that the unit computes modulo `modulus`. Accumulating the
@@ -344,7 +346,7 @@ mod guest {
 
     /// Horner ingress starts at zero, then accumulates limbs from most significant to least.
     #[inline(always)]
-    fn load<const N: usize>(dst: u32, limbs: &[u64; N]) {
+    pub(super) fn load<const N: usize>(dst: u32, limbs: &[u64; N]) {
         assert!(N > 0 && N <= 4, "supported field limb count");
         emit::clear(dst);
         for i in (0..N).rev() {
@@ -365,7 +367,7 @@ mod guest {
     /// Read all `N` limbs, then require the final quotient to vanish.
     /// The caller must reject integers at or above the active field modulus.
     #[inline(always)]
-    fn read_out<const N: usize>(src: u32) -> [u64; N] {
+    pub(super) fn read_out<const N: usize>(src: u32) -> [u64; N] {
         let mut limbs = [0u64; N];
         let mut current = src;
         for limb in limbs.iter_mut() {
@@ -495,7 +497,7 @@ mod guest {
         // field-inline word costs as much as the word itself, so the inner
         // loop is unrolled per block width and indexes without bounds checks.
         macro_rules! accumulate_block {
-            ($($row:ident => $k:literal),+) => {
+            ($($row:ident => $k:literal),+) => {{ $( #[cfg(feature = "field-inline-rowptr")] let $row: &[[u64; N]] = *$row; )+ // row pointers: see the note at the end of this file
                 for j in 0..len {
                     // SAFETY: `j < len`, and every row has `len` elements
                     // (asserted above).
@@ -508,7 +510,7 @@ mod guest {
                         )+
                     }
                 }
-            };
+            }};
         }
         const _: () = assert!(
             WEIGHTED_ROWS_BLOCK == 5,
@@ -642,9 +644,56 @@ mod guest {
         }
         finish()
     }
+
+    #[cfg(feature = "signed-byte-sum")]
+    include!("field_inline/signed_byte_sum.rs");
 }
 
+#[cfg(feature = "signed-byte-sum")]
+pub use guest::sum_signed_bytes;
 pub use guest::{
     accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub,
     sum_of_products, weighted_dot_rows,
 };
+
+// Row pointers (`field-inline-rowptr`, default off; recursion guest feature `rowptr-registers`):
+// `weighted_dot_rows` copies the block's row slices into locals before its
+// element loop. The match bindings `r0..r4` point into `block_rows`, and every
+// field-inline `asm!` block may write memory, so without the copy each term
+// reloads its row base pointer from memory; locals stay in registers across
+// the asm. The statement sits on the macro's arm line and this note sits at the
+// end of the file, so the feature-off build keeps every source line number.
+
+#[cfg(feature = "terminal-contraction")]
+pub use guest::signed_i16_dot;
+#[cfg(feature = "field-inline-horner")]
+pub(crate) mod horner;
+
+// `fill-ingress` (default off): `out(i, src[i] * scale)` with
+// `scale` loaded into `REG_B` once. Each element is loaded into `REG_A`,
+// multiplied into `REG_OUT` and read out canonically (the caller range checks
+// the limbs). Only the operand, output and readout scratch registers are
+// written; no caller code but `out` (integer work on the readout) runs while
+// the scale is resident. Canonical limbs.
+#[cfg(feature = "fill-ingress")]
+pub(crate) mod scale {
+    use super::guest::{load, read_out};
+    use super::{emit, REG_A, REG_B, REG_OUT};
+
+    #[inline(always)]
+    pub(crate) fn scale_into<const N: usize>(
+        scale: &[u64; N],
+        src: &[[u64; N]],
+        mut out: impl FnMut(usize, [u64; N]),
+    ) {
+        load(REG_B, scale);
+        for (index, value) in src.iter().enumerate() {
+            load(REG_A, value);
+            emit::mul_out();
+            out(index, read_out(REG_OUT));
+        }
+    }
+}
+
+#[cfg(feature = "setup-weight-tiles")]
+pub(crate) mod setup_weight_tiles;

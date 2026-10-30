@@ -212,12 +212,12 @@ where
     };
     let stage1 = stage1.clear()?;
     let claims = &proof.clear_claims()?.stage2;
-    sumchecks.validate_output_claims(&claims.batch_outputs)?;
+    crate::recipe_validate_output_claims!(checked; sumchecks(&claims.batch_outputs))?;
 
     let input_values =
         stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
 
-    let output_points = sumchecks.verify_clear(
+    let output_points = crate::recipe_verify_clear!(checked; sumchecks(
         &input_values,
         &input_points,
         &challenges,
@@ -225,7 +225,7 @@ where
         &proof.stages.stage2_sumcheck_proof,
         transcript,
         2,
-    )?;
+    ))?;
 
     sumchecks.append_output_claims(transcript, &claims.batch_outputs);
 

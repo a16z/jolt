@@ -751,6 +751,7 @@ fn stage_gammas<'a, F>(inputs: &BytecodeReadRafStageValueInputs<'a, F>) -> [&'a 
 /// # Errors
 ///
 /// Rejects an `address_eq` whose length differs from the bytecode table's.
+#[cfg(not(feature = "bytecode-fold"))]
 pub fn read_raf_fold_stage_values<F>(
     inputs: BytecodeReadRafStageValueInputs<'_, F>,
     address_eq: &[F],
@@ -1008,6 +1009,144 @@ pub fn bytecode_ra(index: usize) -> JoltOpeningId {
     )
 }
 
+// `bytecode-fold` (default off): the same fold with the flag
+// classes indexed directly by key. `flag_class` packs an 8-bit instruction tag
+// above four low bits, so every key is below `DIRECT_FLAG_KEYS` and indexes a
+// word table holding `class + 1` (zero for an unseen key); a larger key would
+// take the open-addressing path. Same classes in the same first-seen order,
+// same sums, same result and first error.
+#[cfg(feature = "bytecode-fold")]
+const DIRECT_FLAG_KEYS: usize = 1 << 12;
+
+#[cfg(feature = "bytecode-fold")]
+struct DirectFlagClasses {
+    direct: Vec<usize>,
+    /// Open-addressing classes for keys beyond the direct table (built on
+    /// first use) and each such class's shared index.
+    fallback: Option<(FlagClasses, Vec<usize>)>,
+    rows: usize,
+    count: usize,
+}
+
+#[cfg(feature = "bytecode-fold")]
+impl DirectFlagClasses {
+    fn with_rows(rows: usize) -> Self {
+        Self {
+            direct: vec![0; DIRECT_FLAG_KEYS],
+            fallback: None,
+            rows,
+            count: 0,
+        }
+    }
+
+    /// The index of `key`'s class, and whether this call created it.
+    #[inline(always)]
+    fn index(&mut self, key: u32) -> (usize, bool) {
+        if let Some(slot) = self.direct.get_mut(key as usize) {
+            if *slot != 0 {
+                return (*slot - 1, false);
+            }
+            let class = self.count;
+            self.count += 1;
+            *slot = class + 1;
+            return (class, true);
+        }
+        // Keys beyond the direct table share the class numbering.
+        let rows = self.rows;
+        let (fallback, shared) = self
+            .fallback
+            .get_or_insert_with(|| (FlagClasses::with_rows(rows), Vec::new()));
+        let (local, created) = fallback.index(key);
+        if created {
+            let class = self.count;
+            self.count += 1;
+            shared.push(class);
+            return (class, true);
+        }
+        (shared[local], false)
+    }
+}
+
+/// `Σ_r address_eq[r] · stage_values(r)` over the bytecode rows (see the
+/// feature-off function of the same name; flag classes indexed directly).
+///
+/// # Errors
+///
+/// Rejects an `address_eq` whose length differs from the bytecode table's.
+#[cfg(feature = "bytecode-fold")]
+pub fn read_raf_fold_stage_values<F>(
+    inputs: BytecodeReadRafStageValueInputs<'_, F>,
+    address_eq: &[F],
+) -> Result<[F; NUM_BYTECODE_VAL_STAGES], PointGeometryError>
+where
+    F: JoltField,
+{
+    if inputs.bytecode.len() != address_eq.len() {
+        return Err(PointGeometryError::EvaluationDomainLengthMismatch {
+            expected: inputs.bytecode.len(),
+            got: address_eq.len(),
+        });
+    }
+    let register_eq = read_raf_register_eq_evals(
+        inputs.register_read_write_point,
+        inputs.register_val_evaluation_point,
+    );
+    let registers = register_eq.read_write.len();
+    let mut gamma_buckets: [Vec<F>; 5] =
+        std::array::from_fn(|stage| vec![F::zero(); BYTECODE_STAGE_GAMMA_COUNTS[stage]]);
+    let mut register_buckets: [Vec<F>; 3] = std::array::from_fn(|_| vec![F::zero(); registers]);
+    let mut store = F::zero();
+    let rows = inputs.bytecode.len();
+    let mut addresses = Vec::with_capacity(rows);
+    let mut imms = Vec::with_capacity(rows);
+    let mut classes = DirectFlagClasses::with_rows(rows);
+    let mut class_weights: Vec<F> = Vec::new();
+    let mut class_rows: Vec<&JoltInstructionRow> = Vec::new();
+    for (instruction, &eq) in inputs.bytecode.iter().zip(address_eq) {
+        let (class, created) = classes.index(instruction.flag_class());
+        if created {
+            class_weights.push(F::zero());
+            class_rows.push(instruction);
+        }
+        class_weights[class] += eq;
+        let operands = instruction.integer_operands();
+        for (bucket, register) in
+            register_buckets
+                .iter_mut()
+                .zip([operands.rd, operands.rs1, operands.rs2])
+        {
+            if let Some(slot) = register.and_then(|register| bucket.get_mut(register as usize)) {
+                *slot += eq;
+            }
+        }
+        addresses.push(F::from_u64(instruction.address as u64));
+        imms.push(F::from_i128(instruction.operands.imm));
+    }
+    for (instruction, &weight) in class_rows.iter().zip(&class_weights) {
+        if read_raf_flag_terms(instruction, |stage, index| {
+            gamma_buckets[stage][index] += weight;
+        }) {
+            store += weight;
+        }
+    }
+    let eq = address_eq;
+    let gammas = stage_gammas(&inputs);
+    let weighted_read_write = register_eq.weighted_read_write(inputs.stage4_gammas);
+    Ok(assemble_stage_values(
+        F::dot_product(&addresses, eq),
+        F::dot_product(&imms, eq),
+        std::array::from_fn(|stage| F::dot_product(gammas[stage], &gamma_buckets[stage])),
+        &gammas,
+        weighted_read_write
+            .iter()
+            .zip(&register_buckets)
+            .map(|(weights, bucket)| F::dot_product(weights, bucket))
+            .fold(F::zero(), |sum, term| sum + term),
+        F::dot_product(&register_eq.val_evaluation, &register_buckets[0]),
+        store,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1128,3 +1267,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(BytecodeReadRafDimensions {
+    log_t,
+    log_k,
+    committed_ra_polys
+});

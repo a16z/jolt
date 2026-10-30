@@ -132,7 +132,7 @@ impl SymbolicSumcheck for LatticeBooleanityCyclePhase {
     type Challenges<F> = BooleanityCyclePhaseChallenges<F>;
     type Inputs<C> = BooleanityInputClaims<C>;
     type Outputs<C> = LatticeBooleanityOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(22, JOLT, Jolt; shape);
     fn new(shape: LatticeBooleanityDimensions) -> Self {
         Self { shape }
     }
@@ -184,3 +184,6 @@ pub fn booleanity_balanced_inc_carry_opening() -> JoltOpeningId {
         JoltRelationId::Booleanity,
     )
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(LatticeBooleanityDimensions { base, chunking });

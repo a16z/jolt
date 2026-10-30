@@ -5,6 +5,10 @@
 //! copies and fills lower to libc `memcpy`/`memset` calls that move data in
 //! sub-word accesses, each a multi-row sequence; the word paths below load
 //! and store whole aligned words.
+//!
+//! Known public Spongefish domain prefixes reuse precomputed compression
+//! states. The high-level hasher therefore has content-dependent execution;
+//! it is not a constant-time API.
 use crate::{
     BLOCK_INPUT_SIZE_IN_BYTES, IV, MSG_BLOCK_LEN, PERSONA_SIZE_IN_BYTES, SALT_SIZE_IN_BYTES,
     STATE_VECTOR_LEN,
@@ -15,6 +19,21 @@ const INITIAL_STATE: [u64; STATE_VECTOR_LEN] = {
     let mut h = IV;
     h[0] ^= 0x01010000 ^ (OUTPUT_SIZE as u64);
     h
+};
+// Spongefish starts each phase with 127 zero bytes and a domain byte.
+// These are nonfinal blocks at counter 128, computed by the same compression
+// function that executes the inline on the host.
+const SPONGEFISH_PREFIX_STATES: [[u64; STATE_VECTOR_LEN]; 3] = {
+    let mut states = [INITIAL_STATE; 3];
+    let mut tag = 0;
+    while tag < states.len() {
+        let mut block = [0; MSG_BLOCK_LEN + 2];
+        block[MSG_BLOCK_LEN - 1] = (tag as u64) << 56;
+        block[MSG_BLOCK_LEN] = BLOCK_INPUT_SIZE_IN_BYTES as u64;
+        crate::exec::execute_blake2b_compression(&mut states[tag], &block);
+        tag += 1;
+    }
+    states
 };
 
 /// One compression input: 16 message words, the byte counter, and the final
@@ -41,12 +60,42 @@ impl CompressionBlock {
 
     #[inline(always)]
     fn compress(&mut self, state: &mut [u64; STATE_VECTOR_LEN], is_final: bool) {
+        if !is_final && self.counter == BLOCK_INPUT_SIZE_IN_BYTES as u64 {
+            if let Some(prefix) = self.spongefish_prefix(state) {
+                *state = prefix;
+                return;
+            }
+        }
         self.final_flag = u64::from(is_final);
         // SAFETY: repr(C) lays out the 16 message words, the counter, and the
         // flag as exactly the 18 aligned words the inline reads.
         unsafe {
             blake2b_compress(state.as_mut_ptr(), core::ptr::from_ref(self).cast::<u64>());
         }
+    }
+
+    #[inline(always)]
+    fn spongefish_prefix(
+        &self,
+        state: &[u64; STATE_VECTOR_LEN],
+    ) -> Option<[u64; STATE_VECTOR_LEN]> {
+        let tag = match self.words[MSG_BLOCK_LEN - 1] {
+            0 => 0,
+            0x0100_0000_0000_0000 => 1,
+            0x0200_0000_0000_0000 => 2,
+            _ => return None,
+        };
+        // Inspect the packed words: a bytewise mask comparison costs more
+        // guest rows than the compression it saves. The complete initial
+        // state check excludes other digest lengths, salt and personalization.
+        let nonzero = self.words[..MSG_BLOCK_LEN - 1]
+            .iter()
+            .fold(0, |acc, word| acc | word);
+        let changed = state
+            .iter()
+            .zip(INITIAL_STATE)
+            .fold(0, |acc, (word, initial)| acc | (word ^ initial));
+        (nonzero | changed == 0).then_some(SPONGEFISH_PREFIX_STATES[tag])
     }
 }
 
@@ -549,6 +598,14 @@ mod params_tests {
                     hasher.finalize(),
                     expected,
                     "new_with_params streaming mismatch: salt={salt:?}, persona={persona:?}, length={length}"
+                );
+            }
+            for tag in 0..3 {
+                let mut input = [0; 192];
+                input[127] = tag;
+                assert_eq!(
+                    Blake2b::digest_with_params(salt, persona, &input),
+                    reference_with_params(salt, persona, &input),
                 );
             }
         }

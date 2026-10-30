@@ -150,6 +150,7 @@ jolt-transcript::legacy.rs::Transcript::append::append_to_transcript#0::value.ap
 jolt-transcript::legacy.rs::Transcript::append_labeled::append#0::self.append(&Label(label))
 jolt-transcript::legacy.rs::Transcript::append_labeled::append#1::self.append(value)
 jolt-transcript::legacy.rs::Transcript::append_scalars::append_bytes#0::self.append_bytes(&message)
+jolt-transcript::legacy.rs::Transcript::append_scalars::append_bytes#1::self.append_bytes(&message)
 jolt-transcript::legacy.rs::Transcript::append_values::append#0::self.append(&LabelWithCount(label,values.len()asu64))
 jolt-transcript::legacy.rs::Transcript::append_values::append#1::self.append(value)
 jolt-transcript::legacy.rs::U64Word::append_to_transcript::append_bytes#0::transcript.append_bytes(&packed)

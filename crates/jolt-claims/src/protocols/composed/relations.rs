@@ -104,7 +104,7 @@ impl SymbolicSumcheck for OuterRemainder {
         let (az, bz) = self.output_factor_expressions();
         derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
     }
-
+    crate::immutable_symbolic_recipe!(1, COMPOSED, Composed; shape);
     /// The openings of `az` and `bz`, without expanding their product: each
     /// expanded term is a distinct weight-indexed monomial with coefficient
     /// one, so no term cancels and the product references exactly these.
@@ -165,7 +165,7 @@ impl SymbolicSumcheck for ProductUniskip {
         lift(self.base.output_expression())
     }
 }
-
+crate::immutable_recipe_items! {
 #[derive(Clone)]
 pub struct ProductRemainder {
     base: base::ProductRemainder,
@@ -259,7 +259,7 @@ where
         lift(self.base.output_expression())
     }
 }
-
+}
 impl<B> ReadRafAddressPhase<B> {
     fn bytecode_input_extension_expr<F: Ring>() -> ComposedExpr<F> {
         let gamma_public = |challenge: BytecodeReadRafChallenge| -> ComposedExpr<F> {

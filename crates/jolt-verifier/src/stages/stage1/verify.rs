@@ -62,7 +62,7 @@ where
         let batch_challenges = sumchecks.draw_challenges(transcript)?;
         let input_points = sumchecks.empty_input_points();
 
-        sumchecks.validate_output_claims(&claims.outer)?;
+        crate::recipe_validate_output_claims!(checked; sumchecks(&claims.outer))?;
 
         // The remainder consumes the uni-skip's reduced opening as its input claim
         // (the relation's `input_claim` is the bare consumed opening).
@@ -70,7 +70,7 @@ where
             outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip_output_claim),
         };
 
-        let output_points = sumchecks.verify_clear(
+        let output_points = crate::recipe_verify_clear!(checked; sumchecks(
             &input_values,
             &input_points,
             &batch_challenges,
@@ -78,7 +78,7 @@ where
             sumcheck_proof,
             transcript,
             1,
-        )?;
+        ))?;
 
         // Append the 35 produced openings in canonical (declaration) order, matching
         // the prover's commitment order.

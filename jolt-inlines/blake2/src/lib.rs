@@ -14,6 +14,8 @@ pub mod digest_adapter;
 
 #[cfg(feature = "host")]
 pub mod exec;
+#[cfg(not(feature = "host"))]
+mod exec;
 #[cfg(feature = "host")]
 pub mod sequence_builder;
 

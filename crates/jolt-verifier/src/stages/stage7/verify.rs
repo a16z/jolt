@@ -129,12 +129,12 @@ where
     // Also rejects claims supplied for phases that did not run, with the same
     // `UnexpectedOpeningClaim` ids the former hand-written guards used (the id is
     // derived from the supplied claims' canonical order).
-    sumchecks.validate_output_claims(claims)?;
+    crate::recipe_validate_output_claims!(checked; sumchecks(claims))?;
 
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
     let input_points = sumchecks.empty_input_points();
 
-    let output_points = sumchecks.verify_clear(
+    let output_points = crate::recipe_verify_clear!(checked; sumchecks(
         &input_values,
         &input_points,
         &challenges,
@@ -142,7 +142,7 @@ where
         &proof.stages.stage7_sumcheck_proof,
         transcript,
         7,
-    )?;
+    ))?;
 
     sumchecks.append_output_claims(transcript, claims);
 

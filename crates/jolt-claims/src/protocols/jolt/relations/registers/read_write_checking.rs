@@ -107,7 +107,7 @@ impl SymbolicSumcheck for ReadWriteChecking {
     type Challenges<F> = RegistersReadWriteChallenges<F>;
     type Inputs<C> = RegistersReadWriteInputClaims<C>;
     type Outputs<C> = RegistersReadWriteOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(11, JOLT, Jolt; shape);
     fn new(shape: ReadWriteDimensions) -> Self {
         Self { shape }
     }

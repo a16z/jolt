@@ -279,7 +279,7 @@ fn r_cycle_suffix<F: JoltField>(log_t: usize, opening_point: &[F]) -> Result<&[F
         .and_then(|start| opening_point.get(start..))
         .ok_or_else(|| public_input_failed("bytecode cycle opening point shorter than log_t"))
 }
-
+#[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_output)]
 #[cfg(not(feature = "akita"))]
 #[expect(
     clippy::wildcard_enum_match_arm,
@@ -341,7 +341,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_public_output)]
     #[cfg_attr(
         feature = "akita",
         expect(
@@ -771,7 +771,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_output)]
     #[expect(
         clippy::wildcard_enum_match_arm,
         reason = "fail-closed: ids not owned by this relation resolve to a missing-claim error"
@@ -991,7 +991,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCycle<F> {
             }
         }
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_expected_pair)]
     fn expected_output(
         &self,
         input_points: &BytecodeReadRafInputClaims<Vec<F>>,

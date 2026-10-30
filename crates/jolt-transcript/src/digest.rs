@@ -185,9 +185,19 @@ where
     }
 
     fn challenge_scalar(&mut self) -> F {
-        let mut buf = [0u8; 16];
-        self.challenge_bytes(&mut buf);
-        F::from_scalar_challenge_bytes(&buf)
+        #[cfg(feature = "word-transcript")]
+        {
+            // One scalar draw consumes one complete digest state transition.
+            let hash = self.round_hash(&[]);
+            self.update_state(hash);
+            F::from_scalar_challenge_bytes(hash.split_at(16).0)
+        }
+        #[cfg(not(feature = "word-transcript"))]
+        {
+            let mut buf = [0u8; 16];
+            self.challenge_bytes(&mut buf);
+            F::from_scalar_challenge_bytes(&buf)
+        }
     }
 
     #[inline]

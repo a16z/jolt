@@ -32,3 +32,8 @@ pub mod size_class_alloc;
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 mod malloc_shim;
+
+// Keep this opt-in guest module after existing lines: disabled experiments
+// must preserve the frozen guest's panic locations and executable image.
+#[cfg(all(feature = "word-memory", target_arch = "riscv64"))]
+mod word_memory;

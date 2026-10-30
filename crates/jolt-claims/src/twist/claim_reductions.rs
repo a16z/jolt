@@ -165,7 +165,7 @@ macro_rules! instantiate_value_reduction {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-
+            self::immutable_twist_recipe!($relation);
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }
@@ -234,7 +234,7 @@ macro_rules! instantiate_increment_reduction {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-
+            self::immutable_twist_recipe!($relation);
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }

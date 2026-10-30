@@ -15,6 +15,11 @@ repository = "https://github.com/a16z/jolt"
 edition = "2021"
 
 [features]
+immutable-recipes = ["jolt-verifier?/immutable-recipes"]
+immutable-recipes-record = [
+  "immutable-recipes",
+  "jolt-verifier?/immutable-recipes-record",
+]
 default = ["jolt-platform/random"]
 # std guests: route Rust allocations to jolt-platform's O(1) size-class
 # arena instead of musl's malloc over ZeroOS's first-fit heap.
@@ -87,6 +92,7 @@ guest-verifier = [
 ]
 
 malloc-shim = ["jolt-platform/malloc-shim"]
+word-memory = ["jolt-platform/word-memory"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]

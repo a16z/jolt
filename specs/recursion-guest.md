@@ -4,7 +4,7 @@ The recursion example executes Jolt's Akita verifier as a RISC-V guest: it
 verifies an inner Akita, field-inline proof and reports the verdict. The cost of
 interest is the guest's **total trace rows**, the length an outer proof of that
 execution would have to cover, including setup and proof decoding. The working
-target is a Fibonacci inner proof below 2^26 rows; this revision is 11,924,024
+target is a Fibonacci inner proof below 2^26 rows; this revision is 11,158,718
 rows above it (see [Measurements](#measurements)). This document records the
 mechanisms the guest uses, the trust they rely on, and where the rows go.
 
@@ -205,10 +205,12 @@ companion; the last row traces a fresh proof at this revision.
 | Merge `main`: native Akita trace batching (#2012), Akita `d98400c5` (#175), fresh proof | 78,896,208 |
 | Akita review revisions of LayerZero-Labs/akita#186-#190 on Akita `main` `401e7972`, spongefish's own Blake2b sponge, lent-accumulator `signed_sum`, fresh proof | 79,348,402 |
 | Merge `main`: Akita `318c3221` (#193), unified trace rows (#1996), fallible chunked decode and live-entry residual tables, fresh proof (77,245,072 verification cycles) | 79,335,454 |
-| **Merge `main`: Akita `cf95fd05` (BlockDigits dense commit, #236-#242), whole-table bytecode (#2030), fresh proof** (76,947,621 verification cycles) | **79,032,888** |
+| Merge `main`: Akita `cf95fd05` (BlockDigits dense commit, #236-#242), whole-table bytecode (#2030), fresh proof (76,947,621 verification cycles) | 79,032,888 |
+| **Packed-word recognition of constant BLAKE2b prefixes**, same inner proof (76,182,318 verification cycles) | **78,267,582** |
 
 The first row was rebuilt and re-measured from its archived sources and
-reproduces its recorded numbers exactly. Input mode, which reads the setup
+reproduces its recorded numbers exactly. At the #1911 baseline
+(`125fa70aa`), input mode, which reads the setup
 from the guest input, accepts at 86,461,879 rows. A proof with one bit flipped
 in its Akita opening proof is rejected after 60,136,155 rows, inside the PCS
 verifier.
@@ -219,14 +221,52 @@ fold (`verify_root`, 14.56M to 24.46M rows): its relation-matrix evaluation
 and direct setup-contribution scan run over the natively batched trace
 columns. The terminal checks are unchanged.
 
-The last row's 452,194-row increase nets two measured effects, besides the
-boot-time modulus binding. Replacing the
+The review-revision increase from 78,896,208 to 79,348,402 rows nets two
+measured effects, besides the boot-time modulus binding. Replacing the
 hand-written transcript sponge, which reused each phase's compressed mask block,
 with spongefish's sponge over the inline adapter costs about 1.16M rows, and the
 remaining review revisions save about 0.71M. The `signed_sum` accumulator guard
-costs about 9,000 rows. Recovering the mask compressions through a digest that
-recognizes the mask blocks cost more rows (0.36M) than it saved, because the
-128-byte check runs bytewise in the guest.
+costs about 9,000 rows. A prior recognizer for the mask blocks cost more rows (0.36M) than it
+saved, because its 128-byte check ran bytewise in the guest.
+
+### Constant BLAKE2b prefixes (2026-10-20)
+
+Spongefish's three public domain masks are full 128-byte blocks. The SDK now
+recognizes them after packing into sixteen words, and reuses their compression
+outputs computed at compile time by the existing BLAKE2b implementation. The
+fast path requires a nonfinal first block at counter 128, the complete
+BLAKE2b-512 initial state, and an exact match of all message words. This preserves
+all hash bytes, including final-block, shorter-digest, salt and personalization
+semantics. Other blocks still use the inline; Spongefish itself is unchanged.
+The high-level hash API has content-dependent execution, not a constant-time
+contract. The prefixes optimized in recursion are public.
+
+A short squeeze-to-absorb-to-squeeze transition now needs four dynamic
+compressions instead of seven. The complete verifier improvement is smaller:
+**765,306 fewer rows, or 0.9683%**, on the same checksum-sealed inner proof.
+Verification uses 931,381 fewer virtual instructions and 166,078 more ordinary
+RV64IMAC instructions, accounting for the recognition overhead. Both the
+baseline and candidate remain in the $2^{27}$ padded domain; this alone does
+not reach the $2^{26}$ target.
+
+The same typed opening-tamper fixture still rejects without a panic: its total
+trace falls from 60,136,155 to 59,512,842 rows (623,313 saved). Both source states
+return 1 for the valid proof and 0 for the tampered proof. Fixture checksums
+were verified unchanged after both candidate runs.
+
+The baseline was independently reproduced at `125fa70aa657e78bce49f58f701f2756d52a69da`,
+with Akita `ee03aa30`. Both arms ran on a Linux AMD EPYC 7K62 host, Rust 1.95.0,
+CI-profile host and release guest, embedded setup, the same inner proof, and
+`RAYON_NUM_THREADS=1`. Separate guest target directories prevent cross-arm
+artifact reuse. All 14 BLAKE2b nextest tests passed, including independent digest
+compatibility and inline execution checks; formatting and both workspace Clippy
+modes (`host`, `host,zk`) passed. This is a trace-count result, not a native
+elapsed-time or outer recursive-proof measurement.
+
+The successor branch retains #1911's public recursion companion. Merging
+current main's runtime-catalog policy (#2091) and Spongefish migration (#2095)
+requires companion integration and fresh validation; these counts do not
+represent that future merge.
 
 ## Levers not taken here
 
@@ -260,10 +300,10 @@ recognizes the mask blocks cost more rows (0.36M) than it saved, because the
 ## Reproduction
 
 ```bash
-export RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+export RUST_LOG=info RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1
+cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
   generate --example fibonacci --workdir /tmp/recursion
-cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
+cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
   trace --embed --example fibonacci --workdir /tmp/recursion
 ```
 

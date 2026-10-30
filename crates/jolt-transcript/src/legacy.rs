@@ -69,16 +69,31 @@ pub trait Transcript: Default + Sync + Send + 'static {
     ///
     /// [`append_values`]: Self::append_values
     fn append_scalars<F: CanonicalBytes>(&mut self, label: &'static [u8], values: &[F]) {
-        let mut message = Vec::with_capacity(32 + values.len() * F::NUM_BYTES);
-        message.extend_from_slice(&LabelWithCount(label, values.len() as u64).word());
-        for value in values {
-            let start = message.len();
-            message.resize(start + F::NUM_BYTES, 0);
-            let (_, encoded) = message.split_at_mut(start);
-            value.to_bytes_le(encoded);
-            encoded.reverse();
+        #[cfg(feature = "word-transcript")]
+        {
+            let mut message = vec![0u8; 32 + values.len() * F::NUM_BYTES];
+            let (head, body) = message.split_at_mut(32);
+            head.copy_from_slice(&LabelWithCount(label, values.len() as u64).word());
+            if F::NUM_BYTES > 0 {
+                for (value, chunk) in values.iter().zip(body.chunks_exact_mut(F::NUM_BYTES)) {
+                    value.to_bytes_be(chunk);
+                }
+            }
+            self.append_bytes(&message);
         }
-        self.append_bytes(&message);
+        #[cfg(not(feature = "word-transcript"))]
+        {
+            let mut message = Vec::with_capacity(32 + values.len() * F::NUM_BYTES);
+            message.extend_from_slice(&LabelWithCount(label, values.len() as u64).word());
+            for value in values {
+                let start = message.len();
+                message.resize(start + F::NUM_BYTES, 0);
+                let (_, encoded) = message.split_at_mut(start);
+                value.to_bytes_le(encoded);
+                encoded.reverse();
+            }
+            self.append_bytes(&message);
+        }
     }
 
     /// Absorbs a domain label with a count followed by each value in order.
@@ -156,8 +171,13 @@ impl<F: CanonicalBytes> AppendToTranscript for F {
             heap.resize(F::NUM_BYTES, 0);
             &mut heap
         };
-        self.to_bytes_le(buf);
-        buf.reverse();
+        #[cfg(feature = "word-transcript")]
+        self.to_bytes_be(buf);
+        #[cfg(not(feature = "word-transcript"))]
+        {
+            self.to_bytes_le(buf);
+            buf.reverse();
+        }
         transcript.append_bytes(buf);
     }
 }

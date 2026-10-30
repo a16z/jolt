@@ -181,3 +181,103 @@ pub enum FieldError {
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
 }
+
+#[cfg(feature = "setup-weight-tiles")]
+mod setup_weight_tiles;
+#[cfg(feature = "signed-byte-sum")]
+mod signed_byte_sum;
+#[cfg(feature = "terminal-contraction")]
+mod terminal_contraction;
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_recipe_ring_defaults {
+    () => {
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_field() -> Option<$crate::ImmutableRecipeField<Self>> {
+            None
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_native_field() -> Option<$crate::ImmutableRecipeNativeField<Self>> {
+            None
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_export(&self) -> Option<u128> {
+            None
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_import(_value: u128) -> Option<Self> {
+            None
+        }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_recipe_fp128_methods {
+    () => {
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_field() -> Option<$crate::ImmutableRecipeField<Self>> {
+            (cfg!(target_arch = "riscv64")
+                && cfg!(feature = "field-inline-guest-fp128")
+                && !cfg!(feature = "field-inline-guest-bn254")
+                && P == FIELD_INLINE_FP128_MODULUS)
+                .then($crate::ImmutableRecipeField::new)
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_export(&self) -> Option<u128> {
+            (P == FIELD_INLINE_FP128_MODULUS).then(|| self.to_canonical_u128())
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_native_field() -> Option<$crate::ImmutableRecipeNativeField<Self>> {
+            (!cfg!(target_arch = "riscv64") && P == FIELD_INLINE_FP128_MODULUS)
+                .then($crate::ImmutableRecipeNativeField::new)
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_recipe_import(value: u128) -> Option<Self> {
+            if P != FIELD_INLINE_FP128_MODULUS {
+                return None;
+            }
+            <Self as CanonicalEncoding>::from_u128_checked(value)
+        }
+    };
+}
+
+#[cfg(all(feature = "immutable-recipes", feature = "solinas"))]
+use solinas::FIELD_INLINE_FP128_MODULUS;
+#[cfg(feature = "immutable-recipes")]
+use std::marker::PhantomData;
+
+/// Proof of the exact field implementation and active RV64 selector. Downstream
+/// Ring implementations cannot construct this capability for their own Self.
+#[cfg(feature = "immutable-recipes")]
+#[derive(Clone, Copy)]
+pub struct ImmutableRecipeField<F> {
+    marker: PhantomData<fn() -> F>,
+}
+
+#[cfg(feature = "immutable-recipes")]
+impl<F> ImmutableRecipeField<F> {
+    pub(crate) fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+}
+
+#[cfg(all(feature = "immutable-recipes", feature = "solinas"))]
+pub const IMMUTABLE_RECIPE_MODULUS: u128 = FIELD_INLINE_FP128_MODULUS;
+
+/// Native canonical export eligibility, separate from guest recipe eligibility.
+#[cfg(feature = "immutable-recipes")]
+#[derive(Clone, Copy)]
+pub struct ImmutableRecipeNativeField<F> {
+    marker: PhantomData<fn() -> F>,
+}
+#[cfg(feature = "immutable-recipes")]
+impl<F> ImmutableRecipeNativeField<F> {
+    pub(crate) fn new() -> Self {
+        Self {
+            marker: PhantomData,
+        }
+    }
+}

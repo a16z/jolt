@@ -81,13 +81,13 @@ where
         let claims = &proof.clear_claims()?.stage3;
         let stage1 = stage1.clear()?;
         let stage2 = stage2.clear()?;
-        sumchecks.validate_output_claims(claims)?;
+        crate::recipe_validate_output_claims!(checked; sumchecks(claims))?;
 
         let input_values =
             stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);
         let input_points = sumchecks.empty_input_points();
 
-        let output_points = sumchecks.verify_clear(
+        let output_points = crate::recipe_verify_clear!(checked; sumchecks(
             &input_values,
             &input_points,
             &challenges,
@@ -95,7 +95,7 @@ where
             &proof.stages.stage3_sumcheck_proof,
             transcript,
             3,
-        )?;
+        ))?;
 
         sumchecks.append_output_claims(transcript, claims);
 

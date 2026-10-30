@@ -115,7 +115,7 @@ where
         let claims = &proof.clear_claims()?.stage5;
         let stage2 = stage2.clear()?;
         let stage4 = stage4.clear()?;
-        sumchecks.validate_output_claims(claims)?;
+        crate::recipe_validate_output_claims!(checked; sumchecks(claims))?;
 
         // The reduced lookup output aliases the product remainder's lookup output
         // (same opening point and value); stage 2's generated `validate_aliases`
@@ -126,7 +126,7 @@ where
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
 
-        let output_points = sumchecks.verify_clear(
+        let output_points = crate::recipe_verify_clear!(checked; sumchecks(
             &input_values,
             &input_points,
             &challenges,
@@ -134,7 +134,7 @@ where
             &proof.stages.stage5_sumcheck_proof,
             transcript,
             5,
-        )?;
+        ))?;
 
         sumchecks.append_output_claims(transcript, claims);
 

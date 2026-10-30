@@ -9,6 +9,16 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+terminal-contraction = [
+  "akita-pcs/terminal-contraction",
+  "jolt-field/terminal-contraction",
+]
+segment-setup = ["akita-pcs/segment-setup"]
+# Verifier features (default off): setup-scan errors built only on failure,
+# prevalidated row digests copied without a zero fill, packed terminal z decode.
+lazy-scan-errors = ["akita-pcs/lazy-scan-errors"]
+digest-nozero = ["akita-schedules/digest-nozero"]
+golomb-word = ["akita-types/golomb-word", "akita-params/golomb-word"]
 default = ["parallel"]
 # Akita's rayon-backed kernels and backend thread pool. A single-core zkVM
 # guest builds without it; Jolt's own prover kernels in this crate still link
@@ -21,8 +31,48 @@ ntt-inline = ["akita-pcs/ntt-inline"]
 keccak-inline = ["akita-pcs/keccak-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
+# L2 terminal quotient certificate (recursion lever, default off): the
+# terminal A rows are checked at two points against a sent quotient, under
+# Akita protocol identifier v7-l2tq1.
+l2-terminal-quotient = ["akita-pcs/l2-terminal-quotient"]
 profiling = ["parallel"]
+# L3 recursion experiment (default off): Akita evaluates the compression
+# relation weights by factor (same field values; see akita-types).
+l3-compression-weights = ["akita-types/l3-compression-weights"]
 
+# Byte-preserving recursion experiments, default off.
+word-transcript = ["jolt-transcript/word-transcript"]
+word-decode = ["jolt-field/word-decode"]
+ont-static-base = ["akita-challenges/ont-static-base"]
+tensor-no-carry = ["akita-algebra/tensor-no-carry"]
+tensor-eq-runs = ["akita-algebra/tensor-eq-runs"]
+setup-sop-structured = ["akita-pcs/setup-sop-structured"]
+# Prevalidated catalog (default off): the recursion guest rebuilds its one-hot catalog view
+# from a build-time prevalidated record when the view bytes are equal.
+prevalidated-catalog = [
+  "akita-config/prevalidated-catalog",
+  "akita-schedules/prevalidated-catalog",
+]
+# Verifier features (default off): direct flag-class index in the bytecode
+# fold (Jolt), one scale ingress per bounded run in the Akita equality-window
+# fill.
+bytecode-fold = ["jolt-claims/bytecode-fold"]
+fill-ingress = ["akita-algebra/fill-ingress", "jolt-field/fill-ingress"]
+# Root setup scan by lane with hoisted row scales (default off; implies
+# terminal-contraction on the Akita side).
+setup-lane-streams = ["akita-pcs/setup-lane-streams"]
+# Compiled carry-state graphs for the eq-pair tensor recurrences (default off).
+carry-graph = ["akita-algebra/carry-graph"]
+# Low-variable multilinear evaluation by fixed leaf tiles (default off).
+mle-leaf-tiles = ["akita-pcs/mle-leaf-tiles"]
+# Sparse challenge evaluation at powers through one signed-byte field sum
+# (default off; enables jolt-field/signed-byte-sum on the Akita side).
+signed-byte-sum = ["akita-pcs/signed-byte-sum"]
+# Direct setup scan weights added by fixed tiles on field-register addition
+# (default off; enables jolt-field/setup-weight-tiles on the Akita side).
+setup-weight-tiles = ["akita-pcs/setup-weight-tiles"]
+# Signed sparse challenges decoded from whole SHAKE output words (default off).
+challenge-word-decode = ["akita-pcs/challenge-word-decode"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
