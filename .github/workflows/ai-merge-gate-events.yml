@@ -1,0 +1,20 @@
+# Tells the AI merge gate (ai-merge-gate.yml) that a pull request or its reviews changed.
+# GitHub runs the pull request's own copy of this file, without secrets and with no token
+# permissions, so it does nothing but exist: the gate's workflow_run job re-reads every input
+# from the API and trusts nothing from this run but which branch it ran for.
+name: AI merge gate events
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited, labeled]
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions: {}
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "AI merge gate event"

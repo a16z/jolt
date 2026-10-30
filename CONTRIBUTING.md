@@ -54,9 +54,19 @@ These Claude Code skills are available in this repo:
 | `/new-spec <name>` | Create a new spec file from the template |
 | `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
 | `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
-| `/ci-code-review` | Deep PR code review with parallel analysis agents |
+| `/ci-code-review` | One-pass PR code review; the AI merge gate runs it on Astra Max |
+| `/verifier-classifier` | Decide whether a change can alter which proofs the verifier accepts |
 
 Spec analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
+
+## AI Merge Gate
+
+Once its admin setup is in place, merging into `main` requires the `ai-merge-gate` check. It
+passes on a human approval of the pull request's head, or, for a pull request written or
+authorized by a core contributor, when a CI classifier finds the change cannot alter which
+proofs the verifier accepts and an Astra Max review of the head found no issues.
+[`.github/ai-merge-gate.md`](.github/ai-merge-gate.md) has the rules, the
+`AI gate: AUTHORIZED` and `Review: CONFIRMED` lines, and the admin setup.
 
 ## Development Setup
 
