@@ -1,3 +1,10 @@
+//! Weighted folds over field and compact native columns.
+//!
+//! As in optimized's native witness folds, integer products accumulate before
+//! field reduction and Boolean entries select weights to add. Device batches
+//! bound the unreduced accumulator; signed entries negate the weight before
+//! multiplying by the unsigned magnitude.
+
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 #[cfg(test)]
 use jolt_field::Fr;
@@ -728,6 +735,38 @@ mod tests {
                     got, expected,
                     "{kind:?} narrow fold diverged for {summed:?}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn long_narrow_half_fold_matches_the_host_fold() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for sum_len in [4095, 4096, 4097] {
+            let weights: Vec<Fr> = (0..sum_len)
+                .map(|index| match index % 3 {
+                    0 => -Fr::from_u64(1),
+                    1 => Fr::from_u128(u128::MAX - index as u128),
+                    _ => zero(),
+                })
+                .collect();
+            let device_weights = context.upload(&weights).expect("upload weights");
+            let scale = -Fr::from_u64(7);
+            for kind in KINDS {
+                let (words, values) = narrow_entries(kind, 2 * sum_len, u64::MAX);
+                let device_words = context.upload_u64_slice(&words).expect("upload words");
+                let column =
+                    FoldColumn::Narrow(NarrowColumn::packed(&device_words, kind, values.len()));
+                for summed in [SummedHalf::High, SummedHalf::Low] {
+                    let expected = cpu_half_fold(&values, &weights, 2, summed, scale, zero());
+                    let got = half_fold(context, column, &device_weights, summed, scale)
+                        .expect("device long narrow half fold")
+                        .to_host()
+                        .expect("download fold");
+                    assert_eq!(got, expected, "{kind:?}, {summed:?}, length {sum_len}");
+                }
             }
         }
     }
