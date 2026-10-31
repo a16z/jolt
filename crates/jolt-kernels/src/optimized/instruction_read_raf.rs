@@ -271,39 +271,43 @@ pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<Instructio
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) Weak<ConstantSuffix<InstructionCycleRow>>);
 
 impl InstructionCycleRow {
-    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
-    /// impossible to consume) or collect them fresh, and park the carry back
-    /// for later consumers.
+    /// Reuse a length-matched carry; weak rows are valid only for random-access
+    /// witnesses, whose collection does not replay execution.
+    pub(crate) fn cached<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Option<Arc<ConstantSuffix<Self>>> {
+        if let Some(SharedInstructionRows(rows)) = session.state::<SharedInstructionRows>() {
+            if rows.len() == cycles {
+                return Some(Arc::clone(rows));
+            }
+            drop(session.take::<SharedInstructionRows>());
+        }
+        let _ = witness.random_access()?;
+        session
+            .state::<SharedInstructionRowsWeak>()
+            .and_then(|weak| weak.0.upgrade())
+            .filter(|rows| rows.len() == cycles)
+    }
+
+    /// Reuse cached rows or collect them, retaining a strong carry only for
+    /// witnesses whose next collection would replay execution.
     pub(crate) fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Arc<ConstantSuffix<Self>>, KernelError<F>> {
-        // A parked strong carry is always honored (re-emulating sources, and
-        // tests that inject rows a witness would not produce).
-        let carried = match session.take::<SharedInstructionRows>() {
-            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
-            _ => None,
-        };
-        if witness.random_access().is_some() {
-            let upgraded = || {
-                session
-                    .state::<SharedInstructionRowsWeak>()
-                    .and_then(|weak| weak.0.upgrade())
-                    .filter(|rows| rows.len() == cycles)
-            };
-            let rows = match carried.or_else(upgraded) {
-                Some(rows) => rows,
-                None => Arc::new(Self::collect(witness, cycles)?),
-            };
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-            return Ok(rows);
-        }
-        let rows = match carried {
+        let rows = match Self::cached(session, witness, cycles) {
             Some(rows) => rows,
             None => Arc::new(Self::collect(witness, cycles)?),
         };
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        if witness.random_access().is_some() {
+            drop(session.take::<SharedInstructionRows>());
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        } else {
+            session.park(SharedInstructionRows(Arc::clone(&rows)));
+        }
         Ok(rows)
     }
 }
