@@ -105,6 +105,10 @@ legs. Setup may use system entropy; retained URS files are hash-identified.
 Warmup means an excluded first invocation, not a proven Cargo or URS cache hit.
 Akita's external schedule files are copied into the bundle and hash-checked.
 No host governor, SMT, boost, swap, RAID, or other setting is changed.
+`host.microcode` comes from `/proc/cpuinfo`. `host.control_plane` records the
+readable `/opt/pika/bin/pika-cli` and `pika-shim` SHA256s and the shim's `--version`
+output. Unavailable observations are null, never an assumed match. These are
+runtime observations; they are not part of native bundle cache identity.
 
 ## Manual commands
 
@@ -138,9 +142,12 @@ An invalid or incomplete entry is recorded as a cache miss and rebuilt.
 Reuse preserves the construction manifest byte-for-byte. The fresh preparation
 receipt identifies the copied manifest, required inputs and current elapsed
 interval; `construction.log` retains the original build log. Git synchronization,
-lock resolution, validation and copying still count toward preparation. The store
-has no automatic eviction. Cache maintenance is administrator-owned and must hold
-the same `host.lock`; do not remove the lock file itself during maintenance.
+lock resolution, validation, copying and pruning still count toward preparation.
+The completed-bundle store retains at most eight entries. Successful reuse updates
+an entry's recency; each completed store prunes the oldest entries and removes
+empty identity directories. Pruning leaves the source clone, Cargo target, result
+outputs and lock file intact. Other cache maintenance is administrator-owned and
+must hold the same `host.lock`; do not remove the lock file during maintenance.
 
 Build a transportable bundle (no proving occurs):
 
@@ -196,6 +203,46 @@ uv run --no-project python scripts/bench/run.py render-comment \
   --out "$BENCH_OUT/pr-comment.md"
 ```
 
+`run`, `suite`, and `render-comment` accept `--calibration "$CALIBRATION_JSON"`.
+The file supplies the observational reference at execution or rendering time;
+`suite.calibration_sha256` records the SHA256 of its exact bytes. A render-only
+override changes the comment, not the original raw result. The option does not
+enter build identity or change any native bundle's construction manifest.
+Keep the suite configuration and bundles unchanged when adding observations.
+
+Collect the standard-main population first on the released target runtime, with
+`$BASE` set to its exact main revision:
+
+```bash
+uv run --no-project python scripts/bench/run.py suite \
+  --tier main --head-revision "$BASE" --harness-revision "$HARNESS" \
+  --target-cpu "$TARGET_CPU" --out "$MAIN_OUT"
+```
+
+Then use its returned bundle and bundled collector for the ten-pair reference:
+
+```bash
+uv run --no-project python "$MAIN_OUT/builds/head/scripts/bench/run.py" run \
+  --tier pr --kind null --warmups 1 --repetitions 10 \
+  --base "$MAIN_OUT/builds/head/manifest.json" \
+  --head "$MAIN_OUT/builds/head/manifest.json" --out "$NULL_OUT"
+```
+
+After deriving the reference, pass it to the actual three-repetition comparison
+without rebuilding that baseline just to add observations:
+
+```bash
+uv run --no-project python scripts/bench/run.py suite \
+  --tier pr --base-revision "$BASE" --head-revision "$MERGE" \
+  --harness-revision "$HARNESS" --target-cpu "$TARGET_CPU" \
+  --calibration "$CALIBRATION_JSON" --out "$BENCH_OUT/pr-calibrated"
+```
+
+The source revisions, native harness revision, collector hash and calibration
+source remain distinct. A later renderer does not change the collector that
+recorded an earlier result. A changed collector hash makes its old reference
+unavailable; there is no source-equivalence exception registry.
+
 ## Result and failure contract
 
 The schema-1 `benchmark-results.json` contains the expected `cases`, each with all
@@ -207,6 +254,38 @@ raw logs, manifests, fixed inputs, compiler flags, toolchain and lockfile hashes
 binary/guest hashes, CPU topology, and host settings. It excludes executable
 payloads and the runtime URS cache. A transportable `build` bundle keeps the
 actual binaries, guest ELFs, and Akita schedules for off-host execution.
+
+The comment shows the base and head medians for end-to-end time and peak RSS,
+with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
+Only the configured measured repetitions contribute; warmups are excluded.
+Missing repetitions, failed processes and zero denominators remain unavailable
+comparisons. Proof sizes remain in the raw samples.
+
+Without an optional file, `suite.calibration` comes from the supplied configuration.
+The current default is explicitly unavailable. The comment identifies the suite
+configuration and optional input by their SHA256s; a manual rendering does not
+authenticate either source. Trusted publication requires both the calibration
+object and `calibration_sha256` to equal its pinned expected configuration.
+An unapproved manual override is rejected, even if the artifact claims the trusted
+suite hash. The hosted workflow continues to use only that pinned configuration.
+
+The measured method is `null-median3-symmetric-envelope-v2`: ten same-binary null
+pairs supply eight overlapping windows of three pairs. Each window compares the
+two leg medians in both directions and retains the larger percentage increase.
+The informational threshold is 1.5 times the largest window increase, with floors
+of 3% for time and 2% for peak RSS, rounded up to 0.5 percentage points. The
+windows are not independent observations; no statistical significance or pass/fail
+claim follows. The comment displays each cell's threshold and observed maximum.
+
+References apply only to three measured repetitions. Match each cell against the
+base leg's revision, binary, guest, input, trace rows, compiler settings and
+effective lockfile, plus its workload, PCS, core count, ordered CPU mask and scale.
+The collector hash, metric contract, host identity, kernel, microcode, control-plane
+identity, boost, SMT, governor map, huge-page setting and total swap must also match.
+Missing evidence or a mismatch leaves the real medians and signed deltas visible,
+with an unavailable reference and its reason. Candidate binary, guest and trace
+changes are shown, not rejected. A harness Git revision difference alone is not
+a mismatch when the required binary, collector and metric identities match.
 
 The GitHub artifact is `jolt-e2e-RUN_ID-RUN_ATTEMPT`. Its root always contains
 `benchmark-results.json`. For a multi-commit main push, that document is the
@@ -272,8 +351,16 @@ gh api --paginate "orgs/a16z/actions/runner-groups/$jolt_bench_group_id/reposito
 
 Require the exact settings in step 2 and only `a16z/jolt` in the repository
 readback. If the group or workflow restriction is unavailable, leave execution
-disabled. Then, in an interactive root terminal on the prepared host, register
-as the dedicated `runner` account (home `/home/runner`):
+disabled. On the administrator workstation, obtain an organization registration
+token using the [documented API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-a-registration-token-for-an-organization).
+It expires after one hour:
+
+```bash
+gh api --method POST orgs/a16z/actions/runners/registration-token --jq .token
+```
+
+Then, in an interactive root terminal on the prepared host, register as the
+dedicated `runner` account (home `/home/runner`):
 
 ```bash
 runuser -u runner -- bash -lc '
@@ -293,6 +380,18 @@ and its [secret prompt](https://github.com/actions/runner/blob/d1eb12d4b115c3012
 The organization URL is intentional: repository-scoped registration at
 `https://github.com/a16z/jolt` does not select this organization group. The
 hardware label is additional; `jolt-bench` is the workflow's required label.
+
+After registration succeeds, use the same root terminal to install and start the
+native runner service as `runner`, then inspect its status. Runner 2.338.2's
+[service script](https://github.com/actions/runner/blob/d1eb12d4b115c301201de27d667284e1a80f2ab5/src/Misc/layoutbin/systemd.svc.sh.template#L48-L108)
+requires root and accepts the service account as the `install` argument:
+
+```bash
+cd /home/runner/actions-runner &&
+./svc.sh install runner &&
+./svc.sh start &&
+./svc.sh status
+```
 
 Back on the administrator workstation, read the group's actual runner membership
 and labels. Before enabling execution, repeat the group/repository readbacks

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "jolt-cpu-v1",
   "metric_contract": 1,
-  "calibration": {"status": "proposed", "reason": "Sizes and repetitions require the dedicated target null experiment; no PR time-budget result is claimed."},
+  "calibration": {"status": "unavailable", "reason": "An estimator-matched reference has not been supplied; no PR time-budget result is claimed."},
   "tiers": {
     "pr": {
       "warmups": 1, "repetitions": 3,
