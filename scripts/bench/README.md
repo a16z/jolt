@@ -475,9 +475,14 @@ provenance, not independent cryptographic attestation of a persistent host.
 PR requests and comparisons cancel superseded runs per PR branch. Main and
 nightly use unique run groups; GitHub's single-pending replacement behavior
 cannot silently discard main commits. The dedicated runner and owned file lock
-serialize execution. Nightly starts at 09:00 UTC (05:00 EDT / 04:00 EST); finishing
-before ET work hours still requires measured suite and queue durations. Rerun
-all jobs together: a plan from an older run attempt is rejected.
+serialize execution. Nightly is scheduled at 07:00 UTC (03:00 EDT / 02:00 EST).
+The self-hosted job has a configured 180-minute timeout. The measured pilot ran
+each of the 60 supported nightly cases once. It does not establish the full
+nightly suite's duration, variation between runs, or completion within 180
+minutes. Hosted-job and queue overhead remain unmeasured; no finish guarantee
+is established.
+
+Rerun all jobs together: a plan from an older run attempt is rejected.
 
 Focused checks, without proof timings:
 
