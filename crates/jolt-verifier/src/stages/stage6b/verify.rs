@@ -7,7 +7,7 @@ use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{
@@ -53,6 +53,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         relations::validate_member_presence,
         stage1::Stage1Output,
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
@@ -86,14 +87,15 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     // The bytecode fold gamma shares stage 6a's squeeze; it and the booleanity
     // gamma ride on the stage-6a output as typed upstream values. The post-6a
     // draws and the challenges aggregate are the promoted two-front helpers.
     let carried = stage6a.challenges();
     let bytecode_reduction_layout = checked.precommitted.bytecode.as_ref();
-    let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some());
+    check_pow(PowSite::Stage6b, &proof.stages.pow_nonces, transcript)?;
+    let draws = Stage6bDraws::draw(transcript, bytecode_reduction_layout.is_some())?;
 
     let sumchecks = Stage6bSumchecks::build(
         checked,
@@ -535,12 +537,12 @@ fn append_opening_claims<F, T>(
     booleanity_point: &[F],
 ) where
     F: JoltField,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F>,
 {
     // Single-sourced with the prover-curation order: both fronts absorb the
     // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
     for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
-        transcript.append_labeled(b"opening_claim", &value);
+        transcript.append(&value);
     }
 }
 
@@ -560,8 +562,9 @@ mod tests {
     use super::super::ram_hamming_booleanity::RamHammingBooleanityOutputClaims;
     use super::super::ram_ra_virtualization::RamRaVirtualizationOutputClaims;
     use super::*;
-    use crate::stages::relations::append_recording::RecordingTranscript;
+    use crate::stages::relations::draw_recording::recorder;
     use jolt_field::{Fr, Ring};
+    use jolt_transcript::Transcript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -789,15 +792,15 @@ mod tests {
     fn append_opening_claims_follows_canonical_order() {
         let (claims, last) = sample_claims();
 
-        let mut got = RecordingTranscript::default();
+        let mut got = recorder();
         append_opening_claims(&mut got, &claims, &[], &[]);
 
-        let mut want = RecordingTranscript::default();
+        let mut want = recorder();
         for value in (1..=last).map(fr) {
-            want.append_labeled(b"opening_claim", &value);
+            want.append(&value);
         }
 
-        assert_eq!(got.chunks, want.chunks);
+        assert_eq!(got.absorbed(), want.absorbed());
     }
 
     #[test]

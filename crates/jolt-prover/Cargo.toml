@@ -100,7 +100,7 @@ allocative = [
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 akita-params = { workspace = true, optional = true }
-jolt-blindfold = { workspace = true, optional = true }
+jolt-blindfold = { workspace = true, optional = true, features = ["prover"] }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
@@ -111,8 +111,12 @@ jolt-openings.workspace = true
 jolt-poly = { workspace = true, default-features = false }
 jolt-program.workspace = true
 jolt-riscv.workspace = true
-jolt-sumcheck.workspace = true
-jolt-transcript.workspace = true
+jolt-sumcheck = { workspace = true, features = ["prover"] }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "prover-grinding",
+  "transcript-keccak",
+] }
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
 rand_core = { workspace = true, features = ["getrandom"], optional = true }

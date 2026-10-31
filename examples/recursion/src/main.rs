@@ -3,6 +3,7 @@ use jolt_sdk::host::Program;
 use jolt_sdk::ProgramPreprocessingMode;
 use jolt_sdk::{
     JoltDevice, JoltProverPreprocessing, JoltVerifierPreprocessing, MemoryConfig, RV64IMACProof,
+    VerifierTranscript,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
@@ -387,7 +388,7 @@ fn collect_guest_proofs(
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
-            jolt_sdk::VerifierTranscript,
+            VerifierTranscript<'_>,
         >(&guest_verifier_preprocessing, &io_device, &proof, None)
         .is_ok();
         info!("  Verification result: {is_valid}");
@@ -535,7 +536,7 @@ fn run_recursion_proof(
                     jolt_sdk::VerifierField,
                     jolt_sdk::VerifierPCS,
                     jolt_sdk::VerifierVC,
-                    jolt_sdk::VerifierTranscript,
+                    VerifierTranscript<'_>,
                 >(&recursion_verifier_preprocessing, &io_device, &proof, None)
                 .is_ok();
             let rv = postcard::from_bytes::<u32>(&io_device.outputs).unwrap();

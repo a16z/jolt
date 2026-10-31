@@ -519,45 +519,6 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     table.truncate(half);
 }
 
-/// Bound entries from which [`bind_prefix_pairs`] collects them in parallel
-/// into a new table.
-const PREFIX_PAIRS_PAR_MIN: usize = 1024;
-
-/// Low-bit-first binding of a prefix, with the missing odd endpoint supplied
-/// by its implicit suffix. Small prefixes reuse their allocation.
-pub(crate) fn bind_prefix_pairs<F: JoltField>(table: &mut Vec<F>, r: F, boundary: F) {
-    let len = table.len().div_ceil(2);
-    #[cfg(feature = "parallel")]
-    if len >= PREFIX_PAIRS_PAR_MIN {
-        *table = table
-            .par_chunks(2)
-            .map(|pair| {
-                let lo = pair[0];
-                r.mul_add(pair.get(1).copied().unwrap_or(boundary) - lo, lo)
-            })
-            .collect();
-        return;
-    }
-    for index in 0..len {
-        let lo = table[2 * index];
-        let hi = table.get(2 * index + 1).copied().unwrap_or(boundary);
-        table[index] = r.mul_add(hi - lo, lo);
-    }
-    table.truncate(len);
-}
-
-/// Entries [`bind_prefix_pairs`] allocates while binding a `len`-entry
-/// table: the bound half it collects beside the old table under `parallel`,
-/// or none when it binds in place, keeping the old capacity.
-pub(crate) fn bind_prefix_pairs_buffer_len(len: usize) -> usize {
-    let half = len.div_ceil(2);
-    if cfg!(feature = "parallel") && half >= PREFIX_PAIRS_PAR_MIN {
-        half
-    } else {
-        0
-    }
-}
-
 /// Bytes a Rayon fallible `collect::<Result<Vec<T>, _>>()` of `len` entries
 /// may hold at once, or `None` past `usize::MAX`. The collect is unindexed:
 /// it folds each split into its own vector on a linked list, then appends

@@ -25,8 +25,8 @@ use akita_types::{
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
-use rayon::{prelude::*, ThreadPool, ThreadPoolBuilder};
+use jolt_transcript::{BytesMsg, Encoding, FieldTranscript, Transcript, TAG_BYTES};
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
@@ -705,20 +705,17 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
     flavor: AkitaBackendFlavor,
 ) -> Result<(), OpeningsError> {
     let akita_chunk_profile = setup.akita_chunk_profile();
-    transcript.append(&Label(b"akita_setup_key"));
-    transcript.append_bytes(b"akita/fp128");
-    transcript.append_bytes(flavor.transcript_label());
-    transcript.append(&U64Word(setup.max_num_vars as u64));
-    transcript.append(&U64Word(setup.max_num_polys_per_commitment_group as u64));
-    transcript.append(&U64Word(setup.max_total_batch_polys as u64));
-    transcript.append(&U64Word(setup.one_hot_k as u64));
+    transcript.append(&flavor.transcript_word());
+    transcript.append(&(setup.max_num_vars as u64));
+    transcript.append(&(setup.max_num_polys_per_commitment_group as u64));
+    transcript.append(&(setup.max_total_batch_polys as u64));
+    transcript.append(&(setup.one_hot_k as u64));
+    // The flavor word before them fixes whether these two words are present.
     if flavor == AkitaBackendFlavor::OneHot {
-        transcript.append(&Label(b"akita_chunk_profile"));
-        transcript.append(&U64Word(akita_chunk_profile.chunks as u64));
-        transcript.append(&Label(b"akita_chunked_levels"));
-        transcript.append(&U64Word(akita_chunk_profile.levels as u64));
+        transcript.append(&(akita_chunk_profile.chunks as u64));
+        transcript.append(&(akita_chunk_profile.levels as u64));
     }
-    transcript.append_bytes(&setup.default_layout_digest);
+    transcript.append(&setup.default_layout_digest);
     let catalog_digest = match flavor {
         AkitaBackendFlavor::Dense => setup.dense_scheme()?.schedules().catalog_digest(),
         AkitaBackendFlavor::OneHot => {
@@ -727,25 +724,28 @@ pub(crate) fn append_verifier_setup<T: Transcript>(
                 .catalog_digest())
         }
     };
-    transcript.append_bytes(&catalog_digest);
+    transcript.append(&catalog_digest);
     Ok(())
 }
 
 /// Binds the batch statement (commitment group, point, per-claim data) into
-/// the transcript.
+/// the transcript. The verifier builds `statement` and fixes the point's
+/// length, so neither carries a count word.
+///
+/// # Security
+/// The caller must check `point.len()` and `statement.len()` against the
+/// lengths fixed by bound data before calling, since neither is absorbed.
 pub(crate) fn append_batch_statement<T: Transcript>(
     transcript: &mut T,
     statement: &[VerifierOpeningClaim<AkitaField, AkitaCommitment>],
     commitment: &AkitaCommitment,
     point: &[AkitaField],
 ) {
-    transcript.append(&Label(b"akita_batch_statement"));
-    commitment.append_to_transcript(transcript);
-    transcript.append_values(b"akita_pcs_point", point);
-    transcript.append(&LabelWithCount(b"akita_claims", statement.len() as u64));
+    transcript.append(&commitment);
+    transcript.append_values(point);
     for claim in statement {
-        claim.commitment.append_to_transcript(transcript);
-        claim.evaluation.value.append_to_transcript(transcript);
+        transcript.append(&claim.commitment);
+        transcript.append(&claim.evaluation.value);
     }
 }
 
@@ -758,10 +758,11 @@ pub enum AkitaBackendFlavor {
 }
 
 impl AkitaBackendFlavor {
-    pub(crate) const fn transcript_label(self) -> &'static [u8] {
+    /// The flavor's absorbed `u64` word.
+    pub(crate) const fn transcript_word(self) -> u64 {
         match self {
-            Self::Dense => b"dense",
-            Self::OneHot => b"one_hot",
+            Self::Dense => 0,
+            Self::OneHot => 1,
         }
     }
 }
@@ -884,20 +885,22 @@ impl AkitaCommitment {
     }
 }
 
-impl AppendToTranscript for AkitaCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_commitment"));
-        transcript.append_bytes(self.backend_flavor.transcript_label());
-        transcript.append_bytes(&self.layout_digest);
-        transcript.append(&U64Word(self.num_vars as u64));
-        transcript.append(&U64Word(self.poly_count as u64));
-        transcript.append(&U64Word(self.one_hot_k as u64));
-        transcript.append(&U64Word(self.backend_coeff_len as u64));
-        transcript.append(&LabelWithCount(
-            b"akita_commitment_bytes",
-            self.serialized_backend_bytes.len() as u64,
-        ));
-        transcript.append_bytes(&self.serialized_backend_bytes);
+impl Encoding for AkitaCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = self.backend_flavor.transcript_word().to_le_bytes().to_vec();
+        out.extend_from_slice(&self.layout_digest);
+        for word in [
+            self.num_vars,
+            self.poly_count,
+            self.one_hot_k,
+            self.backend_coeff_len,
+        ] {
+            out.extend_from_slice(&(word as u64).to_le_bytes());
+        }
+        // The backend bytes keep their length word: nothing bound fixes it.
+        let backend = BytesMsg(&self.serialized_backend_bytes);
+        out.extend_from_slice(backend.encode().as_ref());
+        out
     }
 }
 
@@ -949,14 +952,11 @@ impl AkitaHidingCommitment {
     }
 }
 
-impl AppendToTranscript for AkitaHidingCommitment {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&Label(b"akita_hiding_commitment"));
-        transcript.append(&LabelWithCount(
-            b"akita_hiding_eval",
-            self.eval.len() as u64,
-        ));
-        transcript.append_bytes(&self.eval);
+impl Encoding for AkitaHidingCommitment {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Vec::new();
+        out.extend_from_slice(BytesMsg(&self.eval).encode().as_ref());
+        out
     }
 }
 
@@ -1138,14 +1138,6 @@ pub(crate) fn one_hot_setup_verifier(
     })
 }
 
-#[doc(hidden)]
-pub fn jolt_to_akita_index(num_vars: usize, index: usize) -> usize {
-    if num_vars == 0 {
-        return index;
-    }
-    index.reverse_bits() >> (usize::BITS as usize - num_vars)
-}
-
 pub(crate) fn dense_polynomials(
     polynomials: &[Polynomial<AkitaField>],
 ) -> Result<Vec<AkitaBackendDensePoly>, OpeningsError> {
@@ -1158,11 +1150,9 @@ pub(crate) fn dense_polynomials(
         .collect()
 }
 
+/// Dense evaluations retain Jolt's row-major order, just like one-hot sources.
+/// Opening adapters reverse the coordinates to match Akita's variable order.
 #[doc(hidden)]
-#[expect(
-    clippy::indexing_slicing,
-    reason = "validated power-of-two lengths keep reversed indices and rectangular tile ranges within their respective slices"
-)]
 pub fn jolt_to_akita_evals(
     num_vars: usize,
     jolt_evals: &[AkitaField],
@@ -1178,55 +1168,14 @@ pub fn jolt_to_akita_evals(
             jolt_evals.len()
         )));
     }
-    if num_vars == 0 {
-        return Ok(jolt_evals.to_vec());
-    }
-    let mut akita_evals = vec![AkitaField::zero(); jolt_evals.len()];
-    if num_vars < 14 {
-        for (jolt_index, &eval) in jolt_evals.iter().enumerate() {
-            let akita_index = jolt_to_akita_index(num_vars, jolt_index);
-            akita_evals[akita_index] = eval;
-        }
-        return Ok(akita_evals);
-    }
-
-    // Reversing the row references lets each task read four contiguous input
-    // values while writing into four 8 KiB output rows that fit in cache.
-    // Only the references are permuted; the output has a single owner.
-    const ROW_BITS: usize = 9;
-    const TILE: usize = 4;
-    let row_size = 1usize << ROW_BITS;
-    let num_rows = expected / row_size;
-    let mut rows: Vec<_> = akita_evals.chunks_exact_mut(row_size).collect();
-    for row in 0..num_rows {
-        let reversed = jolt_to_akita_index(num_vars - ROW_BITS, row);
-        if row < reversed {
-            rows.swap(row, reversed);
-        }
-    }
-    let offsets: Vec<_> = (0..row_size)
-        .map(|high| jolt_to_akita_index(ROW_BITS, high))
-        .collect();
-    rows.par_chunks_mut(TILE)
-        .enumerate()
-        .for_each(|(tile, rows)| {
-            let low = tile * TILE;
-            for (high, &out_low) in offsets.iter().enumerate() {
-                let start = high * num_rows + low;
-                let source = &jolt_evals[start..start + rows.len()];
-                for (row, &value) in rows.iter_mut().zip(source) {
-                    row[out_low] = value;
-                }
-            }
-        });
-    Ok(akita_evals)
+    Ok(jolt_evals.to_vec())
 }
 
-/// Materializes a polynomial's evaluations directly in Akita's (bit-reversed)
-/// index order, avoiding a second full-size buffer for the reorder pass.
+/// Materializes a polynomial's evaluations in Jolt's row-major order.
+/// Both dense and one-hot openings reverse coordinates at the backend boundary.
 #[expect(
     clippy::indexing_slicing,
-    reason = "jolt_to_akita_index keeps num_vars bits of the reversal, so the index is < 2^num_vars = evals.len(); for num_vars = 0 the single index for_each_row yields is 0"
+    reason = "for_each_row yields exactly 2^num_vars evaluations"
 )]
 pub(crate) fn akita_ordered_evaluations<P>(polynomial: &P) -> Result<Vec<AkitaField>, OpeningsError>
 where
@@ -1245,7 +1194,7 @@ where
     let mut jolt_index = 0usize;
     polynomial.for_each_row(num_vars, &mut |_, row| {
         for &eval in row {
-            evals[jolt_to_akita_index(num_vars, jolt_index)] = eval;
+            evals[jolt_index] = eval;
             jolt_index += 1;
         }
     });
@@ -1308,19 +1257,22 @@ pub(crate) fn transparent_zk_error() -> OpeningsError {
 /// subsequent Jolt challenge consumes the terminal opening proof, so
 /// reabsorbing that proof into the outer transcript could not affect
 /// acceptance.
-pub(crate) fn bridged_akita_session<T>(jolt_transcript: &mut T, session_label: &[u8]) -> Vec<u8>
+pub(crate) fn bridged_akita_session<T>(
+    jolt_transcript: &mut T,
+    session_tag: &[u8; TAG_BYTES],
+) -> Result<Vec<u8>, OpeningsError>
 where
-    T: Transcript<Challenge = AkitaField>,
+    T: FieldTranscript<AkitaField>,
 {
-    let bridge = jolt_transcript.challenge_scalar();
+    let bridge = jolt_transcript.challenge()?;
     let bridge_bytes = bridge.to_bytes_le_vec();
     // Akita binds the concrete instance into its own Fiat-Shamir state but
     // keeps the session bytes as domain separator, so the cross-protocol
     // bridge belongs here.
-    let mut bridged_session = Vec::with_capacity(session_label.len() + bridge_bytes.len());
-    bridged_session.extend_from_slice(session_label);
+    let mut bridged_session = Vec::with_capacity(session_tag.len() + bridge_bytes.len());
+    bridged_session.extend_from_slice(session_tag);
     bridged_session.extend_from_slice(&bridge_bytes);
-    bridged_session
+    Ok(bridged_session)
 }
 
 #[cfg(test)]
@@ -1339,37 +1291,6 @@ mod tests {
         AkitaField::from_u64(value)
     }
 
-    /// Jolt indexes MLE evaluations big-endian (variable `j` carries index
-    /// weight `2^(n-1-j)`, see the `eq_table` convention in `scheme.rs`);
-    /// Akita indexes them little-endian (variable `j` carries weight `2^j`).
-    /// The tables below are derived by hand from those weight conventions —
-    /// e.g. for n = 3, jolt index 1 is the assignment (0, 0, 1), whose Akita
-    /// index is 1 * 2^2 = 4 — not by re-running any bit arithmetic.
-    #[test]
-    fn jolt_to_akita_index_matches_hand_derived_tables() {
-        let three_vars = [0, 4, 2, 6, 1, 5, 3, 7];
-        for (jolt_index, &akita_index) in three_vars.iter().enumerate() {
-            assert_eq!(
-                jolt_to_akita_index(3, jolt_index),
-                akita_index,
-                "num_vars=3, jolt index {jolt_index}",
-            );
-        }
-
-        let two_vars = [0, 2, 1, 3];
-        for (jolt_index, &akita_index) in two_vars.iter().enumerate() {
-            assert_eq!(
-                jolt_to_akita_index(2, jolt_index),
-                akita_index,
-                "num_vars=2, jolt index {jolt_index}",
-            );
-        }
-
-        assert_eq!(jolt_to_akita_index(1, 0), 0);
-        assert_eq!(jolt_to_akita_index(1, 1), 1);
-        assert_eq!(jolt_to_akita_index(0, 0), 0);
-    }
-
     #[test]
     fn jolt_to_akita_evals_passes_zero_var_polynomials_through() {
         let jolt = [af(99)];
@@ -1380,31 +1301,26 @@ mod tests {
     }
 
     #[test]
-    fn dense_ordering_preserves_boolean_assignments_across_tile_boundaries() {
+    fn dense_ordering_preserves_row_major_evaluations() {
         for num_vars in [0, 1, 3, 9, 13, 14, 15, 18] {
             // f(x) = 7 + sum_j 3^j x_j identifies each Boolean assignment.
-            // Jolt addresses x_j by the high-order bit, Akita by the low bit.
+            // Dense sources keep Jolt's high-bit-first row-major indexing.
             let weights: Vec<_> = (0..num_vars).map(|j| 3u64.pow(j as u32)).collect();
-            let value = |index: usize, little_endian: bool| {
+            let value = |index: usize| {
                 af(7 + weights
                     .iter()
                     .enumerate()
                     .filter_map(|(j, weight)| {
-                        let bit = if little_endian { j } else { num_vars - 1 - j };
+                        let bit = num_vars - 1 - j;
                         ((index >> bit) & 1 == 1).then_some(*weight)
                     })
                     .sum::<u64>())
             };
-            let polynomial =
-                Polynomial::new((0..1usize << num_vars).map(|i| value(i, false)).collect());
+            let polynomial = Polynomial::new((0..1usize << num_vars).map(value).collect());
             let ordered = akita_ordered_evaluations(&polynomial).unwrap();
             assert_eq!(ordered.len(), 1usize << num_vars);
             for (index, actual) in ordered.into_iter().enumerate() {
-                assert_eq!(
-                    actual,
-                    value(index, true),
-                    "dimension {num_vars}, index {index}"
-                );
+                assert_eq!(actual, value(index), "dimension {num_vars}, index {index}");
             }
         }
     }
@@ -1432,20 +1348,22 @@ mod tests {
         );
     }
 
-    /// The identity the backend hand-off relies on: transforming the
-    /// evaluations with `jolt_to_akita_evals` AND the opening point with
-    /// `reverse_point` leaves the multilinear evaluation unchanged. Checked
-    /// against a hand-rolled big-endian MLE evaluator, so a bug in either
-    /// transform (or applying only one of them) fails this test.
+    /// Jolt uses high-bit-first coordinates and Akita uses low-bit-first
+    /// coordinates. Keep the table and reverse only the opening point.
     #[test]
-    fn eval_and_point_transforms_together_preserve_mle_evaluation() {
-        fn mle_big_endian(evals: &[AkitaField], point: &[AkitaField]) -> AkitaField {
+    fn row_major_evals_and_reversed_point_preserve_mle_evaluation() {
+        fn mle(evals: &[AkitaField], point: &[AkitaField], little_endian: bool) -> AkitaField {
             let one = af(1);
             let mut acc = af(0);
             for (index, &eval) in evals.iter().enumerate() {
                 let mut weight = one;
                 for (variable, &coordinate) in point.iter().enumerate() {
-                    let bit = (index >> (point.len() - 1 - variable)) & 1;
+                    let bit_index = if little_endian {
+                        variable
+                    } else {
+                        point.len() - 1 - variable
+                    };
+                    let bit = (index >> bit_index) & 1;
                     weight *= if bit == 1 {
                         coordinate
                     } else {
@@ -1459,18 +1377,15 @@ mod tests {
 
         let evals: Vec<AkitaField> = (0..8).map(|value| af(100 + 7 * value)).collect();
         let point = vec![af(3), af(17), af(29)];
-        let transformed = jolt_to_akita_evals(3, &evals).expect("well-formed evaluations convert");
+        let retained = jolt_to_akita_evals(3, &evals).expect("well-formed evaluations convert");
 
+        assert_eq!(retained, evals);
         assert_eq!(
-            mle_big_endian(&transformed, &reverse_point(&point)),
-            mle_big_endian(&evals, &point),
+            mle(&retained, &reverse_point(&point), true),
+            mle(&evals, &point, false),
         );
-        // Applying only the evaluation transform must NOT preserve the value
-        // at this off-hypercube point — otherwise the check above is vacuous.
-        assert_ne!(
-            mle_big_endian(&transformed, &point),
-            mle_big_endian(&evals, &point),
-        );
+        // Asymmetric coordinates ensure omitting the point reversal fails.
+        assert_ne!(mle(&retained, &point, true), mle(&evals, &point, false),);
     }
 
     struct HugeDimensionPoly;

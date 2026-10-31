@@ -1135,6 +1135,7 @@ impl<const P: u128> CanonicalBytes for Fp128<P> {
 impl<const P: u128> CanonicalEncoding for Fp128<P> {
     // C < 2^32 implies p > 2^127, so the modulus is exactly 128 bits.
     const MODULUS_BITS: u32 = 128;
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [P as u64, (P >> 64) as u64, 0, 0];
 
     #[inline(always)]
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
@@ -1173,11 +1174,6 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
     #[inline]
     fn num_bits(&self) -> u32 {
         u128::BITS - join(self.0).leading_zeros()
-    }
-
-    #[inline]
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
     }
 }
 

@@ -5,5 +5,5 @@ jolt_instruction!(
     /// load constraints, and update field register `rs2` to `2^64 · rs2 + word`.
     FieldLoadAccumulateFromMemory,
     circuit flags: [FieldLoadAccumulateFromMemory, Load],
-    instruction flags: []
+    instruction flags: [RightOperandIsRdWriteValue]
 );

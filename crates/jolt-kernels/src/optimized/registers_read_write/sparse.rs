@@ -4,9 +4,7 @@ use rayon::prelude::*;
 
 use super::rows::CollectRegisterEntries;
 use crate::optimized::prefix_product::PrefixColumn;
-use crate::optimized::support::{
-    bind_prefix_pairs_buffer_len, bound_pair, map_indices, mul_0_optimized, pool_workers,
-};
+use crate::optimized::support::{bound_pair, map_indices, mul_0_optimized, pool_workers};
 
 /// Values a coefficient LUT may hold: it squares only while the square fits.
 const MAX_LUT_VALUES: usize = 1 << 16;
@@ -263,9 +261,9 @@ impl<F: JoltField> CycleState<F> {
     /// A LUT squaring holds each new table beside the one it replaces, and a
     /// block pass its bounds, counts and slices plus scratch for one block
     /// per pool worker. The increments keep at most the second bind's
-    /// `⌈cycles / 4⌉` entries: a bound prefix keeps its capacity in place or
-    /// collects its bound half (`bind_prefix_pairs_buffer_len`) beside the old
-    /// table, which only the third bind's copy adds to that allocation. The
+    /// `⌈cycles / 4⌉` entries. Binding keeps that capacity until shrinking;
+    /// reserve another half of it for a possible shrink copy, including
+    /// the later direct-generation binds. The
     /// collapse to the `K`-entry address tables and the address rounds hold
     /// less than the fourth bind.
     pub(super) fn peak_bytes(cycles: usize) -> Option<usize> {
@@ -283,7 +281,7 @@ impl<F: JoltField> CycleState<F> {
             |binds: u32| field(read(binds + 1) + write(binds) + read(binds).max(write(binds + 1)));
         let entries = cycles.checked_mul(MAX_ENTRIES_PER_CYCLE)?;
         let increments = field(cycles.div_ceil(4))?;
-        let increment_copy = field(bind_prefix_pairs_buffer_len(cycles.div_ceil(4)))?;
+        let increment_copy = field(cycles.div_ceil(4).div_ceil(2))?;
         let blocks = block_count(entries);
         let block_pass = |task_scratch: usize| {
             let bookkeeping = 2 * size_of::<usize>() + 2 * size_of::<&mut [F]>();
@@ -320,7 +318,12 @@ impl<F: JoltField> CycleState<F> {
                     .max(sum(&[lut(3)?, increments, increment_copy])?),
             ]),
             sum(&[indexed, direct, lut(3)?, increments, block_pass(0)?]),
-            sum(&[direct, increments, block_pass(direct_scratch)?]),
+            sum(&[
+                direct,
+                increments,
+                increment_copy,
+                block_pass(direct_scratch)?,
+            ]),
         ]
         .into_iter()
         .try_fold(0usize, |peak, phase| Some(peak.max(phase?)))

@@ -20,6 +20,7 @@ thiserror.workspace = true
 [dev-dependencies]
 jolt-transcript = { workspace = true, features = [
   "bn254",
+  "test-utils",
   "transcript-blake2b",
 ] }
 bincode.workspace = true

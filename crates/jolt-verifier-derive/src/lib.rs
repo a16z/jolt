@@ -474,8 +474,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
 
         // Collect each present member's claimed sum, in declaration order, for
         // the recorder absorb — the Fiat-Shamir binding that must precede the
-        // batching-coefficient draw (a clear recorder appends each under
-        // `b"sumcheck_claim"`).
+        // batching-coefficient draw (a clear recorder appends each in order).
         let sum_ident = format_ident!("__sum");
         let sum_collects = plans.iter().zip(&sum_idents).map(|(plan, sum)| {
             per_member(
@@ -497,10 +496,13 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 .map(|(plan, (sum, coeff))| {
                     if plan.is_option {
                         quote! {
-                            let #coeff = #sum.as_ref().map(|_| transcript.challenge_scalar());
+                            let #coeff = #sum
+                                .as_ref()
+                                .map(|_| transcript.challenge())
+                                .transpose()?;
                         }
                     } else {
-                        quote!(let #coeff = transcript.challenge_scalar();)
+                        quote!(let #coeff = transcript.challenge()?;)
                     }
                 });
 
@@ -569,7 +571,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             >
             where
                 __R: ::jolt_sumcheck::SumcheckRecorder<#f>,
-                __T: ::jolt_transcript::Transcript<Challenge = #f>,
+                __T: ::jolt_transcript::FieldTranscript<#f>,
             {
                 use #relations::ConcreteSumcheck as _;
 
@@ -628,8 +630,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             stage: usize,
         ) -> ::core::result::Result<#output_points_name<#f>, #krate::VerifierError>
         where
-            __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
-            __T: ::jolt_transcript::Transcript<Challenge = #f>,
+            __C: ::core::clone::Clone + ::jolt_transcript::Encoding,
+            __T: ::jolt_transcript::FieldTranscript<#f>,
         {
             use #relations::ConcreteSumcheck as _;
 
@@ -688,11 +690,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             if plan.is_option {
                 quote! {
                     if self.#id.is_some() {
-                        __batching_coefficients.push(transcript.challenge_scalar());
+                        __batching_coefficients.push(transcript.challenge()?);
                     }
                 }
             } else {
-                quote!(__batching_coefficients.push(transcript.challenge_scalar());)
+                quote!(__batching_coefficients.push(transcript.challenge()?);)
             }
         });
 
@@ -706,8 +708,8 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #krate::VerifierError,
             >
             where
-                __C: ::core::clone::Clone + ::jolt_transcript::AppendToTranscript,
-                __T: ::jolt_transcript::Transcript<Challenge = #f>,
+                __C: ::core::clone::Clone + ::jolt_transcript::Encoding,
+                __T: ::jolt_transcript::FieldTranscript<#f>,
             {
                 use #relations::ConcreteSumcheck as _;
 
@@ -1054,7 +1056,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             /// challenges draw nothing; `Option` members draw only when present.
             /// This single-sources the stage's inline per-instance draw, so its
             /// Fiat-Shamir order follows member declaration order.
-            pub fn draw_challenges<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
+            pub fn draw_challenges<__T: ::jolt_transcript::FieldTranscript<#f>>(
                 &self,
                 transcript: &mut __T,
             ) -> ::core::result::Result<#challenges_name<#f>, #krate::VerifierError> {
@@ -1088,15 +1090,15 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             }
 
             /// Append every absorbed opening to the transcript in canonical order,
-            /// each under the `b"opening_claim"` label, matching the prover's
-            /// commitment order.
-            pub fn append_output_claims<__T: ::jolt_transcript::Transcript<Challenge = #f>>(
+            /// matching the prover's commitment order. The generated output
+            /// struct fixes the value count, so no count word is absorbed.
+            pub fn append_output_claims<__T: ::jolt_transcript::Transcript>(
                 &self,
                 transcript: &mut __T,
                 claims: &#output_claims_name<#f>,
             ) {
                 for value in self.opening_values(claims) {
-                    transcript.append_labeled(b"opening_claim", &value);
+                    transcript.append(&value);
                 }
             }
         }

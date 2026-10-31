@@ -103,7 +103,8 @@ $$
 \begin{align*}
 \widetilde{\textsf{Val}}_3(k) = &\texttt{imm}(k) + \beta_3 \cdot \texttt{unexpanded\_pc}(k) + \beta_3^2 \cdot \texttt{left\_is\_rs1}(k) \\
 &+ \beta_3^3 \cdot \texttt{left\_is\_pc}(k) + \beta_3^4 \cdot \texttt{right\_is\_rs2}(k) + \beta_3^5 \cdot \texttt{right\_is\_imm}(k) \\
-&+ \beta_3^6 \cdot \texttt{is\_noop}(k) + \beta_3^7 \cdot \texttt{virtual\_instruction}(k) + \beta_3^8 \cdot \texttt{is\_first\_in\_sequence}(k)
+&+ \beta_3^6 \cdot \texttt{is\_noop}(k) + \beta_3^7 \cdot \texttt{right\_is\_rd\_write}(k) \\
+&+ \beta_3^8 \cdot \texttt{virtual\_instruction}(k) + \beta_3^9 \cdot \texttt{is\_first\_in\_sequence}(k)
 \end{align*}
 $$
 

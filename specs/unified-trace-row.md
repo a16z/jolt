@@ -78,8 +78,8 @@ The physical layout is:
 | **Total, alignment 8** | **64** | |
 
 The metadata word retains its feature-dependent layout: 16 circuit-flag bits
-in base builds or 24 under `field-inline`, followed by six instruction flags
-and the immediate sign. Nine bits remain unused in base builds and one in
+in base builds or 24 under `field-inline`, followed by seven instruction flags
+and the immediate sign. Eight bits remain unused in base builds and none in
 field-enabled builds. Byte 63 has the same definition in every feature mode:
 
 | Row-control bits | Meaning |
