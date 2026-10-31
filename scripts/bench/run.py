@@ -285,7 +285,7 @@ def build(args):
     write_json(out / 'manifest.json', manifest)
     env = dict(build_environment(), RUSTFLAGS=manifest['rustflags'])
     config = parse_json(Path(args.config).read_text())
-    inputs = {}
+    inputs, required_pcs = {}, set()
     tiers = ([config['tiers'][args.tier]] if getattr(args, 'tier', None)
              else config['tiers'].values())
     for tier in tiers:
@@ -294,6 +294,7 @@ def build(args):
                     (not getattr(args, 'workload', []) or case['workload'] in args.workload) and
                     (not getattr(args, 'case', []) or case['id'] in args.case)):
                 inputs.setdefault(case['workload'], set()).add(case['input']['parameters']['operations'])
+                required_pcs.add(case['pcs'])
     required_inputs = {name: sorted(counts) for name, counts in inputs.items()}
     host_id, reused, cache_misses = manifest['host']['id'], False, []
     try:
@@ -346,10 +347,13 @@ def build(args):
                     _, cached = load_bundle(cached_path)
                     if cached['status'] != 'complete' or any(cached[key] != value for key, value in identity.items()):
                         raise ValueError('cached build identity or completion differs')
+                    missing_pcs = required_pcs.difference(cached['binaries'])
+                    if missing_pcs:
+                        raise ValueError(f'cached bundle lacks required PCS: {sorted(missing_pcs)}')
                     for name, counts in required_inputs.items():
                         if not set(map(str, counts)).issubset(cached['guests'].get(name, {}).get('inputs', {})):
                             raise ValueError(f'cached bundle lacks required inputs for {name}: {counts}')
-                    entries = [cached['binaries'][pcs] for pcs in ('dory', 'akita')]
+                    entries = [cached['binaries'][pcs] for pcs in cached['binaries']]
                     entries += [cached['runner'], *cached['akita_schedules']]
                     for guest in cached['guests'].values():
                         entries += [guest['elf'], *guest['inputs'].values()]
@@ -366,14 +370,13 @@ def build(args):
                 os.utime(cached_path.parent, None)
                 manifest, reused = cached, True
                 return manifest
-            for pcs, features in [('dory', 'profiling'), ('akita', 'profiling,akita')]:
-                packages = ['-p', 'jolt-prover', '--bin', 'jolt-prover']
-                if pcs == 'dory':
-                    packages += ['-p', 'jolt', '--bin', 'jolt']
-                logged(['cargo', 'build', '-q', '--message-format=short', '--locked',
-                        '--target-dir', str(source / 'target'), '--target', triple,
-                        '--profile', args.profile, *packages,
-                        '--features', features], source, env, log)
+            cargo = ['cargo', 'build', '-q', '--message-format=short', '--locked',
+                     '--target-dir', str(source / 'target'), '--target', triple, '--profile', args.profile]
+            logged([*cargo, '-p', 'jolt', '--bin', 'jolt'], source, env, log)
+            for pcs in sorted(required_pcs):
+                features = 'profiling,akita' if pcs == 'akita' else 'profiling'
+                logged([*cargo, '-p', 'jolt-prover', '--bin', 'jolt-prover', '--features', features],
+                       source, env, log)
                 binary = out / f'jolt-prover-{pcs}'
                 shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
                 manifest['binaries'][pcs] = bundle_file(binary, out)
@@ -383,7 +386,8 @@ def build(args):
             guest_env.pop('RUSTFLAGS', None)
             for workload, counts in inputs.items():
                 prepared = out / 'guests' / workload
-                logged([str(out / 'jolt-prover-dory'), 'prepare', '--name', workload,
+                prepare_binary = out / next(iter(manifest['binaries'].values()))['path']
+                logged([str(prepare_binary), 'prepare', '--name', workload,
                         '--operations', ','.join(map(str, sorted(counts))),
                         '--guest-target-dir', str(source / 'target/bench-guests'), '--out', str(prepared)],
                        source, guest_env, log)
@@ -412,7 +416,8 @@ def build(args):
         prepared = False
         try:
             if manifest['status'] == 'complete' and not reused:
-                cached_dir = bucket / hashlib.sha256(json.dumps(required_inputs, sort_keys=True).encode()).hexdigest()
+                contents = {'pcs': sorted(manifest['binaries']), 'inputs': required_inputs}
+                cached_dir = bucket / hashlib.sha256(json.dumps(contents, sort_keys=True).encode()).hexdigest()
                 if cached_dir.exists():
                     shutil.rmtree(cached_dir)
                 shutil.copytree(out, cached_dir, ignore=shutil.ignore_patterns('manifest.json', 'preparation.json'))

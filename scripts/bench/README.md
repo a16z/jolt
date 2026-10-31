@@ -17,8 +17,9 @@ is a miss before downstream work is added.
 
 ## Workloads and tiers
 
-`suites.json` is the source of the case matrix. Both Dory and Akita run at exactly
-1, 8, or 24 physical cores. The ordinary instruction profile and clear proofs are
+`suites.json` is the source of the case matrix. Standard-main and nightly run both
+Dory and Akita at exactly 1, 8, or 24 physical cores; PRs run only Akita.
+The ordinary instruction profile and clear proofs are
 used; no protocol parameter is adjusted for the benchmark.
 
 | Workload | Fixed operations at 1 / 8 / 24 cores in `main` | Input |
@@ -36,9 +37,14 @@ recorded for each build. `seed: null` means the input generator uses no PRNG.
 
 | Tier | Proposed cases | Warmups / measured repetitions per leg |
 |---|---|---:|
-| `pr` | Fibonacci at 1 core, SHA2 at 8, BTreeMap at 24; both PCS: six points | 1 / 3 |
+| `pr` | Fibonacci at 1 core, SHA2 at 8, BTreeMap at 24; Akita only: three points | 1 / 3 |
 | `main` | All five workloads, all three core counts, both PCS: 30 points | 1 / 3 |
 | `nightly` | Two larger inputs for each main point: 60 points | 1 / 5 |
+
+The fast PR subset has no Dory performance signal. It launches 24 fresh proof
+processes, including warmups and both legs; this count does not establish a wall
+time or build saving. The full changed-source workflow, including preparation,
+transfers and result processing, must still be measured below 600 seconds.
 
 Main trace ceilings are `2^18`, `2^20`, and `2^22` at 1, 8, and 24 cores.
 Nightly uses twice and four times each main operation count and raises the trace
@@ -157,6 +163,14 @@ that clone. No `CARGO_TARGET_DIR` is set. Normal Cargo job settings are honored;
 the manifest records `CARGO_BUILD_JOBS` if supplied, without inferring concurrency
 when it is absent.
 
+Preparation builds the real `jolt` guest-builder CLI separately, then only the
+benchmark executables required by the selected supported cases. PR preparation
+builds `jolt-prover-akita`; main and nightly build both variants. Guest preparation
+uses an executable present in that bundle. The CLI still depends on the Dory host
+SDK (`Cargo.toml` and `jolt-sdk/src/host_utils.rs`); omitting the Dory benchmark
+executable does not eliminate Dory dependency compilation. No CLI dependency or
+optimization setting is changed for this subset.
+
 The harness revision must be committed, and `run.py` must be that revision's
 file. Both source revisions receive the same benchmark-only profile harness and
 direct guest dependencies. Existing locked package identities may not change.
@@ -167,10 +181,11 @@ bundles, not differently instrumented main-vs-main binaries.
 Completed bundles persist in the same locked store. Reuse requires an exact
 source and harness revision, Rust/Cargo versions, target CPU/triple/features,
 flags, profile, lockfiles, harness files, runner and suite-definition match.
-Every required guest/input must exist, and the binary, guest, input, runner,
-configuration and schedule hashes are checked before copying. A main-tier bundle
+Every required PCS and guest/input must exist. All recorded binary, guest, input,
+runner, configuration and schedule hashes are checked before copying. A main-tier bundle
 does not qualify merely because its source SHA matches: it may lack a PR input.
-Different input sets can coexist; a valid superset may serve a smaller request.
+Different PCS/input sets can coexist; a valid main-tier superset may serve a PR
+base. An Akita-only bundle cannot serve a request that also requires Dory.
 An invalid or incomplete entry is recorded as a cache miss and rebuilt.
 
 Reuse preserves the construction manifest byte-for-byte. The fresh preparation
@@ -196,7 +211,9 @@ flags before accepting portability. The runner compares the compiler's recorded
 target triple/features with Linux's observed ISA before launching a prover; that
 does not replace the target's first executable compatibility check. Both the
 `release` and existing `ci` Cargo profiles are available through `--profile`;
-the default is `release`. Paired legs must use the same profile and flags.
+the default and workflow profile are `release`. Paired legs must use the same
+profile and flags. `ci` disables release's fat LTO and debug information; it is
+a separate performance identity, not a measured substitute for release.
 
 For an early bundle, repeat `--workload fibonacci --workload sha2-chain
 --workload sha3-chain --workload btreemap`. This changes which guests are prepared,
