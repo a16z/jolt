@@ -170,6 +170,37 @@ impl<const P: u128> Accumulator for Fp128SignedAccumulator<P> {
     }
 }
 
+/// Deferred field sums retain only the two nonzero base-2^64 slots.
+/// Each slot has headroom for at least 2^64 - 1 field additions, including
+/// additions represented by merged partial sums.
+#[derive(Clone, Copy, Default)]
+pub struct Fp128SumAccumulator<const P: u128>([u128; 2]);
+
+impl<const P: u128> Accumulator for Fp128SumAccumulator<P> {
+    type Element = Fp128<P>;
+
+    #[inline(always)]
+    fn add(&mut self, value: Fp128<P>) {
+        for (slot, limb) in self.0.iter_mut().zip(value.to_limbs()) {
+            *slot += u128::from(limb);
+        }
+    }
+    #[inline(always)]
+    fn merge(&mut self, other: Self) {
+        for (slot, other) in self.0.iter_mut().zip(other.0) {
+            *slot += other;
+        }
+    }
+    #[inline(always)]
+    fn reduce(self) -> Fp128<P> {
+        Fp128::<P>::reduce_product(Fp128ProductAccum([self.0[0], self.0[1], 0, 0]))
+    }
+    #[inline(always)]
+    fn fmadd(&mut self, a: Fp128<P>, b: Fp128<P>) {
+        self.add(a * b);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
