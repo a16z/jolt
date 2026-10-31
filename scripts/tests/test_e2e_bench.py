@@ -386,6 +386,55 @@ class BuildCacheTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'outside the action workspace'):
                 bench.cache_root()
 
+    def test_checkout_preserves_mtimes_only_for_identical_effective_build_inputs(self):
+        base = self.revision
+        profile = 'crates/jolt-prover/src/profile.rs'
+        extra = 'crates/jolt-prover/src/profile/prepare.rs'
+        (self.workspace / profile).write_text('fn instrumented_fixture() {}\n')
+        (self.workspace / extra).parent.mkdir()
+        (self.workspace / extra).write_text('fn prepare_fixture() {}\n')
+        self.git('add', profile, extra)
+        self.commit()
+        harness = self.git('rev-parse', 'HEAD')
+        self.git('checkout', '--detach', base)
+        changed = self.workspace / 'crates/jolt-akita/production.rs'
+        changed.write_text('fn changed_production() {}\n')
+        self.git('add', str(changed))
+        self.commit()
+        candidate = self.git('rev-parse', 'HEAD')
+        self.build('base', revision=base, harness_revision=harness, tier='pr')
+        source = bench.cache_root() / 'builds/x86-64/release/source'
+        inputs = [profile, extra, 'Cargo.toml', 'crates/jolt-prover/Cargo.toml', 'Cargo.lock']
+        prior = {}
+        for name in inputs:
+            path = source / name
+            os.utime(path, ns=(1_600_000_000_000_000_000, 1_600_000_000_000_000_000))
+            prior[name] = (path.read_bytes(), path.stat().st_mtime_ns)
+        artifact = source / 'target/owned-artifact'
+        artifact.write_bytes(b'preserved dependency fixture')
+        (source / 'untracked-junk').write_text('discard this fixture')
+        (source / '.gitignore').write_text('discard this tracked change')
+        self.build('candidate', revision=candidate, harness_revision=harness, tier='pr')
+        for name, expected in prior.items():
+            with self.subTest(path=name):
+                path = source / name
+                self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), expected)
+        self.assertEqual((source / 'crates/jolt-akita/production.rs').read_text(),
+                         'fn changed_production() {}\n')
+        self.assertEqual((source / '.gitignore').read_text(), '/target/\n')
+        self.assertFalse((source / 'untracked-junk').exists())
+        self.assertEqual(artifact.read_bytes(), b'preserved dependency fixture')
+        self.git('checkout', '--detach', harness)
+        (self.workspace / profile).write_text('fn changed_instrumentation() {}\n')
+        self.git('rm', extra)
+        self.git('add', profile)
+        self.commit()
+        next_harness = self.git('rev-parse', 'HEAD')
+        self.build('changed-harness', revision=candidate, harness_revision=next_harness, tier='pr')
+        self.assertEqual((source / profile).read_text(), 'fn changed_instrumentation() {}\n')
+        self.assertNotEqual((source / profile).stat().st_mtime_ns, prior[profile][1])
+        self.assertFalse((source / extra).exists())
+
     def test_main_bundle_missing_pr_input_is_not_reused(self):
         first, _ = self.build('main-only', tier='main', case=['main-dory-1', 'main-akita-1'])
         second, receipt = self.build('pr', tier='pr')
@@ -401,6 +450,8 @@ class BuildCacheTests(unittest.TestCase):
         self.assertEqual(set(partial['binaries']), {'akita'})
         self.assertEqual([argv[argv.index('--bin') + 1] for argv in self.compiles],
                          ['jolt', 'jolt-prover'])
+        for argv in self.compiles:
+            self.assertIn('--message-format=json', argv)
         self.assertNotIn('--features', self.compiles[0])
         self.assertEqual(self.compiles[1][-2:], ['--features', 'profiling,akita'])
         self.assertEqual([argv[argv.index('--profile') + 1] for argv in self.compiles], ['ci', 'release'])

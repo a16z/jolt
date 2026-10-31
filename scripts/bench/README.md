@@ -182,6 +182,13 @@ Build manifests distinguish source revision, harness revision, original lockfile
 effective lockfile, and all overlaid files. A same-source null run uses identical
 bundles, not differently instrumented main-vs-main binaries.
 
+Git checkout and cleanup can rewrite identical harness files and patched manifests.
+After overlay and lock resolution, the builder preserves their prior modification
+times only when the effective bytes are identical. Changed or removed inputs keep
+normal invalidation behavior; tracked edits and untracked debris are still reset.
+This avoids timestamp-only invalidation, but does not establish Cargo cache hits
+or predict the time for a changed-source build.
+
 Completed bundles persist in the same locked store. Reuse requires an exact
 source and harness revision, Rust/Cargo versions, target CPU/triple/features,
 flags, prover and guest-builder profiles, lockfiles, harness files, runner and
@@ -212,6 +219,12 @@ a launch failure has no exit code. These are command durations, not separate
 compiler/linker timings. Reuse keeps the original durations in `construction.log`;
 the current commands remain in `build.log`. Validation, copying and all other
 preparation still count in the fresh preparation and full wall-time receipts.
+Native Cargo builds emit stable JSON into the same log. Each `compiler-artifact`
+record's `fresh` field distinguishes reused units from executed rustc units;
+`package_id`, `target`, `features` and `profile` identify the unit. Preserve these
+records and candidate binary hashes for a warm-path receipt. A missing completion
+record is not a completed compilation, and unit freshness does not separate
+LLVM, LTO or native linking. Log emission remains inside the measured interval.
 
 Build a transportable bundle (no proving occurs):
 

@@ -309,6 +309,13 @@ def build(args):
     host_id, reused, cache_misses = manifest['host']['id'], False, []
     try:
         with (out / 'build.log').open('w') as log:
+            effective_inputs = [source / name for name in
+                                ('Cargo.toml', 'Cargo.lock', 'crates/jolt-prover/Cargo.toml')]
+            for prefix in HARNESS_PATHS:
+                path = source / prefix
+                effective_inputs.extend([path] if path.is_file() else path.rglob('*'))
+            prior_inputs = {path: (path.read_bytes(), path.stat().st_mtime_ns)
+                            for path in effective_inputs if path.is_file()}
             if not source.exists():
                 source.parent.mkdir(parents=True, exist_ok=True)
                 logged(['git', 'clone', '--no-local', '--no-checkout', '--no-tags', str(ROOT), str(source)], ROOT, env, log)
@@ -339,6 +346,11 @@ def build(args):
             logged(['cargo', 'metadata', '--format-version', '1'], source, env, log)
             if not pinned.issubset(lock_packages(source / 'Cargo.lock')):
                 raise ValueError('benchmark harness changed an existing locked dependency')
+            # Cargo's default source freshness checks use mtimes. Git/overlay/lock resolution
+            # may rewrite identical inputs; only byte-identical inputs retain their old mtime.
+            for path, (contents, mtime_ns) in prior_inputs.items():
+                if path.is_file() and path.read_bytes() == contents:
+                    os.utime(path, ns=(path.stat().st_atime_ns, mtime_ns))
             manifest['cargo_lock_sha256'] = sha256(source / 'Cargo.lock')
             manifest['harness_files'] = {str(p.relative_to(source)): sha256(p)
                 for prefix in HARNESS_PATHS for p in ([source / prefix] if (source / prefix).is_file()
@@ -381,7 +393,7 @@ def build(args):
                 os.utime(cached_path.parent, None)
                 manifest, reused = cached, True
                 return manifest
-            cargo = ['cargo', 'build', '-q', '--message-format=short', '--locked',
+            cargo = ['cargo', 'build', '-q', '--message-format=json', '--locked',
                      '--target-dir', str(source / 'target'), '--target', triple]
             logged([*cargo, '--profile', manifest['guest_builder_profile'], '-p', 'jolt', '--bin', 'jolt'],
                    source, env, log)
