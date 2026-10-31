@@ -1,11 +1,12 @@
+use crate::cuda::witness::ExecutionFlags;
 use std::sync::Arc;
 
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::JoltField;
 use jolt_riscv::InstructionFlags as InstructionFlagKind;
 use jolt_witness::backend::cuda::{
-    instruction_flag_bit, DeviceExecutionColumns, DeviceTrace, EXTRA_IMM_HI, EXTRA_IMM_LO,
-    EXTRA_RS1, EXTRA_RS2, EXTRA_WORDS,
+    instruction_flag_bit, DeviceTrace, EXTRA_IMM_HI, EXTRA_IMM_LO, EXTRA_RS1, EXTRA_RS2,
+    EXTRA_WORDS,
 };
 
 pub(crate) struct ColumnShard<F: JoltField> {
@@ -281,7 +282,7 @@ impl DeviceInstructionColumns {
     pub fn from_device(
         context: &CudaKernelContext,
         trace: Arc<DeviceTrace>,
-        atoms: &DeviceExecutionColumns,
+        atoms: &ExecutionFlags,
         cycles: usize,
     ) -> Result<Self, CudaError> {
         let () = IMM_WORDS_ARE_ADJACENT;

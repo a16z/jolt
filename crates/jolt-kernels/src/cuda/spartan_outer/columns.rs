@@ -1,12 +1,14 @@
 use crate::cuda::common::device::DeviceFrVec;
+use crate::cuda::witness::ExecutionFlags;
+use crate::cuda::witness::ExecutionOperands;
 use cudarc::driver::LaunchArgs;
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::Fr;
 use jolt_field::JoltField;
 use jolt_riscv::CircuitFlags;
 use jolt_witness::backend::cuda::{
-    circuit_flag_bit, DeviceExecutionColumns, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE,
-    FLAG_BIT_SHOULD_BRANCH, FLAG_BIT_SHOULD_JUMP,
+    circuit_flag_bit, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE, FLAG_BIT_SHOULD_BRANCH,
+    FLAG_BIT_SHOULD_JUMP,
 };
 use witness::LAYOUT;
 use witness::VARIABLES;
@@ -76,7 +78,9 @@ impl DeviceR1csInputs {
     pub fn from_device(
         context: &CudaKernelContext,
         trace: &DeviceTrace,
-        atoms: &DeviceExecutionColumns,
+        atoms: &ExecutionFlags,
+        operands: &ExecutionOperands,
+        product: &CudaSlice<u64>,
         pc_words: &CudaSlice<u32>,
         cycles: usize,
     ) -> Result<Self, CudaError> {
@@ -102,12 +106,12 @@ impl DeviceR1csInputs {
         let _ = builder.arg(&atoms.flags);
         let _ = builder.arg(&sources);
         let _ = builder.arg(&product_sign);
-        let _ = builder.arg(&atoms.left_instruction_input);
-        let _ = builder.arg(&atoms.right_instruction_input);
-        let _ = builder.arg(&atoms.left_lookup_operand);
-        let _ = builder.arg(&atoms.right_lookup_operand);
-        let _ = builder.arg(&atoms.lookup_output);
-        let _ = builder.arg(&atoms.product_magnitude);
+        let _ = builder.arg(&operands.left_instruction_input);
+        let _ = builder.arg(&operands.right_instruction_input);
+        let _ = builder.arg(&operands.left_lookup_operand);
+        let _ = builder.arg(&operands.right_lookup_operand);
+        let _ = builder.arg(&operands.lookup_output);
+        let _ = builder.arg(product);
         let _ = builder.arg(&SIGN_BIT_BASE);
         let _ = builder.arg(&mut narrow);
         let _ = builder.arg(&mut wide);
@@ -363,8 +367,26 @@ mod tests {
                     &whole_domain(cycles),
                 )
                 .expect("mapped pc words");
-                let got = DeviceR1csInputs::from_device(context, &trace, &atoms, &pc_words, cycles)
-                    .expect("device-gathered inputs");
+                let operands = crate::cuda::witness::session_operands_window::<Fr>(
+                    context,
+                    &mut session,
+                    witness,
+                    cycles,
+                    &whole_domain(cycles),
+                )
+                .expect("operand columns");
+                let product = crate::cuda::witness::take_product_window::<Fr>(
+                    context,
+                    &mut session,
+                    witness,
+                    cycles,
+                    &whole_domain(cycles),
+                )
+                .expect("product column");
+                let got = DeviceR1csInputs::from_device(
+                    context, &trace, &atoms, &operands, &product, &pc_words, cycles,
+                )
+                .expect("device-gathered inputs");
 
                 assert_eq!(got.cycles(), expected.cycles());
                 assert_eq!(

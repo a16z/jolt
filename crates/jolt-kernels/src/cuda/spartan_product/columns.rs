@@ -1,8 +1,8 @@
+use crate::cuda::witness::ExecutionFlags;
+use crate::cuda::witness::ExecutionOperands;
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_riscv::{CircuitFlags, InstructionFlags as InstructionFlagKind};
-use jolt_witness::backend::cuda::{
-    circuit_flag_bit, instruction_flag_bit, DeviceExecutionColumns, FLAG_BIT_NEXT_IS_NOOP,
-};
+use jolt_witness::backend::cuda::{circuit_flag_bit, instruction_flag_bit, FLAG_BIT_NEXT_IS_NOOP};
 use witness::CLAIM_LAYOUT;
 use witness::SIGN_BIT_BASE;
 
@@ -29,7 +29,8 @@ impl DeviceProductColumns {
 
     pub fn from_device(
         context: &CudaKernelContext,
-        atoms: &DeviceExecutionColumns,
+        atoms: &ExecutionFlags,
+        operands: &ExecutionOperands,
         cycles: usize,
     ) -> Result<Self, CudaError> {
         if cycles == 0 {
@@ -48,9 +49,9 @@ impl DeviceProductColumns {
         let _ = builder.arg(&atoms.flags);
         let _ = builder.arg(&sources);
         let _ = builder.arg(&sign_base);
-        let _ = builder.arg(&atoms.left_instruction_input);
-        let _ = builder.arg(&atoms.right_instruction_input);
-        let _ = builder.arg(&atoms.lookup_output);
+        let _ = builder.arg(&operands.left_instruction_input);
+        let _ = builder.arg(&operands.right_instruction_input);
+        let _ = builder.arg(&operands.lookup_output);
         let _ = builder.arg(&mut narrow);
         let _ = builder.arg(&mut wide);
         let _ = builder.arg(&mut flags);
@@ -138,6 +139,7 @@ mod tests {
     use super::super::witness::{self, SpartanProductWitness};
     use super::DeviceProductColumns;
     use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::devices::CycleWindow;
     use crate::cuda::common::testing::with_r1cs_witness;
     use crate::cuda::witness::session_execution_columns;
     use crate::ProofSession;
@@ -169,7 +171,18 @@ mod tests {
                 let mut session = ProofSession::default();
                 let atoms = session_execution_columns::<Fr>(context, &mut session, witness, cycles)
                     .expect("atom columns");
-                let got = DeviceProductColumns::from_device(context, &atoms, cycles)
+                let operands = crate::cuda::witness::session_operands_window::<Fr>(
+                    context,
+                    &mut session,
+                    witness,
+                    cycles,
+                    &CycleWindow {
+                        start: 0,
+                        len: cycles,
+                    },
+                )
+                .expect("operand columns");
+                let got = DeviceProductColumns::from_device(context, &atoms, &operands, cycles)
                     .expect("device-gathered columns");
 
                 let expected_flags = context.download_u32(expected.flags()).expect("flags");

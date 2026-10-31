@@ -14,10 +14,19 @@
 //! memory for clear proofs with comparable whole-proof time, despite extra work
 //! in later stages. Explicit warm-up materializes every group.
 //!
-//! Keeping the cache through the joint opening avoids deallocation work on that
-//! stage's critical path. For SHA-2-chain at 2^24 on one and two L4s, retiring it
-//! after building the opening views slowed stage 8 even with background
-//! destruction, without reducing the peak live allocation reached earlier.
+//! Execution atoms have separate owners: the outer gather takes product
+//! magnitudes, and instruction claim reduction takes operands until its
+//! prefix/suffix transition. Flags and table indices remain cached. Optimized
+//! retains each relation's native rows through final claim evaluation. CUDA's
+//! earlier release reduced peak live device allocation by 8.7% at 2^24 on one
+//! and two L4s, and 10% at 2^26 on two, for clear SHA-2-chain proofs. Stage 2
+//! and two-GPU stage 3 slowed, but whole-proof median increases were under 0.6%
+//! at 2^24 and 1.04% at 2^26. The memory savings justify that latency cost.
+//!
+//! Keeping the remaining cache through the joint opening avoids deallocation
+//! work on that stage's critical path. For SHA-2-chain at 2^24 on one and two
+//! L4s, retiring it after building the opening views slowed stage 8 even with
+//! background destruction, without reducing the earlier peak live allocation.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -25,6 +34,7 @@ use allocative::Allocative;
 use allocative::Key;
 #[cfg(feature = "allocative")]
 use allocative::Visitor;
+use cudarc::driver::CudaSlice;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_witness::RowSource;
 use jolt_witness::WitnessBundle;
@@ -61,12 +71,46 @@ where
     crate::optimized::support::collect_rows::<B>(witness, cycles)
 }
 
+pub(crate) struct ExecutionFlags {
+    pub flags: CudaSlice<u32>,
+    pub table_index: CudaSlice<u32>,
+}
+
+impl ExecutionFlags {
+    #[cfg(feature = "allocative")]
+    fn device_bytes(&self) -> usize {
+        (self.flags.len() + self.table_index.len()) * size_of::<u32>()
+    }
+}
+
+pub(crate) struct ExecutionOperands {
+    pub left_instruction_input: CudaSlice<u64>,
+    pub right_instruction_input: CudaSlice<u64>,
+    pub left_lookup_operand: CudaSlice<u64>,
+    pub right_lookup_operand: CudaSlice<u64>,
+    pub lookup_output: CudaSlice<u64>,
+}
+
+impl ExecutionOperands {
+    #[cfg(feature = "allocative")]
+    pub(crate) fn device_bytes(&self) -> usize {
+        (self.left_instruction_input.len()
+            + self.right_instruction_input.len()
+            + self.left_lookup_operand.len()
+            + self.right_lookup_operand.len()
+            + self.lookup_output.len())
+            * size_of::<u64>()
+    }
+}
+
 pub(crate) struct ResidentTrace {
     source: usize,
     cycles: usize,
     base: usize,
     trace: Arc<DeviceTrace>,
-    execution: OnceLock<Arc<DeviceExecutionColumns>>,
+    execution: OnceLock<Arc<ExecutionFlags>>,
+    operands: OnceLock<Arc<ExecutionOperands>>,
+    product: OnceLock<Arc<CudaSlice<u64>>>,
     memory: OnceLock<Arc<DeviceMemoryColumns>>,
     bytecode: OnceLock<Arc<DeviceBytecodeColumns>>,
 }
@@ -78,11 +122,22 @@ pub(crate) struct ResidentTraces {
 
 impl ResidentTraces {
     fn get(&self, ordinal: usize, source: usize, window: &CycleWindow) -> Option<&ResidentTrace> {
-        self.devices.get(ordinal)?.iter().find(|resident| {
-            resident.source == source
-                && resident.base == window.start
-                && resident.cycles >= window.len
-        })
+        self.devices
+            .get(ordinal)?
+            .iter()
+            .find(|resident| resident.covers(source, window))
+    }
+
+    fn get_mut(
+        &mut self,
+        ordinal: usize,
+        source: usize,
+        window: &CycleWindow,
+    ) -> Option<&mut ResidentTrace> {
+        self.devices
+            .get_mut(ordinal)?
+            .iter_mut()
+            .find(|resident| resident.covers(source, window))
     }
 
     fn park(&mut self, ordinal: usize, resident: ResidentTrace) {
@@ -108,6 +163,14 @@ impl Allocative for ResidentTraces {
                     .execution
                     .get()
                     .map_or(0, |columns| columns.device_bytes())
+                    + resident
+                        .operands
+                        .get()
+                        .map_or(0, |columns| columns.device_bytes())
+                    + resident
+                        .product
+                        .get()
+                        .map_or(0, |column| column.len() * size_of::<u64>())
                     + resident
                         .memory
                         .get()
@@ -196,6 +259,8 @@ pub(crate) fn session_row_trace_window<F: JoltField>(
             base: window.start,
             trace: Arc::clone(&trace),
             execution: OnceLock::new(),
+            operands: OnceLock::new(),
+            product: OnceLock::new(),
             memory: OnceLock::new(),
             bytecode: OnceLock::new(),
         },
@@ -205,21 +270,12 @@ pub(crate) fn session_row_trace_window<F: JoltField>(
 
 trait AtomGroup: Sized {
     fn cache(resident: &ResidentTrace) -> &OnceLock<Arc<Self>>;
-    fn extract(trace: &DeviceTrace) -> Result<Self, WitnessError>;
+    fn cache_mut(resident: &mut ResidentTrace) -> &mut OnceLock<Arc<Self>>;
+    fn populate(resident: &ResidentTrace) -> Result<(), WitnessError>;
 }
 
 macro_rules! atom_group {
-    ($type:ty, $field:ident, $extract:ident, $window:ident, $columns:ident $(, $full:ident)?) => {
-        impl AtomGroup for $type {
-            fn cache(resident: &ResidentTrace) -> &OnceLock<Arc<Self>> {
-                &resident.$field
-            }
-
-            fn extract(trace: &DeviceTrace) -> Result<Self, WitnessError> {
-                trace.$extract()
-            }
-        }
-
+    ($type:ty, $window:ident, $columns:ident $(, $full:ident)?) => {
         pub(crate) fn $window<F: JoltField>(
             context: &CudaKernelContext,
             session: &mut ProofSession,
@@ -262,18 +318,104 @@ macro_rules! atom_group {
     };
 }
 
+macro_rules! cache_group {
+    ($type:ty, $field:ident, $populate:expr) => {
+        impl AtomGroup for $type {
+            fn cache(resident: &ResidentTrace) -> &OnceLock<Arc<Self>> {
+                &resident.$field
+            }
+            fn cache_mut(resident: &mut ResidentTrace) -> &mut OnceLock<Arc<Self>> {
+                &mut resident.$field
+            }
+            fn populate(resident: &ResidentTrace) -> Result<(), WitnessError> {
+                $populate(resident)
+            }
+        }
+    };
+}
+
+cache_group!(ExecutionFlags, execution, ResidentTrace::extract_execution);
+cache_group!(
+    ExecutionOperands,
+    operands,
+    ResidentTrace::extract_execution
+);
+cache_group!(CudaSlice<u64>, product, ResidentTrace::extract_execution);
+cache_group!(DeviceMemoryColumns, memory, |resident: &ResidentTrace| {
+    let _ = resident
+        .memory
+        .set(Arc::new(resident.trace.memory_columns()?));
+    Ok(())
+});
+cache_group!(
+    DeviceBytecodeColumns,
+    bytecode,
+    |resident: &ResidentTrace| {
+        let _ = resident
+            .bytecode
+            .set(Arc::new(resident.trace.bytecode_columns()?));
+        Ok(())
+    }
+);
+
+#[cfg(not(feature = "field-inline"))]
+pub(crate) fn session_operands_window<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<ExecutionOperands>, KernelError<F>> {
+    session_columns_window(context, session, witness, cycles, &window.residency(cycles))
+}
+
+pub(crate) fn take_operands_window<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<ExecutionOperands>, KernelError<F>> {
+    take_columns_window(context, session, witness, cycles, &window.residency(cycles))
+}
+
+#[cfg(any(test, not(feature = "field-inline")))]
+pub(crate) fn take_product_window<F: JoltField>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<CudaSlice<u64>>, KernelError<F>> {
+    take_columns_window(context, session, witness, cycles, &window.residency(cycles))
+}
+
+fn take_columns_window<F: JoltField, C: AtomGroup>(
+    context: &CudaKernelContext,
+    session: &mut ProofSession,
+    witness: &dyn JoltWitnessPlane<F>,
+    cycles: usize,
+    window: &CycleWindow,
+) -> Result<Arc<C>, KernelError<F>> {
+    let columns = session_columns_window::<F, C>(context, session, witness, cycles, window)?;
+    let resident = session
+        .state_or_insert_with(ResidentTraces::default)
+        .get_mut(context.ordinal(), witness_identity(witness), window)
+        .ok_or(KernelError::InvariantViolation {
+            reason: "missing residency for transferred atom columns",
+        })?;
+    let _ = C::cache_mut(resident).take();
+    Ok(columns)
+}
+
 atom_group!(
-    DeviceExecutionColumns,
-    execution,
-    execution_columns,
+    ExecutionFlags,
     session_execution_window,
     session_execution_columns_window,
     session_execution_columns
 );
 atom_group!(
     DeviceMemoryColumns,
-    memory,
-    memory_columns,
     session_memory_window,
     session_memory_columns_window,
     session_memory_columns
@@ -281,8 +423,6 @@ atom_group!(
 #[cfg(not(feature = "field-inline"))]
 atom_group!(
     DeviceBytecodeColumns,
-    bytecode,
-    bytecode_columns,
     session_bytecode_window,
     session_bytecode_columns_window
 );
@@ -302,24 +442,70 @@ fn session_columns_window<F: JoltField, C: AtomGroup>(
         .ok_or(KernelError::InvariantViolation {
             reason: "the device residency was parked without an atom-column cache",
         })?;
-    if C::cache(resident).get().is_none() && resident.cycles < STAGED_ATOM_MIN_CYCLES {
+    // Fuse only the initial extraction; requesting an unrelated group must not
+    // regenerate operands or products transferred to their final consumer.
+    if C::cache(resident).get().is_none()
+        && resident.execution.get().is_none()
+        && resident.memory.get().is_none()
+        && resident.bytecode.get().is_none()
+        && resident.cycles < STAGED_ATOM_MIN_CYCLES
+    {
         resident.warm()?;
     }
     Ok(resident.columns::<C>()?)
 }
 
 impl ResidentTrace {
+    fn covers(&self, source: usize, window: &CycleWindow) -> bool {
+        self.source == source && self.base == window.start && self.cycles >= window.len
+    }
+
     fn columns<C: AtomGroup>(&self) -> Result<Arc<C>, WitnessError> {
-        if let Some(columns) = C::cache(self).get() {
-            return Ok(Arc::clone(columns));
+        if C::cache(self).get().is_none() {
+            C::populate(self)?;
         }
-        let columns = Arc::new(C::extract(&self.trace)?);
-        let _ = C::cache(self).set(Arc::clone(&columns));
-        Ok(columns)
+        C::cache(self)
+            .get()
+            .cloned()
+            .ok_or_else(|| WitnessError::InvalidWitnessData {
+                label: "cuda execution atoms",
+                reason: "atom extraction did not populate the requested cache".to_owned(),
+            })
+    }
+
+    fn park_execution(&self, execution: DeviceExecutionColumns) {
+        let DeviceExecutionColumns {
+            flags,
+            table_index,
+            left_instruction_input,
+            right_instruction_input,
+            left_lookup_operand,
+            right_lookup_operand,
+            lookup_output,
+            product_magnitude,
+        } = execution;
+        let _ = self
+            .execution
+            .set(Arc::new(ExecutionFlags { flags, table_index }));
+        let _ = self.operands.set(Arc::new(ExecutionOperands {
+            left_instruction_input,
+            right_instruction_input,
+            left_lookup_operand,
+            right_lookup_operand,
+            lookup_output,
+        }));
+        let _ = self.product.set(Arc::new(product_magnitude));
+    }
+
+    fn extract_execution(&self) -> Result<(), WitnessError> {
+        self.park_execution(self.trace.execution_columns()?);
+        Ok(())
     }
 
     fn warm(&self) -> Result<(), WitnessError> {
         if self.execution.get().is_none()
+            && self.operands.get().is_none()
+            && self.product.get().is_none()
             && self.memory.get().is_none()
             && self.bytecode.get().is_none()
         {
@@ -328,20 +514,26 @@ impl ResidentTrace {
                 memory,
                 bytecode,
             } = self.trace.atom_columns()?;
-            let _ = self.execution.set(execution);
+            let execution =
+                Arc::try_unwrap(execution).map_err(|_| WitnessError::InvalidWitnessData {
+                    label: "cuda execution atoms",
+                    reason: "fresh execution columns have multiple owners".to_owned(),
+                })?;
+            self.park_execution(execution);
             let _ = self.memory.set(memory);
             let _ = self.bytecode.set(bytecode);
         } else {
-            if self.execution.get().is_none() {
-                let _ = self
-                    .execution
-                    .set(Arc::new(self.trace.execution_columns()?));
+            if self.execution.get().is_none()
+                || self.operands.get().is_none()
+                || self.product.get().is_none()
+            {
+                self.extract_execution()?;
             }
             if self.memory.get().is_none() {
-                let _ = self.memory.set(Arc::new(self.trace.memory_columns()?));
+                DeviceMemoryColumns::populate(self)?;
             }
             if self.bytecode.get().is_none() {
-                let _ = self.bytecode.set(Arc::new(self.trace.bytecode_columns()?));
+                DeviceBytecodeColumns::populate(self)?;
             }
         }
         Ok(())
@@ -375,9 +567,10 @@ pub(crate) fn warm_window<F: JoltField>(
 mod tests {
     use std::sync::Arc;
 
+    use super::ExecutionFlags;
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_field::Fr;
-    use jolt_witness::backend::cuda::{DeviceExecutionColumns, FLAG_BIT_NEXT_IS_NOOP};
+    use jolt_witness::backend::cuda::FLAG_BIT_NEXT_IS_NOOP;
     use jolt_witness::witnesses::{NextIsNoop, RamInc, RdInc};
     use jolt_witness::{FixedBackend, WitnessBundle, WitnessError};
 
@@ -533,6 +726,8 @@ mod tests {
                             ordinal,
                             Arc::clone(&resident.trace),
                             Arc::clone(resident.execution.get().expect("execution cache")),
+                            Arc::clone(resident.operands.get().expect("operand cache")),
+                            Arc::clone(resident.product.get().expect("product cache")),
                             Arc::clone(resident.memory.get().expect("memory cache")),
                             Arc::clone(resident.bytecode.get().expect("bytecode cache")),
                         ))
@@ -548,7 +743,7 @@ mod tests {
                     &setup,
                 )
                 .expect("commit prewarmed witness");
-                for (ordinal, trace, execution, memory, bytecode) in before {
+                for (ordinal, trace, execution, operands, product, memory, bytecode) in before {
                     let resident = session
                         .state::<ResidentTraces>()
                         .expect("cache after commitment")
@@ -558,6 +753,14 @@ mod tests {
                     assert!(Arc::ptr_eq(
                         &execution,
                         resident.execution.get().expect("execution cache retained"),
+                    ));
+                    assert!(Arc::ptr_eq(
+                        &operands,
+                        resident.operands.get().expect("operand cache retained"),
+                    ));
+                    assert!(Arc::ptr_eq(
+                        &product,
+                        resident.product.get().expect("product cache retained"),
                     ));
                     assert!(Arc::ptr_eq(
                         &memory,
@@ -594,7 +797,7 @@ mod tests {
                     .get(0, source, &window)
                     .expect("window");
                 let execution = resident
-                    .columns::<DeviceExecutionColumns>()
+                    .columns::<ExecutionFlags>()
                     .expect("execution group");
                 assert!(resident.memory.get().is_none());
                 assert!(resident.bytecode.get().is_none());
@@ -630,6 +833,80 @@ mod tests {
                 &bytecode,
                 resident.bytecode.get().expect("bytecode cache")
             ));
+        });
+    }
+
+    #[test]
+    fn transferred_atoms_release_independently_and_can_be_requested_again() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let log_t = 6;
+        let cycles = 1 << log_t;
+        let windows = witness_windows(cycles);
+        let window = &windows[0];
+        with_r1cs_witness(log_t, RAM_K, ONE_HOT, 23, |witness| {
+            let mut session = ProofSession::default();
+            let (trace, flags) =
+                session_execution_window::<Fr>(context, &mut session, witness, cycles, window)
+                    .expect("initial execution atoms");
+            let product =
+                super::take_product_window::<Fr>(context, &mut session, witness, cycles, window)
+                    .expect("transfer product");
+            let operands =
+                super::take_operands_window::<Fr>(context, &mut session, witness, cycles, window)
+                    .expect("transfer operands");
+            let expected_product = context.download_u64(&product).expect("product values");
+            let expected_operands = context
+                .download_u64(&operands.right_instruction_input)
+                .expect("operand values");
+            let product_lifetime = Arc::downgrade(&product);
+            let operand_lifetime = Arc::downgrade(&operands);
+            drop(product);
+            assert!(product_lifetime.upgrade().is_none());
+            assert!(operand_lifetime.upgrade().is_some());
+            drop(operands);
+            assert!(operand_lifetime.upgrade().is_none());
+
+            let (cached_trace, cached_flags) =
+                session_execution_window::<Fr>(context, &mut session, witness, cycles, window)
+                    .expect("flags after transfer");
+            assert!(Arc::ptr_eq(&trace, &cached_trace));
+            assert!(Arc::ptr_eq(&flags, &cached_flags));
+            let resident = session
+                .state::<ResidentTraces>()
+                .expect("cache")
+                .get(
+                    context.ordinal(),
+                    witness_identity(witness),
+                    &window.residency(cycles),
+                )
+                .expect("window");
+            assert!(resident.operands.get().is_none());
+            assert!(resident.product.get().is_none());
+
+            let regenerated =
+                super::take_operands_window::<Fr>(context, &mut session, witness, cycles, window)
+                    .expect("recreate operands");
+            assert_eq!(
+                context
+                    .download_u64(&regenerated.right_instruction_input)
+                    .expect("regenerated operands"),
+                expected_operands
+            );
+            let regenerated =
+                super::take_product_window::<Fr>(context, &mut session, witness, cycles, window)
+                    .expect("recreate product");
+            assert_eq!(
+                context
+                    .download_u64(&regenerated)
+                    .expect("regenerated product"),
+                expected_product
+            );
+            let (_, preserved_flags) =
+                session_execution_window::<Fr>(context, &mut session, witness, cycles, window)
+                    .expect("flags after regeneration");
+            assert!(Arc::ptr_eq(&flags, &preserved_flags));
         });
     }
 

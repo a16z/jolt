@@ -38,7 +38,9 @@ use witness::VARIABLES;
 
 use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
-use crate::cuda::witness::session_execution_window;
+use crate::cuda::witness::{
+    session_execution_window, session_operands_window, take_product_window,
+};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::{require_context, CudaBackend};
@@ -173,12 +175,16 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             })?;
             let (trace, atoms) =
                 session_execution_window(device, session, witness, cycles, window)?;
+            let operands = session_operands_window(device, session, witness, cycles, window)?;
+            let product = take_product_window(device, session, witness, cycles, window)?;
             let pc_words =
                 device_trace_columns::<F>(device, session, witness, cycles, window, [0, 1, 0], 0)?
                     .pc;
             let resident = window.residency(cycles).len;
             inputs.push((
-                DeviceR1csInputs::from_device(device, &trace, &atoms, &pc_words, resident)?,
+                DeviceR1csInputs::from_device(
+                    device, &trace, &atoms, &operands, &product, &pc_words, resident,
+                )?,
                 CycleWindow {
                     start: window.start,
                     len: window.len,
@@ -450,8 +456,24 @@ mod tests {
                 )
                 .expect("windowed atom columns");
                 let pc_words = trace.mapped_pc_words().expect("windowed pc words");
-                DeviceR1csInputs::from_device(context, &trace, &atoms, &pc_words, resident.len)
-                    .expect("windowed r1cs inputs")
+                let operands = crate::cuda::witness::session_operands_window::<Fr>(
+                    context, session, witness, cycles, &resident,
+                )
+                .expect("windowed operand columns");
+                let product = crate::cuda::witness::take_product_window::<Fr>(
+                    context, session, witness, cycles, &resident,
+                )
+                .expect("windowed product column");
+                DeviceR1csInputs::from_device(
+                    context,
+                    &trace,
+                    &atoms,
+                    &operands,
+                    &product,
+                    &pc_words,
+                    resident.len,
+                )
+                .expect("windowed r1cs inputs")
             };
 
             let mut session = ProofSession::default();
