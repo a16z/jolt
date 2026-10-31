@@ -191,6 +191,11 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
             },
             |scratch, row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, &mut scratch.pairs);
+                let (lo, hi) = scratch.pairs[0];
+                // A zero linear factor annihilates every product-grid evaluation.
+                if lo.is_zero() && hi.is_zero() {
+                    return;
+                }
                 for ((&(lo, hi), eval), step) in scratch
                     .pairs
                     .iter()
@@ -529,6 +534,28 @@ mod tests {
                 RamOp::Write { word: 63, post: 2 },
             ],
             433,
+        );
+    }
+
+    #[test]
+    fn parity_interior_no_access_pairs() {
+        run_parity(
+            FixtureShape {
+                log_t: 4,
+                ram_k: 256,
+            },
+            vec![
+                RamOp::Write { word: 200, post: 7 },
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::Read { word: 200 },
+            ],
+            457,
         );
     }
 
