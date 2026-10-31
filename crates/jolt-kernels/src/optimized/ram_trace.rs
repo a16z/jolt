@@ -1,6 +1,6 @@
 //! Sparse per-cycle RAM addresses and values shared across RAM kernels.
-//! [`SharedRamAddresses`] survives stages 2–6b; [`RamAccessColumns`] owns the
-//! stage-2-only values.
+//! [`SharedRamAddresses`] survives stages 2–6b; each [`RamAccessColumns`] owns
+//! one generation of values, collected in stage 2 and again in stage 4.
 
 use core::marker::PhantomData;
 use std::ops::Index;
@@ -53,6 +53,29 @@ fn encode_address<F: JoltField>(address: Option<u64>) -> Result<u32, KernelError
                      no-access sentinel",
         }),
     }
+}
+
+/// Bytes `value_generations` collected generations of RAM access columns
+/// hold over `prefix_cycles` cycles before the trace's constant suffix, or
+/// `None` past `usize::MAX`: the `u32` address column once, one backing
+/// however many handles and generations share it, and the two `u64` value
+/// columns of each [`RamAccessColumns::collect_full`] call, each truncated to
+/// at most `prefix_cycles` entries. Excludes allocator slack.
+pub fn ram_access_columns_bytes(prefix_cycles: usize, value_generations: usize) -> Option<usize> {
+    let row_bytes = value_generations
+        .checked_mul(2 * size_of::<u64>())?
+        .checked_add(size_of::<u32>())?;
+    prefix_cycles.checked_mul(row_bytes)
+}
+
+/// Bytes a [`RamAccessColumns::collect_full`] call holds while it collects,
+/// beyond its generation's share of [`ram_access_columns_bytes`], or `None`
+/// past `usize::MAX`: each value column's row at the constant suffix,
+/// collected before the truncation, and the copy one column's
+/// `shrink_to_fit` may allocate beside the other. Excludes collector
+/// bookkeeping.
+pub fn ram_value_collection_bytes(prefix_cycles: usize) -> Option<usize> {
+    prefix_cycles.checked_add(2)?.checked_mul(size_of::<u64>())
 }
 
 /// A logical RAM address column with an implicit no-access suffix.
@@ -451,12 +474,62 @@ pub(crate) fn fold_cycles<F: JoltField>(
 }
 
 #[cfg(test)]
-#[expect(clippy::panic, reason = "test module")]
+#[expect(clippy::panic, clippy::unwrap_used, reason = "test module")]
 mod tests {
     use jolt_field::Fr;
     use jolt_witness::testing::with_sample_backend;
 
     use super::*;
+    use crate::optimized::testing::{with_ram_fixture, FixtureShape, RamOp};
+
+    fn requested_bytes<T>(column: &Vec<T>) -> usize {
+        column.capacity() * size_of::<T>()
+    }
+
+    /// Collected RAM access columns request exactly the bytes
+    /// `ram_access_columns_bytes` reserves over the fixture's proof rows, whose
+    /// last row (the termination write) accesses RAM: stage 2's generation
+    /// alone and with stage 4's beside it, as while stage 2's awaits its
+    /// background drop. Every collection shares the parked address backing,
+    /// counted once, and brings two value columns of its own.
+    #[test]
+    fn access_column_generations_request_the_reserved_bytes() {
+        let shape = FixtureShape {
+            log_t: 6,
+            ram_k: 16,
+        };
+        let ops = vec![
+            RamOp::Write { word: 2, post: 7 },
+            RamOp::Read { word: 2 },
+            RamOp::None,
+            RamOp::Write { word: 3, post: 9 },
+        ];
+        with_ram_fixture(shape, ops, |witness| {
+            let prefix_cycles = witness.random_access().unwrap().physical_cycles();
+            assert!(prefix_cycles < 1 << shape.log_t);
+            let mut session = ProofSession::default();
+            let stage2 =
+                RamAccessColumns::collect_full::<Fr>(&mut session, witness, shape.log_t).unwrap();
+            let addresses =
+                SharedRamAddresses::shared::<Fr>(&mut session, witness, shape.log_t).unwrap();
+            let values = |columns: &RamAccessColumns| {
+                requested_bytes(&columns.pre_values) + requested_bytes(&columns.post_values)
+            };
+            assert!(Arc::ptr_eq(&stage2.addresses, &addresses));
+            assert_eq!(
+                requested_bytes(&addresses.values) + values(&stage2),
+                ram_access_columns_bytes(prefix_cycles, 1).unwrap()
+            );
+
+            let stage4 =
+                RamAccessColumns::collect_full::<Fr>(&mut session, witness, shape.log_t).unwrap();
+            assert!(Arc::ptr_eq(&stage4.addresses, &addresses));
+            assert_eq!(
+                requested_bytes(&addresses.values) + values(&stage2) + values(&stage4),
+                ram_access_columns_bytes(prefix_cycles, 2).unwrap()
+            );
+        });
+    }
 
     #[test]
     fn rejects_session_carry_from_another_cycle_domain() {

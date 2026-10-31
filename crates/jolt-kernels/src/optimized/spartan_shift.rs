@@ -45,7 +45,8 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::support::{
-    bind_pairs, fmadd_u64_split, gamma_powers_array, pin_derived_term, BundleStore, RoundChallenges,
+    bind_pairs, fmadd_u64_split, gamma_powers_array, pin_derived_term, pool_workers, BundleStore,
+    RoundChallenges,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -69,6 +70,40 @@ struct SpartanShiftRow {
 }
 
 pub struct OptimizedSpartanShift;
+
+/// Prefix entries per Q-build block.
+const BLOCK: usize = 32;
+
+impl OptimizedSpartanShift {
+    /// Peak bytes of the kernel over `2^log_t` cycles, or `None` past
+    /// `usize::MAX`, with `P` prefix and `S` suffix entries
+    /// ([`EqPlusOnePrefixSuffix::suffix_vars`]). Preparation holds both `eq+1`
+    /// decompositions (`2P + 2S` each), the `4S` suffix rows and the `4P` Q
+    /// rows while the pool's Q blocks fold, then adds the four Q tables
+    /// (`4P`). The dense transition holds the eight prefix–suffix tables at
+    /// their `8P` capacity, the `2P` prefix eq tables and the `5S` folds beside
+    /// one recombined decomposition and the tables recombined so far, then the
+    /// seven `S`-entry dense tables. Not counted: transients inside `jolt-poly`
+    /// constructors and evaluations, and the parallel collect's partial
+    /// buffers.
+    pub fn peak_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        let suffix_vars = EqPlusOnePrefixSuffix::<F>::suffix_vars(log_t);
+        let (p, s) = (1usize << (log_t - suffix_vars), 1usize << suffix_vars);
+        let blocks = pool_workers().min(p.div_ceil(BLOCK));
+        let block_bytes = 2 * size_of::<F::Accumulator>() + 2 * size_of::<F>();
+        let scratch = blocks.checked_mul(BLOCK.min(p))?.checked_mul(block_bytes)?;
+        let bytes = |p_tables: usize, s_tables: usize| {
+            p.checked_mul(p_tables)?
+                .checked_add(s.checked_mul(s_tables)?)?
+                .checked_mul(size_of::<F>())
+        };
+        Some(
+            bytes(12, 8)?
+                .max(bytes(10, 12)?)
+                .max(bytes(8, 8)?.checked_add(scratch)?),
+        )
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
     fn prepare(
@@ -118,7 +153,6 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for OptimizedSpartanShift {
                 F::zero()
             };
 
-        const BLOCK: usize = 32;
         let suffix_rows: Vec<[F; 4]> = (0..outer.suffix_0.len())
             .map(|x_hi| {
                 [

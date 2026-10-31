@@ -18,10 +18,17 @@ pub(super) struct PackedFlags<F: JoltField> {
 }
 
 impl<F: JoltField> PackedFlags<F> {
+    /// Pattern bits per column after the first bind; each later bind doubles
+    /// them and squares the `2^bits`-entry lookup table.
+    pub(super) const FIRST_BITS: u32 = 2;
+
+    /// Pattern bits at which the caller materializes field columns.
+    pub(super) const SATURATED_BITS: u32 = 16;
+
     pub(super) fn new(words: Vec<u128>, tail: [bool; 5], challenge: F) -> Self {
         Self {
             words,
-            bits: 2,
+            bits: Self::FIRST_BITS,
             tail: Self::encode(tail, tail),
             values: vec![F::zero(), F::one() - challenge, challenge, F::one()],
         }
@@ -41,7 +48,7 @@ impl<F: JoltField> PackedFlags<F> {
     }
 
     pub(super) fn saturated(&self) -> bool {
-        self.bits == 16
+        self.bits == Self::SATURATED_BITS
     }
 
     /// Concatenate the two bit patterns; only the small shared table needs

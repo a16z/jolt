@@ -35,7 +35,6 @@ use std::io::{Result, Write as _};
 #[cfg(not(feature = "akita"))]
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "akita")]
 use std::result::Result as ParseResult;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -77,6 +76,7 @@ use tracer::execution_backend::TracerBackend;
 
 use crate::JoltBackend;
 use crate::JoltSharedPreprocessing;
+use crate::MemoryBudget;
 use crate::ProverConfig;
 
 // Empirically measured RV64IMAC cycles per operation. These values keep
@@ -303,6 +303,31 @@ pub struct ProfileArgs {
     #[cfg(feature = "akita")]
     #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
+
+    /// Explicit memory budget in bytes: an integer with an optional binary
+    /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
+    /// optimized`. A budget below the optimized prover's known eager
+    /// reservation, which covers named eager tables only, fails after
+    /// tracing, before proving; passing it does not mean the whole proof
+    /// fits, and the budget does not cap process memory.
+    #[clap(long, value_parser = parse_memory_budget)]
+    pub memory_budget: Option<MemoryBudget>,
+}
+
+/// `--memory-budget`: bytes, optionally scaled by a binary suffix.
+fn parse_memory_budget(value: &str) -> ParseResult<MemoryBudget, String> {
+    let (digits, shift) = [("KiB", 10), ("MiB", 20), ("GiB", 30), ("TiB", 40)]
+        .into_iter()
+        .find_map(|(suffix, shift)| value.strip_suffix(suffix).map(|digits| (digits, shift)))
+        .unwrap_or((value, 0));
+    digits
+        .parse::<usize>()
+        .ok()
+        .and_then(|count| count.checked_mul(1usize.checked_shl(shift)?))
+        .map(MemoryBudget::from_bytes)
+        .ok_or_else(|| {
+            format!("expected bytes with an optional KiB, MiB, GiB or TiB suffix, got {value:?}")
+        })
 }
 
 impl ProfileArgs {
@@ -432,6 +457,10 @@ impl Drop for RunLock {
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
+    assert!(
+        args.memory_budget.is_none() || args.backend == BackendKind::Optimized,
+        "--memory-budget checks the optimized prover's reservation; pass --backend optimized"
+    );
     let scale = args.scale.unwrap_or_else(|| args.name.default_scale());
     validate_scale(scale);
     let trace_name = args.trace_name(scale);
@@ -745,6 +774,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         program_preprocessing,
         trace_output,
         backend,
+        args.memory_budget,
         #[cfg(feature = "akita")]
         args.akita_chunk_profile,
     );
@@ -835,6 +865,7 @@ fn prove_workload(
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
     backend: BackendKind,
+    memory_budget: Option<MemoryBudget>,
 ) -> ProvenRun {
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
@@ -847,6 +878,11 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
+    if let Some(budget) = memory_budget {
+        budget
+            .check_known_eager::<Fr>(&config, &trace_output.trace)
+            .expect("memory budget covers the known eager reservation");
+    }
     let shared_preprocessing =
         JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "dory");
@@ -933,6 +969,7 @@ fn prove_workload(
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
     backend: BackendKind,
+    memory_budget: Option<MemoryBudget>,
     chunk_profile: AkitaChunkProfile,
 ) -> ProvenRun {
     use crate::akita::preprocessing::AkitaVc;
@@ -959,6 +996,11 @@ fn prove_workload(
     )
     .expect("derive config");
     config.akita_chunk_profile = chunk_profile;
+    if let Some(budget) = memory_budget {
+        budget
+            .check_known_eager::<AkitaField>(&config, &trace_output.trace)
+            .expect("memory budget covers the known eager reservation");
+    }
     let schedule_artifacts =
         AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let params = crate::akita::preprocessing::grouped_setup_params(
@@ -1063,6 +1105,7 @@ fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> 
     witness
 }
 
-#[cfg(all(test, feature = "akita"))]
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
 #[path = "profile/tests.rs"]
 mod tests;
