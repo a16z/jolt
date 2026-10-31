@@ -141,7 +141,7 @@ struct NttCommitScratch<const D: usize> {
     ntt_used: Vec<bool>,
     digit_accumulators: Vec<DigitAccumulator<D>>,
     windows: Vec<DigitWindows<D>>,
-    shifts: [Vec<usize>; DOT_BATCH],
+    shifts: Vec<usize>,
 }
 
 impl<const D: usize> NttCommitScratch<D> {
@@ -166,7 +166,7 @@ impl<const D: usize> NttCommitScratch<D> {
             ntt_used: vec![false; num_columns],
             digit_accumulators: vec![[Fp128x8i32([0; 8]); D]; num_columns],
             windows: (0..DOT_BATCH).map(|_| DigitWindows::new()).collect(),
-            shifts: std::array::from_fn(|_| Vec::with_capacity(rows_per_ring)),
+            shifts: vec![0; DOT_BATCH * rows_per_ring],
         }
     }
 
@@ -198,19 +198,28 @@ impl<const D: usize> NttCommitScratch<D> {
         let mut windows_loaded = false;
         let mut tile_columns = [0usize; COLUMN_TILE];
         let mut tile_len = 0;
-        for column in 0..self.num_columns {
+        let num_columns = self.num_columns;
+        let rows_per_ring = self.rows_per_ring;
+        let one_hot_k = self.one_hot_k;
+        for column in 0..num_columns {
+            let rows = &self.rows;
+            let masks = &self.masks;
             let mut selected = 0;
-            for slot in 0..self.buffered {
-                let shifts = &mut self.shifts[slot];
-                shifts.resize(self.rows_per_ring, 0);
-                let row_start = slot * self.rows_per_ring;
+            let mut shifts = [&[][..]; DOT_BATCH];
+            for (slot, buffer) in self
+                .shifts
+                .chunks_exact_mut(rows_per_ring)
+                .take(self.buffered)
+                .enumerate()
+            {
+                let row_start = slot * rows_per_ring;
                 let mut len = 0;
                 for row in 0..self.populated_rows[slot] {
-                    let hot = self.rows[(row_start + row) * self.num_columns + column];
-                    shifts[len] = row * self.one_hot_k + usize::from(hot);
-                    len += usize::from(row_is_committed(hot, self.masks[row_start + row], column));
+                    let hot = rows[(row_start + row) * num_columns + column];
+                    buffer[len] = row * one_hot_k + usize::from(hot);
+                    len += usize::from(row_is_committed(hot, masks[row_start + row], column));
                 }
-                shifts.truncate(len);
+                shifts[slot] = &buffer[..len];
                 selected += len;
             }
             if selected == 0 {
@@ -226,21 +235,18 @@ impl<const D: usize> NttCommitScratch<D> {
                 DigitWindows::accumulate_slots(
                     &self.windows[..self.buffered],
                     &mut self.digit_accumulators[column],
-                    &self.shifts[..self.buffered],
+                    &shifts[..self.buffered],
                 );
                 continue;
             }
-            for slot in 0..self.buffered {
-                if self.shifts[slot].is_empty() {
+            for (slot, shifts) in shifts.iter().enumerate().take(self.buffered) {
+                if shifts.is_empty() {
                     self.transformed[tile_len][slot] = NttRing::zero();
                 } else if let Some(one_hot) = &prepared.one_hot {
-                    one_hot.transform(
-                        &self.shifts[slot],
-                        &mut self.transformed[tile_len][slot].limbs[0],
-                    );
+                    one_hot.transform(shifts, &mut self.transformed[tile_len][slot].limbs[0]);
                 } else {
                     let mut coefficients = [0i8; D];
-                    for &shift in &self.shifts[slot] {
+                    for &shift in *shifts {
                         coefficients[shift] = 1;
                     }
                     self.transformed[tile_len][slot].assign_i8_with_lut(
