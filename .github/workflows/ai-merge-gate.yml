@@ -1,4 +1,4 @@
-# Publishes the required `ai-merge-gate` check through the gate's GitHub App; policy and
+# Publishes the required policy and attestation checks through the gate's GitHub App; policy and
 # admin setup: .github/ai-merge-gate.md. Both triggers run this file and the checked-out
 # scripts and skills from the default branch. Pull request bytes are read through the API as
 # data, the commits' archives included, and never checked out, written or executed. Secrets
@@ -17,11 +17,10 @@ permissions: {}
 
 jobs:
   resolve:
-    # The App's own comments never carry sign-offs; skipping them also stops its sticky
-    # comment edits from re-triggering the gate.
+    # The resolver admits the Pika bot and ignores other bots, including our own comments.
     if: >-
       github.event_name == 'workflow_run' ||
-      (github.event.issue.pull_request && github.event.comment.user.type != 'Bot')
+      github.event.issue.pull_request
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -41,12 +40,47 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: python3 scripts/ci/ai_merge_gate.py resolve
 
+  attest:
+    needs: resolve
+    if: needs.resolve.outputs.pr != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: ai-merge-gate
+      deployment: false
+    concurrency:
+      group: ai-merge-gate-attestation-${{ needs.resolve.outputs.pr }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci
+      - id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.AI_MERGE_GATE_CLIENT_ID }}
+          private-key: ${{ secrets.AI_MERGE_GATE_APP_PRIVATE_KEY }}
+          permission-checks: write
+          permission-pull-requests: read
+          permission-members: read
+      - env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          AI_MERGE_GATE_APP_SLUG: ${{ steps.app.outputs.app-slug }}
+          AI_MERGE_GATE_CORE_TEAM: ${{ vars.AI_MERGE_GATE_CORE_TEAM }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr }}
+        run: python3 scripts/ci/ai_merge_gate.py attest "$PR_NUMBER"
+
   evaluate:
     needs: resolve
     if: needs.resolve.outputs.pr != ''
     runs-on: ubuntu-latest
-    # Covers a classifier and a CI review in one run, each bounded at 40 minutes by the script.
-    timeout-minutes: 90
+    # The classifier is bounded at 40 minutes by the script.
+    timeout-minutes: 50
     environment:
       name: ai-merge-gate
       deployment: false
@@ -64,7 +98,8 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             scripts/ci
-            .claude/skills
+            .github
+            .claude/skills/verifier-classifier
             specs
       - id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0

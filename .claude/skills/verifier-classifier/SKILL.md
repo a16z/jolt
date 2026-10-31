@@ -1,11 +1,11 @@
 ---
 name: verifier-classifier
-description: Decide whether a Jolt pull request can change which proofs the verifier accepts, answering SAFE, AFFECTS or UNCERTAIN with reasoning. The AI merge gate runs it in CI on every eligible pull request head; run it locally to preview that verdict. Use for "does this change affect the verifier", "is this verifier-safe", or "will this need human review under the merge gate".
+description: Classify verifier impact and review risk for a Jolt pull request, answering SAFE, AFFECTS or UNCERTAIN and a risk level for every changed path. The AI merge gate runs it in CI on every eligible pull request head; run it locally to preview that verdict. Use for "does this change affect the verifier", "is this verifier-safe", or "will this need human review under the merge gate".
 ---
 
 # Verifier classifier
 
-Answer one question about a change: **can it change which proofs the Jolt verifier accepts?**
+Answer this question about a change: **can it change which proofs the Jolt verifier accepts?**
 A proof is accepted when verification returns success for some verifier preprocessing,
 program I/O and proof bytes. A change affects acceptance if, for any such input, the result
 could differ before and after it, including a panic or error that becomes success, or the
@@ -41,13 +41,44 @@ edit inside `crates/jolt-verifier` can be SAFE. An edit in a shared crate outsid
   change too large to follow.
 
 SAFE needs an argument for every changed file; one hunk you cannot account for makes the
-verdict UNCERTAIN. A SAFE verdict lets a pull request merge without human review once its
-Astra Max review is clean, so when in doubt answer UNCERTAIN: that only routes the change to a
-human reviewer. Judge the change, not its quality: a buggy test is still SAFE.
+verdict UNCERTAIN. Judge verifier impact separately from review risk: a buggy test is still
+SAFE, and a small verifier-reaching dependency change can be AFFECTS with risk-3. UNCERTAIN
+always requires human review.
+
+## Review risk uses the trusted policy
+
+Use `.github/ai-merge-gate-risk.json` from the gate's default-branch checkout, supplied with
+these instructions, not a proposed replacement in the PR. Assign one level and a reason to
+every changed path listed in the input, including both names of a rename and removed files.
+Missing paths or duplicate entries invalidate the classification.
+
+- **risk-1:** tests, scripts, CI or documentation only. A test-only or comment-only edit can be
+  risk-1 inside a production source file; inspect the surrounding code to establish this.
+- **risk-2:** prover or other non-verifier code only. Follow callers before ruling out effects
+  on verifier preprocessing or generated verifier code.
+- **risk-3:** small, scoped dependency or shared-code changes that could reach the verifier,
+  with a short, direct account of the changed behavior. A file's size or a dependency's patch
+  version alone does not establish a small effect. Broad or unresolved changes are risk-4.
+- **risk-4:** protocol changes, sumcheck order, symbolic sumcheck expressions, transcript or
+  Fiat–Shamir changes, verifier logic, PCS or commitment parameters, and anything uncertain.
+
+For production changes, the highest matching path level is a minimum; raise it for semantic
+effects outside that path's usual role. A level-1 result instead declares that no production
+or build-input change occurred. Unknown paths require semantic classification, not a low
+default. The PR takes the highest effective level across all paths; when any hunk remains
+unclassified, answer UNCERTAIN. Risk-1 through risk-3 can merge without a human approval once
+the other gate requirements pass. Risk-4 requires an independent maintainer's approval of the
+current head. Neither risk nor verifier impact asserts that a code review was performed.
 
 ## Output
 
-One JSON object: `{"verdict": "SAFE" | "AFFECTS" | "UNCERTAIN", "reasoning": "..."}`.
+One JSON object:
+
+```json
+{"verdict": "SAFE", "reasoning": "Verifier-impact argument", "risks": [{"path": "changed/path", "level": 2, "reasoning": "Why this path has this level"}]}
+```
+
+`verdict` is `SAFE`, `AFFECTS` or `UNCERTAIN`; each `level` is an integer 1 through 4.
 The reasoning covers each changed file or group of files and says why it can or cannot reach
 acceptance, citing paths and items. For AFFECTS or UNCERTAIN, lead with the hunks that keep the
 change from SAFE.

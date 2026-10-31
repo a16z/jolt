@@ -6,7 +6,7 @@ name: AI merge gate events
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited, labeled]
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, edited]
   pull_request_review:
     types: [submitted, edited, dismissed]
 

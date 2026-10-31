@@ -1,0 +1,18 @@
+{
+  "risk-1": {
+    "description": "Only tests, scripts, CI, documentation or benchmark harnesses changed; no production or build-input change.",
+    "paths": [".github/**", ".claude/**", "scripts/**", "book/**", "docs/**", "specs/**", "*.md", "**/*.md", "tests/**", "**/tests/**", "benches/**", "**/benches/**"]
+  },
+  "risk-2": {
+    "description": "Only prover or other non-verifier production code changed, with no protocol change or verifier-reaching dependency change.",
+    "paths": ["crates/jolt-prover/src/**", "crates/jolt-kernels/src/**", "crates/jolt-witness/src/**", "crates/jolt-profiling/src/**", "crates/jolt-metal/src/**", "tracer/src/**", "crates/jolt-tracer-x86/src/**"]
+  },
+  "risk-3": {
+    "description": "A small, scoped dependency or shared-code change may reach the verifier, but is directly reviewable and changes no protocol, verifier logic or commitment parameters. Broad or uncertain changes are risk-4.",
+    "paths": ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", ".cargo/**", "rust-toolchain*", "**/build.rs", "common/src/**", "jolt-sdk/**", "crates/jolt-field/src/**", "crates/jolt-poly/src/**", "crates/jolt-program/src/**", "crates/jolt-host/src/**", "crates/jolt-r1cs/src/**", "crates/jolt-riscv/src/**", "crates/jolt-lookup-tables/src/**", "crates/jolt-crypto/src/**", "crates/jolt-utils/src/**"]
+  },
+  "risk-4": {
+    "description": "Protocol changes, sumcheck order or symbolic relations, transcript or Fiat-Shamir changes, verifier logic, PCS or commitment parameters, or any unclassified or uncertain change. Requires a current-head maintainer approval.",
+    "paths": ["crates/jolt-claims/src/**", "crates/jolt-claims-derive/src/**", "crates/jolt-verifier/src/**", "crates/jolt-verifier-derive/src/**", "crates/jolt-spartan-verifier/src/**", "crates/jolt-sumcheck/src/**", "crates/jolt-transcript/src/**", "crates/jolt-openings/src/**", "crates/jolt-dory/src/**", "crates/jolt-hyperkzg/src/**", "crates/jolt-akita/src/**", "crates/jolt-blindfold/src/**", "crates/jolt-prover/src/stages/**", "crates/jolt-prover/src/blindfold.rs", "crates/jolt-prover/src/recorder.rs"]
+  }
+}

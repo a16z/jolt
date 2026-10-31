@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Decide and publish the required `ai-merge-gate` check for a pull request into main.
+"""Publish the policy and review-attestation checks for a pull request into main.
 
     ai_merge_gate.py resolve      # write pr=<number> for the triggering event to $GITHUB_OUTPUT
     ai_merge_gate.py evaluate N   # decide pull request N and publish the result
+    ai_merge_gate.py attest N     # check the current-head review comment, without a model
 
 The policy, its truth table and the admin setup are in .github/ai-merge-gate.md; `Gate.decide`
-implements that table in order. Every input is read from the GitHub API when the gate runs.
+implements that table in order. Every PR input is read from the GitHub API when the gate runs.
 Pull request content reaches the model only as data: the diff, the changed files and the
 answers to its `read_file` and `search` calls, all read from GitHub's archives of the pinned
 merge base and head. Nothing here checks out, writes, builds or runs that content.
@@ -25,6 +26,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from diff_classifier import parse_diff
@@ -38,10 +40,18 @@ MODEL = "gpt-6-astra"
 EFFORT = "max"
 GATE = "ai-merge-gate"
 CLASSIFIER = "ai-merge-gate/classifier"
-REVIEW = "ai-merge-gate/review"
-REVIEW_LABEL = "ai-review"
+ATTESTATION_CHECK = "ai-merge-gate/attestation"
+RISK_POLICY = ".github/ai-merge-gate-risk.json"
+RISK_LABELS = {f"risk-{level}" for level in range(1, 5)}
+HUMAN_LABEL = "needs-human-review"
+# REST users/0xandoroid-ai-agent[bot] and GraphQL node lookup agree on this identity.
+# The separate publishing App must not be allowed to attest its model-shaped comments.
+PIKA_BOT_ID = "BOT_kgDOFAtqNQ"
 SIGN_OFF = re.compile(r"AI gate: AUTHORIZED ([0-9a-f]{40})")
-ATTESTATION = re.compile(r"Review: CONFIRMED ([0-9a-f]{40})")
+ATTESTATION = re.compile(
+    r"I have reviewed pull request #([1-9][0-9]*) at commit ([0-9a-f]{40}) "
+    r"using skill (.+?) and model (.+?) with (.+?) reasoning effort and found no issues\."
+)
 # GitHub runs a pull request's own copy of this workflow for that pull request's reviews, so a
 # change to it decides whether the gate hears its approvals being withdrawn. The gate never
 # passes such a change; admins merge it with the off switch on.
@@ -49,9 +59,10 @@ EVENT_SOURCE = ".github/workflows/ai-merge-gate-events.yml"
 # Merged changes here act on every later evaluation, so the AI path never merges them. Any
 # workflow on the default branch can use the gate's environment secrets. Python resolves the
 # gate's imports from scripts/ci first, so any module there, a json.py or a __pycache__ entry
-# included, can run with the gate's credentials. The skills and the closure spec instruct the model.
+# included, can run with the gate's credentials. The classifier skill, risk policy and closure
+# spec instruct the model.
 GATE_INPUTS = (".github/workflows/", "scripts/ci/", ".claude/skills/verifier-classifier/",
-               ".claude/skills/ci-code-review/", "specs/verifier-closure-lints.md")
+               "specs/verifier-closure-lints.md", RISK_POLICY)
 # The diff plus the changed files, sent with each question; over this the gate fails closed.
 MAX_INPUT_CHARS = 1_000_000
 # Tool answers: one answer (the largest source file is about 160,000 characters numbered),
@@ -73,30 +84,21 @@ CLASSIFICATION_SCHEMA = {
     "properties": {
         "verdict": {"type": "string", "enum": ["SAFE", "AFFECTS", "UNCERTAIN"]},
         "reasoning": {"type": "string"},
-    },
-    "required": ["verdict", "reasoning"],
-    "additionalProperties": False,
-}
-REVIEW_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "verdict": {"type": "string", "enum": ["CLEAN", "ISSUES"]},
-        "summary": {"type": "string"},
-        "findings": {
+        "risks": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "path": {"type": "string"},
-                    "line": {"type": "integer"},
-                    "body": {"type": "string"},
+                    "level": {"type": "integer", "enum": [1, 2, 3, 4]},
+                    "reasoning": {"type": "string"},
                 },
-                "required": ["path", "line", "body"],
+                "required": ["path", "level", "reasoning"],
                 "additionalProperties": False,
             },
         },
     },
-    "required": ["verdict", "summary", "findings"],
+    "required": ["verdict", "reasoning", "risks"],
     "additionalProperties": False,
 }
 REVISION = {"type": "string", "enum": ["base", "head"],
@@ -121,7 +123,11 @@ query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
     pullRequest(number: $number) {
       %s(first: 100, after: $cursor) {
         pageInfo { hasNextPage endCursor }
-        nodes { author { __typename login } body lastEditedAt %s }
+        nodes {
+          author { __typename login ... on Bot { id } }
+          editor { __typename login ... on Bot { id } }
+          body lastEditedAt %s
+        }
       }
     }
   }
@@ -400,6 +406,7 @@ class Record:
     conclusion: str
     title: str
     body: str
+    risk: int
 
 
 @dataclass(frozen=True)
@@ -410,13 +417,13 @@ class Outcome:
 
 
 UNSETTLED = Outcome("failure", "The pull request changed while the gate ran",
-                    "Comments, reviews, labels or team membership changed while the gate ran, and the "
+                    "Comments, reviews or team membership changed while the gate ran, and the "
                     "current state needs a model result this run did not get. The next pull request "
                     "comment, review or push runs the gate again.")
 
 
-def signed_lines(comments: list[dict], reviews: list[dict]) -> list[tuple[str, re.Pattern, str]]:
-    """(login, pattern, sha) for each standalone gate line a person wrote and nobody edited."""
+def signed_lines(comments: list[dict], reviews: list[dict]) -> list[tuple[str, str]]:
+    """(login, sha) for each standalone authorization a person wrote and nobody edited."""
     bodies = [node for node in comments + reviews
               if (node.get("author") or {}).get("__typename") == "User"
               and node.get("lastEditedAt") is None
@@ -424,9 +431,8 @@ def signed_lines(comments: list[dict], reviews: list[dict]) -> list[tuple[str, r
     lines = []
     for node in bodies:
         for line in node["body"].splitlines():
-            for pattern in (SIGN_OFF, ATTESTATION):
-                if match := pattern.fullmatch(line.strip()):
-                    lines.append((node["author"]["login"], pattern, match.group(1)))
+            if match := SIGN_OFF.fullmatch(line.strip()):
+                lines.append((node["author"]["login"], match.group(1)))
     return lines
 
 
@@ -461,15 +467,44 @@ class Gate:
             self.writers[login] = permission is not None and permission["permission"] in ("admin", "write")
         return self.writers[login]
 
-    def recorded(self, head: str, name: str) -> str | None:
-        """The conclusion of `name` for `head` from this run, else from this App's latest check run."""
-        if mine := [record.conclusion for record in self.records if record.name == name]:
+    def recorded(self, head: str, name: str) -> Record | None:
+        """A classification for this head with risk metadata, from this run or this App's cache."""
+        if mine := [record for record in self.records if record.name == name]:
             return mine[-1]
         query = urllib.parse.urlencode({"check_name": name, "filter": "latest", "per_page": 100})
         runs = self.github.get(f"/repos/{self.repo}/commits/{head}/check-runs?{query}")["check_runs"]
         ours = [run for run in runs if (run.get("app") or {}).get("slug") == self.app_slug
                 and run["head_sha"] == head and run["status"] == "completed"]
-        return max(ours, key=lambda run: run["completed_at"])["conclusion"] if ours else None
+        if not ours:
+            return None
+        run = max(ours, key=lambda run: run["completed_at"])
+        if run["conclusion"] not in ("success", "neutral"):
+            return None
+        output = run.get("output") or {}
+        try:
+            metadata = json.loads(output.get("text") or "null")
+            risk = metadata["risk"]
+            if metadata["policy_sha256"] != hashlib.sha256((ROOT / RISK_POLICY).read_bytes()).hexdigest():
+                return None
+        except (ValueError, TypeError, KeyError):
+            return None
+        if type(risk) is not int or risk not in range(1, 5):
+            return None
+        return Record(name, run["conclusion"], output["title"], output["summary"], risk)
+
+    def path_risks(self, pull: dict) -> dict[str, int]:
+        policy = json.loads((ROOT / RISK_POLICY).read_text())
+        return {path: max((int(label[-1]) for label, rule in policy.items()
+                           if any(fnmatchcase(path, pattern) for pattern in rule["paths"])), default=0)
+                for path in self.pinned(pull).changed()}
+
+    def risk_level(self, pull: dict) -> int:
+        if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
+            return record.risk
+        paths = self.path_risks(pull)
+        # Only wholly test/script/doc paths get a low label without semantic classification.
+        # Unknown code, drafts and unauthorized classifier work remain risk-4.
+        return 1 if paths and all(level == 1 for level in paths.values()) else 4
 
     def pinned(self, pull: dict) -> Source:
         """The evaluated head and its merge base with the base branch, fixed on first use. The path
@@ -500,6 +535,7 @@ class Gate:
                 f"Repository: {self.repo}", f"Pull request: #{pull['number']}",
                 f"Merge base, revision `base` for the tools: {base}",
                 f"Head, revision `head` for the tools: {head}",
+                "Changed paths (including both sides of renames): " + json.dumps(sorted(source.changed())),
                 "", f"## Diff {base}...{head}", "", diff,
                 *(f"## {path} at the head\n\n{source.read('head', path)}" for path in present)])
             if len(text) > MAX_INPUT_CHARS:
@@ -511,24 +547,57 @@ class Gate:
     def classify(self, pull: dict) -> str:
         skill = (ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text()
         closure = (ROOT / "specs/verifier-closure-lints.md").read_text()
+        policy = (ROOT / RISK_POLICY).read_text()
         material = self.material(pull)
-        answer = self.model.ask(f"{skill}\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
+        answer = self.model.ask(f"{skill}\n\n## Trusted risk policy: {RISK_POLICY}\n\n{policy}"
+                                f"\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
                                 material, "verifier_classification", CLASSIFICATION_SCHEMA, self.source.call)
+        paths = self.path_risks(pull)
+        risks = {}
+        for item in answer["risks"]:
+            if not isinstance(item, dict) or item.get("path") not in paths or item["path"] in risks \
+                    or type(item.get("level")) is not int or item["level"] not in range(1, 5) \
+                    or not isinstance(item.get("reasoning"), str) or not item["reasoning"].strip():
+                raise GateError("the classifier returned invalid or duplicate per-path risk evidence")
+            # The classifier can identify test-only hunks inside a production source file.
+            # Production changes retain the configured path floors.
+            risks[item["path"]] = 1 if item["level"] == 1 else max(item["level"], paths[item["path"]])
+        if set(risks) != set(paths) or not risks:
+            raise GateError("the classifier did not account for every changed path")
+        risk = max(risks.values())
+        if answer["verdict"] == "UNCERTAIN" or (answer["verdict"] == "AFFECTS" and risk < 3):
+            risk = 4
         conclusion = "success" if answer["verdict"] == "SAFE" else "neutral"
         self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: {answer['verdict']}",
-                                   f"{answer['reasoning']}\n\n_{answer['served_by']}_"))
+                                   f"{answer['reasoning']}\n\nRisk: risk-{risk}\n\n" +
+                                   "\n".join(f"- `{item['path']}`: risk-{risks[item['path']]} — {item['reasoning']}"
+                                             for item in answer["risks"]) +
+                                   f"\n\n_{answer['served_by']}_", risk))
         return conclusion
 
-    def review(self, pull: dict) -> str:
-        skill = (ROOT / ".claude/skills/ci-code-review/SKILL.md").read_text()
-        material = self.material(pull)
-        answer = self.model.ask(skill, material, "code_review", REVIEW_SCHEMA, self.source.call)
-        findings = [f"- `{item['path']}:{item['line']}`: {item['body']}" for item in answer["findings"]]
-        conclusion = "success" if answer["verdict"] == "CLEAN" and not findings else "neutral"
-        title = "Astra Max review: " + ("clean" if conclusion == "success" else f"{len(findings)} findings")
-        self.records.append(Record(REVIEW, conclusion, title,
-                                   "\n".join([answer["summary"], "", *findings, "", f"_{answer['served_by']}_"])))
-        return conclusion
+    def attestation(self, pull: dict) -> Outcome:
+        number, head = pull["number"], pull["head"]["sha"]
+        self.comments = self.github.discussion(number, "comments", "fullDatabaseId")
+        for node in self.comments:
+            author = node.get("author") or {}
+            for line in node["body"].splitlines():
+                match = ATTESTATION.fullmatch(line)
+                if not match or match.group(1) != str(number) or match.group(2) != head \
+                        or not all(field.strip() for field in match.groups()[2:]):
+                    continue
+                actors = [author, node.get("editor") or {}] if node.get("lastEditedAt") else [author]
+                if all(self.can_attest(actor) for actor in actors):
+                    return Outcome("success", "Review attested by " + author["login"],
+                                   f"An authorized comment attests a clean review of PR #{number} at `{head}`.")
+        return Outcome("failure", "Needs a current-head review attestation",
+                       "The Pika App bot or a member of the configured core team must post a PR comment "
+                       f"with this standalone line: I have reviewed pull request #{number} at commit {head} "
+                       "using skill <skill name> and model <model name> with <effort> reasoning effort "
+                       "and found no issues.")
+
+    def can_attest(self, actor: dict) -> bool:
+        return (actor.get("__typename") == "Bot" and actor.get("id") == PIKA_BOT_ID) or \
+            (actor.get("__typename") == "User" and self.is_core(actor["login"]))
 
     def decide(self, pull: dict, pay: bool = True) -> Outcome:
         """The table's result for `pull`. With `pay` false, a row that needs a new paid model result
@@ -541,7 +610,7 @@ class Gate:
                            "with this change the gate could miss an approval being withdrawn. An admin merges "
                            "it with the off switch on, as `.github/ai-merge-gate.md` describes.")
         self.comments = self.github.discussion(number, "comments", "fullDatabaseId")
-        reviews = self.github.discussion(number, "reviews", "state")
+        reviews = self.github.discussion(number, "reviews", "state commit { oid }")
         latest = {}
         for review in reviews:
             login = (review.get("author") or {}).get("login")
@@ -553,59 +622,49 @@ class Gate:
             return Outcome("failure", "Changes requested by " + ", ".join(blocking),
                            "A reviewer with write access requested changes; the gate fails until they "
                            "approve or their review is dismissed.")
-        # GitHub's review state decides an approval's freshness, as for its native approval count:
-        # an approval of an earlier commit counts until GitHub dismisses it.
+        # Risk-1 through risk-3 retain GitHub's approval freshness; risk-4 also checks commit.oid below.
         approvers = sorted(login for login, review in latest.items()
                            if review["state"] == "APPROVED" and review["author"]["__typename"] == "User"
                            and login != author and self.can_write(login))
+        lines = signed_lines(self.comments, reviews)
+        authorized = self.is_core(author) or any(sha == head and self.is_core(login) for login, sha in lines)
+        protected = sorted(path for path in changed if path.startswith(GATE_INPUTS))
+        current = [login for login in approvers if (latest[login].get("commit") or {}).get("oid") == head
+                   and self.is_core(login)]
+        if not approvers:
+            if not authorized:
+                return Outcome("failure", "Human approval required",
+                               f"@{author} is not in the core team and no core member has posted "
+                               f"`AI gate: AUTHORIZED {head}`, so no agent check runs. A reviewer with "
+                               "write access can approve instead; risk-4 requires a current-head maintainer approval.")
+            if pull["draft"]:
+                return Outcome("failure", "Draft: agent checks start when the PR is ready for review",
+                               "Mark the pull request ready for review, or get a human approval.")
+            if protected:
+                return Outcome("failure", "Human approval required: the change edits the gate's inputs",
+                               "Once merged, these files act on every later pull request, so a writer "
+                               "must approve them: " + ", ".join(f"`{path}`" for path in protected))
+        if authorized and not current and not pull["draft"] and not protected \
+                and self.recorded(head, CLASSIFIER) is None:
+            if not pay:
+                return UNSETTLED
+            self.classify(pull)
+        risk = self.risk_level(pull)
+        if risk == 4:
+            if current:
+                return Outcome("success", "Risk 4 approved by " + ", ".join(current),
+                               f"A maintainer other than the author approved the current head `{head}`. "
+                               "The separate attestation check is still required.")
+            return Outcome("failure", "Risk 4: current-head maintainer approval required",
+                           "Protocol or unclassified changes need an undismissed approval of the current "
+                           "head from a writer in the configured core team, other than the PR author.")
         if approvers:
             return Outcome("success", "Approved by " + ", ".join(approvers),
                            "A reviewer with write access approved the pull request, and GitHub has not "
-                           "dismissed the approval.")
+                           "dismissed the approval. The separate attestation check is still required.")
+        return self.attestation(pull)
 
-        lines = signed_lines(self.comments, reviews)
-        if not self.is_core(author) and not any(pattern is SIGN_OFF and sha == head and self.is_core(login)
-                                                for login, pattern, sha in lines):
-            return Outcome("failure", "Human approval required",
-                           f"@{author} is not in the core team and no core member has posted "
-                           f"`AI gate: AUTHORIZED {head}`, so no agent check runs. A reviewer with "
-                           "write access can approve instead.")
-        if pull["draft"]:
-            return Outcome("failure", "Draft: agent checks start when the PR is ready for review",
-                           "Mark the pull request ready for review, or get a human approval.")
-        if touched := sorted(path for path in changed if path.startswith(GATE_INPUTS)):
-            return Outcome("failure", "Human approval required: the change edits the gate's inputs",
-                           "Once merged, these files act on every later pull request, so a writer "
-                           "must approve them: " + ", ".join(f"`{path}`" for path in touched))
-        verdict = self.recorded(head, CLASSIFIER)
-        if verdict is None:
-            if not pay:
-                return UNSETTLED
-            verdict = self.classify(pull)
-        if verdict != "success":
-            return Outcome("failure", "Human approval required: the change may affect the verifier",
-                           f"The verifier classifier did not find `{head}` SAFE; its reasoning is in the "
-                           f"`{CLASSIFIER}` check. A reviewer with write access must approve.")
-        attesters = sorted({login for login, pattern, sha in lines if pattern is ATTESTATION and sha == head
-                            and (login == author or self.is_core(login))})
-        if attesters:
-            return Outcome("success", "Verifier-safe; Astra Max review attested by " + ", ".join(attesters),
-                           f"Classifier SAFE and `Review: CONFIRMED {head}` from {', '.join(attesters)}.")
-        review = self.recorded(head, REVIEW)
-        if review is None and REVIEW_LABEL in {label["name"] for label in pull["labels"]}:
-            if not pay:
-                return UNSETTLED
-            review = self.review(pull)
-        if review == "success":
-            return Outcome("success", "Verifier-safe; CI Astra Max review clean",
-                           f"Classifier SAFE and the `{REVIEW}` check is clean for `{head}`.")
-        found = " The CI review of this head reported findings." if review else ""
-        return Outcome("failure", "Needs an Astra Max review of this head",
-                       f"After a clean Astra Max review of `{head}`, the author or a core member posts "
-                       f"the line `Review: CONFIRMED {head}`; or add the `{REVIEW_LABEL}` label for a "
-                       f"CI review.{found}")
-
-    def evaluate(self, number: int) -> None:
+    def evaluate(self, number: int, attest_only: bool = False) -> None:
         pull = self.github.get(f"/repos/{self.repo}/pulls/{number}")
         if pull["state"] != "open" or pull["base"]["ref"] != self.default_branch:
             log(f"PR #{number} is not an open pull request into {self.default_branch}")
@@ -613,21 +672,31 @@ class Gate:
         head = pull["head"]["sha"]
         # An in-progress run fails the required check until this run decides, so a pass published
         # for an earlier state of this head does not stand while the gate re-reads it.
-        check = self.check(head, GATE, None, "Evaluating", "The gate is evaluating this head.")
+        name = ATTESTATION_CHECK if attest_only else GATE
+        check = self.check(head, name, None, "Evaluating", "The gate is evaluating this head.")
         try:
-            outcome = self.decide(pull)
+            outcome = self.attestation(pull) if attest_only else self.decide(pull)
             self.publish(number, head)
+            if not attest_only and not self.label_risk(number, head, self.risk_level(pull)):
+                outcome = Outcome("failure", "Superseded while the gate ran",
+                                  "The pull request changed before risk labels were confirmed; its next "
+                                  "evaluation decides the current head.")
             if outcome.conclusion == "success":
-                outcome = self.recheck(number, head)
+                outcome = self.recheck(number, head, attest_only)
         except Exception as error:
             self.complete(check, Outcome("failure", "Gate error: human approval required",
                                          f"The gate could not decide: {error}"))
             self.publish(number, head)
+            if not attest_only:
+                try:
+                    self.label_risk(number, head, 4)
+                except Exception as label_error:
+                    log(f"Could not label the failed classification: {label_error}")
             raise
         self.complete(check, outcome)
         log(f"PR #{number} at {head}: {outcome.conclusion}: {outcome.title}")
 
-    def recheck(self, number: int, head: str) -> Outcome:
+    def recheck(self, number: int, head: str, attest_only: bool = False) -> Outcome:
         """Decide again from pull request, comment, review, team and permission state read now,
         reusing this run's paid results: the model work behind a pass can take many minutes."""
         self.core, self.writers = {}, {}
@@ -636,20 +705,50 @@ class Gate:
             return Outcome("failure", "Superseded while the gate ran",
                            f"The pull request is now {pull['state']} at `{pull['head']['sha']}` into "
                            f"`{pull['base']['ref']}`; its next evaluation decides it.")
-        return self.decide(pull, pay=False)
+        return self.attestation(pull) if attest_only else self.decide(pull, pay=False)
 
     def publish(self, number: int, head: str) -> None:
         """Publish the paid results of this run that are not yet published."""
         for record in self.records[self.posted:]:
-            self.check(head, record.name, record.conclusion, record.title, record.body)
+            self.check(head, record.name, record.conclusion, record.title, record.body, record.risk)
             self.comment(number, head, record)
             self.posted += 1
 
-    def check(self, head: str, name: str, conclusion: str | None, title: str, summary: str) -> int:
+    def label_risk(self, number: int, head: str, level: int) -> bool:
+        """Change only our labels, with a current-head read before and after the writes.
+        GitHub has no atomic head-conditional label API; the final read refuses a stale pass."""
+        route = f"/repos/{self.repo}/issues/{number}/labels"
+        pull = self.github.get(f"/repos/{self.repo}/pulls/{number}")
+        if pull["state"] != "open" or pull["base"]["ref"] != self.default_branch or pull["head"]["sha"] != head:
+            return False
+        wanted = {f"risk-{level}"} | ({HUMAN_LABEL} if level == 4 else set())
+        present = {label["name"] for label in pull["labels"]} & (RISK_LABELS | {HUMAN_LABEL})
+        if present == wanted:
+            return True
+        for name in sorted(wanted - present):
+            if self.github.get(f"/repos/{self.repo}/labels/{name}", missing_ok=True) is None:
+                raise GateError(f"repository label {name!r} is missing; an admin must create the risk labels")
+        if wanted - present:
+            self.github.post(route, {"labels": sorted(wanted - present)})
+        for name in sorted(present - wanted):
+            self.github.call("DELETE", route + "/" + name, missing_ok=True)
+        current = self.github.get(f"/repos/{self.repo}/pulls/{number}")
+        if current["state"] != "open" or current["base"]["ref"] != self.default_branch or current["head"]["sha"] != head:
+            return False
+        actual = {label["name"] for label in current["labels"]} & (RISK_LABELS | {HUMAN_LABEL})
+        if actual != wanted:
+            raise GateError(f"risk labels changed during publication: expected {sorted(wanted)}, got {sorted(actual)}")
+        return True
+
+    def check(self, head: str, name: str, conclusion: str | None, title: str, summary: str,
+              risk: int | None = None) -> int:
         """Create a check run on `head`: completed with `conclusion`, or in progress without one."""
         state = {"status": "completed", "conclusion": conclusion} if conclusion else {"status": "in_progress"}
         return self.github.post(f"/repos/{self.repo}/check-runs", {
-            "name": name, "head_sha": head, **state, "output": {"title": title, "summary": clip(summary)},
+            "name": name, "head_sha": head, **state,
+            "output": {"title": title, "summary": clip(summary),
+                       **({"text": json.dumps({"risk": risk, "policy_sha256": hashlib.sha256(
+                           (ROOT / RISK_POLICY).read_bytes()).hexdigest()})} if risk is not None else {})},
         })["id"]
 
     def complete(self, check: int, outcome: Outcome) -> None:
@@ -675,6 +774,11 @@ class Gate:
 def resolve(github: GitHub, event_name: str, event: dict, default_branch: str) -> int | None:
     """The pull request an `issue_comment` or bridged `workflow_run` event is about."""
     if event_name == "issue_comment":
+        author = event["comment"]["user"]
+        # Ignore other bots, including the publishing App's classifier comment edits. Do not
+        # filter on the body: deleting the line is itself an invalidation event.
+        if author["type"] == "Bot" and author["node_id"] != PIKA_BOT_ID:
+            return None
         return event["issue"]["number"] if event["issue"].get("pull_request") else None
     if event_name != "workflow_run" or not event["workflow_run"].get("head_repository"):
         return None
@@ -696,10 +800,10 @@ def main(argv: list[str]) -> int:
                 output.write(f"pr={number or ''}\n")
             log(f"{env['GITHUB_EVENT_NAME']} event: PR {number or 'none'}")
             return 0
-        if len(argv) == 3 and argv[1] == "evaluate":
+        if len(argv) == 3 and argv[1] in ("evaluate", "attest"):
             model = Model(http, env.get("OPENAI_API_KEY", ""))
             Gate(github, model, env["DEFAULT_BRANCH"], env.get("AI_MERGE_GATE_CORE_TEAM", ""),
-                 env["AI_MERGE_GATE_APP_SLUG"]).evaluate(int(argv[2]))
+                 env["AI_MERGE_GATE_APP_SLUG"]).evaluate(int(argv[2]), attest_only=argv[1] == "attest")
             return 0
     except Exception as error:
         message = f"{type(error).__name__}: {error}"
