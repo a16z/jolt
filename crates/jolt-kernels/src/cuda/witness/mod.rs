@@ -188,41 +188,19 @@ pub(crate) fn session_row_trace_window<F: JoltField>(
         )
     })?;
     let trace = Arc::new(trace);
-    park_device_trace(session, ordinal, identity, window, Arc::clone(&trace));
-    Ok(trace)
-}
-
-pub(crate) fn session_resident_trace(
-    session: &ProofSession,
-    ordinal: usize,
-    source: usize,
-    window: &CycleWindow,
-) -> Option<Arc<DeviceTrace>> {
-    session
-        .state::<ResidentTraces>()
-        .and_then(|traces| traces.get(ordinal, source, window))
-        .map(|resident| Arc::clone(&resident.trace))
-}
-
-pub(crate) fn park_device_trace(
-    session: &mut ProofSession,
-    ordinal: usize,
-    source: usize,
-    window: &CycleWindow,
-    trace: Arc<DeviceTrace>,
-) {
     session.state_or_insert_with(ResidentTraces::default).park(
         ordinal,
         ResidentTrace {
-            source,
+            source: identity,
             cycles: window.len,
             base: window.start,
-            trace,
+            trace: Arc::clone(&trace),
             execution: OnceLock::new(),
             memory: OnceLock::new(),
             bytecode: OnceLock::new(),
         },
     );
+    Ok(trace)
 }
 
 trait AtomGroup: Sized {
@@ -502,6 +480,97 @@ mod tests {
                 }
             });
         }
+    }
+
+    #[test]
+    #[cfg(not(feature = "zk"))]
+    fn commitment_preserves_prewarmed_windows() {
+        use crate::commitment::{CommitWitness, CommitmentGrid};
+        use crate::cuda::common::devices::committed_windows;
+        use crate::cuda::{CudaBackend, CudaDoryScheme};
+        use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, TracePolynomialOrder};
+
+        if shared_context().is_none() {
+            return;
+        }
+        let log_t = 13;
+        let cycles = 1 << log_t;
+        let grid = CommitmentGrid {
+            total_vars: log_t + usize::from(ONE_HOT.log_k_chunk),
+            log_t,
+            log_k_chunk: usize::from(ONE_HOT.log_k_chunk),
+            order: TracePolynomialOrder::CycleMajor,
+        };
+        let windows = committed_windows(cycles, grid.num_columns());
+        let setup = CudaDoryScheme::setup_prover(grid.total_vars);
+        let ids = [
+            JoltCommittedPolynomial::RdInc,
+            JoltCommittedPolynomial::RamInc,
+        ];
+        with_r1cs_witness(log_t, RAM_K, ONE_HOT, 23, |witness| {
+            let mut session = ProofSession::default();
+            let source = witness_identity(witness);
+            let last = windows.len() - 1;
+            super::warm_window::<Fr>(
+                context_for(last).expect("last device"),
+                &mut session,
+                witness,
+                cycles,
+                &windows[last],
+            )
+            .expect("partially warm session");
+            for _ in 0..2 {
+                let before: Vec<_> = windows
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ordinal, window)| {
+                        let resident = session.state::<ResidentTraces>()?.get(
+                            ordinal,
+                            source,
+                            &window.residency(cycles),
+                        )?;
+                        Some((
+                            ordinal,
+                            Arc::clone(&resident.trace),
+                            Arc::clone(resident.execution.get().expect("execution cache")),
+                            Arc::clone(resident.memory.get().expect("memory cache")),
+                            Arc::clone(resident.bytecode.get().expect("bytecode cache")),
+                        ))
+                    })
+                    .collect();
+                assert!(!before.is_empty());
+                let _ = <CudaBackend as CommitWitness<Fr, CudaDoryScheme>>::commit_witness(
+                    &CudaBackend,
+                    &mut session,
+                    witness,
+                    &ids,
+                    grid,
+                    &setup,
+                )
+                .expect("commit prewarmed witness");
+                for (ordinal, trace, execution, memory, bytecode) in before {
+                    let resident = session
+                        .state::<ResidentTraces>()
+                        .expect("cache after commitment")
+                        .get(ordinal, source, &windows[ordinal].residency(cycles))
+                        .expect("resident window after commitment");
+                    assert!(Arc::ptr_eq(&trace, &resident.trace), "device {ordinal}");
+                    assert!(Arc::ptr_eq(
+                        &execution,
+                        resident.execution.get().expect("execution cache retained"),
+                    ));
+                    assert!(Arc::ptr_eq(
+                        &memory,
+                        resident.memory.get().expect("memory cache retained"),
+                    ));
+                    assert!(Arc::ptr_eq(
+                        &bytecode,
+                        resident.bytecode.get().expect("bytecode cache retained"),
+                    ));
+                }
+                warm_shared_witness::<Fr>(&mut session, witness, log_t).expect("full warm-up");
+            }
+        });
     }
 
     #[test]

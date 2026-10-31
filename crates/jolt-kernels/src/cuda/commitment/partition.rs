@@ -28,10 +28,6 @@ pub(super) struct ColumnPlan<'a> {
     pub(super) row_width: usize,
 }
 
-pub(super) struct TraceSource<'a> {
-    pub(super) traces: &'a [Arc<DeviceTrace>],
-}
-
 type ColumnSink<'a, F> = &'a mut dyn FnMut(usize, Vec<JacobianLimbs>) -> Result<(), KernelError<F>>;
 
 pub(super) fn window_columns<F: JoltField>(
@@ -440,40 +436,14 @@ where
     })
 }
 
-type WindowState = (Option<Arc<DeviceTrace>>, WindowHotColumns);
-
-type SplitColumns<PCS> = (
-    Vec<FinishedColumn<PCS>>,
-    Vec<Option<Arc<DeviceTrace>>>,
-    Vec<WindowHotColumns>,
-);
-
-fn window_trace<F: JoltField>(
-    context: &CudaKernelContext,
-    plan: &ColumnPlan<'_>,
-    source: &TraceSource<'_>,
-    window: &CycleWindow,
-    ordinal: usize,
-) -> Result<Arc<DeviceTrace>, KernelError<F>> {
-    let _ = (context, plan, window);
-    source
-        .traces
-        .get(ordinal)
-        .cloned()
-        .ok_or(KernelError::InvariantViolation {
-            reason: "commitment partition has no uploaded trace",
-        })
-}
-
 pub(super) fn split_columns<F, PCS>(
     setup: &PCS::ProverSetup,
     bases: &DeviceG1Bases,
-    resident: Option<Arc<DeviceTrace>>,
     plan: &ColumnPlan<'_>,
-    source: &TraceSource<'_>,
+    traces: &[Arc<DeviceTrace>],
     host_bases: &[AffineLimbs],
     windows: &[CycleWindow],
-) -> Result<SplitColumns<PCS>, KernelError<F>>
+) -> Result<PipelineResult<PCS, WindowHotColumns>, KernelError<F>>
 where
     F: JoltField,
     PCS: DeviceTier1Commitment,
@@ -482,16 +452,13 @@ where
         .iter()
         .map(|window| window.len / plan.row_width)
         .collect();
-    let mut producers: Vec<Tier1Producer<'_, F, WindowState>> = Vec::with_capacity(windows.len());
+    let mut producers: Vec<Tier1Producer<'_, F, WindowHotColumns>> =
+        Vec::with_capacity(windows.len());
     for (ordinal, window) in windows.iter().enumerate() {
-        let resident = (ordinal == 0).then(|| resident.clone()).flatten();
+        let trace = traces.get(ordinal).ok_or(KernelError::InvariantViolation {
+            reason: "commitment partition has no uploaded trace",
+        })?;
         producers.push(Box::new(move |context, ordinal, sink| {
-            let (trace, parked) = if let Some(trace) = resident {
-                (trace, None)
-            } else {
-                let trace = window_trace::<F>(context, plan, source, window, ordinal)?;
-                (Arc::clone(&trace), Some(trace))
-            };
             let built = tracing::info_span!(
                 "cuda_commit_park_hot",
                 device = ordinal,
@@ -499,7 +466,7 @@ where
             )
             .in_scope(|| {
                 hot_columns_from_trace::<F>(
-                    &trace,
+                    trace,
                     plan.kinds,
                     plan.one_hot_k,
                     &CycleWindow {
@@ -515,7 +482,7 @@ where
                 device = ordinal,
                 cycles = window.len
             )
-            .in_scope(|| dense_columns_from_trace::<F>(context, &trace, plan.kinds, window.len))?;
+            .in_scope(|| dense_columns_from_trace::<F>(context, trace, plan.kinds, window.len))?;
             let uploaded = (ordinal > 0)
                 .then(|| context.upload_g1_bases(host_bases))
                 .transpose()?;
@@ -541,18 +508,10 @@ where
                     })
                 },
             )?;
-            Ok((parked, built))
+            Ok(built)
         }));
     }
-    let (columns, states) =
-        pipeline_columns::<F, PCS, WindowState, _>(setup, plan, &blocks, &context_for, producers)?;
-    let mut traces = Vec::with_capacity(states.len());
-    let mut hots = Vec::with_capacity(states.len());
-    for (trace, built) in states {
-        traces.push(trace);
-        hots.push(built);
-    }
-    Ok((columns, traces, hots))
+    pipeline_columns::<F, PCS, WindowHotColumns, _>(setup, plan, &blocks, &context_for, producers)
 }
 
 #[cfg(test)]

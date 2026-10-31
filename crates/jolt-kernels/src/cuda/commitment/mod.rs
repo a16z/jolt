@@ -3,7 +3,8 @@
 //! For cycle-major grids whose row fits within the trace, native signed
 //! increments feed device MSMs and packed one-hots feed bucketed row sums.
 //! Commitment-aligned windows can share their uploaded trace and hot columns
-//! with later sumcheck and opening kernels.
+//! with later sumcheck and opening kernels. Every device acquires its window
+//! through the shared session cache so matching prewarmed atoms remain available.
 //!
 //! `DeviceTier1Commitment` separates these row computations from PCS
 //! finalization. `DoryScheme` pipelines GPU rows into CPU tier-two commitments;
@@ -34,7 +35,6 @@ use jolt_claims::protocols::field_inline::FieldInlineCommittedPolynomial;
 #[cfg(feature = "field-inline")]
 use jolt_witness::JoltWitnessPlane;
 use partition::ColumnPlan;
-use partition::TraceSource;
 use std::sync::{mpsc, Arc};
 use tracing::Span;
 
@@ -58,9 +58,7 @@ use jolt_witness::{collect_bundles, JoltWitnessOracle, RowSource};
 
 use super::common::context::CudaKernelContext;
 use super::common::device::require_fr_slice;
-use super::common::device_columns::{
-    park_device_column, whole_domain, witness_identity, DeviceColumn,
-};
+use super::common::device_columns::{park_device_column, whole_domain, DeviceColumn};
 use super::common::devices::{committed_windows, CycleWindow};
 use super::common::error::CudaError;
 use super::common::msm::{
@@ -71,7 +69,7 @@ use super::{require_context, CudaBackend};
 use crate::commitment::{
     finish_streamed, CommitWitness, CommitmentGrid, ModeStreamingCommitment, WitnessCommitment,
 };
-use crate::cuda::witness::{park_device_trace, session_resident_trace, session_row_trace_window};
+use crate::cuda::witness::session_row_trace_window;
 use crate::reference::commitment::{column_kinds, ColumnKind};
 use crate::{KernelError, ProofSession};
 
@@ -436,103 +434,45 @@ impl CudaBackend {
 
         if grid.order == TracePolynomialOrder::CycleMajor && row_width <= cycles {
             let one_hot_k = 1usize << grid.log_k_chunk;
-            let windows = if PCS::BATCHES_TIER2 {
-                committed_windows(cycles, row_width)
-            } else {
-                vec![whole_domain(cycles)]
-            };
-            let device_window = windows.first().ok_or(KernelError::InvariantViolation {
-                reason: "the commit cycle partition produced no windows",
-            })?;
-            let resident = PCS::BATCHES_TIER2
-                .then(|| {
-                    session_resident_trace(
-                        session,
-                        context.ordinal(),
-                        witness_identity(source),
-                        &device_window.residency(cycles),
-                    )
-                })
-                .flatten();
-            let hot = (!PCS::BATCHES_TIER2)
-                .then(|| {
-                    tracing::info_span!(
-                        "cuda_commit_park_hot",
-                        columns = kinds.len(),
-                        cycles = device_window.len
-                    )
-                    .in_scope(|| {
-                        device_hot_columns::<F>(
-                            context,
-                            session,
-                            source,
-                            cycles,
-                            &HotPlan {
-                                kinds: &kinds,
-                                ids,
-                                one_hot_k,
-                                window: device_window,
-                            },
-                            preprocessing,
-                        )
-                    })
-                })
-                .transpose()?;
-            let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
-                .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
             if PCS::BATCHES_TIER2 {
-                let plan = ColumnPlan {
-                    kinds: &kinds,
-                    one_hot_k,
-                    row_width,
-                };
+                let windows = committed_windows(cycles, row_width);
+                let _ = tracing::info_span!("cuda_commit_bases", bases = row_width)
+                    .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
                 let traces = windows
                     .iter()
                     .enumerate()
                     .map(|(ordinal, window)| {
-                        if ordinal == 0 {
-                            if let Some(trace) = &resident {
-                                return Ok(Arc::clone(trace));
-                            }
-                        }
                         let device = super::common::context::context_for(ordinal).ok_or(
                             KernelError::InvariantViolation {
                                 reason: "missing commitment device",
                             },
                         )?;
-                        let resident_window = window.residency(cycles);
-                        Ok(Arc::new(DeviceTrace::upload_source(
-                            Arc::clone(device.stream()),
+                        session_row_trace_window::<F>(
+                            device,
+                            session,
                             source,
-                            resident_window.start..resident_window.start + resident_window.len,
                             preprocessing,
-                        )?))
+                            cycles,
+                            &window.residency(cycles),
+                        )
                     })
                     .collect::<Result<Vec<_>, KernelError<F>>>()?;
+                let bases = device_bases::<F, PCS>(session, context, setup, row_width)?;
+                let plan = ColumnPlan {
+                    kinds: &kinds,
+                    one_hot_k,
+                    row_width,
+                };
                 let host_bases = PCS::tier1_bases(setup, row_width)?;
-                let (columns, traces, hots) = partition::split_columns::<F, PCS>(
+                let (columns, hots) = partition::split_columns::<F, PCS>(
                     setup,
                     bases,
-                    resident,
                     &plan,
-                    &TraceSource { traces: &traces },
+                    &traces,
                     &host_bases,
                     &windows,
                 )?;
-                let identity = witness_identity(source);
-                for (ordinal, (trace, built)) in traces.into_iter().zip(hots).enumerate() {
-                    let Some(window) = windows.get(ordinal) else {
-                        continue;
-                    };
-                    if let Some(trace) = trace {
-                        park_device_trace(
-                            session,
-                            ordinal,
-                            identity,
-                            &window.residency(cycles),
-                            trace,
-                        );
-                    }
+                for (ordinal, (window, built)) in windows.iter().zip(hots).enumerate() {
                     let _ = park_hot_columns(session, source, ordinal, ids, window, built);
                 }
                 return columns
@@ -548,9 +488,26 @@ impl CudaBackend {
                     .collect();
             }
 
-            let (hot, trace) = hot.ok_or(KernelError::InvariantViolation {
-                reason: "the single-device commit path never built its one-hot columns",
-            })?;
+            let window = whole_domain(cycles);
+            let (hot, trace) =
+                tracing::info_span!("cuda_commit_park_hot", columns = kinds.len(), cycles)
+                    .in_scope(|| {
+                        device_hot_columns::<F>(
+                            context,
+                            session,
+                            source,
+                            cycles,
+                            &HotPlan {
+                                kinds: &kinds,
+                                ids,
+                                one_hot_k,
+                                window: &window,
+                            },
+                            preprocessing,
+                        )
+                    })?;
+            let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
+                .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
             let dense = tracing::info_span!("cuda_commit_increments", cycles)
                 .in_scope(|| dense_columns_from_trace::<F>(context, &trace, &kinds, cycles))?;
             let parent = Span::current();
