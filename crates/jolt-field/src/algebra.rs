@@ -14,6 +14,8 @@ use allocative::Allocative;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{de::DeserializeOwned, Serialize};
+#[cfg(feature = "spongefish")]
+use spongefish::Encoding;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::iter::{Product, Sum};
@@ -343,6 +345,11 @@ pub trait CanonicalEncoding:
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
+    /// The field order, as little-endian 64-bit limbs: the size of the set
+    /// a challenge codec draws from. Proof-of-work difficulty is priced from
+    /// it.
+    const CHALLENGE_SET_LIMBS: [u64; 4];
+
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
 
@@ -392,16 +399,6 @@ pub trait CanonicalEncoding:
     ///
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
-
-    #[inline]
-    fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
-
-    /// Constructs a non-optimized scalar challenge from transcript bytes.
-    ///
-    /// Implementations must choose the protocol's byte order explicitly.
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self;
 }
 
 /// Accumulates sums and products with potentially deferred modular reduction.
@@ -566,14 +563,37 @@ pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
 impl<T: ?Sized> MaybeAllocative for T {}
 
+/// spongefish's [`Encoding`](spongefish::Encoding) when the `spongefish`
+/// feature is on, vacuous otherwise.
+///
+/// Every field in this crate encodes as its canonical little-endian bytes, so
+/// `F: JoltField` can be absorbed into a transcript without a bound of its own.
+#[cfg(feature = "spongefish")]
+pub trait MaybeEncoding: Encoding {}
+#[cfg(feature = "spongefish")]
+impl<T: Encoding + ?Sized> MaybeEncoding for T {}
+/// spongefish's `Encoding` when the `spongefish` feature is on, vacuous
+/// otherwise.
+#[cfg(not(feature = "spongefish"))]
+pub trait MaybeEncoding {}
+#[cfg(not(feature = "spongefish"))]
+impl<T: ?Sized> MaybeEncoding for T {}
+
 /// Everything Jolt's protocol stack requires of a scalar field: field
-/// algebra, a canonical transcript encoding, an accumulator, serde wire
-/// serialization (canonical-checked, via [`impl_serde_bytes!`]), and heap
-/// visitation under the `allocative` feature.
+/// algebra, a canonical encoding, an accumulator, serde wire serialization
+/// (canonical-checked, via [`impl_serde_bytes!`]), the transcript encoding
+/// under the `spongefish` feature, and heap visitation under the `allocative`
+/// feature.
 ///
 /// Blanket-implemented — implement the component traits and this follows.
 pub trait JoltField:
-    Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned + MaybeAllocative
+    Field
+    + CanonicalEncoding
+    + WithAccumulator
+    + Serialize
+    + DeserializeOwned
+    + MaybeAllocative
+    + MaybeEncoding
 {
 }
 
@@ -583,7 +603,8 @@ impl<
             + WithAccumulator
             + Serialize
             + DeserializeOwned
-            + MaybeAllocative,
+            + MaybeAllocative
+            + MaybeEncoding,
     > JoltField for T
 {
 }

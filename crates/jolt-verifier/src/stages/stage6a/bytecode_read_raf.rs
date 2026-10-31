@@ -230,6 +230,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
         left_operand_is_pc: instruction_input.left_operand_is_pc,
         right_operand_is_rs2_value: instruction_input.right_operand_is_rs2,
         right_operand_is_imm: instruction_input.right_operand_is_imm,
+        right_operand_is_rd_write_value: instruction_input.right_operand_is_rd_write_value,
         is_noop: shift.is_noop,
         shift_virtual_instruction: shift.is_virtual,
         shift_is_first_in_sequence: shift.is_first_in_sequence,

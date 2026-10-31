@@ -9,6 +9,7 @@ use jolt_field::Fp128x8i32;
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitAccumulator, DigitWindows};
+use super::one_hot_ntt::OneHotNtt;
 use super::source::TraceOneHotColumn;
 use super::traversal::{row_is_committed, visit_segment_ring_row_range};
 use super::MAX_WIDE_ACCUMULATIONS;
@@ -32,6 +33,7 @@ type NttRing<const D: usize> = CyclotomicCrtNtt<i32, 1, D>;
 pub(super) struct PreparedNttCommit<'a, const D: usize> {
     params: CrtNttParamSet<i32, 1, D>,
     lut: DigitMontLut<i32, 1>,
+    one_hot: Option<OneHotNtt>,
     matrix: [Vec<NttRing<D>>; DIGIT_LIMBS],
     coefficients: &'a [CyclotomicRing<AkitaField, D>],
 }
@@ -72,6 +74,7 @@ impl<'a, const D: usize> PreparedNttCommit<'a, D> {
         }
         let _span = tracing::info_span!("trace_onehot_commit_prepare_ntt").entered();
         let lut = DigitMontLut::new_with_digit_bound(&params, 2);
+        let one_hot = OneHotNtt::new(&params, &lut);
         let matrix = std::array::from_fn(|limb| {
             matrix_row[..active_positions]
                 .par_iter()
@@ -80,13 +83,18 @@ impl<'a, const D: usize> PreparedNttCommit<'a, D> {
                         ((ring.coeffs[j].to_canonical_u128() >> (limb * DIGIT_BITS)) & 65535)
                             as i128
                     });
-                    NttRing::from_centered_coefficients(&digits, &params)
+                    let mut ring = NttRing::from_centered_coefficients(&digits, &params);
+                    if let Some(one_hot) = &one_hot {
+                        one_hot.to_lane_order(&mut ring.limbs[0]);
+                    }
+                    ring
                 })
                 .collect()
         });
         Some(Self {
             params,
             lut,
+            one_hot,
             matrix,
             coefficients: matrix_row,
         })
@@ -215,15 +223,21 @@ impl<const D: usize> NttCommitScratch<D> {
                     }
                     windows_loaded = true;
                 }
-                for slot in 0..self.buffered {
-                    self.windows[slot]
-                        .accumulate(&mut self.digit_accumulators[column], &self.shifts[slot]);
-                }
+                DigitWindows::accumulate_slots(
+                    &self.windows[..self.buffered],
+                    &mut self.digit_accumulators[column],
+                    &self.shifts[..self.buffered],
+                );
                 continue;
             }
             for slot in 0..self.buffered {
                 if self.shifts[slot].is_empty() {
                     self.transformed[tile_len][slot] = NttRing::zero();
+                } else if let Some(one_hot) = &prepared.one_hot {
+                    one_hot.transform(
+                        &self.shifts[slot],
+                        &mut self.transformed[tile_len][slot].limbs[0],
+                    );
                 } else {
                     let mut coefficients = [0i8; D];
                     for &shift in &self.shifts[slot] {
@@ -274,6 +288,9 @@ impl<const D: usize> NttCommitScratch<D> {
                 continue;
             }
             for (limb, accumulator) in self.accumulators[column].iter_mut().enumerate() {
+                if let Some(one_hot) = &prepared.one_hot {
+                    one_hot.to_library_order(&mut accumulator.limbs[0]);
+                }
                 inverse_ntt(
                     &mut accumulator.limbs[0],
                     prime,

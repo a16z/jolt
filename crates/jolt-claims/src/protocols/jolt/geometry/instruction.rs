@@ -496,6 +496,20 @@ pub fn imm() -> JoltOpeningId {
     )
 }
 
+pub fn right_operand_is_rd_write_value() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::InstructionFlags(InstructionFlags::RightOperandIsRdWriteValue),
+        JoltRelationId::InstructionInputVirtualization,
+    )
+}
+
+pub fn rd_write_value() -> JoltOpeningId {
+    JoltOpeningId::virtual_polynomial(
+        JoltVirtualPolynomial::RdWriteValue,
+        JoltRelationId::InstructionInputVirtualization,
+    )
+}
+
 #[cfg(test)]
 #[expect(clippy::panic)]
 mod tests {

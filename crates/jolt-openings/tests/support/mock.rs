@@ -4,7 +4,7 @@ use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_field::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, Polynomial};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,11 +31,12 @@ pub struct MockProof<F: JoltField> {
     evaluations: Vec<F>,
 }
 
-impl<F: JoltField> AppendToTranscript for MockCommitment<F> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        for evaluation in &self.evaluations {
-            evaluation.append_to_transcript(transcript);
-        }
+impl<F: JoltField> Encoding for MockCommitment<F> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.evaluations
+            .iter()
+            .flat_map(|evaluation| evaluation.encode().as_ref().to_vec())
+            .collect::<Vec<u8>>()
     }
 }
 
@@ -77,7 +78,7 @@ where
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Option<()>,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         let evaluations = poly.to_dense().into_owned();
         Ok(MockProof { evaluations })
@@ -89,7 +90,7 @@ where
         eval: Self::Field,
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::VerificationFailed);
@@ -146,9 +147,9 @@ pub struct MockHidingCommitment<F: JoltField> {
     pub eval: F,
 }
 
-impl<F: JoltField> AppendToTranscript for MockHidingCommitment<F> {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        self.eval.append_to_transcript(transcript);
+impl<F: JoltField> Encoding for MockHidingCommitment<F> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.eval.encode()
     }
 }
 
@@ -172,7 +173,7 @@ where
         eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Self::OpeningHint,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
         let evaluations = poly.to_dense().into_owned();
         Ok((MockProof { evaluations }, MockHidingCommitment { eval }, ()))
@@ -183,7 +184,7 @@ where
         point: &[Self::Field],
         proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        _transcript: &mut impl Transcript<Challenge = Self::Field>,
+        _transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
         if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::VerificationFailed);

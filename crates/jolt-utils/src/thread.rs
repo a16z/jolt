@@ -90,10 +90,41 @@ pub fn par_collect_windows<V: Copy + Send, E: Send>(
     Ok(out)
 }
 
+/// Concatenate `parts` in order with one parallel copy per part. Rayon's
+/// unindexed `collect` (e.g. after `flat_map_iter` or `fold`) instead appends
+/// every staged segment on the calling thread.
+pub fn par_concat<V: Copy + Send + Sync>(parts: &[Vec<V>]) -> Vec<V> {
+    let total = parts.iter().map(Vec::len).sum();
+    let mut out: Vec<V> = Vec::with_capacity(total);
+    let mut spare = &mut out.spare_capacity_mut()[..total];
+    let mut slots = Vec::with_capacity(parts.len());
+    for part in parts {
+        let (slot, rest) = spare.split_at_mut(part.len());
+        slots.push(slot);
+        spare = rest;
+    }
+    slots.into_par_iter().zip(parts).for_each(|(slot, part)| {
+        for (slot, &value) in slot.iter_mut().zip(part) {
+            let _ = slot.write(value);
+        }
+    });
+    // SAFETY: the slots partition the first `total` spare elements, each of
+    // equal length to its part, and every slot was written above.
+    unsafe { out.set_len(total) };
+    out
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use super::*;
+
+    #[test]
+    fn par_concat_preserves_order() {
+        let parts = vec![vec![1, 2, 3], vec![], vec![4], vec![5, 6]];
+        assert_eq!(par_concat(&parts), parts.concat());
+        assert!(par_concat::<u8>(&[]).is_empty());
+    }
 
     #[test]
     fn latch_keeps_lowest_index() {

@@ -10,7 +10,7 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_read_write_checking::{
@@ -38,6 +38,7 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
         zk::committed,
@@ -94,7 +95,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let log_t = crate::num::ilog2(checked.trace_length);
     let log_k = crate::num::ilog2(checked.ram_K);
@@ -162,9 +163,9 @@ where
     };
 
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
-    // the field-register read-write gamma (each a single `challenge_scalar`), then the RAM
-    // value-check gamma behind its `b"ram_val_check_gamma"` domain separator (the relation's
-    // `draw_challenges` override replays the separator at its exact transcript position).
+    // the field-register read-write gamma, then the RAM value-check gamma, each a single
+    // `challenge()` in one squeeze run behind the stage-4 proof of work.
+    check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {
