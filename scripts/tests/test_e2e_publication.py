@@ -60,15 +60,36 @@ def fixture():
 
 class E2ePublicationTests(unittest.TestCase):
     def test_complete_verified_matrix_renders_but_raw_artifact_scripts_are_not_read(self):
-        result, expected, config = fixture()
-        result['builds'][0]['binaries'] = {'dory': {'path': '/do/not/open/this', 'sha256': '0' * 64}}
+        result, expected, _ = fixture()
+        config = publication.bench.DEFAULT_CONFIG.read_bytes()
+        spec = json.loads(config)
+        result['suite'].update(id=spec['id'], config_sha256=hashlib.sha256(config).hexdigest(),
+                              calibration=spec.get('calibration'), calibration_sha256=spec.get('calibration_sha256'))
+        template = result['cases'].pop()
+        for index, case in enumerate(spec['tiers']['pr']['cases']):
+            measured = copy.deepcopy(template)
+            measured.update(copy.deepcopy(case), cpu_ids=list(range(case['physical_cores'])))
+            measured['input']['sha256'] = '1' * 64
+            for sample in measured['samples']:
+                sample['order'] += index * len(measured['samples'])
+            result['cases'].append(measured)
+        result['host']['topology'] = [{'cpu': cpu, 'core': cpu, 'socket': 0, 'online': True}
+                                     for cpu in range(24)]
+        for build in result['builds']:
+            build['binaries'] = {'akita': {'path': '/do/not/open/this', 'sha256': '0' * 64}}
+            build['guests'] = {case['workload']: {'inputs': {
+                str(case['input']['parameters']['operations']): {'sha256': '1' * 64}}}
+                for case in result['cases']}
+        result['builds'][0]['binaries']['dory'] = {'path': '/do/not/open/this/either', 'sha256': '2' * 64}
         self.assertIs(publication.validate(result, expected, config), result)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'comment.md'
             publication.bench.render_comment(result, output)
             text = output.read_text()
             self.assertTrue(text.startswith('<!-- jolt-e2e-benchmark-v1 -->'))
-            self.assertIn('| fibonacci / dory | 1 | 3.000000 / 3.000000 | +0.00% |', text)
+            for workload, cores in [('fibonacci', 1), ('sha2-chain', 8), ('btreemap', 24)]:
+                self.assertIn(f'| {workload} / akita | {cores} | 3.000000 / 3.000000 | +0.00% |', text)
+            self.assertNotIn(' / dory |', text)
             self.assertIn('Shared harness: `' + 'd' * 40 + '`', text)
 
     def test_comment_uses_leg_medians_and_keeps_unavailable_comparisons_visible(self):

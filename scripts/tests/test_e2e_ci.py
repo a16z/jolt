@@ -106,7 +106,8 @@ class E2eCiTests(unittest.TestCase):
             with patch.object(ci.bench, 'provenance', return_value=({'run_id': None}, {})):
                 result = ci.bench.disabled(args)
             self.assertEqual(result['status'], 'disabled')
-            self.assertEqual(len(result['cases']), 6)
+            self.assertEqual(len(result['cases']), 3)
+            self.assertEqual({case['pcs'] for case in result['cases']}, {'akita'})
             self.assertTrue(all(c['status'] == 'missing' and not c['samples'] for c in result['cases']))
             self.assertIsNone(result['wall_time']['total_s'])
 

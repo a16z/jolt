@@ -7,11 +7,8 @@
     "pr": {
       "warmups": 1, "repetitions": 3,
       "cases": [
-        {"id": "fibonacci-dory-c1-s18-n16000-v1", "workload": "fibonacci", "pcs": "dory", "backend": "optimized", "physical_cores": 1, "scale_log2": 18, "input": {"parameters": {"operations": 16000, "encoding": "postcard-v1"}, "seed": null}},
         {"id": "fibonacci-akita-c1-s18-n16000-v1", "workload": "fibonacci", "pcs": "akita", "backend": "optimized", "physical_cores": 1, "scale_log2": 18, "input": {"parameters": {"operations": 16000, "encoding": "postcard-v1"}, "seed": null}},
-        {"id": "sha2-chain-dory-c8-s20-n256-v1", "workload": "sha2-chain", "pcs": "dory", "backend": "optimized", "physical_cores": 8, "scale_log2": 20, "input": {"parameters": {"operations": 256, "encoding": "postcard-v1"}, "seed": null}},
         {"id": "sha2-chain-akita-c8-s20-n256-v1", "workload": "sha2-chain", "pcs": "akita", "backend": "optimized", "physical_cores": 8, "scale_log2": 20, "input": {"parameters": {"operations": 256, "encoding": "postcard-v1"}, "seed": null}},
-        {"id": "btreemap-dory-c24-s22-n2048-v1", "workload": "btreemap", "pcs": "dory", "backend": "optimized", "physical_cores": 24, "scale_log2": 22, "input": {"parameters": {"operations": 2048, "encoding": "postcard-v1"}, "seed": null}},
         {"id": "btreemap-akita-c24-s22-n2048-v1", "workload": "btreemap", "pcs": "akita", "backend": "optimized", "physical_cores": 24, "scale_log2": 22, "input": {"parameters": {"operations": 2048, "encoding": "postcard-v1"}, "seed": null}}
       ]
     },

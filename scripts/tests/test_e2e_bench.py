@@ -192,6 +192,13 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
     def test_three_tiers_cover_requested_workloads_and_only_requested_core_counts(self):
         config = json.loads(bench.DEFAULT_CONFIG.read_text())
         self.assertEqual(set(config['tiers']), {'pr', 'main', 'nightly'})
+        pr = config['tiers']['pr']
+        self.assertEqual((pr['warmups'], pr['repetitions']), (1, 3))
+        self.assertEqual([(c['workload'], c['pcs'], c['backend'], c['physical_cores'],
+                           c['scale_log2'], c['input']['parameters']['operations']) for c in pr['cases']],
+                         [('fibonacci', 'akita', 'optimized', 1, 18, 16000),
+                          ('sha2-chain', 'akita', 'optimized', 8, 20, 256),
+                          ('btreemap', 'akita', 'optimized', 24, 22, 2048)])
         expected = {'fibonacci', 'sha2-chain', 'sha3-chain', 'btreemap', 'secp256k1-batch'}
         for tier in ('main', 'nightly'):
             _, cases = bench.config_cases(bench.DEFAULT_CONFIG, tier)
@@ -208,6 +215,7 @@ class BuildCacheTests(unittest.TestCase):
         self.workspace = self.root / 'action-workspace'
         self.workspace.mkdir()
         self.compiles = []
+        self.prepares = []
         files = {
             '.gitignore': '/target/\n',
             'Cargo.toml': '[workspace]\nmembers = []\n',
@@ -219,9 +227,11 @@ class BuildCacheTests(unittest.TestCase):
         }
         self.config = self.workspace / 'scripts/bench/suites.json'
         config = {'schema_version': 1, 'metric_contract': 1, 'tiers': {}}
-        for tier, operations in [('main', 1), ('pr', 2)]:
-            config['tiers'][tier] = {'cases': [{'id': tier, 'workload': 'fibonacci',
-                'input': {'parameters': {'operations': operations}}}]}
+        for tier, counts, schemes in [('main', (1, 2), ('dory', 'akita')), ('pr', (2,), ('akita',))]:
+            config['tiers'][tier] = {'cases': [
+                {'id': f'{tier}-{pcs}-{operations}', 'workload': 'fibonacci', 'pcs': pcs,
+                 'input': {'parameters': {'operations': operations}}}
+                for pcs in schemes for operations in counts]}
         files['scripts/bench/suites.json'] = json.dumps(config)
         for name, text in files.items():
             path = self.workspace / name
@@ -260,10 +270,13 @@ class BuildCacheTests(unittest.TestCase):
                 self.assertEqual(Path(argv[argv.index('--target-dir') + 1]), cwd / 'target')
                 target = cwd / 'target' / argv[argv.index('--target') + 1] / argv[argv.index('--profile') + 1]
                 target.mkdir(parents=True, exist_ok=True)
-                for name in ('jolt-prover', 'jolt'):
+                for name in (argv[index + 1] for index, arg in enumerate(argv) if arg == '--bin'):
                     (target / name).write_text('owned compiler output fixture: ' + argv[-1])
                 return
             self.assertEqual(argv[1], 'prepare')
+            self.assertTrue(Path(argv[0]).is_file())
+            self.assertTrue(Path(env['JOLT_PATH']).is_file())
+            self.prepares.append(argv)
             out = Path(argv[argv.index('--out') + 1])
             out.mkdir(parents=True)
             (out / 'guest.elf').write_bytes(b'owned ELF fixture')
@@ -322,7 +335,7 @@ class BuildCacheTests(unittest.TestCase):
                          'new commit after the independent clone')
 
     def test_reuse_keeps_construction_provenance_and_records_fresh_preparation(self):
-        original, built = self.build('original')
+        original, built = self.build('original', tier='main')
         cached = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
         original['started_at'] = '2000-01-01T00:00:00Z'
         original['finished_at'] = '2000-01-02T00:00:00Z'
@@ -349,14 +362,32 @@ class BuildCacheTests(unittest.TestCase):
                 bench.cache_root()
 
     def test_main_bundle_missing_pr_input_is_not_reused(self):
-        first, _ = self.build('main-only', tier='main')
+        first, _ = self.build('main-only', tier='main', case=['main-dory-1', 'main-akita-1'])
         second, receipt = self.build('pr', tier='pr')
         self.assertEqual(first['revision'], second['revision'])
         self.assertEqual(set(first['guests']['fibonacci']['inputs']), {'1'})
         self.assertEqual(set(second['guests']['fibonacci']['inputs']), {'2'})
         self.assertEqual(receipt['mode'], 'built')
         self.assertIn('lacks required inputs', receipt['cache_misses'][0]['reason'])
-        self.assertEqual(len(self.compiles), 4)
+        self.assertEqual(len(self.compiles), 5)
+
+    def test_requested_pcs_builds_only_its_executable_and_keeps_distinct_cache_variants(self):
+        partial, _ = self.build('pr', tier='pr')
+        self.assertEqual(set(partial['binaries']), {'akita'})
+        self.assertEqual([argv[argv.index('--bin') + 1] for argv in self.compiles],
+                         ['jolt', 'jolt-prover'])
+        self.assertNotIn('--features', self.compiles[0])
+        self.assertEqual(self.compiles[1][-2:], ['--features', 'profiling,akita'])
+        self.assertEqual(self.prepares[0][0], str(self.root / 'pr/jolt-prover-akita'))
+        partial_path = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
+        partial_bytes = partial_path.read_bytes()
+        self.compiles.clear()
+        complete, receipt = self.build('both', tier='main', case=['main-dory-2', 'main-akita-2'])
+        self.assertEqual(set(complete['binaries']), {'dory', 'akita'})
+        self.assertEqual(len(self.compiles), 3)
+        self.assertIn('lacks required PCS', receipt['cache_misses'][0]['reason'])
+        self.assertEqual(len(list((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))), 2)
+        self.assertEqual(partial_path.read_bytes(), partial_bytes)
 
     def test_completed_store_keeps_eight_bundles_and_preserves_recent_reuse(self):
         cache = bench.cache_root()
@@ -413,7 +444,7 @@ class BuildCacheTests(unittest.TestCase):
                 bench.write_json(cached, dict(original, **{key: value}))
                 self.compiles.clear()
                 _, receipt = self.build('invalid-' + key)
-                self.assertEqual(len(self.compiles), 2)
+                self.assertEqual(len(self.compiles), 3)
                 self.assertEqual(receipt['mode'], 'built')
                 self.assertTrue(receipt['cache_misses'])
         for name, entry in [('binary', original['binaries']['akita']),
@@ -423,7 +454,7 @@ class BuildCacheTests(unittest.TestCase):
                 (cached.parent / entry['path']).write_bytes(b'corrupted owned fixture')
                 self.compiles.clear()
                 _, receipt = self.build('corrupt-' + name)
-                self.assertEqual(len(self.compiles), 2)
+                self.assertEqual(len(self.compiles), 3)
                 self.assertEqual(receipt['mode'], 'built')
                 self.assertIn('hash mismatch', receipt['cache_misses'][0]['reason'])
 
