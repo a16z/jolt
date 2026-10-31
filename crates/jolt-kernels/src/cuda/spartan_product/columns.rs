@@ -1,7 +1,7 @@
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_riscv::{CircuitFlags, InstructionFlags as InstructionFlagKind};
 use jolt_witness::backend::cuda::{
-    circuit_flag_bit, instruction_flag_bit, DeviceAtomColumns, FLAG_BIT_NEXT_IS_NOOP,
+    circuit_flag_bit, instruction_flag_bit, DeviceExecutionColumns, FLAG_BIT_NEXT_IS_NOOP,
 };
 use witness::CLAIM_LAYOUT;
 use witness::SIGN_BIT_BASE;
@@ -29,7 +29,7 @@ impl DeviceProductColumns {
 
     pub fn from_device(
         context: &CudaKernelContext,
-        atoms: &DeviceAtomColumns,
+        atoms: &DeviceExecutionColumns,
         cycles: usize,
     ) -> Result<Self, CudaError> {
         if cycles == 0 {
@@ -139,7 +139,7 @@ mod tests {
     use super::DeviceProductColumns;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::testing::with_r1cs_witness;
-    use crate::cuda::witness::session_atom_columns;
+    use crate::cuda::witness::session_execution_columns;
     use crate::ProofSession;
 
     const LOG_T: usize = 8;
@@ -167,7 +167,7 @@ mod tests {
                     .expect("host-encoded columns");
 
                 let mut session = ProofSession::default();
-                let atoms = session_atom_columns::<Fr>(context, &mut session, witness, cycles)
+                let atoms = session_execution_columns::<Fr>(context, &mut session, witness, cycles)
                     .expect("atom columns");
                 let got = DeviceProductColumns::from_device(context, &atoms, cycles)
                     .expect("device-gathered columns");

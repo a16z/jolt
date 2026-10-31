@@ -176,7 +176,7 @@ pub fn warm_shared_witness<F: JoltField>(
         let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
             reason: "a witness warm-up window names an absent device",
         })?;
-        let _ = self::witness::session_window_residency(device, session, witness, cycles, window)?;
+        self::witness::warm_window(device, session, witness, cycles, window)?;
         device.stream().synchronize().map_err(CudaError::from)?;
     }
     Ok(())

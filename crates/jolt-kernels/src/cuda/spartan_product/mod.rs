@@ -30,7 +30,7 @@ use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
 use jolt_verifier::stages::stage2::product_uniskip::ProductUniskip;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_execution_window;
 
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::devices::witness_windows;
@@ -88,7 +88,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a Spartan product window names an absent device",
             })?;
-            let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+            let (_, atoms) = session_execution_window(device, session, witness, cycles, window)?;
             columns.push((
                 ordinal,
                 DeviceProductColumns::from_device(device, &atoms, window.len)?,

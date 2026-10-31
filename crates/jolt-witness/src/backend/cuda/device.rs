@@ -19,7 +19,10 @@ use jolt_riscv::JoltTraceRow as TraceRow;
 
 use super::packed::{PackedTrace, EXTRA_WORDS as PACKED_EXTRA_WORDS};
 use super::tables::kind_tables;
-use super::{DeviceAtomColumns, DeviceTraceColumn, HotSource, NarrowColumn};
+use super::{
+    DeviceAtomColumns, DeviceBytecodeColumns, DeviceExecutionColumns, DeviceMemoryColumns,
+    DeviceTraceColumn, HotSource, NarrowColumn,
+};
 use crate::witnesses::RaChunkSelector;
 use crate::{RowSource, WitnessError, JOLT_VM_LABEL};
 
@@ -379,29 +382,165 @@ impl DeviceTrace {
 
     #[tracing::instrument(skip_all, name = "cuda_witness_atom_columns", fields(cycles = self.cycles))]
     pub fn atom_columns(&self) -> Result<DeviceAtomColumns, WitnessError> {
+        let mut execution = self.allocate_execution()?;
+        let mut memory = self.allocate_memory()?;
+        let mut bytecode = self.allocate_bytecode()?;
+        self.extract_columns(Some(&mut execution), Some(&mut memory), Some(&mut bytecode))?;
+        Ok(DeviceAtomColumns {
+            execution: Arc::new(execution),
+            memory: Arc::new(memory),
+            bytecode: Arc::new(bytecode),
+        })
+    }
+
+    #[tracing::instrument(skip_all, name = "cuda_witness_execution_columns", fields(cycles = self.cycles))]
+    pub fn execution_columns(&self) -> Result<DeviceExecutionColumns, WitnessError> {
+        let mut columns = self.allocate_execution()?;
+        self.extract_columns(Some(&mut columns), None, None)?;
+        Ok(columns)
+    }
+
+    fn allocate_execution(&self) -> Result<DeviceExecutionColumns, WitnessError> {
+        let _ = self.count()?;
+        Ok(DeviceExecutionColumns {
+            flags: self
+                .stream
+                .alloc_zeros::<u32>(self.cycles)
+                .map_err(device_error)?,
+            table_index: self
+                .stream
+                .alloc_zeros::<u32>(self.cycles)
+                .map_err(device_error)?,
+            left_instruction_input: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles)
+                .map_err(device_error)?,
+            right_instruction_input: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles * 2)
+                .map_err(device_error)?,
+            left_lookup_operand: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles)
+                .map_err(device_error)?,
+            right_lookup_operand: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles * 2)
+                .map_err(device_error)?,
+            lookup_output: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles)
+                .map_err(device_error)?,
+            product_magnitude: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles * 2)
+                .map_err(device_error)?,
+        })
+    }
+
+    #[tracing::instrument(skip_all, name = "cuda_witness_memory_columns", fields(cycles = self.cycles))]
+    pub fn memory_columns(&self) -> Result<DeviceMemoryColumns, WitnessError> {
+        let mut columns = self.allocate_memory()?;
+        self.extract_columns(None, Some(&mut columns), None)?;
+        Ok(columns)
+    }
+
+    fn allocate_memory(&self) -> Result<DeviceMemoryColumns, WitnessError> {
+        let _ = self.count()?;
+        Ok(DeviceMemoryColumns {
+            rd_pre_value: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles)
+                .map_err(device_error)?,
+            rs1_address: self
+                .stream
+                .alloc_zeros::<u32>(self.cycles)
+                .map_err(device_error)?,
+            rs2_address: self
+                .stream
+                .alloc_zeros::<u32>(self.cycles)
+                .map_err(device_error)?,
+            rd_address: self
+                .stream
+                .alloc_zeros::<u32>(self.cycles)
+                .map_err(device_error)?,
+            rd_inc: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles * 2)
+                .map_err(device_error)?,
+            ram_inc: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles * 2)
+                .map_err(device_error)?,
+        })
+    }
+
+    #[tracing::instrument(skip_all, name = "cuda_witness_bytecode_columns", fields(cycles = self.cycles))]
+    pub fn bytecode_columns(&self) -> Result<DeviceBytecodeColumns, WitnessError> {
+        let mut columns = self.allocate_bytecode()?;
+        self.extract_columns(None, None, Some(&mut columns))?;
+        Ok(columns)
+    }
+
+    fn allocate_bytecode(&self) -> Result<DeviceBytecodeColumns, WitnessError> {
+        let _ = self.count()?;
+        Ok(DeviceBytecodeColumns {
+            bytecode_pc: self
+                .stream
+                .alloc_zeros::<u64>(self.cycles)
+                .map_err(device_error)?,
+        })
+    }
+
+    fn extract_columns(
+        &self,
+        execution: Option<&mut DeviceExecutionColumns>,
+        memory: Option<&mut DeviceMemoryColumns>,
+        bytecode: Option<&mut DeviceBytecodeColumns>,
+    ) -> Result<(), WitnessError> {
         let count = self.count()?;
-
-        let alloc32 = |len: usize| self.stream.alloc_zeros::<u32>(len).map_err(device_error);
-        let alloc64 = |len: usize| self.stream.alloc_zeros::<u64>(len).map_err(device_error);
-        let mut columns = DeviceAtomColumns {
-            flags: alloc32(self.cycles)?,
-            table_index: alloc32(self.cycles)?,
-            bytecode_pc: alloc64(self.cycles)?,
-            rd_pre_value: alloc64(self.cycles)?,
-            rs1_address: alloc32(self.cycles)?,
-            rs2_address: alloc32(self.cycles)?,
-            rd_address: alloc32(self.cycles)?,
-            rd_inc: alloc64(self.cycles * 2)?,
-            ram_inc: alloc64(self.cycles * 2)?,
-            left_instruction_input: alloc64(self.cycles)?,
-            right_instruction_input: alloc64(self.cycles * 2)?,
-            left_lookup_operand: alloc64(self.cycles)?,
-            right_lookup_operand: alloc64(self.cycles * 2)?,
-            lookup_output: alloc64(self.cycles)?,
-            product_magnitude: alloc64(self.cycles * 2)?,
-        };
+        let groups = u32::from(execution.is_some())
+            | (u32::from(memory.is_some()) << 1)
+            | (u32::from(bytecode.is_some()) << 2);
         let mut unmapped = self.unmapped_flag()?;
-
+        let null = 0u64;
+        let (
+            flags,
+            table_index,
+            left_instruction_input,
+            right_instruction_input,
+            left_lookup_operand,
+            right_lookup_operand,
+            lookup_output,
+            product_magnitude,
+        ) = match execution {
+            Some(columns) => (
+                Some(&mut columns.flags),
+                Some(&mut columns.table_index),
+                Some(&mut columns.left_instruction_input),
+                Some(&mut columns.right_instruction_input),
+                Some(&mut columns.left_lookup_operand),
+                Some(&mut columns.right_lookup_operand),
+                Some(&mut columns.lookup_output),
+                Some(&mut columns.product_magnitude),
+            ),
+            None => (None, None, None, None, None, None, None, None),
+        };
+        let (rd_pre_value, rs1_address, rs2_address, rd_address, rd_inc, ram_inc) = match memory {
+            Some(columns) => (
+                Some(&mut columns.rd_pre_value),
+                Some(&mut columns.rs1_address),
+                Some(&mut columns.rs2_address),
+                Some(&mut columns.rd_address),
+                Some(&mut columns.rd_inc),
+                Some(&mut columns.ram_inc),
+            ),
+            None => (None, None, None, None, None, None),
+        };
+        let (bytecode_pc,) = match bytecode {
+            Some(columns) => (Some(&mut columns.bytecode_pc),),
+            None => (None,),
+        };
         let mut builder = self.stream.launch_builder(&self.functions.atom_columns);
         let _ = builder.arg(&self.rows.is_noop);
         let _ = builder.arg(&self.rows.address);
@@ -415,36 +554,42 @@ impl DeviceTrace {
         let _ = builder.arg(&self.kinds.output);
         let _ = builder.arg(&self.kinds.index);
         let _ = builder.arg(&self.kinds.count);
-        let _ = builder.arg(&mut columns.flags);
-        let _ = builder.arg(&mut columns.table_index);
-        let _ = builder.arg(&mut columns.bytecode_pc);
-        let _ = builder.arg(&mut columns.rd_pre_value);
-        let _ = builder.arg(&mut columns.rs1_address);
-        let _ = builder.arg(&mut columns.rs2_address);
-        let _ = builder.arg(&mut columns.rd_address);
-        let _ = builder.arg(&mut columns.rd_inc);
-        let _ = builder.arg(&mut columns.ram_inc);
-        let _ = builder.arg(&mut columns.left_instruction_input);
-        let _ = builder.arg(&mut columns.right_instruction_input);
-        let _ = builder.arg(&mut columns.left_lookup_operand);
-        let _ = builder.arg(&mut columns.right_lookup_operand);
-        let _ = builder.arg(&mut columns.lookup_output);
-        let _ = builder.arg(&mut columns.product_magnitude);
+        macro_rules! output {
+            ($column:ident) => {
+                if let Some(column) = $column {
+                    let _ = builder.arg(column);
+                } else {
+                    let _ = builder.arg(&null);
+                }
+            };
+        }
+        output!(flags);
+        output!(table_index);
+        output!(bytecode_pc);
+        output!(rd_pre_value);
+        output!(rs1_address);
+        output!(rs2_address);
+        output!(rd_address);
+        output!(rd_inc);
+        output!(ram_inc);
+        output!(left_instruction_input);
+        output!(right_instruction_input);
+        output!(left_lookup_operand);
+        output!(right_lookup_operand);
+        output!(lookup_output);
+        output!(product_magnitude);
         let _ = builder.arg(&mut unmapped);
+        let _ = builder.arg(&groups);
         let _ = builder.arg(&count);
-        // SAFETY: thread `i < count` writes exactly index `i` of each
-        // single-word output (all allocated at `cycles`) and `2*i`, `2*i + 1`
-        // of the four two-limb outputs (allocated at `cycles * 2`). It reads
-        // index `i` of the row arrays and the `EXTRA_WORDS` consecutive words
-        // at `i * EXTRA_WORDS`, plus `is_noop[i + 1]` guarded by
-        // `i + 1 < cycles`. The kind tables, including the four mode
-        // tables, are bounds-checked against `count` and each holds `count`
-        // entries. `unmapped` is written only by `atomicExch`. Every buffer is
-        // a distinct allocation.
+        // SAFETY: the mask is derived from the supplied output groups. Disabled
+        // groups receive null pointers and are never accessed. Enabled outputs
+        // cover `cycles` rows, with two u64 limbs for wide values. Thread `i`
+        // reads row `i` and its EXTRA_WORDS extras; successor reads require
+        // `i + 1 < cycles`. The kernel bounds-checks each descriptor kind, and
+        // its sequence variant is in 0..VARIANTS. Each output is a separate
+        // allocation, and the rejection flag is written with atomicExch.
         let _ = unsafe { builder.launch(launch_config(count)) }.map_err(device_error)?;
-
-        self.check_mapped(&unmapped, "atom columns")?;
-        Ok(columns)
+        self.check_mapped(&unmapped, "atom columns")
     }
 
     pub fn flag_bit_bytes(

@@ -38,7 +38,7 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::RamReadWriteChecking
 use jolt_witness::JoltWitnessPlane;
 use witness::RamReadWriteWitness;
 
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_device_trace_window;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
@@ -305,7 +305,13 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for CudaBackend {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a RAM read-write window names an absent device",
             })?;
-            let (trace, _) = session_window_residency(device, session, witness, cycles, window)?;
+            let trace = session_device_trace_window(
+                device,
+                session,
+                witness,
+                cycles,
+                &window.residency(cycles),
+            )?;
             let rows = DeviceRamRows::from_device(&trace, 1usize << log_k, window.len)?;
             cycle_shards.push(CycleShard {
                 ordinal,
@@ -401,7 +407,8 @@ fn prepare_address_first<F: JoltField>(
         start: 0,
         len: cycles,
     };
-    let (trace, _) = session_window_residency(context, session, witness, cycles, &window)?;
+    let trace =
+        session_device_trace_window(context, session, witness, cycles, &window.residency(cycles))?;
     let rows = DeviceRamRows::from_device(&trace, 1usize << log_k, cycles)?;
     let val_init = initial_memory(witness, cycles, 1usize << log_k)?;
     let state = AddressFirst::new(

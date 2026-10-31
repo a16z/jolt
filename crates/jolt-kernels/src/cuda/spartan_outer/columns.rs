@@ -5,7 +5,7 @@ use jolt_field::Fr;
 use jolt_field::JoltField;
 use jolt_riscv::CircuitFlags;
 use jolt_witness::backend::cuda::{
-    circuit_flag_bit, DeviceAtomColumns, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE,
+    circuit_flag_bit, DeviceExecutionColumns, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE,
     FLAG_BIT_SHOULD_BRANCH, FLAG_BIT_SHOULD_JUMP,
 };
 use witness::LAYOUT;
@@ -76,7 +76,7 @@ impl DeviceR1csInputs {
     pub fn from_device(
         context: &CudaKernelContext,
         trace: &DeviceTrace,
-        atoms: &DeviceAtomColumns,
+        atoms: &DeviceExecutionColumns,
         pc_words: &CudaSlice<u32>,
         cycles: usize,
     ) -> Result<Self, CudaError> {
@@ -323,7 +323,7 @@ mod tests {
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::device_columns::{device_pc_words, whole_domain};
     use crate::cuda::common::testing::with_r1cs_witness;
-    use crate::cuda::witness::{session_atom_columns, session_device_trace};
+    use crate::cuda::witness::{session_device_trace, session_execution_columns};
     use crate::ProofSession;
 
     const LOG_T: usize = 8;
@@ -353,7 +353,7 @@ mod tests {
                 let mut session = ProofSession::default();
                 let trace = session_device_trace::<Fr>(context, &mut session, witness, cycles)
                     .expect("device residency");
-                let atoms = session_atom_columns::<Fr>(context, &mut session, witness, cycles)
+                let atoms = session_execution_columns::<Fr>(context, &mut session, witness, cycles)
                     .expect("atom columns");
                 let pc_words = device_pc_words::<Fr>(
                     context,

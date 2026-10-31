@@ -28,9 +28,9 @@ use jolt_witness::JoltWitnessPlane;
 
 use std::sync::Arc;
 
-use jolt_witness::backend::cuda::DeviceAtomColumns;
+use jolt_witness::backend::cuda::DeviceExecutionColumns;
 
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_execution_window;
 
 use super::common::context::context_for;
 use super::common::devices::{witness_windows, CycleWindow};
@@ -162,7 +162,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBacken
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "an instruction reduction window names an absent device",
             })?;
-            let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+            let (_, atoms) = session_execution_window(device, session, witness, cycles, window)?;
             column_windows.push(PrefixSuffixWindow {
                 ordinal,
                 columns: ColumnSet::Narrow(Arc::new(AtomFoldColumns {
@@ -202,7 +202,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>> for CudaBacken
 }
 
 struct AtomFoldColumns {
-    atoms: Arc<DeviceAtomColumns>,
+    atoms: Arc<DeviceExecutionColumns>,
     entries: usize,
 }
 
@@ -364,7 +364,7 @@ mod tests {
                 .collect();
 
             let mut session = ProofSession::default();
-            let atoms = crate::cuda::witness::session_atom_columns::<Fr>(
+            let atoms = crate::cuda::witness::session_execution_columns::<Fr>(
                 context,
                 &mut session,
                 witness,

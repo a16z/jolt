@@ -21,7 +21,7 @@ use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
 use crate::cuda::common::device_columns::DeviceTraceColumns;
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_bytecode_window;
 
 use super::pushforward::{DeviceBytecodePushforward, PushforwardInputs};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
@@ -129,7 +129,7 @@ fn device_bytecode_pc_words<F: JoltField>(
     window: &CycleWindow,
     addresses: usize,
 ) -> Result<NarrowColumn, KernelError<F>> {
-    let (trace, columns) = session_window_residency(context, session, witness, cycles, window)?;
+    let (trace, columns) = session_bytecode_window(context, session, witness, cycles, window)?;
     Ok(trace.narrow_u64_column(&columns.bytecode_pc, addresses as u64)?)
 }
 

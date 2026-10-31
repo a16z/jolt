@@ -38,7 +38,7 @@ use witness::VARIABLES;
 
 use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_execution_window;
 
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::{require_context, CudaBackend};
@@ -172,7 +172,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
                 reason: "a Spartan outer window names an absent device",
             })?;
             let (trace, atoms) =
-                session_window_residency(device, session, witness, cycles, window)?;
+                session_execution_window(device, session, witness, cycles, window)?;
             let pc_words =
                 device_trace_columns::<F>(device, session, witness, cycles, window, [0, 1, 0], 0)?
                     .pc;
@@ -312,7 +312,7 @@ mod tests {
     use crate::cuda::common::testing::{
         arb_point, drive, fr, probe_input_claim, with_r1cs_witness,
     };
-    use crate::cuda::witness::{session_atom_columns_window, session_device_trace_window};
+    use crate::cuda::witness::{session_device_trace_window, session_execution_columns_window};
     use crate::reference::spartan_outer::ReferenceOuterRemainder;
     use crate::reference::ReferenceBackend;
     use crate::uniskip::UniskipKernel;
@@ -445,9 +445,10 @@ mod tests {
                 let trace =
                     session_device_trace_window::<Fr>(context, session, witness, cycles, &resident)
                         .expect("windowed residency");
-                let atoms =
-                    session_atom_columns_window::<Fr>(context, session, witness, cycles, &resident)
-                        .expect("windowed atom columns");
+                let atoms = session_execution_columns_window::<Fr>(
+                    context, session, witness, cycles, &resident,
+                )
+                .expect("windowed atom columns");
                 let pc_words = trace.mapped_pc_words().expect("windowed pc words");
                 DeviceR1csInputs::from_device(context, &trace, &atoms, &pc_words, resident.len)
                     .expect("windowed r1cs inputs")

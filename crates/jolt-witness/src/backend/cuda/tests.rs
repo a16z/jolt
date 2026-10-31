@@ -314,21 +314,38 @@ fn device_atom_columns_match_the_reference_extractors() {
         return;
     };
     let columns = fixture.trace.atom_columns().expect("atom columns");
-    let flags = fixture.u32s(&columns.flags);
-    let table_index = fixture.u32s(&columns.table_index);
-    let bytecode_pc = fixture.u64s(&columns.bytecode_pc);
-    let rd_pre = fixture.u64s(&columns.rd_pre_value);
-    let rs1_address = fixture.u32s(&columns.rs1_address);
-    let rs2_address = fixture.u32s(&columns.rs2_address);
-    let rd_address = fixture.u32s(&columns.rd_address);
-    let rd_inc = fixture.u64s(&columns.rd_inc);
-    let ram_inc = fixture.u64s(&columns.ram_inc);
-    let left_input = fixture.u64s(&columns.left_instruction_input);
-    let right_input = fixture.u64s(&columns.right_instruction_input);
-    let left_operand = fixture.u64s(&columns.left_lookup_operand);
-    let right_operand = fixture.u64s(&columns.right_lookup_operand);
-    let lookup_output = fixture.u64s(&columns.lookup_output);
-    let product = fixture.u64s(&columns.product_magnitude);
+    assert_atom_columns(&fixture, columns);
+}
+
+#[test]
+fn device_atom_groups_match_the_reference_extractors() {
+    let Some(fixture) = fixture(7) else {
+        return;
+    };
+    let columns = DeviceAtomColumns {
+        execution: Arc::new(fixture.trace.execution_columns().expect("execution")),
+        memory: Arc::new(fixture.trace.memory_columns().expect("memory")),
+        bytecode: Arc::new(fixture.trace.bytecode_columns().expect("bytecode")),
+    };
+    assert_atom_columns(&fixture, columns);
+}
+
+fn assert_atom_columns(fixture: &Fixture, columns: DeviceAtomColumns) {
+    let flags = fixture.u32s(&columns.execution.flags);
+    let table_index = fixture.u32s(&columns.execution.table_index);
+    let bytecode_pc = fixture.u64s(&columns.bytecode.bytecode_pc);
+    let rd_pre = fixture.u64s(&columns.memory.rd_pre_value);
+    let rs1_address = fixture.u32s(&columns.memory.rs1_address);
+    let rs2_address = fixture.u32s(&columns.memory.rs2_address);
+    let rd_address = fixture.u32s(&columns.memory.rd_address);
+    let rd_inc = fixture.u64s(&columns.memory.rd_inc);
+    let ram_inc = fixture.u64s(&columns.memory.ram_inc);
+    let left_input = fixture.u64s(&columns.execution.left_instruction_input);
+    let right_input = fixture.u64s(&columns.execution.right_instruction_input);
+    let left_operand = fixture.u64s(&columns.execution.left_lookup_operand);
+    let right_operand = fixture.u64s(&columns.execution.right_lookup_operand);
+    let lookup_output = fixture.u64s(&columns.execution.lookup_output);
+    let product = fixture.u64s(&columns.execution.product_magnitude);
     let rows: Vec<AtomProbe> = fixture.probes();
 
     assert!(
@@ -350,7 +367,7 @@ fn device_atom_columns_match_the_reference_extractors() {
     assert!(
         rows.iter().any(|row| row.right_instruction_input.0 < 0),
         "no cycle has a negative right instruction input, so the two's-complement limb pair is \
-         untested",
+     untested",
     );
     assert!(
         rows.iter()
@@ -382,7 +399,7 @@ fn device_atom_columns_match_the_reference_extractors() {
     assert!(
         rows.last().is_some_and(|row| row.jump.0),
         "the fixture's last cycle does not jump, so ShouldJump's `is_some_and` lookahead is \
-         indistinguishable from NextIsNoop's `is_none_or` at the one index where they differ",
+     indistinguishable from NextIsNoop's `is_none_or` at the one index where they differ",
     );
 
     for (index, row) in rows.iter().enumerate() {

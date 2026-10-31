@@ -2,7 +2,9 @@
 //!
 //! The trace backend and optimized kernels derive typed bundles on the host.
 //! This module instead packs native row values, uploads a cycle window, and
-//! derives reusable integer columns on the caller's CUDA stream. Instruction
+//! derives reusable integer columns on the caller's CUDA stream. Execution,
+//! register/increment, and bytecode groups can be extracted independently or
+//! together; the kernel backend selects their residency policy. Instruction
 //! descriptors select device formulas; flags and lookup-table indices come
 //! from the active instruction profile. Unsupported descriptors are rejected
 //! by the upload path.
@@ -24,6 +26,7 @@ use jolt_riscv::InstructionFlags;
 pub(crate) use jolt_riscv::RV64IMAC_JOLT as CUDA_PROFILE;
 #[cfg(feature = "field-inline")]
 pub(crate) use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE as CUDA_PROFILE;
+use std::sync::Arc;
 use tables::TABLE_INDEX_ABSENT as TablesTableIndexAbsent;
 
 mod descriptors;
@@ -47,15 +50,21 @@ pub use packed::{
 /// Flags occupy the explicit `FLAG_BIT_*` positions. No column here is in
 /// Montgomery form; the arithmetic kernels perform field promotion.
 pub struct DeviceAtomColumns {
+    pub execution: Arc<DeviceExecutionColumns>,
+    pub memory: Arc<DeviceMemoryColumns>,
+    pub bytecode: Arc<DeviceBytecodeColumns>,
+}
+
+impl DeviceAtomColumns {
+    pub fn device_bytes(&self) -> usize {
+        self.execution.device_bytes() + self.memory.device_bytes() + self.bytecode.device_bytes()
+    }
+}
+
+/// Execution atoms using the native limb and flag encodings of [`DeviceAtomColumns`].
+pub struct DeviceExecutionColumns {
     pub flags: CudaSlice<u32>,
     pub table_index: CudaSlice<u32>,
-    pub bytecode_pc: CudaSlice<u64>,
-    pub rd_pre_value: CudaSlice<u64>,
-    pub rs1_address: CudaSlice<u32>,
-    pub rs2_address: CudaSlice<u32>,
-    pub rd_address: CudaSlice<u32>,
-    pub rd_inc: CudaSlice<u64>,
-    pub ram_inc: CudaSlice<u64>,
     pub left_instruction_input: CudaSlice<u64>,
     pub right_instruction_input: CudaSlice<u64>,
     pub left_lookup_operand: CudaSlice<u64>,
@@ -64,24 +73,48 @@ pub struct DeviceAtomColumns {
     pub product_magnitude: CudaSlice<u64>,
 }
 
-impl DeviceAtomColumns {
+impl DeviceExecutionColumns {
     pub fn device_bytes(&self) -> usize {
-        let words = self.flags.len()
-            + self.table_index.len()
-            + self.rs1_address.len()
-            + self.rs2_address.len()
-            + self.rd_address.len();
-        let wide = self.bytecode_pc.len()
-            + self.rd_pre_value.len()
-            + self.rd_inc.len()
-            + self.ram_inc.len()
-            + self.left_instruction_input.len()
-            + self.right_instruction_input.len()
-            + self.left_lookup_operand.len()
-            + self.right_lookup_operand.len()
-            + self.lookup_output.len()
-            + self.product_magnitude.len();
-        words * size_of::<u32>() + wide * size_of::<u64>()
+        self.flags.len() * size_of::<u32>()
+            + self.table_index.len() * size_of::<u32>()
+            + self.left_instruction_input.len() * size_of::<u64>()
+            + self.right_instruction_input.len() * size_of::<u64>()
+            + self.left_lookup_operand.len() * size_of::<u64>()
+            + self.right_lookup_operand.len() * size_of::<u64>()
+            + self.lookup_output.len() * size_of::<u64>()
+            + self.product_magnitude.len() * size_of::<u64>()
+    }
+}
+
+/// Register state and two's-complement increment pairs, indexed by local cycle.
+pub struct DeviceMemoryColumns {
+    pub rd_pre_value: CudaSlice<u64>,
+    pub rs1_address: CudaSlice<u32>,
+    pub rs2_address: CudaSlice<u32>,
+    pub rd_address: CudaSlice<u32>,
+    pub rd_inc: CudaSlice<u64>,
+    pub ram_inc: CudaSlice<u64>,
+}
+
+impl DeviceMemoryColumns {
+    pub fn device_bytes(&self) -> usize {
+        self.rd_pre_value.len() * size_of::<u64>()
+            + self.rs1_address.len() * size_of::<u32>()
+            + self.rs2_address.len() * size_of::<u32>()
+            + self.rd_address.len() * size_of::<u32>()
+            + self.rd_inc.len() * size_of::<u64>()
+            + self.ram_inc.len() * size_of::<u64>()
+    }
+}
+
+/// Bytecode indices, with one native `u64` per local cycle.
+pub struct DeviceBytecodeColumns {
+    pub bytecode_pc: CudaSlice<u64>,
+}
+
+impl DeviceBytecodeColumns {
+    pub fn device_bytes(&self) -> usize {
+        self.bytecode_pc.len() * size_of::<u64>()
     }
 }
 

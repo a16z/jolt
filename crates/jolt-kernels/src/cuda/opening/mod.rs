@@ -40,7 +40,7 @@ use super::common::devices::{committed_windows, fan_out, CycleWindow, DeviceTask
 use super::common::error::CudaError;
 use super::{require_context, CudaBackend};
 use crate::commitment::{CommitmentGrid, CommittedColumnsWitness};
-use crate::cuda::witness::{collect_rows, session_atom_columns_window};
+use crate::cuda::witness::{collect_rows, session_memory_columns_window};
 use crate::opening::{
     JointOpeningPolynomials, PrecommittedOpeningTables, RamInitialOpening,
     RamInitialOpeningEvaluation,
@@ -708,7 +708,7 @@ fn increment_columns<F: JoltField>(
         let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
             reason: "a committed increment window names an absent device",
         })?;
-        let atoms = session_atom_columns_window(device, session, witness, cycles, window)?;
+        let atoms = session_memory_columns_window(device, session, witness, cycles, window)?;
         for &id in &wanted {
             let source = match id {
                 JoltCommittedPolynomial::RdInc => &atoms.rd_inc,

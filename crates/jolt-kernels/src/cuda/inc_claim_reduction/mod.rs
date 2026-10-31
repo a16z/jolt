@@ -29,11 +29,11 @@ use jolt_witness::JoltWitnessPlane;
 
 use std::sync::Arc;
 
-use jolt_witness::backend::cuda::DeviceAtomColumns;
+use jolt_witness::backend::cuda::DeviceMemoryColumns;
 
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::devices::{witness_windows, CycleWindow};
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_memory_window;
 
 use super::common::half_fold::{NarrowColumn, NarrowKind};
 use super::common::prefix_suffix::{
@@ -53,7 +53,7 @@ const RD_COLUMN: usize = 1;
 const GROUP_COLUMNS: [usize; 4] = [RAM_COLUMN, RAM_COLUMN, RD_COLUMN, RD_COLUMN];
 
 struct IncrementFoldColumns {
-    atoms: Arc<DeviceAtomColumns>,
+    atoms: Arc<DeviceMemoryColumns>,
     entries: usize,
 }
 
@@ -170,7 +170,7 @@ fn increment_windows<F: JoltField>(
         let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
             reason: "an increment reduction window names an absent device",
         })?;
-        let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+        let (_, atoms) = session_memory_window(device, session, witness, cycles, window)?;
         out.push(PrefixSuffixWindow {
             ordinal,
             columns: ColumnSet::Narrow(Arc::new(IncrementFoldColumns {

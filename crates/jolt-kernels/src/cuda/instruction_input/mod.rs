@@ -30,7 +30,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_execution_window;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
@@ -192,7 +192,7 @@ pub(crate) fn prepare_with_basis<F: JoltField>(
         let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
             reason: "an instruction-input window names an absent device",
         })?;
-        let (trace, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+        let (trace, atoms) = session_execution_window(device, session, witness, cycles, window)?;
         column_shards.push(ColumnShard {
             ordinal,
             columns: DeviceInstructionColumns::from_device(device, trace, &atoms, window.len)?,

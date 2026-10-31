@@ -23,7 +23,7 @@ use jolt_verifier::stages::stage5::registers_val_evaluation::RegistersValEvaluat
 use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::common::ra_poly::COLD;
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_memory_window;
 
 use super::CudaBackend;
 use crate::cuda::common::context::context_for;
@@ -69,7 +69,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a registers value-evaluation window names an absent device",
             })?;
-            let (_, atoms) = session_window_residency(device, session, witness, cycles, window)?;
+            let (_, atoms) = session_memory_window(device, session, witness, cycles, window)?;
             let inc = device.i128_to_montgomery_device(&atoms.rd_inc, window.len)?;
             let slots = device.download_u32(&atoms.rd_address)?;
             if slots

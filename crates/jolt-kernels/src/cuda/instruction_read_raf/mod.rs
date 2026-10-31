@@ -51,7 +51,7 @@ use jolt_verifier::stages::stage5::instruction_read_raf::InstructionReadRaf;
 use jolt_witness::backend::cuda::FLAG_BIT_RAF;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_execution_window;
 
 use self::address_driver::{AddressShard, DeviceAddressPhase};
 use self::address_phase::{flag_claims, DeviceRows, NO_TABLE};
@@ -330,7 +330,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             let shard = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "an instruction read-RAF cycle window names an absent device",
             })?;
-            let (trace, atoms) = session_window_residency(shard, session, witness, cycles, window)?;
+            let (trace, atoms) = session_execution_window(shard, session, witness, cycles, window)?;
             let limbs =
                 device_trace_columns::<F>(shard, session, witness, cycles, window, [1, 0, 0], 0)?
                     .lookup;

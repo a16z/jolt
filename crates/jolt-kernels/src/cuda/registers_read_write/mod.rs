@@ -35,7 +35,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::registers_read_write_checking::RegistersReadWriteChecking;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_memory_window;
 
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
@@ -369,8 +369,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBacke
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a registers read-write window names an absent device",
             })?;
-            let (trace, atoms) =
-                session_window_residency(device, session, witness, cycles, window)?;
+            let (trace, atoms) = session_memory_window(device, session, witness, cycles, window)?;
             resident.push((ordinal, device, trace, atoms));
         }
 
@@ -452,7 +451,7 @@ fn prepare_address_first<F: JoltField>(
         start: 0,
         len: cycles,
     };
-    let (trace, atoms) = session_window_residency(context, session, witness, cycles, &window)?;
+    let (trace, atoms) = session_memory_window(context, session, witness, cycles, &window)?;
     let rows = DeviceRegisterRows::from_device(context, &trace, &atoms, cycles)?;
     let state = AddressFirst::new(
         context,
@@ -530,9 +529,13 @@ mod tests {
         let trace =
             crate::cuda::witness::session_device_trace::<Fr>(context, &mut session, &plane, cycles)
                 .expect("device residency");
-        let atoms =
-            crate::cuda::witness::session_atom_columns::<Fr>(context, &mut session, &plane, cycles)
-                .expect("atom columns");
+        let atoms = crate::cuda::witness::session_memory_columns::<Fr>(
+            context,
+            &mut session,
+            &plane,
+            cycles,
+        )
+        .expect("atom columns");
         let got = DeviceRegisterRows::from_device(context, &trace, &atoms, cycles)
             .expect("device-gathered register rows");
 

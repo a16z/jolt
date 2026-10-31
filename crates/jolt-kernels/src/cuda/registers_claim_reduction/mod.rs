@@ -38,7 +38,7 @@ use crate::cuda::common::devices::{witness_windows, CycleWindow};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::half_fold::{u64_suffix_folds, NarrowColumn, NarrowKind};
 use crate::cuda::common::prefix_suffix::{NarrowColumns, PrefixSuffixWindow};
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_device_trace_window;
 
 use super::common::prefix_suffix::{
     eq_pair, prefix_rounds_ceil, ColumnSet, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -199,7 +199,13 @@ impl<F: JoltField> PrepareKernel<F, RegistersClaimReduction<F>> for CudaBackend 
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a registers reduction window names an absent device",
             })?;
-            let (trace, _) = session_window_residency(device, session, witness, cycles, window)?;
+            let trace = session_device_trace_window(
+                device,
+                session,
+                witness,
+                cycles,
+                &window.residency(cycles),
+            )?;
             column_windows.push(PrefixSuffixWindow {
                 ordinal,
                 columns: ColumnSet::Narrow(Arc::new(ExtraWordColumns {

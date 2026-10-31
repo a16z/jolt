@@ -49,7 +49,7 @@ use crate::cuda::common::context::context_for;
 use crate::cuda::common::device_columns::device_trace_columns;
 use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::prefix_suffix::PrefixSuffixWindow;
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_execution_window;
 
 use super::common::prefix_suffix::{
     eq_plus_one_pairs, prefix_rounds_ceil, ColumnSet, PrefixSuffixGroup, PrefixSuffixRounds,
@@ -186,7 +186,7 @@ impl<F: JoltField> PrepareKernel<F, SpartanShift<F>> for CudaBackend {
                 reason: "a Spartan shift window names an absent device",
             })?;
             let (trace, atoms) =
-                session_window_residency(device, session, witness, cycles, window)?;
+                session_execution_window(device, session, witness, cycles, window)?;
             let pc =
                 device_trace_columns::<F>(device, session, witness, cycles, window, [0, 1, 0], 0)?
                     .pc;

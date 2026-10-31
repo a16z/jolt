@@ -32,7 +32,7 @@ use crate::cuda::common::context::context_for;
 use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::error::backend;
 use crate::cuda::common::split_eq::DeviceSplitEq;
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_execution_window;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -145,7 +145,7 @@ fn hamming_shards<F: JoltField>(
         let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
             reason: "a RAM hamming-booleanity window names an absent device",
         })?;
-        let (trace, columns) = session_window_residency(device, session, witness, cycles, window)?;
+        let (trace, columns) = session_execution_window(device, session, witness, cycles, window)?;
         let bits = trace.flag_bit_column(&columns.flags, FLAG_BIT_RAM_HAMMING)?;
         out.push(HammingShard {
             ordinal,
@@ -284,7 +284,7 @@ mod tests {
                 cycles,
             )
             .expect("device residency");
-            let columns = trace.atom_columns().expect("atom columns");
+            let columns = trace.execution_columns().expect("atom columns");
             let got = context
                 .download_u64(
                     &trace

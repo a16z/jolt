@@ -24,7 +24,7 @@ use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;
 use jolt_witness::JoltWitnessPlane;
 
-use crate::cuda::witness::session_window_residency;
+use crate::cuda::witness::session_memory_window;
 
 use super::CudaBackend;
 use crate::cuda::common::context::context_for;
@@ -68,8 +68,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
             let device = context_for(ordinal).ok_or(KernelError::InvariantViolation {
                 reason: "a RAM value-check window names an absent device",
             })?;
-            let (trace, atoms) =
-                session_window_residency(device, session, witness, cycles, window)?;
+            let (trace, atoms) = session_memory_window(device, session, witness, cycles, window)?;
             let inc = device.i128_to_montgomery_device(&atoms.ram_inc, window.len)?;
             let (hot, _) = trace.remapped_ram_words(addresses)?;
             let eq_address = device.eq_evals(require_fr_slice(r_address)?)?;

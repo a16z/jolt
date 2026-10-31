@@ -3,7 +3,7 @@ use jolt_field::{Fr, Ring};
 use jolt_witness::WitnessError;
 
 use jolt_witness::backend::cuda::{
-    DeviceAtomColumns, DeviceTrace, EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2,
+    DeviceMemoryColumns, DeviceTrace, EXTRA_RD_POST, EXTRA_RS1, EXTRA_RS2,
 };
 
 #[cfg(test)]
@@ -48,7 +48,7 @@ impl DeviceRegisterRows {
     pub fn from_device(
         context: &CudaKernelContext,
         trace: &DeviceTrace,
-        atoms: &DeviceAtomColumns,
+        atoms: &DeviceMemoryColumns,
         cycles: usize,
     ) -> Result<Self, CudaError> {
         if cycles == 0 || trace.cycles() < cycles {
