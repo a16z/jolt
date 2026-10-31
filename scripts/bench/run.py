@@ -16,7 +16,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tarfile
 import time
 import tomllib
 
@@ -191,6 +190,7 @@ def add_manifest_items(source):
         path.write_text(text)
     path = source / 'crates/jolt-prover/Cargo.toml'
     text = path.read_text()
+    original = text
     manifest = tomllib.loads(text)
     features = ['dep:serde_json', 'dep:jolt-inlines-secp256k1', 'jolt-inlines-secp256k1/host']
     additions = [item for item in features if item not in manifest['features']['profiling']]
@@ -203,7 +203,8 @@ def add_manifest_items(source):
                  if key not in manifest['dependencies']]
     if additions:
         text = text.replace('[dependencies]\n', '[dependencies]\n' + ''.join(additions), 1)
-    path.write_text(text)
+    if text != original:
+        path.write_text(text)
 
 
 def lock_packages(path):
@@ -220,7 +221,7 @@ def build(args):
     out.mkdir(parents=True, exist_ok=True)
     if (out / 'manifest.json').exists():
         raise ValueError('build output already contains a manifest; choose a new receipt directory')
-    if args.target_cpu == 'native':
+    if args.target_cpu.lower() == 'native' or not re.fullmatch(r'[a-zA-Z0-9_.+-]+', args.target_cpu):
         raise ValueError('native is not a portable target; use the target ISA readback')
     revision, harness = git_revision(args.revision), git_revision(args.harness_revision)
     runner_source = subprocess.check_output(['git', 'show', f'{harness}:scripts/bench/run.py'], cwd=ROOT)
@@ -245,19 +246,19 @@ def build(args):
     try:
         with (out / 'build.log').open('w') as log:
             if not source.exists():
-                source.mkdir(parents=True)
-                archive = source.parent / 'source.tar'
-                with archive.open('wb') as stream:
-                    subprocess.run(['git', 'archive', revision], cwd=ROOT, stdout=stream, check=True)
-                with tarfile.open(archive) as stream:
-                    stream.extractall(source, filter='data')
-                archive.unlink()
-                paths = capture(['git', 'ls-tree', '-r', '--name-only', harness, '--', *HARNESS_PATHS]).splitlines()
-                for path in paths:
-                    destination = source / path
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    destination.write_bytes(subprocess.check_output(['git', 'show', f'{harness}:{path}'], cwd=ROOT))
-                add_manifest_items(source)
+                source.parent.mkdir(parents=True, exist_ok=True)
+                logged(['git', 'clone', '--shared', '--no-checkout', '--no-tags', str(ROOT), str(source)], ROOT, env, log)
+                logged(['git', 'checkout', '--detach', revision], source, env, log)
+            if capture(['git', 'rev-parse', 'HEAD'], cwd=source) != revision or not (source / '.git').is_dir():
+                raise ValueError('build source is not a real Git checkout at the requested revision')
+            paths = capture(['git', 'ls-tree', '-r', '--name-only', harness, '--', *HARNESS_PATHS]).splitlines()
+            for path in paths:
+                destination = source / path
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                contents = subprocess.check_output(['git', 'show', f'{harness}:{path}'], cwd=ROOT)
+                if not destination.exists() or destination.read_bytes() != contents:
+                    destination.write_bytes(contents)
+            add_manifest_items(source)
             original_lock = subprocess.check_output(['git', 'show', f'{revision}:Cargo.lock'], cwd=ROOT)
             manifest['source_cargo_lock_sha256'] = hashlib.sha256(original_lock).hexdigest()
             pinned = {(p['name'], p['version'], p.get('source'), p.get('checksum'))
@@ -414,8 +415,12 @@ def validate_metrics(metrics, case):
 
 def result_envelope(args, config, host, bundles):
     prov, event = provenance()
+    context = getattr(args, 'context', None)
+    if context is not None:
+        prov = context['provenance']
     revisions = {leg: manifest['revision'] for leg, (_, manifest) in bundles.items()}
-    pr = event.get('pull_request')
+    pr = ({'head': {'sha': context['submitted_head']}} if context and context['is_pr']
+          else event.get('pull_request'))
     paired = 'base' in bundles
     harnesses = {manifest['harness_revision'] for _, manifest in bundles.values()}
     if len(harnesses) > 1:
