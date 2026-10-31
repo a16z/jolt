@@ -55,6 +55,12 @@ def write_json(path, value):
     temporary.replace(path)
 
 
+def parse_json(text):
+    def reject(value):
+        raise ValueError(f'non-finite JSON number: {value}')
+    return json.loads(text, parse_constant=reject)
+
+
 def capture(argv, cwd=ROOT, env=None):
     return subprocess.check_output(argv, cwd=cwd, env=env, text=True).strip()
 
@@ -68,7 +74,8 @@ def read_optional(path):
 
 def build_environment():
     names = ('PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL',
-             'CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'RUSTC_WRAPPER', 'RUSTC_BOOTSTRAP')
+             'CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'RUSTC_WRAPPER', 'RUSTC_BOOTSTRAP',
+             'RUNNER_TRACKING_ID')
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
@@ -140,7 +147,7 @@ def host_lock():
 
 
 def config_cases(config_path, tier, filters=()):
-    config = json.loads(Path(config_path).read_text())
+    config = parse_json(Path(config_path).read_text())
     if config['schema_version'] != 1 or config['metric_contract'] != 1:
         raise ValueError('unsupported suite or metric contract')
     cases = config['tiers'][tier]['cases']
@@ -165,6 +172,22 @@ def git_revision(value):
     return revision
 
 
+def interrupt(signum, _frame):
+    raise KeyboardInterrupt(f'signal {signum}')
+
+
+def stop_child(child):
+    try:
+        os.killpg(child.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    try:
+        child.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        os.killpg(child.pid, signal.SIGKILL)
+        child.wait()
+
+
 def logged(argv, cwd, env, log):
     log.write(json.dumps(argv) + '\n')
     log.flush()
@@ -173,8 +196,7 @@ def logged(argv, cwd, env, log):
         try:
             code = child.wait()
         except BaseException:
-            os.killpg(child.pid, signal.SIGTERM)
-            child.wait()
+            stop_child(child)
             raise
     if code:
         raise RuntimeError(f'command exited {code}: {argv[0]} (see build.log)')
@@ -228,8 +250,7 @@ def build(args):
     if hashlib.sha256(runner_source).hexdigest() != sha256(__file__):
         raise ValueError('build must use the committed runner at --harness-revision')
     toolchain = capture(['rustc', '--version', '--verbose'])
-    key = hashlib.sha256(f'{revision}:{harness}:{args.target_cpu}:{toolchain}'.encode()).hexdigest()
-    source = ROOT / 'target/e2e-builds' / key / 'source'
+    source = ROOT / 'target/e2e-builds' / args.target_cpu / args.profile / 'source'
     existed = (source / 'target').exists()
     started = utc_now()
     begin = time.perf_counter()
@@ -248,9 +269,10 @@ def build(args):
             if not source.exists():
                 source.parent.mkdir(parents=True, exist_ok=True)
                 logged(['git', 'clone', '--shared', '--no-checkout', '--no-tags', str(ROOT), str(source)], ROOT, env, log)
-                logged(['git', 'checkout', '--detach', revision], source, env, log)
-            if capture(['git', 'rev-parse', 'HEAD'], cwd=source) != revision or not (source / '.git').is_dir():
-                raise ValueError('build source is not a real Git checkout at the requested revision')
+            if not (source / '.git').is_dir():
+                raise ValueError('build source is not a real private Git checkout')
+            logged(['git', 'checkout', '--force', '--detach', revision], source, env, log)
+            logged(['git', 'clean', '-ffdx', '-e', '/target/'], source, env, log)
             paths = capture(['git', 'ls-tree', '-r', '--name-only', harness, '--', *HARNESS_PATHS]).splitlines()
             for path in paths:
                 destination = source / path
@@ -270,7 +292,7 @@ def build(args):
             cfg = capture(['rustc', '--print', 'cfg', '--target', triple,
                            '-C', f'target-cpu={args.target_cpu}'], cwd=source, env=env)
             manifest['target_features'] = sorted(re.findall(r'^target_feature="([^"]+)"$', cfg, re.M))
-            logged(['cargo', 'metadata', '--format-version', '1'], source, env, log)
+            logged(['cargo', 'metadata', '--no-deps', '--format-version', '1'], source, env, log)
             if not pinned.issubset(lock_packages(source / 'Cargo.lock')):
                 raise ValueError('benchmark harness changed an existing locked dependency')
             manifest['cargo_lock_sha256'] = sha256(source / 'Cargo.lock')
@@ -287,7 +309,7 @@ def build(args):
                 binary = out / f'jolt-prover-{pcs}'
                 shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
                 manifest['binaries'][pcs] = bundle_file(binary, out)
-            config = json.loads(Path(args.config).read_text())
+            config = parse_json(Path(args.config).read_text())
             inputs = {}
             tiers = ([config['tiers'][args.tier]] if getattr(args, 'tier', None)
                      else config['tiers'].values())
@@ -334,11 +356,19 @@ def build(args):
 
 def load_bundle(path):
     path = Path(path).resolve()
-    manifest = json.loads(path.read_text())
+    manifest = parse_json(path.read_text())
     if manifest.get('schema_version') != 1:
         raise ValueError('unsupported build manifest version')
     if not re.fullmatch(r'[0-9a-f]{40}', manifest.get('revision', '')):
         raise ValueError('build revision must be a full Git commit')
+    if manifest.get('status') == 'complete':
+        required = {'harness_revision', 'toolchain', 'cargo_version', 'target_cpu', 'target_triple',
+                    'target_features', 'profile', 'rustflags', 'source_cargo_lock_sha256',
+                    'cargo_lock_sha256', 'harness_files', 'binaries', 'guests', 'runner',
+                    'akita_schedules', 'suite_config_sha256', 'host', 'started_at',
+                    'finished_at', 'build_s', 'reason', 'cache'}
+        if required - manifest.keys():
+            raise ValueError(f'incomplete successful build manifest: {sorted(required - manifest.keys())}')
     return path, manifest
 
 
@@ -355,7 +385,7 @@ def checked_file(manifest_path, entry):
 
 def provenance():
     event_path = os.environ.get('GITHUB_EVENT_PATH')
-    event = json.loads(Path(event_path).read_text()) if event_path else {}
+    event = parse_json(Path(event_path).read_text()) if event_path else {}
     return {
         'workflow': os.environ.get('GITHUB_WORKFLOW'),
         'workflow_file': WORKFLOW_FILE if os.environ.get('GITHUB_WORKFLOW') else None,
@@ -379,18 +409,18 @@ def sample_order(paired, warmups, repetitions):
 
 
 def measure(command, env, cwd, log_path):
-    started = time.perf_counter()
     with log_path.open('wb') as log:
+        started = time.perf_counter()
         with subprocess.Popen(command, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
                               start_new_session=True) as child:
             try:
                 _, status, usage = os.wait4(child.pid, 0)
+                finished = time.perf_counter()
                 child.returncode = os.waitstatus_to_exitcode(status)
             except BaseException:
-                os.killpg(child.pid, signal.SIGTERM)
-                child.wait()
+                stop_child(child)
                 raise
-    return child.returncode, time.perf_counter() - started, int(usage.ru_maxrss) * 1024
+    return child.returncode, finished - started, int(usage.ru_maxrss) * 1024
 
 
 def validate_metrics(metrics, case):
@@ -461,6 +491,8 @@ def result_envelope(args, config, host, bundles):
 
 
 def run(args):
+    started = utc_now()
+    begin = time.perf_counter()
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     result_path = out / 'benchmark-results.json'
@@ -472,10 +504,10 @@ def run(args):
         bundles['base'] = load_bundle(args.base)
     host = host_snapshot()
     result = result_envelope(args, config, host, bundles)
+    result['started_at'] = started
     for _, manifest in bundles.values():
         if manifest.get('runner', {}).get('sha256') != sha256(__file__):
             raise ValueError('run this build bundle with its pinned scripts/bench/run.py')
-    begin = time.perf_counter()
     cache = out / 'runtime-cache'
     cache.mkdir()
     result['runtime_cache'] = {
@@ -531,6 +563,8 @@ def run(args):
             env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG': 'C.UTF-8',
                    'TMPDIR': str(directory), 'LOCALAPPDATA': str(cache),
                    'RAYON_NUM_THREADS': str(case['physical_cores']), 'RUST_BACKTRACE': '1'}
+            if 'RUNNER_TRACKING_ID' in os.environ:
+                env['RUNNER_TRACKING_ID'] = os.environ['RUNNER_TRACKING_ID']
             if case['pcs'] == 'akita':
                 env['JOLT_AKITA_SCHEDULE_DIR'] = str(bundles[item['leg']][0].parent / 'akita-schedules')
             sample['command'] = command
@@ -541,7 +575,7 @@ def run(args):
                 sample['exit_code'] = code
                 if code:
                     raise ValueError(f'profile exited {code}; see samples/{sample["order"]:05d}/process.log')
-                metrics = validate_metrics(json.loads(raw.read_text()), case)
+                metrics = validate_metrics(parse_json(raw.read_text()), case)
                 metrics.update(process_s=seconds, peak_rss_bytes=rss)
                 sample['metrics'], sample['status'] = metrics, 'complete'
             except (OSError, ValueError, KeyError) as error:
@@ -556,8 +590,8 @@ def run(args):
     statuses = {case['status'] for case in result['cases']}
     result['status'] = ('failed' if 'failed' in statuses else 'incomplete' if 'missing' in statuses
                         else 'unsupported' if statuses == {'unsupported'} else 'complete')
-    result['finished_at'] = utc_now()
     result['runtime_cache']['files'] = [bundle_file(path, out) for path in sorted(cache.rglob('*.urs'))]
+    result['finished_at'] = utc_now()
     seconds = time.perf_counter() - begin
     result['wall_time'].update(benchmark_s=seconds, total_s=seconds)
     write_json(result_path, result)
@@ -598,13 +632,15 @@ def render_comment(result, out):
         lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {base['e2e_s']:.6f} | "
                      f"{head['e2e_s']:.6f} | {change} | {base['peak_rss_bytes']:.0f} / "
                      f"{head['peak_rss_bytes']:.0f} | {base['proof_bytes']:.0f} / {head['proof_bytes']:.0f} |")
-    revisions = result['revisions']
+    revisions = {key: value or 'unavailable' for key, value in result['revisions'].items()}
+    total = result['wall_time']['total_s']
+    total_label = f'{total:.3f}' if total is not None else 'not measured'
     lines += ['', f"Base: `{revisions['base']}`. Submitted head: `{revisions['head']}`. "
               f"Measured merge: `{revisions['merge']}`. Shared harness: `{revisions['harness']}`.", '',
               f"Warmups per leg: {result['suite']['warmups']}; measured repetitions per leg: "
               f"{result['suite']['repetitions']}. Each invocation is a fresh process; measured pairs alternate order.", '',
               f"Wall receipt: {result['wall_time']['scope']}. "
-              f"Total seconds: {result['wall_time']['total_s']}. "
+              f"Total seconds: {total_label}. "
               'Prebuilt execution does not establish the build-inclusive PR budget.', '',
               'No calibrated regression threshold is applied. Raw measurements, verification times, '
               'row counts, hashes, compiler flags, and host settings are in benchmark-results.json.', '']
@@ -642,7 +678,8 @@ def suite(args):
 
 def disabled(args):
     config, cases = config_cases(args.config, args.tier)
-    args.kind, args.case, args.warmups, args.repetitions = None, [], None, None
+    args.kind = 'comparison' if args.tier == 'pr' else 'history'
+    args.case, args.warmups, args.repetitions = [], None, None
     result = result_envelope(args, config, None, {})
     result.update(status=args.status, reason=args.reason, finished_at=utc_now())
     result['cases'] = [dict(case, cpu_ids=[], input=dict(case['input'], sha256=None),
@@ -690,10 +727,10 @@ def parse_args():
 
 def main():
     args = parse_args()
-    signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    signal.signal(signal.SIGTERM, interrupt)
     try:
         if args.command == 'render-comment':
-            render_comment(json.loads(args.results.read_text()), args.out)
+            render_comment(parse_json(args.results.read_text()), args.out)
             return 0
         if args.command == 'status':
             result = disabled(args)

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -16,6 +17,43 @@ SPEC.loader.exec_module(bench)
 
 
 class E2eBenchTests(unittest.TestCase):
+    def test_cancellation_reaps_its_owned_process(self):
+        with subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.read()'],
+                              stdin=subprocess.PIPE, start_new_session=True) as child:
+            bench.stop_child(child)
+            self.assertIsNotNone(child.returncode)
+            with self.assertRaises(ChildProcessError):
+                os.waitpid(child.pid, os.WNOHANG)
+
+    def test_host_lock_excludes_another_process_until_its_owner_exits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, XDG_CACHE_HOME=directory,
+                       PYTHONPATH=str(SCRIPT.parent))
+            owner_code = ('import run, sys\nwith run.host_lock():\n'
+                          ' print("locked", flush=True)\n sys.stdin.read()\n')
+            probe_code = ('import fcntl, pathlib, sys\n'
+                          f'path = pathlib.Path({directory!r}) / "jolt-bench/host.lock"\n'
+                          'with path.open("a") as lock:\n'
+                          ' try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)\n'
+                          ' except BlockingIOError: sys.exit(9)\n')
+            with subprocess.Popen([sys.executable, '-c', owner_code], env=env,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) as owner:
+                try:
+                    self.assertEqual(owner.stdout.readline(), 'locked\n')
+                    self.assertEqual(subprocess.run([sys.executable, '-c', probe_code], env=env).returncode, 9)
+                finally:
+                    owner.communicate('', timeout=5)
+            self.assertEqual(subprocess.run([sys.executable, '-c', probe_code], env=env).returncode, 0)
+
+    def test_target_preflight_rejects_missing_compiled_instructions(self):
+        manifest = {'target_triple': 'x86_64-unknown-linux-gnu',
+                    'target_features': ['avx2', 'cmpxchg16b', 'sha']}
+        host = {'architecture': 'x86_64', 'cpu_flags': ['avx2', 'cx16']}
+        with self.assertRaisesRegex(ValueError, 'sha_ni'):
+            bench.check_target(manifest, host)
+        host['cpu_flags'].append('sha_ni')
+        bench.check_target(manifest, host)
+
     def test_topology_selects_one_allowed_thread_per_physical_core(self):
         rows = [{'cpu': i * 2 + sibling, 'core': i, 'socket': 0,
                  'online': True, 'allowed': True}
@@ -88,6 +126,8 @@ class E2eBenchTests(unittest.TestCase):
 from pathlib import Path
 assert not any(name in os.environ for name in ('GITHUB_TOKEN', 'PIKA_CLI_TOKEN', 'ACTIONS_RUNTIME_TOKEN'))
 assert os.environ['RAYON_NUM_THREADS'] == '1'
+assert sys.argv[sys.argv.index('--backend') + 1] == 'optimized'
+assert '--guest-elf' in sys.argv and '--input-file' in sys.argv
 path = Path(sys.argv[sys.argv.index('--result-json') + 1])
 path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optimized', scale_log2=3,
     e2e_s=0.003, prove_s=0.001, setup_s=0.001, verify_s=0.0001, verify_single_s=0.0001,
@@ -101,6 +141,12 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
             for leg, executable in [('base', binary), ('head', failure)]:
                 manifest = {'schema_version': 1, 'revision': ('a' if leg == 'base' else 'b') * 40,
                             'harness_revision': 'c' * 40, 'status': 'complete',
+                            'toolchain': 'fixture', 'cargo_version': 'fixture', 'target_cpu': 'x86-64',
+                            'profile': 'release', 'rustflags': '-C target-cpu=x86-64',
+                            'source_cargo_lock_sha256': '0' * 64, 'cargo_lock_sha256': '0' * 64,
+                            'harness_files': {}, 'akita_schedules': [], 'suite_config_sha256': '0' * 64,
+                            'started_at': '2026-10-31T00:00:00Z', 'finished_at': '2026-10-31T00:00:01Z',
+                            'build_s': 1.0, 'reason': None, 'cache': {},
                             'runner': {'sha256': bench.sha256(SCRIPT)},
                             'host': {'architecture': bench.platform.machine()},
                             'target_triple': bench.platform.machine() + '-unknown-linux-gnu',
