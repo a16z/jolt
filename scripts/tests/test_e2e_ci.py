@@ -125,6 +125,36 @@ class E2eCiTests(unittest.TestCase):
             self.assertTrue(all(c['status'] == 'missing' and not c['samples'] for c in result['cases']))
             self.assertIsNone(result['wall_time']['total_s'])
 
+    def test_only_pr_selects_the_measured_off16_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for tier, profile in [('pr', 'bench-off16'), ('main', 'release'), ('nightly', 'release')]:
+                with self.subTest(tier=tier):
+                    plan = {'enabled': True, 'tier': tier, 'harness': 'c' * 40,
+                            'target_cpu': 'znver4', 'reason': None,
+                            'push_before': None, 'push_after': 'b' * 40,
+                            'provenance': {'workflow': ci.bench.WORKFLOW,
+                                'workflow_file': ci.bench.WORKFLOW_FILE,
+                                'run_id': '123', 'run_attempt': '1',
+                                'event': 'workflow_run' if tier == 'pr' else ('push' if tier == 'main' else 'schedule'),
+                                'ref': 'refs/heads/main', 'pr_number': 7 if tier == 'pr' else None,
+                                'request_run_id': 99 if tier == 'pr' else None},
+                            'runs': [{'base': 'a' * 40 if tier == 'pr' else None,
+                                      'head': 'b' * 40, 'submitted_head': ('d' if tier == 'pr' else 'b') * 40}]}
+                    plan_path = root / 'plan.json'
+                    plan_path.write_text(json.dumps(plan))
+                    with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
+                            patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
+                            patch.object(ci.bench, 'capture'), \
+                            patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
+                            patch.object(ci.bench, 'suite', return_value={'status': 'complete'}) as suite:
+                        self.assertEqual(ci.execute(argparse.Namespace(plan=plan_path, out=root / tier)), 0)
+                    self.assertEqual(suite.call_args.args[0].profile, profile)
+                    argv = ['run.py', 'suite', '--tier', tier, '--head-revision', 'b' * 40,
+                            '--harness-revision', 'c' * 40, '--target-cpu', 'znver4', '--out', str(root)]
+                    with patch.object(sys, 'argv', argv):
+                        self.assertEqual(ci.bench.parse_args().profile, profile)
+
     def test_interrupted_batch_closes_partial_documents_and_keeps_missing_tip_explicit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -30,7 +30,7 @@ def fixture():
                                'ref': 'refs/heads/main', 'pr_number': 7, 'request_run_id': 99}}
     builds = [{'leg': leg, 'revision': revision, 'harness_revision': 'd' * 40, 'status': 'complete',
                'harness_files': {'profile.rs': '0' * 64}, 'rustflags': '-C target-cpu=znver4',
-               'target_cpu': 'znver4', 'profile': 'release', 'guest_builder_profile': 'ci',
+               'target_cpu': 'znver4', 'profile': 'release', 'profile_config': {}, 'guest_builder_profile': 'ci',
                'guests': {'fibonacci': {'inputs': {'1': {'sha256': '1' * 64}}}}}
               for leg, revision in [('base', 'a' * 40), ('head', 'c' * 40)]]
     samples = []
@@ -76,6 +76,8 @@ class E2ePublicationTests(unittest.TestCase):
         result['host']['topology'] = [{'cpu': cpu, 'core': cpu, 'socket': 0, 'online': True}
                                      for cpu in range(24)]
         for build in result['builds']:
+            build.update(profile='bench-off16', profile_config={
+                'inherits': 'release', 'lto': 'off', 'codegen-units': 16})
             build['binaries'] = {'akita': {'path': '/do/not/open/this', 'sha256': '0' * 64}}
             build['guests'] = {case['workload']: {'inputs': {
                 str(case['input']['parameters']['operations']): {'sha256': '1' * 64}}}
@@ -91,6 +93,12 @@ class E2ePublicationTests(unittest.TestCase):
                 self.assertIn(f'| {workload} / akita | {cores} | 3.000000 / 3.000000 | +0.00% |', text)
             self.assertNotIn(' / dory |', text)
             self.assertIn('Shared harness: `' + 'd' * 40 + '`', text)
+            self.assertIn('Prover profiles: base `bench-off16`; head `bench-off16`.', text)
+        for key, value in [('profile', 'release'), ('profile_config', {'lto': 'fat'})]:
+            changed = copy.deepcopy(result)
+            changed['builds'][1][key] = value
+            with self.subTest(mismatch=key), self.assertRaisesRegex(ValueError, key):
+                publication.validate(changed, expected, config)
 
     def test_comment_uses_leg_medians_and_keeps_unavailable_comparisons_visible(self):
         result, expected, config = fixture()
