@@ -44,32 +44,32 @@ pub fn prepare(args: &PrepareArgs) {
 pub(super) fn secp256k1_inputs(count: u32) -> Vec<u8> {
     // Valid signature from examples/secp256k1-ecdsa-verify/src/main.rs.
     const Z: [u64; 4] = [
-        0x9088f7ace2efcde9,
-        0xc484efe37a5380ee,
-        0xa52e52d7da7dabfa,
-        0xb94d27b9934d3e08,
+        0x9088_f7ac_e2ef_cde9,
+        0xc484_efe3_7a53_80ee,
+        0xa52e_52d7_da7d_abfa,
+        0xb94d_27b9_934d_3e08,
     ];
     const R: [u64; 4] = [
-        0xb8fc413b4b967ed8,
-        0x248d4b0b2829ab00,
-        0x587f69296af3cd88,
-        0x3a5d6a386e6cf7c0,
+        0xb8fc_413b_4b96_7ed8,
+        0x248d_4b0b_2829_ab00,
+        0x587f_6929_6af3_cd88,
+        0x3a5d_6a38_6e6c_f7c0,
     ];
     const S: [u64; 4] = [
-        0x66a82f274e3dcafc,
-        0x299a02486be40321,
-        0x6212d714118f617e,
-        0x9d452f63cf91018d,
+        0x66a8_2f27_4e3d_cafc,
+        0x299a_0248_6be4_0321,
+        0x6212_d714_118f_617e,
+        0x9d45_2f63_cf91_018d,
     ];
     const Q: [u64; 8] = [
-        0x0012563f32ed0216,
-        0xee00716af6a73670,
-        0x91fc70e34e00e6c8,
-        0xeeb6be8b9e68868b,
-        0x4780de3d5fda972d,
-        0xcb1b42d72491e47f,
-        0xdc7f31262e4ba2b7,
-        0xdc7b004d3bb2800d,
+        0x0012_563f_32ed_0216,
+        0xee00_716a_f6a7_3670,
+        0x91fc_70e3_4e00_e6c8,
+        0xeeb6_be8b_9e68_868b,
+        0x4780_de3d_5fda_972d,
+        0xcb1b_42d7_2491_e47f,
+        0xdc7f_3126_2e4b_a2b7,
+        0xdc7b_004d_3bb2_800d,
     ];
     postcard::to_stdvec(&(count, Z, R, S, Q)).expect("serialize ECDSA verification input")
 }
