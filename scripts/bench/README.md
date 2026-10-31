@@ -159,17 +159,21 @@ Build state lives under
 `${XDG_CACHE_HOME:-$HOME/.cache}/jolt-bench/`, outside the action workspace.
 Its `builds/<cpu>/<profile>/source` is an independent Git clone with its own
 objects, fetched from the current trusted checkout; Cargo targets stay inside
-that clone. No `CARGO_TARGET_DIR` is set. Normal Cargo job settings are honored;
+that clone. The driver forwards no `CARGO_TARGET_DIR` override. Normal Cargo job settings are honored;
 the manifest records `CARGO_BUILD_JOBS` if supplied, without inferring concurrency
 when it is absent.
 
-Preparation builds the real `jolt` guest-builder CLI separately, then only the
-benchmark executables required by the selected supported cases. PR preparation
+Preparation builds the real `jolt` guest-builder CLI from the selected source
+under the existing `ci` Cargo profile, without fat LTO or debug information.
+The benchmark executables still use the requested prover profile; the workflow
+uses `release` with fat LTO. Guest builds still receive `--release`. The manifest
+records `guest_builder_profile: "ci"` separately from the measured prover's
+`profile` and retains the CLI's hash. PR preparation
 builds `jolt-prover-akita`; main and nightly build both variants. Guest preparation
 uses an executable present in that bundle. The CLI still depends on the Dory host
 SDK (`Cargo.toml` and `jolt-sdk/src/host_utils.rs`); omitting the Dory benchmark
-executable does not eliminate Dory dependency compilation. No CLI dependency or
-optimization setting is changed for this subset.
+executable does not eliminate Dory dependency compilation. No CLI dependency,
+prover optimization or guest optimization is changed by the builder-profile split.
 
 The harness revision must be committed, and `run.py` must be that revision's
 file. Both source revisions receive the same benchmark-only profile harness and
@@ -180,7 +184,8 @@ bundles, not differently instrumented main-vs-main binaries.
 
 Completed bundles persist in the same locked store. Reuse requires an exact
 source and harness revision, Rust/Cargo versions, target CPU/triple/features,
-flags, profile, lockfiles, harness files, runner and suite-definition match.
+flags, prover and guest-builder profiles, lockfiles, harness files, runner and
+suite-definition match.
 Every required PCS and guest/input must exist. All recorded binary, guest, input,
 runner, configuration and schedule hashes are checked before copying. A main-tier bundle
 does not qualify merely because its source SHA matches: it may lack a PR input.
@@ -197,6 +202,16 @@ an entry's recency; each completed store prunes the oldest entries and removes
 empty identity directories. Pruning leaves the source clone, Cargo target, result
 outputs and lock file intact. Other cache maintenance is administrator-owned and
 must hold the same `host.lock`; do not remove the lock file during maintenance.
+
+`build.log` records each command's argument vector, elapsed seconds, exit code
+and `complete` or `failed` outcome in a flushed JSON line when the attempt finishes.
+The initial argument-vector record is flushed before execution. A start without
+an outcome record is interrupted or unknown, never a completed duration.
+This covers the CLI build, prover builds and guest preparation, including failures;
+a launch failure has no exit code. These are command durations, not separate
+compiler/linker timings. Reuse keeps the original durations in `construction.log`;
+the current commands remain in `build.log`. Validation, copying and all other
+preparation still count in the fresh preparation and full wall-time receipts.
 
 Build a transportable bundle (no proving occurs):
 
@@ -476,8 +491,14 @@ PR requests and comparisons cancel superseded runs per PR branch. Main and
 nightly use unique run groups; GitHub's single-pending replacement behavior
 cannot silently discard main commits. The dedicated runner and owned file lock
 serialize execution. Nightly is scheduled at 07:00 UTC (03:00 EDT / 02:00 EST).
-The self-hosted job has a configured 180-minute timeout. The measured pilot ran
-each of the 60 supported nightly cases once. It does not establish the full
+The self-hosted job has a 10-minute timeout for PRs and 180 minutes for main and
+nightly. A timeout is a failure, not evidence of a completed sub-600-second job.
+Interruption can prevent finalization and artifact upload; missing artifacts or
+results remain unavailable, not passing. A complete manual trial must finish in
+less than 600 seconds, including `ci.py execute`, `ci.py finalize`, preparation,
+transport and result processing. Hosted-only overhead remains unverified.
+
+The measured pilot ran each of the 60 supported nightly cases once. It does not establish the full
 nightly suite's duration, variation between runs, or completion within 180
 minutes. Hosted-job and queue overhead remain unmeasured; no finish guarantee
 is established.

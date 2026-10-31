@@ -17,6 +17,30 @@ SPEC.loader.exec_module(bench)
 
 
 class E2eBenchTests(unittest.TestCase):
+    def test_logged_commands_record_duration_and_outcome_after_owned_process_exit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for exit_code in (0, 7):
+                with self.subTest(exit_code=exit_code):
+                    marker, output = root / f'done-{exit_code}', root / f'log-{exit_code}'
+                    argv = [sys.executable, '-c',
+                            'import json, pathlib, sys; '
+                            'assert json.loads(pathlib.Path(sys.argv[3]).read_text())[-3:] == sys.argv[1:]; '
+                            'pathlib.Path(sys.argv[1]).write_text("finished"); '
+                            'sys.stdout.write("{\\"child_done\\": true}"); sys.exit(int(sys.argv[2]))',
+                            str(marker), str(exit_code), str(output)]
+                    with output.open('w') as log, patch.object(bench.time, 'perf_counter', side_effect=[10, 10.25]):
+                        if exit_code:
+                            with self.assertRaisesRegex(RuntimeError, 'command exited 7'):
+                                bench.logged(argv, root, bench.build_environment(), log)
+                        else:
+                            bench.logged(argv, root, bench.build_environment(), log)
+                        self.assertEqual(marker.read_text(), 'finished')
+                        records = [json.loads(line) for line in output.read_text().splitlines() if line]
+                        completed = [r for r in records if isinstance(r, dict) and 'command' in r]
+                        self.assertEqual(completed, [{'command': argv, 'elapsed_s': 0.25,
+                            'exit_code': exit_code, 'outcome': 'complete' if exit_code == 0 else 'failed'}])
+
     def test_cancellation_reaps_its_owned_process(self):
         with subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.read()'],
                               stdin=subprocess.PIPE, start_new_session=True) as child:
@@ -157,7 +181,8 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
                 manifest = {'schema_version': 1, 'revision': ('a' if leg == 'base' else 'b') * 40,
                             'harness_revision': 'c' * 40, 'status': 'complete',
                             'toolchain': 'fixture', 'cargo_version': 'fixture', 'target_cpu': 'x86-64',
-                            'profile': 'release', 'rustflags': '-C target-cpu=x86-64',
+                            'profile': 'release', 'guest_builder_profile': 'ci',
+                            'rustflags': '-C target-cpu=x86-64',
                             'source_cargo_lock_sha256': '0' * 64, 'cargo_lock_sha256': '0' * 64,
                             'harness_files': {}, 'akita_schedules': [], 'suite_config_sha256': '0' * 64,
                             'started_at': '2026-10-31T00:00:00Z', 'finished_at': '2026-10-31T00:00:01Z',
@@ -276,7 +301,7 @@ class BuildCacheTests(unittest.TestCase):
             self.assertEqual(argv[1], 'prepare')
             self.assertTrue(Path(argv[0]).is_file())
             self.assertTrue(Path(env['JOLT_PATH']).is_file())
-            self.prepares.append(argv)
+            self.prepares.append((argv, env['JOLT_PATH']))
             out = Path(argv[argv.index('--out') + 1])
             out.mkdir(parents=True)
             (out / 'guest.elf').write_bytes(b'owned ELF fixture')
@@ -378,7 +403,13 @@ class BuildCacheTests(unittest.TestCase):
                          ['jolt', 'jolt-prover'])
         self.assertNotIn('--features', self.compiles[0])
         self.assertEqual(self.compiles[1][-2:], ['--features', 'profiling,akita'])
-        self.assertEqual(self.prepares[0][0], str(self.root / 'pr/jolt-prover-akita'))
+        self.assertEqual([argv[argv.index('--profile') + 1] for argv in self.compiles], ['ci', 'release'])
+        self.assertEqual(partial['guest_builder_profile'], 'ci')
+        self.assertEqual(partial['profile'], 'release')
+        self.assertEqual(self.prepares[0][0][0], str(self.root / 'pr/jolt-prover-akita'))
+        cli = bench.cache_root() / 'builds/x86-64/release/source/target/x86_64-unknown-linux-gnu/ci/jolt'
+        self.assertEqual(self.prepares[0][1], str(cli))
+        self.assertEqual(partial['guest_builder_sha256'], bench.sha256(cli))
         partial_path = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
         partial_bytes = partial_path.read_bytes()
         self.compiles.clear()
@@ -430,11 +461,16 @@ class BuildCacheTests(unittest.TestCase):
     def test_cache_rejects_changed_identity_incomplete_or_corrupt_content(self):
         original, _ = self.build('original')
         cached = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
+        missing_profile = dict(original)
+        missing_profile.pop('guest_builder_profile', None)
+        bench.write_json(cached, missing_profile)
+        with self.assertRaisesRegex(ValueError, 'guest_builder_profile'):
+            bench.load_bundle(cached)
         changes = {
             'revision': 'a' * 40, 'harness_revision': 'b' * 40, 'toolchain': 'other rustc',
             'cargo_version': 'other cargo', 'target_cpu': 'znver4',
             'target_triple': 'aarch64-unknown-linux-gnu', 'target_features': ['avx2'],
-            'profile': 'ci', 'rustflags': '-C target-cpu=znver4',
+            'profile': 'ci', 'guest_builder_profile': 'release', 'rustflags': '-C target-cpu=znver4',
             'source_cargo_lock_sha256': '1' * 64, 'cargo_lock_sha256': '2' * 64,
             'harness_files': {}, 'suite_config_sha256': '3' * 64,
             'runner': {'path': 'scripts/bench/run.py', 'sha256': '4' * 64}, 'status': 'incomplete',

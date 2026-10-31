@@ -69,7 +69,7 @@ jobs:
     runs-on:
       group: jolt-bench
       labels: jolt-bench
-    timeout-minutes: 180
+    timeout-minutes: ${{ needs.plan.outputs.tier == 'pr' && 10 || 180 }}
     permissions:
       contents: read
       actions: read
