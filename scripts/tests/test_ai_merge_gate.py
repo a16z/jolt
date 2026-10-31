@@ -482,6 +482,21 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(apis.posted, [])
                 self.assertFalse(any("/check-runs?" in url or "/tarball/" in url for _, url in apis.requests))
 
+    def test_publishing_app_cannot_author_or_edit_an_attestation(self) -> None:
+        for publisher, expected in [(PIKA_LOGIN, "failure"), (SLUG, "success")]:
+            for login in (PIKA_LOGIN, f"{PIKA_LOGIN}[bot]"):
+                bot = comment(login, f"<!-- {GATE.CLASSIFIER} -->\n{attestation()}", kind="Bot", actor_id=PIKA_ID)
+                edited = {**comment("core-b", attestation(), edited=True), "editor": bot["author"]}
+                for role, node in [("author", bot), ("editor", edited)]:
+                    with self.subTest(publisher=publisher, login=login, role=role):
+                        apis = FakeApis(comments=[node])
+                        env = {"GH_TOKEN": "token", "GITHUB_REPOSITORY": REPO, "DEFAULT_BRANCH": "main",
+                               "AI_MERGE_GATE_CORE_TEAM": "core", "AI_MERGE_GATE_APP_SLUG": publisher}
+                        with mock.patch.dict(os.environ, env, clear=True), mock.patch.object(GATE, "http", apis):
+                            self.assertEqual(GATE.main(["ai_merge_gate.py", "attest", "7"]), 0)
+                        self.assert_completed(apis, GATE.ATTESTATION_CHECK, expected)
+                        self.assertEqual(apis.model_requests, [])
+
     def test_attestation_rechecks_edits_deletion_membership_and_new_heads_before_passing(self) -> None:
         def remove_line(apis):
             apis.comments[0].update(body="Review withdrawn.", lastEditedAt="2026-10-31T20:00:00Z")

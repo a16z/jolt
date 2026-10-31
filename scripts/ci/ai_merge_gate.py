@@ -596,7 +596,8 @@ class Gate:
                        "and found no issues.")
 
     def can_attest(self, actor: dict) -> bool:
-        return (actor.get("__typename") == "Bot" and actor.get("id") == PIKA_BOT_ID) or \
+        return (actor.get("__typename") == "Bot" and actor.get("id") == PIKA_BOT_ID
+                and actor.get("login") not in (self.app_slug, f"{self.app_slug}[bot]")) or \
             (actor.get("__typename") == "User" and self.is_core(actor["login"]))
 
     def decide(self, pull: dict, pay: bool = True) -> Outcome:

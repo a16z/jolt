@@ -85,10 +85,10 @@ creates no check for a closed PR or a base other than `main`; otherwise it fails
 matching authorized comment. Require **both** checks: an approval can pass the policy without
 satisfying the attestation check, and an attestation alone cannot satisfy the verifier policy.
 
-While either evaluation runs, its check run is in progress, which the required check
-does not count as passing, so a pass published for an earlier state of the head does not stand
-during the re-evaluation. Before it publishes a pass, the gate reads the pull request, its
-comments and reviews, team membership and permissions again and evaluates the table once more,
+Each evaluation creates an in-progress check run and completes that run with its result.
+Which same-name run GitHub selects for mergeability remains unverified; see [Limits](#limits).
+Before it publishes a pass, the gate reads the pull request, its comments and reviews,
+team membership and permissions again and evaluates the table once more,
 reusing the model results it already has. It publishes the pass only if that second evaluation
 passes too. The attestation evaluation re-reads the head, comments and team membership without
 model work. When the policy's new state needs a classifier result the run does not have, for
@@ -123,6 +123,8 @@ The Pika identity is pinned by its GitHub node ID, `BOT_kgDOFAtqNQ`, not by a na
 The REST API identifies it as `0xandoroid-ai-agent[bot]`, numeric ID `336292405`; GraphQL reports
 the same node ID with login `0xandoroid-ai-agent` (verified 2026-10-31). This is **not** the
 separate App that publishes the gate's checks and classifier comments.
+The authority predicate rejects the publishing App as an author or editor, even if the
+publisher is misconfigured to use the Pika App.
 
 The check reads the comment's current body, including edits, and uses its API-reported author.
 For an edited comment, its last editor must also be an allowed account; write access alone
@@ -284,9 +286,9 @@ publishing App's classifier comments must never authorize a review or trigger an
 
 - Name it, for example, `jolt-ai-merge-gate`, and clear "Active" under Webhook: the gate
   receives no events.
-- Repository permissions: Checks read and write, Contents read-only, Pull requests read and
-  write, and the mandatory Metadata read-only. Contents covers the comparison, tree and archive
-  reads that give the model the merge base and head.
+- Repository permissions: Checks read and write, Commit statuses read and write, Contents
+  read-only, Pull requests read and write, and the mandatory Metadata read-only. Contents covers
+  the comparison, tree and archive reads that give the model the merge base and head.
 - Organization permissions: Members read-only, which the team membership lookup needs.
 - Allow installation only on this account.
 
@@ -298,6 +300,15 @@ The [Checks API](https://docs.github.com/en/rest/checks/runs#create-a-check-run)
 write permission. The [team membership API](https://docs.github.com/en/rest/teams/members#get-team-membership-for-a-user)
 requires organization Members read permission. Each workflow job requests only its needed
 permissions using the [pinned App-token action](https://github.com/actions/create-github-app-token/blob/64ab729a6294000f5aa4a4bc0b73d1f32bc45510/action.yml).
+
+GitHub's [required-check expected-source instructions](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#require-status-checks-to-pass-before-merging)
+require the installed App to have `statuses:write`, a recently submitted check run and an
+association with a pre-existing required status check in the ruleset.
+[Commit statuses write](https://docs.github.com/en/rest/commits/statuses#create-a-commit-status)
+is for that admin prerequisite; the gate does not post commit statuses, and its job tokens
+do not request that permission. App-bound activation has not been tested live, including
+the required-check association; verify the binding during admin setup rather than treating
+the configuration examples below as proof of merge blocking.
 
 ### 3. Set the repository variables
 
@@ -480,24 +491,25 @@ request with a native approval, then turn the gate back on.
 
 ## Limits
 
-- Event delivery bounds how fast withdrawn evidence takes effect. A dismissed approval, an
-  edited or deleted comment counts once an evaluation that starts after it
-  publishes; until then the earlier result stands. Comments reach the gate directly. Reviews and
+- Event delivery delays re-evaluation of withdrawn evidence. The gate cannot reflect a
+  dismissed approval or an edited or deleted comment until an evaluation reads that state
+  and publishes a result. Comments reach the gate directly. Reviews and
   pull request changes reach it through the events workflow, which GitHub holds while a
   first-time contributor's workflow runs await a maintainer's approval, and does not run for
   `pull_request` activity while the pull request has a merge conflict; a comment still triggers
   the gate in both cases. Evaluations of one pull request run one at a time, and a pass rests on
   state read just before it is published. A change in the seconds between that read and the
-  publication, or one GitHub delivers late, takes effect when the next evaluation publishes. If
-  the gate cannot reach GitHub, the last published result stands.
+  publication, or one GitHub delivers late, is not observed until a later evaluation. If
+  the gate cannot reach GitHub, existing check runs remain unchanged.
 - Team changes trigger no event. Removing someone from the core team does not re-evaluate open
   pull requests until their next event.
-- Check runs belong to a commit, not to a pull request. Open pull requests whose heads are the
-  same commit share the gate's check runs, its cached model results included, and the latest
-  evaluation of any of them sets the result for all. Parsing rejects a line for another PR,
-  but GitHub's shared result can still appear on another PR at the same head. The new
-  attestation and risk-4 approval requirements inherit this existing commit-scoped limit;
-  they are not PR-scoped merge locks. Risk labels themselves belong to the individual PR.
+- The [Checks API](https://docs.github.com/en/rest/checks/runs#create-a-check-run) creates check
+  runs for a commit, not a pull request. PRs with the same head share those commit-scoped runs
+  and cached classifier results. Parsing rejects a line for another PR, but this does not
+  establish PR-scoped merge isolation: which same-name run GitHub selects for mergeability,
+  including across PRs sharing a head, has not been verified. The attestation and risk-4
+  approval requirements inherit this commit-scoped limit; they are not PR-scoped merge locks.
+  Risk labels themselves belong to the individual PR.
 - The model reads the source but does not build or run it, and it reads only text files up to
   1,000,000 bytes. A change it cannot read, such as a binary file in a verifier crate, should
   make the classifier answer `UNCERTAIN`, which sends the pull request to human review.
