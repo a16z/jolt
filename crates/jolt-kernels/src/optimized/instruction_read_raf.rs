@@ -63,7 +63,9 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{
+    ChunkIndexSource, LazyFoldedRa, PAIRED_MATERIALIZE_ADDRESSES, PAIRED_MATERIALIZE_BRANCHES,
+};
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
     product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage,
@@ -345,6 +347,35 @@ impl LookupIndexChunks {
     }
 }
 
+impl LookupIndexChunks {
+    fn gather_paired_values_inner<F: JoltField, const BITS: usize>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) {
+        let bits = if BITS == 0 { self.chunk_bits } else { BITS };
+        let mut indices = [0u128; PAIRED_MATERIALIZE_BRANCHES];
+        for (branch, index) in indices.iter_mut().enumerate() {
+            *index = self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index();
+        }
+        let mask = (1u128 << bits) - 1;
+        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+        for (column, table) in out.iter_mut().zip(tables).rev() {
+            let mut sum = F::Accumulator::default();
+            for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
+                let lo = (indices[0] & mask) as usize;
+                let hi = (indices[1] & mask) as usize;
+                sum.add(table[pair * radix * radix + lo * radix + hi]);
+                indices[0] >>= bits;
+                indices[1] >>= bits;
+            }
+            column[output_row] = sum.reduce();
+        }
+    }
+}
+
 impl ChunkIndexSource for LookupIndexChunks {
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
@@ -392,6 +423,19 @@ impl ChunkIndexSource for LookupIndexChunks {
                 *index >>= self.chunk_bits;
             }
             column[output_row] = sum.reduce();
+        }
+    }
+
+    fn gather_paired_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) {
+        match self.chunk_bits {
+            4 => self.gather_paired_values_inner::<F, 4>(tables, row, out, output_row),
+            _ => self.gather_paired_values_inner::<F, 0>(tables, row, out, output_row),
         }
     }
 
@@ -1766,7 +1810,7 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, OptimizedInstructionReadRafKernel};
+    use super::{InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel};
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
@@ -1855,6 +1899,87 @@ mod tests {
         assert!(row.raf_flag());
         #[cfg(feature = "akita")]
         assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
+    }
+
+    #[test]
+    fn packed_lookup_binding_matches_multilinear_weights() {
+        fn check<F: JoltField>(columns: usize, bits: usize) {
+            use super::super::{constant_suffix::ConstantSuffix, lazy_ra::LazyFoldedRa};
+            use rand_chacha::ChaCha20Rng;
+            use rand_core::{RngCore, SeedableRng};
+
+            let mut rng = ChaCha20Rng::seed_from_u64(314_159);
+            let cycles = 1 << 16;
+            let prefix = cycles - 7;
+            let indices: Vec<u128> = (0..cycles)
+                .map(|i| {
+                    if i >= prefix {
+                        0x1234_5678_9abc_def0_fedc_ba98_7654_3210
+                    } else {
+                        (u128::from(rng.next_u64()) << 64) | u128::from(rng.next_u64())
+                    }
+                })
+                .collect();
+            let rows = indices
+                .iter()
+                .map(|&index| {
+                    InstructionCycleRow::new(
+                        index,
+                        None,
+                        false,
+                        0,
+                        None,
+                        #[cfg(feature = "akita")]
+                        FusedInc::default(),
+                    )
+                })
+                .collect();
+            let source =
+                LookupIndexChunks::new(Arc::new(ConstantSuffix::new(rows, cycles)), columns, bits);
+            let tables: Vec<Vec<F>> = (0..columns)
+                .map(|_| (0..16).map(|_| F::random(&mut rng)).collect())
+                .collect();
+            let challenges = [3, 5, 13, 29].map(F::from_u64);
+            let mut bound = LazyFoldedRa::new(tables.clone(), source);
+            for challenge in challenges {
+                bound.bind(challenge);
+            }
+            let weights: Vec<F> = (0..16)
+                .map(|branch| {
+                    challenges
+                        .iter()
+                        .enumerate()
+                        .fold(F::one(), |weight, (bit, r)| {
+                            weight
+                                * if (branch >> bit) & 1 == 1 {
+                                    *r
+                                } else {
+                                    F::one() - *r
+                                }
+                        })
+                })
+                .collect();
+            for (column, table) in tables.iter().enumerate() {
+                for row in 0..cycles / 16 {
+                    let expected: F = weights
+                        .iter()
+                        .enumerate()
+                        .map(|(branch, weight)| {
+                            let digit = ((indices[row * 16 + branch]
+                                >> (bits * (columns - 1 - column)))
+                                & ((1u128 << bits) - 1))
+                                as usize;
+                            *weight * table[digit]
+                        })
+                        .sum();
+                    assert_eq!(bound.value(column, row), expected);
+                }
+            }
+        }
+        check::<Fr>(16, 2);
+        check::<Fr>(16, 4);
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>(32, 4);
     }
 
     /// The sumcheck input claim from first principles:

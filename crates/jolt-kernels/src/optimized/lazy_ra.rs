@@ -121,6 +121,33 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
         }
     }
 
+    /// Consume the adjacent-branch sum tables built by `materialize_paired_values`.
+    /// Each pair has radix 17, with the final digit representing a cold row.
+    fn gather_paired_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) where
+        Self: Sized,
+    {
+        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+        for (column, (values, table)) in out.iter_mut().zip(tables).enumerate() {
+            let mut sum = F::Accumulator::default();
+            for pair in 0..PAIRED_MATERIALIZE_BRANCHES / 2 {
+                let lo = self
+                    .index(column, row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair)
+                    .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+                let hi = self
+                    .index(column, row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair + 1)
+                    .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+                sum.add(table[pair * radix * radix + lo * radix + hi]);
+            }
+            values[output_row] = sum.reduce();
+        }
+    }
+
     fn gather_pairs<F: JoltField>(
         &self,
         tables: &[Vec<F>],
@@ -546,8 +573,8 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
 /// the row-major fill touches all tables per row, which only pays while they
 /// stay cache-resident.
 const ROW_MAJOR_FILL_MAX_TABLE_BYTES: usize = 1 << 20;
-const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
-const PAIRED_MATERIALIZE_ADDRESSES: usize = 16;
+pub(super) const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
+pub(super) const PAIRED_MATERIALIZE_ADDRESSES: usize = 16;
 const PAIRED_MATERIALIZE_MIN_ROWS: usize = 1 << 12;
 const PAIRED_MATERIALIZE_MAX_BYTES: usize = 2 << 20;
 
@@ -697,35 +724,21 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
         start: usize,
         paired: &[Vec<F>],
         source: &S,
-        width: usize,
     ) {
         let len = out[0].len();
-        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
         #[cfg(feature = "parallel")]
         if len > ROW_MAJOR_FILL_SPLIT_ROWS {
             let mid = len / 2;
             let (left, right): (Vec<_>, Vec<_>) =
                 out.into_iter().map(|c| c.split_at_mut(mid)).unzip();
             let _ = rayon::join(
-                || fill(left, start, paired, source, width),
-                || fill(right, start + mid, paired, source, width),
+                || fill(left, start, paired, source),
+                || fill(right, start + mid, paired, source),
             );
             return;
         }
         for row in 0..len {
-            for (column, (values, table)) in out.iter_mut().zip(paired).enumerate() {
-                let mut sum = F::Accumulator::default();
-                for pair in 0..width / 2 {
-                    let lo = source
-                        .index(column, (start + row) * width + 2 * pair)
-                        .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
-                    let hi = source
-                        .index(column, (start + row) * width + 2 * pair + 1)
-                        .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
-                    sum.add(table[pair * radix * radix + lo * radix + hi]);
-                }
-                values[row] = sum.reduce();
-            }
+            source.gather_paired_values(paired, start + row, &mut out, row);
         }
     }
     fill(
@@ -733,7 +746,6 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
         0,
         &paired,
         source,
-        width,
     );
     values
 }
