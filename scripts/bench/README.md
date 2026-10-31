@@ -66,7 +66,8 @@ verification calls must succeed before the JSON metric file is written.
 neither substitutes for `e2e_s`.
 
 `verify_s` is the existing parallel verifier; `verify_single_s` is its separate
-single-threaded run. `process_s` is parent-observed launch through reaped exit,
+single-threaded run. Both verify the in-memory proof; there is no deserialize
+step. `process_s` is parent-observed launch through reaped exit,
 including both verifications, output, and teardown. `peak_rss_bytes` is Linux
 `wait4` maximum RSS for that process, converted from KiB to bytes; it is not a
 heap allocation estimate or a host-wide memory reading. `proof_bytes` is the

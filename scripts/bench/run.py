@@ -292,7 +292,7 @@ def build(args):
             cfg = capture(['rustc', '--print', 'cfg', '--target', triple,
                            '-C', f'target-cpu={args.target_cpu}'], cwd=source, env=env)
             manifest['target_features'] = sorted(re.findall(r'^target_feature="([^"]+)"$', cfg, re.M))
-            logged(['cargo', 'metadata', '--no-deps', '--format-version', '1'], source, env, log)
+            logged(['cargo', 'metadata', '--format-version', '1'], source, env, log)
             if not pinned.issubset(lock_packages(source / 'Cargo.lock')):
                 raise ValueError('benchmark harness changed an existing locked dependency')
             manifest['cargo_lock_sha256'] = sha256(source / 'Cargo.lock')
