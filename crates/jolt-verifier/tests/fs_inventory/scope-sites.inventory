@@ -10,5 +10,6 @@ jolt-verifier::stages/stage6a/verify.rs::verify::jolt_verifier_derive::fs_scope(
 jolt-verifier::stages/stage6b/verify.rs::verify::jolt_verifier_derive::fs_scope(Stage6b)
 jolt-verifier::stages/stage7/verify.rs::verify::jolt_verifier_derive::fs_scope(Stage7)
 jolt-verifier::stages/stage8/verify.rs::verify::jolt_verifier_derive::fs_scope(Stage8)
+jolt-verifier::stages/stage8/verify.rs::verify_with_akita_opening::jolt_verifier_derive::fs_scope(Stage8)
 jolt-verifier::verifier.rs::absorb_commitments::jolt_verifier_derive::fs_scope(Commitments)
 jolt-verifier::verifier.rs::verify::fs_scope_guard(BlindFold)

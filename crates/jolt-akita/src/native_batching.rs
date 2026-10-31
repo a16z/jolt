@@ -19,6 +19,7 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_verifier::{SetupClaimAccumulator, SetupMode};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentGroupRole, GroupOpeningClaim, GroupOpeningWithHint,
     OpeningsError, TaggedGroupOpeningClaim, VerifierOpeningClaim,
@@ -218,11 +219,14 @@ where
     bridged_akita_session(transcript, &GROUP_BATCH_TAG)
 }
 
-fn prove_one_hot_opening(
-    setup: &AkitaProverSetup,
-    opening: AkitaOpening<'_>,
+fn prove_one_hot_opening<'a>(
+    setup: &'a AkitaProverSetup,
+    mut opening: AkitaOpening<'a>,
     session: &[u8],
 ) -> Result<Vec<u8>, OpeningsError> {
+    if let Some(inherited) = &setup.inherited_setup {
+        opening = opening.with_setup_batch(inherited.level, &inherited.statement);
+    }
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let scheme = setup.verifier.one_hot_scheme()?;
@@ -245,16 +249,23 @@ fn verify_one_hot_statement(
     proof: &AkitaBatchProof,
     session: &[u8],
     statement: GroupBatchStatement<'_, AkitaBackendExtField, AkitaField>,
+    accumulator: Option<&mut SetupClaimAccumulator<'_, AkitaField>>,
+    mode: SetupMode,
 ) -> Result<(), OpeningsError> {
     let verifier = setup.one_hot_verifier()?;
-    let verified = with_backend_pool(|| {
+    let verified = if let Some(accumulator) = accumulator {
         with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
-            &proof.backend_proof,
-            session,
-            statement,
-            BasisMode::Lagrange,
+            &proof.backend_proof, session, statement, BasisMode::Lagrange,
+            Some(accumulator), mode,
         ))
-    });
+    } else {
+        with_backend_pool(|| {
+            with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
+                &proof.backend_proof, session, statement, BasisMode::Lagrange,
+                None, mode,
+            ))
+        })
+    };
     verified.map_err(|_| OpeningsError::VerificationFailed)
 }
 
@@ -372,6 +383,29 @@ impl AkitaNativeBatching {
     where
         T: FieldTranscript<AkitaField>,
     {
+        Self::verify_trace_batch_with_setup(
+            setup,
+            auxiliary_groups,
+            main,
+            proof,
+            transcript,
+            None,
+            SetupMode::Check,
+        )
+    }
+
+    pub fn verify_trace_batch_with_setup<T>(
+        setup: &AkitaVerifierSetup,
+        auxiliary_groups: &[TaggedGroupOpeningClaim<AkitaField, AkitaCommitment>],
+        main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
+        proof: &AkitaBatchProof,
+        transcript: &mut T,
+        accumulator: Option<&mut SetupClaimAccumulator<'_, AkitaField>>,
+        mode: SetupMode,
+    ) -> Result<(), OpeningsError>
+    where
+        T: FieldTranscript<AkitaField>,
+    {
         validate_trace_batch_statement(setup, auxiliary_groups, main)?;
         let backend_main_point = reverse_point(&main.point);
         let auxiliary_commitments = auxiliary_groups
@@ -411,7 +445,7 @@ impl AkitaNativeBatching {
         );
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
         let batch_statement = GroupBatchStatement::new(selection, claims).map_err(akita_error)?;
-        verify_one_hot_statement(setup, proof, &session, batch_statement)
+        verify_one_hot_statement(setup, proof, &session, batch_statement, accumulator, mode)
     }
 }
 
@@ -753,13 +787,20 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         &session,
                         batch_statement,
                         BasisMode::Lagrange,
+                        None,
+                        SetupMode::Check,
                     )
                 })
                 .map_err(|_| OpeningsError::VerificationFailed)
             }
-            AkitaBackendFlavor::OneHot => {
-                verify_one_hot_statement(setup, proof, &session, batch_statement)
-            }
+            AkitaBackendFlavor::OneHot => verify_one_hot_statement(
+                setup,
+                proof,
+                &session,
+                batch_statement,
+                None,
+                SetupMode::Check,
+            ),
         }
     }
 }

@@ -1,6 +1,8 @@
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
+use akita_params::OpeningScheduleSelection;
 use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier};
 use akita_types::AkitaVerifierSetup;
+use akita_verifier::TrustedTerminalCache;
 
 use crate::configs::{AkitaChunkProfile, JoltOneHotK16};
 use crate::family_contract::OneHotFamilyContract;
@@ -90,6 +92,19 @@ macro_rules! define_family_types {
         }
 
         impl AkitaOneHotBackendScheme {
+            pub(crate) fn verifier_for_selection(
+                &self,
+                setup: AkitaVerifierSetup<<JoltOneHotK16 as CommitmentConfig>::Field>,
+                selection: OpeningScheduleSelection,
+                cache: TrustedTerminalCache<'_>,
+            ) -> Result<AkitaOneHotBackendVerifier, AkitaError> {
+                match self {
+                    $(Self::$variant(scheme) => AkitaVerifier::<$cfg>::for_selection(
+                        setup, scheme.schedules().clone(), selection, Some(cache),
+                    ).map(AkitaOneHotBackendVerifier::$variant)),+
+                }
+            }
+
             pub(crate) fn from_artifact(
                 family: OneHotFamily,
                 bytes: &[u8],

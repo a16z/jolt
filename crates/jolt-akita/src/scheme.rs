@@ -488,6 +488,7 @@ impl CommitmentScheme for AkitaScheme {
         }
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup)?;
         let prover = AkitaProverSetup {
+            inherited_setup: None,
             full_width,
             backend_prover_setup,
             cpu_backend,

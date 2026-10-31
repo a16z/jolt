@@ -35,6 +35,7 @@ impl Program {
             profile: None,
             instruction_profile: RV64IMAC_JOLT_ALL_INLINES,
             guest_features: Vec::new(),
+            linker_memory_size: None,
             heap_size: DEFAULT_HEAP_SIZE,
             stack_size: DEFAULT_STACK_SIZE,
             max_input_size: DEFAULT_MAX_INPUT_SIZE,
@@ -105,6 +106,12 @@ impl Program {
         self.heap_size = len;
     }
 
+    /// Override the linker's image region for guests embedding large setup keys.
+    /// Execution memory is still derived from the resulting ELF and memory config.
+    pub fn set_linker_memory_size(&mut self, bytes: u64) {
+        self.linker_memory_size = Some(bytes);
+    }
+
     pub fn set_stack_size(&mut self, len: u64) {
         self.stack_size = len;
     }
@@ -161,6 +168,10 @@ impl Program {
             args.push(self.stack_size.to_string());
             args.push("--heap-size".to_string());
             args.push(self.heap_size.to_string());
+            if let Some(bytes) = self.linker_memory_size {
+                args.push("--memory-size".to_string());
+                args.push(bytes.to_string());
+            }
 
             let mut features = self.guest_features.clone();
             for feature in extra_features {
@@ -481,7 +492,8 @@ impl Program {
         }
     }
 
-    fn memory_config_with_program_size(&self, program_size: u64) -> MemoryConfig {
+    /// Execution memory configuration with the decoded ELF image size.
+    pub fn memory_config_with_program_size(&self, program_size: u64) -> MemoryConfig {
         MemoryConfig {
             heap_size: self.heap_size,
             stack_size: self.stack_size,
