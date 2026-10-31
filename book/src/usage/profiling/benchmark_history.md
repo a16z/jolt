@@ -137,7 +137,7 @@ workflow also triggers this full-site deployment. There is no reliance on a
    `dev/prover-history/` after deployment. Normal producer completions then
    archive and deploy new results.
 
-The implementation lead chose this site-wide tradeoff: one workflow owns
+This implementation makes a site-wide tradeoff: one workflow owns
 deployment of both the legacy site and the new history. Turning off history
 processing leaves legacy deployment active. To roll back, first disable Pages
 activation, then restore branch-based Pages publication for `gh-pages` at `/`.
