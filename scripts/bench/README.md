@@ -117,14 +117,20 @@ Rust toolchain, its `rust-src` component and configured RISC-V targets. The five
 prepared guests use `riscv64imac-unknown-none-elf`. The build produces its own
 `jolt` CLI; a stale globally installed CLI is not used.
 
-On Ubuntu, have the administrator provide `build-essential`, `cmake`,
-`pkg-config`, and `libssl-dev` through the normal package-management process.
-These are declared in [setup_machine.sh](../setup_machine.sh#L11-L13) and the
-[devcontainer Dockerfile](../../.devcontainer/Dockerfile#L7). `build-essential`
-supplies the native `cc`/C++ toolchain, make, and libc development headers/startup
-objects; `libssl-dev` supplies OpenSSL headers. Existing `ld`/`ar` alone do not
-satisfy the native compiler requirement. Do not run the broad setup script for
-this repair: it also upgrades the OS and changes firewall/services.
+On Ubuntu, have the administrator provide `gcc`, `g++`, `make`, `dpkg-dev`,
+`libcrypt-dev`, `cmake`, `pkg-config`, and `libssl-dev` through the normal
+package-management process. Keep `libc6-dev` for libc headers/startup objects;
+`libssl-dev` supplies OpenSSL headers. The native tools and headers follow
+[setup_machine.sh](../setup_machine.sh#L11-L13) and the
+[devcontainer Dockerfile](../../.devcontainer/Dockerfile#L7).
+
+Use the direct packages on Ubuntu 26.04: `build-essential` pulls
+`coreutils-from-uutils`, which would replace this runner's `coreutils-from-gnu`.
+The administrator transaction must use `--no-remove` and
+`--no-install-recommends` to preserve the installed coreutils provider and avoid
+bringing the metapackage back through recommendations. Existing `ld`/`ar` alone
+do not satisfy the native compiler requirement. Do not run the broad setup
+script for this repair: it also upgrades the OS and changes firewall/services.
 
 After provisioning, check availability as `runner` without compiling anything:
 
@@ -140,7 +146,7 @@ test -r /usr/include/openssl/ssl.h
 jolt_crt=$(cc -print-file-name=Scrt1.o)
 test -r "$jolt_crt"
 dpkg-query -W -f='${binary:Package}\t${Version}\t${db:Status-Abbrev}\n' \
-  build-essential cmake pkg-config libssl-dev libc6-dev
+  gcc g++ make dpkg-dev libcrypt-dev cmake pkg-config libssl-dev libc6-dev
 ```
 
 Build state lives under
