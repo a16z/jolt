@@ -30,6 +30,13 @@ HARNESS_PATHS = ('crates/jolt-prover/src/profile.rs',
                  'crates/jolt-prover/src/profile',
                  'crates/jolt-prover/src/bin/jolt_prover.rs',
                  'examples/secp256k1-batch/guest')
+LINUX_FEATURE_NAMES = {
+    'bmi1': 'bmi1', 'cmpxchg16b': 'cx16', 'lzcnt': 'abm', 'sha': 'sha_ni',
+    'sse3': 'pni', 'sse4.1': 'sse4_1', 'sse4.2': 'sse4_2',
+    'avx512bf16': 'avx512_bf16', 'avx512bitalg': 'avx512_bitalg',
+    'avx512vbmi2': 'avx512_vbmi2', 'avx512vnni': 'avx512_vnni',
+    'avx512vpopcntdq': 'avx512_vpopcntdq',
+}
 
 
 def utc_now():
@@ -113,6 +120,15 @@ def physical_cpu_ids(topology, count):
     if len(selected) < count:
         raise ValueError(f'{count} physical cores requested, only {len(selected)} available')
     return list(selected.values())[:count]
+
+
+def check_target(manifest, host):
+    if manifest['target_triple'].split('-')[0] != host['architecture']:
+        raise ValueError('compiled target and measurement host architectures differ')
+    required = {LINUX_FEATURE_NAMES.get(feature, feature) for feature in manifest['target_features']}
+    missing = required - set(host['cpu_flags'])
+    if missing:
+        raise ValueError(f'target lacks compiled CPU features: {sorted(missing)}')
 
 
 @contextlib.contextmanager
@@ -207,6 +223,9 @@ def build(args):
     if args.target_cpu == 'native':
         raise ValueError('native is not a portable target; use the target ISA readback')
     revision, harness = git_revision(args.revision), git_revision(args.harness_revision)
+    runner_source = subprocess.check_output(['git', 'show', f'{harness}:scripts/bench/run.py'], cwd=ROOT)
+    if hashlib.sha256(runner_source).hexdigest() != sha256(__file__):
+        raise ValueError('build must use the committed runner at --harness-revision')
     toolchain = capture(['rustc', '--version', '--verbose'])
     key = hashlib.sha256(f'{revision}:{harness}:{args.target_cpu}:{toolchain}'.encode()).hexdigest()
     source = ROOT / 'target/e2e-builds' / key / 'source'
@@ -245,6 +264,11 @@ def build(args):
                       for p in tomllib.loads(original_lock.decode())['package']}
             manifest['toolchain'] = capture(['rustc', '--version', '--verbose'], cwd=source, env=env)
             manifest['cargo_version'] = capture(['cargo', '--version'], cwd=source, env=env)
+            triple = re.search(r'^host: (.+)$', manifest['toolchain'], re.M).group(1)
+            manifest['target_triple'] = triple
+            cfg = capture(['rustc', '--print', 'cfg', '--target', triple,
+                           '-C', f'target-cpu={args.target_cpu}'], cwd=source, env=env)
+            manifest['target_features'] = sorted(re.findall(r'^target_feature="([^"]+)"$', cfg, re.M))
             logged(['cargo', 'metadata', '--format-version', '1'], source, env, log)
             if not pinned.issubset(lock_packages(source / 'Cargo.lock')):
                 raise ValueError('benchmark harness changed an existing locked dependency')
@@ -257,9 +281,10 @@ def build(args):
                 if pcs == 'dory':
                     packages += ['-p', 'jolt', '--bin', 'jolt']
                 logged(['cargo', 'build', '-q', '--message-format=short', '--locked',
-                        '--profile', args.profile, *packages, '--features', features], source, env, log)
+                        '--target', triple, '--profile', args.profile, *packages,
+                        '--features', features], source, env, log)
                 binary = out / f'jolt-prover-{pcs}'
-                shutil.copy2(source / 'target' / args.profile / 'jolt-prover', binary)
+                shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
                 manifest['binaries'][pcs] = bundle_file(binary, out)
             config = json.loads(Path(args.config).read_text())
             inputs = {}
@@ -268,9 +293,12 @@ def build(args):
             for tier in tiers:
                 for case in tier['cases']:
                     if (not case.get('unsupported_reason') and
+                            (not getattr(args, 'workload', []) or case['workload'] in args.workload) and
                             (not getattr(args, 'case', []) or case['id'] in args.case)):
                         inputs.setdefault(case['workload'], set()).add(case['input']['parameters']['operations'])
-            guest_env = dict(env, JOLT_PATH=str(source / 'target' / args.profile / 'jolt'))
+            guest_builder = source / 'target' / triple / args.profile / 'jolt'
+            manifest['guest_builder_sha256'] = sha256(guest_builder)
+            guest_env = dict(env, JOLT_PATH=str(guest_builder))
             guest_env.pop('RUSTFLAGS', None)
             for workload, counts in inputs.items():
                 prepared = out / 'guests' / workload
@@ -280,6 +308,7 @@ def build(args):
                        source, guest_env, log)
                 manifest['guests'][workload] = {'elf': bundle_file(prepared / 'guest.elf', out),
                     'inputs': {str(n): bundle_file(prepared / f'input-{n}.bin', out) for n in counts}}
+            manifest['requested_workloads'] = sorted(inputs)
             schedules = out / 'akita-schedules'
             schedules.mkdir()
             manifest['akita_schedules'] = []
@@ -288,6 +317,11 @@ def build(args):
                 shutil.copy2(path, destination)
                 manifest['akita_schedules'].append(bundle_file(destination, out))
             manifest['suite_config_sha256'] = sha256(args.config)
+            runner = out / 'scripts/bench/run.py'
+            runner.parent.mkdir(parents=True)
+            runner.write_bytes(runner_source)
+            shutil.copy2(args.config, runner.with_name('suites.json'))
+            manifest['runner'] = bundle_file(runner, out)
             manifest['status'] = 'complete'
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         manifest['status'], manifest['reason'] = 'failed', str(error)
@@ -433,6 +467,9 @@ def run(args):
         bundles['base'] = load_bundle(args.base)
     host = host_snapshot()
     result = result_envelope(args, config, host, bundles)
+    for _, manifest in bundles.values():
+        if manifest.get('runner', {}).get('sha256') != sha256(__file__):
+            raise ValueError('run this build bundle with its pinned scripts/bench/run.py')
     begin = time.perf_counter()
     cache = out / 'runtime-cache'
     cache.mkdir()
@@ -457,8 +494,7 @@ def run(args):
             for leg, (path, manifest) in bundles.items():
                 if manifest['status'] != 'complete':
                     raise ValueError(f'{leg} build is {manifest["status"]}: {manifest.get("reason")}')
-                if manifest['host']['architecture'] != host['architecture']:
-                    raise ValueError('build and target architectures differ')
+                check_target(manifest, host)
                 guest = manifest['guests'][case['workload']]
                 input_file = guest['inputs'][str(case['input']['parameters']['operations'])]
                 files[leg] = (checked_file(path, manifest['binaries'][case['pcs']]),
@@ -600,10 +636,12 @@ def suite(args):
 
 
 def disabled(args):
-    config, _ = config_cases(args.config, args.tier)
+    config, cases = config_cases(args.config, args.tier)
     args.kind, args.case, args.warmups, args.repetitions = None, [], None, None
     result = result_envelope(args, config, None, {})
     result.update(status=args.status, reason=args.reason, finished_at=utc_now())
+    result['cases'] = [dict(case, cpu_ids=[], input=dict(case['input'], sha256=None),
+                            status='missing', reason=args.reason, samples=[]) for case in cases]
     result['wall_time']['scope'] = 'not-executed'
     write_json(Path(args.out) / 'benchmark-results.json', result)
     return result
@@ -625,6 +663,8 @@ def parse_args():
         item.add_argument('--target-cpu', required=True)
         item.add_argument('--profile', choices=['release', 'ci'], default='release')
     build_parser.add_argument('--revision', required=True)
+    build_parser.add_argument('--workload', action='append', default=[],
+                              help='prepare only this workload; repeat for an early executable handoff')
     for item in (run_parser, suite_parser):
         item.add_argument('--tier', choices=['pr', 'main', 'nightly'], required=True)
         item.add_argument('--kind', choices=['comparison', 'null', 'settings', 'history'])

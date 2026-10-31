@@ -95,20 +95,23 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
 ''')
             binary.chmod(0o700)
             failure = root / 'failure'
-            failure.write_text(f'#!{sys.executable}\nimport sys\nsys.exit(7)\n')
+            failure.write_text(binary.read_text() + '\nsys.exit(7)\n')
             failure.chmod(0o700)
             manifests = {}
             for leg, executable in [('base', binary), ('head', failure)]:
                 manifest = {'schema_version': 1, 'revision': ('a' if leg == 'base' else 'b') * 40,
                             'harness_revision': 'c' * 40, 'status': 'complete',
+                            'runner': {'sha256': bench.sha256(SCRIPT)},
                             'host': {'architecture': bench.platform.machine()},
+                            'target_triple': bench.platform.machine() + '-unknown-linux-gnu',
+                            'target_features': [],
                             'binaries': {'dory': bench.bundle_file(executable, root)},
                             'guests': {'fibonacci': {'elf': bench.bundle_file(root / 'guest.elf', root),
                                 'inputs': {'1': bench.bundle_file(root / 'input.bin', root)}}}}
                 manifests[leg] = root / f'{leg}.json'
                 manifests[leg].write_text(json.dumps(manifest))
             cpu = min(os.sched_getaffinity(0))
-            host = {'architecture': bench.platform.machine(),
+            host = {'architecture': bench.platform.machine(), 'cpu_flags': [],
                     'topology': [{'cpu': cpu, 'core': 0, 'socket': 0, 'online': True}]}
             args = argparse.Namespace(config=config_path, tier='pr', case=[], kind=None,
                                       warmups=None, repetitions=None, out=root / 'results', **manifests)
