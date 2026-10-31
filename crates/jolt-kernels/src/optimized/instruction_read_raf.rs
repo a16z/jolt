@@ -273,39 +273,43 @@ pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<Instructio
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) Weak<ConstantSuffix<InstructionCycleRow>>);
 
 impl InstructionCycleRow {
-    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
-    /// impossible to consume) or collect them fresh, and park the carry back
-    /// for later consumers.
+    /// Reuse a length-matched carry; weak rows are valid only for random-access
+    /// witnesses, whose collection does not replay execution.
+    pub(crate) fn cached<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Option<Arc<ConstantSuffix<Self>>> {
+        if let Some(SharedInstructionRows(rows)) = session.state::<SharedInstructionRows>() {
+            if rows.len() == cycles {
+                return Some(Arc::clone(rows));
+            }
+            drop(session.take::<SharedInstructionRows>());
+        }
+        let _ = witness.random_access()?;
+        session
+            .state::<SharedInstructionRowsWeak>()
+            .and_then(|weak| weak.0.upgrade())
+            .filter(|rows| rows.len() == cycles)
+    }
+
+    /// Reuse cached rows or collect them, retaining a strong carry only for
+    /// witnesses whose next collection would replay execution.
     pub(crate) fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Arc<ConstantSuffix<Self>>, KernelError<F>> {
-        // A parked strong carry is always honored (re-emulating sources, and
-        // tests that inject rows a witness would not produce).
-        let carried = match session.take::<SharedInstructionRows>() {
-            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
-            _ => None,
-        };
-        if witness.random_access().is_some() {
-            let upgraded = || {
-                session
-                    .state::<SharedInstructionRowsWeak>()
-                    .and_then(|weak| weak.0.upgrade())
-                    .filter(|rows| rows.len() == cycles)
-            };
-            let rows = match carried.or_else(upgraded) {
-                Some(rows) => rows,
-                None => Arc::new(Self::collect(witness, cycles)?),
-            };
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-            return Ok(rows);
-        }
-        let rows = match carried {
+        let rows = match Self::cached(session, witness, cycles) {
             Some(rows) => rows,
             None => Arc::new(Self::collect(witness, cycles)?),
         };
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        if witness.random_access().is_some() {
+            drop(session.take::<SharedInstructionRows>());
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        } else {
+            session.park(SharedInstructionRows(Arc::clone(&rows)));
+        }
         Ok(rows)
     }
 }
@@ -627,12 +631,12 @@ struct CycleState<F: JoltField> {
 }
 
 struct RafScan<F: JoltField> {
-    shift_half: Vec<F::Accumulator>,
+    shift_half: Vec<F::SumAccumulator>,
     left: Vec<F::Accumulator>,
     right: Vec<F::Accumulator>,
-    shift_full: Vec<F::Accumulator>,
+    shift_full: Vec<F::SumAccumulator>,
     identity: Vec<F::Accumulator>,
-    upper_all_ones: Vec<F::Accumulator>,
+    upper_all_ones: Vec<F::SumAccumulator>,
 }
 
 struct RafSums<F> {
@@ -647,22 +651,22 @@ struct RafSums<F> {
 impl<F: JoltField> RafScan<F> {
     fn new() -> Self {
         Self {
-            shift_half: vec![F::Accumulator::default(); CHUNK_SIZE],
+            shift_half: vec![F::SumAccumulator::default(); CHUNK_SIZE],
             left: vec![F::Accumulator::default(); CHUNK_SIZE],
             right: vec![F::Accumulator::default(); CHUNK_SIZE],
-            shift_full: vec![F::Accumulator::default(); CHUNK_SIZE],
+            shift_full: vec![F::SumAccumulator::default(); CHUNK_SIZE],
             identity: vec![F::Accumulator::default(); CHUNK_SIZE],
-            upper_all_ones: vec![F::Accumulator::default(); CHUNK_SIZE],
+            upper_all_ones: vec![F::SumAccumulator::default(); CHUNK_SIZE],
         }
     }
 
     fn reduce(self) -> RafSums<F> {
-        let reduce = |accumulators: Vec<F::Accumulator>| -> Vec<F> {
+        fn reduce<A: Accumulator>(accumulators: Vec<A>) -> Vec<A::Element> {
             accumulators
                 .into_iter()
                 .map(|accumulator| accumulator.reduce())
                 .collect()
-        };
+        }
         RafSums {
             shift_half: reduce(self.shift_half),
             left: reduce(self.left),
@@ -809,65 +813,151 @@ enum SuffixRow {
     General(Suffixes),
 }
 
-/// One scan task's suffix accumulators for one lookup table: one row per
-/// suffix, in `table.suffixes()` order.
-struct TableScan<F: JoltField> {
-    suffixes: Vec<SuffixRow>,
-    accumulators: Vec<F::Accumulator>,
-}
-
-impl<F: JoltField> TableScan<F> {
-    fn new(table: LookupTableKind<RISCV_XLEN>) -> Self {
-        let suffixes: Vec<SuffixRow> = table
-            .suffixes()
-            .iter()
-            .map(|&suffix| {
-                if matches!(suffix, Suffixes::One) {
-                    SuffixRow::One
-                } else if suffix.is_01_valued() {
-                    SuffixRow::ZeroOne(suffix)
-                } else {
-                    SuffixRow::General(suffix)
-                }
-            })
-            .collect();
-        let accumulators = vec![F::Accumulator::default(); suffixes.len() * CHUNK_SIZE];
-        Self {
-            suffixes,
-            accumulators,
+impl SuffixRow {
+    fn new(suffix: Suffixes) -> Self {
+        if matches!(suffix, Suffixes::One) {
+            Self::One
+        } else if suffix.is_01_valued() {
+            Self::ZeroOne(suffix)
+        } else {
+            Self::General(suffix)
         }
     }
 
     #[inline]
-    fn accumulate(&mut self, chunk: usize, suffix_bits: LookupBits, u: F) {
-        for (&suffix, row) in self
-            .suffixes
-            .iter()
-            .zip(self.accumulators.chunks_exact_mut(CHUNK_SIZE))
-        {
-            match suffix {
-                SuffixRow::One => row[chunk].add(u),
-                SuffixRow::ZeroOne(suffix) => {
-                    if suffix.suffix_mle(suffix_bits) == 1 {
-                        row[chunk].add(u);
-                    }
+    fn accumulate<F: JoltField, A: Accumulator<Element = F>>(
+        self,
+        row: &mut [A],
+        chunk: usize,
+        bits: LookupBits,
+        value: F,
+    ) {
+        match self {
+            Self::One => row[chunk].add(value),
+            Self::ZeroOne(suffix) => {
+                if suffix.suffix_mle(bits) == 1 {
+                    row[chunk].add(value);
                 }
-                SuffixRow::General(suffix) => {
-                    let value = suffix.suffix_mle(suffix_bits);
-                    if value != 0 {
-                        row[chunk].fmadd_u64(u, value);
+            }
+            Self::General(suffix) => {
+                let scalar = suffix.suffix_mle(bits);
+                if scalar != 0 {
+                    row[chunk].fmadd_u64(value, scalar);
+                }
+            }
+        }
+    }
+}
+
+enum SuffixScan<F: JoltField> {
+    One(Vec<F::SumAccumulator>),
+    ZeroOne(Suffixes, Vec<F::SumAccumulator>),
+    General(Suffixes, Vec<F::Accumulator>),
+}
+
+/// Accumulators in `table.suffixes()` order. Boolean rows use separate compact
+/// allocations only when the field supplies a smaller sum accumulator.
+enum TableScan<F: JoltField> {
+    Flat {
+        suffixes: Vec<SuffixRow>,
+        accumulators: Vec<F::Accumulator>,
+    },
+    Compact(Vec<SuffixScan<F>>),
+}
+
+impl<F: JoltField> TableScan<F> {
+    /// Separate row allocations must reduce the accumulator footprint;
+    /// otherwise keep one contiguous allocation for the table.
+    const fn uses_compact_rows() -> bool {
+        std::mem::size_of::<F::SumAccumulator>() < std::mem::size_of::<F::Accumulator>()
+    }
+
+    fn new(table: LookupTableKind<RISCV_XLEN>) -> Self {
+        if Self::uses_compact_rows() {
+            Self::Compact(
+                table
+                    .suffixes()
+                    .iter()
+                    .map(|&suffix| match SuffixRow::new(suffix) {
+                        SuffixRow::One => {
+                            SuffixScan::One(vec![F::SumAccumulator::default(); CHUNK_SIZE])
+                        }
+                        SuffixRow::ZeroOne(suffix) => SuffixScan::ZeroOne(
+                            suffix,
+                            vec![F::SumAccumulator::default(); CHUNK_SIZE],
+                        ),
+                        SuffixRow::General(suffix) => {
+                            SuffixScan::General(suffix, vec![F::Accumulator::default(); CHUNK_SIZE])
+                        }
+                    })
+                    .collect(),
+            )
+        } else {
+            let suffixes: Vec<_> = table
+                .suffixes()
+                .iter()
+                .copied()
+                .map(SuffixRow::new)
+                .collect();
+            let accumulators = vec![F::Accumulator::default(); suffixes.len() * CHUNK_SIZE];
+            Self::Flat {
+                suffixes,
+                accumulators,
+            }
+        }
+    }
+
+    #[inline]
+    fn accumulate(&mut self, chunk: usize, bits: LookupBits, value: F) {
+        match self {
+            Self::Flat {
+                suffixes,
+                accumulators,
+            } => {
+                for (&suffix, row) in suffixes
+                    .iter()
+                    .zip(accumulators.chunks_exact_mut(CHUNK_SIZE))
+                {
+                    suffix.accumulate(row, chunk, bits, value);
+                }
+            }
+            Self::Compact(suffixes) => {
+                for suffix in suffixes {
+                    match suffix {
+                        SuffixScan::One(row) => SuffixRow::One.accumulate(row, chunk, bits, value),
+                        SuffixScan::ZeroOne(suffix, row) => {
+                            SuffixRow::ZeroOne(*suffix).accumulate(row, chunk, bits, value);
+                        }
+                        SuffixScan::General(suffix, row) => {
+                            SuffixRow::General(*suffix).accumulate(row, chunk, bits, value);
+                        }
                     }
                 }
             }
         }
     }
 
-    /// The table's reduced suffix sums, in `table.suffixes()` order.
     fn reduce(self) -> Vec<F> {
-        self.accumulators
-            .into_iter()
-            .map(|accumulator| accumulator.reduce())
-            .collect()
+        match self {
+            Self::Flat { accumulators, .. } => accumulators
+                .into_iter()
+                .map(|value| value.reduce())
+                .collect(),
+            Self::Compact(suffixes) => {
+                let mut sums = Vec::with_capacity(suffixes.len() * CHUNK_SIZE);
+                for suffix in suffixes {
+                    match suffix {
+                        SuffixScan::One(row) | SuffixScan::ZeroOne(_, row) => {
+                            sums.extend(row.into_iter().map(|value| value.reduce()));
+                        }
+                        SuffixScan::General(_, row) => {
+                            sums.extend(row.into_iter().map(|value| value.reduce()));
+                        }
+                    }
+                }
+                sums
+            }
+        }
     }
 }
 
@@ -1774,8 +1864,10 @@ mod tests {
         Fr::from_u64(value)
     }
 
-    fn challenge(round: usize) -> Fr {
-        fr(0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11)
+    fn challenge<F: JoltField>(round: usize) -> F {
+        F::from_u64(
+            0x9E37_79B9_7F4A_7C15 ^ (round as u64).wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ 0x11,
+        )
     }
 
     fn splitmix(state: &mut u64) -> u64 {
@@ -1793,6 +1885,8 @@ mod tests {
             LookupTableKind::<RISCV_XLEN>::Or(Default::default()).index(),
             LookupTableKind::<RISCV_XLEN>::Xor(Default::default()).index(),
             LookupTableKind::<RISCV_XLEN>::VirtualXORROTW7(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::UnsignedLessThan(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Equal(Default::default()).index(),
         ];
         let mut state = seed;
         (0..1usize << log_t)
@@ -1926,7 +2020,11 @@ mod tests {
     /// point-mass `ra` collapsed at each cycle's lookup index. Pins both
     /// kernels to the protocol, not merely to each other (each kernel's own
     /// `s(0) + s(1) = claim` self-check would reject a drifted round 0).
-    fn input_claim(rows: &[InstructionReadRafWitness], r_reduction: &[Fr], gamma: Fr) -> Fr {
+    fn input_claim<F: JoltField>(
+        rows: &[InstructionReadRafWitness],
+        r_reduction: &[F],
+        gamma: F,
+    ) -> F {
         let tables: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::iter().collect();
         let gamma_sqr = gamma * gamma;
         let address_bits = 2 * RISCV_XLEN;
@@ -1935,15 +2033,16 @@ mod tests {
             .zip(rows)
             .map(|(&u, row)| {
                 let k = row.lookup_index.0;
-                let value = row
-                    .table_index
-                    .0
-                    .map_or_else(|| fr(0), |index| fr(tables[index].materialize_entry(k)));
+                let value = row.table_index.0.map_or_else(
+                    || F::from_u64(0),
+                    |index| F::from_u64(tables[index].materialize_entry(k)),
+                );
                 let raf = if !row.raf_flag.0 {
                     let (left, right) = LookupBits::new(k, address_bits).uninterleave();
-                    gamma * fr(u64::from(left)) + gamma_sqr * fr(u64::from(right))
+                    gamma * F::from_u64(u64::from(left)) + gamma_sqr * F::from_u64(u64::from(right))
                 } else {
-                    let mut raf = gamma_sqr * (fr(k as u64) + fr((k >> 64) as u64).mul_pow_2(64));
+                    let mut raf = gamma_sqr
+                        * (F::from_u64(k as u64) + F::from_u64((k >> 64) as u64).mul_pow_2(64));
                     if CANONICAL_INSTRUCTION_ADDRESS
                         && (k >> (address_bits / 2)) == (1u128 << (address_bits / 2)) - 1
                     {
@@ -1987,6 +2086,24 @@ mod tests {
         exceptional: Option<ExceptionalEq>,
         prefix: Option<(usize, bool)>,
     ) {
+        assert_parity_prefix_field::<Fr>(log_t, num_virtual_ra_polys, seed, exceptional, prefix);
+        #[cfg(feature = "akita")]
+        assert_parity_prefix_field::<Prime128OffsetA7F7>(
+            log_t,
+            num_virtual_ra_polys,
+            seed,
+            exceptional,
+            prefix,
+        );
+    }
+
+    fn assert_parity_prefix_field<F: JoltField>(
+        log_t: usize,
+        num_virtual_ra_polys: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+        prefix: Option<(usize, bool)>,
+    ) {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
@@ -2004,11 +2121,15 @@ mod tests {
                 *row = tail;
             }
         }
-        let r_reduction: Vec<Fr> = exceptional.map_or_else(
-            || (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect(),
+        let r_reduction: Vec<F> = exceptional.map_or_else(
+            || {
+                (0..log_t)
+                    .map(|i| F::from_u64(1000 + 37 * i as u64))
+                    .collect()
+            },
             |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),
         );
-        let gamma = fr(0xACE1_57EF);
+        let gamma = F::from_u64(0xACE1_57EF);
 
         let mut reference =
             InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
@@ -2038,9 +2159,9 @@ mod tests {
         optimized.finish_rounds(challenge(rounds - 1)).unwrap();
 
         let inputs = InstructionReadRafInputClaims {
-            lookup_output: fr(0),
-            left_lookup_operand: fr(0),
-            right_lookup_operand: fr(0),
+            lookup_output: F::from_u64(0),
+            left_lookup_operand: F::from_u64(0),
+            right_lookup_operand: F::from_u64(0),
         };
         let reference_outputs = reference.output_claims(&inputs).unwrap();
         let optimized_outputs = optimized.output_claims(&inputs).unwrap();
