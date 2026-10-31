@@ -19,6 +19,7 @@ is a miss before downstream work is added.
 
 `suites.json` is the source of the case matrix. Standard-main and nightly run both
 Dory and Akita at exactly 1, 8, or 24 physical cores; PRs run only Akita.
+PR prover executables use `bench-off16`; standard-main and nightly keep `release`.
 The ordinary instruction profile and clear proofs are
 used; no protocol parameter is adjusted for the benchmark.
 
@@ -165,8 +166,8 @@ when it is absent.
 
 Preparation builds the real `jolt` guest-builder CLI from the selected source
 under the existing `ci` Cargo profile, without fat LTO or debug information.
-The benchmark executables still use the requested prover profile; the workflow
-uses `release` with fat LTO. Guest builds still receive `--release`. The manifest
+The benchmark executables use the requested prover profile: `bench-off16` for
+PRs and `release` with fat LTO for main/nightly. Guest builds still receive `--release`. The manifest
 records `guest_builder_profile: "ci"` separately from the measured prover's
 `profile` and retains the CLI's hash. PR preparation
 builds `jolt-prover-akita`; main and nightly build both variants. Guest preparation
@@ -191,13 +192,14 @@ or predict the time for a changed-source build.
 
 Completed bundles persist in the same locked store. Reuse requires an exact
 source and harness revision, Rust/Cargo versions, target CPU/triple/features,
-flags, prover and guest-builder profiles, lockfiles, harness files, runner and
+flags, prover profile and `profile_config`, guest-builder profile, lockfiles, harness files, runner and
 suite-definition match.
 Every required PCS and guest/input must exist. All recorded binary, guest, input,
 runner, configuration and schedule hashes are checked before copying. A main-tier bundle
 does not qualify merely because its source SHA matches: it may lack a PR input.
-Different PCS/input sets can coexist; a valid main-tier superset may serve a PR
-base. An Akita-only bundle cannot serve a request that also requires Dory.
+Different PCS/input sets can coexist; a superset may serve a smaller request
+only under the same profile and settings. A release main-history bundle cannot
+serve an off16 PR base. An Akita-only bundle cannot serve a request that also requires Dory.
 An invalid or incomplete entry is recorded as a cache miss and rebuilt.
 
 Reuse preserves the construction manifest byte-for-byte. The fresh preparation
@@ -237,11 +239,24 @@ uv run --no-project python scripts/bench/run.py build \
 `TARGET_CPU` must be explicit, never `native`. Record the actual target's CPU
 flags before accepting portability. The runner compares the compiler's recorded
 target triple/features with Linux's observed ISA before launching a prover; that
-does not replace the target's first executable compatibility check. Both the
-`release` and existing `ci` Cargo profiles are available through `--profile`;
-the default and workflow profile are `release`. Paired legs must use the same
-profile and flags. `ci` disables release's fat LTO and debug information; it is
-a separate performance identity, not a measured substitute for release.
+does not replace the target's first executable compatibility check. `--profile`
+accepts `release`, `ci`, and `bench-off16`. A standalone `build` defaults to
+`release`; `suite --tier pr` defaults to `bench-off16`, matching CI. Main/nightly
+default to `release`. Use `build --profile bench-off16` to prepare a PR bundle.
+
+The root `Cargo.toml` owns `bench-off16`: it inherits release, disables LTO and
+sets 16 codegen units, retaining release's debug information and other settings.
+The builder reads this table at the pinned harness revision and passes it through
+Cargo's `--config` only to the prover build, including when an older source lacks
+the named profile. `profile_config` records the applied table; cache identity and
+paired-result validation include it. The source revision's other profiles are
+not rewritten. The real CLI stays on `ci`, and guests stay on release.
+
+Paired legs must use the same profile, settings and flags, including manual
+settings experiments. The off16 pilot checked ratio consistency, not release-speed
+equivalence: its proofs were slower than stock release. It is a separate performance
+identity, not a conversion factor for release history or calibration. `ci` also
+disables release's debug information and remains a distinct manual option.
 
 For an early bundle, repeat `--workload fibonacci --workload sha2-chain
 --workload sha3-chain --workload btreemap`. This changes which guests are prepared,
@@ -289,22 +304,23 @@ override changes the comment, not the original raw result. The option does not
 enter build identity or change any native bundle's construction manifest.
 Keep the suite configuration and bundles unchanged when adding observations.
 
-Collect the standard-main population first on the released target runtime, with
-`$BASE` set to its exact main revision:
+For a PR reference, construct the exact main base under the PR profile using the
+normal locked builder. This is separately timed preparation, not a PR-budget pass;
+do not seed the completed cache or reuse a release-history reference:
 
 ```bash
-uv run --no-project python scripts/bench/run.py suite \
-  --tier main --head-revision "$BASE" --harness-revision "$HARNESS" \
-  --target-cpu "$TARGET_CPU" --out "$MAIN_OUT"
+uv run --no-project python scripts/bench/run.py build \
+  --revision "$BASE" --harness-revision "$HARNESS" --profile bench-off16 \
+  --target-cpu "$TARGET_CPU" --out "$BASE_OUT"
 ```
 
 Then use its returned bundle and bundled collector for the ten-pair reference:
 
 ```bash
-uv run --no-project python "$MAIN_OUT/builds/head/scripts/bench/run.py" run \
+uv run --no-project python "$BASE_OUT/scripts/bench/run.py" run \
   --tier pr --kind null --warmups 1 --repetitions 10 \
-  --base "$MAIN_OUT/builds/head/manifest.json" \
-  --head "$MAIN_OUT/builds/head/manifest.json" --out "$NULL_OUT"
+  --base "$BASE_OUT/manifest.json" \
+  --head "$BASE_OUT/manifest.json" --out "$NULL_OUT"
 ```
 
 After deriving the reference, pass it to the actual three-repetition comparison

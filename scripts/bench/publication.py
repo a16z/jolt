@@ -71,7 +71,7 @@ def validate(result, expected, config_bytes):
         build = builds[leg]
         if build['revision'] != revision or build['harness_revision'] != expected['revisions']['harness']:
             raise ValueError('build manifest is not for the measured revisions')
-    for key in ('harness_files', 'rustflags', 'target_cpu', 'profile'):
+    for key in ('harness_files', 'rustflags', 'target_cpu', 'profile', 'profile_config'):
         if builds['base'][key] != builds['head'][key]:
             raise ValueError(f'paired build mismatch: {key}')
     topology = {row['cpu']: row for row in result['host']['topology']}

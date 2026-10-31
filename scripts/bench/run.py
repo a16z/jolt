@@ -279,12 +279,16 @@ def build(args):
     runner_source = subprocess.check_output(['git', 'show', f'{harness}:scripts/bench/run.py'], cwd=ROOT)
     if hashlib.sha256(runner_source).hexdigest() != sha256(__file__):
         raise ValueError('build must use the committed runner at --harness-revision')
+    profile_config = {}
+    if args.profile == 'bench-off16':
+        harness_manifest = subprocess.check_output(['git', 'show', f'{harness}:Cargo.toml'], cwd=ROOT)
+        profile_config = tomllib.loads(harness_manifest.decode())['profile'][args.profile]
     toolchain = capture(['rustc', '--version', '--verbose'])
     source = cache_root() / 'builds' / args.target_cpu / args.profile / 'source'
     existed = (source / 'target').exists()
     manifest = {'schema_version': 1, 'revision': revision, 'harness_revision': harness,
                 'toolchain': toolchain, 'target_cpu': args.target_cpu, 'profile': args.profile,
-                'guest_builder_profile': 'ci',
+                'guest_builder_profile': 'ci', 'profile_config': profile_config,
                 'rustflags': f'-C target-cpu={args.target_cpu}', 'host': host_snapshot(),
                 'started_at': started, 'finished_at': None, 'build_s': None,
                 'status': 'incomplete', 'reason': None, 'binaries': {}, 'guests': {},
@@ -360,7 +364,7 @@ def build(args):
                                   'sha256': hashlib.sha256(runner_source).hexdigest()}
             identity = {key: manifest[key] for key in (
                 'revision', 'harness_revision', 'toolchain', 'cargo_version', 'target_cpu',
-                'target_triple', 'target_features', 'profile', 'guest_builder_profile',
+                'target_triple', 'target_features', 'profile', 'profile_config', 'guest_builder_profile',
                 'rustflags', 'source_cargo_lock_sha256',
                 'cargo_lock_sha256', 'harness_files', 'suite_config_sha256', 'runner')}
             bucket = cache_root() / 'bundles' / hashlib.sha256(
@@ -397,9 +401,11 @@ def build(args):
                      '--target-dir', str(source / 'target'), '--target', triple]
             logged([*cargo, '--profile', manifest['guest_builder_profile'], '-p', 'jolt', '--bin', 'jolt'],
                    source, env, log)
+            profile_args = [argument for key, value in profile_config.items()
+                            for argument in ('--config', f'profile.{args.profile}.{key}={json.dumps(value)}')]
             for pcs in sorted(required_pcs):
                 features = 'profiling,akita' if pcs == 'akita' else 'profiling'
-                logged([*cargo, '--profile', args.profile, '-p', 'jolt-prover', '--bin', 'jolt-prover',
+                logged([*cargo, *profile_args, '--profile', args.profile, '-p', 'jolt-prover', '--bin', 'jolt-prover',
                         '--features', features], source, env, log)
                 binary = out / f'jolt-prover-{pcs}'
                 shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
@@ -476,7 +482,7 @@ def load_bundle(path):
         raise ValueError('build revision must be a full Git commit')
     if manifest.get('status') == 'complete':
         required = {'harness_revision', 'toolchain', 'cargo_version', 'target_cpu', 'target_triple',
-                    'target_features', 'profile', 'guest_builder_profile', 'rustflags', 'source_cargo_lock_sha256',
+                    'target_features', 'profile', 'profile_config', 'guest_builder_profile', 'rustflags', 'source_cargo_lock_sha256',
                     'cargo_lock_sha256', 'harness_files', 'binaries', 'guests', 'runner',
                     'akita_schedules', 'suite_config_sha256', 'host', 'started_at',
                     'finished_at', 'build_s', 'reason', 'cache'}
@@ -570,7 +576,7 @@ def result_envelope(args, config, host, bundles):
         raise ValueError('both legs must use the same benchmark-only harness revision')
     if paired:
         base, head = bundles['base'][1], bundles['head'][1]
-        for field in ('harness_files', 'rustflags', 'target_cpu', 'profile'):
+        for field in ('harness_files', 'rustflags', 'target_cpu', 'profile', 'profile_config'):
             if base.get(field) != head.get(field):
                 raise ValueError(f'paired builds differ in {field}')
     if args.kind == 'null' and (not paired or revisions['base'] != revisions['head']):
@@ -901,6 +907,8 @@ def render_comment(result, out):
     total_label = f'{total:.3f}' if total is not None else 'not measured'
     lines += ['', f"Base: `{revisions['base']}`. Submitted head: `{revisions['head']}`. "
               f"Measured merge: `{revisions['merge']}`. Shared harness: `{revisions['harness']}`.", '',
+              f"Prover profiles: base `{text(builds.get('base', {}).get('profile') or 'unavailable')}`; "
+              f"head `{text(builds.get('head', {}).get('profile') or 'unavailable')}`.", '',
               f"Warmups per leg: {result['suite']['warmups']}; measured repetitions per leg: "
               f"{result['suite']['repetitions']}. Each invocation is a fresh process; measured pairs alternate order.", '',
               f"Suite configuration SHA256: `{result['suite']['config_sha256']}`.", '',
@@ -974,7 +982,7 @@ def parse_args():
     for item in (build_parser, suite_parser):
         item.add_argument('--harness-revision', required=True)
         item.add_argument('--target-cpu', required=True)
-        item.add_argument('--profile', choices=['release', 'ci'], default='release')
+        item.add_argument('--profile', choices=['release', 'ci', 'bench-off16'])
     build_parser.add_argument('--revision', required=True)
     build_parser.add_argument('--workload', action='append', default=[],
                               help='prepare only this workload; repeat for an early executable handoff')
@@ -995,7 +1003,10 @@ def parse_args():
     status_parser.add_argument('--tier', choices=['pr', 'main', 'nightly'], required=True)
     status_parser.add_argument('--status', choices=['disabled', 'unsupported', 'failed'], required=True)
     status_parser.add_argument('--reason', required=True)
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.command in ('build', 'suite') and args.profile is None:
+        args.profile = 'bench-off16' if getattr(args, 'tier', None) == 'pr' else 'release'
+    return args
 
 
 def main():

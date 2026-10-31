@@ -181,7 +181,7 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
                 manifest = {'schema_version': 1, 'revision': ('a' if leg == 'base' else 'b') * 40,
                             'harness_revision': 'c' * 40, 'status': 'complete',
                             'toolchain': 'fixture', 'cargo_version': 'fixture', 'target_cpu': 'x86-64',
-                            'profile': 'release', 'guest_builder_profile': 'ci',
+                            'profile': 'release', 'profile_config': {}, 'guest_builder_profile': 'ci',
                             'rustflags': '-C target-cpu=x86-64',
                             'source_cargo_lock_sha256': '0' * 64, 'cargo_lock_sha256': '0' * 64,
                             'harness_files': {}, 'akita_schedules': [], 'suite_config_sha256': '0' * 64,
@@ -243,7 +243,7 @@ class BuildCacheTests(unittest.TestCase):
         self.prepares = []
         files = {
             '.gitignore': '/target/\n',
-            'Cargo.toml': '[workspace]\nmembers = []\n',
+            'Cargo.toml': '[workspace]\nmembers = []\n\n[profile.release]\nlto = "fat"\ndebug = 1\n',
             'Cargo.lock': 'version = 3\n[[package]]\nname = "fixture"\nversion = "0.0.0"\n',
             'crates/jolt-prover/Cargo.toml': '[features]\nprofiling = []\n[dependencies]\n',
             'crates/jolt-prover/src/profile.rs': 'fn fixture() {}\n',
@@ -471,6 +471,47 @@ class BuildCacheTests(unittest.TestCase):
         self.assertEqual(len(list((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))), 2)
         self.assertEqual(partial_path.read_bytes(), partial_bytes)
 
+    def test_pr_profile_uses_pinned_settings_without_changing_cli_or_old_source(self):
+        definition = {'inherits': 'release', 'lto': 'off', 'codegen-units': 16}
+        root_manifest = self.workspace / 'Cargo.toml'
+        root_manifest.write_text(root_manifest.read_text() + '\n[profile.bench-off16]\n'
+                                 'inherits = "release"\nlto = "off"\ncodegen-units = 16\n')
+        self.git('add', 'Cargo.toml')
+        self.commit()
+        harness = self.git('rev-parse', 'HEAD')
+        options = {'tier': 'pr', 'profile': 'bench-off16', 'harness_revision': harness}
+        manifest, _ = self.build('pr-profile', **options)
+        self.assertEqual(manifest['profile_config'], definition)
+        for key, value in [('profile', 'release'), ('profile_config', {'lto': 'fat'})]:
+            with self.subTest(paired_mismatch=key), \
+                    patch.object(bench, 'provenance', return_value=({'run_id': None}, {})), \
+                    self.assertRaisesRegex(ValueError, key):
+                bench.result_envelope(argparse.Namespace(context=None), {}, {}, {
+                    'base': (None, manifest), 'head': (None, dict(manifest, **{key: value}))})
+        cli, prover = self.compiles
+        self.assertEqual(cli[cli.index('--profile') + 1], 'ci')
+        self.assertNotIn('--config', cli)
+        self.assertEqual(prover[prover.index('--profile') + 1], 'bench-off16')
+        settings = [prover[index + 1] for index, arg in enumerate(prover) if arg == '--config']
+        self.assertEqual(settings, ['profile.bench-off16.inherits="release"',
+                                    'profile.bench-off16.lto="off"',
+                                    'profile.bench-off16.codegen-units=16'])
+        source = bench.cache_root() / 'builds/x86-64/bench-off16/source'
+        self.assertEqual(bench.tomllib.loads((source / 'Cargo.toml').read_text())['profile']['release'],
+                         {'lto': 'fat', 'debug': 1})
+        self.assertNotIn('profile.bench-off16', (source / 'Cargo.toml').read_text())
+        self.assertIn('/ci/jolt', self.prepares[0][1])
+        self.compiles.clear()
+        repeated, receipt = self.build('pr-profile-reused', **options)
+        self.assertEqual(repeated, manifest)
+        self.assertEqual(receipt['mode'], 'reused')
+        self.assertFalse(self.compiles)
+        release, receipt = self.build('release-profile', tier='main', harness_revision=harness)
+        self.assertEqual(release['profile'], 'release')
+        self.assertEqual(release['profile_config'], {})
+        self.assertEqual(receipt['mode'], 'built')
+        self.assertEqual(len(self.compiles), 3)
+
     def test_completed_store_keeps_eight_bundles_and_preserves_recent_reuse(self):
         cache = bench.cache_root()
         entries, revisions = [], []
@@ -512,16 +553,18 @@ class BuildCacheTests(unittest.TestCase):
     def test_cache_rejects_changed_identity_incomplete_or_corrupt_content(self):
         original, _ = self.build('original')
         cached = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
-        missing_profile = dict(original)
-        missing_profile.pop('guest_builder_profile', None)
-        bench.write_json(cached, missing_profile)
-        with self.assertRaisesRegex(ValueError, 'guest_builder_profile'):
-            bench.load_bundle(cached)
+        for key in ('guest_builder_profile', 'profile_config'):
+            missing_profile = dict(original)
+            missing_profile.pop(key)
+            bench.write_json(cached, missing_profile)
+            with self.subTest(missing=key), self.assertRaisesRegex(ValueError, key):
+                bench.load_bundle(cached)
         changes = {
             'revision': 'a' * 40, 'harness_revision': 'b' * 40, 'toolchain': 'other rustc',
             'cargo_version': 'other cargo', 'target_cpu': 'znver4',
             'target_triple': 'aarch64-unknown-linux-gnu', 'target_features': ['avx2'],
-            'profile': 'ci', 'guest_builder_profile': 'release', 'rustflags': '-C target-cpu=znver4',
+            'profile': 'ci', 'profile_config': {'lto': 'off'},
+            'guest_builder_profile': 'release', 'rustflags': '-C target-cpu=znver4',
             'source_cargo_lock_sha256': '1' * 64, 'cargo_lock_sha256': '2' * 64,
             'harness_files': {}, 'suite_config_sha256': '3' * 64,
             'runner': {'path': 'scripts/bench/run.py', 'sha256': '4' * 64}, 'status': 'incomplete',

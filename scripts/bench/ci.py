@@ -129,7 +129,8 @@ def execute(args):
             run_out = (out / entry['path']).parent
             options = argparse.Namespace(config=bench.DEFAULT_CONFIG, tier=plan['tier'],
                 out=run_out, base_revision=item['base'], head_revision=item['head'],
-                harness_revision=plan['harness'], target_cpu=plan['target_cpu'], profile='release',
+                harness_revision=plan['harness'], target_cpu=plan['target_cpu'],
+                profile='bench-off16' if plan['tier'] == 'pr' else 'release',
                 kind=None, case=[], warmups=None, repetitions=None,
                 context={'provenance': plan['provenance'], 'submitted_head': item['submitted_head'],
                          'is_pr': plan['tier'] == 'pr'})
