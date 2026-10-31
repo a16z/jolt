@@ -134,6 +134,7 @@ impl CanonicalEncoding for F8 {
 }
 
 impl WithAccumulator for F8 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = NaiveAccumulator<Self>;
     type SmallScalarAccumulator = NaiveAccumulator<Self>;
     type SignedProductAccumulator = NaiveAccumulator<Self>;

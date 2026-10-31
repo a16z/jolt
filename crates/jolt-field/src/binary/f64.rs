@@ -120,6 +120,7 @@ impl CanonicalEncoding for F64 {
 }
 
 impl WithAccumulator for F64 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = F64Accumulator;
     type SmallScalarAccumulator = F64Accumulator;
     type SignedProductAccumulator = F64Accumulator;

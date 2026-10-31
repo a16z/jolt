@@ -556,12 +556,12 @@ struct CycleState<F: JoltField> {
 }
 
 struct RafScan<F: JoltField> {
-    shift_half: Vec<F::Accumulator>,
+    shift_half: Vec<F::SumAccumulator>,
     left: Vec<F::Accumulator>,
     right: Vec<F::Accumulator>,
-    shift_full: Vec<F::Accumulator>,
+    shift_full: Vec<F::SumAccumulator>,
     identity: Vec<F::Accumulator>,
-    upper_all_ones: Vec<F::Accumulator>,
+    upper_all_ones: Vec<F::SumAccumulator>,
 }
 
 struct RafSums<F> {
@@ -576,22 +576,22 @@ struct RafSums<F> {
 impl<F: JoltField> RafScan<F> {
     fn new() -> Self {
         Self {
-            shift_half: vec![F::Accumulator::default(); CHUNK_SIZE],
+            shift_half: vec![F::SumAccumulator::default(); CHUNK_SIZE],
             left: vec![F::Accumulator::default(); CHUNK_SIZE],
             right: vec![F::Accumulator::default(); CHUNK_SIZE],
-            shift_full: vec![F::Accumulator::default(); CHUNK_SIZE],
+            shift_full: vec![F::SumAccumulator::default(); CHUNK_SIZE],
             identity: vec![F::Accumulator::default(); CHUNK_SIZE],
-            upper_all_ones: vec![F::Accumulator::default(); CHUNK_SIZE],
+            upper_all_ones: vec![F::SumAccumulator::default(); CHUNK_SIZE],
         }
     }
 
     fn reduce(self) -> RafSums<F> {
-        let reduce = |accumulators: Vec<F::Accumulator>| -> Vec<F> {
+        fn reduce<A: Accumulator>(accumulators: Vec<A>) -> Vec<A::Element> {
             accumulators
                 .into_iter()
                 .map(|accumulator| accumulator.reduce())
                 .collect()
-        };
+        }
         RafSums {
             shift_half: reduce(self.shift_half),
             left: reduce(self.left),
@@ -803,65 +803,151 @@ enum SuffixRow {
     General(Suffixes),
 }
 
-/// One scan task's suffix accumulators for one lookup table: one row per
-/// suffix, in `table.suffixes()` order.
-struct TableScan<F: JoltField> {
-    suffixes: Vec<SuffixRow>,
-    accumulators: Vec<F::Accumulator>,
-}
-
-impl<F: JoltField> TableScan<F> {
-    fn new(table: LookupTableKind<RISCV_XLEN>) -> Self {
-        let suffixes: Vec<SuffixRow> = table
-            .suffixes()
-            .iter()
-            .map(|&suffix| {
-                if matches!(suffix, Suffixes::One) {
-                    SuffixRow::One
-                } else if suffix.is_01_valued() {
-                    SuffixRow::ZeroOne(suffix)
-                } else {
-                    SuffixRow::General(suffix)
-                }
-            })
-            .collect();
-        let accumulators = vec![F::Accumulator::default(); suffixes.len() * CHUNK_SIZE];
-        Self {
-            suffixes,
-            accumulators,
+impl SuffixRow {
+    fn new(suffix: Suffixes) -> Self {
+        if matches!(suffix, Suffixes::One) {
+            Self::One
+        } else if suffix.is_01_valued() {
+            Self::ZeroOne(suffix)
+        } else {
+            Self::General(suffix)
         }
     }
 
     #[inline]
-    fn accumulate(&mut self, chunk: usize, suffix_bits: LookupBits, u: F) {
-        for (&suffix, row) in self
-            .suffixes
-            .iter()
-            .zip(self.accumulators.chunks_exact_mut(CHUNK_SIZE))
-        {
-            match suffix {
-                SuffixRow::One => row[chunk].add(u),
-                SuffixRow::ZeroOne(suffix) => {
-                    if suffix.suffix_mle(suffix_bits) == 1 {
-                        row[chunk].add(u);
-                    }
+    fn accumulate<F: JoltField, A: Accumulator<Element = F>>(
+        self,
+        row: &mut [A],
+        chunk: usize,
+        bits: LookupBits,
+        value: F,
+    ) {
+        match self {
+            Self::One => row[chunk].add(value),
+            Self::ZeroOne(suffix) => {
+                if suffix.suffix_mle(bits) == 1 {
+                    row[chunk].add(value);
                 }
-                SuffixRow::General(suffix) => {
-                    let value = suffix.suffix_mle(suffix_bits);
-                    if value != 0 {
-                        row[chunk].fmadd_u64(u, value);
+            }
+            Self::General(suffix) => {
+                let scalar = suffix.suffix_mle(bits);
+                if scalar != 0 {
+                    row[chunk].fmadd_u64(value, scalar);
+                }
+            }
+        }
+    }
+}
+
+enum SuffixScan<F: JoltField> {
+    One(Vec<F::SumAccumulator>),
+    ZeroOne(Suffixes, Vec<F::SumAccumulator>),
+    General(Suffixes, Vec<F::Accumulator>),
+}
+
+/// Accumulators in `table.suffixes()` order. Boolean rows use separate compact
+/// allocations only when the field supplies a smaller sum accumulator.
+enum TableScan<F: JoltField> {
+    Flat {
+        suffixes: Vec<SuffixRow>,
+        accumulators: Vec<F::Accumulator>,
+    },
+    Compact(Vec<SuffixScan<F>>),
+}
+
+impl<F: JoltField> TableScan<F> {
+    /// Separate row allocations must reduce the accumulator footprint;
+    /// otherwise keep one contiguous allocation for the table.
+    const fn uses_compact_rows() -> bool {
+        std::mem::size_of::<F::SumAccumulator>() < std::mem::size_of::<F::Accumulator>()
+    }
+
+    fn new(table: LookupTableKind<RISCV_XLEN>) -> Self {
+        if Self::uses_compact_rows() {
+            Self::Compact(
+                table
+                    .suffixes()
+                    .iter()
+                    .map(|&suffix| match SuffixRow::new(suffix) {
+                        SuffixRow::One => {
+                            SuffixScan::One(vec![F::SumAccumulator::default(); CHUNK_SIZE])
+                        }
+                        SuffixRow::ZeroOne(suffix) => SuffixScan::ZeroOne(
+                            suffix,
+                            vec![F::SumAccumulator::default(); CHUNK_SIZE],
+                        ),
+                        SuffixRow::General(suffix) => {
+                            SuffixScan::General(suffix, vec![F::Accumulator::default(); CHUNK_SIZE])
+                        }
+                    })
+                    .collect(),
+            )
+        } else {
+            let suffixes: Vec<_> = table
+                .suffixes()
+                .iter()
+                .copied()
+                .map(SuffixRow::new)
+                .collect();
+            let accumulators = vec![F::Accumulator::default(); suffixes.len() * CHUNK_SIZE];
+            Self::Flat {
+                suffixes,
+                accumulators,
+            }
+        }
+    }
+
+    #[inline]
+    fn accumulate(&mut self, chunk: usize, bits: LookupBits, value: F) {
+        match self {
+            Self::Flat {
+                suffixes,
+                accumulators,
+            } => {
+                for (&suffix, row) in suffixes
+                    .iter()
+                    .zip(accumulators.chunks_exact_mut(CHUNK_SIZE))
+                {
+                    suffix.accumulate(row, chunk, bits, value);
+                }
+            }
+            Self::Compact(suffixes) => {
+                for suffix in suffixes {
+                    match suffix {
+                        SuffixScan::One(row) => SuffixRow::One.accumulate(row, chunk, bits, value),
+                        SuffixScan::ZeroOne(suffix, row) => {
+                            SuffixRow::ZeroOne(*suffix).accumulate(row, chunk, bits, value);
+                        }
+                        SuffixScan::General(suffix, row) => {
+                            SuffixRow::General(*suffix).accumulate(row, chunk, bits, value);
+                        }
                     }
                 }
             }
         }
     }
 
-    /// The table's reduced suffix sums, in `table.suffixes()` order.
     fn reduce(self) -> Vec<F> {
-        self.accumulators
-            .into_iter()
-            .map(|accumulator| accumulator.reduce())
-            .collect()
+        match self {
+            Self::Flat { accumulators, .. } => accumulators
+                .into_iter()
+                .map(|value| value.reduce())
+                .collect(),
+            Self::Compact(suffixes) => {
+                let mut sums = Vec::with_capacity(suffixes.len() * CHUNK_SIZE);
+                for suffix in suffixes {
+                    match suffix {
+                        SuffixScan::One(row) | SuffixScan::ZeroOne(_, row) => {
+                            sums.extend(row.into_iter().map(|value| value.reduce()));
+                        }
+                        SuffixScan::General(_, row) => {
+                            sums.extend(row.into_iter().map(|value| value.reduce()));
+                        }
+                    }
+                }
+                sums
+            }
+        }
     }
 }
 
@@ -1855,6 +1941,8 @@ mod tests {
             LookupTableKind::<RISCV_XLEN>::Or(Default::default()).index(),
             LookupTableKind::<RISCV_XLEN>::Xor(Default::default()).index(),
             LookupTableKind::<RISCV_XLEN>::VirtualXORROTW7(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::UnsignedLessThan(Default::default()).index(),
+            LookupTableKind::<RISCV_XLEN>::Equal(Default::default()).index(),
         ];
         let mut state = seed;
         (0..1usize << log_t)
@@ -1972,6 +2060,24 @@ mod tests {
         exceptional: Option<ExceptionalEq>,
         prefix: Option<(usize, bool)>,
     ) {
+        assert_parity_prefix_field::<Fr>(log_t, num_virtual_ra_polys, seed, exceptional, prefix);
+        #[cfg(feature = "akita")]
+        assert_parity_prefix_field::<Prime128OffsetA7F7>(
+            log_t,
+            num_virtual_ra_polys,
+            seed,
+            exceptional,
+            prefix,
+        );
+    }
+
+    fn assert_parity_prefix_field<F: JoltField>(
+        log_t: usize,
+        num_virtual_ra_polys: usize,
+        seed: u64,
+        exceptional: Option<ExceptionalEq>,
+        prefix: Option<(usize, bool)>,
+    ) {
         let dimensions = InstructionReadRafDimensions::new(
             log_t,
             2 * RISCV_XLEN,
@@ -1989,8 +2095,12 @@ mod tests {
                 *row = tail;
             }
         }
-        let r_reduction: Vec<Fr> = exceptional.map_or_else(
-            || (0..log_t).map(|i| fr(1000 + 37 * i as u64)).collect(),
+        let r_reduction: Vec<F> = exceptional.map_or_else(
+            || {
+                (0..log_t)
+                    .map(|i| F::from_u64(1000 + 37 * i as u64))
+                    .collect()
+            },
             |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),
         );
         assert_parity_rows(dimensions, &r_reduction, rows);
