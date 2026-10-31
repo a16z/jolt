@@ -30,7 +30,7 @@ def fixture():
                                'ref': 'refs/heads/main', 'pr_number': 7, 'request_run_id': 99}}
     builds = [{'leg': leg, 'revision': revision, 'harness_revision': 'd' * 40, 'status': 'complete',
                'harness_files': {'profile.rs': '0' * 64}, 'rustflags': '-C target-cpu=znver4',
-               'target_cpu': 'znver4', 'profile': 'release',
+               'target_cpu': 'znver4', 'profile': 'release', 'guest_builder_profile': 'ci',
                'guests': {'fibonacci': {'inputs': {'1': {'sha256': '1' * 64}}}}}
               for leg, revision in [('base', 'a' * 40), ('head', 'c' * 40)]]
     samples = []

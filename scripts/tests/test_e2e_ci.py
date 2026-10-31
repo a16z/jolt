@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -21,6 +22,18 @@ finally:
 
 
 class E2eCiTests(unittest.TestCase):
+    def test_workflow_timeout_matches_configured_tiers(self):
+        workflow = (DIRECTORY.parents[1] / '.github/workflows/e2e-bench.yml').read_text()
+        measure = re.search(r'(?ms)^  measure:\n(.*?)(?=^  [^ ]|\Z)', workflow).group(1)
+        timeout = re.search(
+            r"^    timeout-minutes: \$\{\{ needs\.plan\.outputs\.tier == '([^']+)' && (\d+) \|\| (\d+) \}\}$",
+            measure, re.M)
+        self.assertIsNotNone(timeout)
+        self.assertIn('      tier: ${{ steps.plan.outputs.tier }}', workflow)
+        tiers = json.loads(ci.bench.DEFAULT_CONFIG.read_text())['tiers']
+        actual = {tier: int(timeout[2] if tier == timeout[1] else timeout[3]) for tier in tiers}
+        self.assertEqual(actual, {'pr': 10, 'main': 180, 'nightly': 180})
+
     def test_fork_request_is_rejected_before_checkout_or_compilation(self):
         request = {'name': ci.REQUEST_WORKFLOW, 'path': ci.REQUEST_FILE,
                    'event': 'pull_request', 'conclusion': 'success',
@@ -76,6 +89,7 @@ class E2eCiTests(unittest.TestCase):
             args = argparse.Namespace(plan=plan_path, out=root / 'artifact')
             def suite(options):
                 self.assertEqual(options.context['provenance'], provenance)
+                self.assertEqual(options.profile, 'release')
                 ci.bench.write_json(options.out / 'benchmark-results.json',
                                     {'fixture_revision': options.head_revision})
                 return {'status': 'complete'}
