@@ -3,6 +3,18 @@
 //! transcript or PCS choice; [`MemoryBudget::check_known_eager`] only rejects
 //! a request below the optimized prover's known eager reservation, after
 //! tracing and before proving starts.
+//!
+//! The SDK and profile callers first pass its bytes and their configured trace
+//! domain to `TracerBackend::limited_for_row_domain`. That routing proxy is
+//! not a peak: a covering budget keeps the original trace even when its
+//! unpriced requests exceed the budget, and a run much shorter than its domain
+//! can take the limited serial trace although the original would fit. The
+//! limited trace rejects parallel tracing (`TRACER_PARALLEL`) and chunked
+//! execution (chunk replay stays unchecked), fails before setup when the
+//! budget cannot hold its setup requests (over 1 GiB by default), and keeps
+//! its row reserve in the trace, which [`TraceData::heap_bytes`] counts here;
+//! budgets below that floor never reach this check. The SDK's
+//! `compute_advice_tape` trace is not budgeted.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::JoltField;
@@ -107,9 +119,9 @@ macro_rules! batch_peak_bytes {
     };
 }
 
-/// An explicit memory request, in bytes, for one optimized proof. Only
-/// [`MemoryBudget::check_known_eager`] reads it; it does not cap process
-/// memory.
+/// An explicit memory request, in bytes, for one optimized proof. Callers
+/// route the trace by its bytes and check it with
+/// [`MemoryBudget::check_known_eager`]; it does not cap process memory.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemoryBudget {
     bytes: usize,
