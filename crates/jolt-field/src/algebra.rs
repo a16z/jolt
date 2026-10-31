@@ -499,6 +499,9 @@ pub trait Accumulator: Default + Copy + Send + Sync {
 }
 
 pub trait WithAccumulator: Ring {
+    /// Accumulator for sums of field elements without scalar products.
+    type SumAccumulator: Accumulator<Element = Self>;
+
     /// General field-product accumulator.
     type Accumulator: Accumulator<Element = Self>;
 

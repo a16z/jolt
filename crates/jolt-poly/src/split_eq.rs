@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -53,10 +53,25 @@ impl<F: JoltField> TensorEqTable<F> {
         &self.e_in
     }
 
-    pub fn evaluate_index(&self, index: usize) -> F {
+    fn factors_at_index(&self, index: usize) -> (F, F) {
         let x_out = index >> self.in_bits;
         let x_in = index & ((1usize << self.in_bits) - 1);
-        self.e_out[x_out] * self.e_in[x_in]
+        (self.e_out[x_out], self.e_in[x_in])
+    }
+
+    pub fn evaluate_index(&self, index: usize) -> F {
+        let (outer, inner) = self.factors_at_index(index);
+        outer * inner
+    }
+
+    /// Sum the tables at one Boolean index with a single accumulator reduction.
+    pub fn sum_at_index(tables: &[Self], index: usize) -> F {
+        let mut sum = F::Accumulator::default();
+        for table in tables {
+            let (outer, inner) = table.factors_at_index(index);
+            sum.fmadd(outer, inner);
+        }
+        sum.reduce()
     }
 
     pub fn evaluate_slices(&self, values: &[&[F]]) -> Vec<F> {

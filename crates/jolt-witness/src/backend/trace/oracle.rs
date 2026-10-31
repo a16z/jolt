@@ -82,15 +82,12 @@ impl JoltVmWitnessMetadata<'_> {
                         Compact,
                     ))
                 }
-                C::Reserved4(retired) => match retired {},
+                C::Reserved4(retired) | C::Reserved9(retired) | C::Reserved10(retired) => {
+                    match retired {}
+                }
                 C::ProgramBytecode | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::BalancedIncDigit(index) => {
-                    require_index(index, self.balanced_inc_digit_count()?)?;
-                    Ok(Shape::new(self.one_hot_log_rows()?, OneHot))
-                }
-                C::BalancedIncCarry => Ok(Shape::new(self.one_hot_log_rows()?, OneHot)),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => Ok(Shape::new(self.ram_read_write_log_rows()?, Dense)),
@@ -145,17 +142,6 @@ impl JoltVmWitnessMetadata<'_> {
             },
         }
     }
-
-    fn balanced_inc_digit_count(&self) -> Result<usize, WitnessError> {
-        jolt_claims::protocols::jolt::lattice::BalancedIncChunking::new(
-            self.config.one_hot.committed_chunk_bits(),
-        )
-        .map(|chunking| chunking.chunk_count())
-        .map_err(|error| WitnessError::InvalidDimensions {
-            label: JOLT_VM_LABEL,
-            reason: error.to_string(),
-        })
-    }
 }
 
 impl<F: JoltField> JoltWitnessOracle<F> for TraceBackend {
@@ -191,21 +177,12 @@ impl<F: JoltField> JoltWitnessOracle<F> for TraceBackend {
                 ),
                 C::TrustedAdvice => self.materialize_trusted_advice(),
                 C::UntrustedAdvice => self.materialize_untrusted_advice(),
-                C::Reserved4(retired) => match retired {},
+                C::Reserved4(retired) | C::Reserved9(retired) | C::Reserved10(retired) => {
+                    match retired {}
+                }
                 C::ProgramBytecode | C::ProgramImageInit => {
                     Err(not_served(id, COMMITTED_PROGRAM_REASON))
                 }
-                C::BalancedIncDigit(index) => self.materialize_balanced_inc_one_hot(
-                    crate::witnesses::BalancedIncColumn::Digit {
-                        width: self.config.one_hot.committed_chunk_bits(),
-                        index,
-                    },
-                ),
-                C::BalancedIncCarry => self.materialize_balanced_inc_one_hot(
-                    crate::witnesses::BalancedIncColumn::Carry {
-                        width: self.config.one_hot.committed_chunk_bits(),
-                    },
-                ),
             },
             JoltPolynomialId::Virtual(virtual_id) => match virtual_id {
                 V::RamVal | V::RamRa => self.materialize_ram_read_write_virtual(virtual_id),
