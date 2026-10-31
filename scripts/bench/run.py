@@ -75,7 +75,7 @@ def read_optional(path):
 def build_environment():
     names = ('PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'LC_ALL',
              'CARGO_HOME', 'RUSTUP_HOME', 'RUSTUP_TOOLCHAIN', 'RUSTC_WRAPPER', 'RUSTC_BOOTSTRAP',
-             'RUNNER_TRACKING_ID')
+             'CARGO_BUILD_JOBS', 'RUNNER_TRACKING_ID')
     return {name: os.environ[name] for name in names if name in os.environ}
 
 
@@ -137,9 +137,17 @@ def check_target(manifest, host):
         raise ValueError(f'target lacks compiled CPU features: {sorted(missing)}')
 
 
+def cache_root():
+    path = (Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'jolt-bench').resolve()
+    workspace = Path(os.environ.get('GITHUB_WORKSPACE', ROOT)).resolve()
+    if path.is_relative_to(workspace) or path.is_relative_to(ROOT.resolve()):
+        raise ValueError('runner cache must be outside the action workspace and harness checkout')
+    return path
+
+
 @contextlib.contextmanager
 def host_lock():
-    path = Path(os.environ.get('XDG_CACHE_HOME', Path.home() / '.cache')) / 'jolt-bench/host.lock'
+    path = cache_root() / 'host.lock'
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -239,6 +247,7 @@ def bundle_file(path, out):
 
 
 def build(args):
+    started, begin = utc_now(), time.perf_counter()
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
     if (out / 'manifest.json').exists():
@@ -250,10 +259,8 @@ def build(args):
     if hashlib.sha256(runner_source).hexdigest() != sha256(__file__):
         raise ValueError('build must use the committed runner at --harness-revision')
     toolchain = capture(['rustc', '--version', '--verbose'])
-    source = ROOT / 'target/e2e-builds' / args.target_cpu / args.profile / 'source'
+    source = cache_root() / 'builds' / args.target_cpu / args.profile / 'source'
     existed = (source / 'target').exists()
-    started = utc_now()
-    begin = time.perf_counter()
     manifest = {'schema_version': 1, 'revision': revision, 'harness_revision': harness,
                 'toolchain': toolchain, 'target_cpu': args.target_cpu, 'profile': args.profile,
                 'rustflags': f'-C target-cpu={args.target_cpu}', 'host': host_snapshot(),
@@ -261,16 +268,30 @@ def build(args):
                 'status': 'incomplete', 'reason': None, 'binaries': {}, 'guests': {},
                 'cache': {'cargo_target_preexisting': existed,
                           'rustc_wrapper': os.environ.get('RUSTC_WRAPPER'),
+                          'cargo_build_jobs': os.environ.get('CARGO_BUILD_JOBS'),
                           'hit_status': 'not inferred from target existence'}}
     write_json(out / 'manifest.json', manifest)
-    env = dict(build_environment(), RUSTFLAGS=manifest['rustflags'], CARGO_BUILD_JOBS='16')
+    env = dict(build_environment(), RUSTFLAGS=manifest['rustflags'])
+    config = parse_json(Path(args.config).read_text())
+    inputs = {}
+    tiers = ([config['tiers'][args.tier]] if getattr(args, 'tier', None)
+             else config['tiers'].values())
+    for tier in tiers:
+        for case in tier['cases']:
+            if (not case.get('unsupported_reason') and
+                    (not getattr(args, 'workload', []) or case['workload'] in args.workload) and
+                    (not getattr(args, 'case', []) or case['id'] in args.case)):
+                inputs.setdefault(case['workload'], set()).add(case['input']['parameters']['operations'])
+    required_inputs = {name: sorted(counts) for name, counts in inputs.items()}
+    host_id, reused, cache_misses = manifest['host']['id'], False, []
     try:
         with (out / 'build.log').open('w') as log:
             if not source.exists():
                 source.parent.mkdir(parents=True, exist_ok=True)
-                logged(['git', 'clone', '--shared', '--no-checkout', '--no-tags', str(ROOT), str(source)], ROOT, env, log)
-            if not (source / '.git').is_dir():
-                raise ValueError('build source is not a real private Git checkout')
+                logged(['git', 'clone', '--no-local', '--no-checkout', '--no-tags', str(ROOT), str(source)], ROOT, env, log)
+            if not (source / '.git').is_dir() or (source / '.git/objects/info/alternates').exists():
+                raise ValueError('build source must be an independent private Git checkout')
+            logged(['git', 'fetch', '--no-tags', str(ROOT), revision], source, env, log)
             logged(['git', 'checkout', '--force', '--detach', revision], source, env, log)
             logged(['git', 'clean', '-ffdx', '-e', '/target/'], source, env, log)
             paths = capture(['git', 'ls-tree', '-r', '--name-only', harness, '--', *HARNESS_PATHS]).splitlines()
@@ -299,26 +320,50 @@ def build(args):
             manifest['harness_files'] = {str(p.relative_to(source)): sha256(p)
                 for prefix in HARNESS_PATHS for p in ([source / prefix] if (source / prefix).is_file()
                                                      else sorted((source / prefix).rglob('*'))) if p.is_file()}
+            manifest['suite_config_sha256'] = sha256(args.config)
+            manifest['runner'] = {'path': 'scripts/bench/run.py',
+                                  'sha256': hashlib.sha256(runner_source).hexdigest()}
+            identity = {key: manifest[key] for key in (
+                'revision', 'harness_revision', 'toolchain', 'cargo_version', 'target_cpu',
+                'target_triple', 'target_features', 'profile', 'rustflags', 'source_cargo_lock_sha256',
+                'cargo_lock_sha256', 'harness_files', 'suite_config_sha256', 'runner')}
+            bucket = cache_root() / 'bundles' / hashlib.sha256(
+                json.dumps(identity, sort_keys=True).encode()).hexdigest()
+            for cached_path in sorted(bucket.glob('*/manifest.json')):
+                try:
+                    _, cached = load_bundle(cached_path)
+                    if cached['status'] != 'complete' or any(cached[key] != value for key, value in identity.items()):
+                        raise ValueError('cached build identity or completion differs')
+                    for name, counts in required_inputs.items():
+                        if not set(map(str, counts)).issubset(cached['guests'].get(name, {}).get('inputs', {})):
+                            raise ValueError(f'cached bundle lacks required inputs for {name}: {counts}')
+                    entries = [cached['binaries'][pcs] for pcs in ('dory', 'akita')]
+                    entries += [cached['runner'], *cached['akita_schedules']]
+                    for guest in cached['guests'].values():
+                        entries += [guest['elf'], *guest['inputs'].values()]
+                    for entry in entries:
+                        checked_file(cached_path, entry)
+                    checked_file(cached_path, {'path': 'scripts/bench/suites.json',
+                                              'sha256': identity['suite_config_sha256']})
+                except (OSError, ValueError, KeyError, TypeError) as error:
+                    cache_misses.append({'manifest': str(cached_path), 'reason': str(error)})
+                    continue
+                shutil.copytree(cached_path.parent, out, dirs_exist_ok=True,
+                                ignore=shutil.ignore_patterns('manifest.json', 'preparation.json', 'build.log'))
+                shutil.copy2(cached_path.parent / 'build.log', out / 'construction.log')
+                manifest, reused = cached, True
+                return manifest
             for pcs, features in [('dory', 'profiling'), ('akita', 'profiling,akita')]:
                 packages = ['-p', 'jolt-prover', '--bin', 'jolt-prover']
                 if pcs == 'dory':
                     packages += ['-p', 'jolt', '--bin', 'jolt']
                 logged(['cargo', 'build', '-q', '--message-format=short', '--locked',
-                        '--target', triple, '--profile', args.profile, *packages,
+                        '--target-dir', str(source / 'target'), '--target', triple,
+                        '--profile', args.profile, *packages,
                         '--features', features], source, env, log)
                 binary = out / f'jolt-prover-{pcs}'
                 shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
                 manifest['binaries'][pcs] = bundle_file(binary, out)
-            config = parse_json(Path(args.config).read_text())
-            inputs = {}
-            tiers = ([config['tiers'][args.tier]] if getattr(args, 'tier', None)
-                     else config['tiers'].values())
-            for tier in tiers:
-                for case in tier['cases']:
-                    if (not case.get('unsupported_reason') and
-                            (not getattr(args, 'workload', []) or case['workload'] in args.workload) and
-                            (not getattr(args, 'case', []) or case['id'] in args.case)):
-                        inputs.setdefault(case['workload'], set()).add(case['input']['parameters']['operations'])
             guest_builder = source / 'target' / triple / args.profile / 'jolt'
             manifest['guest_builder_sha256'] = sha256(guest_builder)
             guest_env = dict(env, JOLT_PATH=str(guest_builder))
@@ -339,7 +384,6 @@ def build(args):
                 destination = schedules / path.name
                 shutil.copy2(path, destination)
                 manifest['akita_schedules'].append(bundle_file(destination, out))
-            manifest['suite_config_sha256'] = sha256(args.config)
             runner = out / 'scripts/bench/run.py'
             runner.parent.mkdir(parents=True)
             runner.write_bytes(runner_source)
@@ -349,8 +393,27 @@ def build(args):
     except (OSError, ValueError, RuntimeError, subprocess.CalledProcessError) as error:
         manifest['status'], manifest['reason'] = 'failed', str(error)
     finally:
-        manifest['finished_at'], manifest['build_s'] = utc_now(), time.perf_counter() - begin
+        if not reused:
+            manifest['finished_at'], manifest['build_s'] = utc_now(), time.perf_counter() - begin
         write_json(out / 'manifest.json', manifest)
+        prepared = False
+        try:
+            if manifest['status'] == 'complete' and not reused:
+                cached_dir = bucket / hashlib.sha256(json.dumps(required_inputs, sort_keys=True).encode()).hexdigest()
+                if cached_dir.exists():
+                    shutil.rmtree(cached_dir)
+                shutil.copytree(out, cached_dir, ignore=shutil.ignore_patterns('manifest.json', 'preparation.json'))
+                write_json(cached_dir / 'manifest.json', manifest)
+            prepared = True
+        finally:
+            write_json(out / 'preparation.json', {
+                'mode': 'reused' if reused else 'built', 'host_id': host_id,
+                'status': manifest['status'] if prepared else 'incomplete',
+                'started_at': started, 'finished_at': utc_now(), 'elapsed_s': time.perf_counter() - begin,
+                'manifest_sha256': sha256(out / 'manifest.json'), 'required_inputs': required_inputs,
+                'reused_from': str(cached_path) if reused else None,
+                'cache_misses': cache_misses,
+            })
     return manifest
 
 
@@ -660,11 +723,12 @@ def suite(args):
             build_args.revision, build_args.out = revision, out / 'builds' / leg
             build(build_args)
             manifests[leg] = build_args.out / 'manifest.json'
+    preparation_s = time.perf_counter() - begin
     run_args = argparse.Namespace(**vars(args), base=manifests.get('base'), head=manifests['head'])
     result = run(run_args)
     result['started_at'] = started
     result['wall_time'] = {
-        'build_s': sum(item['build_s'] for item in result['builds']),
+        'build_s': preparation_s,
         'benchmark_s': result['wall_time']['benchmark_s'],
         'total_s': time.perf_counter() - begin,
         'scope': 'sequential-build-preparation-through-results-on-this-host',
