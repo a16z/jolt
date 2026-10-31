@@ -132,7 +132,18 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     ) where
         Self: Sized,
     {
-        gather_paired_columns(self, tables, row, out, output_row, 0);
+        self.visit_paired_values(tables, row, |column, value| out[column][output_row] = value);
+    }
+
+    fn visit_paired_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        visit: impl FnMut(usize, F),
+    ) where
+        Self: Sized,
+    {
+        visit_paired_columns(self, tables, row, visit, 0);
     }
 
     fn gather_pairs<F: JoltField>(
@@ -185,7 +196,14 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
     /// Sources without a constant-suffix guarantee retain the dense path.
     Dense(Vec<Polynomial<F>>),
     /// Explicit nonconstant evaluations followed by one constant per column.
-    Prefix { values: Vec<Vec<F>>, tail: Vec<F> },
+    Prefix {
+        values: Vec<Vec<F>>,
+        tail: Vec<F>,
+    },
+    Rows {
+        values: Vec<F>,
+        tail: Vec<F>,
+    },
 }
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
@@ -231,6 +249,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             } => tables.len() / factors,
             Self::Dense(polys) => polys.len(),
             Self::Prefix { values, .. } => values.len(),
+            Self::Rows { tail, .. } => tail.len(),
         }
     }
 
@@ -242,12 +261,13 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             } => prefix_len.div_ceil(*width),
             Self::Dense(polys) => polys.first().map_or(0, Polynomial::len),
             Self::Prefix { values, .. } => values.first().map_or(0, Vec::len),
+            Self::Rows { values, tail } => values.len() / tail.len(),
         }
     }
 
     pub(crate) fn tail_values(&self) -> &[F] {
         match self {
-            Self::Lazy { tail, .. } | Self::Prefix { tail, .. } => tail,
+            Self::Lazy { tail, .. } | Self::Prefix { tail, .. } | Self::Rows { tail, .. } => tail,
             Self::Dense(_) => &[],
         }
     }
@@ -267,6 +287,9 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             } => gather_poly(tables, *factors, *width, source, i, j),
             Self::Dense(polys) => polys[i].evals()[j],
             Self::Prefix { values, tail, .. } => values[i].get(j).copied().unwrap_or(tail[i]),
+            Self::Rows { values, tail } => {
+                values.get(j * tail.len() + i).copied().unwrap_or(tail[i])
+            }
         }
     }
 
@@ -310,6 +333,20 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 for (out, poly) in out.iter_mut().zip(polys) {
                     let evals = poly.evals();
                     *out = (evals[2 * row], evals[2 * row + 1]);
+                }
+            }
+            Self::Rows { values, tail } => {
+                let columns = tail.len();
+                if 2 * row + 1 < values.len() / columns {
+                    let lo = &values[2 * row * columns..(2 * row + 1) * columns];
+                    let hi = &values[(2 * row + 1) * columns..(2 * row + 2) * columns];
+                    for ((out, &lo), &hi) in out.iter_mut().zip(lo).zip(hi) {
+                        *out = (lo, hi);
+                    }
+                } else {
+                    for (i, out) in out.iter_mut().enumerate() {
+                        *out = (self.value(i, 2 * row), self.value(i, 2 * row + 1));
+                    }
                 }
             }
             Self::Prefix { values, tail, .. } => {
@@ -380,7 +417,15 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                             None,
                         )
                     };
-                    let dense = if prefix_len < source.cycles() {
+                    let materialized_rows = prefix_len.div_ceil(next_width);
+                    let dense = if tables.len() >= 16
+                        && can_pair_materialize(&tables, factors, branches, materialized_rows, bind)
+                    {
+                        Self::Rows {
+                            values: materialize_paired_rows(&tables, &source, materialized_rows),
+                            tail,
+                        }
+                    } else if prefix_len < source.cycles() {
                         Self::Prefix {
                             values: materialize_values(
                                 &tables,
@@ -429,7 +474,71 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 }
                 Self::Prefix { values, tail }
             }
+            Self::Rows { mut values, tail } => {
+                Self::bind_rows_in_place(&mut values, &tail, challenge);
+                Self::Rows { values, tail }
+            }
         };
+    }
+
+    fn bind_rows_in_place(values: &mut Vec<F>, tail: &[F], challenge: F) {
+        let columns = tail.len();
+        let rows = values.len() / columns;
+        if rows == 0 {
+            return;
+        }
+        for i in 0..columns {
+            let lo = values[i];
+            let hi = values.get(columns + i).copied().unwrap_or(tail[i]);
+            values[i] = challenge.mul_add(hi - lo, lo);
+        }
+        let mut start = 2;
+        while start < rows {
+            let count = (rows - start).min(start);
+            let (head, rest) = values.split_at_mut(start * columns);
+            let source = &rest[..count * columns];
+            let destination =
+                &mut head[start / 2 * columns..(start / 2 + count.div_ceil(2)) * columns];
+            let bind = |(out, pair): (&mut [F], &[F])| {
+                let (lo, hi) = pair.split_at(columns);
+                for ((out, &lo), &hi) in out.iter_mut().zip(lo).zip(hi) {
+                    *out = challenge.mul_add(hi - lo, lo);
+                }
+            };
+            let complete = &mut destination[..count / 2 * columns];
+            #[cfg(feature = "parallel")]
+            {
+                let min_elements: usize = if F::NUM_BYTES <= 16 { 1 << 14 } else { 1 << 10 };
+                if complete.len() >= min_elements {
+                    complete
+                        .par_chunks_exact_mut(columns)
+                        .zip(source.par_chunks_exact(2 * columns))
+                        .with_min_len(min_elements.div_ceil(columns))
+                        .for_each(bind);
+                } else {
+                    complete
+                        .chunks_exact_mut(columns)
+                        .zip(source.chunks_exact(2 * columns))
+                        .for_each(bind);
+                }
+            }
+            #[cfg(not(feature = "parallel"))]
+            complete
+                .chunks_exact_mut(columns)
+                .zip(source.chunks_exact(2 * columns))
+                .for_each(bind);
+            if count % 2 != 0 {
+                for i in 0..columns {
+                    let lo = source[(count - 1) * columns + i];
+                    destination[count / 2 * columns + i] = challenge.mul_add(tail[i] - lo, lo);
+                }
+            }
+            start *= 2;
+        }
+        values.truncate(rows.div_ceil(2) * columns);
+        if values.capacity() >= 8 * values.len().max(1) {
+            values.shrink_to_fit();
+        }
     }
 }
 
@@ -616,20 +725,7 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
         }
     }
 
-    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-    let paired_bytes = tables
-        .len()
-        .saturating_mul(PAIRED_MATERIALIZE_BRANCHES / 2 * radix * radix * std::mem::size_of::<F>());
-    if bind.is_none()
-        && !tables.is_empty()
-        && factors == 1
-        && branches == PAIRED_MATERIALIZE_BRANCHES
-        && len >= PAIRED_MATERIALIZE_MIN_ROWS
-        && paired_bytes <= PAIRED_MATERIALIZE_MAX_BYTES
-        && tables
-            .iter()
-            .all(|table| table.len() == PAIRED_MATERIALIZE_BRANCHES * PAIRED_MATERIALIZE_ADDRESSES)
-    {
+    if can_pair_materialize(tables, factors, branches, len, bind) {
         return materialize_paired_values(tables, source, len);
     }
     let table_bytes = tables.iter().map(Vec::len).sum::<usize>() * std::mem::size_of::<F>();
@@ -666,16 +762,15 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
 }
 
 #[inline]
-pub(super) fn gather_paired_columns<F: JoltField, S: ChunkIndexSource>(
+pub(super) fn visit_paired_columns<F: JoltField, S: ChunkIndexSource>(
     source: &S,
     tables: &[Vec<F>],
     row: usize,
-    out: &mut [&mut [F]],
-    output_row: usize,
+    mut visit: impl FnMut(usize, F),
     first_column: usize,
 ) {
     let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-    for (column, (values, table)) in out.iter_mut().zip(tables).enumerate() {
+    for (column, table) in tables.iter().enumerate() {
         let mut sum = F::Accumulator::default();
         for pair in 0..PAIRED_MATERIALIZE_BRANCHES / 2 {
             let lo = source
@@ -692,8 +787,30 @@ pub(super) fn gather_paired_columns<F: JoltField, S: ChunkIndexSource>(
                 .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
             sum.add(table[pair * radix * radix + lo * radix + hi]);
         }
-        values[output_row] = sum.reduce();
+        visit(first_column + column, sum.reduce());
     }
+}
+
+fn can_pair_materialize<F: JoltField>(
+    tables: &[Vec<F>],
+    factors: usize,
+    branches: usize,
+    len: usize,
+    bind: Option<F>,
+) -> bool {
+    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+    let paired_bytes = tables
+        .len()
+        .saturating_mul(PAIRED_MATERIALIZE_BRANCHES / 2 * radix * radix * std::mem::size_of::<F>());
+    bind.is_none()
+        && !tables.is_empty()
+        && factors == 1
+        && branches == PAIRED_MATERIALIZE_BRANCHES
+        && len >= PAIRED_MATERIALIZE_MIN_ROWS
+        && paired_bytes <= PAIRED_MATERIALIZE_MAX_BYTES
+        && tables
+            .iter()
+            .all(|table| table.len() == PAIRED_MATERIALIZE_BRANCHES * PAIRED_MATERIALIZE_ADDRESSES)
 }
 
 // The final radix digit represents a cold source row, whose contribution is zero.
@@ -703,33 +820,7 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
     source: &S,
     len: usize,
 ) -> Vec<Vec<F>> {
-    let width = PAIRED_MATERIALIZE_BRANCHES;
-    let addresses = PAIRED_MATERIALIZE_ADDRESSES;
-    let radix = addresses + 1;
-    let paired: Vec<Vec<F>> = tables
-        .iter()
-        .map(|table| {
-            let mut values = Vec::with_capacity(width / 2 * radix * radix);
-            for pair in 0..width / 2 {
-                for lo in 0..radix {
-                    for hi in 0..radix {
-                        let a = if lo == addresses {
-                            F::zero()
-                        } else {
-                            table[2 * pair * addresses + lo]
-                        };
-                        let b = if hi == addresses {
-                            F::zero()
-                        } else {
-                            table[(2 * pair + 1) * addresses + hi]
-                        };
-                        values.push(a + b);
-                    }
-                }
-            }
-            values
-        })
-        .collect();
+    let paired = paired_branch_tables(tables);
     #[cfg(feature = "parallel")]
     let mut values: Vec<Vec<F>> = (0..tables.len())
         .into_par_iter()
@@ -768,6 +859,64 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
     values
 }
 
+fn paired_branch_tables<F: JoltField>(tables: &[Vec<F>]) -> Vec<Vec<F>> {
+    let width = PAIRED_MATERIALIZE_BRANCHES;
+    let addresses = PAIRED_MATERIALIZE_ADDRESSES;
+    let radix = addresses + 1;
+    tables
+        .iter()
+        .map(|table| {
+            let mut values = Vec::with_capacity(width / 2 * radix * radix);
+            for pair in 0..width / 2 {
+                for lo in 0..radix {
+                    for hi in 0..radix {
+                        let a = if lo == addresses {
+                            F::zero()
+                        } else {
+                            table[2 * pair * addresses + lo]
+                        };
+                        let b = if hi == addresses {
+                            F::zero()
+                        } else {
+                            table[(2 * pair + 1) * addresses + hi]
+                        };
+                        values.push(a + b);
+                    }
+                }
+            }
+            values
+        })
+        .collect()
+}
+
+fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    source: &S,
+    len: usize,
+) -> Vec<F> {
+    let paired = paired_branch_tables(tables);
+    let columns = tables.len();
+    #[cfg(feature = "parallel")]
+    let mut values: Vec<F> = (0..len * columns)
+        .into_par_iter()
+        .map(|_| F::zero())
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let mut values = vec![F::zero(); len * columns];
+    let fill = |(row, out): (usize, &mut [F])| {
+        source.visit_paired_values(&paired, row, |column, value| out[column] = value);
+    };
+    #[cfg(feature = "parallel")]
+    values
+        .par_chunks_mut(columns)
+        .enumerate()
+        .with_min_len(ROW_MAJOR_FILL_SPLIT_ROWS)
+        .for_each(fill);
+    #[cfg(not(feature = "parallel"))]
+    values.chunks_mut(columns).enumerate().for_each(fill);
+    values
+}
+
 #[cfg(test)]
 mod prefix_tests {
     use super::{ChunkIndexSource, LazyFoldedRa};
@@ -778,10 +927,11 @@ mod prefix_tests {
     struct Source {
         cycles: usize,
         prefix: usize,
+        columns: usize,
     }
     impl ChunkIndexSource for Source {
         fn num_columns(&self) -> usize {
-            2
+            self.columns
         }
         fn cycles(&self) -> usize {
             self.cycles
@@ -806,22 +956,29 @@ mod prefix_tests {
     fn check<F: JoltField>() {
         let small = [0, 1, 2, 15, 16, 17, 63, 64, 65, 111, 127, 128]
             .into_iter()
-            .map(|prefix| (128usize, prefix));
-        for (cycles, prefix) in small.chain([
-            (32768, 32761),
-            (32768, 32768),
-            (65536, 65529),
-            (65536, 65536),
+            .map(|prefix| (128usize, prefix, 2));
+        for (cycles, prefix, columns) in small.chain([
+            (32768, 32761, 2),
+            (32768, 32768, 2),
+            (65536, 65529, 2),
+            (65536, 65536, 2),
+            (131_072, 131_041, 3),
+            (131_072, 131_041, 16),
+            (131_072, 131_072, 16),
         ]) {
-            let source = Source { cycles, prefix };
-            let tables: Vec<Vec<F>> = (0..2)
+            let source = Source {
+                cycles,
+                prefix,
+                columns,
+            };
+            let tables: Vec<Vec<F>> = (0..columns)
                 .map(|i| {
                     (0..16)
                         .map(|j| F::from_u64((5 + i * 13 + j) as u64))
                         .collect()
                 })
                 .collect();
-            let mut dense: Vec<Vec<F>> = (0..2)
+            let mut dense: Vec<Vec<F>> = (0..columns)
                 .map(|i| {
                     (0..cycles)
                         .map(|j| source.index(i, j).map_or(F::zero(), |k| tables[i][k]))

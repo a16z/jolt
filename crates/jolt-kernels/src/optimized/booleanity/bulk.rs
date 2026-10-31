@@ -4,8 +4,8 @@
 use super::{BooleanityChunks, ChunkIndexSource};
 use jolt_field::JoltField;
 
-use crate::optimized::instruction_read_raf::gather_paired_four_bit_values;
-use crate::optimized::lazy_ra::{gather_paired_columns, PAIRED_MATERIALIZE_BRANCHES};
+use crate::optimized::instruction_read_raf::visit_paired_four_bit_values;
+use crate::optimized::lazy_ra::{visit_paired_columns, PAIRED_MATERIALIZE_BRANCHES};
 
 impl ChunkIndexSource for BooleanityChunks {
     fn constant_suffix_start(&self) -> usize {
@@ -75,12 +75,11 @@ impl ChunkIndexSource for BooleanityChunks {
         }
     }
 
-    fn gather_paired_values<F: JoltField>(
+    fn visit_paired_values<F: JoltField>(
         &self,
         tables: &[Vec<F>],
         row: usize,
-        out: &mut [&mut [F]],
-        output_row: usize,
+        mut visit: impl FnMut(usize, F),
     ) {
         let instruction = if self.chunk_bits == 4 {
             self.instruction_chunks
@@ -88,21 +87,13 @@ impl ChunkIndexSource for BooleanityChunks {
             0
         };
         if instruction != 0 {
-            gather_paired_four_bit_values(
+            visit_paired_four_bit_values(
                 |branch| self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index(),
                 &tables[..instruction],
-                &mut out[..instruction],
-                output_row,
+                &mut visit,
             );
         }
-        gather_paired_columns(
-            self,
-            &tables[instruction..],
-            row,
-            &mut out[instruction..],
-            output_row,
-            instruction,
-        );
+        visit_paired_columns(self, &tables[instruction..], row, visit, instruction);
     }
 
     #[inline]
