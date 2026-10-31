@@ -932,7 +932,8 @@ impl AkitaBatchProof {
         }
     }
 
-    pub(crate) fn selection(&self) -> OpeningScheduleSelection {
+    /// The exact admitted schedule row selected by this proof.
+    pub fn selection(&self) -> OpeningScheduleSelection {
         OpeningScheduleSelection {
             row_digest: ScheduleRowDigest::from_bytes(self.schedule_selection),
         }

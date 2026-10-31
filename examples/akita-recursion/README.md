@@ -5,8 +5,8 @@ power-of-two padded trace. A RISC-V recursion guest verifies both direct Akita
 proofs and publishes every deferred setup query and answer in its public output.
 The harness measures execution without proving the outer execution.
 
-Akita is pinned to `9531295760583b12b876a45a81ed40dabefa4b76` on
-`codex/external-setup-accumulation-checkpoint` in the workspace manifest and lockfile.
+Akita is pinned to `4bdb8ff3ff03397c5cfbf8f5221cf105cda21e74` on
+`codex/recursive-verifier-optimizations` in the workspace manifest and lockfile.
 Regenerate inputs when that pin changes.
 The experiment generates one exact direct scalar catalog for the inner trace shape
 and adapts the grouped opening through Jolt's normal preprocessing. The supplied
@@ -110,3 +110,71 @@ with `AkitaProverSetup::with_inherited_setup`, and check the same collection usi
 `InheritedSetupClaims::accumulator` in the outer opening. Acceptance also requires
 an empty pending collection after outer verification. Setup answers remain advice
 until that discharge. This trace harness does not claim to perform that outer proof.
+
+
+## Replay the saved accumulated outer proof
+
+The saved fixture verifies two distinct committed SHA2-chain inner executions
+with padded traces of `2^26`. Its outer execution is 955,732,363 cycles, padded
+to `2^30`, with setup offloading, W8R4/K16 and eight active witness units.
+The external guest verifies that outer proof in Defer mode. It decodes A from
+the outer public output, consumes all twelve inherited claims through the
+existing batched Stage 3 and exports B from the eight direct folds. No separate
+copy of A is supplied. The guest image fixes the expected verifier and its
+seed-derived key and terminal material; advice contains only the proof bundle,
+output domain and candidate setup answers.
+
+Run from a checkout with the normal Jolt guest toolchain and CLI installed:
+
+```bash
+bash examples/akita-recursion/saved-outer-benchmark.sh
+```
+
+This uses the checked-in `fixtures/outer-2p30.bundle` and its expected output.
+It prepares the fixed verifier material, measures native Check/Defer with one
+resource preparation and two warmups plus eight measured iterations per mode,
+and counts the complete external guest without retaining a witness trace.
+Check must leave zero unresolved claims; Defer must consume the answer tape
+and export the count derived from the actual selected catalog row. Corrupted
+setup advice and altered public output are rejected. The runner refuses to
+replace an existing result directory.
+
+The completed optimization run reduced complete-guest verification from
+12,684,355,371 to **952,939,555 cycles** (92.49%, or 13.31x fewer cycles), moving
+its padded trace from `2^34` to `2^30`. That measured build spent 783,219,339
+cycles in Akita verification, 117,842,123 in the remaining Jolt verification,
+and 51,878,093 in transport, output and cleanup. A fresh replay from the
+published source measured **952,932,363 cycles**: 783,372,767 in Akita,
+117,692,939 in other Jolt verification and 51,866,657 in transport, output
+and cleanup. Native verification medians after shared preparation were
+88.594 ms in Check and 40.350 ms in Defer (two warmups and eight measurements
+per mode). The runner records fresh counts in `cycles.json`; source and
+compiler changes can affect exact counts.
+The Akita pin includes the complete `codex/recursive-verifier-optimizations`
+stack, so no local source patches are required.
+
+To generate a separate pair of committed CPU inner proofs, select direct
+setup checking by default or add `--offload`:
+
+```bash
+cargo run --profile ci -p jolt-akita-recursion --features recursion-host -- \
+  generate --trace-log 26 --offload --schedules crates/jolt-akita/schedules \
+  --output benchmark-runs/new-pair.bin
+cargo run --profile ci -p jolt-akita-recursion --features recursion-host -- \
+  rebind --pair benchmark-runs/new-pair.bin --setup-log 28 \
+  --output benchmark-runs/new-pair-domain28.bin
+cargo run --profile ci -p jolt-akita-external --features akita --bin outer-verifier-audit -- \
+  --prepare-pair benchmark-runs/new-pair-domain28.bin benchmark-runs/pair-material
+JOLT_AKITA_EXTERNAL_MATERIAL="$PWD/benchmark-runs/pair-material" \
+JOLT_FUNC_NAME=verify_advice jolt build -p jolt-akita-advice-guest \
+  --mode std --backtrace off --stack-size 33554432 --heap-size 1073741824 \
+  --memory-size 2147483648 -- --release --features guest
+```
+
+The `advice-guest` is the separate new outer layout with fixed verifier
+identity. Its output is A. An enclosing prover must read A from actual guest
+output, validate the full canonical statement and supply it through
+`InheritedSetupClaims::from_public_output`; the public output retains A.
+This separate layout does not regenerate or modify the saved outer fixture.
+The `external-guest` similarly exports B for an enclosing setup-offloaded
+opening. Final verification uses Check and requires no pending claims.

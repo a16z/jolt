@@ -1,0 +1,46 @@
+[package]
+name = "jolt-akita-external"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[features]
+akita = [
+  "jolt-akita-recursion/akita",
+  "dep:jolt-akita",
+  "dep:jolt-verifier",
+  "dep:jolt-transcript",
+  "dep:akita-types",
+]
+recursion-host = [
+  "akita",
+  "dep:jolt-host",
+  "dep:tracer",
+  "dep:tracing-subscriber",
+  "dep:tracing",
+]
+[dependencies]
+serde.workspace = true
+bincode.workspace = true
+postcard = { workspace = true, features = ["use-std"] }
+jolt-akita-recursion = { path = ".." }
+jolt-akita = { workspace = true, optional = true }
+jolt-verifier = { workspace = true, features = ["akita"], optional = true }
+jolt-transcript = { workspace = true, features = [
+  "transcript-blake2b",
+], optional = true }
+akita-types = { workspace = true, optional = true }
+anyhow.workspace = true
+serde_json.workspace = true
+jolt-field.workspace = true
+jolt-host = { workspace = true, optional = true }
+tracer = { workspace = true, features = ["std"], optional = true }
+tracing-subscriber = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+[[bin]]
+name = "outer-verifier-audit"
+path = "src/bin/outer-verifier-audit.rs"
+required-features = ["akita"]
+[[bin]]
+name = "outer-verifier-trace"
+path = "src/bin/outer-verifier-trace.rs"
+required-features = ["recursion-host"]

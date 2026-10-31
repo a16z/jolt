@@ -1068,6 +1068,29 @@ impl<const P: u128> Ring for Fp128<P> {
 }
 
 impl<const P: u128> Field for Fp128<P> {
+    /// Separate positive and negative wide sums, reducing once per bounded chunk.
+    #[inline]
+    fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
+    where
+        Self: 'a,
+    {
+        use crate::Accumulator;
+        let mut accumulator = Fp128SignedAccumulator::<P>::default();
+        let mut result = <Self as num_traits::Zero>::zero();
+        let mut count = 0usize;
+        for (term, negative) in terms {
+            accumulator.fmadd_i64(*term, if negative { -1 } else { 1 });
+            count += 1;
+            // Each limb sum stays below 2^80 before reduction.
+            if count == 65536 {
+                result += accumulator.reduce();
+                accumulator = Fp128SignedAccumulator::default();
+                count = 0;
+            }
+        }
+        result + accumulator.reduce()
+    }
+
     /// Accumulates the products unreduced and reduces once.
     #[inline]
     fn dot_product(a: &[Self], b: &[Self]) -> Self {
@@ -1341,6 +1364,37 @@ mod wide_tests {
             let got4_trunc = a.mul_wide_limbs::<4, 4>(b4);
             assert_eq!(got4_trunc, got4_full[..4]);
             assert_eq!(F::solinas_reduce(&got4_full), a * F::solinas_reduce(&b4));
+        }
+    }
+}
+
+#[cfg(test)]
+mod signed_sum_tests {
+    use super::*;
+    use num_traits::{One, Zero};
+    type F = crate::Prime128OffsetA7F7;
+    #[test]
+    fn signed_sum_preserves_carries_cancellation_and_chunk_boundaries() {
+        let minus_one = -F::one();
+        let one = F::one();
+        assert_eq!(F::signed_sum(core::iter::empty()), F::zero());
+        for n in [1usize, 41, 65535, 65536, 65537, 140_000] {
+            assert_eq!(
+                F::signed_sum(core::iter::repeat_n((&minus_one, false), n)),
+                -F::from_u64(n as u64)
+            );
+            assert_eq!(
+                F::signed_sum(core::iter::repeat_n((&minus_one, true), n)),
+                F::from_u64(n as u64)
+            );
+            assert_eq!(
+                F::signed_sum((0..n).flat_map(|_| [(&minus_one, false), (&one, false)])),
+                F::zero()
+            );
+            assert_eq!(
+                F::signed_sum((0..n).flat_map(|_| [(&minus_one, false), (&one, true)])),
+                -F::from_u64(2 * n as u64)
+            );
         }
     }
 }

@@ -22,13 +22,7 @@ pub enum MleError {
 }
 
 pub fn sparse_mle_msb<F: JoltField>(start_index: u128, values: &[u64], point: &[F]) -> F {
-    values
-        .iter()
-        .enumerate()
-        .map(|(offset, value)| {
-            F::from_u64(*value) * eq_index_msb(point, start_index + offset as u128)
-        })
-        .sum()
+    sparse_segments_mle_msb(core::iter::once((start_index, values)), point)
 }
 
 pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
@@ -36,10 +30,69 @@ where
     F: JoltField,
     I: IntoIterator<Item = (u128, &'a [u64])>,
 {
-    segments
-        .into_iter()
-        .map(|(start_index, values)| sparse_mle_msb(start_index, values, point))
-        .sum()
+    let segments: Vec<_> = segments.into_iter().collect();
+    let entries = segments
+        .iter()
+        .fold(0usize, |n, (_, values)| n.saturating_add(values.len()));
+    let scalar = || {
+        segments
+            .iter()
+            .map(|(start, values)| {
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, value)| {
+                        F::from_u64(*value) * eq_index_msb(point, *start + offset as u128)
+                    })
+                    .sum::<F>()
+            })
+            .sum::<F>()
+    };
+    if entries < 128
+        || point.is_empty()
+        || segments
+            .iter()
+            .any(|(start, values)| start.checked_add(values.len() as u128).is_none())
+    {
+        return scalar();
+    }
+    // A bounded low table is shared by all contiguous public-memory segments.
+    // Each high-address factor is constant for a whole table-width chunk.
+    // No inversion is used, so Boolean challenge coordinates are supported.
+    let low_bits = point.len().min(10);
+    let split = point.len() - low_bits;
+    let width = 1usize << low_bits;
+    let mut low = Vec::with_capacity(width);
+    low.push(F::one());
+    for &r in &point[split..] {
+        let n = low.len();
+        low.resize(n * 2, F::zero());
+        for index in (0..n).rev() {
+            let value = low[index];
+            low[2 * index] = value * (F::one() - r);
+            low[2 * index + 1] = value * r;
+        }
+    }
+    let mut value = F::zero();
+    for (mut address, mut words) in segments {
+        while !words.is_empty() {
+            let residue = (address & (width as u128 - 1)) as usize;
+            let take = words.len().min(width - residue);
+            let high = eq_index_msb(&point[..split], address >> low_bits);
+            if !high.is_zero() {
+                let dot: F = words[..take]
+                    .iter()
+                    .zip(&low[residue..residue + take])
+                    .filter(|(word, _)| **word != 0)
+                    .map(|(&word, &weight)| F::from_u64(word) * weight)
+                    .sum();
+                value += high * dot;
+            }
+            address += take as u128;
+            words = &words[take..];
+        }
+    }
+    value
 }
 
 pub fn block_selector_mle_msb<F: JoltField>(
@@ -280,5 +333,53 @@ mod tests {
                 domain_size: 4
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod sparse_segment_table_tests {
+    use super::*;
+    use jolt_field::{Prime128OffsetA7F7 as F, Ring};
+    #[test]
+    fn bounded_low_tables_match_scalar_mle_for_offsets_and_boolean_points() {
+        for arity in [0, 1, 7, 11, 25, 129] {
+            for kind in 0..3 {
+                let point: Vec<F> = (0..arity)
+                    .map(|i| {
+                        F::from_u64(match kind {
+                            0 => i as u64 + 7,
+                            1 => 0,
+                            _ => 1,
+                        })
+                    })
+                    .collect();
+                let words: Vec<u64> = (0..2301)
+                    .map(|i| {
+                        if i % 7 == 0 {
+                            0
+                        } else {
+                            (i as u64).wrapping_mul(0x000D_EADB_EEF1_2345)
+                        }
+                    })
+                    .collect();
+                for base in [0, 1, 31, 1023, 2048, 8191] {
+                    let expected: F = words
+                        .iter()
+                        .enumerate()
+                        .map(|(i, &word)| {
+                            F::from_u64(word) * eq_index_msb(&point, base + i as u128)
+                        })
+                        .sum();
+                    assert_eq!(sparse_mle_msb(base, &words, &point), expected);
+                    assert_eq!(
+                        sparse_segments_mle_msb(
+                            [(base, &words[..1023]), (base + 1023, &words[1023..])],
+                            &point
+                        ),
+                        expected
+                    );
+                }
+            }
+        }
     }
 }

@@ -494,6 +494,7 @@ mod tests {
                 .collect();
             let row = admitted
                 .resolve_key(&ScheduleLookupKey {
+                    root_accumulated_setup_prefix_len: 0,
                     final_group: params.final_group,
                     precommitteds,
                 })
@@ -556,6 +557,7 @@ mod tests {
                             .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
                             .unwrap();
                         let key = ScheduleLookupKey {
+                            root_accumulated_setup_prefix_len: 0,
                             final_group: PolynomialGroupLayout::new(final_num_vars, num_polys),
                             precommitteds: [untrusted, trusted]
                                 .into_iter()
@@ -617,6 +619,7 @@ mod tests {
                             precommitteds.push(full_producer);
                         }
                         let key = ScheduleLookupKey {
+                            root_accumulated_setup_prefix_len: 0,
                             final_group: PolynomialGroupLayout::new(final_num_vars, 1),
                             precommitteds,
                         };

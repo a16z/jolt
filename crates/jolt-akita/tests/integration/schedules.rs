@@ -231,6 +231,7 @@ fn trusted_advice_grouped_key(dense: &ValidatedScheduleCatalog) -> ScheduleLooku
     let trusted_profile = dense_group_profile(dense, TRUSTED_ADVICE_GROUP)
         .expect("trusted advice standalone row must resolve");
     ScheduleLookupKey {
+        root_accumulated_setup_prefix_len: 0,
         final_group: TRUSTED_ADVICE_K256_FINAL_GROUP,
         precommitteds: vec![trusted_profile],
     }
@@ -347,6 +348,7 @@ fn grouped_adaptation_preserves_direct_and_recursive_k16_trace_skeletons() {
         let final_group = PolynomialGroupLayout::new(final_num_vars, width);
         let resolved = setup_catalog
             .resolve_key(&ScheduleLookupKey {
+                root_accumulated_setup_prefix_len: 0,
                 final_group,
                 precommitteds: vec![precommit],
             })
@@ -420,6 +422,7 @@ fn base_catalogs_contain_no_grouped_advice_rows() {
     ] {
         for num_vars in FIXTURE_K16_FINAL_NUM_VARS.0..=FIXTURE_K16_FINAL_NUM_VARS.1 {
             let key = ScheduleLookupKey {
+                root_accumulated_setup_prefix_len: 0,
                 final_group: PolynomialGroupLayout::new(num_vars, 34),
                 precommitteds: precommitteds.clone(),
             };
@@ -618,6 +621,7 @@ mod field_inc {
                         panic!("K={one_hot_k} {profile:?} {final_group:?}: field-inline provisioning failed: {error}")
                     });
                 let key = ScheduleLookupKey {
+                    root_accumulated_setup_prefix_len: 0,
                     final_group,
                     precommitteds: vec![
                         dense_group_profile(
@@ -781,6 +785,7 @@ mod field_inc {
                     .expect("full-width advice-shaped profile");
             assert!(catalog
                 .resolve_key(&ScheduleLookupKey {
+                    root_accumulated_setup_prefix_len: 0,
                     final_group: PolynomialGroupLayout::new(final_num_vars, 34),
                     precommitteds: vec![widened_advice, inc, fused_profile],
                 })

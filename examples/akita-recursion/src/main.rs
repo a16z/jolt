@@ -8,6 +8,7 @@ use std::{
     result::Result as StdResult,
     sync::Arc,
     thread::Builder,
+    time::Instant,
 };
 
 use akita_types::setup_claims::{SetupBatchStatement, SetupPolynomialId, SetupQuery};
@@ -57,6 +58,9 @@ enum Command {
         output: PathBuf,
         #[arg(long)]
         iterations: Option<u32>,
+        /// Use the recursive setup-offloading catalog for both CPU inner proofs.
+        #[arg(long)]
+        offload: bool,
     },
     /// Re-embed the same direct-proof queries in a larger outer setup prefix.
     Rebind {
@@ -73,6 +77,9 @@ enum Command {
         pair: PathBuf,
         #[arg(long)]
         report: PathBuf,
+        /// Execute only the deferred guest, omitting the fully checking baseline.
+        #[arg(long)]
+        deferred_only: bool,
     },
 }
 
@@ -238,6 +245,7 @@ fn generate(
     schedules: &Path,
     output: &Path,
     iterations: Option<u32>,
+    offload: bool,
 ) -> Result<()> {
     let bound = 1usize
         .checked_shl(trace_log)
@@ -246,14 +254,20 @@ fn generate(
     let mut source = Program::new("sha2-chain-guest");
     source.set_heap_size(32768);
     let mut preprocessing = None;
+    let mut _verifier_resources = None;
     let mut proofs = Vec::new();
+    let mut measurements = Vec::new();
     for seed in [5u8, 6] {
         let input = [
             postcard::to_stdvec(&[seed; 32])?,
             postcard::to_stdvec(&iterations)?,
         ]
         .concat();
+        let trace_started = Instant::now();
         let (program, program_preprocessing, trace, config) = prepare(&mut source, input, bound)?;
+        let trace_seconds = trace_started.elapsed().as_secs_f64();
+        let trace_rows = trace.dimensions.trace_length;
+        let planning_started = Instant::now();
         if config.trace_length != bound {
             return Err(format!(
                 "actual padded trace {} differs from requested {bound}; adjust --iterations",
@@ -271,31 +285,52 @@ fn generate(
                 &config,
                 &program_preprocessing,
                 &output.with_extension("catalogs"),
-                true,
+                !offload,
             )?;
             let mut prepared =
-                preprocessing::preprocess_full(&catalogs, program_preprocessing, &config)?;
+                preprocessing::preprocess_committed(&catalogs, program_preprocessing, &config)?;
             let domain_len = prepared.pcs_setup.required_setup_domain_len()?;
             prepared.pcs_setup = prepared.pcs_setup.with_setup_domain(domain_len)?;
             prepared.verifier.pcs_setup = AkitaScheme::verifier_setup(&prepared.pcs_setup);
+            _verifier_resources =
+                Some(jolt_akita::AkitaVerifierResources::prepare([Ok(prepared
+                    .verifier
+                    .pcs_setup
+                    .clone())])?);
             preprocessing = Some(prepared);
         }
         let prepared = preprocessing.as_ref().ok_or("missing preprocessing")?;
+        let planning_seconds = planning_started.elapsed().as_secs_f64();
+        let prove_started = Instant::now();
         let inner = prove(&program, trace, &config, prepared)?;
-        if !prepared
+        let prover_seconds = prove_started.elapsed().as_secs_f64();
+        let offloads = prepared
             .verifier
             .pcs_setup
-            .setup_offloads(&inner.proof.joint_opening_proof)?
-            .is_empty()
-        {
-            return Err("inner proof uses setup offloading; supply a --direct catalog".into());
+            .setup_offloads(&inner.proof.joint_opening_proof)?;
+        if offloads.is_empty() == offload {
+            return Err(format!(
+                "wrong CPU inner setup policy: offload={offload}, slots={offloads:?}"
+            )
+            .into());
         }
-        jolt_verifier::verify::<AkitaField, AkitaScheme, Vc, VerifierState<Blake2b512>>(
-            &prepared.verifier,
-            &inner.io,
-            &inner.proof,
-            None,
-        )?;
+        let mut checks = Vec::new();
+        for _ in 0..9 {
+            let verify_started = Instant::now();
+            jolt_verifier::verify::<AkitaField, AkitaScheme, Vc, VerifierState<Blake2b512>>(
+                &prepared.verifier,
+                &inner.io,
+                &inner.proof,
+                None,
+            )?;
+            checks.push(verify_started.elapsed().as_secs_f64());
+        }
+        let mut warm_checks = checks[1..].to_vec();
+        warm_checks.sort_by(f64::total_cmp);
+        let verification_seconds = (warm_checks[3] + warm_checks[4]) / 2.0;
+        let measurement = serde_json::json!({"seed":seed,"trace_rows":trace_rows,"padded_trace":config.trace_length,"trace_and_program_preprocessing_seconds":trace_seconds,"planning_and_pcs_preprocessing_seconds":planning_seconds,"prover_seconds":prover_seconds,"full_verification_seconds":verification_seconds,"full_verification_samples_seconds":checks,"program_mode":"committed","backend":"native CPU","setup_mode":if offload {"offloading"} else {"direct"},"setup_offloads":offloads});
+        println!("inner timing {measurement}");
+        measurements.push(measurement);
         println!("inner seed={seed} verify OK");
         proofs.push(inner);
     }
@@ -318,7 +353,31 @@ fn generate(
         statement.claims().len()
     );
     pair.answers = advice.answers;
-    save(output, &pair)
+    let mut tape = AnswerTape(pair.answers.iter());
+    let replay_started = Instant::now();
+    let mut inner_started = Instant::now();
+    let deferred = pair.replay(SetupMode::Defer, &mut tape, |event| match event {
+        jolt_akita_recursion::ReplayEvent::InnerStart(_) => inner_started = Instant::now(),
+        jolt_akita_recursion::ReplayEvent::InnerEnd(index) => {
+            measurements[index]["deferred_verification_seconds"] =
+                serde_json::json!(inner_started.elapsed().as_secs_f64());
+        }
+        _ => {}
+    })?;
+    let replay_seconds = replay_started.elapsed().as_secs_f64();
+    if tape.0.next().is_some() {
+        return Err("unused setup advice".into());
+    }
+    save(output, &pair)?;
+    fs::write(
+        output.with_extension("timings.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "inners":measurements,"deferred_pair_verification_seconds":replay_seconds,
+            "deferred_setup_claims":deferred.claims().len(),
+            "scope":"Native CPU; prover excludes tracing and preprocessing; full verification checks setup; deferred verification uses prepared answer tape and leaves claims for outer proof"
+        }))?,
+    )?;
+    Ok(())
 }
 
 fn recursion_source(function: &str) -> Program {
@@ -381,7 +440,8 @@ fn run() -> Result<()> {
             schedules,
             output,
             iterations,
-        } => generate(trace_log, &schedules, &output, iterations),
+            offload,
+        } => generate(trace_log, &schedules, &output, iterations, offload),
         Command::Rebind {
             pair,
             setup_log,
@@ -398,7 +458,11 @@ fn run() -> Result<()> {
             let _statement = replay(&pair)?;
             save(&output, &pair)
         }
-        Command::Trace { pair, report } => {
+        Command::Trace {
+            pair,
+            report,
+            deferred_only,
+        } => {
             let bytes = fs::read(pair)?;
             let pair = decode_pair(&bytes);
             let statement = replay(&pair)?;
@@ -415,15 +479,20 @@ fn run() -> Result<()> {
                 .parent()
                 .filter(|path| !path.as_os_str().is_empty())
                 .unwrap_or(Path::new("."));
-            let (before, baseline_io) = execute_pair("verify_before", &bytes, directory)?;
+            let before = if deferred_only {
+                None
+            } else {
+                let (before, baseline_io) = execute_pair("verify_before", &bytes, directory)?;
+                let baseline: Vec<u8> = postcard::from_bytes(&baseline_io.outputs)?;
+                if !baseline.is_empty() {
+                    return Err("unexpected baseline output".into());
+                }
+                Some(before)
+            };
             let (deferred, deferred_io) = execute_pair("verify_deferred", &bytes, directory)?;
-            let baseline: Vec<u8> = postcard::from_bytes(&baseline_io.outputs)?;
-            if !baseline.is_empty() {
-                return Err("unexpected baseline output".into());
-            }
             let descriptor: Vec<u8> = postcard::from_bytes(&deferred_io.outputs)?;
             let _inherited = InheritedSetupClaims::from_public_output(0, statement, &descriptor)?;
-            let result = serde_json::json!({"inner_count": 2, "inner_padded_trace": pair.inner[0].proof.trace_length, "before": before, "deferred": deferred, "cycle_reduction": before.total_cycles as f64 / deferred.total_cycles as f64, "setup_domain_fields": pair.setup_field_len, "verifier_materialized_setup_fields": pair.preprocessing.pcs_setup.materialized_setup_field_len()?, "claims": pair.answers.len()});
+            let result = serde_json::json!({"inner_count": 2, "inner_padded_trace": pair.inner[0].proof.trace_length, "before": before, "deferred": deferred, "cycle_reduction": before.as_ref().map(|b| b.total_cycles as f64 / deferred.total_cycles as f64), "setup_domain_fields": pair.setup_field_len, "verifier_materialized_setup_fields": pair.preprocessing.pcs_setup.materialized_setup_field_len()?, "claims": pair.answers.len()});
             if let Some(parent) = report.parent() {
                 fs::create_dir_all(parent)?;
             }
