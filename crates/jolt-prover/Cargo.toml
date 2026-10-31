@@ -76,12 +76,15 @@ profiling = [
   "jolt-inlines-keccak256/host",
   "dep:jolt-inlines-sha2",
   "jolt-inlines-sha2/host",
+  "dep:jolt-inlines-secp256k1",
+  "jolt-inlines-secp256k1/host",
   "dep:jolt-profiling",
   "jolt-profiling/monitor",
   "jolt-profiling/summary",
   "dep:jolt-host",
   "dep:postcard",
   "postcard/use-std",
+  "dep:serde_json",
   "dep:tracer",
 ]
 # Per-batch heap snapshots from the profile harness: emitted inside
@@ -131,12 +134,14 @@ chrono = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
 jolt-inlines-keccak256 = { workspace = true, optional = true }
 jolt-inlines-sha2 = { workspace = true, optional = true }
+jolt-inlines-secp256k1 = { workspace = true, optional = true }
 jolt-host = { workspace = true, optional = true }
 # default-features = false: the `profiling` feature adds `summary`
 # explicitly; `allocative` needs only the flamegraph hooks.
 jolt-profiling = { workspace = true, optional = true, default-features = false }
 postcard = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true, features = ["std"], optional = true }
 tracer = { workspace = true, optional = true }
 
 [dev-dependencies]
