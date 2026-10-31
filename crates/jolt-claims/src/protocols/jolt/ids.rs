@@ -342,10 +342,9 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed polynomials (columns of the native trace group); base
-    // mode never constructs these. Appended for codec stability.
-    BalancedIncDigit(usize),
-    BalancedIncCarry,
+    // Reserved codec slots; uninhabited and rejected during deserialization.
+    Reserved9(RetiredIdentifier),
+    Reserved10(RetiredIdentifier),
     ProgramBytecode,
 }
 

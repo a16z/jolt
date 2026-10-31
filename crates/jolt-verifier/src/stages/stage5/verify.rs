@@ -4,7 +4,7 @@ use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, 
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_val_evaluation::{
@@ -32,6 +32,7 @@ use super::{
 use crate::{
     proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
         zk::committed,
@@ -90,7 +91,7 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = formula_dimensions.trace;
@@ -109,6 +110,7 @@ where
     // registers draws nothing, and neither does the `field-inline` value-evaluation member.
     // The drawn challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
+    check_pow(PowSite::Stage5, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk {

@@ -17,7 +17,7 @@ use jolt_akita::{
 };
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 use crate::support;
 
@@ -40,7 +40,8 @@ fn external_multichunk_catalog_survives_transport() {
             .expect("restore verifier without source catalogs");
         let mut statement = support::single_statement(commitment, &point, evaluation);
         assert_eq!(setup.akita_chunk_profile(), AkitaChunkProfile::new(2, 4));
-        let mut transcript = Blake2bTranscript::new(DOMAIN);
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"");
         AkitaNativeBatching::verify_batch(&setup, &statement, &proof, &mut transcript)
             .expect("upstream verifier accepts the transported multi-chunk proof");
         let mut wrong = serde_json::to_value(&setup).expect("encode trusted setup");
@@ -51,11 +52,12 @@ fn external_multichunk_catalog_survives_transport() {
             &wrong,
             &statement,
             &proof,
-            &mut Blake2bTranscript::new(DOMAIN)
+            &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"")
         )
         .is_err());
         statement[0].evaluation.value += support::f(1);
-        let mut transcript = Blake2bTranscript::new(DOMAIN);
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"");
         assert!(
             AkitaNativeBatching::verify_batch(&setup, &statement, &proof, &mut transcript).is_err()
         );
@@ -137,7 +139,8 @@ fn external_multichunk_catalog_survives_transport() {
         AkitaScheme::commit_one_hot_group(&prover, support::layout(3), &polynomials)
             .expect("commit one-hot source");
     let statement = support::single_statement(commitment.clone(), &point, evaluation);
-    let mut transcript = Blake2bTranscript::new(DOMAIN);
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"");
     let proof = AkitaNativeBatching::prove_batch(
         &prover,
         statement.clone(),

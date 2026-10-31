@@ -2,7 +2,7 @@ use jolt_crypto::{Bn254G1, Commitment, JoltGroup};
 use jolt_field::{Fr, One, Zero};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use crate::{
     HyperKZGError, HyperKZGProof, HyperKZGProverSetup, HyperKZGSetupParams, HyperKZGVerifierSetup,
@@ -51,7 +51,7 @@ impl HyperKZGScheme {
         evaluation: Fr,
         setup: &HyperKZGProverSetup,
         hint: Option<Bn254G1>,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) -> Result<HyperKZGProof, HyperKZGError> {
         let len = setup.verifier.check_arity(point.len())?;
         if evaluations.len() != len {
@@ -87,7 +87,7 @@ impl HyperKZGScheme {
         for commitment in &com {
             transcript.append(commitment);
         }
-        let r = transcript.challenge();
+        let r = transcript.challenge()?;
         if r.is_zero() {
             return Err(HyperKZGError::DegenerateChallenge);
         }
@@ -102,7 +102,7 @@ impl HyperKZGScheme {
         evaluation: Fr,
         proof: &HyperKZGProof,
         setup: &HyperKZGVerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) -> Result<(), HyperKZGError> {
         let _ = setup.check_arity(point.len())?;
         if proof.com.len() != point.len() - 1 || proof.v.iter().any(|row| row.len() != point.len())
@@ -113,7 +113,7 @@ impl HyperKZGScheme {
         for commitment in &proof.com {
             transcript.append(commitment);
         }
-        let r = transcript.challenge();
+        let r = transcript.challenge()?;
         if r.is_zero() {
             return Err(HyperKZGError::DegenerateChallenge);
         }
@@ -195,7 +195,7 @@ impl CommitmentScheme for HyperKZGScheme {
         evaluation: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) -> Result<Self::Proof, OpeningsError> {
         if poly.num_vars() != point.len() {
             return Err(OpeningsError::ProveFailed(
@@ -216,7 +216,7 @@ impl CommitmentScheme for HyperKZGScheme {
         evaluation: Fr,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) -> Result<(), OpeningsError> {
         Self::verify_opening(commitment, point, evaluation, proof, setup, transcript)
             .map_err(|_| OpeningsError::VerificationFailed)

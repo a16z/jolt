@@ -44,7 +44,10 @@ jolt-dory = { path = ".." }
 jolt-field = { path = "../../jolt-field" }
 jolt-openings = { path = "../../jolt-openings" }
 jolt-poly = { path = "../../jolt-poly" }
-jolt-transcript = { path = "../../jolt-transcript" }
+jolt-transcript = { path = "../../jolt-transcript", features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 serde_json = "1"
 bincode = { version = "2", features = ["serde"] }
 rand_core = "0.6"

@@ -301,7 +301,7 @@ impl MacroBuilder {
                         jolt::VerifierField,
                         jolt::VerifierPCS,
                         jolt::VerifierVC,
-                        jolt::VerifierTranscript,
+                        jolt::VerifierTranscript<'_>,
                     >(
                         &__jolt_preprocessing,
                         &__jolt_io_device,
@@ -1241,7 +1241,7 @@ impl MacroBuilder {
                     jolt::VerifierField,
                     jolt::VerifierPCS,
                     jolt::VerifierVC,
-                    jolt::VerifierTranscript,
+                    jolt::VerifierTranscript<'_>,
                 >(
                     &preprocessing,
                     &io_device,

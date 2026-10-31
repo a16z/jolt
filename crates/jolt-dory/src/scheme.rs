@@ -14,7 +14,7 @@ use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, Pedersen
 use jolt_field::Fr;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 use rayon::prelude::*;
 
 use crate::routines::{JoltG1Routines, JoltG2Routines};
@@ -233,12 +233,11 @@ impl CommitmentScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::Proof, OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let (nu, sigma) = matrix_shape(num_vars);
 
         let (row_commitments, commit_blind) = match hint {
             Some(h) => h.into_ark_parts(),
@@ -267,6 +266,7 @@ impl CommitmentScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove failed: {e:?}")))?;
+        dory_transcript.finish()?;
 
         Ok(DoryProof(proof))
     }
@@ -278,8 +278,9 @@ impl CommitmentScheme for DoryScheme {
         eval: Fr,
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
+        check_matrix_shape(proof, point.len())?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
@@ -302,7 +303,8 @@ impl CommitmentScheme for DoryScheme {
             setup.0.clone().into_inner(),
             &mut dory_transcript,
         )
-        .map_err(|_| OpeningsError::VerificationFailed)
+        .map_err(|_| OpeningsError::VerificationFailed)?;
+        dory_transcript.finish()
     }
 }
 
@@ -380,12 +382,11 @@ impl ZkOpeningScheme for DoryScheme {
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let (nu, sigma) = matrix_shape(num_vars);
         let (row_commitments, commit_blind) = hint.into_ark_parts();
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
@@ -403,6 +404,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove (ZK) failed: {e:?}")))?;
+        dory_transcript.finish()?;
 
         let y_com = proof
             .y_com
@@ -421,8 +423,9 @@ impl ZkOpeningScheme for DoryScheme {
         point: &[Fr],
         proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut impl Transcript<Challenge = Self::Field>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
+        check_matrix_shape(proof, point.len())?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
         // so the caller-side eval is unused here.
@@ -444,8 +447,28 @@ impl ZkOpeningScheme for DoryScheme {
             &mut dory_transcript,
         )
         .map_err(|_| OpeningsError::VerificationFailed)?;
+        dory_transcript.finish()?;
 
         Ok(hiding_commitment)
+    }
+}
+
+/// Jolt's Dory matrix shape for `num_vars` variables, as `(nu, sigma)`:
+/// `sigma = ceil(num_vars / 2)` column variables and `nu = floor(num_vars / 2)`
+/// row variables.
+fn matrix_shape(num_vars: usize) -> (usize, usize) {
+    let sigma = num_vars.div_ceil(2);
+    (num_vars - sigma, sigma)
+}
+
+/// dory-pcs reads `nu` and `sigma` from the proof and accepts any split with
+/// `nu <= sigma`. Jolt fixes the split from the point's length, so a proof
+/// with another split is rejected before Dory runs.
+fn check_matrix_shape(proof: &DoryProof, num_vars: usize) -> Result<(), OpeningsError> {
+    if (proof.0.nu, proof.0.sigma) == matrix_shape(num_vars) {
+        Ok(())
+    } else {
+        Err(OpeningsError::VerificationFailed)
     }
 }
 

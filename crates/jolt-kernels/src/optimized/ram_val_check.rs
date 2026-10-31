@@ -8,7 +8,7 @@
 
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
 use jolt_field::JoltField;
-use jolt_poly::UnivariatePoly;
+use jolt_poly::{bind_prefix_in_place, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -20,8 +20,7 @@ use std::sync::Arc;
 use super::lazy_ra::{ChunkIndexSource, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
 use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, RamAddresses, NO_ACCESS};
 use super::support::{
-    bind_prefix_pairs, bind_prefix_pairs_buffer_len, bound_pair, map_indices, pin_derived_term,
-    triple_product_round_evals, RoundProgress, SplitLt,
+    bound_pair, map_indices, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
 };
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -93,11 +92,11 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
 /// doubles through the lazy branch schedule ([`LazyBind`]), each new table
 /// beside the old one, until `ra` materializes at most
 /// `⌈prefix_cycles / 2w⌉` values at the switch's width `w`; each later bind
-/// may collect their bound half beside them, whose allocation is counted at
-/// its materialized length. The second bind builds the
-/// `⌈prefix_cycles / 4⌉`-entry increment table beside the check's own value
-/// columns, then drops them, and later binds halve it in place or beside it
-/// (`bind_prefix_pairs_buffer_len`). Every window counts the shared address
+/// reserves their initial capacity plus the bound half for a possible shrink
+/// copy. The second bind builds the `⌈prefix_cycles / 4⌉`-entry increment
+/// table beside the check's own value columns, then drops those columns.
+/// Later binds retain the increment allocation bound and reserve its bound
+/// half for a possible shrink copy. Every window counts the shared address
 /// column and stage 2's value columns, which may still await their background
 /// drop ([`ram_access_columns_bytes`]), the LT tables at their largest
 /// (`SplitLt::peak_bytes`), and the branch tables queued for a background drop
@@ -162,13 +161,8 @@ pub fn scalar_window_bytes<F: JoltField>(
             }
             None => 0,
             Some((len, capacity)) => {
-                let buffer = bind_prefix_pairs_buffer_len(len);
+                let buffer = len.div_ceil(2);
                 window(1, capacity.checked_add(buffer)?.checked_add(ra.held()?)?)?;
-                let capacity = if buffer > 0 {
-                    len.div_ceil(2)
-                } else {
-                    capacity
-                };
                 increments = Some((len.div_ceil(2), capacity));
                 capacity
             }
@@ -255,7 +249,7 @@ impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         let mut freed_columns = false;
         if let IncColumn::Bound(inc) = &mut self.inc {
-            bind_prefix_pairs(inc, challenge, F::zero());
+            let _ = bind_prefix_in_place(inc, challenge, F::zero());
         } else {
             let placeholder = IncColumn::Raw(RamAccessColumns {
                 addresses: Arc::new(Vec::new().into()),

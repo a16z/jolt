@@ -52,9 +52,7 @@ use super::rw_matrix::{
     round0_bind, round0_bind_bytes, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
     AddressMajorMatrix, CycleMajorMatrix,
 };
-use super::support::{
-    bind_prefix_pairs_buffer_len, map_indices, pin_derived_term_if_derived, GruenRoundMessage,
-};
+use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -482,9 +480,8 @@ impl RamReadWriteBytes {
     /// tables. Cycle-first adds one generation of access columns
     /// ([`ram_access_columns_bytes`]), queued for a background drop only after
     /// round 0 returns; its first bind adds the round-0 collect at its largest
-    /// entry count (`round0_bind_bytes`), then the larger of the increment
-    /// prefix's bound half (`bind_prefix_pairs_buffer_len`) and one
-    /// half-length copy of a RAF table. Address-first adds the eq prefix (at
+    /// entry count (`round0_bind_bytes`), then one half-length copy of a RAF
+    /// table. The increment prefix's first bind stays in its allocation. Address-first adds the eq prefix (at
     /// most `prefix_cycles` entries) and the matrix at its collected capacity
     /// (`AddressMajorMatrix::collected_bytes`), which `prepare` builds beside
     /// one generation of access columns before it drops the value columns;
@@ -527,13 +524,11 @@ impl RamReadWriteBytes {
         match order {
             ReadWriteOrder::CycleFirst => {
                 let prepared = shared.checked_add(ram_access_columns_bytes(prefix_cycles, 1)?)?;
-                let after_collect =
-                    field(bind_prefix_pairs_buffer_len(prefix_cycles))?.max(half_copy);
                 Some(Self {
                     prepared,
                     first_bind: prepared
                         .checked_add(round0_bind_bytes::<F>(prefix_cycles, log_k)?)?
-                        .checked_add(after_collect)?,
+                        .checked_add(half_copy)?,
                 })
             }
             ReadWriteOrder::AddressFirst => {

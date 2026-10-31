@@ -19,9 +19,9 @@ pub use super::spartan_shift::{SpartanShift, SpartanShiftOutputClaims};
 /// absorb plumbing.
 ///
 /// The instruction-input virtualization declares one cross-relation opening alias
-/// (`unexpanded_pc` = the shift's) and the register claim-reduction declares two
-/// (`rs1_value`/`rs2_value` = the instruction-input ones), so the generated
-/// `append_output_claims` absorbs 13 of the members' 16 expression-referenced
+/// (`unexpanded_pc` = the shift's) and the register claim-reduction declares three
+/// (`rd_write_value`/`rs1_value`/`rs2_value` = the instruction-input ones), so the generated
+/// `append_output_claims` absorbs 14 of the members' 18 expression-referenced
 /// openings (each alias once, via its canonical source), the generated
 /// `output_shape` count/validator use the same wire sets, and the generated
 /// `validate_aliases` (run by `expected_final_claim`) enforces the aliased wire
@@ -117,8 +117,8 @@ mod tests {
         }
     }
 
-    /// A stage-3 output with the three cross-relation aliases satisfied: shift and
-    /// instruction-input `unexpanded_pc` equal, and register-reduction `rs1`/`rs2`
+    /// A stage-3 output with the four cross-relation aliases satisfied: shift and
+    /// instruction-input `unexpanded_pc` equal, and register-reduction `rd`/`rs1`/`rs2`
     /// equal the instruction-input ones. `validate_aliases` accepts it; the tests
     /// below perturb one alias each to assert rejection. The absorb test overrides
     /// the aliased cells with sentinels to prove they are skipped.
@@ -140,9 +140,11 @@ mod tests {
                 rs2_value: fr(10),
                 right_operand_is_imm: fr(11),
                 imm: fr(12),
+                right_operand_is_rd_write_value: fr(13),
+                rd_write_value: fr(14),
             },
             registers_claim_reduction: RegistersClaimReductionOutputClaims {
-                rd_write_value: fr(13),
+                rd_write_value: fr(14),
                 rs1_value: fr(7),
                 rs2_value: fr(10),
             },
@@ -151,7 +153,7 @@ mod tests {
 
     /// Locks the stage-3 Fiat-Shamir append order against silent drift: the
     /// generated absorb follows member declaration order and each member's
-    /// `canonical_order`, skipping the three aliased openings (absorbed once via
+    /// `canonical_order`, skipping the four aliased openings (absorbed once via
     /// their canonical sources). The aliased cells carry distinct sentinels here
     /// to prove the skip is id-driven, not value-driven.
     #[test]
@@ -160,19 +162,20 @@ mod tests {
         claims.instruction_input.unexpanded_pc = fr(101);
         claims.registers_claim_reduction.rs1_value = fr(102);
         claims.registers_claim_reduction.rs2_value = fr(103);
+        claims.registers_claim_reduction.rd_write_value = fr(104);
 
         assert_eq!(
             sumchecks().opening_values(&claims),
-            (1..=13).map(fr).collect::<Vec<_>>()
+            (1..=14).map(fr).collect::<Vec<_>>()
         );
     }
 
-    /// The generated `output_claim_count` sums the members' wire sets: the 16
-    /// expression-referenced openings minus the 3 aliases.
+    /// The generated `output_claim_count` sums the members' wire sets: the 18
+    /// expression-referenced openings minus the 4 aliases.
     #[test]
     fn output_claim_count_matches_absorbed_openings() {
         let sumchecks = sumchecks();
-        assert_eq!(sumchecks.output_claim_count(), 13);
+        assert_eq!(sumchecks.output_claim_count(), 14);
         assert_eq!(
             sumchecks.opening_values(&consistent()).len(),
             sumchecks.output_claim_count(),
@@ -212,7 +215,7 @@ mod tests {
         }
 
         let register_pairs = RegistersClaimReduction::<Fr>::aliased_output_openings();
-        assert_eq!(register_pairs.len(), 2);
+        assert_eq!(register_pairs.len(), 3);
         let register_expression = sumchecks
             .registers_claim_reduction
             .symbolic()
@@ -263,6 +266,13 @@ mod tests {
         assert!(sumchecks().validate_aliases(&claims).is_err());
     }
 
+    #[test]
+    fn validate_aliases_rejects_rd_write_value_mismatch() {
+        let mut claims = consistent();
+        claims.registers_claim_reduction.rd_write_value = fr(99);
+        assert!(sumchecks().validate_aliases(&claims).is_err());
+    }
+
     /// Pins the structural invariant the alias declarations rely on:
     /// `validate_aliases` checks values only, which is sound because all three
     /// stage-3 members bind the same batch-point slice (equal rounds, default
@@ -303,5 +313,9 @@ mod tests {
         assert_eq!(shift_points.unexpanded_pc, instruction_points.unexpanded_pc);
         assert_eq!(instruction_points.rs1_value, register_points.rs1_value);
         assert_eq!(instruction_points.rs2_value, register_points.rs2_value);
+        assert_eq!(
+            instruction_points.rd_write_value,
+            register_points.rd_write_value
+        );
     }
 }

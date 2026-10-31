@@ -27,8 +27,8 @@ use rayon::prelude::*;
 use super::rows::{raw_rd_inc, RegisterCycleRow, SharedRdIndices};
 use crate::optimized::prefix_product::PrefixColumn;
 use crate::optimized::support::{
-    bind_prefix_pairs_buffer_len, fallible_collect_bytes, map_indices, pin_derived_term,
-    pool_workers, BundleStore, GruenRoundMessage, RoundProgress,
+    fallible_collect_bytes, map_indices, pin_derived_term, pool_workers, BundleStore,
+    GruenRoundMessage, RoundProgress,
 };
 use crate::{KernelError, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError};
 
@@ -98,8 +98,8 @@ impl<F: JoltField> AddressFirstKernel<F> {
     /// bound address weights while it fills the five `prefix_cycles`-entry
     /// cycle tables (`rs1` in the address eq table's allocation) through one
     /// checkpoint value per chunk task; the cycle rounds hold the five tables
-    /// and the bound half the first bind collects
-    /// (`bind_prefix_pairs_buffer_len`). Preparation after the collect and
+    /// and reserve half their initial prefix for a possible binding
+    /// shrink copy. Preparation after the collect and
     /// the address rounds hold the rows, the checkpoints, the eq table and at
     /// most `K` checkpoint values per chunk task, less than the handoff; the
     /// eq table's tensor factors, live while it fills, are not counted.
@@ -118,8 +118,7 @@ impl<F: JoltField> AddressFirstKernel<F> {
         ]
         .into_iter()
         .try_fold(0usize, usize::checked_add)?;
-        let cycle_rounds =
-            tables.checked_add(field(bind_prefix_pairs_buffer_len(prefix_cycles))?)?;
+        let cycle_rounds = tables.checked_add(field(prefix_cycles.div_ceil(2))?)?;
         Some(
             fallible_collect_bytes::<Access>(prefix_cycles)?
                 .max(handoff)
