@@ -227,10 +227,12 @@ acceptance runs; it is not evidence that the time budget has passed.
    account must have no write-capable GitHub, SSH, cloud, or Pika credentials in
    its environment, home, helpers, or accessible files. Do not use a general
    development account. Confirm CPU topology/ISA and host storage readiness.
-2. Put the runner in organization runner group `jolt-bench`, label `jolt-bench`.
-   Restrict that group to **only**
-   `a16z/jolt/.github/workflows/e2e-bench.yml@refs/heads/main`. Read back the
-   group's `restricted_to_workflows` and `selected_workflows` settings. If this
+2. Create or select organization runner group `jolt-bench`. Set `visibility` to
+   `selected` and its repository access list to **only `a16z/jolt`**. Set
+   `allows_public_repositories=true` because this repository is public. Set
+   `restricted_to_workflows=true` and `selected_workflows` to **only**
+   `a16z/jolt/.github/workflows/e2e-bench.yml@refs/heads/main`. Register the runner
+   into that organization group with label `jolt-bench`, as shown below. If this
    restriction is unavailable for the account, leave execution disabled: a
    PR-editable YAML `if` is not a security boundary. GitHub documents these
    fields in its [runner-group API](https://docs.github.com/en/rest/actions/self-hosted-runner-groups#update-a-self-hosted-runner-group-for-an-organization).
@@ -248,6 +250,58 @@ acceptance runs; it is not evidence that the time budget has passed.
 5. After reviewing trusted publication separately, optionally set
    `JOLT_E2E_COMMENTS_ENABLED=true`. Until then, comments are rendered artifacts
    only. This task does not enable or post them.
+
+### Registration uses the organization group
+
+These are proposed administrator commands, not actions performed by this task.
+Wait for the benchmark lead to release the host for administration. Configure
+the group in step 2 before registering. Use an authorized administrator
+workstation for GitHub API commands; do not put its credentials on the runner.
+For an existing group, repository selection uses the separate
+[repository-access API](https://docs.github.com/en/rest/actions/self-hosted-runner-groups#set-repository-access-for-a-self-hosted-runner-group-in-an-organization),
+not the group-update payload. Read back the group and its selected repositories:
+
+```bash
+jolt_bench_group_id=$(gh api --paginate orgs/a16z/actions/runner-groups \
+  --jq '.runner_groups[] | select(.name == "jolt-bench") | .id')
+gh api "orgs/a16z/actions/runner-groups/$jolt_bench_group_id" \
+  --jq '{id, name, visibility, allows_public_repositories, restricted_to_workflows, selected_workflows}'
+gh api --paginate "orgs/a16z/actions/runner-groups/$jolt_bench_group_id/repositories" \
+  --jq '.repositories[].full_name'
+```
+
+Require the exact settings in step 2 and only `a16z/jolt` in the repository
+readback. If the group or workflow restriction is unavailable, leave execution
+disabled. Then, in an interactive root terminal on the prepared host, register
+as the dedicated `runner` account (home `/home/runner`):
+
+```bash
+runuser -u runner -- bash -lc '
+  cd /home/runner/actions-runner &&
+  ./config.sh --url https://github.com/a16z \
+    --runnergroup jolt-bench --name jolt-bench \
+    --labels jolt-bench,jolt-bench-cherry-9254p --work _work
+'
+```
+
+Supply an **organization** registration token at the runner's masked local
+prompt. Omitting `--unattended` and `--token` keeps the token out of the command
+line; do not store it as a repository secret or supply an administrator PAT on
+this account. Runner 2.338.2 supports
+[`--runnergroup`](https://github.com/actions/runner/blob/d1eb12d4b115c301201de27d667284e1a80f2ab5/src/Runner.Listener/Runner.cs#L1141-L1148)
+and its [secret prompt](https://github.com/actions/runner/blob/d1eb12d4b115c301201de27d667284e1a80f2ab5/src/Runner.Listener/CommandSettings.cs#L389-L425).
+The organization URL is intentional: repository-scoped registration at
+`https://github.com/a16z/jolt` does not select this organization group. The
+hardware label is additional; `jolt-bench` is the workflow's required label.
+
+Back on the administrator workstation, read the group's actual runner membership
+and labels. Before enabling execution, repeat the group/repository readbacks
+above and require runner `jolt-bench` in this group, online, with label `jolt-bench`:
+
+```bash
+gh api --paginate "orgs/a16z/actions/runner-groups/$jolt_bench_group_id/runners" \
+  --jq '.runners[] | select(.name == "jolt-bench") | {id, name, status, labels: [.labels[].name]}'
+```
 
 The hosted PR request workflow runs on code PRs and skips docs-only changes. A
 default-branch `workflow_run` producer validates the request against GitHub,
