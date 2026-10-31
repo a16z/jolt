@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="color-scheme" content="dark">
+  <title>Jolt · CPU benchmark history</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="dashboard.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <div>
+        <p class="eyebrow">Jolt / Performance</p>
+        <h1>CPU benchmark history</h1>
+        <p class="subtitle">Fixed inputs. 1, 8, or 24 physical cores. Standard main runs and nightly runs stay separate.</p>
+      </div>
+      <a class="control-link" href="../bench/">Legacy benchmarks</a>
+    </header>
+
+    <nav class="tiers" aria-label="Benchmark tier">
+      <button type="button" data-tier="main" aria-pressed="true">Standard main</button>
+      <button type="button" data-tier="nightly" aria-pressed="false">Nightly</button>
+      <button type="button" data-tier="other" aria-pressed="false" hidden>Other runs</button>
+      <button type="button" data-tier="preview" aria-pressed="false" hidden>Manual previews</button>
+    </nav>
+    <p id="tier-description" class="context"></p>
+    <p id="notice" class="notice" role="status" hidden></p>
+    <p id="load-status" class="context" role="status">Loading published history…</p>
+
+    <section class="panel" aria-labelledby="point-heading">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Comparison scope</p>
+          <h2 id="point-heading">One fixed benchmark point</h2>
+        </div>
+        <a class="control-link" href="history.json" download>Download history index</a>
+      </div>
+      <div class="filters">
+        <label class="wide">Workload, input, and cores
+          <select id="point-select" disabled><option>No measurements loaded</option></select>
+        </label>
+        <label class="wide">Host and build settings
+          <select id="regime-select" disabled><option>No configurations loaded</option></select>
+        </label>
+        <label>Metric
+          <select id="metric-select">
+            <option value="e2e_s">End-to-end time · s</option>
+            <option value="prove_s">Prove time · s</option>
+            <option value="peak_rss_bytes">Peak process memory · MiB</option>
+            <option value="verify_s">Parallel verify time · s</option>
+            <option value="verify_single_s">Single-thread verify time · s</option>
+            <option value="proof_bytes">Serialized proof · bytes</option>
+            <option value="process_s">Process time · s</option>
+            <option value="setup_s">Commitment setup time · s</option>
+            <option value="trace_rows">Expanded trace rows</option>
+            <option value="padded_trace_rows">Padded trace rows</option>
+          </select>
+        </label>
+      </div>
+      <p id="metric-boundary" class="metric-boundary"></p>
+      <details id="configuration">
+        <summary>Exact input, host, and build settings</summary>
+        <pre id="configuration-value">Select a benchmark point to inspect its configuration.</pre>
+      </details>
+    </section>
+
+    <section class="panel" aria-labelledby="history-heading">
+      <div class="section-header">
+        <div>
+          <p class="eyebrow">Per-run measurements</p>
+          <h2 id="history-heading">History</h2>
+        </div>
+        <span id="point-count" class="context"></span>
+      </div>
+      <p class="chart-caption">Each value is the median of measured repetitions; the table gives the minimum–maximum range. Warmups are excluded. Failed or incomplete cases have no plotted value, and break the line.</p>
+      <div id="chart" aria-live="polite"></div>
+      <div class="table-scroll" role="region" aria-label="Benchmark runs" tabindex="0">
+        <table>
+          <thead><tr>
+            <th scope="col">Commit / run</th>
+            <th scope="col">Point status</th>
+            <th scope="col" id="value-heading" class="number">End-to-end · s</th>
+            <th scope="col" class="number">Measured repetitions</th>
+            <th scope="col">Provenance / raw data</th>
+          </tr></thead>
+          <tbody id="history-rows"></tbody>
+        </table>
+      </div>
+      <p id="empty-state" class="empty" hidden>No runs have been published for this tier.</p>
+      <div class="history-footer">
+        <p id="window-label" class="context"></p>
+        <button id="load-more" type="button" hidden>Load older runs</button>
+      </div>
+    </section>
+
+    <footer class="page-footer">
+      <p>No averaging across tiers, inputs, core counts, hosts, toolchains, or build settings. Source revisions and binary hashes are recorded per point.</p>
+      <p>Only received runs appear here. Queued, never-started, or expired producer runs can require an administrator to replay publication; this page is not proof that every merge ran.</p>
+    </footer>
+    <noscript><p class="notice">JavaScript is required to filter and plot this page. The history index and raw JSON remain downloadable.</p></noscript>
+  </main>
+</body>
+</html>
