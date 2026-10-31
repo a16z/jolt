@@ -79,16 +79,16 @@ impl AkitaScheme {
             AkitaSetupFlavor::Both => AkitaVerifierScheduleArtifacts::Both {
                 dense_profile: artifacts.dense_profile(),
                 profile,
-                dense: dense_schedule_artifact()?,
-                one_hot: one_hot_schedule_artifact()?,
+                dense: dense_schedule_artifact()?.into(),
+                one_hot: one_hot_schedule_artifact()?.into(),
             },
             AkitaSetupFlavor::OneHot => AkitaVerifierScheduleArtifacts::OneHot {
                 profile,
-                one_hot: one_hot_schedule_artifact()?,
+                one_hot: one_hot_schedule_artifact()?.into(),
             },
             AkitaSetupFlavor::Dense => AkitaVerifierScheduleArtifacts::Dense {
                 dense_profile: artifacts.dense_profile(),
-                dense: dense_schedule_artifact()?,
+                dense: dense_schedule_artifact()?.into(),
             },
         };
         Ok(AkitaVerifierSetup {
@@ -98,6 +98,7 @@ impl AkitaScheme {
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
             schedule_artifacts: schedule_artifacts.into(),
+            prepared: None,
             backend_cache: BackendVerifierCache::default(),
         })
     }

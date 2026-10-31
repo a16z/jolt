@@ -652,6 +652,26 @@ impl DynasmEmitter {
             return Ok(EmitOutcome::Unsupported);
         }
 
+        // Field-inline rows need the interpreter's field unit; this backend
+        // deliberately does not implement them. Decline before the row prelude
+        // or observations so another emitter can safely handle them.
+        #[cfg(feature = "field-inline")]
+        if matches!(
+            row.instruction_kind,
+            K::FieldAdd(_)
+                | K::FieldSub(_)
+                | K::FieldMul(_)
+                | K::FieldInv(_)
+                | K::FieldAssertEq(_)
+                | K::FieldLoadAccumulateFromRegister(_)
+                | K::FieldAssertZero(_)
+                | K::FieldLoadImm(_)
+                | K::FieldLoadAccumulateFromMemory(_)
+                | K::FieldAdviceLimb(_)
+        ) {
+            return Ok(EmitOutcome::Unsupported);
+        }
+
         dynasm!(e.ops ; .arch x64 ; inc r14);
 
         // Record mode brackets each row's template with value capture. Rows that
@@ -1194,6 +1214,19 @@ impl DynasmEmitter {
             // in executable bytecode and was declined before any emission (the
             // early return above), so this arm only completes the match.
             K::Noop(_) => return Ok(EmitOutcome::Unsupported),
+            // Declined before any emission above. Keep these variants explicit
+            // so new instruction kinds still require an emitter decision.
+            #[cfg(feature = "field-inline")]
+            K::FieldAdd(_)
+            | K::FieldSub(_)
+            | K::FieldMul(_)
+            | K::FieldInv(_)
+            | K::FieldAssertEq(_)
+            | K::FieldLoadAccumulateFromRegister(_)
+            | K::FieldAssertZero(_)
+            | K::FieldLoadImm(_)
+            | K::FieldLoadAccumulateFromMemory(_)
+            | K::FieldAdviceLimb(_) => return Ok(EmitOutcome::Unsupported),
         }
         if record && !transfers_control {
             e.obs_rd_post(row);

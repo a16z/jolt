@@ -11,6 +11,8 @@ workspace = true
 [features]
 default = []
 akita = []
+# Guest transcript acceleration; layout digests use the protocol DigestHasher.
+blake2-inline = ["jolt-transcript/blake2-inline"]
 # Heap flamegraph visitation of the relation claim structs (profile harness).
 allocative = ["dep:allocative"]
 field-inline = ["jolt-lookup-tables/field-inline"]
@@ -28,7 +30,6 @@ jolt-openings.workspace = true
 jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
-rayon.workspace = true
 serde = { workspace = true, features = ["alloc", "derive"] }
 sha3.workspace = true
 thiserror.workspace = true

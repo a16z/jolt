@@ -68,8 +68,23 @@ pub use spongefish::{Encoding, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
 pub use verifier::{VerifierInit, VerifierTranscript};
 
-#[cfg(feature = "transcript-blake2b")]
+#[cfg(all(
+    feature = "transcript-blake2b",
+    not(all(feature = "blake2-inline", target_arch = "riscv64"))
+))]
 use blake2::Blake2b512 as Blake2b512Digest;
+#[cfg(all(
+    feature = "transcript-blake2b",
+    feature = "blake2-inline",
+    target_arch = "riscv64"
+))]
+use jolt_inlines_blake2::digest_adapter::{Blake2b, U64};
+#[cfg(all(
+    feature = "transcript-blake2b",
+    feature = "blake2-inline",
+    target_arch = "riscv64"
+))]
+type Blake2b512Digest = Blake2b<U64>;
 #[cfg(feature = "transcript-blake2b")]
 use spongefish::instantiations::Hash;
 

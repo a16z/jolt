@@ -8,9 +8,9 @@ use crate::{challenge, derived, opening, Expr};
 /// value openings folded by `gamma`, five produced openings at the shared
 /// read-write point, weighted by the `EqCycle` public.
 pub trait ReadWriteCheckingIds {
-    type OpeningId: Clone;
-    type DerivedId: Clone;
-    type ChallengeId: Clone;
+    type OpeningId: Copy;
+    type DerivedId: Copy;
+    type ChallengeId: Copy;
 
     /// Consumed value openings, in `gamma` power order (γ⁰, γ¹, γ²).
     fn rd_value() -> Self::OpeningId;
@@ -56,9 +56,9 @@ pub fn read_write_checking_output<F: Ring, S: ReadWriteCheckingIds>(
 /// Id supplier for the register val-evaluation shape: one consumed `Val`
 /// opening, two produced openings weighted by the `LtCycle` public.
 pub trait ValEvaluationIds {
-    type OpeningId: Clone;
-    type DerivedId: Clone;
-    type ChallengeId: Clone;
+    type OpeningId: Copy;
+    type DerivedId: Copy;
+    type ChallengeId: Copy;
 
     /// Consumed `Val` opening (at the upstream read-write point).
     fn registers_val() -> Self::OpeningId;
