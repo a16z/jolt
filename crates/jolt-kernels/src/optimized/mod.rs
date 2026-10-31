@@ -64,6 +64,7 @@ pub mod instruction_input;
 pub mod instruction_ra_virtualization;
 pub mod instruction_read_raf;
 mod lazy_ra;
+mod one_hot_histograms;
 #[cfg(not(feature = "akita"))]
 pub mod opening;
 pub mod precommitted_reduction;
