@@ -37,7 +37,9 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
   "parallel",
 ] }
 jolt-poly.workspace = true
-jolt-transcript = { path = "../jolt-transcript", default-features = false }
+jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
+  "solinas",
+] }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true

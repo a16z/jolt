@@ -27,8 +27,10 @@ use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{EqPolynomial, UnivariatePoly};
+use jolt_poly::{bind_prefix_in_place, EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -43,8 +45,8 @@ use rayon::prelude::*;
 use super::prefix_product::PrefixColumn;
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
 use super::support::{
-    bind_prefix_pairs, collect_rows, fallible_collect_bytes, pin_derived_term,
-    triple_product_round_evals, BundleStore, RoundProgress, SplitLt,
+    collect_rows, fallible_collect_bytes, pin_derived_term, triple_product_round_evals,
+    BundleStore, RoundProgress, SplitLt,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -117,7 +119,9 @@ impl<F: JoltField> WaState<F> {
                 let dense: Vec<F> = (0..half).map(bind_pair).collect();
                 *self = Self::Bound(dense);
             }
-            Self::Bound(values) => bind_prefix_pairs(values, r, F::zero()),
+            Self::Bound(values) => {
+                let _ = bind_prefix_in_place(values, r, F::zero());
+            }
         }
     }
 
@@ -135,17 +139,14 @@ impl<F: JoltField> WaState<F> {
 pub struct OptimizedRegistersValEvaluation;
 
 impl OptimizedRegistersValEvaluation {
-    /// Peak bytes over `2^log_t >= 2^8` cycles whose first `prefix_cycles`
-    /// precede the trace's constant suffix, or `None` past `usize::MAX`: the
-    /// first bind's fallible collect of the `⌈prefix_cycles / 2⌉`-entry
-    /// increment table (`fallible_collect_bytes`) beside the `rd` indices
-    /// taken over from stage 4 (moved, not copied, at most `prefix_cycles`),
-    /// the `K`-entry address eq table and the LT tables at their largest
-    /// (`SplitLt::peak_bytes`). The write table that replaces the indices and
-    /// the bound halves later binds collect beside the tables hold less. Not
-    /// counted: the increment row store, a handle on the witness's rows when
-    /// it has one, and the row collect `prepare` falls back to when stage 4
-    /// parked no indices.
+    /// Reservation over `2^log_t >= 2^8` cycles whose first `prefix_cycles`
+    /// precede the constant suffix, or `None` past `usize::MAX`. The retained
+    /// fallible-collect allowance bounds the increment materialization,
+    /// both retained field columns and a possible binding shrink copy;
+    /// `par_collect_windows` fills its destination directly. Alongside it
+    /// count the moved `rd` indices, the address eq table and the LT tables
+    /// at their largest. Not counted: the increment row store and the row
+    /// collect `prepare` falls back to when stage 4 parked no indices.
     pub fn peak_bytes<F: JoltField>(log_t: usize, prefix_cycles: usize) -> Option<usize> {
         [
             prefix_cycles.checked_mul(size_of::<Option<u8>>())?,
@@ -276,10 +277,7 @@ impl<F: JoltField> ValEvaluationKernel<F> {
                     Ok(lo + challenge * (hi - lo))
                 };
                 #[cfg(feature = "parallel")]
-                let table = (0..half)
-                    .into_par_iter()
-                    .map(bound)
-                    .collect::<Result<Vec<F>, _>>()?;
+                let table = par_collect_windows(half, bound)?;
                 #[cfg(not(feature = "parallel"))]
                 let table = (0..half).map(bound).collect::<Result<Vec<F>, _>>()?;
                 self.inc = IncState::Dense(PrefixColumn {
@@ -339,7 +337,7 @@ impl<F: JoltField> ProveRounds<F> for ValEvaluationKernel<F> {
                         || [F::Accumulator::default(); 3],
                         |mut acc, y| {
                             group(y, &mut acc)?;
-                            Ok(acc)
+                            Ok::<_, SumcheckError<F>>(acc)
                         },
                     )
                     .map(|acc| acc.map(|acc| acc.map(F::Accumulator::reduce)))
@@ -551,8 +549,8 @@ mod tests {
     /// and counted once (10000 bytes), the 128-entry address eq table (4096),
     /// the split LT tables of 2^6 and twice 2^7 entries with the 2^7-entry
     /// dense table their switch builds beside them (14336), and 2500
-    /// increments collected at 200 bytes each: a 32-byte table slot, four in
-    /// a one-entry split and a 40-byte list node.
+    /// increments reserved at the conservative 200-byte fallible-collect
+    /// allowance each; direct materialization and in-place binds need less.
     #[test]
     fn peak_bytes_holds_the_parked_rd_indices_once() {
         assert_eq!(

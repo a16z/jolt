@@ -1,7 +1,7 @@
 //! Optimized instruction input virtualization (stage 3).
 //!
 //! `GruenSplitEqPolynomial` factors the eq term out of
-//! `eq(r_product, j) · ((is_rs2·rs2 + is_imm·imm) + γ·(is_rs1·rs1 + is_pc·upc))(j)`.
+//! `eq(r_product, j) · ((is_rs2·rs2 + is_imm·imm + is_rd·rd) + γ·(is_rs1·rs1 + is_pc·upc))(j)`.
 //!
 //! Round 0 evaluates native integer rows. Early binds retain Boolean flags as
 //! packed bit patterns and materialize only operands. The constant suffix
@@ -14,7 +14,7 @@ use flags::PackedFlags;
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{bind_prefix_in_place, BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
@@ -22,22 +22,21 @@ use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
 use jolt_verifier::stages::stage3::outputs::InstructionInput;
-use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, ToField, UnexpandedPc};
+use jolt_witness::witnesses::{
+    Imm, InstructionFlag, RdWriteValue, Rs1Value, Rs2Value, ToField, UnexpandedPc,
+};
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
-use super::support::{
-    bind_prefix_pairs, bind_prefix_pairs_buffer_len, pin_derived_term, BundleStore,
-    GruenRoundMessage, RoundProgress,
-};
+use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
-/// The eight operand/flag tables, in output-claim declaration order:
-/// `[is_rs1, rs1, is_pc, upc, is_rs2, rs2, is_imm, imm]`.
-const NUM_TABLES: usize = 8;
+/// The ten operand/flag tables, in output-claim declaration order:
+/// `[is_rs1, rs1, is_pc, upc, is_rs2, rs2, is_imm, imm, is_rd, rd]`.
+const NUM_TABLES: usize = 10;
 
 use crate::mem::purge_retained_memory;
 
@@ -46,7 +45,7 @@ const LATE_PURGE_ROUNDS: usize = 8;
 #[cfg(feature = "parallel")]
 const MATERIALIZE_CHUNK: usize = 1 << 12;
 
-/// One cycle's eight operand/flag values as native scalars.
+/// One cycle's ten operand/flag values as native scalars.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, WitnessBundle)]
 pub struct InstructionInputRow {
     #[opening(InstructionFlags(InstructionFlags::LeftOperandIsRs1Value))]
@@ -61,19 +60,29 @@ pub struct InstructionInputRow {
     #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm))]
     pub is_imm: InstructionFlag,
     pub imm: Imm,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRdWriteValue))]
+    pub is_rd: InstructionFlag,
+    pub rd_write_value: RdWriteValue,
 }
 
 impl InstructionInputRow {
-    fn flags(&self) -> [bool; 4] {
-        [self.is_rs1.0, self.is_pc.0, self.is_rs2.0, self.is_imm.0]
+    fn flags(&self) -> [bool; 5] {
+        [
+            self.is_rs1.0,
+            self.is_pc.0,
+            self.is_rs2.0,
+            self.is_imm.0,
+            self.is_rd.0,
+        ]
     }
 
-    fn operands<F: JoltField>(&self) -> [F; 4] {
+    fn operands<F: JoltField>(&self) -> [F; 5] {
         [
             self.rs1_value.to_field(),
             self.unexpanded_pc.to_field(),
             self.rs2_value.to_field(),
             self.imm.to_field(),
+            self.rd_write_value.to_field(),
         ]
     }
 
@@ -88,6 +97,8 @@ impl InstructionInputRow {
             self.rs2_value.to_field(),
             self.is_imm.to_field(),
             self.imm.to_field(),
+            self.is_rd.to_field(),
+            self.rd_write_value.to_field(),
         ]
     }
 }
@@ -95,37 +106,30 @@ impl InstructionInputRow {
 pub struct OptimizedInstructionInput;
 
 impl OptimizedInstructionInput {
-    /// Peak bytes of the kernel over `prefix_cycles` cycles before the
-    /// trace's constant suffix, or `None` past `usize::MAX`. The first bind
-    /// builds the four operand tables and the packed flag words at
-    /// `⌈prefix_cycles / 2⌉` entries each. Each later bind halves the operand
-    /// tables, the first one's bound half (`bind_prefix_pairs_buffer_len`)
-    /// beside all four, then repacks the words beside the old ones and squares
-    /// the flag lookup table beside the old one; once the table saturates, the
-    /// bind instead materializes four flag tables beside the words and the
-    /// table. An operand table bound in place keeps its capacity; the dense
-    /// binds after the switch hold less. Not counted: the row store, a handle
-    /// on the witness's rows when it has one; the split-eq tables.
+    /// Reservation over `prefix_cycles` cycles before the constant suffix,
+    /// or `None` past `usize::MAX`. All five operand tables are charged at
+    /// their first-bind capacity throughout; binding in place can retain it.
+    /// Each bind also reserves its bound half for a possible `shrink_to_fit`
+    /// copy, then the old and new packed words and lookup tables together.
+    /// Saturation replaces the packed flags with five field columns.
+    /// Not counted: the row store, a handle on the witness's rows when it has
+    /// one; the split-eq tables. These are allocation bounds, not live sizes.
     pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
         let bytes = |field: usize, words: usize| {
             field
                 .checked_mul(size_of::<F>())?
-                .checked_add(words.checked_mul(size_of::<u64>())?)
+                .checked_add(words.checked_mul(size_of::<u128>())?)
         };
         let mut len = prefix_cycles.div_ceil(2);
-        let mut capacity = len;
+        let capacity = len;
         let mut bits = PackedFlags::<F>::FIRST_BITS;
         let mut peak = 0usize;
         loop {
             let lut = 1usize << bits;
             let bound = len.div_ceil(2);
-            let buffer = bind_prefix_pairs_buffer_len(len);
+            let buffer = len.div_ceil(2);
             let operands = capacity.checked_mul(NUM_TABLES / 2)?;
             peak = peak.max(bytes(operands.checked_add(buffer)?.checked_add(lut)?, len)?);
-            if buffer > 0 {
-                capacity = bound;
-            }
-            let operands = capacity.checked_mul(NUM_TABLES / 2)?;
             if bits == PackedFlags::<F>::SATURATED_BITS {
                 let flags = bound.checked_mul(NUM_TABLES / 2)?;
                 return Some(peak.max(bytes(operands.checked_add(flags)?.checked_add(lut)?, len)?));
@@ -159,7 +163,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructio
 enum InputState<F: JoltField> {
     Native(BundleStore<InstructionInputRow>),
     Packed {
-        operands: [Vec<F>; 4],
+        operands: [Vec<F>; 5],
         flags: PackedFlags<F>,
     },
     Dense(Vec<Vec<F>>),
@@ -250,26 +254,30 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 let (is_pc, is_pc_m) = ext_flag(even.is_pc.0, odd.is_pc.0);
                 let (is_rs2, is_rs2_m) = ext_flag(even.is_rs2.0, odd.is_rs2.0);
                 let (is_imm, is_imm_m) = ext_flag(even.is_imm.0, odd.is_imm.0);
+                let (is_rd, is_rd_m) = ext_flag(even.is_rd.0, odd.is_rd.0);
                 let (rs1, rs1_m) = ext_u64(even.rs1_value.0, odd.rs1_value.0);
                 let (upc, upc_m) = ext_u64(even.unexpanded_pc.0, odd.unexpanded_pc.0);
                 let (rs2, rs2_m) = ext_u64(even.rs2_value.0, odd.rs2_value.0);
+                let (rd, rd_m) = ext_u64(even.rd_write_value.0, odd.rd_write_value.0);
                 let split = |imm: i128| (imm >> 64, i128::from(imm as u64));
                 let (imm_even_high, imm_even_low) = split(even.imm.0);
                 let (imm_odd_high, imm_odd_low) = split(odd.imm.0);
                 for t in 0..POINTS as i64 {
                     // |f(t)| ≤ 3, |v(t)| < 2^67, and the Lagrange weights
-                    // |1 − t|, |t| ≤ 3 keep every low sum below 2^70 and the
+                    // |1 − t|, |t| ≤ 3 keep every low sum below 2^71 and the
                     // high sums below 2^67: exact in `i128` for any immediate.
                     let f_rs1 = is_rs1 + t * is_rs1_m;
                     let f_pc = is_pc + t * is_pc_m;
                     let f_rs2 = is_rs2 + t * is_rs2_m;
                     let f_imm = is_imm + t * is_imm_m;
+                    let f_rd = is_rd + t * is_rd_m;
                     let (w_even, w_odd) = (i128::from(f_imm * (1 - t)), i128::from(f_imm * t));
                     let left = i128::from(f_rs1) * (rs1 + i128::from(t) * rs1_m)
                         + i128::from(f_pc) * (upc + i128::from(t) * upc_m);
                     let right = i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m)
                         + w_even * imm_even_low
-                        + w_odd * imm_odd_low;
+                        + w_odd * imm_odd_low
+                        + i128::from(f_rd) * (rd + i128::from(t) * rd_m);
                     let right_high = w_even * imm_even_high + w_odd * imm_odd_high;
                     right_acc[t as usize].fmadd_i128(e_in, right);
                     if right_high != 0 {
@@ -314,7 +322,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
     }
 
     fn operand_product(&self, values: &[F; NUM_TABLES]) -> F {
-        let right = values[4] * values[5] + values[6] * values[7];
+        let right = values[4] * values[5] + values[6] * values[7] + values[8] * values[9];
         let left = values[0] * values[1] + values[2] * values[3];
         right + self.gamma * left
     }
@@ -336,12 +344,12 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 // Separate left/right lanes let gamma be applied once per
                 // block, rather than once per row or evaluation point.
                 let mut inner = [F::Accumulator::default(); 4];
-                for pair in 0..4 {
+                for pair in 0..5 {
                     let (flag_0, flag_1) = pair_at(2 * pair, row);
                     let (value_0, value_1) = pair_at(2 * pair + 1, row);
                     let flag_m = flag_1 - flag_0;
                     let value_m = value_1 - value_0;
-                    let offset = 2 * (pair / 2);
+                    let offset = if pair < 2 { 0 } else { 2 };
                     inner[offset].fmadd(flag_0, value_0);
                     inner[offset + 1].fmadd(flag_m, value_m);
                 }
@@ -433,10 +441,10 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         rows: &BundleStore<InstructionInputRow>,
         challenge: F,
         half: usize,
-        tail: [bool; 4],
+        tail: [bool; 5],
     ) -> Result<InputState<F>, WitnessError> {
         let access = rows.access();
-        let cell = |y: usize| -> Result<([F; 4], u64), WitnessError> {
+        let cell = |y: usize| -> Result<([F; 5], u128), WitnessError> {
             let even_row = access.row(2 * y)?;
             let odd_row = access.row(2 * y + 1)?;
             let word = PackedFlags::<F>::encode(even_row.flags(), odd_row.flags());
@@ -448,29 +456,31 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             ))
         };
 
-        let mut tables: [Vec<F>; 4] = core::array::from_fn(|_| unsafe_allocate_zero_vec(half));
-        let mut words = vec![0u64; half];
+        let mut tables: [Vec<F>; 5] = core::array::from_fn(|_| unsafe_allocate_zero_vec(half));
+        let mut words = vec![0u128; half];
         #[cfg(feature = "parallel")]
         {
-            let [t0, t1, t2, t3] = &mut tables;
+            let [t0, t1, t2, t3, t4] = &mut tables;
             (
                 t0.par_chunks_mut(MATERIALIZE_CHUNK),
                 t1.par_chunks_mut(MATERIALIZE_CHUNK),
                 t2.par_chunks_mut(MATERIALIZE_CHUNK),
                 t3.par_chunks_mut(MATERIALIZE_CHUNK),
+                t4.par_chunks_mut(MATERIALIZE_CHUNK),
                 words.par_chunks_mut(MATERIALIZE_CHUNK),
             )
                 .into_par_iter()
                 .enumerate()
                 .try_for_each(|(chunk_index, chunks)| -> Result<(), WitnessError> {
                     let base = chunk_index * MATERIALIZE_CHUNK;
-                    let (c0, c1, c2, c3, codes) = chunks;
+                    let (c0, c1, c2, c3, c4, codes) = chunks;
                     for offset in 0..c0.len() {
                         let (values, word) = cell(base + offset)?;
                         c0[offset] = values[0];
                         c1[offset] = values[1];
                         c2[offset] = values[2];
                         c3[offset] = values[3];
+                        c4[offset] = values[4];
                         codes[offset] = word;
                     }
                     Ok(())
@@ -505,7 +515,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }
             InputState::Packed { operands, flags } => {
                 for (i, table) in operands.iter_mut().enumerate() {
-                    bind_prefix_pairs(table, challenge, self.tail[2 * i + 1]);
+                    let _ = bind_prefix_in_place(table, challenge, self.tail[2 * i + 1]);
                 }
                 if flags.saturated() {
                     let flag_tables = flags.materialize_bound(challenge);
@@ -523,7 +533,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }
             InputState::Dense(tables) => {
                 for (table, tail) in tables.iter_mut().zip(self.tail) {
-                    bind_prefix_pairs(table, challenge, tail);
+                    let _ = bind_prefix_in_place(table, challenge, tail);
                 }
                 if self.progress.bound() + 1 == LATE_PURGE_ROUNDS {
                     purge_retained_memory(self.progress.total());
@@ -582,7 +592,7 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<InstructionInputOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let [left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
+        let [left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm, right_operand_is_rd_write_value, rd_write_value] =
             self.final_values()
                 .map_err(|_| SumcheckKernelError::InvariantViolation {
                     reason: "instruction input row re-extraction failed after the rounds",
@@ -596,6 +606,8 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionInputKernel<F> {
             rs2_value,
             right_operand_is_imm,
             imm,
+            right_operand_is_rd_write_value,
+            rd_write_value,
         })
     }
 
@@ -625,8 +637,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use jolt_claims::protocols::jolt::geometry::instruction::{
-        imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
-        rs1_value, rs2_value, unexpanded_pc,
+        imm, left_operand_is_pc, left_operand_is_rs1, rd_write_value, right_operand_is_imm,
+        right_operand_is_rd_write_value, right_operand_is_rs2, rs1_value, rs2_value, unexpanded_pc,
     };
     use jolt_claims::protocols::jolt::relations::instruction::{
         InstructionInputChallenges, InstructionInputInputClaims,
@@ -639,7 +651,9 @@ mod tests {
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage3::outputs::InstructionInput;
-    use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, UnexpandedPc};
+    use jolt_witness::witnesses::{
+        Imm, InstructionFlag, RdWriteValue, Rs1Value, Rs2Value, UnexpandedPc,
+    };
 
     use crate::reference::views::eq_table;
     use crate::{NaiveSumcheckProver, ProverInputs, SumcheckKernel};
@@ -680,6 +694,8 @@ mod tests {
                     rs2_value: Rs2Value(splitmix(&mut state)),
                     is_imm: InstructionFlag(raw & 8 != 0),
                     imm: Imm(if index % 3 == 0 { -wide } else { wide }),
+                    is_rd: InstructionFlag(raw & 16 != 0),
+                    rd_write_value: RdWriteValue(splitmix(&mut state)),
                 }
             })
             .collect();
@@ -696,7 +712,7 @@ mod tests {
                 )
             }
         };
-        let tables: Vec<Vec<F>> = (0..8)
+        let tables: Vec<Vec<F>> = (0..10)
             .map(|table| {
                 rows.iter()
                     .map(|row| row.field_values::<F>()[table])
@@ -724,6 +740,8 @@ mod tests {
             rs2_value(),
             right_operand_is_imm(),
             imm(),
+            right_operand_is_rd_write_value(),
+            rd_write_value(),
         ];
         let opening_tables: BTreeMap<_, _> = ids
             .into_iter()
@@ -764,7 +782,9 @@ mod tests {
         let eq = eq_table(&r_product);
         let mut claim = fr(0);
         for j in 0..1usize << log_t {
-            let right = tables[4][j] * tables[5][j] + tables[6][j] * tables[7][j];
+            let right = tables[4][j] * tables[5][j]
+                + tables[6][j] * tables[7][j]
+                + tables[8][j] * tables[9][j];
             let left = tables[0][j] * tables[1][j] + tables[2][j] * tables[3][j];
             claim += eq[j] * (right + gamma * left);
         }

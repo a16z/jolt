@@ -311,7 +311,7 @@ mod tests {
         stage_one_reserves_its_tables::<AkitaField>();
     }
 
-    /// The stage-3 state after the first bind: the instruction input's four
+    /// The stage-3 state after the first bind: the instruction input's five
     /// operand tables and packed flag words at `PREFIX / 2` entries each and
     /// its four-value flag table, beside the shift's eight prefix–suffix
     /// tables and the register claim reduction's two, `2^ceil(log_t/2)`
@@ -321,8 +321,8 @@ mod tests {
     /// last proof row accesses RAM.
     fn stage_three_reserves_its_state<F: JoltField>() {
         let (half, prefix) = (PREFIX / 2, 1usize << LOG_T.div_ceil(2));
-        let floor = (4 * half + 4 + 8 * prefix + 2 * prefix) * size_of::<F>()
-            + half * size_of::<u64>()
+        let floor = (5 * half + 4 + 8 * prefix + 2 * prefix) * size_of::<F>()
+            + half * size_of::<u128>()
             + PREFIX * (size_of::<u32>() + 2 * size_of::<u64>());
         let stage3 = stages::<F>(&config::<F>(LOG_T))[2];
         assert!(
@@ -357,8 +357,7 @@ mod tests {
     /// (`rs1`, `rs2`, and `rd` parked for stage 5), the indexed generation's
     /// values and 25-byte packed metadata, the direct entries, the read LUT
     /// at 2^16 values and the write LUT at 2^8, and the increments'
-    /// `PREFIX / 4`-entry allocation, which they keep because a prefix of
-    /// 1024 entries binds in place; plus stage 4's RAM bytes.
+    /// `PREFIX / 4`-entry allocation, which are still retained at the fourth bind; plus stage 4's RAM bytes.
     fn cycle_first_transition_floor<F: JoltField>(direct_entry_bytes: usize) -> usize {
         let f = size_of::<F>();
         STAGE_FOUR_RAM

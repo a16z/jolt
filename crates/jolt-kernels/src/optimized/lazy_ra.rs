@@ -43,9 +43,8 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
-use super::support::bind_prefix_pairs;
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, Polynomial};
+use jolt_poly::{bind_prefix_in_place, BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -408,11 +407,11 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     .par_iter_mut()
                     .zip(&tail)
                     .for_each(|(values, &tail)| {
-                        bind_prefix_pairs(values, challenge, tail);
+                        let _ = bind_prefix_in_place(values, challenge, tail);
                     });
                 #[cfg(not(feature = "parallel"))]
                 for (values, &tail) in values.iter_mut().zip(&tail) {
-                    bind_prefix_pairs(values, challenge, tail);
+                    let _ = bind_prefix_in_place(values, challenge, tail);
                 }
                 Self::Prefix { values, tail }
             }
@@ -619,6 +618,13 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
             })
             .collect();
     }
+    // `vec![column; n]` would clone one column n times on this thread.
+    #[cfg(feature = "parallel")]
+    let mut values: Vec<Vec<F>> = (0..tables.len() / factors)
+        .into_par_iter()
+        .map(|_| vec![F::zero(); len])
+        .collect();
+    #[cfg(not(feature = "parallel"))]
     let mut values = vec![vec![F::zero(); len]; tables.len() / factors];
     let columns = values.iter_mut().map(Vec::as_mut_slice).collect();
     fill(columns, 0, tables, factors, source, branches);

@@ -307,6 +307,7 @@ macro_rules! define_solinas_prime {
 
         impl<const P: $word> CanonicalEncoding for $name<P> {
             const MODULUS_BITS: u32 = Self::BITS;
+            const CHALLENGE_SET_LIMBS: [u64; 4] = [P as u64, 0, 0, 0];
 
             #[inline(always)]
             fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
@@ -352,11 +353,6 @@ macro_rules! define_solinas_prime {
             #[inline]
             fn num_bits(&self) -> u32 {
                 <$word>::BITS - self.0.leading_zeros()
-            }
-
-            #[inline]
-            fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-                Self::from_bytes_le_reduced(bytes)
             }
         }
 

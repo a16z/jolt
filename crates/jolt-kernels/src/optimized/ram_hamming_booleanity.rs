@@ -11,8 +11,8 @@
 //!   `s(0)+s(1) = previous_claim` — two point-evaluations per pair instead
 //!   of the naive tier's four full-summand evaluations plus an eq-table
 //!   bind.
-//! - **In-place parallel binding** of the single dense `H` table
-//!   (`Polynomial::bind_with_order`, rayon inside).
+//! - **Prefix storage** through packing and subsequent field rounds. A
+//!   constant Boolean tail contributes zero to `H² − H` after every bind.
 //! - **Block-pattern startup.** The first [`STARTUP_ROUNDS`] rounds run on
 //!   `H` packed as one bit pattern per block of low cycle bits: before any
 //!   bind, a single pass accumulates each pattern's weight under the
@@ -31,8 +31,10 @@
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamHammingBooleanityPublic};
 use jolt_claims::NoChallenges;
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 use jolt_verifier::stages::relations::{
     SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -41,11 +43,13 @@ use jolt_verifier::stages::stage6b::ram_hamming_booleanity::{
     RamHammingBooleanity, RamHammingBooleanityOutputClaims,
 };
 use jolt_witness::witnesses::RamHammingWeight;
-use jolt_witness::{JoltWitnessPlane, WitnessBundle};
+use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
+
+use super::prefix_product::PrefixColumn;
 
 use super::support::{
-    collect_rows, map_indices, map_reduce_chunks, pin_derived_term_if_derived, scan_chunk_size,
-    GruenRoundMessage, RoundProgress,
+    map_indices, map_reduce_chunks, pin_derived_term_if_derived, scan_chunk_size, BundleAccess,
+    BundleStore, GruenRoundMessage, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -75,7 +79,11 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
                 reason: "stage-1 cycle binding has the wrong variable count",
             });
         }
-        let rows: Vec<HammingRow> = collect_rows(witness, 1 << trace_dimensions.log_t())?;
+        let cycles = 1usize << trace_dimensions.log_t();
+        let rows = BundleStore::<HammingRow>::resolve(witness, cycles)?;
+        let access = rows.access();
+        let prefix_cycles = access.constant_suffix_start(cycles)?;
+        let tail = access.row(prefix_cycles.min(cycles - 1))?.weight.0;
         // The verifier's `derive_output_term` pairs the raw sumcheck point
         // against the stage-1 binding positionally, so the eq table's
         // big-endian point is the binding reversed — same orientation as the
@@ -84,11 +92,20 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
         let eq = GruenSplitEqPolynomial::new(&eq_point, BindingOrder::LowToHigh);
         let depth = STARTUP_ROUNDS.min(trace_dimensions.log_t());
         let hamming = if depth == 0 {
-            HammingState::Dense(Polynomial::new(
-                rows.iter().map(|row| F::from_bool(row.weight.0)).collect(),
-            ))
+            HammingState::Folded(PrefixColumn {
+                values: (0..prefix_cycles)
+                    .map(|i| access.row(i).map(|row| F::from_bool(row.weight.0)))
+                    .collect::<Result<_, _>>()?,
+                tail: [F::from_bool(tail); 2],
+            })
         } else {
-            HammingState::Startup(HammingStartup::new(&rows, depth, &eq))
+            HammingState::Startup(HammingStartup::new(
+                &access,
+                prefix_cycles,
+                tail,
+                depth,
+                &eq,
+            )?)
         };
 
         Ok(Box::new(OptimizedRamHammingBooleanityKernel {
@@ -99,7 +116,7 @@ impl<F: JoltField> PrepareKernel<F, RamHammingBooleanity<F>> for OptimizedRamHam
     }
 }
 
-#[derive(Clone, Copy, Debug, WitnessBundle)]
+#[derive(Clone, Copy, Debug, PartialEq, WitnessBundle)]
 struct HammingRow {
     weight: RamHammingWeight,
 }
@@ -118,11 +135,11 @@ impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
             HammingState::Startup(startup) => {
                 startup.challenges.push(challenge);
                 if startup.challenges.len() == startup.depth {
-                    self.hamming = HammingState::Dense(startup.materialize());
+                    self.hamming = HammingState::Folded(startup.materialize());
                 }
             }
-            HammingState::Dense(hamming) => {
-                hamming.bind_with_order(challenge, BindingOrder::LowToHigh);
+            HammingState::Folded(hamming) => {
+                let _ = hamming.bind(challenge);
             }
         }
         self.progress.advance();
@@ -132,7 +149,7 @@ impl<F: JoltField> OptimizedRamHammingBooleanityKernel<F> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 enum HammingState<F: JoltField> {
     Startup(HammingStartup<F>),
-    Dense(Polynomial<F>),
+    Folded(PrefixColumn<F>),
 }
 
 /// `H` during the first `depth` rounds. Block `z` covers cycles
@@ -145,35 +162,67 @@ enum HammingState<F: JoltField> {
 struct HammingStartup<F: JoltField> {
     depth: usize,
     patterns: Vec<u16>,
+    tail: F,
     histogram: Vec<F>,
     challenges: Vec<F>,
 }
 
 impl<F: JoltField> HammingStartup<F> {
-    fn new(rows: &[HammingRow], depth: usize, eq: &GruenSplitEqPolynomial<F>) -> Self {
+    fn new(
+        rows: &BundleAccess<'_, HammingRow>,
+        prefix_cycles: usize,
+        tail: bool,
+        depth: usize,
+        eq: &GruenSplitEqPolynomial<F>,
+    ) -> Result<Self, WitnessError> {
         let width = 1usize << depth;
-        let patterns = map_indices(rows.len() / width, |block| {
-            rows[block * width..][..width]
-                .iter()
-                .enumerate()
-                .fold(0u16, |pattern, (offset, row)| {
-                    pattern | u16::from(row.weight.0) << offset
-                })
-        });
+        let count = prefix_cycles.div_ceil(width);
+        let pack = |block: usize| -> Result<u16, WitnessError> {
+            let start = block * width;
+            let live = (prefix_cycles - start).min(width);
+            let mut pattern = 0;
+            for offset in 0..live {
+                pattern |= u16::from(rows.row(start + offset)?.weight.0) << offset;
+            }
+            if tail && live < width {
+                pattern |= (((1u32 << width) - 1) ^ ((1u32 << live) - 1)) as u16;
+            }
+            Ok(pattern)
+        };
+        #[cfg(feature = "parallel")]
+        let mut patterns = par_collect_windows(count, pack)?;
+        #[cfg(not(feature = "parallel"))]
+        let mut patterns = (0..count).map(pack).collect::<Result<Vec<_>, _>>()?;
+
+        let tail_pattern = if tail {
+            ((1u32 << width) - 1) as u16
+        } else {
+            0
+        };
+        let prefix = patterns
+            .iter()
+            .rposition(|&pattern| pattern != tail_pattern)
+            .map_or(0, |i| i + 1);
+        patterns.truncate(prefix);
+        if patterns.capacity() >= 2 * prefix.max(1) {
+            patterns.shrink_to_fit();
+        }
 
         let (e_out, e_in) = eq.e_out_in_for_window(depth);
         let in_bits = e_in.len().trailing_zeros();
         let bins = 1usize << (width - 1);
         let histogram = map_reduce_chunks(
-            e_out.len(),
-            scan_chunk_size(e_out.len()),
+            patterns.len().div_ceil(e_in.len()),
+            scan_chunk_size(patterns.len().div_ceil(e_in.len())),
             |range| {
                 let mut histogram = vec![F::zero(); bins];
                 let mut inner = vec![F::zero(); bins];
                 if bins <= 128 {
                     for x_out in range {
                         let mut touched = 0u128;
-                        let blocks = &patterns[x_out << in_bits..][..e_in.len()];
+                        let start = x_out << in_bits;
+                        let end = (start + e_in.len()).min(patterns.len());
+                        let blocks = &patterns[start..end];
                         for (&pattern, &weight) in blocks.iter().zip(e_in) {
                             let bin = canonical_bin(pattern, width);
                             if bin == 0 {
@@ -196,7 +245,9 @@ impl<F: JoltField> HammingStartup<F> {
                     let mut seen = vec![false; bins];
                     let mut touched = Vec::with_capacity(bins.min(e_in.len()));
                     for x_out in range {
-                        let blocks = &patterns[x_out << in_bits..][..e_in.len()];
+                        let start = x_out << in_bits;
+                        let end = (start + e_in.len()).min(patterns.len());
+                        let blocks = &patterns[start..end];
                         for (&pattern, &weight) in blocks.iter().zip(e_in) {
                             let bin = canonical_bin(pattern, width);
                             if bin == 0 {
@@ -228,12 +279,13 @@ impl<F: JoltField> HammingStartup<F> {
             || vec![F::zero(); bins],
         );
 
-        Self {
+        Ok(Self {
             depth,
             patterns,
+            tail: F::from_bool(tail),
             histogram,
             challenges: Vec::with_capacity(depth),
-        }
+        })
     }
 
     /// Round `j = challenges.len()`: `s(t) = l(t)·Q(t)` with `l` the split-eq
@@ -348,7 +400,13 @@ impl<F: JoltField> HammingStartup<F> {
         [q_0, q_1, q_2]
     }
 
-    fn materialize(&self) -> Polynomial<F> {
+    fn materialize(&self) -> PrefixColumn<F> {
+        if self.patterns.is_empty() {
+            return PrefixColumn {
+                values: Vec::new(),
+                tail: [self.tail; 2],
+            };
+        }
         let reversed: Vec<F> = self.challenges.iter().rev().copied().collect();
         let weights = EqPolynomial::<F>::evals(&reversed, None);
         let mut values = vec![F::zero(); 1 << (1 << self.depth)];
@@ -356,9 +414,12 @@ impl<F: JoltField> HammingStartup<F> {
             values[pattern] =
                 values[pattern & (pattern - 1)] + weights[pattern.trailing_zeros() as usize];
         }
-        Polynomial::new(map_indices(self.patterns.len(), |block| {
-            values[usize::from(self.patterns[block])]
-        }))
+        PrefixColumn {
+            values: map_indices(self.patterns.len(), |block| {
+                values[usize::from(self.patterns[block])]
+            }),
+            tail: [self.tail; 2],
+        }
     }
 }
 
@@ -389,12 +450,15 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
             HammingState::Startup(startup) => {
                 return startup.round_poly(&self.eq, round, previous_claim);
             }
-            HammingState::Dense(hamming) => hamming,
+            HammingState::Folded(hamming) => hamming,
         };
-        let [constant, leading] = self.eq.par_fold_out_in(
+        // The constant Boolean tail has zero defect after every bind.
+        let prefix_pairs = hamming.values.len().div_ceil(2);
+        let [constant, leading] = self.eq.par_fold_out_in_prefix(
+            prefix_pairs,
             || [F::zero(); 2],
             |accumulator, row, _x_in, e_in| {
-                let (h_0, h_1) = hamming.sumcheck_eval_pair(row, BindingOrder::LowToHigh);
+                let (h_0, h_1) = hamming.pair(row);
                 let delta = h_1 - h_0;
                 accumulator[0] += e_in * (h_0 * h_0 - h_0);
                 accumulator[1] += e_in * (delta * delta);
@@ -404,10 +468,11 @@ impl<F: JoltField> ProveRounds<F> for OptimizedRamHammingBooleanityKernel<F> {
         );
         self.eq
             .checked_cubic(constant, leading, previous_claim, round, || {
-                self.eq.par_fold_out_in(
+                self.eq.par_fold_out_in_prefix(
+                    prefix_pairs,
                     F::zero,
                     |sum, row, _, weight| {
-                        let (_, high) = hamming.sumcheck_eval_pair(row, BindingOrder::LowToHigh);
+                        let (_, high) = hamming.pair(row);
                         *sum += weight * (high * high - high);
                     },
                     |_, weight, sum| weight * sum,
@@ -430,13 +495,13 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedRamHammingBooleanityKernel<F> 
         _inputs: &SumcheckInputClaims<F, Self::Relation>,
     ) -> Result<RamHammingBooleanityOutputClaims<F>, SumcheckKernelError<F>> {
         self.progress.require_complete()?;
-        let HammingState::Dense(hamming) = &self.hamming else {
+        let HammingState::Folded(hamming) = &self.hamming else {
             return Err(SumcheckKernelError::InvariantViolation {
                 reason: "RAM Hamming startup outlived its rounds",
             });
         };
         Ok(RamHammingBooleanityOutputClaims {
-            ram_hamming_weight: hamming.evals()[0],
+            ram_hamming_weight: hamming.value(0),
         })
     }
 
@@ -587,6 +652,7 @@ mod tests {
             let mut startup = HammingStartup {
                 depth: 4,
                 patterns: Vec::new(),
+                tail: Fr::zero(),
                 histogram,
                 challenges: Vec::new(),
             };
@@ -699,6 +765,19 @@ mod tests {
             ));
         });
     }
+    #[test]
+    fn padding_boundaries_preserve_all_rounds_and_final_claim() {
+        for prefix in [0, 1, 2, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128] {
+            let bits: Vec<_> = (0..prefix).map(|i| i % 5 < 2).collect();
+            hamming_parity(7, &bits, generic_binding(7));
+        }
+        // Fully retained tables can have a constant one suffix as well.
+        for prefix in [0, 1, 15, 16, 17, 63, 64, 65] {
+            let bits: Vec<_> = (0..128).map(|i| i >= prefix || i % 5 < 2).collect();
+            hamming_parity(7, &bits, generic_binding(7));
+        }
+    }
+
     #[test]
     fn matches_reference_at_exceptional_points_through_dense_rounds() {
         let log_t = STARTUP_ROUNDS + 3;
