@@ -414,6 +414,24 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
 /// the linear-time round kernel.
 pub struct OptimizedProductRemainder;
 
+impl OptimizedProductRemainder {
+    /// Peak bytes of the remainder over `prefix_cycles` cycles before the
+    /// trace's constant suffix, or `None` past `usize::MAX`: `left` and
+    /// `right` at their allocated entries each, `prefix_cycles` rounded up to
+    /// even, which binding never grows, plus the closing opening walk's
+    /// `prefix_cycles + 1` cycle weights. That allowance also bounds any
+    /// binding shrink copy. Not counted: the row store, a
+    /// handle on the witness's rows when it has one; the split-eq tables; the
+    /// opening walk's eq factors and per-block sums; the field-inline rows.
+    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
+        let len = prefix_cycles.div_ceil(2).checked_mul(2)?;
+        let transient = prefix_cycles.checked_add(1)?;
+        len.checked_mul(2)?
+            .checked_add(transient)?
+            .checked_mul(size_of::<F>())
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for OptimizedProductRemainder {
     fn prepare(
         &self,

@@ -750,6 +750,7 @@ impl MacroBuilder {
                     &__jolt_trusted_advice_bytes,
                     #commitment_arg,
                     __jolt_advice_tape,
+                    ::core::option::Option::None,
                 ).expect("execution trace exceeds the max_trace_length configured in #[jolt::provable]");
 
                 #handle_return

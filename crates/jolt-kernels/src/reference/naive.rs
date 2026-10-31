@@ -64,7 +64,9 @@ pub(crate) fn sample_dense_round<F: JoltField>(
             .map(|y| term(y, point))
             .try_reduce(F::zero, |a, b| Ok(a + b))?;
         #[cfg(not(feature = "parallel"))]
-        let sum = (0..half).try_fold(F::zero(), |acc, y| Ok(acc + term(y, point)?))?;
+        let sum = (0..half).try_fold(F::zero(), |acc, y| {
+            Ok::<_, SumcheckError<F>>(acc + term(y, point)?)
+        })?;
         evals.push(sum);
     }
     let actual = evals[0] + evals[1];

@@ -105,6 +105,43 @@ impl InstructionInputRow {
 
 pub struct OptimizedInstructionInput;
 
+impl OptimizedInstructionInput {
+    /// Reservation over `prefix_cycles` cycles before the constant suffix,
+    /// or `None` past `usize::MAX`. All five operand tables are charged at
+    /// their first-bind capacity throughout; binding in place can retain it.
+    /// Each bind also reserves its bound half for a possible `shrink_to_fit`
+    /// copy, then the old and new packed words and lookup tables together.
+    /// Saturation replaces the packed flags with five field columns.
+    /// Not counted: the row store, a handle on the witness's rows when it has
+    /// one; the split-eq tables. These are allocation bounds, not live sizes.
+    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
+        let bytes = |field: usize, words: usize| {
+            field
+                .checked_mul(size_of::<F>())?
+                .checked_add(words.checked_mul(size_of::<u128>())?)
+        };
+        let mut len = prefix_cycles.div_ceil(2);
+        let capacity = len;
+        let mut bits = PackedFlags::<F>::FIRST_BITS;
+        let mut peak = 0usize;
+        loop {
+            let lut = 1usize << bits;
+            let bound = len.div_ceil(2);
+            let buffer = len.div_ceil(2);
+            let operands = capacity.checked_mul(NUM_TABLES / 2)?;
+            peak = peak.max(bytes(operands.checked_add(buffer)?.checked_add(lut)?, len)?);
+            if bits == PackedFlags::<F>::SATURATED_BITS {
+                let flags = bound.checked_mul(NUM_TABLES / 2)?;
+                return Some(peak.max(bytes(operands.checked_add(flags)?.checked_add(lut)?, len)?));
+            }
+            let words = len.checked_add(bound)?;
+            peak = peak.max(bytes(operands.checked_add(lut + lut * lut)?, words)?);
+            len = bound;
+            bits *= 2;
+        }
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for OptimizedInstructionInput {
     fn prepare(
         &self,
