@@ -219,6 +219,14 @@ pub fn serialize_and_print_size(
     Ok(())
 }
 
+/// The advice tape `source`'s compute-advice guest writes for these inputs,
+/// or `None` when `source` has no compute-advice build. Without
+/// `memory_budget`, a full unbudgeted trace of that guest produces it. With
+/// one, [`TracerBackend::execute_advice_tape`] runs the guest without a trace
+/// and returns an error for the first setup request or advice write the
+/// budget's bytes cannot hold; it checks named requests, not process memory.
+/// Building the compute-advice program happens before either and is outside
+/// the budget.
 #[cfg(feature = "host")]
 pub fn compute_advice_tape(
     source: &dyn host::JoltProgramSource,
@@ -226,6 +234,7 @@ pub fn compute_advice_tape(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_layout: &MemoryLayout,
+    memory_budget: Option<MemoryBudget>,
 ) -> Result<Option<Vec<u8>>, Box<dyn StdError + Send + Sync>> {
     let Some(elf) = source.get_elf_compute_advice_contents() else {
         return Ok(None);
@@ -245,16 +254,24 @@ pub fn compute_advice_tape(
         heap_size: memory_layout.heap_size,
         program_size: Some(program.program_end - RAM_START_ADDRESS),
     };
-    let trace = program.trace_with(
-        &mut TracerBackend::new(),
-        TraceInputs::new(
-            inputs.to_vec(),
-            untrusted_advice.to_vec(),
-            trusted_advice.to_vec(),
-            memory_config,
-        ),
-    )?;
-    Ok(trace.advice_tape)
+    let trace_inputs = TraceInputs::new(
+        inputs.to_vec(),
+        untrusted_advice.to_vec(),
+        trusted_advice.to_vec(),
+        memory_config,
+    );
+    Ok(match memory_budget {
+        None => {
+            program
+                .trace_with(&mut TracerBackend::new(), trace_inputs)?
+                .advice_tape
+        }
+        Some(budget) => Some(TracerBackend::execute_advice_tape(
+            &program,
+            trace_inputs,
+            budget.bytes(),
+        )?),
+    })
 }
 
 /// `memory_budget`, when set, selects the trace with
@@ -268,7 +285,8 @@ pub fn compute_advice_tape(
 /// its row reserve in the trace, where the known-eager check counts it.
 /// That check, [`MemoryBudget::check_known_eager`], runs after tracing and
 /// before the witness is built. Passing does not mean the proof fits in the
-/// budget, and [`compute_advice_tape`]'s trace is not budgeted.
+/// budget. [`compute_advice_tape`] checks its run only against the budget it
+/// is given; `advice_tape` counts as the caller's buffer here.
 #[cfg(feature = "host")]
 #[expect(
     clippy::too_many_arguments,

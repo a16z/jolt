@@ -45,13 +45,16 @@ pub enum TraceError {
 /// The trace-storage request an explicit trace allocation limit stopped.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TraceAllocationPhase {
-    /// Setup buffers, the initial row reserve and the pending cycle window.
+    /// Setup buffers, and a trace's initial row reserve and pending cycle
+    /// window.
     Initial,
     RowGrowth,
     /// Converted-chunk metadata and field-event buffers.
     Conversion,
     FieldMerge,
     FinalMemory,
+    /// A host advice write's guest-copy scratch and advice-tape growth.
+    AdviceWrite,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
