@@ -344,14 +344,46 @@ impl LookupIndexChunks {
 }
 
 impl LookupIndexChunks {
-    fn gather_paired_values_inner<F: JoltField, const BITS: usize>(
+    fn gather_paired_four_bit_values<F: JoltField>(
         &self,
         tables: &[Vec<F>],
         row: usize,
         out: &mut [&mut [F]],
         output_row: usize,
     ) {
-        let bits = if BITS == 0 { self.chunk_bits } else { BITS };
+        const DIGITS_PER_LIMB: usize = u64::BITS as usize / 4;
+        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+        // Four-bit digits never cross a 64-bit limb boundary.
+        for limb in 0..self.chunks.div_ceil(DIGITS_PER_LIMB) {
+            let end = self.chunks - limb * DIGITS_PER_LIMB;
+            let start = end.saturating_sub(DIGITS_PER_LIMB);
+            let mut indices = [0u64; PAIRED_MATERIALIZE_BRANCHES];
+            for (branch, index) in indices.iter_mut().enumerate() {
+                *index = (self.packed_index(row * PAIRED_MATERIALIZE_BRANCHES + branch)
+                    >> (limb * u64::BITS as usize)) as u64;
+            }
+            for (column, table) in out[start..end].iter_mut().zip(&tables[start..end]).rev() {
+                let mut sum = F::Accumulator::default();
+                for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
+                    let lo = (indices[0] & 15) as usize;
+                    let hi = (indices[1] & 15) as usize;
+                    sum.add(table[pair * radix * radix + lo * radix + hi]);
+                    indices[0] >>= 4;
+                    indices[1] >>= 4;
+                }
+                column[output_row] = sum.reduce();
+            }
+        }
+    }
+
+    fn gather_paired_values_inner<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) {
+        let bits = self.chunk_bits;
         let mut indices = [0u128; PAIRED_MATERIALIZE_BRANCHES];
         for (branch, index) in indices.iter_mut().enumerate() {
             *index = self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index();
@@ -430,8 +462,8 @@ impl ChunkIndexSource for LookupIndexChunks {
         output_row: usize,
     ) {
         match self.chunk_bits {
-            4 => self.gather_paired_values_inner::<F, 4>(tables, row, out, output_row),
-            _ => self.gather_paired_values_inner::<F, 0>(tables, row, out, output_row),
+            4 => self.gather_paired_four_bit_values(tables, row, out, output_row),
+            _ => self.gather_paired_values_inner(tables, row, out, output_row),
         }
     }
 
@@ -1884,6 +1916,7 @@ mod tests {
         }
         check::<Fr>(16, 2);
         check::<Fr>(16, 4);
+        check::<Fr>(20, 4);
         #[cfg(feature = "akita")]
         check::<Prime128OffsetA7F7>(32, 4);
     }
