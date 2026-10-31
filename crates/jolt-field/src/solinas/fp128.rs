@@ -21,7 +21,7 @@ use super::word::mul64_wide;
 use crate::PseudoMersenne;
 use crate::{
     CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator,
-    MulBaseUnreduced, Ring, WithAccumulator,
+    Fp128SumAccumulator, MulBaseUnreduced, Ring, WithAccumulator,
 };
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
@@ -1180,6 +1180,7 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
+    type SumAccumulator = Fp128SumAccumulator<P>;
     type Accumulator = Fp128Accumulator<P>;
     type SmallScalarAccumulator = Fp128SignedAccumulator<P>;
     type SignedProductAccumulator = Fp128SignedAccumulator<P>;
