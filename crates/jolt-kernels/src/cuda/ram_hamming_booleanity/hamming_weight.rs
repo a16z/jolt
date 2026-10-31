@@ -10,6 +10,7 @@ use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
 const LANES: usize = 3;
+const CONSOLIDATE_AT: usize = 1 << 12;
 
 pub struct DeviceHammingWeight {
     weights: DeviceFrVec,
@@ -44,16 +45,6 @@ impl DeviceHammingWeight {
             weights: context.upload(values)?,
             one: context.upload(&[Fr::from(1u64)])?,
         })
-    }
-
-    fn window_scalar(&self) -> Result<Fr, CudaError> {
-        if self.weights.len() != 1 {
-            return Err(CudaError::LengthMismatch {
-                expected: 1,
-                got: self.weights.len(),
-            });
-        }
-        self.weights.first()
     }
 
     fn require_power_of_two(len: usize) -> Result<(), CudaError> {
@@ -179,8 +170,6 @@ pub(crate) struct HammingShard<F: JoltField> {
 pub(crate) struct ShardedHammingWeight<F: JoltField> {
     shards: Vec<HammingShard<F>>,
     collapsed: Option<DeviceHammingWeight>,
-    local_rounds: usize,
-    tail_rounds: usize,
 }
 
 impl<F: JoltField> ShardedHammingWeight<F> {
@@ -197,6 +186,14 @@ impl<F: JoltField> ShardedHammingWeight<F> {
                 reason: "a sharded hamming weight cannot split more windows than cycle rounds",
             });
         }
+        let local_len = 1usize << (log_t - tail_rounds);
+        if shards.iter().enumerate().any(|(ordinal, shard)| {
+            shard.ordinal != ordinal || shard.weights.weights.len() != local_len
+        }) {
+            return Err(CudaError::InvariantViolation {
+                reason: "hamming weight shards must cover equal cycle windows in device order",
+            });
+        }
         if count == 1 {
             let shard = shards
                 .into_iter()
@@ -207,16 +204,16 @@ impl<F: JoltField> ShardedHammingWeight<F> {
             return Ok(Self {
                 shards: Vec::new(),
                 collapsed: Some(shard.weights),
-                local_rounds: log_t,
-                tail_rounds: 0,
             });
         }
-        Ok(Self {
+        let mut weights = Self {
             shards,
             collapsed: None,
-            local_rounds: log_t - tail_rounds,
-            tail_rounds,
-        })
+        };
+        if local_len <= CONSOLIDATE_AT {
+            weights.collapse()?;
+        }
+        Ok(weights)
     }
 
     pub(crate) fn round_coefficients(
@@ -247,7 +244,7 @@ impl<F: JoltField> ShardedHammingWeight<F> {
         Ok(total)
     }
 
-    pub(crate) fn bind(&mut self, challenge: F, bound: usize) -> Result<(), CudaError> {
+    pub(crate) fn bind(&mut self, challenge: F) -> Result<(), CudaError> {
         if let Some(collapsed) = &mut self.collapsed {
             let context = context_for(0).ok_or(absent())?;
             return collapsed.bind(context, challenge);
@@ -266,7 +263,11 @@ impl<F: JoltField> ShardedHammingWeight<F> {
             })
             .collect();
         let _ = fan_out(tasks)?;
-        if bound + 1 == self.local_rounds {
+        if self
+            .shards
+            .first()
+            .is_some_and(|shard| shard.weights.weights.len() <= CONSOLIDATE_AT)
+        {
             self.collapse()?;
         }
         Ok(())
@@ -275,17 +276,12 @@ impl<F: JoltField> ShardedHammingWeight<F> {
     fn collapse(&mut self) -> Result<(), CudaError> {
         let context = context_for(0).ok_or(absent())?;
         let shards = std::mem::take(&mut self.shards);
-        let mut scalars = Vec::with_capacity(shards.len());
+        let len = shards.iter().map(|shard| shard.weights.weights.len()).sum();
+        let mut values = Vec::with_capacity(len);
         for shard in &shards {
-            scalars.push(shard.weights.window_scalar()?);
+            values.extend(shard.weights.weights.to_host()?);
         }
-        if scalars.len() != 1usize << self.tail_rounds {
-            return Err(CudaError::LengthMismatch {
-                expected: 1usize << self.tail_rounds,
-                got: scalars.len(),
-            });
-        }
-        self.collapsed = Some(DeviceHammingWeight::from_table(context, &scalars)?);
+        self.collapsed = Some(DeviceHammingWeight::from_table(context, &values)?);
         Ok(())
     }
 
@@ -315,8 +311,8 @@ mod tests {
     use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial};
     use proptest::prelude::*;
 
-    use super::DeviceHammingWeight;
-    use crate::cuda::common::context::shared_context;
+    use super::{DeviceHammingWeight, HammingShard, ShardedHammingWeight};
+    use crate::cuda::common::context::{context_for, shared_context};
     use crate::cuda::common::split_eq::DeviceSplitEq;
     use crate::cuda::common::testing::arb_point;
 
@@ -353,6 +349,68 @@ mod tests {
             quadratic += weight * delta * delta;
         }
         (constant, quadratic, at_one)
+    }
+
+    #[test]
+    fn sharded_hamming_weight_preserves_rounds_and_claim_through_consolidation() {
+        let Some(second) = context_for(1) else {
+            return;
+        };
+        let contexts = [context_for(0).expect("first device"), second];
+        for log_t in [8, 15, 18] {
+            let cycles = 1usize << log_t;
+            let column = indicator(17, cycles, 3);
+            let point: Vec<_> = (0..log_t)
+                .map(|i| Fr::from_u64((i * 13 + 7) as u64))
+                .collect();
+            let shards = contexts
+                .iter()
+                .enumerate()
+                .map(|(ordinal, context)| {
+                    let start = ordinal * cycles / contexts.len();
+                    let end = start + cycles / contexts.len();
+                    HammingShard {
+                        ordinal,
+                        weights: DeviceHammingWeight::new(context, &column[start..end])
+                            .expect("shard weights"),
+                        eq: DeviceSplitEq::new_window(
+                            context,
+                            &point,
+                            BindingOrder::LowToHigh,
+                            ordinal,
+                            contexts.len(),
+                        )
+                        .expect("shard equality"),
+                    }
+                })
+                .collect();
+            let mut got = ShardedHammingWeight::new(shards, log_t).expect("sharded weights");
+            let mut got_eq = DeviceSplitEq::new(contexts[0], &point, BindingOrder::LowToHigh)
+                .expect("whole equality");
+            let mut expected_weights =
+                Polynomial::new(column.into_iter().map(Fr::from_u64).collect::<Vec<_>>());
+            let mut expected_eq = GruenSplitEqPolynomial::new(&point, BindingOrder::LowToHigh);
+            for round in 0..log_t {
+                assert_eq!(
+                    got.round_coefficients(&got_eq).expect("round coefficients"),
+                    cpu_coefficients(&expected_eq, &expected_weights),
+                    "2^{log_t} round {round}",
+                );
+                let challenge = Fr::from_u64(match round % 4 {
+                    0 => 0,
+                    1 => 1,
+                    _ => (round * 19 + 11) as u64,
+                });
+                got.bind(challenge).expect("sharded bind");
+                got_eq.bind(challenge);
+                expected_weights.bind_with_order(challenge, BindingOrder::LowToHigh);
+                expected_eq.bind(challenge);
+            }
+            assert_eq!(
+                got.final_claim().expect("sharded final claim"),
+                expected_weights.evals()[0],
+            );
+        }
     }
 
     proptest! {

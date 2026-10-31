@@ -7,7 +7,11 @@
 //!
 //! Reductions return both genuine endpoints and the leading coefficient, so
 //! host Gruen recovery also handles a vanishing equality endpoint. Cycle
-//! windows fold locally before the remaining weights are gathered onto GPU 0.
+//! windows fold locally until at most 4,096 weights remain per window, then
+//! gather through host memory onto GPU 0. The concatenated table uses the
+//! whole-domain equality state maintained alongside the shards. On two L4s at
+//! 2^24 cycles, this reduces small-round dispatch/readback overhead without
+//! the transfer and single-GPU work of a much earlier gather.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -61,9 +65,8 @@ impl<F: JoltField> Allocative for RamHammingBooleanityKernel<F> {
 
 impl<F: JoltField> RamHammingBooleanityKernel<F> {
     fn bind(&mut self, challenge: F) -> Result<(), SumcheckError<F>> {
-        let bound = self.rounds_bound;
         self.weights
-            .bind(challenge, bound)
+            .bind(challenge)
             .map_err(backend("cuda RAM Hamming-booleanity bind"))?;
         self.eq.bind(challenge);
         self.rounds_bound += 1;
