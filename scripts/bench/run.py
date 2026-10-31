@@ -93,12 +93,24 @@ def host_snapshot():
     cpuinfo = Path('/proc/cpuinfo').read_text()
     model = re.search(r'^model name\s*:\s*(.+)$', cpuinfo, re.M)
     flags = re.search(r'^flags\s*:\s*(.+)$', cpuinfo, re.M)
+    microcode = re.search(r'^microcode\s*:\s*(.+)$', cpuinfo, re.M)
     meminfo = dict(re.findall(r'^(\w+):\s+(\d+) kB$', Path('/proc/meminfo').read_text(), re.M))
     machine_id = read_optional('/etc/machine-id') or platform.node()
+    control_plane = {'version': None, 'cli_sha256': None, 'shim_sha256': None}
+    for name in ('cli', 'shim'):
+        try:
+            control_plane[f'{name}_sha256'] = sha256(f'/opt/pika/bin/pika-{name}')
+        except OSError:
+            pass
+    try:
+        control_plane['version'] = capture(['/opt/pika/bin/pika-shim', '--version']) or None
+    except (OSError, subprocess.CalledProcessError):
+        pass
     return {
         'id': hashlib.sha256(machine_id.encode()).hexdigest(),
         'hostname': platform.node(), 'architecture': platform.machine(),
         'cpu_model': model.group(1) if model else None, 'kernel': platform.release(),
+        'microcode': microcode.group(1) if microcode else None, 'control_plane': control_plane,
         'physical_cores': len({(r['socket'], r['core']) for r in topology}),
         'logical_cpus': len(topology), 'memory_bytes': int(meminfo['MemTotal']) * 1024,
         'topology': topology, 'cpu_flags': flags.group(1).split() if flags else [],
@@ -351,6 +363,7 @@ def build(args):
                 shutil.copytree(cached_path.parent, out, dirs_exist_ok=True,
                                 ignore=shutil.ignore_patterns('manifest.json', 'preparation.json', 'build.log'))
                 shutil.copy2(cached_path.parent / 'build.log', out / 'construction.log')
+                os.utime(cached_path.parent, None)
                 manifest, reused = cached, True
                 return manifest
             for pcs, features in [('dory', 'profiling'), ('akita', 'profiling,akita')]:
@@ -404,6 +417,14 @@ def build(args):
                     shutil.rmtree(cached_dir)
                 shutil.copytree(out, cached_dir, ignore=shutil.ignore_patterns('manifest.json', 'preparation.json'))
                 write_json(cached_dir / 'manifest.json', manifest)
+                # Only completed stores publish manifest.json, after all payload files are copied.
+                stored_bundles = sorted(
+                    (path.parent for path in bucket.parent.glob('*/*/manifest.json')),
+                    key=lambda directory: (directory == cached_dir, directory.stat().st_mtime_ns), reverse=True)
+                for expired in stored_bundles[8:]:
+                    shutil.rmtree(expired)
+                    if not any(expired.parent.iterdir()):
+                        expired.parent.rmdir()
             prepared = True
         finally:
             write_json(out / 'preparation.json', {
@@ -546,11 +567,21 @@ def result_envelope(args, config, host, bundles):
         'provenance': prov,
         'suite': {'id': config['id'], 'config_sha256': sha256(args.config), 'metric_contract': 1,
                   'warmups': warmups, 'repetitions': repetitions,
-                  'selected_cases': list(args.case), 'calibration': config.get('calibration')},
+                  'selected_cases': list(args.case), 'calibration': config.get('calibration'),
+                  'calibration_sha256': config.get('calibration_sha256')},
         'host': host, 'builds': [dict(manifest, leg=leg) for leg, (_, manifest) in bundles.items()],
         'wall_time': {'build_s': None, 'benchmark_s': None, 'total_s': None,
                       'scope': 'prebuilt-execution-only'}, 'cases': [],
     }
+
+
+def apply_calibration(result, path):
+    if path is not None:
+        contents = Path(path).read_bytes()
+        calibration = parse_json(contents)
+        if not isinstance(calibration, dict):
+            raise ValueError('calibration input must be a JSON object')
+        result['suite'].update(calibration=calibration, calibration_sha256=hashlib.sha256(contents).hexdigest())
 
 
 def run(args):
@@ -567,6 +598,7 @@ def run(args):
         bundles['base'] = load_bundle(args.base)
     host = host_snapshot()
     result = result_envelope(args, config, host, bundles)
+    apply_calibration(result, getattr(args, 'calibration', None))
     result['started_at'] = started
     for _, manifest in bundles.values():
         if manifest.get('runner', {}).get('sha256') != sha256(__file__):
@@ -663,8 +695,96 @@ def run(args):
     return result
 
 
+def calibration_for_case(result, case):
+    calibration = result['suite'].get('calibration') or {}
+    if not isinstance(calibration, dict):
+        return None, 'calibration is not an object'
+    if calibration.get('status') != 'measured':
+        return None, calibration.get('reason') or 'reference not measured'
+    try:
+        for key, value in {'method': 'null-median3-symmetric-envelope-v2', 'metric_contract': 1,
+                           'window_pairs': 3, 'windows_overlap': True, 'independent_windows': False,
+                           'floor_pct': {'e2e_s': 3.0, 'peak_rss_bytes': 2.0},
+                           'envelope_multiplier': 1.5, 'rounding_pp': 0.5}.items():
+            if calibration.get(key) != value:
+                raise ValueError(f'calibration {key} differs from the supported method')
+        if result['suite']['repetitions'] != calibration['window_pairs']:
+            raise ValueError('measured repetitions differ from the 3-pair reference estimator')
+        reference = calibration['cases'].get(case['id'])
+        if reference is None:
+            raise ValueError('case is absent from the reference')
+        if reference['status'] != 'measured':
+            raise ValueError(reference.get('reason') or 'reference case not measured')
+        if reference['n_pairs'] != 10 or reference['n_windows'] != 8:
+            raise ValueError('reference case lacks 10 pairs and 8 windows')
+        source, host = calibration['source'], result['host']
+        base = next((build for build in result['builds'] if build['leg'] == 'base'), None)
+        if base is None:
+            raise ValueError('base build is missing')
+        for key in ('run_id', 'started_at', 'finished_at', 'native_harness_revision', 'result_sha256'):
+            if not source.get(key):
+                raise ValueError(f'missing reference source.{key}')
+        for key, length in [('native_harness_revision', 40), ('result_sha256', 64)]:
+            if not re.fullmatch(f'[0-9a-f]{{{length}}}', str(source[key])):
+                raise ValueError(f'invalid reference source.{key}')
+        guest = base.get('guests', {}).get(case['workload'], {})
+        comparisons = [('metric_contract', calibration['metric_contract'], result['suite']['metric_contract']),
+                       ('base.revision', source.get('revision'), base.get('revision')),
+                       ('collector_sha256', source.get('collector_sha256'), base.get('runner', {}).get('sha256')),
+                       ('input_sha256', reference.get('input_sha256'), case['input'].get('sha256')),
+                       ('base.guest_elf_sha256', reference.get('guest_elf_sha256'), guest.get('elf', {}).get('sha256')),
+                       ('base.binary_sha256', reference.get('base_binary_sha256'),
+                        base.get('binaries', {}).get(case['pcs'], {}).get('sha256'))]
+        comparisons += [(key, reference.get(key), case.get(key)) for key in (
+            'workload', 'pcs', 'backend', 'physical_cores', 'cpu_ids', 'scale_log2')]
+        comparisons += [(f'base.{key}', source.get(key), base.get(key)) for key in (
+            'toolchain', 'target_cpu', 'target_triple', 'rustflags', 'profile', 'cargo_lock_sha256')]
+        comparisons += [(f'host.{key}', source.get('host_id' if key == 'id' else key), host.get(key))
+                        for key in ('id', 'kernel', 'microcode')]
+        comparisons += [(f'host.control_plane.{key}', source['control_plane'].get(key),
+                         (host.get('control_plane') or {}).get(key))
+                        for key in ('version', 'cli_sha256', 'shim_sha256')]
+        comparisons += [(f'host.settings.{key}', source['settings'].get(key), host.get('settings', {}).get(key))
+                        for key in ('boost', 'smt', 'governor', 'transparent_huge_pages', 'swap_total_bytes')]
+        for label, expected, actual in comparisons:
+            if expected is None or actual is None or expected == '' or actual == '':
+                raise ValueError(f'missing {label}')
+            if label.endswith('sha256') and not re.fullmatch('[0-9a-f]{64}', str(expected)):
+                raise ValueError(f'invalid reference {label}')
+            if label == 'host.settings.governor' and (not expected or not actual or
+                    any(value in (None, '') for value in [*expected.values(), *actual.values()])):
+                raise ValueError(f'missing {label}')
+            if expected != actual:
+                raise ValueError(f'mismatch: {label}')
+        samples = [sample['metrics'] for sample in case['samples']
+                   if sample['leg'] == 'base' and sample['phase'] == 'measure']
+        for key in ('trace_rows', 'padded_trace_rows'):
+            if reference.get(key) is None or not samples:
+                raise ValueError(f'missing base.{key}')
+            if any(sample[key] != reference[key] for sample in samples):
+                raise ValueError(f'mismatch: base.{key}')
+        for metric, unit in [('e2e_s', 'seconds'), ('peak_rss_bytes', 'bytes')]:
+            value = reference['metrics'][metric]
+            if value['unit'] != unit:
+                raise ValueError(f'mismatch: {metric} unit')
+            for key in ('threshold_pct', 'max_symmetric_window_delta_pct'):
+                if (type(value.get(key)) not in (int, float) or not math.isfinite(value[key])
+                        or value[key] < 0):
+                    raise ValueError(f'missing or invalid {metric}.{key}')
+        return reference['metrics'], None
+    except (KeyError, TypeError, AttributeError) as error:
+        return None, f'missing or invalid calibration evidence: {error}'
+    except ValueError as error:
+        return None, str(error)
+
+
 def render_comment(result, out):
+    import html
     import statistics
+
+    def text(value):
+        return html.escape(str(value) if value is not None else 'unavailable').replace(
+            '|', '&#124;').replace('`', '&#96;').replace('\n', ' ')
 
     if result.get('schema_version') != 1:
         raise ValueError('unsupported result schema')
@@ -672,41 +792,99 @@ def render_comment(result, out):
              f"Status: **{result['status']}**. Tier: {result['tier']}. "
              f"Comparison: {result['kind']}.", '',
              'Primary time includes guest loading, both tracing passes, preprocessing, PCS setup, '
-             'proving, and proof serialization. Verification is separate.', '',
-             '| Workload / PCS | Physical cores | Base end-to-end (s) | Head end-to-end (s) | Change | Base / head peak RSS (bytes) | Base / head proof (bytes) |',
-             '|---|---:|---:|---:|---:|---:|---:|']
+             'proving, and proof serialization. Verification is separate. Memory is process peak '
+             'resident set size (RSS).', '',
+             'Values are medians; changes use the ratio of head and base medians, with warmups excluded. '
+             'Positive changes mean more time or memory.', '',
+             '| Workload / PCS | Physical cores | End-to-end base / head (s) | Signed time change | Observed time reference | Peak RSS base / head (bytes) | Signed RSS change | Observed RSS reference |',
+             '|---|---:|---:|---:|---|---:|---:|---|']
+    repetitions = result['suite']['repetitions']
+    builds = {build['leg']: build for build in result['builds']}
+    identities = ['| Workload / PCS / physical cores | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
+                  '|---|---|---|---|']
     for case in result['cases']:
         name = case['workload']
         if not re.fullmatch(r'[a-z0-9-]+', name) or case['pcs'] not in ('dory', 'akita'):
             raise ValueError('invalid workload or PCS in comment data')
-        if case['status'] != 'complete':
-            lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {case['status']} | — | — | — | — |")
+        measurements = {leg: [sample for sample in case['samples']
+                              if sample['leg'] == leg and sample['phase'] == 'measure']
+                        for leg in ('base', 'head')}
+        point_status = case['status']
+        if point_status == 'complete' and any(
+                sample['status'] != 'complete' or sample['exit_code'] != 0 for sample in case['samples']):
+            point_status = 'failed or incomplete samples'
+        if point_status == 'complete' and any(
+                len(samples) != repetitions or {sample['repetition'] for sample in samples} != set(range(repetitions))
+                for samples in measurements.values()):
+            point_status = 'unpaired or incomplete repetitions'
+        if point_status != 'complete':
+            lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {point_status} | "
+                         'unavailable | unavailable | — | unavailable | unavailable |')
             continue
-        measurements = {leg: [sample['metrics'] for sample in case['samples']
-                              if sample['leg'] == leg and sample['phase'] == 'measure'
-                              and sample['status'] == 'complete'] for leg in ('base', 'head')}
-        if not all(measurements.values()):
-            lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | unpaired | — | — | — | — |")
-            continue
-        medians = {leg: {key: statistics.median(m[key] for m in values) for key in METRICS}
+        medians = {leg: {key: statistics.median(sample['metrics'][key] for sample in values)
+                         for key in ('e2e_s', 'peak_rss_bytes')}
                    for leg, values in measurements.items()}
         base, head = medians['base'], medians['head']
-        change = f"{(head['e2e_s'] / base['e2e_s'] - 1) * 100:+.2f}%" if base['e2e_s'] else 'unavailable'
-        lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {base['e2e_s']:.6f} | "
-                     f"{head['e2e_s']:.6f} | {change} | {base['peak_rss_bytes']:.0f} / "
-                     f"{head['peak_rss_bytes']:.0f} | {base['proof_bytes']:.0f} / {head['proof_bytes']:.0f} |")
+        changes = {key: f'{(head[key] / base[key] - 1) * 100:+.2f}%' if base[key] else 'unavailable (zero base)'
+                   for key in base}
+        calibrated, reason = calibration_for_case(result, case)
+        basis = {key: (f"{calibrated[key]['threshold_pct']:.2f}% "
+                       f"(max symmetric null {calibrated[key]['max_symmetric_window_delta_pct']:.2f}%)"
+                       if calibrated else f'unavailable: {text(reason)}') for key in base}
+        for key in base:
+            if not base[key]:
+                basis[key] = 'unavailable: zero base median'
+        lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {base['e2e_s']:.6f} / "
+                     f"{head['e2e_s']:.6f} | {changes['e2e_s']} | {basis['e2e_s']} | {base['peak_rss_bytes']:.0f} / "
+                     f"{head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']} | {basis['peak_rss_bytes']} |")
+        rows, binaries, guests = [], [], []
+        for leg in ('base', 'head'):
+            rows.append('; '.join(f'{raw},{padded}' for raw, padded in sorted({
+                (sample['metrics']['trace_rows'], sample['metrics']['padded_trace_rows'])
+                for sample in measurements[leg]})))
+            build = builds.get(leg, {})
+            binaries.append(text((build.get('binaries', {}).get(case['pcs'], {}).get('sha256') or 'unavailable')[:12]))
+            guests.append(text((build.get('guests', {}).get(name, {}).get('elf', {}).get('sha256') or 'unavailable')[:12]))
+        identities.append(f"| {name} / {case['pcs']} / {case['physical_cores']} | {' / '.join(rows)} | "
+                          f"{' / '.join(binaries)} | {' / '.join(guests)} |")
+    calibration = result['suite'].get('calibration') or {}
+    source = calibration.get('source') or {}
+    if len(identities) > 2:
+        lines += ['', 'Identity SHA256s below are abbreviated to 12 characters; raw JSON retains the full hashes.', '', *identities]
+    if calibration.get('status') == 'measured':
+        lines += ['', f"Supplied reference method: `{text(calibration.get('method'))}`. "
+                  'The supported v2 method requires 10 same-binary null pairs and eight overlapping 3-pair windows, '
+                  'which are not independent. Each window takes each leg’s median, then the larger '
+                  'of the head/base and base/head percentage increases. The displayed reference is '
+                  '1.5 times the largest window increase, with floors of 3% time and 2% RSS, rounded up '
+                  'to 0.5 percentage points.', '',
+                  f"Reference source: run `{text(source.get('run_id'))}`, raw result SHA256 "
+                  f"`{text(source.get('result_sha256'))}`, {text(source.get('started_at'))} "
+                  f"through {text(source.get('finished_at'))}.", '',
+                  f"Reference revision: `{text(source.get('revision'))}`; native harness: "
+                  f"`{text(source.get('native_harness_revision'))}`; collector SHA256: "
+                  f"`{text(source.get('collector_sha256'))}`."]
+    else:
+        lines += ['', f"Calibration unavailable: {text(calibration.get('reason') or 'reference not measured')}."]
     revisions = {key: value or 'unavailable' for key, value in result['revisions'].items()}
+    collector = builds.get('base', builds.get('head', {})).get('runner', {}).get('sha256')
     total = result['wall_time']['total_s']
     total_label = f'{total:.3f}' if total is not None else 'not measured'
     lines += ['', f"Base: `{revisions['base']}`. Submitted head: `{revisions['head']}`. "
               f"Measured merge: `{revisions['merge']}`. Shared harness: `{revisions['harness']}`.", '',
               f"Warmups per leg: {result['suite']['warmups']}; measured repetitions per leg: "
               f"{result['suite']['repetitions']}. Each invocation is a fresh process; measured pairs alternate order.", '',
+              f"Suite configuration SHA256: `{result['suite']['config_sha256']}`.", '',
+              f"Measured collector SHA256: `{text(collector or 'unavailable')}`. "
+              f"Renderer SHA256: `{sha256(__file__)}`.", '',
+              f"Calibration input SHA256: `{text(result['suite'].get('calibration_sha256') or 'not supplied; inline suite configuration')}`. "
+              'A manual rendering does not authenticate that input.', '',
               f"Wall receipt: {result['wall_time']['scope']}. "
               f"Total seconds: {total_label}. "
               'Prebuilt execution does not establish the build-inclusive PR budget.', '',
-              'No calibrated regression threshold is applied. Raw measurements, verification times, '
-              'row counts, hashes, compiler flags, and host settings are in benchmark-results.json.', '']
+              'Noise references are observed informational context, not statistical significance, pass/fail decisions or a CI gate. '
+              'Raw measurements, proof bytes, verification times, row counts, hashes, compiler flags, '
+              'and host settings are in benchmark-results.json.', '']
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text('\n'.join(lines))
 
@@ -777,6 +955,8 @@ def parse_args():
         item.add_argument('--case', action='append', default=[])
         item.add_argument('--warmups', type=int)
         item.add_argument('--repetitions', type=int)
+    for item in (run_parser, suite_parser, comment_parser):
+        item.add_argument('--calibration', type=Path, help='optional observational JSON; never a native build input')
     run_parser.add_argument('--base', type=Path)
     run_parser.add_argument('--head', type=Path, required=True)
     suite_parser.add_argument('--base-revision')
@@ -794,7 +974,9 @@ def main():
     signal.signal(signal.SIGTERM, interrupt)
     try:
         if args.command == 'render-comment':
-            render_comment(parse_json(args.results.read_text()), args.out)
+            result = parse_json(args.results.read_text())
+            apply_calibration(result, args.calibration)
+            render_comment(result, args.out)
             return 0
         if args.command == 'status':
             result = disabled(args)

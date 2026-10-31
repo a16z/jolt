@@ -329,7 +329,11 @@ class BuildCacheTests(unittest.TestCase):
         original['build_s'] = 86400
         bench.write_json(cached, original)
         self.compiles.clear()
-        reused, receipt = self.build('reused', tier='pr')
+        calibration = self.root / 'observations.json'
+        calibration.write_text('{"status":"unavailable","reason":"fixture metadata only"}')
+        with patch.object(bench, 'host_snapshot', return_value={
+                'id': 'fixture-host', 'microcode': 'changed', 'control_plane': {'version': 'changed'}}):
+            reused, receipt = self.build('reused', tier='pr', calibration=calibration)
         self.assertEqual(self.compiles, [])
         self.assertEqual(reused, original)
         self.assertEqual(receipt['mode'], 'reused')
@@ -353,6 +357,44 @@ class BuildCacheTests(unittest.TestCase):
         self.assertEqual(receipt['mode'], 'built')
         self.assertIn('lacks required inputs', receipt['cache_misses'][0]['reason'])
         self.assertEqual(len(self.compiles), 4)
+
+    def test_completed_store_keeps_eight_bundles_and_preserves_recent_reuse(self):
+        cache = bench.cache_root()
+        entries, revisions = [], []
+        for number in range(8):
+            (self.workspace / 'candidate').write_text(str(number))
+            self.git('add', 'candidate')
+            self.commit()
+            revision = self.git('rev-parse', 'HEAD')
+            revisions.append(revision)
+            self.build(f'output-{number}', revision=revision)
+            entry = next(path.parent for path in (cache / 'bundles').glob('*/*/manifest.json')
+                         if json.loads(path.read_text())['revision'] == revision)
+            os.utime(entry, ns=(number + 1, number + 1))
+            entries.append(entry)
+        original_hash = bench.sha256(entries[0] / 'manifest.json')
+        target_file = cache / 'builds/x86-64/release/source/target/keep'
+        target_file.write_bytes(b'owned target')
+        other_cache = self.root / 'unrelated-cache'
+        other_cache.write_bytes(b'owned unrelated cache fixture')
+        lock_inode = (cache / 'host.lock').stat().st_ino
+        _, reused = self.build('reused', revision=revisions[0])
+        self.assertEqual(reused['mode'], 'reused')
+        self.assertEqual(bench.sha256(entries[0] / 'manifest.json'), original_hash)
+        (self.workspace / 'candidate').write_text('ninth source')
+        self.git('add', 'candidate')
+        self.commit()
+        newest = self.git('rev-parse', 'HEAD')
+        self.build('output-8', revision=newest)
+        retained = list((cache / 'bundles').glob('*/*/manifest.json'))
+        self.assertEqual(len(retained), 8)
+        self.assertIn(entries[0] / 'manifest.json', retained)
+        self.assertIn(newest, [json.loads(path.read_text())['revision'] for path in retained])
+        self.assertFalse(entries[1].parent.exists())
+        self.assertEqual(target_file.read_bytes(), b'owned target')
+        self.assertEqual(other_cache.read_bytes(), b'owned unrelated cache fixture')
+        self.assertEqual((cache / 'host.lock').stat().st_ino, lock_inode)
+        self.assertTrue(all((self.root / f'output-{number}/manifest.json').is_file() for number in range(9)))
 
     def test_cache_rejects_changed_identity_incomplete_or_corrupt_content(self):
         original, _ = self.build('original')

@@ -37,6 +37,9 @@ def validate(result, expected, config_bytes):
     config = bench.parse_json(config_bytes)
     if result['suite']['config_sha256'] != hashlib.sha256(config_bytes).hexdigest():
         raise ValueError('suite is not the configuration at the measured harness commit')
+    for key in ('calibration', 'calibration_sha256'):
+        if result['suite'].get(key) != config.get(key):
+            raise ValueError(f'{key} differs from the pinned suite configuration')
     tier = config['tiers']['pr']
     for key in ('warmups', 'repetitions'):
         if result['suite'][key] != tier[key]:

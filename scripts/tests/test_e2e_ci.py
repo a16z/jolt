@@ -63,21 +63,36 @@ class E2eCiTests(unittest.TestCase):
     def test_batch_artifact_has_root_tip_and_explicit_earlier_commit_documents(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            provenance = {'workflow': ci.bench.WORKFLOW, 'workflow_file': ci.bench.WORKFLOW_FILE,
+                          'run_id': '123', 'run_attempt': '1', 'event': 'push',
+                          'ref': 'refs/heads/main', 'pr_number': None, 'request_run_id': None}
             plan = {'enabled': True, 'tier': 'main', 'harness': 'c' * 40, 'target_cpu': 'znver4',
-                    'push_before': 'a' * 40, 'provenance': {}, 'runs': [
+                    'reason': None, 'push_before': 'a' * 40, 'push_after': 'c' * 40,
+                    'provenance': provenance, 'runs': [
                         {'base': None, 'head': 'b' * 40, 'submitted_head': 'b' * 40},
                         {'base': None, 'head': 'c' * 40, 'submitted_head': 'c' * 40}]}
             plan_path = root / 'plan.json'
             plan_path.write_text(json.dumps(plan))
             args = argparse.Namespace(plan=plan_path, out=root / 'artifact')
             def suite(options):
+                self.assertEqual(options.context['provenance'], provenance)
                 ci.bench.write_json(options.out / 'benchmark-results.json',
                                     {'fixture_revision': options.head_revision})
                 return {'status': 'complete'}
             with patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
-                    patch.object(ci.bench, 'capture'), patch.object(ci.bench, 'host_lock',
-                    side_effect=contextlib.nullcontext), patch.object(ci.bench, 'suite', side_effect=suite):
+                    patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
+                    patch.object(ci.bench, 'capture') as capture, \
+                    patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
+                    patch.object(ci.bench, 'suite', side_effect=suite) as measured:
                 self.assertEqual(ci.execute(args), 0)
+                capture.reset_mock()
+                measured.reset_mock()
+                for name, value in [('GITHUB_RUN_ID', '124'), ('GITHUB_RUN_ATTEMPT', '2')]:
+                    with self.subTest(mismatch=name), patch.dict(os.environ, {name: value}):
+                        with self.assertRaisesRegex(ValueError, 'different run or attempt'):
+                            ci.execute(args)
+                        capture.assert_not_called()
+                        measured.assert_not_called()
             index = json.loads((args.out / 'index.json').read_text())
             self.assertEqual(index, {'schema_version': 1, 'push_before': 'a' * 40, 'push_after': 'c' * 40,
                 'documents': [{'revision': 'b' * 40, 'path': f'commits/{"b" * 40}/benchmark-results.json'},
