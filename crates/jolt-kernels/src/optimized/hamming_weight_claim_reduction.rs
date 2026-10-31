@@ -91,6 +91,7 @@ fn pushforwards<F: JoltField>(
     let prefix = rows.prefix_len();
     let bits = k_chunk.trailing_zeros();
     let mask = (k_chunk - 1) as u128;
+    let native_decode = bits.is_power_of_two() && bits <= 32 && instruction <= 128 / bits as usize;
     struct State<F: JoltField> {
         block: Vec<Vec<F::Accumulator>>,
         sums: Vec<Vec<F::Accumulator>>,
@@ -102,13 +103,32 @@ fn pushforwards<F: JoltField>(
     let add_row = |buckets: &mut [Vec<F::Accumulator>], row: &InstructionCycleRow, weight: F| {
         let (instruction_buckets, other) = buckets.split_at_mut(instruction);
         let (bytecode_buckets, ram_buckets) = other.split_at_mut(bytecode);
-        let mut index = row.lookup_index();
-        for bucket in instruction_buckets.iter_mut().rev() {
-            let digit = (index & mask) as usize;
-            if !omit_digit_zero || digit != 0 {
-                bucket[digit].add(weight);
+        let index = row.lookup_index();
+        if native_decode {
+            for (buckets, mut limb) in instruction_buckets
+                .rchunks_mut(64 / bits as usize)
+                .zip([index as u64, (index >> 64) as u64])
+            {
+                if omit_digit_zero && limb == 0 {
+                    continue;
+                }
+                for bucket in buckets.iter_mut().rev() {
+                    let digit = limb as usize & (k_chunk - 1);
+                    if !omit_digit_zero || digit != 0 {
+                        bucket[digit].add(weight);
+                    }
+                    limb >>= bits;
+                }
             }
-            index >>= bits;
+        } else {
+            let mut index = index;
+            for bucket in instruction_buckets.iter_mut().rev() {
+                let digit = (index & mask) as usize;
+                if !omit_digit_zero || digit != 0 {
+                    bucket[digit].add(weight);
+                }
+                index >>= bits;
+            }
         }
         let mut pc = row.bytecode_pc();
         for bucket in bytecode_buckets.iter_mut().rev() {
@@ -610,7 +630,7 @@ mod pushforward_tests {
     }
 
     fn check<F: JoltField>() {
-        for bits in [1, 2, 4, 8] {
+        for bits in [1, 2, 3, 4, 8] {
             for counts in [(128 / bits, 3, 4), (2, 2, 2), (0, 2, 1), (2, 0, 0)] {
                 let selectors = FamilySelectors::new::<F>(counts, bits).unwrap();
                 for prefix in [0, 1, 15, 16, 17, 33, 63] {
