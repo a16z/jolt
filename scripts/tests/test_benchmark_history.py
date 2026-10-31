@@ -4,7 +4,6 @@ import copy
 import importlib.util
 import io
 import json
-import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -18,7 +17,6 @@ history = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(history)
 REVISION = "a" * 40
 SECOND_REVISION = "b" * 40
-SCRATCH = Path(os.environ.get("TMPDIR", tempfile.gettempdir())) / "jolt-history-implementation"
 
 
 def synthetic_result(run_id=101, attempt=1, tier="main", revision=REVISION):
@@ -167,8 +165,7 @@ def collected_push(*, omit_index_entry=False, bad_path=False, wrong_revision=Fal
 
 class BenchmarkHistoryTests(unittest.TestCase):
     def setUp(self):
-        SCRATCH.mkdir(parents=True, exist_ok=True)
-        self.directory = tempfile.TemporaryDirectory(dir=SCRATCH)
+        self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.site = Path(self.directory.name) / "site"
 

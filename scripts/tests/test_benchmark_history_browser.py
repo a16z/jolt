@@ -12,7 +12,7 @@ import threading
 import unittest
 
 from scripts.tests.test_benchmark_history import (
-    REVISION, SCRATCH, SCRIPT, collected_fixture, collected_push, history, synthetic_result,
+    REVISION, SCRIPT, collected_fixture, collected_push, history, synthetic_result,
 )
 
 try:
@@ -25,19 +25,23 @@ except ImportError:
 class BenchmarkHistoryBrowserTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        SCRATCH.mkdir(parents=True, exist_ok=True)
-        cls.temporary = tempfile.TemporaryDirectory(dir=SCRATCH)
+        cls.temporary = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.directory = Path(cls.temporary.name)
         cls.site = cls.directory / "site"
-        for number in [*range(101, 113), 114, 115]:
+        for number in [*range(101, 113), 114, 115, 116, 117]:
             data = synthetic_result(number, tier="nightly" if number == 110 else "main", revision=f"{number:040x}")
             data["started_at"] = f"2026-01-{number - 100:02}T00:00:00Z"
             data["finished_at"] = f"2026-01-{number - 100:02}T00:01:00Z"
             case = data["cases"][0]
+            if number == 101:
+                for sample, proof_bytes, trace_rows in zip(case["samples"][1:], [123455, 123457], [4194300, 4194302]):
+                    sample["metrics"].update(proof_bytes=proof_bytes, trace_rows=trace_rows, padded_trace_rows=4194304)
             if number in {102, 104}:
                 for sample, value in zip(case["samples"][1:], [20, 24] if number == 102 else [30, 34]):
                     sample["metrics"]["e2e_s"] = value
+            if number == 102:
+                data["builds"][0].update(source_cargo_lock_sha256="b" * 64, cargo_lock_sha256="c" * 64)
             if number == 103:
                 data["status"] = case["status"] = "failed"
                 case["reason"] = '<img src="https://invalid.example/attack" onerror="window.__historyAttack=1">'
@@ -46,8 +50,9 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
             if number == 105:
                 case["samples"][-1]["metrics"]["peak_rss_bytes"] = None
             if number == 106:
-                data["host"]["settings"]["boost"] = False
                 data["builds"][0]["rustflags"] = "different flags"
+            if number == 117:
+                data["host"]["settings"]["boost"] = False
             if number in {107, 110}:
                 case["scale_log2"] = 20 if number == 107 else 22
                 case["input"]["parameters"]["iterations"] = 200
@@ -59,8 +64,9 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
                 data.update(status="disabled", builds=[], cases=[], reason="SYNTHETIC runner disabled")
             if number == 114:
                 data["builds"][0]["status"] = data["status"] = "failed"
-            if number == 115:
+            if number in {115, 116}:
                 case["pcs"] = "akita"
+                data["builds"][0]["akita_schedules"] = [{"path": "akita-schedules/synthetic.aks", "sha256": f"{number:064x}"}]
             record, raw = collected_fixture(data, missing=number == 111)
             history.append_site(cls.site, [(record, raw)])
         manual = synthetic_result(113, tier="pr")
@@ -82,6 +88,7 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
                 pass
 
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), partial(Handler, directory=str(cls.site)))
+        cls.server.daemon_threads = False
         cls.thread = threading.Thread(target=cls.server.serve_forever)
         cls.thread.start()
 
@@ -120,7 +127,8 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
         ]))
         self.page.select_option("#point-select", selected)
         regimes = self.page.locator("#regime-select option").evaluate_all("options => options.map(o => o.value)")
-        baseline = next(value for value in regimes if json.loads(value)["host"]["settings"]["boost"])
+        baseline = next(value for value in regimes if json.loads(value)["host"]["settings"]["boost"]
+                        and json.loads(value)["build_settings"]["rustflags"] == "-C target-cpu=synthetic")
         self.page.select_option("#regime-select", baseline)
 
     def assert_clean(self):
@@ -129,10 +137,15 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
 
     def test_dimension_selectors_keep_revisions_comparable_without_pooling(self):
         self.select_point()
-        self.assertEqual(self.page.locator("#regime-select option").count(), 2)
-        self.assertEqual(self.page.locator(".chart-point").count(), 4)
-        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "12")
-        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 102, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "22")
+        with self.subTest(pcs="dory"):
+            self.assertEqual(self.page.locator("#regime-select option").count(), 3)
+            self.assertEqual(self.page.locator(".chart-point").count(), 4)
+            self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "12")
+            changed = self.page.locator("#history-rows tr").filter(has_text="Run 102, attempt 1")
+            self.assertEqual(changed.locator("td").nth(2).inner_text().splitlines()[0], "22")
+            build = json.loads(changed.locator("pre").text_content())["build"]
+            self.assertEqual(build["source_cargo_lock_sha256"], "b" * 64)
+            self.assertEqual(build["cargo_lock_sha256"], "c" * 64)
         self.select_point(cores=8)
         self.assertEqual(self.page.locator(".chart-point").count(), 1)
         self.select_point(cores=24)
@@ -140,7 +153,13 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
         self.select_point(scale=20)
         self.assertEqual(self.page.locator(".chart-point").count(), 1)
         self.select_point(pcs="akita")
-        self.assertEqual(self.page.locator(".chart-point").count(), 1)
+        with self.subTest(pcs="akita"):
+            self.assertEqual(self.page.locator("#regime-select option").count(), 1)
+            self.assertEqual(self.page.locator(".chart-point").count(), 2)
+            for number in (115, 116):
+                changed = self.page.locator("#history-rows tr").filter(has_text=f"Run {number}, attempt 1")
+                build = json.loads(changed.locator("pre").text_content())["build"]
+                self.assertEqual(build["akita_schedules"][0]["sha256"], f"{number:064x}")
         self.page.get_by_role("button", name="Nightly", exact=True).click()
         expect(self.page.locator("#window-label")).to_have_text("Showing the newest 1 of 1 run records. Dates use UTC.")
         self.assertEqual(self.page.locator("#point-select option").count(), 1)
@@ -166,9 +185,22 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
         self.assertIn("missing", self.page.locator("#history-rows tr").filter(has_text="Run 111, attempt 1").inner_text())
         self.assertIn("disabled", self.page.locator("#history-rows tr").filter(has_text="Run 112, attempt 1").inner_text())
         self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 114, attempt 1").locator("td").nth(2).inner_text(), "—")
-        for metric, value in (("verify_s", "0.3"), ("proof_bytes", "4,096")):
-            self.page.select_option("#metric-select", metric)
-            self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], value)
+        self.page.select_option("#metric-select", "verify_s")
+        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "0.3")
+        self.assert_clean()
+
+    def test_integer_metrics_keep_all_digits_in_values_ranges_and_tooltips(self):
+        self.select_point()
+        row = self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1")
+        for metric, value, extent in (
+            ("proof_bytes", "123,456", "123,455–123,457"),
+            ("trace_rows", "4,194,301", "4,194,300–4,194,302"),
+            ("padded_trace_rows", "4,194,304", "4,194,304–4,194,304"),
+        ):
+            with self.subTest(metric=metric):
+                self.page.select_option("#metric-select", metric)
+                self.assertEqual(row.locator("td").nth(2).inner_text().splitlines(), [value, extent])
+                self.assertIn(f"{101:040x}"[:12] + f": {value}", self.page.locator(".chart-point title").all_text_contents())
         self.assert_clean()
 
     def test_multi_commit_records_and_range_limits_are_visible(self):

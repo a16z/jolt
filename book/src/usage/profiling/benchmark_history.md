@@ -24,10 +24,16 @@ The three measurement tiers have different purposes.
 
 Selectors separate workload, polynomial commitment scheme, CPU backend, fixed
 input, input-size target, and exactly 1, 8, or 24 physical cores. Host settings,
-CPU affinity, compiler version, target, flags, profile, lockfiles, build host,
-and measurement harness settings separate configurations. Source revisions,
-binary hashes, and guest hashes remain per-point provenance: a new source commit
-does not by itself start a new configuration.
+CPU affinity, compiler version, target, flags, profile, build host, and measurement
+harness settings separate configurations. Source revisions, lockfile hashes,
+Akita schedule hashes, binary hashes, and guest hashes remain per-point provenance:
+source and dependency changes do not by themselves start a new configuration.
+
+**Build and source** shows the original construction manifests. Their `build_s`
+and timestamps are provenance, not current preparation time when a bundle is
+reused. Current preparation, when recorded, is in the raw result's
+`wall_time.build_s`; it includes cache lookup, fetch, validation and copying, or a
+new build. A prebuilt-only run can leave that field null.
 
 The primary `e2e_s` timer includes prebuilt guest loading, both sizing and proof
 traces, preprocessing, commitment setup, proving, and serialization. It excludes
@@ -52,10 +58,16 @@ Both source workflows must retain those names and paths. GitHub requires the
 receiving `workflow_run` file on the default branch and emits completion events
 regardless of the source conclusion. [GitHub workflow events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
 
+`JOLT_BENCH_HISTORY_ENABLED` controls only new history processing. After Pages
+activation, legacy **CI Benchmarks** completions deploy the existing site with
+that variable either `true` or `false`. They invoke neither the history collector
+nor the append parser, so a rejected artifact or invalid history index cannot
+block legacy publication. PR-originated completions remain excluded.
+
 The write-token job checks out executable code and dashboard assets from `main`,
-not the producer revision or a pull request. It accepts only this repository's
-completed main-branch push, schedule, or manual producer runs. It checks the run
-ID, attempt, workflow, repository, branch, artifact identity, and recorded source
+not the producer revision or a pull request. The history path accepts only this
+repository's completed main-branch push, schedule, or manual producer runs. It
+checks the run ID, attempt, workflow, repository, branch, artifact identity, and recorded source
 revisions against GitHub metadata. The exact artifact name is
 `jolt-e2e-RUN_ID-RUN_ATTEMPT`. Only JSON members are read; downloaded scripts,
 HTML, binaries, and manifest file paths are never executed or dereferenced.
@@ -85,9 +97,8 @@ The publisher also retries a rejected non-force Git push against the newest
 
 ## An administrator enables the existing Pages site
 
-This setup preserves the old site while changing how it is deployed. A
-`GITHUB_TOKEN` push does not trigger a branch-based Pages build. The new workflow
-instead uploads the whole `gh-pages` site with `actions/upload-pages-artifact`
+This setup preserves the old site while changing how it is deployed. The workflow
+uploads the whole `gh-pages` site with `actions/upload-pages-artifact`
 and deploys it with `actions/deploy-pages`. Completion of the legacy benchmark
 workflow also triggers this full-site deployment. There is no reliance on a
 `gh-pages` push event, and no second workflow copy on the data branch.
@@ -106,12 +117,20 @@ workflow also triggers this full-site deployment. There is no reliance on a
    repository's existing deployment protections. The allowed-action policy must
    permit the pinned `actions/checkout`, `astral-sh/setup-uv`,
    `actions/upload-pages-artifact`, and `actions/deploy-pages` actions.
-4. Set the repository Actions variable `JOLT_BENCH_HISTORY_ENABLED` to `true`.
-   The workflow refuses publication unless the Pages API reports
-   `build_type: workflow`; it does not enable or reconfigure Pages itself.
+4. Set the repository Actions variable `JOLT_BENCH_HISTORY_ENABLED` to `true`
+   to enable history collection and updates. Legacy deployment does not require
+   this variable. Until the Pages API reports `build_type: workflow`, publication
+   stops at the Pages-source check; the workflow does not enable or reconfigure
+   Pages itself.
 5. Dispatch the publisher on `main` without a source run ID for the initial
    full-site refresh. Confirm both `dev/bench/` and `dev/prover-history/` after
    deployment. Normal producer completions then archive and deploy new results.
+
+The tradeoff is site-wide: this one workflow owns deployment of both the legacy
+site and the new history. Turning off history processing leaves legacy deployment
+active. Disabling the entire publication workflow requires restoring branch-based
+Pages publication for `gh-pages` at `/`. Live deployment remains unverified until
+an administrator activates and checks this route.
 
 The publisher needs only the following job permissions. It does not need issue,
 pull-request, administration, or `deployments: write` permissions. The PR test job
@@ -144,6 +163,10 @@ gh workflow run prover-history.yml --repo a16z/jolt --ref main \
   -f run_id="$RUN_ID" -f run_attempt="$RUN_ATTEMPT"
 ```
 
+A dispatch with a run ID requires `JOLT_BENCH_HISTORY_ENABLED=true`. Without a run
+ID, it redeploys the existing whole site even when history is disabled; when
+history is enabled, it also initializes or refreshes the history assets.
+
 Queue overflow, a failed publication job, a disabled publisher, or an expired
 source artifact can leave gaps. The page does not claim that every merge ran.
 GitHub's default artifact retention is 90 days, but repository and producer
@@ -160,11 +183,14 @@ limit, not from all Pages limits. If the archive reaches a provider limit, arran
 an explicit retention or storage decision instead of deleting old points.
 [GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 
-Setting `JOLT_BENCH_HISTORY_ENABLED` to `false` stops new publication and leaves
-the last deployed site intact. It also stops automatic deployment of new legacy
-results, although their workflow can still update `gh-pages`. Restoring the
-previous publication mode is a separate admin operation: select **Deploy from a
-branch**, with `gh-pages` and `/`, in the publishing-source settings.
+Setting `JOLT_BENCH_HISTORY_ENABLED` to `false` stops new history collection and
+updates. Legacy completions and no-run-ID manual refreshes continue to deploy the
+existing site without parsing history JSON. Disabling the entire publication
+workflow stops both automatic deployment paths, although the legacy writer can
+still update `gh-pages`. To restore the previous publication mode, an administrator
+selects **Deploy from a branch**, with `gh-pages` and `/`, in the publishing-source
+settings and verifies the legacy site before disabling this workflow. The branch
+and its existing files are retained.
 
 ## Preview and test without publishing
 

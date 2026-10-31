@@ -44,13 +44,15 @@ jobs:
 
   publish:
     if: >-
-      github.repository == 'a16z/jolt' && vars.JOLT_BENCH_HISTORY_ENABLED == 'true' &&
+      github.repository == 'a16z/jolt' &&
       ((github.event_name == 'workflow_run' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&
         github.event.workflow_run.head_branch == 'main' &&
         contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event.workflow_run.event) &&
-        contains(fromJSON('[".github/workflows/e2e-bench.yml",".github/workflows/ci-bench.yml"]'), github.event.workflow_run.path)) ||
-       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
+        (github.event.workflow_run.path == '.github/workflows/ci-bench.yml' ||
+         (vars.JOLT_BENCH_HISTORY_ENABLED == 'true' && github.event.workflow_run.path == '.github/workflows/e2e-bench.yml'))) ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
+        (inputs.run_id == '' || vars.JOLT_BENCH_HISTORY_ENABLED == 'true')))
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -79,8 +81,9 @@ jobs:
           test "$(gh api repos/a16z/jolt/pages --jq .build_type)" = workflow
       - name: Collect the producer attempt as data
         if: >-
-          (github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/e2e-bench.yml') ||
-          (github.event_name == 'workflow_dispatch' && inputs.run_id != '')
+          vars.JOLT_BENCH_HISTORY_ENABLED == 'true' &&
+          ((github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/e2e-bench.yml') ||
+           (github.event_name == 'workflow_dispatch' && inputs.run_id != ''))
         env:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.run_attempt }}
@@ -94,6 +97,10 @@ jobs:
           ref: gh-pages
           path: site
       - name: Append history without replacing legacy files
+        if: >-
+          vars.JOLT_BENCH_HISTORY_ENABLED == 'true' &&
+          ((github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/e2e-bench.yml') ||
+           github.event_name == 'workflow_dispatch')
         shell: bash
         run: |
           record_args=()

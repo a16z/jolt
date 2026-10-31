@@ -38,7 +38,7 @@ function canonical(value) {
 }
 
 const identity = (value) => JSON.stringify(canonical(value));
-const number = (value) => new Intl.NumberFormat("en", {maximumSignificantDigits: 5}).format(value);
+const number = (value) => new Intl.NumberFormat("en", {maximumFractionDigits: 3}).format(value);
 const short = (value) => typeof value === "string" ? value.slice(0, 12) : "unknown";
 
 function group(record) {
@@ -54,8 +54,7 @@ function buildSettings(build) {
   if (!build) return null;
   return Object.fromEntries([
     "toolchain", "cargo_version", "target_cpu", "target_triple", "target_features", "profile",
-    "rustflags", "source_cargo_lock_sha256", "cargo_lock_sha256", "harness_files", "host",
-    "akita_schedules",
+    "rustflags", "harness_files", "host",
   ].map((key) => [key, build[key] ?? null]).concat([["runner_sha256", build.runner?.sha256 ?? null]]));
 }
 
@@ -105,7 +104,7 @@ function renderRegimes() {
   const matching = points.filter((point) => point.key === $("point-select").value);
   const unique = new Map(matching.map((point) => [point.regime, point]));
   choices($("regime-select"), [...unique].map(([key, point], i) => [key,
-    `Configuration ${i + 1}: ${point.data.host.id} / ${point.data.host.cpu_model} / ${point.build?.profile ?? "unknown profile"} / ${point.build?.target_cpu ?? "unknown target"} / ${point.build?.rustflags ?? "unknown flags"} / lock ${short(point.build?.cargo_lock_sha256)}`,
+    `Configuration ${i + 1}: ${point.data.host.id} / ${point.data.host.cpu_model} / ${point.build?.profile ?? "unknown profile"} / ${point.build?.target_cpu ?? "unknown target"} / ${point.build?.rustflags ?? "unknown flags"}`,
   ]), "No host/build configurations");
   render();
 }
