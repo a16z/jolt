@@ -68,7 +68,9 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
+use super::lazy_ra::{
+    ChunkIndexSource, LazyFoldedRa, PAIRED_MATERIALIZE_ADDRESSES, PAIRED_MATERIALIZE_BRANCHES,
+};
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
     product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage,
@@ -276,39 +278,43 @@ pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<Instructio
 pub(crate) struct SharedInstructionRowsWeak(pub(crate) Weak<ConstantSuffix<InstructionCycleRow>>);
 
 impl InstructionCycleRow {
-    /// Reclaim the parked stage-5 rows (the length guard makes a stale carry
-    /// impossible to consume) or collect them fresh, and park the carry back
-    /// for later consumers.
+    /// Reuse a length-matched carry; weak rows are valid only for random-access
+    /// witnesses, whose collection does not replay execution.
+    pub(crate) fn cached<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Option<Arc<ConstantSuffix<Self>>> {
+        if let Some(SharedInstructionRows(rows)) = session.state::<SharedInstructionRows>() {
+            if rows.len() == cycles {
+                return Some(Arc::clone(rows));
+            }
+            drop(session.take::<SharedInstructionRows>());
+        }
+        let _ = witness.random_access()?;
+        session
+            .state::<SharedInstructionRowsWeak>()
+            .and_then(|weak| weak.0.upgrade())
+            .filter(|rows| rows.len() == cycles)
+    }
+
+    /// Reuse cached rows or collect them, retaining a strong carry only for
+    /// witnesses whose next collection would replay execution.
     pub(crate) fn shared<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Arc<ConstantSuffix<Self>>, KernelError<F>> {
-        // A parked strong carry is always honored (re-emulating sources, and
-        // tests that inject rows a witness would not produce).
-        let carried = match session.take::<SharedInstructionRows>() {
-            Some(SharedInstructionRows(rows)) if rows.len() == cycles => Some(rows),
-            _ => None,
-        };
-        if witness.random_access().is_some() {
-            let upgraded = || {
-                session
-                    .state::<SharedInstructionRowsWeak>()
-                    .and_then(|weak| weak.0.upgrade())
-                    .filter(|rows| rows.len() == cycles)
-            };
-            let rows = match carried.or_else(upgraded) {
-                Some(rows) => rows,
-                None => Arc::new(Self::collect(witness, cycles)?),
-            };
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-            return Ok(rows);
-        }
-        let rows = match carried {
+        let rows = match Self::cached(session, witness, cycles) {
             Some(rows) => rows,
             None => Arc::new(Self::collect(witness, cycles)?),
         };
-        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        if witness.random_access().is_some() {
+            drop(session.take::<SharedInstructionRows>());
+            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
+        } else {
+            session.park(SharedInstructionRows(Arc::clone(&rows)));
+        }
         Ok(rows)
     }
 }
@@ -342,6 +348,65 @@ impl LookupIndexChunks {
             prefix_len,
             chunks,
             chunk_bits,
+        }
+    }
+}
+
+pub(super) fn gather_paired_four_bit_values<F: JoltField>(
+    packed_index: impl Fn(usize) -> u128,
+    tables: &[Vec<F>],
+    out: &mut [&mut [F]],
+    output_row: usize,
+) {
+    const DIGITS_PER_LIMB: usize = u64::BITS as usize / 4;
+    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+    // Four-bit digits never cross a 64-bit limb boundary.
+    for limb in 0..tables.len().div_ceil(DIGITS_PER_LIMB) {
+        let end = tables.len() - limb * DIGITS_PER_LIMB;
+        let start = end.saturating_sub(DIGITS_PER_LIMB);
+        let mut indices = [0u64; PAIRED_MATERIALIZE_BRANCHES];
+        for (branch, index) in indices.iter_mut().enumerate() {
+            *index = (packed_index(branch) >> (limb * u64::BITS as usize)) as u64;
+        }
+        for (column, table) in out[start..end].iter_mut().zip(&tables[start..end]).rev() {
+            let mut sum = F::Accumulator::default();
+            for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
+                let lo = (indices[0] & 15) as usize;
+                let hi = (indices[1] & 15) as usize;
+                sum.add(table[pair * radix * radix + lo * radix + hi]);
+                indices[0] >>= 4;
+                indices[1] >>= 4;
+            }
+            column[output_row] = sum.reduce();
+        }
+    }
+}
+
+impl LookupIndexChunks {
+    fn gather_paired_values_inner<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) {
+        let bits = self.chunk_bits;
+        let mut indices = [0u128; PAIRED_MATERIALIZE_BRANCHES];
+        for (branch, index) in indices.iter_mut().enumerate() {
+            *index = self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index();
+        }
+        let mask = (1u128 << bits) - 1;
+        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+        for (column, table) in out.iter_mut().zip(tables).rev() {
+            let mut sum = F::Accumulator::default();
+            for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
+                let lo = (indices[0] & mask) as usize;
+                let hi = (indices[1] & mask) as usize;
+                sum.add(table[pair * radix * radix + lo * radix + hi]);
+                indices[0] >>= bits;
+                indices[1] >>= bits;
+            }
+            column[output_row] = sum.reduce();
         }
     }
 }
@@ -393,6 +458,24 @@ impl ChunkIndexSource for LookupIndexChunks {
                 *index >>= self.chunk_bits;
             }
             column[output_row] = sum.reduce();
+        }
+    }
+
+    fn gather_paired_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) {
+        match self.chunk_bits {
+            4 => gather_paired_four_bit_values(
+                |branch| self.packed_index(row * PAIRED_MATERIALIZE_BRANCHES + branch),
+                tables,
+                out,
+                output_row,
+            ),
+            _ => self.gather_paired_values_inner(tables, row, out, output_row),
         }
     }
 
@@ -1897,7 +1980,8 @@ mod tests {
     use crate::SumcheckKernel;
 
     use super::{
-        InstructionCycleRow, OptimizedInstructionReadRafKernel, ScanBlock, COALESCE_CACHE_SLOTS,
+        InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, ScanBlock,
+        COALESCE_CACHE_SLOTS,
     };
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
@@ -1987,6 +2071,88 @@ mod tests {
         assert!(row.raf_flag());
         #[cfg(feature = "akita")]
         assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
+    }
+
+    #[test]
+    fn packed_lookup_binding_matches_multilinear_weights() {
+        fn check<F: JoltField>(columns: usize, bits: usize) {
+            use super::super::{constant_suffix::ConstantSuffix, lazy_ra::LazyFoldedRa};
+            use rand_chacha::ChaCha20Rng;
+            use rand_core::{RngCore, SeedableRng};
+
+            let mut rng = ChaCha20Rng::seed_from_u64(314_159);
+            let cycles = 1 << 16;
+            let prefix = cycles - 7;
+            let indices: Vec<u128> = (0..cycles)
+                .map(|i| {
+                    if i >= prefix {
+                        0x1234_5678_9abc_def0_fedc_ba98_7654_3210
+                    } else {
+                        (u128::from(rng.next_u64()) << 64) | u128::from(rng.next_u64())
+                    }
+                })
+                .collect();
+            let rows = indices
+                .iter()
+                .map(|&index| {
+                    InstructionCycleRow::new(
+                        index,
+                        None,
+                        false,
+                        0,
+                        None,
+                        #[cfg(feature = "akita")]
+                        FusedInc::default(),
+                    )
+                })
+                .collect();
+            let source =
+                LookupIndexChunks::new(Arc::new(ConstantSuffix::new(rows, cycles)), columns, bits);
+            let tables: Vec<Vec<F>> = (0..columns)
+                .map(|_| (0..16).map(|_| F::random(&mut rng)).collect())
+                .collect();
+            let challenges = [3, 5, 13, 29].map(F::from_u64);
+            let mut bound = LazyFoldedRa::new(tables.clone(), source);
+            for challenge in challenges {
+                bound.bind(challenge);
+            }
+            let weights: Vec<F> = (0..16)
+                .map(|branch| {
+                    challenges
+                        .iter()
+                        .enumerate()
+                        .fold(F::one(), |weight, (bit, r)| {
+                            weight
+                                * if (branch >> bit) & 1 == 1 {
+                                    *r
+                                } else {
+                                    F::one() - *r
+                                }
+                        })
+                })
+                .collect();
+            for (column, table) in tables.iter().enumerate() {
+                for row in 0..cycles / 16 {
+                    let expected: F = weights
+                        .iter()
+                        .enumerate()
+                        .map(|(branch, weight)| {
+                            let digit = ((indices[row * 16 + branch]
+                                >> (bits * (columns - 1 - column)))
+                                & ((1u128 << bits) - 1))
+                                as usize;
+                            *weight * table[digit]
+                        })
+                        .sum();
+                    assert_eq!(bound.value(column, row), expected);
+                }
+            }
+        }
+        check::<Fr>(16, 2);
+        check::<Fr>(16, 4);
+        check::<Fr>(20, 4);
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>(32, 4);
     }
 
     /// The sumcheck input claim from first principles:
