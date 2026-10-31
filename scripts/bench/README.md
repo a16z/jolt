@@ -5,9 +5,13 @@ guest ELFs before measurement, run fresh prover processes, verify every successf
 proof, and retain raw samples. There is no reference-backend timing lane.
 
 **The sizes and repetition counts are proposals, not a calibrated performance
-gate.** Only a full target-host `suite` run can establish the PR budget: less than
-600 seconds including build and preparation, with a 300–420 second aim. A
-prebuilt run or a build on another host cannot establish that budget.
+gate.** The PR budget is less than 600 seconds, with a 300–420 second aim, for the
+actual workflow path on a real changed-source PR update. It includes every build,
+preparation, transfer, and result-processing interval. A target-host `suite` run
+measures the local build/preparation-through-results component; it does not
+include workflow transfers or hosted publication. Runtime-only or prebuilt-only
+runs cannot pass this gate, and a preparation interval already above 600 seconds
+is a miss before downstream work is added.
 
 ## Workloads and tiers
 
@@ -80,6 +84,10 @@ proof metrics. `suite` measures one continuous build/preparation-through-results
 interval on its executing host. `run` records `prebuilt-execution-only`, with
 `build_s: null`; it never adds historical build timings to claim a fresh total.
 Individual build manifests retain their own elapsed intervals and host identity.
+The workflow's transfer and trusted result-processing intervals must be measured
+separately before claiming the PR total. Cargo target existence or a configured
+compiler cache does not establish cold or cached state; hit state stays unknown
+without evidence for the actual invocation.
 
 Each warmup and repetition launches a new process. The paired order is base/head
 for repetition zero, head/base for repetition one, and then alternates. The runner
