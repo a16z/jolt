@@ -6,9 +6,20 @@
 //! preserve complete PCS rows; independent row batches can use uneven aligned
 //! partitions. `CycleWindow::residency` adds the next row needed by flag extraction
 //! without counting it in the work partition.
+//!
+//! Secondary device tasks reuse host threads across rounds, reducing dispatch
+//! overhead as the tables shrink. These workers leave optimized's Rayon pool
+//! available for CPU work inside the tasks. The first task stays on the caller
+//! to preserve thread-local Dory state. Nested dispatches use scoped threads
+//! rather than waiting for an occupied worker. `fan_out_with` drains all borrowed
+//! tasks on success, error, and unwinding.
 
 use super::context::{device_count, enter_device};
 use core::cmp::Reverse;
+use std::cell::{Cell, RefCell};
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 
 pub(crate) type DeviceTask<'a, T, E> = Box<dyn FnOnce() -> Result<T, E> + Send + 'a>;
 
@@ -150,7 +161,125 @@ where
     fan_out_with(tasks, false)
 }
 
+#[expect(
+    clippy::expect_used,
+    reason = "the worker loop retains its receiver and catches every task panic"
+)]
 fn fan_out_with<T, E>(tasks: Vec<DeviceTask<'_, T, E>>, bind: bool) -> Result<Vec<T>, E>
+where
+    T: Send,
+    E: Send,
+{
+    if tasks.len() < 2 || DISPATCHING.get() {
+        return fan_out_scoped(tasks, bind);
+    }
+    let _dispatch = DispatchGuard::enter();
+    let workers = WORKERS.with_borrow_mut(|workers| {
+        while workers.len() < tasks.len() - 1 {
+            let (sender, receiver) = mpsc::channel::<WorkerJob<'static>>();
+            let _ = thread::spawn(move || {
+                let _dispatch = DispatchGuard::enter();
+                while let Ok(job) = receiver.recv() {
+                    job();
+                }
+            });
+            workers.push(sender);
+        }
+        workers.clone()
+    });
+    let mut tasks = tasks.into_iter();
+    let Some(first) = tasks.next() else {
+        return Ok(Vec::new());
+    };
+    let mut pending = Vec::with_capacity(tasks.len());
+    for (index, (worker, task)) in workers.iter().zip(tasks).enumerate() {
+        let (sender, receiver) = mpsc::channel();
+        // Install the unwind guard before a worker can access borrowed inputs.
+        pending.push(Pending {
+            receiver: Some(receiver),
+        });
+        let job: WorkerJob<'_> = Box::new(move || {
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                let _device = bind.then(|| enter_device(index + 1));
+                task()
+            }));
+            let _ = sender.send(outcome);
+        });
+        // SAFETY: every submitted job has a Pending guard on this stack. Its
+        // join/Drop waits for the task (including unwinding and captured input
+        // destruction) to finish before borrowed inputs can expire. The only
+        // work after sending completion is dropping the result sender, which
+        // owns no borrowed inputs. A failed enqueue drops the job locally.
+        let job = unsafe { std::mem::transmute::<WorkerJob<'_>, WorkerJob<'static>>(job) };
+        worker.send(job).expect("a live CUDA dispatch worker");
+    }
+    let mut results = Vec::with_capacity(pending.len() + 1);
+    let mut outcome = first().map(|value| results.push(value));
+    for task in pending {
+        match task.join() {
+            Ok(value) if outcome.is_ok() => results.push(value),
+            Err(error) if outcome.is_ok() => outcome = Err(error),
+            _ => {}
+        }
+    }
+    outcome.map(|()| results)
+}
+
+type WorkerJob<'a> = Box<dyn FnOnce() + Send + 'a>;
+
+thread_local! {
+    // Pools belong to the dispatching host thread, not Rayon's CPU-work pool.
+    static WORKERS: RefCell<Vec<Sender<WorkerJob<'static>>>> = const { RefCell::new(Vec::new()) };
+    static DISPATCHING: Cell<bool> = const { Cell::new(false) };
+}
+
+struct DispatchGuard;
+
+impl DispatchGuard {
+    fn enter() -> Self {
+        DISPATCHING.set(true);
+        Self
+    }
+}
+
+impl Drop for DispatchGuard {
+    fn drop(&mut self) {
+        DISPATCHING.set(false);
+    }
+}
+
+struct Pending<T, E> {
+    receiver: Option<Receiver<thread::Result<Result<T, E>>>>,
+}
+
+impl<T, E> Pending<T, E> {
+    #[expect(
+        clippy::expect_used,
+        reason = "the live worker sends even when a task panics"
+    )]
+    fn join(mut self) -> Result<T, E> {
+        match self
+            .receiver
+            .take()
+            .expect("an unjoined task")
+            .recv()
+            .expect("a completed CUDA task")
+        {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
+    }
+}
+
+impl<T, E> Drop for Pending<T, E> {
+    fn drop(&mut self) {
+        if let Some(receiver) = self.receiver.take() {
+            let _ = receiver.recv();
+        }
+    }
+}
+
+fn fan_out_scoped<T, E>(tasks: Vec<DeviceTask<'_, T, E>>, bind: bool) -> Result<Vec<T>, E>
 where
     T: Send,
     E: Send,
@@ -196,13 +325,169 @@ where
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    clippy::panic,
+    reason = "tests exercise panic propagation"
+)]
 mod tests {
     use super::{
-        device_selections, plan_committed_windows, plan_device_windows, plan_witness_windows,
-        CycleWindow, MIN_WITNESS_WINDOW,
+        device_selections, fan_out, fan_out_bound, plan_committed_windows, plan_device_windows,
+        plan_witness_windows, CycleWindow, DeviceTask, MIN_WITNESS_WINDOW,
     };
+    use crate::cuda::common::context::{current_device, enter_device};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::{mpsc, Barrier};
+    use std::thread;
 
     const COUNTS: [usize; 12] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 15, 16, 64];
+
+    #[test]
+    fn dispatch_preserves_borrowed_results_order_and_device_scope() {
+        let _device = enter_device(7);
+        let caller = thread::current().id();
+        let mut values = [0, 0, 0];
+        for bound in [false, true, false] {
+            let tasks: Vec<DeviceTask<'_, _, ()>> = values
+                .iter_mut()
+                .enumerate()
+                .map(|(index, value)| {
+                    let task: DeviceTask<'_, _, ()> = Box::new(move || {
+                        if index == 0 {
+                            assert_eq!(thread::current().id(), caller);
+                        } else {
+                            assert_ne!(thread::current().id(), caller);
+                        }
+                        assert_eq!(
+                            current_device(),
+                            if index == 0 {
+                                7
+                            } else if bound {
+                                0
+                            } else {
+                                index
+                            }
+                        );
+                        let _nested = enter_device(19);
+                        *value = index + 1;
+                        Ok(&*value)
+                    });
+                    task
+                })
+                .collect();
+            let result = if bound {
+                fan_out_bound(tasks)
+            } else {
+                fan_out(tasks)
+            }
+            .unwrap();
+            assert_eq!(result, vec![&1, &2, &3]);
+            assert_eq!(current_device(), 7);
+        }
+        assert_eq!(values, [1, 2, 3]);
+    }
+
+    #[test]
+    fn dispatch_drains_borrowers_after_errors_and_panics() {
+        struct Completion<'a>(&'a mut bool);
+        impl Drop for Completion<'_> {
+            fn drop(&mut self) {
+                *self.0 = true;
+            }
+        }
+
+        for panic in [false, true] {
+            for failure in 0..3 {
+                let mut completed = [(false, false); 3];
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    let tasks: Vec<DeviceTask<'_, (), usize>> = completed
+                        .iter_mut()
+                        .enumerate()
+                        .map(|(index, (entered, dropped))| {
+                            let completion = Completion(dropped);
+                            let task: DeviceTask<'_, (), usize> = Box::new(move || {
+                                let _completion = completion;
+                                *entered = true;
+                                if index == failure {
+                                    if panic {
+                                        std::panic::panic_any(index);
+                                    }
+                                    return Err(index);
+                                }
+                                Ok(())
+                            });
+                            task
+                        })
+                        .collect();
+                    fan_out(tasks)
+                }));
+                if panic {
+                    assert_eq!(*result.unwrap_err().downcast::<usize>().unwrap(), failure);
+                } else {
+                    assert_eq!(result.unwrap(), Err(failure));
+                }
+                assert_eq!(completed, [(true, true); 3]);
+            }
+        }
+        let tasks: Vec<DeviceTask<'_, (), usize>> = vec![
+            Box::new(|| Err(0)),
+            Box::new(|| Err(1)),
+            Box::new(|| Err(2)),
+        ];
+        assert_eq!(fan_out(tasks), Err(0));
+    }
+
+    #[test]
+    fn dispatch_allows_nested_work_on_the_caller_and_workers() {
+        let tasks: Vec<DeviceTask<'_, Vec<usize>, ()>> = (0..3)
+            .map(|outer| {
+                let task: DeviceTask<'_, Vec<usize>, ()> = Box::new(move || {
+                    let (sender, receiver) = mpsc::sync_channel(0);
+                    let nested: Vec<DeviceTask<'_, usize, ()>> = vec![
+                        Box::new(move || {
+                            assert_eq!(current_device(), outer);
+                            Ok(receiver.recv().unwrap())
+                        }),
+                        Box::new(move || {
+                            assert_eq!(current_device(), 1);
+                            sender.send(outer).unwrap();
+                            Ok(outer + 10)
+                        }),
+                    ];
+                    let result = fan_out(nested)?;
+                    assert_eq!(current_device(), outer);
+                    Ok(result)
+                });
+                task
+            })
+            .collect();
+        assert_eq!(
+            fan_out(tasks).unwrap(),
+            vec![vec![0, 10], vec![1, 11], vec![2, 12]]
+        );
+    }
+
+    #[test]
+    fn dispatch_keeps_concurrent_callers_independent() {
+        let barrier = Barrier::new(4);
+        thread::scope(|scope| {
+            for _ in 0..2 {
+                let barrier = &barrier;
+                let _ = scope.spawn(move || {
+                    let tasks: Vec<DeviceTask<'_, usize, ()>> = (0..2)
+                        .map(|index| {
+                            let task: DeviceTask<'_, usize, ()> = Box::new(move || {
+                                let _ = barrier.wait();
+                                Ok(index)
+                            });
+                            task
+                        })
+                        .collect();
+                    assert_eq!(fan_out(tasks).unwrap(), vec![0, 1]);
+                });
+            }
+        });
+    }
 
     fn covers(windows: &[CycleWindow], cycles: usize) {
         let mut next = 0;
