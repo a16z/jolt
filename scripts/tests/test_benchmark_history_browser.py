@@ -33,6 +33,8 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
             data = synthetic_result(number, tier="nightly" if number == 110 else "main", revision=f"{number:040x}")
             data["started_at"] = f"2026-01-{number - 100:02}T00:00:00Z"
             data["finished_at"] = f"2026-01-{number - 100:02}T00:01:00Z"
+            data["host"]["settings"].update(swap_total_bytes=8589930496, swap_free_bytes=8165384192)
+            data["builds"][0]["host"]["settings"] = {"swap_total_bytes": 8589930496, "swap_free_bytes": 8165384192}
             case = data["cases"][0]
             if number == 101:
                 for sample, proof_bytes, trace_rows in zip(case["samples"][1:], [123455, 123457], [4194300, 4194302]):
@@ -42,6 +44,9 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
                     sample["metrics"]["e2e_s"] = value
             if number == 102:
                 data["builds"][0].update(source_cargo_lock_sha256="b" * 64, cargo_lock_sha256="c" * 64)
+            if number == 104:
+                data["host"]["settings"]["swap_free_bytes"] = 8110710784
+                data["builds"][0]["host"]["settings"]["swap_free_bytes"] = 8110710784
             if number == 103:
                 data["status"] = case["status"] = "failed"
                 case["reason"] = '<img src="https://invalid.example/attack" onerror="window.__historyAttack=1">'
@@ -146,6 +151,18 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
             build = json.loads(changed.locator("pre").text_content())["build"]
             self.assertEqual(build["source_cargo_lock_sha256"], "b" * 64)
             self.assertEqual(build["cargo_lock_sha256"], "c" * 64)
+            changed = self.page.locator("#history-rows tr").filter(has_text="Run 104, attempt 1")
+            self.assertEqual(changed.locator("td").nth(2).inner_text().splitlines()[0], "32")
+            build = json.loads(changed.locator("pre").text_content())["build"]
+            self.assertEqual(build["host"]["settings"]["swap_free_bytes"], 8110710784)
+            raw_link = changed.get_by_role("link", name="Raw JSON", exact=True).get_attribute("href")
+            raw = self.page.request.get(self.url + raw_link).json()
+            self.assertEqual(raw["host"]["settings"]["swap_free_bytes"], 8110710784)
+            self.assertEqual(raw["builds"][0]["host"], build["host"])
+            configuration = json.loads(self.page.locator("#regime-select").input_value())
+            for host in (configuration["host"], configuration["build_settings"]["host"]):
+                self.assertEqual(host["settings"]["swap_total_bytes"], 8589930496)
+                self.assertNotIn("swap_free_bytes", host["settings"])
         self.select_point(cores=8)
         self.assertEqual(self.page.locator(".chart-point").count(), 1)
         self.select_point(cores=24)

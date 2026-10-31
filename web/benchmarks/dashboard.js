@@ -50,12 +50,21 @@ function rawLink(record) {
   return typeof record.raw === "string" && /^runs\/(github-[0-9a-f]{40}-[1-9][0-9]*-[1-9][0-9]*|preview-[0-9a-f]{64})\.json$/.test(record.raw) ? record.raw : null;
 }
 
+function hostSettings(host) {
+  if (!host?.settings) return host ?? null;
+  const settings = {...host.settings};
+  delete settings.swap_free_bytes;
+  return {...host, settings};
+}
+
 function buildSettings(build) {
   if (!build) return null;
   return Object.fromEntries([
     "toolchain", "cargo_version", "target_cpu", "target_triple", "target_features", "profile",
-    "rustflags", "harness_files", "host",
-  ].map((key) => [key, build[key] ?? null]).concat([["runner_sha256", build.runner?.sha256 ?? null]]));
+    "rustflags", "harness_files",
+  ].map((key) => [key, build[key] ?? null]).concat([
+    ["host", hostSettings(build.host)], ["runner_sha256", build.runner?.sha256 ?? null],
+  ]));
 }
 
 function references(record, data) {
@@ -70,7 +79,7 @@ function references(record, data) {
         scale_log2: testCase.scale_log2, input: testCase.input,
         metric_contract: data.suite.metric_contract, leg,
       };
-      const environment = {host: data.host, cpu_ids: testCase.cpu_ids, build_settings: buildSettings(build)};
+      const environment = {host: hostSettings(data.host), cpu_ids: testCase.cpu_ids, build_settings: buildSettings(build)};
       return {record, data, testCase, leg, build, definition, environment, key: identity(definition), regime: identity(environment)};
     });
   });

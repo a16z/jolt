@@ -44,6 +44,7 @@ jobs:
 
   publish:
     if: >-
+      vars.JOLT_BENCH_PAGES_ENABLED == 'true' &&
       github.repository == 'a16z/jolt' &&
       ((github.event_name == 'workflow_run' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&
