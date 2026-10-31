@@ -132,20 +132,7 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     ) where
         Self: Sized,
     {
-        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-        for (column, (values, table)) in out.iter_mut().zip(tables).enumerate() {
-            let mut sum = F::Accumulator::default();
-            for pair in 0..PAIRED_MATERIALIZE_BRANCHES / 2 {
-                let lo = self
-                    .index(column, row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair)
-                    .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
-                let hi = self
-                    .index(column, row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair + 1)
-                    .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
-                sum.add(table[pair * radix * radix + lo * radix + hi]);
-            }
-            values[output_row] = sum.reduce();
-        }
+        gather_paired_columns(self, tables, row, out, output_row, 0);
     }
 
     fn gather_pairs<F: JoltField>(
@@ -676,6 +663,37 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
     let columns = values.iter_mut().map(Vec::as_mut_slice).collect();
     fill(columns, 0, tables, factors, source, branches);
     values
+}
+
+#[inline]
+pub(super) fn gather_paired_columns<F: JoltField, S: ChunkIndexSource>(
+    source: &S,
+    tables: &[Vec<F>],
+    row: usize,
+    out: &mut [&mut [F]],
+    output_row: usize,
+    first_column: usize,
+) {
+    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+    for (column, (values, table)) in out.iter_mut().zip(tables).enumerate() {
+        let mut sum = F::Accumulator::default();
+        for pair in 0..PAIRED_MATERIALIZE_BRANCHES / 2 {
+            let lo = source
+                .index(
+                    first_column + column,
+                    row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair,
+                )
+                .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+            let hi = source
+                .index(
+                    first_column + column,
+                    row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair + 1,
+                )
+                .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+            sum.add(table[pair * radix * radix + lo * radix + hi]);
+        }
+        values[output_row] = sum.reduce();
+    }
 }
 
 // The final radix digit represents a cold source row, whose contribution is zero.
