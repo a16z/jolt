@@ -102,12 +102,27 @@ class E2eBenchTests(unittest.TestCase):
 
     def test_build_environment_does_not_forward_service_credentials(self):
         with patch.dict(os.environ, {'GITHUB_TOKEN': 'fixture', 'PIKA_CLI_TOKEN': 'fixture',
-                                     'ACTIONS_RUNTIME_TOKEN': 'fixture', 'OPENAI_API_KEY': 'fixture'}):
+                                     'ACTIONS_RUNTIME_TOKEN': 'fixture', 'OPENAI_API_KEY': 'fixture',
+                                     'CARGO_BUILD_JOBS': '3'}):
             env = bench.build_environment()
         self.assertNotIn('GITHUB_TOKEN', env)
         self.assertNotIn('PIKA_CLI_TOKEN', env)
         self.assertNotIn('ACTIONS_RUNTIME_TOKEN', env)
         self.assertNotIn('OPENAI_API_KEY', env)
+        self.assertEqual(env['CARGO_BUILD_JOBS'], '3')
+
+    def test_suite_times_current_preparation_instead_of_old_manifests(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = argparse.Namespace(out=Path(directory), base_revision='a' * 40, head_revision='b' * 40)
+            result = {'builds': [{'build_s': 86400}, {'build_s': 86400}],
+                      'wall_time': {'benchmark_s': 2}}
+            with patch.object(bench, 'build'), patch.object(bench, 'run', return_value=result), \
+                    patch.object(bench, 'render_comment'), \
+                    patch.object(bench.time, 'perf_counter', side_effect=[10, 13, 20]):
+                bench.suite(args)
+            receipt = json.loads((args.out / 'benchmark-results.json').read_text())
+            self.assertEqual(receipt['wall_time']['build_s'], 3)
+            self.assertEqual(receipt['wall_time']['total_s'], 10)
 
     def test_failed_owned_process_is_reaped_and_never_aggregated_as_success(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -185,6 +200,190 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
             self.assertEqual({case['physical_cores'] for case in supported}, {1, 8, 24})
             self.assertEqual({case['pcs'] for case in supported}, {'dory', 'akita'})
         self.assertGreater(config['tiers']['nightly']['repetitions'], config['tiers']['main']['repetitions'])
+
+
+class BuildCacheTests(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.workspace = self.root / 'action-workspace'
+        self.workspace.mkdir()
+        self.compiles = []
+        files = {
+            '.gitignore': '/target/\n',
+            'Cargo.toml': '[workspace]\nmembers = []\n',
+            'Cargo.lock': 'version = 3\n[[package]]\nname = "fixture"\nversion = "0.0.0"\n',
+            'crates/jolt-prover/Cargo.toml': '[features]\nprofiling = []\n[dependencies]\n',
+            'crates/jolt-prover/src/profile.rs': 'fn fixture() {}\n',
+            'crates/jolt-akita/schedules/fixture.aks': 'owned schedule fixture',
+            'scripts/bench/run.py': SCRIPT.read_text(),
+        }
+        self.config = self.workspace / 'scripts/bench/suites.json'
+        config = {'schema_version': 1, 'metric_contract': 1, 'tiers': {}}
+        for tier, operations in [('main', 1), ('pr', 2)]:
+            config['tiers'][tier] = {'cases': [{'id': tier, 'workload': 'fibonacci',
+                'input': {'parameters': {'operations': operations}}}]}
+        files['scripts/bench/suites.json'] = json.dumps(config)
+        for name, text in files.items():
+            path = self.workspace / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.git('init', '-q')
+        self.git('add', *files)
+        self.commit()
+        self.revision = self.git('rev-parse', 'HEAD')
+        self.enterContext(patch.object(bench, 'ROOT', self.workspace))
+        self.enterContext(patch.dict(os.environ, {'XDG_CACHE_HOME': str(self.root / 'runner-cache'),
+            'GITHUB_WORKSPACE': str(self.workspace), 'CARGO_BUILD_JOBS': '3'}))
+        self.enterContext(patch.object(bench, 'host_snapshot', return_value={'id': 'fixture-host'}))
+        original_logged = bench.logged
+
+        def capture(argv, cwd=None, env=None):
+            if argv[0] == 'rustc':
+                if '--print' in argv:
+                    return 'target_feature="sse2"'
+                return 'rustc fixture\nhost: x86_64-unknown-linux-gnu'
+            if argv[0] == 'cargo':
+                self.assertEqual(argv, ['cargo', '--version'])
+                return 'cargo fixture'
+            return subprocess.check_output(argv, cwd=cwd or self.workspace, env=env, text=True).strip()
+
+        def logged(argv, cwd, env, log):
+            if argv[0] == 'git':
+                return original_logged(argv, cwd, env, log)
+            self.assertEqual(env['CARGO_BUILD_JOBS'], '3')
+            self.assertNotIn('CARGO_TARGET_DIR', env)
+            log.write(json.dumps(argv) + '\n')
+            if argv[:2] == ['cargo', 'metadata']:
+                return
+            if argv[:2] == ['cargo', 'build']:
+                self.compiles.append(argv)
+                self.assertEqual(Path(argv[argv.index('--target-dir') + 1]), cwd / 'target')
+                target = cwd / 'target' / argv[argv.index('--target') + 1] / argv[argv.index('--profile') + 1]
+                target.mkdir(parents=True, exist_ok=True)
+                for name in ('jolt-prover', 'jolt'):
+                    (target / name).write_text('owned compiler output fixture: ' + argv[-1])
+                return
+            self.assertEqual(argv[1], 'prepare')
+            out = Path(argv[argv.index('--out') + 1])
+            out.mkdir(parents=True)
+            (out / 'guest.elf').write_bytes(b'owned ELF fixture')
+            for count in argv[argv.index('--operations') + 1].split(','):
+                (out / f'input-{count}.bin').write_text(count)
+
+        self.enterContext(patch.object(bench, 'capture', side_effect=capture))
+        self.enterContext(patch.object(bench, 'logged', side_effect=logged))
+
+    def git(self, *args, cwd=None):
+        return subprocess.check_output(['git', *args], cwd=cwd or self.workspace,
+                                       stderr=subprocess.STDOUT, text=True).strip()
+
+    def commit(self):
+        self.git('-c', 'user.name=Benchmark fixture', '-c', 'user.email=fixture@example.invalid',
+                 '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'fixture')
+
+    def build(self, name, **options):
+        args = argparse.Namespace(config=self.config, out=self.root / name, revision=self.revision,
+                                  harness_revision=self.revision, target_cpu='x86-64', profile='release')
+        vars(args).update(options)
+        with bench.host_lock():
+            manifest = bench.build(args)
+        self.assertEqual(manifest['status'], 'complete', manifest['reason'])
+        return manifest, json.loads((args.out / 'preparation.json').read_text())
+
+    def test_checkout_cleanup_preserves_independent_cached_source_and_target(self):
+        original, _ = self.build('original')
+        source = bench.cache_root() / 'builds/x86-64/release/source'
+        artifact = source / 'target/owned-artifact'
+        artifact.write_bytes(b'owned artifact')
+        self.assertFalse(source.is_relative_to(self.workspace))
+        self.assertFalse((source / '.git/objects/info/alternates').exists())
+        disposable = self.workspace / 'target/e2e-builds/old'
+        disposable.mkdir(parents=True)
+        (disposable / 'artifact').write_text('old workspace-local cache')
+        # actions/checkout@3d3c42e: tryClean/tryReset run these exact commands.
+        self.git('clean', '-ffdx')
+        self.git('reset', '--hard', 'HEAD')
+        self.assertFalse(disposable.exists())
+        self.assertEqual(artifact.read_bytes(), b'owned artifact')
+        reused, receipt = self.build('after-clean')
+        self.assertEqual(reused, original)
+        self.assertEqual(receipt['mode'], 'reused')
+        (self.workspace / 'new-source').write_text('new commit after the independent clone')
+        self.git('add', 'new-source')
+        self.commit()
+        changed = self.git('rev-parse', 'HEAD')
+        result, receipt = self.build('changed-source', revision=changed)
+        self.assertEqual(result['revision'], changed)
+        self.assertEqual(receipt['mode'], 'built')
+        self.assertTrue(result['cache']['cargo_target_preexisting'])
+        self.assertEqual(artifact.read_bytes(), b'owned artifact')
+        (self.workspace / '.git').rename(self.root / 'removed-workspace-git')
+        self.assertEqual(self.git('show', 'HEAD:new-source', cwd=source),
+                         'new commit after the independent clone')
+
+    def test_reuse_keeps_construction_provenance_and_records_fresh_preparation(self):
+        original, built = self.build('original')
+        cached = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
+        original['started_at'] = '2000-01-01T00:00:00Z'
+        original['finished_at'] = '2000-01-02T00:00:00Z'
+        original['build_s'] = 86400
+        bench.write_json(cached, original)
+        self.compiles.clear()
+        reused, receipt = self.build('reused', tier='pr')
+        self.assertEqual(self.compiles, [])
+        self.assertEqual(reused, original)
+        self.assertEqual(receipt['mode'], 'reused')
+        self.assertNotEqual(receipt['started_at'], original['started_at'])
+        self.assertNotEqual(receipt['started_at'], built['started_at'])
+        self.assertEqual(receipt['reused_from'], str(cached))
+        self.assertEqual(receipt['required_inputs'], {'fibonacci': [2]})
+        self.assertEqual(receipt['manifest_sha256'], bench.sha256(cached))
+        self.assertGreater(receipt['elapsed_s'], 0)
+        self.assertTrue((self.root / 'reused/construction.log').is_file())
+        with patch.dict(os.environ, {'XDG_CACHE_HOME': str(self.workspace / 'target/cache')}):
+            with self.assertRaisesRegex(ValueError, 'outside the action workspace'):
+                bench.cache_root()
+
+    def test_main_bundle_missing_pr_input_is_not_reused(self):
+        first, _ = self.build('main-only', tier='main')
+        second, receipt = self.build('pr', tier='pr')
+        self.assertEqual(first['revision'], second['revision'])
+        self.assertEqual(set(first['guests']['fibonacci']['inputs']), {'1'})
+        self.assertEqual(set(second['guests']['fibonacci']['inputs']), {'2'})
+        self.assertEqual(receipt['mode'], 'built')
+        self.assertIn('lacks required inputs', receipt['cache_misses'][0]['reason'])
+        self.assertEqual(len(self.compiles), 4)
+
+    def test_cache_rejects_changed_identity_incomplete_or_corrupt_content(self):
+        original, _ = self.build('original')
+        cached = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
+        changes = {
+            'revision': 'a' * 40, 'harness_revision': 'b' * 40, 'toolchain': 'other rustc',
+            'cargo_version': 'other cargo', 'target_cpu': 'znver4',
+            'target_triple': 'aarch64-unknown-linux-gnu', 'target_features': ['avx2'],
+            'profile': 'ci', 'rustflags': '-C target-cpu=znver4',
+            'source_cargo_lock_sha256': '1' * 64, 'cargo_lock_sha256': '2' * 64,
+            'harness_files': {}, 'suite_config_sha256': '3' * 64,
+            'runner': {'path': 'scripts/bench/run.py', 'sha256': '4' * 64}, 'status': 'incomplete',
+        }
+        for key, value in changes.items():
+            with self.subTest(key=key):
+                bench.write_json(cached, dict(original, **{key: value}))
+                self.compiles.clear()
+                _, receipt = self.build('invalid-' + key)
+                self.assertEqual(len(self.compiles), 2)
+                self.assertEqual(receipt['mode'], 'built')
+                self.assertTrue(receipt['cache_misses'])
+        for name, entry in [('binary', original['binaries']['akita']),
+                            ('guest', original['guests']['fibonacci']['elf']),
+                            ('input', original['guests']['fibonacci']['inputs']['2'])]:
+            with self.subTest(name=name):
+                (cached.parent / entry['path']).write_bytes(b'corrupted owned fixture')
+                self.compiles.clear()
+                _, receipt = self.build('corrupt-' + name)
+                self.assertEqual(len(self.compiles), 2)
+                self.assertEqual(receipt['mode'], 'built')
+                self.assertIn('hash mismatch', receipt['cache_misses'][0]['reason'])
 
 
 if __name__ == '__main__':

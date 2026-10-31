@@ -7,8 +7,10 @@ proof, and retain raw samples. There is no reference-backend timing lane.
 **The sizes and repetition counts are proposals, not a calibrated performance
 gate.** The PR budget is less than 600 seconds, with a 300–420 second aim, for the
 actual workflow path on a real changed-source PR update. It includes every build,
-preparation, transfer, and result-processing interval. A target-host `suite` run
-measures the local build/preparation-through-results component; it does not
+preparation, transfer, and result-processing interval, measured from the successful
+request's completion through the result artifact and, if enabled, the trusted
+comment job. A target-host `suite` run measures the local
+build/preparation-through-results component; it does not
 include workflow transfers or hosted publication. Runtime-only or prebuilt-only
 runs cannot pass this gate, and a preparation interval already above 600 seconds
 is a miss before downstream work is added.
@@ -83,7 +85,10 @@ All times are full-resolution numeric seconds. Build time is separate from the
 proof metrics. `suite` measures one continuous build/preparation-through-results
 interval on its executing host. `run` records `prebuilt-execution-only`, with
 `build_s: null`; it never adds historical build timings to claim a fresh total.
-Individual build manifests retain their own elapsed intervals and host identity.
+Individual build manifests retain their original construction intervals and host
+identity, including when a completed bundle is reused. Each new `preparation.json`
+records the current validation/copy or build interval. The suite's `build_s` is
+the freshly observed preparation interval, never a sum of old manifest durations.
 The workflow's transfer and trusted result-processing intervals must be measured
 separately before claiming the PR total. Cargo target existence or a configured
 compiler cache does not establish cold or cached state; hit state stays unknown
@@ -106,8 +111,13 @@ No host governor, SMT, boost, swap, RAID, or other setting is changed.
 Run on Linux with Python 3.11+ through `uv`, Git, `taskset`, `lscpu`, the pinned
 Rust toolchain and its `rust-src` component, and the RISC-V compiler required by
 the repository's guest builder. The build produces its own `jolt` CLI; a stale
-globally installed CLI is not used. Cargo targets stay inside private source
-checkouts under this checkout's `target/e2e-builds/`.
+globally installed CLI is not used. Build state lives under
+`${XDG_CACHE_HOME:-$HOME/.cache}/jolt-bench/`, outside the action workspace.
+Its `builds/<cpu>/<profile>/source` is an independent Git clone with its own
+objects, fetched from the current trusted checkout; Cargo targets stay inside
+that clone. No `CARGO_TARGET_DIR` is set. Normal Cargo job settings are honored;
+the manifest records `CARGO_BUILD_JOBS` if supplied, without inferring concurrency
+when it is absent.
 
 The harness revision must be committed, and `run.py` must be that revision's
 file. Both source revisions receive the same benchmark-only profile harness and
@@ -115,6 +125,22 @@ direct guest dependencies. Existing locked package identities may not change.
 Build manifests distinguish source revision, harness revision, original lockfile,
 effective lockfile, and all overlaid files. A same-source null run uses identical
 bundles, not differently instrumented main-vs-main binaries.
+
+Completed bundles persist in the same locked store. Reuse requires an exact
+source and harness revision, Rust/Cargo versions, target CPU/triple/features,
+flags, profile, lockfiles, harness files, runner and suite-definition match.
+Every required guest/input must exist, and the binary, guest, input, runner,
+configuration and schedule hashes are checked before copying. A main-tier bundle
+does not qualify merely because its source SHA matches: it may lack a PR input.
+Different input sets can coexist; a valid superset may serve a smaller request.
+An invalid or incomplete entry is recorded as a cache miss and rebuilt.
+
+Reuse preserves the construction manifest byte-for-byte. The fresh preparation
+receipt identifies the copied manifest, required inputs and current elapsed
+interval; `construction.log` retains the original build log. Git synchronization,
+lock resolution, validation and copying still count toward preparation. The store
+has no automatic eviction. Cache maintenance is administrator-owned and must hold
+the same `host.lock`; do not remove the lock file itself during maintenance.
 
 Build a transportable bundle (no proving occurs):
 
@@ -148,8 +174,8 @@ uv run --no-project python "$BENCH_OUT/bundle/scripts/bench/run.py" run \
 overrides. Select IDs directly from `suites.json`; partial/pilot results are not a
 full PR comparison. Every case uses the exact same profile invocation as CI.
 
-For a build-inclusive PR dry run, use an exact current-main base, exact candidate
-merge revision, and one committed harness:
+For the local component of a PR dry run, use an exact current-main base, exact
+candidate merge revision, and one committed harness:
 
 ```bash
 uv run --no-project python scripts/bench/run.py suite \
@@ -160,6 +186,8 @@ uv run --no-project python scripts/bench/run.py suite \
 
 The runner never builds or measures on another host implicitly. Manual JSON uses
 null GitHub provenance. Never compare a historical run on another host with a PR.
+This manual command does not replace the actual workflow acceptance run, which
+must also include checkout/fetch, transfers and result processing.
 To render a comment without posting:
 
 ```bash
@@ -192,7 +220,8 @@ boundary; consumers must keep that provenance limit explicit.
 ## Administrator enablement
 
 The draft adds no runner, setting, secret, or live comment. Keep
-`JOLT_E2E_ENABLED` unset until all of the following are satisfied:
+`JOLT_E2E_ENABLED` unset until steps 1–3 are satisfied. Step 4 enables controlled
+acceptance runs; it is not evidence that the time budget has passed.
 
 1. Use a dedicated Linux runner account and the observed target machine. That
    account must have no write-capable GitHub, SSH, cloud, or Pika credentials in
@@ -207,11 +236,15 @@ The draft adds no runner, setting, secret, or live comment. Keep
    fields in its [runner-group API](https://docs.github.com/en/rest/actions/self-hosted-runner-groups#update-a-self-hosted-runner-group-for-an-organization).
 3. Install the repository's build prerequisites and `uv` through the normal
    administrator process. Set `JOLT_E2E_TARGET_CPU` only after observing the
-   target ISA. Complete a real null pilot and a full fresh build-inclusive PR
-   dry run, calibrating sizes/repetitions without changing protocol parameters.
-4. Enable `JOLT_E2E_ENABLED=true`. Inspect the first run's complete artifact,
-   every expected point, physical affinity, hashes, verified exits, and measured
-   total. Target measurements, not this document, determine readiness.
+   target ISA. Keep the runner cache outside the action workspace, with ownership
+   restricted to that account. Complete a real null pilot and calibrate
+   sizes/repetitions without changing protocol parameters.
+4. Enable `JOLT_E2E_ENABLED=true` for an actual changed-source PR workflow run.
+   Inspect every expected point, physical affinity, hashes and verified exits.
+   Measure the full request-completion-through-result interval, including build
+   or reuse preparation, checkout/fetch, transfers and result processing. Include
+   trusted comment publication when enabled. Keep a miss as a miss; a prebuilt
+   run or manual local receipt cannot establish the less-than-600-second gate.
 5. After reviewing trusted publication separately, optionally set
    `JOLT_E2E_COMMENTS_ENABLED=true`. Until then, comments are rendered artifacts
    only. This task does not enable or post them.
@@ -222,8 +255,10 @@ rejects forks, and resolves the PR merge ref's exact current-main parent. No
 `pull_request_target` workflow executes PR code. The persistent measurement job
 has only read permissions; subprocess environments exclude tokens. The runner's
 non-secret `RUNNER_TRACKING_ID` is retained for cancellation cleanup. Trusted
-checkouts are cleaned normally; correctness does not depend on a retained source
-tree. Cargo cache reuse is recorded, never assumed or required for a time claim.
+action checkouts are cleaned normally. The locked source clone, its repo-local
+Cargo target and completed bundles survive outside that workspace. Removing the
+store causes fresh preparation; a compiler-cache hit is never inferred from
+directory existence or from a completed-bundle reuse receipt.
 
 The hosted plan is transferred by its captured immutable artifact ID, not just
 its name. The hosted read-only validator checks actual workflow/artifact/PR
