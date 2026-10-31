@@ -67,9 +67,17 @@ reserved capacity and the largest stage-1–5 envelope of the Spartan,
 instruction-input and register (claim reduction, read/write checking and value
 evaluation) tables over the trace's rows before its constant padding suffix,
 with every register read/write entry generation at its worst case of three
-entries per cycle, and the RAM access columns of stages 2 and 4 that may still
-be held. It omits most other allocations, so passing it does not mean the
-proof fits. It is not a lower bound on the memory a proof needs, and the
+entries per cycle. The envelope also counts the instruction claim reduction's
+construction collect and its storage after preparation, the RAM read/write
+kernel's storage through its first bind with the RAF evaluation's folded and
+unmap tables, the RAM value check's scalar tables at their largest, and the RAM
+access columns that may still be held. It omits most other allocations, so
+passing it does not mean the proof fits. It is not a lower bound on the memory
+a proof needs. Under Akita, the profile also fails before PCS setup allocates
+its one-hot backend when the budget cannot hold the trace output, program and
+program preprocessing buffers plus the setup's flat public matrix; that check
+rejects the multi-chunk profiles and auxiliary (field-inline) setups it does
+not price, and passing it does not mean the setup or proof fits either. The
 budget does not cap process memory.
 
 Artifacts are grouped by run: each invocation writes into

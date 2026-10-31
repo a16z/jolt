@@ -172,6 +172,11 @@ impl BytecodePCMapper {
         Ok(Self { slots })
     }
 
+    /// Bytes the slot table holds on the heap, at capacity.
+    pub(crate) fn heap_bytes(&self) -> usize {
+        self.slots.capacity() * size_of::<PcSlot>()
+    }
+
     fn validate_run(
         bytecode_index: usize,
         address: usize,
@@ -307,7 +312,10 @@ mod tests {
     #[cfg(feature = "field-inline")]
     use jolt_riscv::{FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
 
-    use super::{BytecodePCMapper, BytecodePreprocessing, PreprocessingError};
+    use common::jolt_device::MemoryLayout;
+
+    use super::{BytecodePCMapper, BytecodePreprocessing, PcSlot, PreprocessingError};
+    use crate::preprocess::{JoltProgramPreprocessing, RAMPreprocessing};
 
     #[test]
     fn preprocess_prepends_and_pads_bytecode() {
@@ -447,6 +455,32 @@ mod tests {
         assert_eq!(preprocessing.get_pc(&noop), Some(0));
 
         assert_eq!(preprocessing.get_pc(&instruction(0x8000_0004, None)), None);
+    }
+
+    #[test]
+    fn program_preprocessing_heap_bytes_count_buffers_at_capacity() {
+        let mut bytecode = Vec::with_capacity(37);
+        bytecode.push(instruction(0x8000_0000, None));
+        let slots = Vec::<PcSlot>::with_capacity(41);
+        let bytecode_words = Vec::<u64>::with_capacity(43);
+        let expected = bytecode.capacity() * size_of::<JoltInstructionRow>()
+            + slots.capacity() * size_of::<PcSlot>()
+            + bytecode_words.capacity() * size_of::<u64>();
+        let preprocessing = JoltProgramPreprocessing {
+            bytecode: BytecodePreprocessing {
+                code_size: 2,
+                bytecode,
+                pc_map: BytecodePCMapper { slots },
+                entry_address: 0x8000_0000,
+            },
+            ram: RAMPreprocessing {
+                min_bytecode_address: 0x8000_0000,
+                bytecode_words,
+            },
+            memory_layout: MemoryLayout::default(),
+            max_padded_trace_length: 2,
+        };
+        assert_eq!(preprocessing.heap_bytes(), expected);
     }
 
     fn instruction(address: usize, virtual_sequence_remaining: Option<u16>) -> JoltInstructionRow {

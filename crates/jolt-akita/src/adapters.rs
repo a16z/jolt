@@ -13,8 +13,9 @@ use std::{cell::Cell, num::NonZeroUsize};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_pcs::{
-    AkitaCommitmentScheme, AkitaDeserialize, AkitaProverSetup as BackendProverSetup,
-    AkitaSerialize, AkitaVerifier, CommitmentHandle, CpuBackend, DensePoly, OneHotPoly,
+    new_prover_setup, AkitaCommitmentScheme, AkitaDeserialize,
+    AkitaProverSetup as BackendProverSetup, AkitaSerialize, AkitaVerifier, CommitmentHandle,
+    CpuBackend, DensePoly, OneHotPoly, SetupRequirements,
 };
 use akita_schedules::ValidatedScheduleCatalog;
 use akita_types::{
@@ -1068,15 +1069,50 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
 /// [`AkitaVerifierSetup::one_hot_backend_num_vars`].
 pub(crate) fn one_hot_setup_prover(
     setup: &AkitaVerifierSetup,
+    known_source_limit: Option<usize>,
 ) -> Result<AkitaBackendProverSetup, OpeningsError> {
     let max_num_vars = setup.one_hot_backend_num_vars()?;
     let max_num_polys = setup.max_total_batch_polys;
     let scheme = setup.one_hot_scheme()?;
     with_backend_pool(|| {
-        with_one_hot_family!(scheme scheme, |scheme| scheme
-            .setup_prover(max_num_vars, max_num_polys))
+        with_one_hot_family!(scheme scheme, |scheme| {
+            let requirements =
+                SetupRequirements::from_catalog(scheme.schedules(), max_num_vars, max_num_polys)
+                    .map_err(invalid_setup)?;
+            if let Some(limit) = known_source_limit {
+                check_known_source_bytes(&requirements, limit)?;
+            }
+            new_prover_setup(&requirements).map_err(invalid_setup)
+        })
     })
-    .map_err(invalid_setup)
+}
+
+/// Rejects `requirements` when the flat public matrix [`new_prover_setup`]
+/// generates, `matrix_capacity` field elements that the setup keeps, needs
+/// more than `limit` bytes. Nothing else the setup allocates is counted: the
+/// setup-prefix export streams each required slot's commitment from that
+/// matrix through per-slot buffers, and keeps the commitments and hints.
+///
+/// This prices generation followed by export. With Akita's
+/// `disk-persistence` feature, off in this build, a cache hit returns before
+/// either, so enabling it requires gating or repricing this check.
+fn check_known_source_bytes<F>(
+    requirements: &SetupRequirements<F>,
+    limit: usize,
+) -> Result<(), OpeningsError> {
+    let required = requirements
+        .matrix_capacity()
+        .num_field_elements
+        .checked_mul(size_of::<F>())
+        .ok_or_else(|| {
+            OpeningsError::InvalidSetup("Akita setup matrix bytes overflow usize".into())
+        })?;
+    if required > limit {
+        return Err(OpeningsError::InvalidSetup(format!(
+            "the Akita one-hot setup needs {required} bytes for its flat public matrix, above the known-source limit of {limit} bytes"
+        )));
+    }
+    Ok(())
 }
 
 fn largest_precommitted_num_vars<Cfg: CommitmentConfig>(

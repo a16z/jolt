@@ -274,6 +274,23 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
         }
     }
 
+    /// Bytes [`Self::new`] requests for a nonempty `vars`-variable point bound
+    /// [`BindingOrder::LowToHigh`], or `None` past `usize::MAX`: the copied
+    /// point and the [`EqPolynomial::evals_cached`] tables over the point
+    /// without its last variable, split at `vars / 2` into `2P - 1` out entries
+    /// for `P = 2^⌊vars/2⌋` and `H - 1` in entries for `H = 2^⌈vars/2⌉`, with
+    /// their `vars + 1` `Vec` headers. The empty point's layout differs.
+    /// Excludes allocator slack.
+    pub fn low_to_high_bytes(vars: usize) -> Option<usize> {
+        let out = 1usize << (vars / 2);
+        let inner = 1usize << vars.div_ceil(2);
+        vars.checked_add(out.checked_mul(2)?)?
+            .checked_add(inner)?
+            .checked_sub(2)?
+            .checked_mul(size_of::<F>())?
+            .checked_add(vars.checked_add(1)?.checked_mul(size_of::<Vec<F>>())?)
+    }
+
     pub fn current_scalar(&self) -> F {
         self.current_scalar
     }

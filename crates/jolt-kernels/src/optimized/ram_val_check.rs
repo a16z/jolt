@@ -17,8 +17,8 @@ use jolt_verifier::stages::stage4::ram_val_check::{RamValCheck, RamValCheckOutpu
 use jolt_witness::JoltWitnessPlane;
 use std::sync::Arc;
 
-use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{RamAccessColumns, RamAddresses, NO_ACCESS};
+use super::lazy_ra::{ChunkIndexSource, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
+use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, RamAddresses, NO_ACCESS};
 use super::support::{
     bound_pair, map_indices, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
 };
@@ -83,6 +83,145 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for OptimizedBackend {
             lt: SplitLt::new_plus_constant(r_cycle, inputs.challenges.gamma),
         }))
     }
+}
+
+/// Bytes the value check's scalar tables and the RAM access columns request
+/// at their largest over `2^log_t` cycles, `ram_k` addresses and the
+/// `prefix_cycles` cycles before the trace's constant suffix, or `None` past
+/// `usize::MAX`. The bound replays the kernel's binds. The `ra` address table
+/// doubles through the lazy branch schedule ([`LazyBind`]), each new table
+/// beside the old one, until `ra` materializes at most
+/// `⌈prefix_cycles / 2w⌉` values at the switch's width `w`; each later bind
+/// reserves their initial capacity plus the bound half for a possible shrink
+/// copy. The second bind builds the `⌈prefix_cycles / 4⌉`-entry increment
+/// table beside the check's own value columns, then drops those columns.
+/// Later binds retain the increment allocation bound and reserve its bound
+/// half for a possible shrink copy. Every window counts the shared address
+/// column and stage 2's value columns, which may still await their background
+/// drop ([`ram_access_columns_bytes`]), the LT tables at their largest
+/// (`SplitLt::peak_bytes`), and the branch tables queued for a background drop
+/// at the switch, which no window assumes has run. Not counted: the access
+/// columns' collection (the eager check reserves it separately), transients
+/// inside `jolt-poly` constructors, the boxed kernel, `Vec` and `Arc` headers,
+/// round messages, Rayon jobs and the macOS purge's cache-pump requests.
+pub fn scalar_window_bytes<F: JoltField>(
+    log_t: usize,
+    ram_k: usize,
+    prefix_cycles: usize,
+) -> Option<usize> {
+    /// `ra` between binds: the lazy branch table at `width` branches, or the
+    /// queued branch tables beside the materialized values.
+    enum Ra {
+        Lazy {
+            width: usize,
+            table: usize,
+        },
+        Materialized {
+            queued: usize,
+            len: usize,
+            capacity: usize,
+        },
+    }
+    impl Ra {
+        fn held(&self) -> Option<usize> {
+            match *self {
+                Self::Lazy { table, .. } => Some(table),
+                Self::Materialized {
+                    queued, capacity, ..
+                } => queued.checked_add(capacity),
+            }
+        }
+    }
+
+    let cycles = 1usize << log_t;
+    let mut peak = 0usize;
+    // `generations` of access columns beside `entries` scalars.
+    let mut window = |generations: usize, entries: usize| -> Option<()> {
+        let bytes = ram_access_columns_bytes(prefix_cycles, generations)?
+            .checked_add(entries.checked_mul(size_of::<F>())?)?;
+        peak = peak.max(bytes);
+        Some(())
+    };
+    // The address eq table and the one-entry tail beside both generations.
+    window(2, ram_k.checked_add(1)?)?;
+    let mut ra = Ra::Lazy {
+        width: 1,
+        table: ram_k,
+    };
+    // The increment table's `(len, capacity)` once the second bind builds it.
+    let mut increments: Option<(usize, usize)> = None;
+    for bind in 1..=log_t {
+        let generations = if bind == 1 { 2 } else { 1 };
+        let increments_held = match increments {
+            None if bind == 2 => {
+                let len = prefix_cycles.div_ceil(4);
+                window(2, len.checked_add(ra.held()?)?)?;
+                increments = Some((len, len));
+                len
+            }
+            None => 0,
+            Some((len, capacity)) => {
+                let buffer = len.div_ceil(2);
+                window(1, capacity.checked_add(buffer)?.checked_add(ra.held()?)?)?;
+                increments = Some((len.div_ceil(2), capacity));
+                capacity
+            }
+        };
+        ra = match ra {
+            Ra::Lazy { width, table } => {
+                let doubled = table.checked_mul(2)?;
+                let values = prefix_cycles.div_ceil(2 * width);
+                match LazyBind::new(width, DEFAULT_MAX_WIDTH, 1, cycles, [table].into_iter()) {
+                    LazyBind::Double => {
+                        window(
+                            generations,
+                            increments_held.checked_add(table.checked_add(doubled)?)?,
+                        )?;
+                        Ra::Lazy {
+                            width: 2 * width,
+                            table: doubled,
+                        }
+                    }
+                    LazyBind::DoubleThenMaterialize => {
+                        let tables = table
+                            .checked_add(doubled)?
+                            .max(doubled.checked_add(values)?);
+                        window(generations, increments_held.checked_add(tables)?)?;
+                        Ra::Materialized {
+                            queued: doubled,
+                            len: values,
+                            capacity: values,
+                        }
+                    }
+                    LazyBind::FusedMaterialize => {
+                        window(
+                            generations,
+                            increments_held.checked_add(table.checked_add(values)?)?,
+                        )?;
+                        Ra::Materialized {
+                            queued: table,
+                            len: values,
+                            capacity: values,
+                        }
+                    }
+                }
+            }
+            Ra::Materialized {
+                queued,
+                len,
+                capacity,
+            } => {
+                let held = queued.checked_add(capacity)?.checked_add(len.div_ceil(2))?;
+                window(generations, increments_held.checked_add(held)?)?;
+                Ra::Materialized {
+                    queued,
+                    len: len.div_ceil(2),
+                    capacity,
+                }
+            }
+        };
+    }
+    peak.checked_add(SplitLt::<F>::peak_bytes(log_t)?)
 }
 
 /// Raw trace values for two rounds; an explicit prefix with a zero suffix afterward.
@@ -398,6 +537,23 @@ mod tests {
             FixtureShape { log_t: 1, ram_k: 8 },
             vec![RamOp::Write { word: 1, post: 4 }],
             41,
+        );
+    }
+
+    /// Over 2^13 cycles, 64 addresses and 4096 proof rows, `ra` doubles at
+    /// the first three binds and materializes 256 values at the fourth. The
+    /// largest window opens the second bind: its 1024-entry increment table
+    /// beside the 128-entry `ra` table, the `u32` address column and two
+    /// generations of `u64` value columns, 4096 · 36 + 1152 · 32 = 184,320
+    /// bytes. The windows before it hold at most 153,600 bytes (the first
+    /// bind's 64- and 128-entry tables beside both generations), and those
+    /// after it at most 143,360 (the fifth bind's). The LT tables add
+    /// 64 + 3 · 128 entries, 14,336 bytes.
+    #[test]
+    fn scalar_windows_peak_at_the_second_bind() {
+        assert_eq!(
+            scalar_window_bytes::<Fr>(13, 64, 4096),
+            Some(184_320 + 14_336)
         );
     }
 }

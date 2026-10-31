@@ -31,7 +31,7 @@
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
 use jolt_claims::protocols::jolt::{
-    JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
+    JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic, ReadWriteDimensions,
 };
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly};
@@ -46,10 +46,10 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::{
 use jolt_witness::JoltWitnessPlane;
 
 use super::prefix_product::PrefixColumn;
-use super::ram_trace::RamAccessColumns;
+use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns};
 use super::read_write::ReadWriteOrder;
 use super::rw_matrix::{
-    round0_bind, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
+    round0_bind, round0_bind_bytes, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
     AddressMajorMatrix, CycleMajorMatrix,
 };
 use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
@@ -456,10 +456,102 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
     }
 }
 
+/// Bytes the RAM read-write kernel and RAM RAF evaluation hold in the same
+/// stage-2 batch, over the `prefix_cycles` cycles before the trace's constant
+/// suffix; zero for a phase split `prepare` rejects before allocating.
+#[derive(Clone, Copy, Debug)]
+pub struct RamReadWriteBytes {
+    /// From the read-write kernel's preparation until a member of the batch
+    /// first binds.
+    pub prepared: usize,
+    /// Through the read-write kernel's first bind and RAF's first bind after
+    /// it.
+    pub first_bind: usize,
+}
+
+impl RamReadWriteBytes {
+    /// The read-write kernel's tables for `dimensions` under `prepare`'s
+    /// `ReadWriteOrder` dispatch, with RAF's folded `ra` and unmap tables, or
+    /// `None` past `usize::MAX`.
+    ///
+    /// Both orders count the increment prefix (at most `prefix_cycles`
+    /// entries), `val_init` (at least four slots), the split-eq tables
+    /// ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and RAF's two `K`-entry
+    /// tables. Cycle-first adds one generation of access columns
+    /// ([`ram_access_columns_bytes`]), queued for a background drop only after
+    /// round 0 returns; its first bind adds the round-0 collect at its largest
+    /// entry count (`round0_bind_bytes`), then one half-length copy of a RAF
+    /// table. The increment prefix's first bind stays in its allocation. Address-first adds the eq prefix (at
+    /// most `prefix_cycles` entries) and the matrix at its collected capacity
+    /// (`AddressMajorMatrix::collected_bytes`), which `prepare` builds beside
+    /// one generation of access columns before it drops the value columns;
+    /// its first bind keeps the shared address column and holds the larger of
+    /// the bind's collect (`AddressMajorMatrix::first_bind_bytes`, the old
+    /// entries included) and its bound entries
+    /// (`AddressMajorMatrix::bound_bytes`) beside one half-length copy of a
+    /// `K`-entry table: `val_init`'s, or one of RAF's. RAF binds its tables
+    /// one at a time after the read-write kernel under the optimized backend's
+    /// sequential member scheduler. The cycle-table handoff of a two-address
+    /// first bind fits in these bytes.
+    ///
+    /// Not counted: later binds, and the preparation transients other than
+    /// the stored tables: the access columns' collection (the eager check
+    /// reserves it separately), `val_init`'s `K` reconstruction flags,
+    /// address-first's eq-table tensor factors, and RAF's fold staging and eq
+    /// factors.
+    pub fn new<F: JoltField>(
+        dimensions: ReadWriteDimensions,
+        prefix_cycles: usize,
+    ) -> Option<Self> {
+        let Ok(order) = ReadWriteOrder::new::<F>(dimensions) else {
+            return Some(Self {
+                prepared: 0,
+                first_bind: 0,
+            });
+        };
+        let (log_t, log_k) = (dimensions.log_t(), dimensions.log_k());
+        let addresses = 1usize << log_k;
+        let field = |entries: usize| entries.checked_mul(size_of::<F>());
+        let half_copy = field(addresses / 2)?;
+        let shared = [
+            field(prefix_cycles)?,
+            field(addresses.max(4))?,
+            GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t)?,
+            field(addresses.checked_mul(2)?)?,
+        ]
+        .into_iter()
+        .try_fold(0usize, usize::checked_add)?;
+        match order {
+            ReadWriteOrder::CycleFirst => {
+                let prepared = shared.checked_add(ram_access_columns_bytes(prefix_cycles, 1)?)?;
+                Some(Self {
+                    prepared,
+                    first_bind: prepared
+                        .checked_add(round0_bind_bytes::<F>(prefix_cycles, log_k)?)?
+                        .checked_add(half_copy)?,
+                })
+            }
+            ReadWriteOrder::AddressFirst => {
+                let eq = shared.checked_add(field(prefix_cycles)?)?;
+                let bind = AddressMajorMatrix::<F>::first_bind_bytes(prefix_cycles)?.max(
+                    AddressMajorMatrix::<F>::bound_bytes(prefix_cycles)?.checked_add(half_copy)?,
+                );
+                Some(Self {
+                    prepared: eq
+                        .checked_add(ram_access_columns_bytes(prefix_cycles, 1)?)?
+                        .checked_add(AddressMajorMatrix::<F>::collected_bytes(prefix_cycles)?)?,
+                    first_bind: eq
+                        .checked_add(ram_access_columns_bytes(prefix_cycles, 0)?)?
+                        .checked_add(bind)?,
+                })
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
 mod tests {
-    use jolt_claims::protocols::jolt::geometry::dimensions::ReadWriteDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::{ram_ra, ram_val};
     use jolt_field::{Fr, Ring};
     use jolt_poly::EqPolynomial;
@@ -743,5 +835,22 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Address-first, the first bind holds one half-length copy of a
+    /// `K`-entry table at a time beside its bound entries. Over 2^13 cycles,
+    /// 2^20 addresses and 4096 proof rows, with 136-byte entries, that 16 MiB
+    /// copy outweighs the bind's collect, and the term is 118,285,384 bytes:
+    /// above the 105,014,344 bytes without the copy, below the 135,062,600
+    /// bytes with two copies at once.
+    #[test]
+    fn address_first_first_bind_holds_one_half_copy() {
+        let bytes = RamReadWriteBytes::new::<Fr>(ReadWriteDimensions::new(13, 20, 0, 20), 4096)
+            .unwrap()
+            .first_bind;
+        assert!(
+            (104 << 20..120 << 20).contains(&bytes),
+            "address-first first bind {bytes} outside 104..120 MiB"
+        );
     }
 }
