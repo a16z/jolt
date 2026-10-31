@@ -44,6 +44,9 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             scale: Some(20),
             format: OutputFormat::None,
             backend: BackendKind::Optimized,
+            guest_elf: None,
+            input_file: None,
+            result_json: None,
             akita_chunk_profile: profile,
         };
         assert_eq!(args.workload_name(), workload_name);

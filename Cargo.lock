@@ -3856,6 +3856,7 @@ dependencies = [
  "jolt-field",
  "jolt-host",
  "jolt-inlines-keccak256",
+ "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-kernels",
  "jolt-lookup-tables",
@@ -6180,6 +6181,14 @@ dependencies = [
  "rand 0.9.5",
  "secp256k1-sys 0.14.1",
  "serde",
+]
+
+[[package]]
+name = "secp256k1-batch-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-inlines-secp256k1",
+ "jolt-sdk",
 ]
 
 [[package]]

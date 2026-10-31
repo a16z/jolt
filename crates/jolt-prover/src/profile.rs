@@ -19,8 +19,10 @@
 //! suffix so the two protocols' runs never collide) — and a full
 //! `jolt_verifier::verify` as the correctness gate. PCS setup, prove, and
 //! verifier latency under explicit host-parallel and single-threaded
-//! pools are measured separately; guest compilation, tracer execution, and
-//! non-PCS preprocessing remain excluded.
+//! pools are measured separately. With a prebuilt ELF and fixed input file,
+//! `--result-json` also reports the interval through proof serialization,
+//! including both tracing passes, program preprocessing, and PCS setup.
+//! Compilation stays outside that end-to-end interval.
 
 #![expect(
     clippy::expect_used,
@@ -53,8 +55,9 @@ use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 use jolt_akita::AkitaField;
-use jolt_host::{JoltProgramSource, Program};
+use jolt_host::{GuestElf, JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
+use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
@@ -126,6 +129,7 @@ pub enum Workload {
     Sha3Chain,
     #[value(name = "btreemap")]
     BTreeMap,
+    Secp256k1Batch,
     /// The eq-MLE field-inline guest (`examples/field-ops`): the workload
     /// that exercises the field-inline columns and kernels. Fixed-size (its input does
     /// not scale), so it is not in the default sweep list.
@@ -142,6 +146,7 @@ impl Workload {
             Self::Sha2Chain => "sha2-chain",
             Self::Sha3Chain => "sha3-chain",
             Self::BTreeMap => "btreemap",
+            Self::Secp256k1Batch => "secp256k1-batch",
             #[cfg(feature = "field-inline")]
             Self::FieldOps => "field-ops",
         }
@@ -161,33 +166,36 @@ impl Workload {
             Self::Sha2Chain => 22,
             Self::Sha3Chain => 22,
             Self::BTreeMap => 20,
+            Self::Secp256k1Batch => 20,
             #[cfg(feature = "field-inline")]
             Self::FieldOps => 16,
         }
     }
 
     fn input(self, target: usize) -> Vec<u8> {
+        let cycles_per_op = match self {
+            Self::Fibonacci => CYCLES_PER_FIBONACCI_UNIT,
+            Self::Sha2Chain => CYCLES_PER_SHA256,
+            Self::Sha3Chain => CYCLES_PER_SHA3,
+            Self::BTreeMap => CYCLES_PER_BTREEMAP_OP,
+            Self::Secp256k1Batch => return self.input_for_operations(1),
+            #[cfg(feature = "field-inline")]
+            Self::FieldOps => return eqpoly_inputs(),
+        };
+        self.input_for_operations(scale_to_target_ops(target, cycles_per_op))
+    }
+
+    fn input_for_operations(self, operations: u32) -> Vec<u8> {
         match self {
-            Self::Fibonacci => {
-                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_FIBONACCI_UNIT))
-                    .expect("serialize input")
+            Self::Fibonacci | Self::BTreeMap => {
+                postcard::to_stdvec(&operations).expect("serialize input")
             }
-            Self::Sha2Chain => [
+            Self::Sha2Chain | Self::Sha3Chain => [
                 postcard::to_stdvec(&[5u8; 32]).expect("serialize input"),
-                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_SHA256))
-                    .expect("serialize input"),
+                postcard::to_stdvec(&operations).expect("serialize input"),
             ]
             .concat(),
-            Self::Sha3Chain => [
-                postcard::to_stdvec(&[5u8; 32]).expect("serialize input"),
-                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_SHA3))
-                    .expect("serialize input"),
-            ]
-            .concat(),
-            Self::BTreeMap => {
-                postcard::to_stdvec(&scale_to_target_ops(target, CYCLES_PER_BTREEMAP_OP))
-                    .expect("serialize input")
-            }
+            Self::Secp256k1Batch => prepare::secp256k1_inputs(operations),
             #[cfg(feature = "field-inline")]
             Self::FieldOps => eqpoly_inputs(),
         }
@@ -299,6 +307,18 @@ pub struct ProfileArgs {
 
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
+
+    /// Prebuilt guest ELF; bypasses guest compilation in this process.
+    #[clap(long)]
+    pub guest_elf: Option<PathBuf>,
+
+    /// Exact postcard input bytes, prepared separately from measurement.
+    #[clap(long)]
+    pub input_file: Option<PathBuf>,
+
+    /// Full-resolution metrics, written only after both verifications pass.
+    #[clap(long, requires_all = ["guest_elf", "input_file"])]
+    pub result_json: Option<PathBuf>,
 
     /// Akita witness geometry as w<chunks>r<levels>, for example w2r3.
     #[cfg(feature = "akita")]
@@ -633,10 +653,12 @@ pub fn run_sweep(args: &BenchmarkArgs) -> bool {
 
 struct ProvenRun {
     duration: Duration,
+    e2e_duration: Duration,
     setup_duration: Duration,
     verifier_parallel: VerificationRun,
     verifier_single_threaded: VerificationRun,
     proof_size: usize,
+    padded_trace_rows: usize,
 }
 
 struct VerificationRun {
@@ -709,9 +731,21 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     let bench_target = (max_trace_length as f64 * SAFETY_MARGIN) as usize;
     tracing::info!("Running modular {bench_name} profile at scale 2^{scale}");
 
-    let input = workload.input(bench_target);
+    if args.result_json.is_some() {
+        assert_eq!(args.backend, BackendKind::Optimized);
+        assert_eq!(args.format, OutputFormat::None);
+        assert!(args.guest_elf.is_some() && args.input_file.is_some());
+    }
+    let e2e_start = Instant::now();
+    let input = args.input_file.as_ref().map_or_else(
+        || workload.input(bench_target),
+        |path| fs::read(path).expect("read fixed guest input"),
+    );
 
     let mut program = Program::new(&format!("{bench_name}-guest"));
+    if let Some(path) = &args.guest_elf {
+        program.elf = Some(GuestElf::read(path.clone()).expect("read prebuilt guest ELF"));
+    }
     #[cfg(feature = "field-inline")]
     if workload.uses_field_inline() {
         program.enable_field_inline();
@@ -737,6 +771,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     .expect("program preprocessing");
 
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    assert!(!trace_output.device.panic, "benchmark guest panicked");
     let trace_length = trace_output.trace.proof_len();
 
     let run = prove_workload(
@@ -744,13 +779,36 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         program_preprocessing,
         trace_output,
         backend,
+        e2e_start,
         #[cfg(feature = "akita")]
         args.akita_chunk_profile,
     );
     let (duration, proof_size) = (run.duration, run.proof_size);
 
+    if let Some(path) = &args.result_json {
+        let metrics = serde_json::json!({
+            "workload": bench_name,
+            "pcs": if cfg!(feature = "akita") { "akita" } else { "dory" },
+            "backend": backend_label,
+            "scale_log2": scale,
+            "e2e_s": run.e2e_duration.as_secs_f64(),
+            "prove_s": duration.as_secs_f64(),
+            "setup_s": run.setup_duration.as_secs_f64(),
+            "verify_s": run.verifier_parallel.seconds(),
+            "verify_single_s": run.verifier_single_threaded.seconds(),
+            "proof_bytes": proof_size,
+            "trace_rows": trace_length,
+            "padded_trace_rows": run.padded_trace_rows,
+        });
+        fs::write(
+            path,
+            serde_json::to_vec(&metrics).expect("encode measurement"),
+        )
+        .expect("write measurement");
+    }
+
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
-    let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
+    let padded_proving_hz = run.padded_trace_rows as f64 / duration.as_secs_f64();
     println!(
         "modular {} (2^{}, {backend_label}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
         bench_name,
@@ -790,7 +848,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         args.benchmark_name(),
         scale,
         duration.as_secs_f64(),
-        trace_length.next_power_of_two(),
+        run.padded_trace_rows,
         padded_proving_hz,
         proof_size,
         proof_size,
@@ -834,6 +892,7 @@ fn prove_workload(
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
     backend: BackendKind,
+    e2e_start: Instant,
 ) -> ProvenRun {
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
@@ -891,6 +950,7 @@ fn prove_workload(
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize proof")
         .len();
+    let e2e_duration = e2e_start.elapsed();
 
     let parallel_threads = std::thread::available_parallelism().map_or(1, NonZeroUsize::get);
     let parallel_pool = ThreadPoolBuilder::new()
@@ -919,10 +979,12 @@ fn prove_workload(
 
     ProvenRun {
         duration,
+        e2e_duration,
         setup_duration,
         verifier_parallel,
         verifier_single_threaded,
         proof_size,
+        padded_trace_rows: config.trace_length,
     }
 }
 
@@ -932,6 +994,7 @@ fn prove_workload(
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
     backend: BackendKind,
+    e2e_start: Instant,
     chunk_profile: AkitaChunkProfile,
 ) -> ProvenRun {
     use crate::akita::preprocessing::AkitaVc;
@@ -1022,6 +1085,7 @@ fn prove_workload(
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize Akita proof")
         .len();
+    let e2e_duration = e2e_start.elapsed();
     tracing::info!(
         akita_proof_body_size,
         akita_opening_unframed_size,
@@ -1048,10 +1112,12 @@ fn prove_workload(
 
     ProvenRun {
         duration,
+        e2e_duration,
         setup_duration,
         verifier_parallel,
         verifier_single_threaded,
         proof_size,
+        padded_trace_rows: config.trace_length,
     }
 }
 
@@ -1085,3 +1151,6 @@ fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> 
 #[cfg(all(test, feature = "akita"))]
 #[path = "profile/tests.rs"]
 mod tests;
+
+mod prepare;
+pub use prepare::{prepare, PrepareArgs};

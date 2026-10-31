@@ -79,6 +79,7 @@ members = [
   "examples/fibonacci/guest",
   "examples/secp256k1-ecdsa-verify",
   "examples/secp256k1-ecdsa-verify/guest",
+  "examples/secp256k1-batch/guest",
   "examples/p256-ecdsa-verify",
   "examples/p256-ecdsa-verify/guest",
   "examples/sha2-ex",

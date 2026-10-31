@@ -1,0 +1,41 @@
+name: End-to-end prover benchmark requests
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+    paths-ignore:
+      - '**/*.md'
+      - 'book/**'
+      - 'specs/**'
+      - '.claude/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-request-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Check benchmark contracts without proving
+        run: uv run --no-project python -m unittest scripts.tests.test_e2e_bench scripts.tests.test_e2e_ci scripts.tests.test_e2e_publication -v
+      - name: Report runner enablement
+        env:
+          ENABLED: ${{ vars.JOLT_E2E_ENABLED }}
+        run: |
+          if [ "$ENABLED" = true ]; then
+            echo 'The default-branch producer will validate this request. Fork PRs cannot use the benchmark runner.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Target execution is disabled. An administrator must complete scripts/bench/README.md before enabling it.' >> "$GITHUB_STEP_SUMMARY"
+          fi
