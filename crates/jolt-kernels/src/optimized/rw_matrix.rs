@@ -19,6 +19,8 @@
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
+use jolt_utils::par_concat;
+#[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
 use super::prefix_product::PrefixColumn;
@@ -258,16 +260,17 @@ impl<F: JoltField> CycleMajorMatrix<F> {
     /// Bind one cycle variable low-to-high: merge every adjacent row pair.
     pub fn bind(&mut self, r: F) {
         #[cfg(feature = "parallel")]
-        let bound: Vec<CycleMajorEntry<F>> = self
-            .entries
-            .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
-            .flat_map_iter(|group| {
-                let (even, odd) = split_row_pair(group);
-                let mut out = Vec::with_capacity(group.len());
-                merge_bind_rows(even, odd, r, &mut out);
-                out
-            })
-            .collect();
+        let bound: Vec<CycleMajorEntry<F>> = par_concat(
+            &self
+                .entries
+                .par_chunk_by(|a, b| a.row / 2 == b.row / 2)
+                .fold(Vec::new, |mut out, group| {
+                    let (even, odd) = split_row_pair(group);
+                    merge_bind_rows(even, odd, r, &mut out);
+                    out
+                })
+                .collect::<Vec<_>>(),
+        );
         #[cfg(not(feature = "parallel"))]
         let bound: Vec<CycleMajorEntry<F>> = {
             let mut out = Vec::with_capacity(self.entries.len());
@@ -463,10 +466,15 @@ pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> Cyc
     };
 
     #[cfg(feature = "parallel")]
-    let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
-        .into_par_iter()
-        .flat_map_iter(|pair| per_pair(pair).into_iter().flatten())
-        .collect();
+    let entries: Vec<CycleMajorEntry<F>> = par_concat(
+        &(0..pairs)
+            .into_par_iter()
+            .fold(Vec::new, |mut out, pair| {
+                out.extend(per_pair(pair).into_iter().flatten());
+                out
+            })
+            .collect::<Vec<_>>(),
+    );
     #[cfg(not(feature = "parallel"))]
     let entries: Vec<CycleMajorEntry<F>> = (0..pairs)
         .flat_map(|pair| per_pair(pair).into_iter().flatten())
@@ -836,24 +844,25 @@ impl<F: JoltField> AddressMajorMatrix<F> {
     /// pair against the `val_init` checkpoints, then bind `val_init` itself.
     pub fn bind(&mut self, r: F, val_init: &mut Polynomial<F>) {
         #[cfg(feature = "parallel")]
-        let bound: Vec<AddressMajorEntry<F>> = self
-            .entries
-            .par_chunk_by(|a, b| a.col / 2 == b.col / 2)
-            .flat_map_iter(|group| {
-                let (even, odd) = split_col_pair(group);
-                let even_col = 2 * (group[0].col / 2) as usize;
-                let mut out = Vec::with_capacity(group.len());
-                merge_bind_cols(
-                    even,
-                    odd,
-                    val_init.evals()[even_col],
-                    val_init.evals()[even_col + 1],
-                    r,
-                    &mut out,
-                );
-                out
-            })
-            .collect();
+        let bound: Vec<AddressMajorEntry<F>> = par_concat(
+            &self
+                .entries
+                .par_chunk_by(|a, b| a.col / 2 == b.col / 2)
+                .fold(Vec::new, |mut out, group| {
+                    let (even, odd) = split_col_pair(group);
+                    let even_col = 2 * (group[0].col / 2) as usize;
+                    merge_bind_cols(
+                        even,
+                        odd,
+                        val_init.evals()[even_col],
+                        val_init.evals()[even_col + 1],
+                        r,
+                        &mut out,
+                    );
+                    out
+                })
+                .collect::<Vec<_>>(),
+        );
         #[cfg(not(feature = "parallel"))]
         let bound: Vec<AddressMajorEntry<F>> = {
             let mut out = Vec::with_capacity(self.entries.len());

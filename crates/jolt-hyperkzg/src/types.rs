@@ -1,6 +1,6 @@
 use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
 use jolt_field::Fr;
-use jolt_transcript::{Transcript, U64Word};
+use jolt_transcript::{FieldTranscript, VerificationError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -61,20 +61,26 @@ impl HyperKZGVerifierSetup {
         Ok(len)
     }
 
+    /// Absorbs the setup, the commitment, the point and the evaluation.
+    ///
+    /// # Security
+    /// The point is absorbed with no count, so the caller must validate
+    /// `point.len()` first, as the scheme's entry points do with
+    /// [`Self::check_arity`].
     pub(crate) fn append_statement(
         &self,
         commitment: &Bn254G1,
         point: &[Fr],
         evaluation: Fr,
-        transcript: &mut impl Transcript<Challenge = Fr>,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) {
-        transcript.append_labeled(b"hyperkzg-binary-bn254-v1", &U64Word(self.num_powers));
-        transcript.append_bytes(&self.setup_id);
+        transcript.append(&self.num_powers);
+        transcript.append(&self.setup_id);
         transcript.append(&self.g1);
         transcript.append(&self.g2);
         transcript.append(&self.beta_g2);
         transcript.append(commitment);
-        transcript.append_values(b"opening-point", point);
+        transcript.append_values(point);
         transcript.append(&evaluation);
     }
 }
@@ -105,6 +111,16 @@ pub enum HyperKZGError {
     Folding,
     #[error("KZG pairing equation failed")]
     Pairing,
+    /// The transcript refused a challenge draw: the codec does not support the
+    /// request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl From<VerificationError> for HyperKZGError {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +131,7 @@ pub enum HyperKZGError {
 mod tests {
     use jolt_crypto::Bn254;
     use jolt_field::{One, Ring, Zero};
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_transcript::{prover_transcript, Blake2b512};
 
     use super::*;
     use crate::HyperKZGScheme;
@@ -141,7 +157,10 @@ mod tests {
                 Fr::zero(),
                 &proof,
                 key,
-                &mut Blake2bTranscript::new(b"decoded-key"),
+                &mut prover_transcript::<Blake2b512>(
+                    &jolt_transcript::protocol_tag(b"decoded-key"),
+                    b"",
+                ),
             )
         };
         verify(&valid).unwrap();

@@ -5,15 +5,17 @@
 //! chunk boundaries must reach different transcript states.
 //!
 //! Each chunk is absorbed the way production code absorbs variable-length
-//! payloads — a `LabelWithCount` frame followed by the payload — so a
-//! boundary move changes the framing and MUST change the state. A matching
-//! state would mean the framing convention fails to separate `[ab]` from
-//! `[a][b]`, the classic transcript-malleability footgun.
+//! payloads — `append_bytes`, a length-prefixed, word-padded `BytesMsg` — so a boundary
+//! move changes the framing and MUST change the state. A matching state would
+//! mean the framing convention fails to separate `[ab]` from `[a][b]`, the
+//! classic transcript-malleability footgun. The state is observed as the next
+//! 32 squeezed bytes.
 
 use jolt_transcript::{
-    Blake2bTranscript, KeccakTranscript, LabelWithCount, PoseidonTranscript, Transcript,
+    protocol_tag, prover_transcript, Blake2b512, Keccak, PoseidonSponge, Transcript,
 };
 use libfuzzer_sys::fuzz_target;
+use spongefish::DuplexSpongeInit;
 
 const MAX_CHUNKS: usize = 16;
 
@@ -32,13 +34,12 @@ fn parse_chunks(data: &[u8]) -> Vec<&[u8]> {
     chunks
 }
 
-fn framed_state<T: Transcript>(chunks: &[Vec<u8>]) -> [u8; 32] {
-    let mut transcript = T::new(b"fuzz-injectivity");
+fn framed_state<H: DuplexSpongeInit<U = u8>>(chunks: &[Vec<u8>]) -> [u8; 32] {
+    let mut transcript = prover_transcript::<H>(&protocol_tag(b"fuzz-injectivity"), b"");
     for chunk in chunks {
-        transcript.append(&LabelWithCount(b"chunk", chunk.len() as u64));
         transcript.append_bytes(chunk);
     }
-    transcript.state()
+    transcript.verifier_messages::<u8, 32>()
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -75,18 +76,18 @@ fuzz_target!(|data: &[u8]| {
     debug_assert_eq!(original.concat(), morphed.concat());
 
     assert_ne!(
-        framed_state::<Blake2bTranscript>(&original),
-        framed_state::<Blake2bTranscript>(&morphed),
+        framed_state::<Blake2b512>(&original),
+        framed_state::<Blake2b512>(&morphed),
         "Blake2b framed absorption is not boundary-injective"
     );
     assert_ne!(
-        framed_state::<KeccakTranscript>(&original),
-        framed_state::<KeccakTranscript>(&morphed),
+        framed_state::<Keccak>(&original),
+        framed_state::<Keccak>(&morphed),
         "Keccak framed absorption is not boundary-injective"
     );
     assert_ne!(
-        framed_state::<PoseidonTranscript>(&original),
-        framed_state::<PoseidonTranscript>(&morphed),
+        framed_state::<PoseidonSponge>(&original),
+        framed_state::<PoseidonSponge>(&morphed),
         "Poseidon framed absorption is not boundary-injective"
     );
 });

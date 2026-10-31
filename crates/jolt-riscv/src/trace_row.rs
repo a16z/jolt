@@ -45,7 +45,7 @@ const MAX_REGISTER_ID: u8 = u8::MAX - 1;
 const REGISTER_NONE: u8 = u8::MAX;
 
 /// Field-inline builds use 24 circuit-flag bits; base builds retain the original
-/// 16-bit layout. Six instruction flags and the immediate sign follow them.
+/// 16-bit layout. Seven instruction flags and the immediate sign follow them.
 const META_INSTRUCTION_FLAGS_SHIFT: u32 = if cfg!(feature = "field-inline") {
     24
 } else {

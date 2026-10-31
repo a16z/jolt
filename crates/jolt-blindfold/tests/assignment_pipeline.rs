@@ -6,7 +6,7 @@ use jolt_blindfold::{BlindFoldProtocol, BlindFoldWitness, ProverError};
 use jolt_claims::{constant, opening};
 use jolt_crypto::{Bn254G1, JoltGroup, PedersenSetup, VectorCommitment};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec, SumcheckStatement};
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 use support::*;
@@ -44,7 +44,8 @@ fn assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
 
     let (stage1, stage2) = {
         let mut prover = SumcheckTestProver::new(&mut *rng);
-        let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
         let stage1 =
             prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
         let stage2 =
@@ -57,7 +58,8 @@ fn assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
     let eval_blindings = vec![rng_field(rng)];
     let eval_commitment = VC::commit(&setup, &[eval_outputs[0]], &eval_blindings[0]);
 
-    let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     let stage1_consistency = stage1
         .proof
         .verify_committed_consistency(statement1, &mut transcript)
@@ -121,7 +123,8 @@ fn product_assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
 
     let (stage1, stage2) = {
         let mut prover = SumcheckTestProver::new(&mut *rng);
-        let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
         let stage1 =
             prover.prove_stage_with_output_claims(&setup, &mut transcript, statement1, input1, 2);
         // Stage 2 opens on the product of two stage-1 output-claim entries —
@@ -137,7 +140,8 @@ fn product_assignment_fixture(rng: &mut impl RngCore) -> AssignmentFixture {
     let eval_blindings = vec![rng_field(rng)];
     let eval_commitment = VC::commit(&setup, &[eval_outputs[0]], &eval_blindings[0]);
 
-    let mut transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     let stage1_consistency = stage1
         .proof
         .verify_committed_consistency(statement1, &mut transcript)
@@ -212,12 +216,13 @@ fn assigned_witness_proves_and_verifies_through_the_real_prover() {
         .iter()
         .all(|row| row.len() == dimensions.witness.row_len));
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_transcript);
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
+    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_state);
     let proof = jolt_blindfold::prove::<F, VC, _, _>(
         &fixture.setup,
         &fixture.protocol,
-        &mut prover_transcript,
+        &mut prover_state,
         BlindFoldWitness {
             rows: &assigned.rows,
             blindings: &assigned.blindings,
@@ -228,7 +233,8 @@ fn assigned_witness_proves_and_verifies_through_the_real_prover() {
     )
     .expect("assigned witness proves");
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     append_protocol_transcript_prefix(&fixture.protocol, &mut verifier_transcript);
     fixture
         .protocol
@@ -257,12 +263,13 @@ fn product_auxiliaries_solve_and_prove_through_the_real_prover() {
         )
         .expect("product witness assigns");
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_transcript);
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
+    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_state);
     let proof = jolt_blindfold::prove::<F, VC, _, _>(
         &fixture.setup,
         &fixture.protocol,
-        &mut prover_transcript,
+        &mut prover_state,
         BlindFoldWitness {
             rows: &assigned.rows,
             blindings: &assigned.blindings,
@@ -273,7 +280,8 @@ fn product_auxiliaries_solve_and_prove_through_the_real_prover() {
     )
     .expect("product witness proves");
 
-    let mut verifier_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     append_protocol_transcript_prefix(&fixture.protocol, &mut verifier_transcript);
     fixture
         .protocol
@@ -407,12 +415,13 @@ fn final_opening_rows_stay_hidden_from_public_proof_data() {
         )
         .expect("witness assigns");
 
-    let mut prover_transcript = Blake2bTranscript::<F>::new(TRANSCRIPT_LABEL);
-    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_transcript);
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
+    append_protocol_transcript_prefix(&fixture.protocol, &mut prover_state);
     let proof = jolt_blindfold::prove::<F, VC, _, _>(
         &fixture.setup,
         &fixture.protocol,
-        &mut prover_transcript,
+        &mut prover_state,
         BlindFoldWitness {
             rows: &assigned.rows,
             blindings: &assigned.blindings,

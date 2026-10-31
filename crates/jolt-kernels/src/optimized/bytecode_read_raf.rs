@@ -53,6 +53,8 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
 use jolt_field::JoltField;
+#[cfg(feature = "akita")]
+use jolt_poly::bind_prefix_in_place;
 use jolt_poly::{
     EqPolynomial, IdentityPolynomial, MultilinearEvaluation, Polynomial, UnivariatePoly,
 };
@@ -73,8 +75,6 @@ use super::constant_suffix::ConstantSuffix;
 use super::eq_prefix::EqPrefix;
 use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-#[cfg(feature = "akita")]
-use super::support::bind_prefix_pairs;
 use super::support::{
     bind_all, eq_table, gamma_powers, pair, par_sum_pair_groups, par_sum_pair_groups_reusing,
     round_poly_from_skipped_evals, RoundProgress,
@@ -891,7 +891,7 @@ impl<F: JoltField> LazyFusedInc<F> {
                 }
             }
             Self::Prefix { values, tail } => {
-                bind_prefix_pairs(values, challenge, *tail);
+                let _ = bind_prefix_in_place(values, challenge, *tail);
             }
         }
     }

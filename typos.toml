@@ -45,6 +45,10 @@ extend-exclude = [
 # HOL Light theorem type emitted and checked by the proof runner.
 "thm" = "thm"
 
+[type.rust.extend-words]
+# Hex known answers in jolt-transcript's tests contain "ba".
+"ba" = "ba"
+
 [type.py.extend-words]
 # Proof checkers contain this x86 immediate and the HOL Light theorem type.
 "ba" = "ba"

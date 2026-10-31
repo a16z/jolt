@@ -582,6 +582,7 @@ mod execution_witness_tests {
     const LEFT_LOOKUP_EQ_LEFT_INPUT_OTHERWISE: usize = 6;
     const RIGHT_LOOKUP_ADD: usize = 7;
     const RIGHT_LOOKUP_EQ_PRODUCT_IF_MUL: usize = 9;
+    const RIGHT_LOOKUP_EQ_RIGHT_INPUT_OTHERWISE: usize = 10;
     const RD_WRITE_EQ_LOOKUP_IF_WRITE_LOOKUP_TO_RD: usize = 12;
     const RD_WRITE_EQ_PC_PLUS_CONST_IF_JUMP: usize = 13;
     const NEXT_UNEXP_PC_EQ_LOOKUP_IF_SHOULD_JUMP: usize = 14;
@@ -671,7 +672,8 @@ mod execution_witness_tests {
     ///
     /// Circuit flags [Load] (i/ld.rs). Loads route the loaded value into
     /// RamReadValue, RamWriteValue (read-write identity), and RdWriteValue;
-    /// instruction inputs and the lookup are unused (all zero).
+    /// the right instruction/lookup operand carries that value so instruction
+    /// read-RAF proves it is a `u64`.
     fn ld_witness() -> Vec<Fr> {
         const BASE: u64 = 0x8000_1000;
         const LOADED: u64 = 0xDEAD_BEEF_CAFE_F00D;
@@ -688,6 +690,8 @@ mod execution_witness_tests {
         w[V_RD_WRITE_VALUE] = Fr::from_u64(LOADED);
         w[V_RAM_READ_VALUE] = Fr::from_u64(LOADED);
         w[V_RAM_WRITE_VALUE] = Fr::from_u64(LOADED);
+        w[V_RIGHT_INSTRUCTION_INPUT] = Fr::from_u64(LOADED);
+        w[V_RIGHT_LOOKUP_OPERAND] = Fr::from_u64(LOADED);
         w[V_FLAG_LOAD] = Fr::from_u64(1);
         w
     }
@@ -972,6 +976,12 @@ mod execution_witness_tests {
             check(&w),
             Err(RAM_ADDR_EQ_RS1_PLUS_IMM_MINUS_LOOKUP_IF_LOAD_STORE)
         );
+    }
+
+    #[test]
+    fn ld_rejects_right_lookup_not_carried_from_rd_write_input() {
+        let w = with_cell(&ld_witness(), V_RIGHT_LOOKUP_OPERAND, Fr::from_u64(0));
+        assert_eq!(check(&w), Err(RIGHT_LOOKUP_EQ_RIGHT_INPUT_OTHERWISE));
     }
 
     #[test]

@@ -59,6 +59,6 @@ pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.
 #[doc(hidden)]
-pub use adapters::{jolt_to_akita_evals, jolt_to_akita_index, reverse_point};
+pub use adapters::{jolt_to_akita_evals, reverse_point};
 
 pub use verifier_resources::AkitaVerifierResources;

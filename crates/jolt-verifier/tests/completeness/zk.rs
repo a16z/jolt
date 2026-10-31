@@ -18,7 +18,7 @@ use jolt_field::Fr;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::{Keccak, VerifierState};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
@@ -44,7 +44,7 @@ fn zk_committed_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         Fr,
         DoryScheme,
         Pedersen<Bn254G1>,
-        Blake2bTranscript,
+        VerifierState<'_, Keccak>,
         _,
     >(&case.preprocessing, &case.public_io, &case.proof, None)
     .expect("build modular BlindFold protocol shape");
@@ -79,7 +79,7 @@ fn zk_muldiv_blindfold_shape_audit_matches_modular_protocol() {
         Fr,
         DoryScheme,
         Pedersen<Bn254G1>,
-        Blake2bTranscript,
+        VerifierState<'_, Keccak>,
         _,
     >(&case.preprocessing, &case.public_io, &case.proof, None)
     .expect("build modular BlindFold protocol shape");

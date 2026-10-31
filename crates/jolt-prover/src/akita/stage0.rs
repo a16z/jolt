@@ -7,10 +7,10 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomi
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::{
-    absorb_akita_commitments, absorb_transcript_preamble, validate_inputs_from_parts,
-    CheckedInputs, ProofTranscriptConfig,
+    absorb_akita_commitments, validate_inputs_from_parts, CheckedInputs, JoltStatement,
+    ProofTranscriptConfig, JOLT_SESSION,
 };
 
 use super::witness::{commit_advice, AdviceObject};
@@ -47,9 +47,9 @@ where
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
-    PCS::Output: Clone + AppendToTranscript,
+    PCS::Output: Clone + Encoding,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverInit,
 {
     let setup = &preprocessing.verifier.pcs_setup;
     if config.akita_chunk_profile.num_chunks() != setup.one_hot_num_chunks()
@@ -104,18 +104,20 @@ where
         config.trace_polynomial_order,
         config.one_hot_config,
         trusted_advice.is_some(),
+        untrusted_advice_present,
         false,
     )?;
 
-    let mut transcript = T::new(b"Jolt");
-    absorb_transcript_preamble(
-        &checked,
-        ProofTranscriptConfig {
-            rw_config: config.rw_config,
-            one_hot_config: config.one_hot_config,
-            trace_polynomial_order: config.trace_polynomial_order,
+    let mut transcript = T::init(
+        &JOLT_SESSION,
+        &JoltStatement {
+            checked: &checked,
+            config: ProofTranscriptConfig {
+                rw_config: config.rw_config,
+                one_hot_config: config.one_hot_config,
+                trace_polynomial_order: config.trace_polynomial_order,
+            },
         },
-        &mut transcript,
     );
 
     let log_t = config.trace_length.ilog2() as usize;

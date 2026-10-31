@@ -1,7 +1,5 @@
 use jolt_field::JoltField;
-use jolt_poly::GruenSplitEqPolynomial;
-
-use super::support::bind_prefix_pairs;
+use jolt_poly::{bind_prefix_in_place, GruenSplitEqPolynomial};
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct PrefixColumn<F: JoltField> {
@@ -29,12 +27,13 @@ impl<F: JoltField> PrefixColumn<F> {
         )
     }
 
+    /// Binds the prefix in place and folds the two-periodic tail with it.
+    /// Returns whether backing storage shrank.
     pub(crate) fn bind(&mut self, challenge: F) -> bool {
-        let capacity = self.values.capacity();
-        bind_prefix_pairs(&mut self.values, challenge, self.tail[1]);
+        let shrunk = bind_prefix_in_place(&mut self.values, challenge, self.tail[1]);
         let bound = self.tail[0] + challenge * (self.tail[1] - self.tail[0]);
         self.tail = [bound; 2];
-        self.values.capacity() < capacity
+        shrunk
     }
     pub(crate) fn product_at_one(&self, other: &Self, eq: &GruenSplitEqPolynomial<F>) -> F {
         let prefix_pairs = self.values.len().div_ceil(2);

@@ -1,6 +1,6 @@
 use jolt_field::Field;
 use jolt_poly::UnivariatePolynomial;
-use jolt_transcript::{AppendToTranscript, LabelWithCount, Transcript};
+use jolt_transcript::{require_no_pow, Encoding, FieldTranscript};
 
 use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
 use crate::committed::{
@@ -8,8 +8,9 @@ use crate::committed::{
 };
 use crate::domain::{BooleanHypercube, SumcheckDomain};
 use crate::error::SumcheckError;
+use crate::pow::RoundNonces;
 use crate::proof::CompressedSumcheckProof;
-use crate::round_proof::{ClearRound, RoundMessage};
+use crate::round_proof::{append_compressed_round, ClearRound, RoundMessage};
 
 pub struct SumcheckVerifier;
 
@@ -20,8 +21,11 @@ impl SumcheckVerifier {
     /// 1. The degree bound is enforced against `claim.degree`.
     /// 2. The round sum is checked against the running sum in `domain`.
     /// 3. The round message is absorbed into the transcript.
-    /// 4. A challenge $r_i$ is squeezed from the transcript.
-    /// 5. The running sum is updated to the round polynomial at $r_i$.
+    /// 4. The round's proof-of-work nonce from `pow_nonces` is checked
+    ///    (one per round when the difficulty for `claim.degree` is positive,
+    ///    none otherwise).
+    /// 5. A challenge $r_i$ is squeezed from the transcript.
+    /// 6. The running sum is updated to the round polynomial at $r_i$.
     ///
     /// On success, returns an [`EvaluationClaim`] `{ point: r, value: v }`
     /// where `v` is the final evaluation and `r = (r_1, ..., r_n)` is the
@@ -30,7 +34,8 @@ impl SumcheckVerifier {
     /// # Errors
     ///
     /// Returns [`SumcheckError`] if any round check fails, a degree bound
-    /// is exceeded, or the proof has the wrong number of rounds.
+    /// is exceeded, a proof-of-work nonce is missing or wrong, or the proof
+    /// has the wrong number of rounds or nonces.
     ///
     /// # Soundness
     ///
@@ -44,12 +49,13 @@ impl SumcheckVerifier {
     pub fn verify<F, T, R, D>(
         claim: &SumcheckClaim<F>,
         round_proofs: &[R],
+        pow_nonces: &[u64],
         domain: D,
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
         F: Field,
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F>,
         R: ClearRound<F>,
         D: SumcheckDomain<F>,
     {
@@ -59,6 +65,7 @@ impl SumcheckVerifier {
                 got: round_proofs.len(),
             });
         }
+        let pow = RoundNonces::new::<F, T>(claim.degree, claim.num_vars, pow_nonces)?;
 
         let mut running_sum = claim.claimed_sum;
         let mut challenges = Vec::with_capacity(claim.num_vars);
@@ -72,7 +79,8 @@ impl SumcheckVerifier {
             }
             domain.check_round_sum(round, running_sum, round_proof)?;
             round_proof.append_to_transcript(transcript);
-            let r: F = transcript.challenge();
+            pow.check(round, transcript)?;
+            let r: F = transcript.challenge()?;
             running_sum = round_proof.evaluate(r);
             challenges.push(r);
         }
@@ -85,12 +93,11 @@ impl SumcheckVerifier {
         claim: &SumcheckClaim<F>,
         proof: &CompressedSumcheckProof<F>,
         domain: BooleanHypercube,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: Field + AppendToTranscript,
-        T: Transcript<Challenge = F>,
+        F: Field + Encoding,
+        T: FieldTranscript<F>,
     {
         if proof.round_polynomials.len() != claim.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
@@ -98,6 +105,7 @@ impl SumcheckVerifier {
                 got: proof.round_polynomials.len(),
             });
         }
+        let pow = RoundNonces::new::<F, T>(claim.degree, claim.num_vars, &proof.pow_nonces)?;
         let BooleanHypercube = domain;
 
         let mut running_sum = claim.claimed_sum;
@@ -115,11 +123,10 @@ impl SumcheckVerifier {
                 return Err(SumcheckError::CompressedPolynomialTooShort { round, got: 0 });
             }
 
-            transcript.append(&LabelWithCount(round_label, coeffs.len() as u64));
-            for coeff in coeffs {
-                coeff.append_to_transcript(transcript);
-            }
-            let r: F = transcript.challenge();
+            // The count word: the prover chooses the degree up to the bound.
+            append_compressed_round(transcript, coeffs);
+            pow.check(round, transcript)?;
+            let r: F = transcript.challenge()?;
             running_sum = round_proof.evaluate_with_hint(running_sum, r);
             challenges.push(r);
         }
@@ -139,8 +146,8 @@ impl SumcheckVerifier {
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
         F: Field,
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         if round_proofs.len() != statement.num_vars {
             return Err(SumcheckError::WrongNumberOfRounds {
@@ -148,6 +155,8 @@ impl SumcheckVerifier {
                 got: round_proofs.len(),
             });
         }
+        // Committed proofs carry no proof-of-work nonces.
+        require_no_pow(T::CHALLENGE_SET).map_err(|_| SumcheckError::NeedsProofOfWork)?;
 
         let mut rounds = Vec::with_capacity(statement.num_vars);
         for round_proof in round_proofs {
@@ -162,7 +171,7 @@ impl SumcheckVerifier {
             rounds.push(VerifiedCommittedRound {
                 commitment: round_proof.commitment.clone(),
                 degree: round_proof.degree,
-                challenge: transcript.challenge(),
+                challenge: transcript.challenge()?,
             });
         }
 
@@ -172,27 +181,27 @@ impl SumcheckVerifier {
 
 impl<F> CompressedSumcheckProof<F>
 where
-    F: Field + AppendToTranscript,
+    F: Field + Encoding,
 {
     pub fn verify<T>(
         &self,
         claim: &SumcheckClaim<F>,
         domain: BooleanHypercube,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
+        T: FieldTranscript<F>,
     {
-        SumcheckVerifier::verify_compressed(claim, self, domain, round_label, transcript)
+        SumcheckVerifier::verify_compressed(claim, self, domain, transcript)
     }
 }
 
 impl<C> CommittedSumcheckProof<C> {
     /// Checks committed-proof consistency through the Fiat-Shamir transcript.
     ///
-    /// This checks the round count and degree bounds, derives the round challenges,
-    /// and absorbs the committed output claims after the round transcript.
+    /// This checks the round count and degree bounds, derives the round
+    /// challenges, and absorbs the committed output claims
+    /// after the round transcript.
     pub fn verify_committed_consistency<F, T>(
         &self,
         statement: SumcheckStatement,
@@ -200,15 +209,15 @@ impl<C> CommittedSumcheckProof<C> {
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
         F: Field,
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         let consistency = SumcheckVerifier::verify_committed_round_consistency(
             statement,
             &self.rounds,
             transcript,
         )?;
-        self.output_claims.append_to_transcript(transcript);
+        transcript.append(&self.output_claims);
         Ok(consistency)
     }
 }

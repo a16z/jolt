@@ -57,7 +57,7 @@ use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
-    format_memory_size, report_stage_memory, setup_tracing_with_trace_path, PeakMemory,
+    format_memory_size, report_stage_boundaries, setup_tracing_with_trace_path, PeakMemory,
     TracingFormat, BYTES_PER_GIB,
 };
 use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
@@ -69,7 +69,7 @@ type FieldInlineField = Fr;
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 type FieldInlineField = AkitaField;
 #[cfg(not(feature = "akita"))]
-use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 #[cfg(not(feature = "akita"))]
 use rayon::ThreadPoolBuilder;
@@ -510,7 +510,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     drop(guards);
 
     if args.format != OutputFormat::Chrome {
-        report_stage_memory();
+        report_stage_boundaries();
         update_latest_link(&trace_name, &run_dir);
         return ProfileArtifacts::default();
     }
@@ -524,8 +524,11 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         finalize_trace(&trace_path, &ctx, peak).expect("finalize chrome trace");
 
     if let Some(root) = &summary.root {
+        let instructions = root.instructions.map_or_else(String::new, |count| {
+            format!(", {:.3}G instructions", count as f64 / 1e9)
+        });
         println!(
-            "modular {} (2^{scale}): root span {:.2}s, dark time {:.1}%",
+            "modular {} (2^{scale}): root span {:.2}s, dark time {:.1}%{instructions}",
             args.name.as_str(),
             root.wall_time_ns as f64 / 1e9,
             root.dark_time_fraction * 100.0,
@@ -915,7 +918,7 @@ fn prove_workload(
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -941,7 +944,7 @@ fn prove_workload(
         .build()
         .expect("single-threaded verifier pool must build");
     let verify = || {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,
@@ -972,10 +975,11 @@ fn prove_workload(
     memory_budget: Option<MemoryBudget>,
     chunk_profile: AkitaChunkProfile,
 ) -> ProvenRun {
-    use crate::akita::preprocessing::{AkitaTranscript, AkitaVc};
+    use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::CommitmentScheme;
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
     let backend = match backend {
@@ -1064,7 +1068,7 @@ fn prove_workload(
     // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
-    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -1090,7 +1094,7 @@ fn prove_workload(
     );
 
     let verify = || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,
