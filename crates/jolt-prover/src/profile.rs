@@ -771,6 +771,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     .expect("program preprocessing");
 
     let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
+    assert!(!trace_output.device.panic, "benchmark guest panicked");
     let trace_length = trace_output.trace.proof_len();
 
     let run = prove_workload(
@@ -807,7 +808,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     }
 
     let proving_hz = trace_length as f64 / duration.as_secs_f64();
-    let padded_proving_hz = trace_length.next_power_of_two() as f64 / duration.as_secs_f64();
+    let padded_proving_hz = run.padded_trace_rows as f64 / duration.as_secs_f64();
     println!(
         "modular {} (2^{}, {backend_label}): Prover completed in {:.2}s ({:.1} kHz / padded {:.1} kHz)",
         bench_name,
@@ -847,7 +848,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         args.benchmark_name(),
         scale,
         duration.as_secs_f64(),
-        trace_length.next_power_of_two(),
+        run.padded_trace_rows,
         padded_proving_hz,
         proof_size,
         proof_size,
