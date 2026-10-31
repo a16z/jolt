@@ -6,6 +6,13 @@
 //! after the prefix challenges are known. The five individual claims remain
 //! available at the end of the suffix phase.
 //!
+//! This amortizes field reductions over native dot products and avoids storing
+//! and repeatedly binding a 32-byte field element per cycle. On SHA-2-chain at
+//! 2^24 cycles, five-run medians for preparation, rounds, and final claims were
+//! 16.1/11.6 ms on one/two L4s, versus 27.7/16.4 ms for a sharded combined-table
+//! Gruen implementation with fused construction and claim recovery. Whole-proof
+//! timings did not establish a consistent benefit for Gruen.
+//!
 //! Witness folds are distributed over aligned device windows; round tables are
 //! combined on GPU 0. Domains too small for the split use the reference kernel.
 
