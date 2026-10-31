@@ -201,8 +201,11 @@ jobs:
       - name: Build HOL Light as an OCaml module
         working-directory: ${{ runner.temp }}/hol-light
         run: |
-          make switch-5
+          opam update
+          opam switch create . ocaml-base-compiler.5.4.0 --no-install
           eval "$(opam env --switch . --set-switch)"
+          # The native proof runner uses compile/link, which do not need ledit.
+          opam install --yes zarith camlp5.8.04.00
           HOLLIGHT_USE_MODULE=1 make -j2
 
       - name: Check bytes and run HOL Light proofs

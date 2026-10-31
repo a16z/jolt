@@ -32,7 +32,6 @@ jolt-akita = { workspace = true, optional = true }
 jolt-verifier = { workspace = true, features = ["akita"], optional = true }
 jolt-crypto.workspace = true
 jolt-transcript = { workspace = true, features = ["transcript-blake2b"] }
-jolt-field.workspace = true
 jolt-openings.workspace = true
 common.workspace = true
 akita-types.workspace = true

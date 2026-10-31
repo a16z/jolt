@@ -3328,7 +3328,6 @@ dependencies = [
  "common",
  "jolt-akita",
  "jolt-crypto",
- "jolt-field",
  "jolt-host",
  "jolt-inlines-sha2",
  "jolt-openings",
