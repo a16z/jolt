@@ -19,10 +19,11 @@ profiling = []
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-pcs = { workspace = true, features = ["parallel", "transcript-blake2b"] }
+akita-pcs = { workspace = true, features = ["parallel", "transcript-keccak"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
+akita-transcript.workspace = true
 akita-types.workspace = true
 akita-params.workspace = true
 # Canonical trace geometry without selecting the Akita PIOP feature.

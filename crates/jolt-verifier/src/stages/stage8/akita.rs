@@ -6,6 +6,7 @@
 
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::lattice::increments::{fused_inc_group_role, FusedIncLayout};
+use std::borrow::BorrowMut;
 use std::collections::BTreeMap;
 
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
@@ -19,10 +20,11 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, Jolt
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
+    CommitmentScheme, EvaluationClaim, GroupBatchOpening, GroupOpeningClaim,
+    TaggedGroupOpeningClaim,
 };
 use jolt_poly::Point;
-use jolt_transcript::{Encoding, FieldTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, VerifierState};
 
 use super::precommitted::precommitted_final_openings;
 use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
@@ -245,7 +247,7 @@ pub fn fused_inc_claim<F: JoltField, C: Clone>(
     clippy::too_many_arguments,
     reason = "the stage inputs are passed separately by the verifier driver"
 )]
-pub fn verify<PCS, VC, T>(
+pub fn verify<'a, PCS, VC, T>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &crate::preprocessing::JoltVerifierPreprocessing<PCS, VC>,
@@ -261,13 +263,13 @@ pub fn verify<PCS, VC, T>(
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
-) -> Result<(), VerifierError>
+) -> Result<PCS::PendingEof, VerifierError>
 where
-    PCS: CommitmentScheme,
+    PCS: CommitmentScheme + GroupBatchOpening,
     PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: FieldTranscript<PCS::Field>,
+    T: FieldTranscript<PCS::Field> + BorrowMut<VerifierState<'a, PCS::Sponge>>,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
@@ -416,11 +418,9 @@ where
         &auxiliary_groups,
         &main_group,
         proof,
-        transcript,
+        BorrowMut::<VerifierState<'a, PCS::Sponge>>::borrow_mut(transcript),
     )
-    .map_err(opening_failed)?;
-
-    Ok(())
+    .map_err(opening_failed)
 }
 
 /// Assembles the native `OneHotTrace` group claim: every canonical
