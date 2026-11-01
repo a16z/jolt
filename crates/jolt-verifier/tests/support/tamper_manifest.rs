@@ -1385,7 +1385,8 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::MissingPreprocessingPayload { .. }
         | VerifierError::UnsupportedInstruction { .. }
         | VerifierError::InvalidFieldInlineBytecode { .. }
-        | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
+        | VerifierError::PreprocessingDigestFailed { .. }
+        | VerifierError::PcsSetupPreparationFailed { .. } => Some(VerifierPhase::Preamble),
         // The difficulty depends only on the challenge set, so the first site
         // reports it.
         VerifierError::PowDifficulty => Some(VerifierPhase::Stage1),

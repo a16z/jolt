@@ -137,7 +137,12 @@ impl GroupedScheduleParams {
         self.final_group
     }
 
-    /// Provision and audit the exact grouped rows before constructing backend matrices.
+    /// Provision and audit the exact grouped rows before constructing backend
+    /// matrices. The result holds only rows for this final group: its scalar
+    /// guide row, grouped rows `one_hot_catalog` already holds, and the newly
+    /// planned ones. Rows for other final groups would only widen the setup's
+    /// capacity and the setup-prefix commitments it stores; a setup admitting
+    /// several trace shapes merges each shape's catalog instead.
     /// Used by preprocessing and the offline grouped-schedule diagnostic.
     pub fn extend_catalog(
         &self,
@@ -153,8 +158,24 @@ impl GroupedScheduleParams {
             self.final_group.num_polynomials(),
         )?;
         with_one_hot_family!(family, |Cfg| {
-            let catalog =
-                TrustedScheduleCatalog::<Cfg>::new(one_hot_catalog.clone(), profile.witness_cfg())?;
+            let scoped = one_hot_catalog
+                .rows()
+                .filter(|row| row.profiles().final_group.group == self.final_group)
+                .map(|row| (row.profiles().clone(), row.schedule().clone()))
+                .collect::<Vec<_>>();
+            // Without a row for this final group, provisioning reports the
+            // missing guide against the full catalog.
+            let scoped = if scoped.is_empty() {
+                one_hot_catalog.clone()
+            } else {
+                ValidatedScheduleCatalog::try_new(
+                    Cfg::schedule_family_name(),
+                    scoped,
+                    one_hot_catalog.policy(),
+                    Cfg::ring_challenge_config,
+                )?
+            };
+            let catalog = TrustedScheduleCatalog::<Cfg>::new(scoped, profile.witness_cfg())?;
             let rows = provision_groups_for_config::<Cfg>(
                 dense_catalog,
                 full_dense_catalog,
@@ -207,6 +228,66 @@ pub fn extend_catalog<Cfg: CommitmentConfig>(
         base.policy(),
         Cfg::ring_challenge_config,
     )
+}
+
+/// One one-hot catalog holding every row of `catalogs`, each row once, so a
+/// single verifier setup can admit every shape those catalogs were built for.
+pub(crate) fn union_one_hot_catalogs(
+    one_hot_k: usize,
+    profile: AkitaChunkProfile,
+    catalogs: &[&[u8]],
+) -> Result<Vec<u8>, AkitaError> {
+    let family = OneHotFamily::from_parts(one_hot_k, profile)?;
+    with_one_hot_family!(family, |Cfg| {
+        let decoded = catalogs
+            .iter()
+            .map(|bytes| {
+                TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes, profile.witness_cfg())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let first = decoded.first().ok_or_else(|| {
+            AkitaError::InvalidSetup("a catalog union needs at least one catalog".to_owned())
+        })?;
+        let mut seen = std::collections::HashSet::new();
+        let rows = decoded
+            .iter()
+            .flat_map(|catalog| catalog.catalog().rows())
+            .filter(|row| seen.insert(row.selection().row_digest))
+            .map(|row| (row.profiles().clone(), row.schedule().clone()))
+            .collect::<Vec<_>>();
+        ValidatedScheduleCatalog::try_new(
+            Cfg::schedule_family_name(),
+            rows,
+            first.catalog().policy(),
+            Cfg::ring_challenge_config,
+        )?
+        .to_artifact_bytes()
+    })
+}
+
+/// Whether every row of the one-hot catalog `rows` is also a row of
+/// `catalog`.
+pub(crate) fn one_hot_catalog_covers(
+    one_hot_k: usize,
+    profile: AkitaChunkProfile,
+    catalog: &[u8],
+    rows: &[u8],
+) -> Result<bool, AkitaError> {
+    let family = OneHotFamily::from_parts(one_hot_k, profile)?;
+    with_one_hot_family!(family, |Cfg| {
+        let digests = |bytes: &[u8]| {
+            TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(bytes, profile.witness_cfg()).map(
+                |catalog| {
+                    catalog
+                        .catalog()
+                        .rows()
+                        .map(|row| row.selection().row_digest)
+                        .collect::<std::collections::HashSet<_>>()
+                },
+            )
+        };
+        Ok(digests(rows)?.is_subset(&digests(catalog)?))
+    })
 }
 
 fn plan_row<Cfg: CommitmentConfig>(
@@ -511,10 +592,17 @@ mod tests {
         let artifacts = AkitaScheduleArtifacts::shared_from_default_directory(profile);
         let dense = artifacts.dense_catalog().unwrap();
         let full_dense = artifacts.full_dense_catalog().unwrap();
-        let mut catalog = artifacts
+        let base = artifacts
             .one_hot_catalog_for_profile(AKITA_ONE_HOT_K16, profile)
             .unwrap();
-        for arity in [20, 22] {
+        let resolves_same = |catalog: &ValidatedScheduleCatalog, row: &ResolvedScheduleRow| {
+            let key = ScheduleLookupKey {
+                final_group: row.profiles().final_group.group,
+                precommitteds: row.profiles().precommitteds.clone(),
+            };
+            catalog.resolve_key(&key).unwrap().selection() == row.selection()
+        };
+        let extended = [20, 22].map(|arity| {
             let params = GroupedScheduleParams::new(
                 None,
                 Some(14),
@@ -522,19 +610,34 @@ mod tests {
                 PolynomialGroupLayout::singleton(arity),
             );
             let extended = params
-                .extend_catalog(&dense, &full_dense, &catalog, AKITA_ONE_HOT_K16, profile)
+                .extend_catalog(&dense, &full_dense, &base, AKITA_ONE_HOT_K16, profile)
                 .unwrap();
-            for row in catalog.rows() {
-                let key = ScheduleLookupKey {
-                    final_group: row.profiles().final_group.group,
-                    precommitteds: row.profiles().precommitteds.clone(),
-                };
-                assert_eq!(
-                    extended.resolve_key(&key).unwrap().selection(),
-                    row.selection(),
-                );
+            // An extension keeps every base selection for its own final group
+            // and holds no row for any other final group.
+            assert!(extended
+                .rows()
+                .all(|row| row.profiles().final_group.group == params.final_group));
+            for row in base
+                .rows()
+                .filter(|row| row.profiles().final_group.group == params.final_group)
+            {
+                assert!(resolves_same(&extended, row));
             }
-            catalog = extended;
+            extended
+        });
+        // The union of per-shape extensions keeps every selection of each.
+        let bytes = extended
+            .iter()
+            .map(|catalog| catalog.to_artifact_bytes().unwrap())
+            .collect::<Vec<_>>();
+        let union = union_one_hot_catalogs(
+            AKITA_ONE_HOT_K16,
+            profile,
+            &bytes.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+        )
+        .unwrap();
+        for catalog in &bytes {
+            assert!(one_hot_catalog_covers(AKITA_ONE_HOT_K16, profile, &union, catalog).unwrap());
         }
     }
 

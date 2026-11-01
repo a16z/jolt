@@ -223,6 +223,11 @@ where
         vc_setup: Option<VC::Setup>,
     ) -> Result<Self, VerifierError> {
         let preprocessing_digest = program.digest()?;
+        PCS::prepare_verifier_setup(&pcs_setup).map_err(|error| {
+            VerifierError::PcsSetupPreparationFailed {
+                reason: error.to_string(),
+            }
+        })?;
         Ok(Self {
             program,
             preprocessing_digest,

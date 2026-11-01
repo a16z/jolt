@@ -1,6 +1,10 @@
 //! Verifier state shared across setups: one seed-derived matrix, the setup-prefix
 //! commitments it needs, and one backend verifier per distinct catalog.
-//! Everything is derived from the public seed; nothing is loaded from outside.
+//!
+//! The setup-prefix commitments are computed once, at preprocessing, and
+//! travel inside [`AkitaVerifierSetup`]; key load derives only the matrix
+//! prefix from the public seed. Verification never derives either: a setup that
+//! was not prepared at key load fails instead of rebuilding its state.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -18,8 +22,8 @@ use akita_types::{
 use jolt_openings::OpeningsError;
 
 use crate::adapters::{
-    invalid_setup, with_backend_pool, AkitaBackendScheme, AkitaBackendVerifierSetup,
-    BackendVerifierCache,
+    deserialize_akita, invalid_setup, serialize_akita, with_backend_pool, AkitaBackend,
+    AkitaBackendScheme, AkitaBackendVerifierSetup, BackendVerifierCache,
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::one_hot_family::AkitaOneHotBackendScheme;
@@ -113,40 +117,161 @@ impl AkitaVerifierRequirements {
     }
 }
 
-fn generate_material(
+pub(crate) type AkitaPrefixRegistry = SetupPrefixVerifierRegistry<AkitaField>;
+
+fn descriptor(
     requirements: &AkitaVerifierRequirements,
-) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
-    let seed = sample_akita_setup_seed();
-    let descriptor = |num_field_elements| AkitaSetupDescriptor {
+    num_field_elements: usize,
+) -> AkitaSetupDescriptor {
+    AkitaSetupDescriptor {
         max_num_vars: requirements.max_num_vars,
         max_num_batched_polys: requirements.max_total_batch_polys,
         num_field_elements,
-        setup_seed: seed.clone(),
-    };
+        setup_seed: sample_akita_setup_seed(),
+    }
+}
+
+/// Key-load material: the matrix prefix derived from the seed, and the required
+/// setup-prefix commitments taken from `stored`. Never commits to a prefix.
+fn generate_material(
+    requirements: &AkitaVerifierRequirements,
+    stored: &AkitaPrefixRegistry,
+) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
+    let seed = sample_akita_setup_seed();
+    if stored.setup_seed() != &seed {
+        return Err(invalid_setup(
+            "stored setup-prefix commitments belong to a different public matrix",
+        ));
+    }
     let mut prefixes = SetupPrefixVerifierRegistry::new(seed.clone());
-    if !requirements.prefix_slots.is_empty() {
-        let slots = requirements
-            .prefix_slots
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let generated = CpuBackend::<AkitaField, AkitaField>::export_setup_prefixes_from_seed(
-            &descriptor(requirements.prefix_field_elements),
-            &slots,
-        )
-        .map_err(invalid_setup)?;
-        for slot in generated.verifier_slots() {
-            prefixes.insert(slot).map_err(invalid_setup)?;
-        }
+    for id in &requirements.prefix_slots {
+        let slot = stored.get(id).ok_or_else(|| {
+            invalid_setup(format!(
+                "verifier preprocessing has no setup-prefix commitment for a {}-element \
+                 prefix; rebuild the verifier preprocessing",
+                id.natural_len
+            ))
+        })?;
+        prefixes.insert(slot.clone()).map_err(invalid_setup)?;
     }
     let retained_fields = requirements.retained_field_elements;
     let expanded = Arc::new(
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            descriptor(retained_fields),
+            descriptor(requirements, retained_fields),
             derive_public_matrix_prefix(retained_fields, &seed),
         ),
     );
     AkitaBackendVerifierSetup::from_parts(expanded, prefixes).map_err(invalid_setup)
+}
+
+/// The union of the stored setup-prefix commitments carried by `setups`.
+pub(crate) fn stored_prefixes(
+    setups: &[AkitaVerifierSetup],
+) -> Result<AkitaPrefixRegistry, OpeningsError> {
+    let mut union = SetupPrefixVerifierRegistry::new(sample_akita_setup_seed());
+    let mut seen: Vec<&Arc<Vec<u8>>> = Vec::new();
+    for bytes in setups
+        .iter()
+        .filter_map(|setup| setup.prefix_commitments.as_ref())
+    {
+        if seen
+            .iter()
+            .any(|earlier| Arc::ptr_eq(earlier, bytes) || earlier == &bytes)
+        {
+            continue;
+        }
+        seen.push(bytes);
+        merge_prefixes(
+            &mut union,
+            &deserialize_akita::<AkitaPrefixRegistry>(bytes, &())?,
+        )?;
+    }
+    Ok(union)
+}
+
+pub(crate) fn merge_prefixes(
+    into: &mut AkitaPrefixRegistry,
+    from: &AkitaPrefixRegistry,
+) -> Result<(), OpeningsError> {
+    if from.setup_seed() != into.setup_seed() {
+        return Err(invalid_setup(
+            "setup-prefix commitments belong to a different public matrix",
+        ));
+    }
+    for (id, slot) in from.iter() {
+        match into.get(id) {
+            Some(existing) if existing == slot => {}
+            Some(_) => {
+                return Err(invalid_setup(
+                    "conflicting setup-prefix commitments for one slot",
+                ))
+            }
+            None => into.insert(slot.clone()).map_err(invalid_setup)?,
+        }
+    }
+    Ok(())
+}
+
+/// A prover backend's expanded setup matrix. Committing to a setup prefix it
+/// holds is cheaper than expanding that prefix from the public seed again.
+pub(crate) struct ExpandedPrefixSource<'a> {
+    pub(crate) backend: &'a AkitaBackend,
+    pub(crate) field_elements: usize,
+}
+
+/// Preprocessing: commit to every setup prefix that any of `setups` can need at
+/// their joint capacity, reusing the commitments in `known`, and store the
+/// union in each setup. Missing prefixes that fit in `expanded` are committed
+/// from it; the rest are expanded from the public seed. This is the only place
+/// verifier-side prefix commitments are computed.
+pub(crate) fn provision_prefix_commitments(
+    setups: &mut [AkitaVerifierSetup],
+    known: &AkitaPrefixRegistry,
+    expanded: Option<ExpandedPrefixSource<'_>>,
+) -> Result<(), OpeningsError> {
+    let requirements = AkitaVerifierRequirements::for_setups(setups)?;
+    let mut union = SetupPrefixVerifierRegistry::new(sample_akita_setup_seed());
+    merge_prefixes(&mut union, known)?;
+    let missing = requirements
+        .prefix_slots
+        .iter()
+        .filter(|id| union.get(id).is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    let (from_matrix, missing): (Vec<_>, Vec<_>) = missing.into_iter().partition(|id| {
+        expanded.as_ref().is_some_and(|source| {
+            setup_prefix_slot_field_elements(id).is_ok_and(|len| len <= source.field_elements)
+        })
+    });
+    if let Some(source) = expanded.filter(|_| !from_matrix.is_empty()) {
+        let generated = with_backend_pool(|| source.backend.export_setup_prefixes(&from_matrix))
+            .map_err(invalid_setup)?;
+        for slot in generated.verifier_slots() {
+            union.insert(slot).map_err(invalid_setup)?;
+        }
+    }
+    if !missing.is_empty() {
+        let mut field_elements = 1;
+        for id in &missing {
+            field_elements =
+                field_elements.max(setup_prefix_slot_field_elements(id).map_err(invalid_setup)?);
+        }
+        let generated = with_backend_pool(|| {
+            CpuBackend::<AkitaField, AkitaField>::export_setup_prefixes_from_seed(
+                &descriptor(&requirements, field_elements),
+                &missing,
+            )
+        })
+        .map_err(invalid_setup)?;
+        for slot in generated.verifier_slots() {
+            union.insert(slot).map_err(invalid_setup)?;
+        }
+    }
+    let bytes = Arc::new(serialize_akita(&union)?);
+    for setup in setups {
+        setup.prefix_commitments = Some(Arc::clone(&bytes));
+    }
+    Ok(())
 }
 
 pub(crate) struct Prepared {
@@ -166,7 +291,8 @@ impl Prepared {
             requested.push(setup);
         }
         let requirements = AkitaVerifierRequirements::for_setups(&requested)?;
-        let material = with_backend_pool(|| generate_material(&requirements))?;
+        let stored = stored_prefixes(&requested)?;
+        let material = with_backend_pool(|| generate_material(&requirements, &stored))?;
         let mut catalogs: Vec<AkitaVerifierSetup> = Vec::new();
         for mut setup in requested {
             if catalogs.iter().any(|catalog| catalog.same_catalog(&setup)) {
@@ -214,8 +340,8 @@ pub struct AkitaVerifierResources {
 
 impl AkitaVerifierResources {
     /// Decode and audit each distinct catalog, derive one matrix from the public
-    /// seed, compute the required prefix commitments and build each catalog's
-    /// backend verifier. Fails on the first `Err` before generating or publishing
+    /// seed, take the required prefix commitments from the setups' stored ones
+    /// and build each catalog's backend verifier. Fails on the first `Err` before generating or publishing
     /// anything.
     ///
     /// Setups prepared together share one state at the per-field maximum of their
@@ -289,28 +415,38 @@ impl PreparedRegistry {
         self.prepared_catalog(setup, BackendVerifierCache::decoded_one_hot)
     }
 
-    /// Attach `setup` to the smallest live state that covers it, the newest among
-    /// equals. Otherwise build state for it alone; it is not published, and its
-    /// verifiers live in `setup` and its clones. No lock is held while building: the build runs on
-    /// the backend's rayon pool, which may run another verification on this
+    /// Key load: attach `setup` to the smallest live state that covers it, the
+    /// newest among equals. Otherwise build state for it alone from its stored
+    /// prefix commitments; it is not published, and its verifiers live in
+    /// `setup` and its clones. No lock is held while building: the build runs
+    /// on the backend's rayon pool, which may run another verification on this
     /// thread while it waits.
     pub(crate) fn attach(&self, setup: &AkitaVerifierSetup) -> Result<(), OpeningsError> {
         setup.check_group_width()?;
-        let states = self.states();
-        let covering = states
-            .iter()
-            .filter_map(|state| state.catalog(setup).map(|catalog| (state.size(), catalog)))
-            .min_by_key(|(size, _)| *size);
-        let own;
-        let catalog = if let Some((_, catalog)) = covering {
-            catalog
-        } else {
-            own = Prepared::new([Ok(setup.clone())])?;
-            own.catalog(setup)
-                .ok_or_else(|| invalid_setup("verifier state does not cover its setup"))?
-        };
+        if self.attach_prepared(setup) {
+            return Ok(());
+        }
+        let own = Prepared::new([Ok(setup.clone())])?;
+        let catalog = own
+            .catalog(setup)
+            .ok_or_else(|| invalid_setup("verifier state does not cover its setup"))?;
         setup.backend_cache.adopt(&catalog.backend_cache);
         Ok(())
+    }
+
+    /// Verification: attach `setup` to the smallest live state that covers it,
+    /// without building anything. Returns whether one did.
+    pub(crate) fn attach_prepared(&self, setup: &AkitaVerifierSetup) -> bool {
+        let states = self.states();
+        let Some((_, catalog)) = states
+            .iter()
+            .filter_map(|state| state.catalog(setup).map(|catalog| (state.size(), catalog)))
+            .min_by_key(|(size, _)| *size)
+        else {
+            return false;
+        };
+        setup.backend_cache.adopt(&catalog.backend_cache);
+        true
     }
 }
 

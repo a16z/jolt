@@ -6,6 +6,7 @@ use crate::adapters::{
     BackendVerifierCache,
 };
 use crate::one_hot_family::OneHotFamily;
+use crate::verifier_resources::ExpandedPrefixSource;
 use crate::{AkitaChunkProfile, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup};
 
 impl AkitaScheme {
@@ -98,7 +99,74 @@ impl AkitaScheme {
             default_layout_digest: params.default_layout_digest,
             one_hot_k: params.one_hot_k,
             schedule_artifacts: schedule_artifacts.into(),
+            prefix_commitments: None,
+            admitted_shapes: Vec::new(),
             backend_cache: BackendVerifierCache::default(),
         })
     }
+}
+
+/// Preprocessing: one verifier setup that verifies every shape of `setups`.
+/// Their one-hot catalogs merge into one, so the result stores a single catalog
+/// and key load prepares a single backend key; its own fields describe the
+/// largest shape, and it stores the setup-prefix commitments every shape needs,
+/// committing to those no input stores from `expanded` where it holds them.
+/// All of `setups` must share their dense catalog and one-hot family.
+pub(crate) fn merge_verifier_setups(
+    setups: &[AkitaVerifierSetup],
+    expanded: Option<ExpandedPrefixSource<'_>>,
+) -> Result<AkitaVerifierSetup, OpeningsError> {
+    let largest = setups
+        .iter()
+        .max_by_key(|setup| setup.shape())
+        .ok_or_else(|| invalid_setup("no verifier setups to merge"))?;
+    if setups.iter().any(|setup| {
+        setup.one_hot_k != largest.one_hot_k
+            || setup.akita_chunk_profile() != largest.akita_chunk_profile()
+            || setup.schedule_artifacts.dense() != largest.schedule_artifacts.dense()
+            || setup.schedule_artifacts.one_hot().is_some()
+                != largest.schedule_artifacts.one_hot().is_some()
+    }) {
+        return Err(invalid_setup(
+            "merged verifier setups must share their dense catalog and one-hot family",
+        ));
+    }
+    let mut shapes = setups
+        .iter()
+        .flat_map(|setup| {
+            if setup.admitted_shapes.is_empty() {
+                vec![setup.shape()]
+            } else {
+                setup.admitted_shapes.clone()
+            }
+        })
+        .collect::<Vec<_>>();
+    shapes.sort();
+    shapes.dedup();
+    let mut merged = AkitaVerifierSetup {
+        prefix_commitments: None,
+        admitted_shapes: if shapes.len() > 1 { shapes } else { Vec::new() },
+        backend_cache: BackendVerifierCache::default(),
+        ..largest.clone()
+    };
+    if largest.schedule_artifacts.one_hot().is_some() {
+        let catalogs = setups
+            .iter()
+            .filter_map(|setup| setup.schedule_artifacts.one_hot())
+            .collect::<Vec<_>>();
+        let union = crate::schedule_registry::union_one_hot_catalogs(
+            largest.one_hot_k,
+            largest.akita_chunk_profile(),
+            &catalogs,
+        )
+        .map_err(invalid_setup)?;
+        merged.schedule_artifacts = largest.schedule_artifacts.with_one_hot(union).into();
+    }
+    let known = crate::verifier_resources::stored_prefixes(setups)?;
+    crate::verifier_resources::provision_prefix_commitments(
+        std::slice::from_mut(&mut merged),
+        &known,
+        expanded,
+    )?;
+    Ok(merged)
 }

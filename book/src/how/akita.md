@@ -61,11 +61,16 @@ The verifier derives the expected layouts and roles from preprocessing and proto
 
 Akita uses transparent setup. Jolt supplies versioned schedule catalogs as `.aks` artifacts under `crates/jolt-akita/schedules/`. Preprocessing provisions the grouped schedules needed by the program and advice configuration; the resulting verifier setup carries the catalog used during verification. The proof selects a schedule by digest from that catalog rather than supplying new schedule parameters.
 
+One verifier preprocessing serves every execution of a program. The verifier accepts every power-of-two trace length up to the program's `max_trace_length` and every power-of-two RAM domain its memory layout allows, and each such pair fixes a different one-hot trace shape. Preprocessing therefore provisions every admissible shape into one catalog, which holds only the rows those shapes can select, and records each shape's dimensions and layout digest; the verifier selects the shape the proof's trace commitment declares. The prover binds the same catalog, so the verifier preprocessing does not depend on the execution it was built from.
+
 The workspace pins Akita to `f594bfc0d812a9a1fba62f15b51885bd19e83a3d`.
 Jolt delegates to Akita's adaptive ring-dimension schedule configuration
-and uses the CPU backend for every fold. Verifier preprocessing streams
-setup-prefix commitments from the public seed and materializes only the
-public matrix prefix needed for verification.
+and uses the CPU backend for every fold. Preprocessing computes the
+setup-prefix commitments every admitted shape needs and stores them in the
+verifier preprocessing. Loading it (constructing or deserializing
+`JoltVerifierPreprocessing`) derives only the public matrix prefix needed for
+verification; verification itself derives nothing and rejects a setup that was
+not prepared at load.
 The default K=16 catalog covers traces through `2^31` cycles.
 
 Akita's planner admits a Module-SIS instance only when its ADPS16 quantum

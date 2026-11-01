@@ -12,7 +12,8 @@ use jolt_claims::protocols::jolt::lattice::{advice_packing_plan, committed_progr
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
-use jolt_program::preprocess::JoltProgramPreprocessing;
+use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k, JoltProgramPreprocessing};
+use jolt_verifier::config::MIN_PADDED_TRACE_LENGTH;
 use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
 };
@@ -64,6 +65,41 @@ pub fn preprocess_full_with_advice(
     })
 }
 
+/// Prover preprocessing for `config` under an existing full-program verifier
+/// preprocessing, built by [`preprocess_full_with_advice`] with the same
+/// schedule artifacts and advice flags. Only the prover setup for `config`'s
+/// shape is built; the verifier preprocessing, which already admits every
+/// shape, is reused as is.
+pub fn preprocess_full_for_verifier(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    verifier: &AkitaVerifierPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    validate_trace_order(config)?;
+    let program = verifier
+        .program
+        .as_full()
+        .ok_or_else(|| PreprocessingError::InvalidProgram {
+            reason: "the verifier preprocessing is not for a full program".to_owned(),
+        })?;
+    let (mut pcs_setup, _) = AkitaScheme::setup(grouped_setup_params(
+        schedule_artifacts,
+        program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        &[],
+    )?)?;
+    pcs_setup.adopt_verifier_setup(&verifier.pcs_setup)?;
+    Ok(JoltProverPreprocessing {
+        verifier: verifier.clone(),
+        pcs_setup,
+        committed_program: None,
+    })
+}
+
 /// The grouped Akita setup: the canonical `OneHotTrace` object plus every
 /// auxiliary object (advice, field increments, then direct program objects)
 /// opened in one batch. Building it provisions the grouped schedule rows that
@@ -76,14 +112,113 @@ fn grouped_setup(
     trusted_advice: bool,
     direct_program_physical_vars: &[usize],
 ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), PreprocessingError> {
-    Ok(AkitaScheme::setup(grouped_setup_params(
+    let setup = AkitaScheme::setup(grouped_setup_params(
         schedule_artifacts,
         program,
         config,
         untrusted_advice,
         trusted_advice,
         direct_program_physical_vars,
-    )?)?)
+    )?)?;
+    admissible_setup(
+        setup,
+        schedule_artifacts,
+        program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        direct_program_physical_vars,
+    )
+}
+
+/// One verifier setup for every trace shape the verifier admits for this
+/// program ([`AkitaProverSetup::merge_and_adopt_verifier_setups`]), paired with `setup`'s
+/// prover setup bound to it. `setup` is the configured shape's own setup. The verifier accepts every power-of-two trace length in
+/// `[MIN_PADDED_TRACE_LENGTH, max_padded_trace_length]` and every power-of-two
+/// RAM domain in `[compute_min_ram_k, compute_max_ram_k]`; the result does not
+/// depend on `config`'s dimensions, so one verifier key accepts every proof
+/// this preprocessing can produce, and a verifier never commits to a setup
+/// prefix. Each shape's setup holds only its own catalog rows, so the merged
+/// key holds one row set per admissible shape and its setup-prefix
+/// commitments cover only the dimensions those rows select.
+///
+/// Each shape takes the default one-hot policy for its trace length, unless
+/// `config` overrides that policy, which then applies to every shape. Shapes
+/// the schedule catalog does not admit cannot be proven and are skipped.
+pub(crate) fn admissible_setup(
+    (mut prover_setup, verifier_setup): (AkitaProverSetup, AkitaVerifierSetup),
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: &JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+    direct_program_physical_vars: &[usize],
+) -> Result<(AkitaProverSetup, AkitaVerifierSetup), PreprocessingError> {
+    let invalid = |reason: String| PreprocessingError::InvalidConfiguration { reason };
+    let max_trace_length = program.max_padded_trace_length;
+    let min_ram_k = compute_min_ram_k(
+        program.ram.min_bytecode_address,
+        program.ram.bytecode_words.len(),
+        &program.memory_layout,
+    )
+    .map_err(|error| invalid(error.to_string()))?;
+    let max_ram_k =
+        compute_max_ram_k(&program.memory_layout).map_err(|error| invalid(error.to_string()))?;
+    let one_hot_override = (config.one_hot_config
+        != crate::config::one_hot_config(config.trace_length.ilog2() as usize))
+    .then_some(config.one_hot_config);
+    let shape_key = |shape: &ProverConfig| {
+        one_hot_trace_setup_shape(shape, program.bytecode.code_size)
+            .map(|(setup_shape, digest, _)| {
+                (
+                    shape.trace_length,
+                    setup_shape.num_vars,
+                    setup_shape.num_polys,
+                    digest,
+                )
+            })
+            .map_err(|error| invalid(error.to_string()))
+    };
+    let mut seen = std::collections::HashSet::from([shape_key(config)?]);
+    let mut setups = vec![verifier_setup];
+    let powers_of_two = |min: usize, max: usize| {
+        std::iter::successors(Some(min), |n: &usize| n.checked_mul(2))
+            .take_while(move |&n| n <= max)
+    };
+    for trace_length in powers_of_two(MIN_PADDED_TRACE_LENGTH, max_trace_length) {
+        for ram_k in powers_of_two(min_ram_k, max_ram_k) {
+            let mut shape = ProverConfig::from_padded_dimensions::<AkitaField>(
+                trace_length,
+                ram_k,
+                max_trace_length,
+            )
+            .map_err(|error| invalid(error.to_string()))?;
+            shape.akita_chunk_profile = config.akita_chunk_profile;
+            if let Some(one_hot_config) = one_hot_override {
+                shape.one_hot_config = one_hot_config;
+            }
+            if !seen.insert(shape_key(&shape)?) {
+                continue;
+            }
+            match grouped_setup_params(
+                schedule_artifacts,
+                program,
+                &shape,
+                untrusted_advice,
+                trusted_advice,
+                direct_program_physical_vars,
+            )
+            .and_then(|params| Ok(AkitaScheme::verifier_setup_from_params(&params)?))
+            {
+                Ok(setup) => setups.push(setup),
+                Err(error) => {
+                    tracing::debug!(trace_length, ram_k, %error, "skipping inadmissible shape");
+                }
+            }
+        }
+    }
+    let merged = prover_setup.merge_and_adopt_verifier_setups(&setups)?;
+    Ok((prover_setup, merged))
 }
 
 pub(crate) fn grouped_setup_params(

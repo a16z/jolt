@@ -286,6 +286,7 @@ fn dense_geometry_survives_verifier_transport() {
     drop(verifier);
     drop(prover);
     let transported: AkitaVerifierSetup = serde_json::from_value(encoded.clone()).unwrap();
+    transported.prepare().unwrap();
     AkitaScheme::verify(
         &commitment,
         &point,

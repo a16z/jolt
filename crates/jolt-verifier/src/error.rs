@@ -132,6 +132,9 @@ pub enum VerifierError {
     #[error("invalid field-inline bytecode: {reason}")]
     InvalidFieldInlineBytecode { reason: String },
 
+    #[error("PCS verifier setup is not prepared for verification: {reason}")]
+    PcsSetupPreparationFailed { reason: String },
+
     #[error("program preprocessing digest failed: {reason}")]
     PreprocessingDigestFailed { reason: String },
 

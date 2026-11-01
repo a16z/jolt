@@ -432,6 +432,11 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    PCS::check_verifier_setup_prepared(&preprocessing.pcs_setup).map_err(|error| {
+        VerifierError::PcsSetupPreparationFailed {
+            reason: error.to_string(),
+        }
+    })?;
     let trace_length = proof.trace_length;
     let ram_k = proof.ram_K;
     let trace_polynomial_order = proof.trace_polynomial_order;

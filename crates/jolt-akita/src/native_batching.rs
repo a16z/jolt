@@ -818,6 +818,8 @@ mod tests {
                 one_hot: Vec::new(),
             }
             .into(),
+            prefix_commitments: None,
+            admitted_shapes: Vec::new(),
             backend_cache: Default::default(),
         };
         let mut serialized = serde_json::to_value(setup).unwrap();
@@ -861,6 +863,8 @@ mod tests {
                 one_hot: Vec::new(),
             }
             .into(),
+            prefix_commitments: None,
+            admitted_shapes: Vec::new(),
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);

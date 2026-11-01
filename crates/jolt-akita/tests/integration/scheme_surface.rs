@@ -102,6 +102,9 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
     let transported: <AkitaScheme as CommitmentScheme>::VerifierSetup =
         serde_json::from_str(&json).expect("verifier setup deserializes");
     assert_eq!(transported, verifier_setup);
+    transported
+        .prepare()
+        .expect("key load prepares the transported setup");
 
     let mut verifier_transcript = prover_transcript::<Blake2b512>(
         &jolt_transcript::protocol_tag(b"akita-k16-transported"),
@@ -115,7 +118,7 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
         &transported,
         &mut verifier_transcript,
     )
-    .expect("transported setup must re-derive the one-hot backend key");
+    .expect("prepared transported setup verifies");
     assert_eq!(
         prover_state.verifier_message::<[u8; 32]>(),
         verifier_transcript.verifier_message::<[u8; 32]>()

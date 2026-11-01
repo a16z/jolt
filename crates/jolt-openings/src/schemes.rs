@@ -44,6 +44,20 @@ pub trait GroupSetupMetadata {
     }
     fn default_layout_digest(&self) -> [u8; 32];
     fn one_hot_k(&self) -> usize;
+    /// The setup that verifies a final group of this shape, when this setup
+    /// admits several. A single-shape setup returns itself; callers still
+    /// check its shape.
+    fn for_shape(
+        &self,
+        _num_vars: usize,
+        _num_polys: usize,
+        _layout_digest: [u8; 32],
+    ) -> Option<std::borrow::Cow<'_, Self>>
+    where
+        Self: Clone,
+    {
+        Some(std::borrow::Cow::Borrowed(self))
+    }
     /// Number of witness chunks selected by the one-hot setup.
     fn one_hot_num_chunks(&self) -> usize;
     /// Number of leading folding levels using those witness chunks.
@@ -67,6 +81,19 @@ pub trait CommitmentScheme: Commitment {
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup;
+
+    /// Key load: build whatever a verifier setup needs before its first
+    /// verification, so verification itself derives nothing. Called once when
+    /// verifier preprocessing is constructed or deserialized.
+    fn prepare_verifier_setup(_setup: &Self::VerifierSetup) -> Result<(), OpeningsError> {
+        Ok(())
+    }
+
+    /// Verification: reject a setup that was not prepared at key load before
+    /// any proof work. Never derives setup state.
+    fn check_verifier_setup_prepared(_setup: &Self::VerifierSetup) -> Result<(), OpeningsError> {
+        Ok(())
+    }
 
     fn commit<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
