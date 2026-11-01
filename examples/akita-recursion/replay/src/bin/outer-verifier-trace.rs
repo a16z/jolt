@@ -2,10 +2,9 @@
 use anyhow::{anyhow, ensure, Result};
 use jolt_host::Program;
 use std::{fs, path::PathBuf};
+use tracing::Level;
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
     let args: Vec<_> = std::env::args_os().collect();
     ensure!(
         args.len() == 2,

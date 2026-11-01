@@ -2,9 +2,14 @@
 use anyhow::{anyhow, ensure, Result};
 use jolt_akita::deferred::SetupMode;
 use jolt_akita::{AkitaField, AkitaVerifierResources};
-use jolt_akita_external::{ExternalInput, Tape};
+use jolt_akita_external::pair_api::ProofPair;
+use jolt_akita_external::{ExternalInput, OuterAdvice, PairAdvice, Tape};
 use jolt_field::Ring;
-use std::{fs, path::PathBuf, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 fn main() -> Result<()> {
     let args: Vec<_> = std::env::args_os().collect();
     if args.len() == 4 && args[1] == "--import-json" {
@@ -118,7 +123,7 @@ fn expected_pending(input: &ExternalInput) -> Result<usize> {
         .checked_sub(offloads.len())
         .ok_or_else(|| anyhow!("offloading count exceeds schedule"))
 }
-fn prepare(input: ExternalInput, dir: &std::path::Path) -> Result<()> {
+fn prepare(input: ExternalInput, dir: &Path) -> Result<()> {
     ensure!(!dir.exists(), "choose a fresh preparation directory");
     let _resources = AkitaVerifierResources::prepare([Ok(input.preprocessing.pcs_setup.clone())])?;
     let mut tape = Tape(input.answers.iter());
@@ -160,7 +165,7 @@ fn prepare(input: ExternalInput, dir: &std::path::Path) -> Result<()> {
             &serde_json::json!({"selected_row_digest":input.outer.proof.joint_opening_proof.selection().row_digest.as_bytes(),"nonterminal_folds":1+row.schedule().recursive_folds.len(),"direct_folds":count,"inherited_claims":input.inherited().map_err(|e|anyhow!(e))?.claims().len()}),
         )?,
     )?;
-    let outer = jolt_akita_external::OuterAdvice {
+    let outer = OuterAdvice {
         outer: input.outer,
         output_setup_fields: input.output_setup_fields,
         answers: input.answers.clone(),
@@ -171,10 +176,7 @@ fn prepare(input: ExternalInput, dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn prepare_pair(
-    pair: jolt_akita_external::pair_api::ProofPair,
-    dir: &std::path::Path,
-) -> Result<()> {
+fn prepare_pair(pair: ProofPair, dir: &Path) -> Result<()> {
     use jolt_akita_external::pair_api::AnswerTape;
     ensure!(!dir.exists(), "choose a fresh preparation directory");
     let _resources = AkitaVerifierResources::prepare([Ok(pair.preprocessing.pcs_setup.clone())])?;
@@ -229,7 +231,7 @@ fn prepare_pair(
         dir.join("expected-output.bin"),
         postcard::to_stdvec(&statement.descriptor_bytes::<AkitaField>()?)?,
     )?;
-    let advice = jolt_akita_external::PairAdvice {
+    let advice = PairAdvice {
         inner: pair.inner,
         output_setup_fields: pair.setup_field_len,
         answers: pair.answers,

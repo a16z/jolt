@@ -1,7 +1,8 @@
 #![cfg(feature = "guest")]
+use jolt::UntrustedAdvice;
 use jolt_akita::deferred::SetupMode;
 use jolt_akita::{AkitaField, TrustedBytes};
-use jolt_akita_external::{decode_exact, Event, OuterAdvice};
+use jolt_akita_external::{decode_exact, Event, OuterAdvice, Tape};
 include!(concat!(env!("OUT_DIR"), "/material.rs"));
 fn observe(event: Event) {
     match event {
@@ -23,7 +24,7 @@ fn observe(event: Event) {
     stack_size = 33554432,
     max_trace_length = 68719476736
 )]
-fn verify_external(bytes: jolt::UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
+fn verify_external(bytes: UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
     jolt::start_cycle_tracking("decode_external");
     let advice: OuterAdvice = decode_exact(&bytes).expect("external advice");
     let verifier = decode_exact(&VERIFIER.0).expect("fixed outer verifier");
@@ -40,7 +41,7 @@ fn verify_external(bytes: jolt::UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
         .install_recursion_material(&input.outer.proof.joint_opening_proof, key, terminal)
         .expect("outer verifier material");
     jolt::end_cycle_tracking("install_prepared_setup");
-    let mut tape = jolt_akita_external::Tape(input.answers.iter());
+    let mut tape = Tape(input.answers.iter());
     let statement = input
         .replay(SetupMode::Defer, &mut tape, observe)
         .expect("saved outer deferred verification");

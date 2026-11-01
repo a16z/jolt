@@ -17,9 +17,9 @@ use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_akita::deferred::{InheritedSetupClaims, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
     AkitaChunkProfile, AkitaError, AkitaField, AkitaProverSetup, AkitaScheduleArtifacts,
-    AkitaScheme,
+    AkitaScheme, AkitaVerifierResources,
 };
-use jolt_akita_recursion::{decode_pair, AnswerTape, InnerProof, ProofPair, Vc};
+use jolt_akita_recursion::{decode_pair, AnswerTape, InnerProof, ProofPair, ReplayEvent, Vc};
 use jolt_host::{JoltProgramSource, Program};
 use jolt_inlines_sha2 as _;
 use jolt_openings::CommitmentScheme;
@@ -292,11 +292,10 @@ fn generate(
             let domain_len = prepared.pcs_setup.required_setup_domain_len()?;
             prepared.pcs_setup = prepared.pcs_setup.with_setup_domain(domain_len)?;
             prepared.verifier.pcs_setup = AkitaScheme::verifier_setup(&prepared.pcs_setup);
-            _verifier_resources =
-                Some(jolt_akita::AkitaVerifierResources::prepare([Ok(prepared
-                    .verifier
-                    .pcs_setup
-                    .clone())])?);
+            _verifier_resources = Some(AkitaVerifierResources::prepare([Ok(prepared
+                .verifier
+                .pcs_setup
+                .clone())])?);
             preprocessing = Some(prepared);
         }
         let prepared = preprocessing.as_ref().ok_or("missing preprocessing")?;
@@ -357,8 +356,8 @@ fn generate(
     let replay_started = Instant::now();
     let mut inner_started = Instant::now();
     let deferred = pair.replay(SetupMode::Defer, &mut tape, |event| match event {
-        jolt_akita_recursion::ReplayEvent::InnerStart(_) => inner_started = Instant::now(),
-        jolt_akita_recursion::ReplayEvent::InnerEnd(index) => {
+        ReplayEvent::InnerStart(_) => inner_started = Instant::now(),
+        ReplayEvent::InnerEnd(index) => {
             measurements[index]["deferred_verification_seconds"] =
                 serde_json::json!(inner_started.elapsed().as_secs_f64());
         }

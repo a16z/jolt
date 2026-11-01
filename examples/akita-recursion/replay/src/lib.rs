@@ -1,11 +1,14 @@
 #![cfg(feature = "akita")]
 //! Verify one saved outer proof, consume its input batch, and export its direct-fold obligations.
-use akita_types::setup_claims::{SetupBatchStatement, SetupClaim};
-use jolt_akita::deferred::{InheritedSetupClaims, SetupClaimAdvice, SetupMode};
-use jolt_akita::{AkitaField, AkitaNativeBatching, AkitaScheme};
+use akita_types::setup_claims::{SetupBatchStatement, SetupClaim, SetupQuery};
+use jolt_akita::deferred::{
+    InheritedSetupClaims, SetupClaimAccumulator, SetupClaimAdvice, SetupMode,
+};
+use jolt_akita::{AkitaError, AkitaField, AkitaNativeBatching, AkitaScheme};
 use jolt_akita_recursion::{InnerProof, Preprocessing, Vc};
 use jolt_transcript::{Blake2b512, VerifierState};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::slice::Iter;
 
 #[derive(Serialize, Deserialize)]
 pub struct ExternalInput {
@@ -48,8 +51,7 @@ impl ExternalInput {
         }
         observe(Event::PrepareStart);
         let statement = self.inherited()?;
-        let mut accumulator = jolt_akita::deferred::SetupClaimAccumulator::from_batch(0, statement)
-            .with_advice(advice);
+        let mut accumulator = SetupClaimAccumulator::from_batch(0, statement).with_advice(advice);
         observe(Event::PrepareEnd);
         observe(Event::JoltStart);
         let result = jolt_verifier::verifier::verify_with_akita_opening::<
@@ -105,16 +107,13 @@ pub fn decode(bytes: &[u8]) -> Result<ExternalInput, String> {
     Ok(value)
 }
 
-pub struct Tape<'a>(pub std::slice::Iter<'a, AkitaField>);
+pub struct Tape<'a>(pub Iter<'a, AkitaField>);
 impl SetupClaimAdvice<AkitaField> for Tape<'_> {
-    fn answer(
-        &mut self,
-        _: &akita_types::setup_claims::SetupQuery<AkitaField>,
-    ) -> Result<AkitaField, jolt_akita::AkitaError> {
+    fn answer(&mut self, _: &SetupQuery<AkitaField>) -> Result<AkitaField, AkitaError> {
         self.0
             .next()
             .copied()
-            .ok_or_else(|| jolt_akita::AkitaError::InvalidInput("advice exhausted".into()))
+            .ok_or_else(|| AkitaError::InvalidInput("advice exhausted".into()))
     }
 }
 
@@ -158,7 +157,7 @@ impl OuterAdvice {
         }
     }
 }
-pub fn decode_exact<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+pub fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
     let (value, n) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
         .map_err(|e| e.to_string())?;
     if n != bytes.len() {

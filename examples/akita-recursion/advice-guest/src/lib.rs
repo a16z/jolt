@@ -1,4 +1,5 @@
 #![cfg(feature = "guest")]
+use jolt::UntrustedAdvice;
 use jolt_akita::deferred::SetupMode;
 use jolt_akita::{AkitaField, TrustedBytes};
 use jolt_akita_external::pair_api::{AnswerTape, ReplayEvent};
@@ -27,7 +28,7 @@ fn observe(event: ReplayEvent) {
     stack_size = 33554432,
     max_trace_length = 68719476736
 )]
-fn verify_advice(bytes: jolt::UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
+fn verify_advice(bytes: UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
     let _ = INHERITED_FIELDS;
     jolt::start_cycle_tracking("decode_pair");
     let advice: PairAdvice = decode_exact(&bytes).expect("pair advice");
