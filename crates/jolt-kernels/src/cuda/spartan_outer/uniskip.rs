@@ -7,9 +7,8 @@ use jolt_poly::UnivariatePoly;
 use jolt_r1cs::constraint::ConstraintMatrices;
 
 use super::columns::{DeviceR1csInputs, LinearForms};
-use super::witness::VARIABLES;
+use super::guards::{GuardForms, NODES, SHARED_BYTES};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
-use crate::cuda::common::device::LIMBS;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::split_eq_tables_window;
@@ -95,32 +94,28 @@ pub fn extended_evals_window<F: JoltField>(
         });
     }
     let nodes = extended_nodes();
-    let variables = VARIABLES;
-    let columns: Vec<usize> = (1..=variables).collect();
-
-    let mut forms = LinearForms::new();
-    for &(_, node) in &nodes {
-        let point = node_field::<F>(node);
-        push_forms(&mut forms, matrices, &columns, point, F::zero())?;
-        push_forms(&mut forms, matrices, &columns, point, F::one())?;
-    }
-    let device_forms = forms.upload(context)?;
+    let device_forms = GuardForms::new(matrices)?.upload(context)?;
 
     let (e_in, e_out, in_bits) = split_eq_tables_window(context, &tau[..=log_t], shard, shards)?;
 
-    let threads = cycles.div_ceil(STRIP);
-    let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
+    if cycles == 0 || cycles * 2 > e_in.len() * e_out.len() {
+        return Err(CudaError::InvariantViolation {
+            reason: "the Spartan outer equality tables do not cover its cycle window",
+        });
+    }
+    let group_cycles = (e_in.len() / 2).min(BLOCK as usize * STRIP);
+    let blocks = u32::try_from(cycles.div_ceil(group_cycles)).map_err(|_| {
         CudaError::InvariantViolation {
             reason: "the Spartan outer uni-skip launch exceeds a u32 block count",
         }
     })?;
-    let lanes = u32::try_from(nodes.len()).map_err(|_| CudaError::InvariantViolation {
+    let lanes = u32::try_from(2 * NODES).map_err(|_| CudaError::InvariantViolation {
         reason: "the Spartan outer uni-skip launch exceeds a u32 lane count",
     })?;
-    let mut partials = context.alloc(nodes.len() * blocks as usize)?;
+    let mut partials = context.alloc(lanes as usize * blocks as usize)?;
 
     let count = CudaKernelContext::count_of(cycles)?;
-    let strip = CudaKernelContext::count_of(STRIP)?;
+    let tile = CudaKernelContext::count_of(group_cycles)?;
     let bits = CudaKernelContext::count_of(in_bits)?;
     let mut builder = context.stream().launch_builder(context.so_uniskip());
     let _ = builder.arg(inputs.narrow());
@@ -131,34 +126,28 @@ pub fn extended_evals_window<F: JoltField>(
     let _ = builder.arg(e_out.limbs());
     let _ = builder.arg(&bits);
     let _ = builder.arg(&count);
-    let _ = builder.arg(&strip);
+    let _ = builder.arg(&tile);
     let _ = builder.arg(partials.limbs_mut());
-    // SAFETY: thread `(blockIdx.x, threadIdx.x)` of node `blockIdx.y < lanes`
-    // covers cycles `base .. base + STRIP` and breaks at `cycles`, so every
-    // column read is inside `narrow`'s `cycles * NARROW`, `wide`'s
-    // `cycles * WIDE * 2` and `flags`' `cycles` entries. Its two forms per stream
-    // index `offsets`/`counts`/`constants` at `(node * 2 + stream) * 2 (+ 1)`,
-    // below the `4 * lanes` forms uploaded above, and read `terms`/`coeffs`
-    // within each form's own `count` entries. The eq lookup is bounded because
-    // `in_bits` comes from `e_in`'s length and `(t << 1) | stream < 2 * cycles`.
-    // It writes only `partials[node * blocks + blockIdx.x]` of
-    // `lanes * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
-    // `shared_mem_bytes`, and the block reduction sits outside every early exit
-    // so all threads reach each `__syncthreads()`.
+    // SAFETY: each block stays inside one inner equality-table tile and guards
+    // every input read by `t < cycles`. GuardForms validates the native layout,
+    // integer bounds, and ten-node domain. Its offsets cover all 40 forms.
+    // The two stream blocks each write NODES lanes within the partials buffer.
+    // SHARED_BYTES covers the 32 keys, grouped and overflow accumulators, and
+    // node totals. All threads reach the barriers between those phases.
     let _ = unsafe {
         builder.launch(LaunchConfig {
-            grid_dim: (blocks, lanes, 1),
+            grid_dim: (blocks, 2, 1),
             block_dim: (BLOCK, 1, 1),
-            shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+            shared_mem_bytes: SHARED_BYTES as u32,
         })
     }?;
 
     let totals = reduce_lanes(context, partials, lanes, blocks)?;
     let host = totals.to_host()?;
     let mut values = vec![F::zero(); EXTENDED_SIZE];
-    for (&(position, _), value) in nodes.iter().zip(&host) {
-        values[position] =
-            crate::cuda::common::device::fr_into(*value).ok_or(CudaError::NotImplemented {
+    for (node, &(position, _)) in nodes.iter().enumerate() {
+        values[position] = crate::cuda::common::device::fr_into(host[node] + host[NODES + node])
+            .ok_or(CudaError::NotImplemented {
                 kernel: "CUDA kernels support only the BN254 scalar field",
             })?;
     }
@@ -183,4 +172,165 @@ pub fn first_round_poly<F: JoltField>(
         &kernel_coefficients,
         &t1_coefficients,
     )))
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test module: device operations fail loudly"
+)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use jolt_claims::protocols::composed::r1cs::{
+        spartan_outer_constraints, spartan_outer_row_weights, SPARTAN_OUTER_FIRST_GROUP_ROWS,
+        SPARTAN_OUTER_SECOND_GROUP_ROWS,
+    };
+    use jolt_field::{Fr, One, Ring, Zero};
+    use jolt_poly::EqPolynomial;
+
+    use super::{extended_evals_window, extended_nodes, node_field, EXTENDED_SIZE};
+    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::error::CudaError;
+    use crate::cuda::common::testing::fr;
+    use crate::cuda::spartan_outer::columns::DeviceR1csInputs;
+    use crate::cuda::spartan_outer::witness::{
+        Packed, KIND_FLAG, KIND_NARROW, LAYOUT, NARROW, SIGN_BIT_BASE, VARIABLES, WIDE,
+    };
+
+    #[test]
+    fn uniskip_rejects_empty_and_oversized_equality_windows() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let packed = Packed {
+            narrow: vec![0; 16 * NARROW],
+            wide: vec![0; 16 * WIDE * 2],
+            flags: vec![0; 16],
+        };
+        let inputs = DeviceR1csInputs::new(context, &packed).expect("native inputs");
+        let matrices = spartan_outer_constraints::<Fr>();
+        let tau = vec![Fr::from_u64(7); 5];
+        for cycles in [0, 9] {
+            assert!(matches!(
+                extended_evals_window(context, &inputs, &matrices, &tau, 3, 0, 1, cycles),
+                Err(CudaError::InvariantViolation { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn native_uniskip_matches_field_matrix_with_repeated_and_diverse_guards() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const LOG_T: usize = 12;
+        const CYCLES: usize = 1 << LOG_T;
+        let matrices = spartan_outer_constraints::<Fr>();
+        let columns: Vec<usize> = (0..=VARIABLES).collect();
+        let nodes = extended_nodes();
+        let forms: Vec<_> = nodes
+            .iter()
+            .flat_map(|&(_, node)| {
+                let matrices = &matrices;
+                let columns = &columns;
+                [Fr::zero(), Fr::one()].into_iter().map(move |stream| {
+                    let weights = spartan_outer_row_weights(node_field::<Fr>(node), stream)
+                        .expect("canonical row weights");
+                    matrices
+                        .weighted_columns(&weights, columns)
+                        .expect("canonical columns")
+                })
+            })
+            .collect();
+        for (diverse, exceptional) in [(false, false), (true, false), (true, true)] {
+            let word = |i: usize| [0, u64::MAX, 1, 1 << 63, u64::MAX - 1][i % 5];
+            let packed = Packed {
+                narrow: (0..CYCLES * NARROW).map(word).collect(),
+                wide: (0..CYCLES * WIDE * 2).map(|i| word(i + 1)).collect(),
+                flags: (0..CYCLES)
+                    .map(|t| {
+                        let flags = if diverse {
+                            (t as u32).wrapping_mul(0x9e37_79b9).rotate_left(5) & 0xffff
+                        } else {
+                            0x1044
+                        };
+                        flags | ((t as u32 % 8) << SIGN_BIT_BASE)
+                    })
+                    .collect(),
+            };
+            let device = DeviceR1csInputs::new(context, &packed).expect("native inputs");
+            let narrow = context
+                .download_u64(device.narrow())
+                .expect("narrow columns");
+            let wide = context.download_u64(device.wide()).expect("wide columns");
+            let flags = context.download_u32(device.flags()).expect("shifted flags");
+            let mut tau: Vec<Fr> = (0..LOG_T + 2).map(|i| fr(23 + i as u64)).collect();
+            if exceptional {
+                tau[0] = Fr::zero();
+                tau[LOG_T] = Fr::one();
+            }
+            let cycles = CYCLES - 3;
+            let weights = EqPolynomial::<Fr>::evals(&tau[..=LOG_T], None);
+            let got = extended_evals_window(context, &device, &matrices, &tau, LOG_T, 0, 1, cycles)
+                .expect("native extension");
+            let mut expected = vec![Fr::zero(); EXTENDED_SIZE];
+            let mut guard_patterns = [BTreeSet::new(), BTreeSet::new()];
+            for t in 0..cycles {
+                let mut z = vec![Fr::one()];
+                z.extend(LAYOUT.map(|layout| {
+                    let slot = (layout & 255) as usize;
+                    match layout >> 8 {
+                        KIND_NARROW => Fr::from_u64(narrow[t * NARROW + slot]),
+                        KIND_FLAG => Fr::from_u64(u64::from((flags[t] >> slot) & 1)),
+                        _ => {
+                            let magnitude = u128::from(wide[t * WIDE * 2 + 2 * slot])
+                                | (u128::from(wide[t * WIDE * 2 + 2 * slot + 1]) << 64);
+                            let value = Fr::from_u128(magnitude);
+                            if (flags[t] >> (SIGN_BIT_BASE + slot as u32)) & 1 != 0 {
+                                -value
+                            } else {
+                                value
+                            }
+                        }
+                    }
+                }));
+                if diverse && t < 64 {
+                    let guards: Vec<_> = matrices
+                        .a
+                        .iter()
+                        .map(|row| {
+                            row.iter()
+                                .map(|&(col, coefficient)| coefficient * z[col])
+                                .sum::<Fr>()
+                        })
+                        .collect();
+                    for (patterns, indices) in guard_patterns.iter_mut().zip([
+                        SPARTAN_OUTER_FIRST_GROUP_ROWS.as_slice(),
+                        SPARTAN_OUTER_SECOND_GROUP_ROWS.as_slice(),
+                    ]) {
+                        let pattern: Vec<_> = indices.iter().map(|&i| guards[i]).collect();
+                        let _ = patterns.insert(format!("{pattern:?}"));
+                    }
+                }
+                for (i, form) in forms.iter().enumerate() {
+                    let a: Fr = form.a.iter().zip(&z).map(|(c, v)| *c * *v).sum();
+                    let b: Fr = form.b.iter().zip(&z).map(|(c, v)| *c * *v).sum();
+                    expected[nodes[i / 2].0] += weights[2 * t + i % 2] * a * b;
+                }
+            }
+            if diverse {
+                for patterns in guard_patterns {
+                    assert!(
+                        patterns.len() > 32,
+                        "the fixture must exceed the group capacity"
+                    );
+                }
+            }
+            assert_eq!(
+                got, expected,
+                "diverse={diverse}, exceptional={exceptional}"
+            );
+        }
+    }
 }

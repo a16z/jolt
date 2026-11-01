@@ -1,11 +1,13 @@
 //! CUDA Spartan outer uni-skip and remainder kernels.
 //!
-//! The host derives weighted linear forms from the canonical R1CS matrices;
-//! device kernels evaluate them against native-width input columns and reduce
-//! the extended-node sums. Unlike optimized's integer row evaluator and finite
-//! differences, CUDA applies those uploaded field coefficients directly.
-//! Optimized also groups repeated guard patterns before extending the sums;
-//! CUDA evaluates the linear forms separately for each cycle.
+//! Uni-skip evaluates integer linear forms derived from the canonical R1CS
+//! matrices. As in optimized, equal guard vectors share weighted value sums,
+//! which are extended by finite differences. CUDA keeps up to 32 groups in
+//! block-local shared memory and tiles the inner equality domain; a warp
+//! extends each reduced group. Additional patterns use integer node weights
+//! directly, avoiding per-thread difference tables. Grouping saves extension
+//! work on sparse native rows, but dense nonzero values can make shared-atomic
+//! contention dominate.
 //!
 //! The proof session carries the input columns across uni-skip. Once its
 //! challenge is known, CUDA materializes both stream lanes of `Az` and `Bz`
@@ -50,6 +52,7 @@ use crate::{
 };
 
 pub(crate) mod columns;
+mod guards;
 pub(crate) mod remainder;
 pub(crate) mod uniskip;
 pub(crate) mod witness;
