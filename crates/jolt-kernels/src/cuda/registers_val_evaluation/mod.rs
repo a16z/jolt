@@ -7,9 +7,9 @@
 //! CUDA and optimized keep increments compact through the first round, then
 //! materialize their bound field values. CUDA reads resident `i128` increments;
 //! optimized derives them from typed trace rows. CUDA keeps write RA lazy until
-//! the third bind; optimized materializes it at the first bind. Product rounds
-//! run over resident cycle windows before gathering their remaining factors
-//! onto GPU 0.
+//! the third bind and gathers its values inside the product round; optimized
+//! materializes it at the first bind. Product rounds run over resident cycle
+//! windows before gathering their remaining factors onto GPU 0.
 //! Optimized materializes only nonconstant prefixes and keeps their suffixes
 //! implicit; CUDA's increment and write-RA tables span the padded cycle domain.
 

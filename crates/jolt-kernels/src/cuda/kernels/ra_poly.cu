@@ -17,16 +17,10 @@ extern "C" __global__ void ra_split_tables_kernel(const u64 *__restrict__ in,
     store4(out + ((unsigned long long)n + (unsigned long long)i) * LIMBS, hi);
 }
 
-extern "C" __global__ void ra_gather_kernel(const unsigned int *__restrict__ indices,
-                                            const u64 *__restrict__ tables,
-                                            const unsigned int *__restrict__ bases,
-                                            unsigned int slots,
-                                            unsigned int addresses,
-                                            unsigned int stride,
-                                            u64 *__restrict__ out,
-                                            unsigned int len) {
-    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
-    if (j >= len) return;
+__device__ __forceinline__ void ra_gather_value(
+    const unsigned int *indices, const u64 *tables, const unsigned int *bases,
+    unsigned int slots, unsigned int addresses, unsigned int stride,
+    unsigned long long j, u64 *out) {
     u64 total[LIMBS] = {0, 0, 0, 0};
     unsigned long long base = (unsigned long long)j * (unsigned long long)stride;
     for (unsigned int slot = 0; slot < slots; slot++) {
@@ -39,5 +33,19 @@ extern "C" __global__ void ra_gather_kernel(const unsigned int *__restrict__ ind
               value);
         fr_add(total, value, total);
     }
-    store4(out + (unsigned long long)j * LIMBS, total);
+    store4(out, total);
+}
+
+extern "C" __global__ void ra_gather_kernel(const unsigned int *__restrict__ indices,
+                                            const u64 *__restrict__ tables,
+                                            const unsigned int *__restrict__ bases,
+                                            unsigned int slots,
+                                            unsigned int addresses,
+                                            unsigned int stride,
+                                            u64 *__restrict__ out,
+                                            unsigned int len) {
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= len) return;
+    ra_gather_value(indices, tables, bases, slots, addresses, stride, j,
+                    out + (unsigned long long)j * LIMBS);
 }

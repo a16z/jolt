@@ -6,7 +6,8 @@
 //! materialize the quarter-sized field table. CUDA reuses resident `i128`
 //! increments; optimized derives increments from pre/post trace values.
 //!
-//! The shared device RA helper materializes after three binds, versus four in
+//! Lazy RA values are gathered inside each product round, as in optimized.
+//! The device RA helper materializes after three binds, versus four in
 //! optimized's usual lazy-RA path. Device windows contribute local product
 //! messages before the short remaining tables are gathered onto GPU 0.
 //! Optimized can switch its lazy RA to dense storage earlier when that is

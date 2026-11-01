@@ -31,7 +31,7 @@ extern "C" __global__ void dense_product_increment_bind_kernel(
     store4(out + y * LIMBS, value);
 }
 
-template <bool COMPACT_INCREMENT>
+template <bool COMPACT_INCREMENT, bool LAZY_RA>
 __device__ __forceinline__ void dp_round(
     const u64 *const *__restrict__ tables, unsigned int table_count,
     unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
@@ -40,6 +40,8 @@ __device__ __forceinline__ void dp_round(
     unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
     unsigned int first_point, unsigned int infinity_lane,
     const u64 *increments, unsigned int increment_bound, const u64 *increment_challenge,
+    const unsigned int *ra_indices, const u64 *ra_tables, const unsigned int *ra_bases,
+    unsigned int ra_slots, unsigned int ra_addresses, unsigned int ra_stride,
     u64 *scratch) {
     unsigned int tid = threadIdx.x;
     unsigned int y = blockIdx.x * blockDim.x + tid;
@@ -48,6 +50,13 @@ __device__ __forceinline__ void dp_round(
     if (COMPACT_INCREMENT && y < half) {
         dp_increment_value(increments, 2ull * y, increment_bound, increment_challenge, inc_lo);
         dp_increment_value(increments, 2ull * y + 1, increment_bound, increment_challenge, inc_hi);
+    }
+    u64 ra_lo[LIMBS], ra_hi[LIMBS];
+    if (LAZY_RA && y < half) {
+        ra_gather_value(ra_indices, ra_tables, ra_bases, ra_slots, ra_addresses,
+                        ra_stride, 2ull * y, ra_lo);
+        ra_gather_value(ra_indices, ra_tables, ra_bases, ra_slots, ra_addresses,
+                        ra_stride, 2ull * y + 1, ra_hi);
     }
 
     for (unsigned int c = 0; c < lanes; c++) {
@@ -85,6 +94,18 @@ __device__ __forceinline__ void dp_round(
                 u64 next[LIMBS];
                 fr_mul(product, value, next);
                 for (int l = 0; l < LIMBS; l++) product[l] = next[l];
+            }
+            if (LAZY_RA) {
+                u64 difference[LIMBS], scaled[LIMBS], value[LIMBS], next[LIMBS];
+                fr_sub(ra_hi, ra_lo, difference);
+                if (at_infinity) {
+                    load4(difference, value);
+                } else {
+                    fr_mul(point, difference, scaled);
+                    fr_add(ra_lo, scaled, value);
+                }
+                fr_mul(product, value, next);
+                load4(next, product);
             }
             if (has_lt) {
                 u64 lo[LIMBS], hi[LIMBS], diff[LIMBS], scaled[LIMBS], value[LIMBS];
@@ -134,9 +155,9 @@ extern "C" __global__ void dense_product_round_kernel(
     unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
     unsigned int first_point, unsigned int infinity_lane) {
     extern __shared__ u64 scratch[];
-    dp_round<false>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
+    dp_round<false, false>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
                     lt_shift, lt_lo_bits, lt_lo_mask, has_lt, first_point, infinity_lane,
-                    nullptr, 0, nullptr, scratch);
+                    nullptr, 0, nullptr, nullptr, nullptr, nullptr, 0, 0, 0, scratch);
 }
 
 extern "C" __global__ void dense_product_increment_round_kernel(
@@ -150,9 +171,47 @@ extern "C" __global__ void dense_product_increment_round_kernel(
     u64 r0, u64 r1, u64 r2, u64 r3) {
     extern __shared__ u64 scratch[];
     const u64 challenge[LIMBS] = {r0, r1, r2, r3};
-    dp_round<true>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
+    dp_round<true, false>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
                    lt_shift, lt_lo_bits, lt_lo_mask, has_lt, first_point, infinity_lane,
-                   increments, increment_bound, challenge, scratch);
+                   increments, increment_bound, challenge,
+                   nullptr, nullptr, nullptr, 0, 0, 0, scratch);
+}
+
+extern "C" __global__ void dense_product_ra_round_kernel(
+    const u64 *const *__restrict__ tables, unsigned int table_count,
+    unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
+    const u64 *__restrict__ lt_lo, const u64 *__restrict__ lt_hi,
+    const u64 *__restrict__ eq_hi, const u64 *__restrict__ lt_shift,
+    unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
+    unsigned int first_point, unsigned int infinity_lane,
+    const unsigned int *__restrict__ ra_indices, const u64 *__restrict__ ra_tables,
+    const unsigned int *__restrict__ ra_bases, unsigned int ra_slots,
+    unsigned int ra_addresses, unsigned int ra_stride) {
+    extern __shared__ u64 scratch[];
+    dp_round<false, true>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
+                   lt_shift, lt_lo_bits, lt_lo_mask, has_lt, first_point, infinity_lane,
+                   nullptr, 0, nullptr,
+                   ra_indices, ra_tables, ra_bases, ra_slots, ra_addresses, ra_stride, scratch);
+}
+
+extern "C" __global__ void dense_product_increment_ra_round_kernel(
+    const u64 *const *__restrict__ tables, unsigned int table_count,
+    unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
+    const u64 *__restrict__ lt_lo, const u64 *__restrict__ lt_hi,
+    const u64 *__restrict__ eq_hi, const u64 *__restrict__ lt_shift,
+    unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
+    unsigned int first_point, unsigned int infinity_lane,
+    const u64 *__restrict__ increments, unsigned int increment_bound,
+    u64 r0, u64 r1, u64 r2, u64 r3,
+    const unsigned int *__restrict__ ra_indices, const u64 *__restrict__ ra_tables,
+    const unsigned int *__restrict__ ra_bases, unsigned int ra_slots,
+    unsigned int ra_addresses, unsigned int ra_stride) {
+    extern __shared__ u64 scratch[];
+    const u64 challenge[LIMBS] = {r0, r1, r2, r3};
+    dp_round<true, true>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
+                   lt_shift, lt_lo_bits, lt_lo_mask, has_lt, first_point, infinity_lane,
+                   increments, increment_bound, challenge,
+                   ra_indices, ra_tables, ra_bases, ra_slots, ra_addresses, ra_stride, scratch);
 }
 
 extern "C" __global__ void lane_sum_total_kernel(const u64 *__restrict__ in,

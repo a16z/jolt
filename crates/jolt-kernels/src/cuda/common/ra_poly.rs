@@ -33,6 +33,15 @@ pub struct DeviceRaPolynomial {
     dense: Option<DeviceFrVec>,
 }
 
+pub(crate) struct RaGatherView<'a> {
+    pub(crate) indices: &'a CudaSlice<u32>,
+    pub(crate) tables: &'a DeviceFrVec,
+    pub(crate) bases: CudaSlice<u32>,
+    pub(crate) slots: u32,
+    pub(crate) addresses: u32,
+    pub(crate) stride: u32,
+}
+
 fn reverse_bits(value: usize, bits: usize) -> usize {
     (0..bits).fold(0, |acc, bit| {
         acc | (((value >> bit) & 1) << (bits - 1 - bit))
@@ -158,11 +167,37 @@ impl DeviceRaPolynomial {
         self.dense.as_ref()
     }
 
+    #[cfg(test)]
     pub fn coefficients(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         if let Some(dense) = &self.dense {
             return dense.try_clone();
         }
-        self.gather(context, self.rounds_bound)
+        self.gather(context)
+    }
+
+    pub(crate) fn lazy_view(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Option<RaGatherView<'_>>, CudaError> {
+        if self.dense.is_some() {
+            return Ok(None);
+        }
+        self.gather_view(context).map(Some)
+    }
+
+    fn gather_view(&self, context: &CudaKernelContext) -> Result<RaGatherView<'_>, CudaError> {
+        let rounds = self.rounds_bound;
+        Ok(RaGatherView {
+            indices: &self.indices,
+            tables: &self.tables,
+            bases: context.upload_u32_slice(&self.slot_bases(rounds))?,
+            slots: CudaKernelContext::count_of(1usize << rounds)?,
+            addresses: CudaKernelContext::count_of(self.addresses)?,
+            stride: CudaKernelContext::count_of(match self.order {
+                BindingOrder::LowToHigh => 1usize << rounds,
+                BindingOrder::HighToLow => 1,
+            })?,
+        })
     }
 
     fn slot_bases(&self, rounds: usize) -> Vec<u32> {
@@ -179,27 +214,21 @@ impl DeviceRaPolynomial {
             .collect()
     }
 
-    fn gather(&self, context: &CudaKernelContext, rounds: usize) -> Result<DeviceFrVec, CudaError> {
-        let len = self.cycles >> rounds;
+    fn gather(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
+        let len = self.len();
         let mut output = context.alloc(len)?;
         if len == 0 {
             return Ok(output);
         }
-        let bases = context.upload_u32_slice(&self.slot_bases(rounds))?;
-        let slots = CudaKernelContext::count_of(1usize << rounds)?;
-        let addresses = CudaKernelContext::count_of(self.addresses)?;
-        let stride = CudaKernelContext::count_of(match self.order {
-            BindingOrder::LowToHigh => 1usize << rounds,
-            BindingOrder::HighToLow => 1,
-        })?;
+        let view = self.gather_view(context)?;
         let count = CudaKernelContext::count_of(len)?;
         let mut builder = context.stream().launch_builder(context.ra_gather());
-        let _ = builder.arg(&self.indices);
-        let _ = builder.arg(self.tables.limbs());
-        let _ = builder.arg(&bases);
-        let _ = builder.arg(&slots);
-        let _ = builder.arg(&addresses);
-        let _ = builder.arg(&stride);
+        let _ = builder.arg(view.indices);
+        let _ = builder.arg(view.tables.limbs());
+        let _ = builder.arg(&view.bases);
+        let _ = builder.arg(&view.slots);
+        let _ = builder.arg(&view.addresses);
+        let _ = builder.arg(&view.stride);
         let _ = builder.arg(output.limbs_mut());
         let _ = builder.arg(&count);
         // SAFETY: thread `j < len` writes only `out[j]`, and reads
@@ -266,7 +295,7 @@ impl DeviceRaPolynomial {
         self.split_tables(context, challenge)?;
         self.rounds_bound += 1;
         if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS {
-            self.dense = Some(self.gather(context, self.rounds_bound)?);
+            self.dense = Some(self.gather(context)?);
             self.tables = context.alloc(0)?;
             self.indices = context.alloc_u32(0)?;
         }
@@ -282,7 +311,7 @@ impl DeviceRaPolynomial {
         }
         match &self.dense {
             Some(dense) => dense.first(),
-            None => self.gather(context, self.rounds_bound)?.first(),
+            None => self.gather(context)?.first(),
         }
     }
 }

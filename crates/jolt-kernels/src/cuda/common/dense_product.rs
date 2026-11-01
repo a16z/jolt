@@ -3,6 +3,8 @@
 //! Optimized's product-grid helper uses balanced subproducts and finite
 //! differences, including specialized five- and nine-factor forms. The dense
 //! device evaluator multiplies the interpolated factors at each sample.
+//! Lazy RA factors are gathered once per pair inside the product kernel,
+//! following optimized's on-demand evaluation without a temporary dense table.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -493,24 +495,12 @@ impl DeviceDenseProduct {
         Ok(state)
     }
 
-    fn round_tables(
-        &self,
-        context: &CudaKernelContext,
-    ) -> Result<(Vec<&DeviceFrVec>, Option<DeviceFrVec>), CudaError> {
+    fn round_tables(&self) -> Vec<&DeviceFrVec> {
         let mut handles: Vec<&DeviceFrVec> = Vec::with_capacity(2 + self.factors.tables().len());
         handles.extend(self.weight.as_ref());
         handles.extend(self.factors.tables());
-        let materialized = match &self.one_hot {
-            None => None,
-            Some(one_hot) => match one_hot.dense() {
-                Some(dense) => {
-                    handles.push(dense);
-                    None
-                }
-                None => Some(one_hot.coefficients(context)?),
-            },
-        };
-        Ok((handles, materialized))
+        handles.extend(self.one_hot.as_ref().and_then(DeviceRaPolynomial::dense));
+        handles
     }
 
     pub fn toom_evals<F: JoltField>(
@@ -532,10 +522,13 @@ impl DeviceDenseProduct {
         let lanes = CudaKernelContext::count_of(lane_count)?;
         let half_count = CudaKernelContext::count_of(half)?;
 
-        let (mut handles, materialized) = self.round_tables(context)?;
-        if let Some(gathered) = &materialized {
-            handles.push(gathered);
-        }
+        let handles = self.round_tables();
+        let ra_view = self
+            .one_hot
+            .as_ref()
+            .map(|one_hot| one_hot.lazy_view(context))
+            .transpose()?
+            .flatten();
         let table_count = CudaKernelContext::count_of(handles.len())?;
         let pointers = context.device_pointers(&handles)?;
         let blocks = half_count.div_ceil(BLOCK).max(1);
@@ -564,10 +557,11 @@ impl DeviceDenseProduct {
                 fr_limbs(column.first_bind().unwrap_or_default()),
             )),
         };
-        let kernel = if increment.is_some() {
-            context.dense_product_increment_round()
-        } else {
-            context.dense_product_round()
+        let kernel = match (increment.is_some(), ra_view.is_some()) {
+            (false, false) => context.dense_product_round(),
+            (true, false) => context.dense_product_increment_round(),
+            (false, true) => context.dense_product_ra_round(),
+            (true, true) => context.dense_product_increment_ra_round(),
         };
         let mut builder = context.stream().launch_builder(kernel);
         let _ = builder.arg(&pointers);
@@ -592,6 +586,14 @@ impl DeviceDenseProduct {
                 let _ = builder.arg(limb);
             }
         }
+        if let Some(view) = &ra_view {
+            let _ = builder.arg(view.indices);
+            let _ = builder.arg(view.tables.limbs());
+            let _ = builder.arg(&view.bases);
+            let _ = builder.arg(&view.slots);
+            let _ = builder.arg(&view.addresses);
+            let _ = builder.arg(&view.stride);
+        }
         // SAFETY: reads, all in bounds — `table[2y]`/`table[2y+1]` for each of
         // `table_count` tables of `2 * half` elements; the LT tables and the
         // single-element `lt_shift` only when
@@ -603,6 +605,11 @@ impl DeviceDenseProduct {
         // variant reads two i128 entries per pair, or four after the first
         // RAM bind; from_increments checked the logical two-word extent.
         // A resident successor row is outside that logical window.
+        // Lazy RA uses the same gather geometry as DeviceRaPolynomial::gather:
+        // its view covers this domain, validated by from_device_factors, and
+        // the two indices per pair remain below its logical cycle extent.
+        // RA constructors' callers validate non-COLD addresses. The view owns
+        // its uploaded bases and borrows the index/lookup buffers through launch.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
@@ -610,7 +617,7 @@ impl DeviceDenseProduct {
                 shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
             })
         }?;
-        drop(materialized);
+        drop(ra_view);
 
         let totals = reduce_lanes(context, partials, lanes, blocks)?;
         totals
@@ -858,12 +865,16 @@ mod tests {
                     [i128::MIN + offset, -1, 0, 1 << 64, i128::MAX - offset][i % 5]
                 })
                 .collect();
-            let words = one_hot_words(cycles);
             let eq_address = EqPolynomial::<Fr>::evals(
                 &(0..LOG_K).map(|i| fr(19 + i as u64)).collect::<Vec<_>>(),
                 None,
             );
-            for case in 0..4 {
+            for case in 0..6 {
+                let words = match case {
+                    4 => vec![COLD; cycles],
+                    5 => vec![(1 << LOG_K) - 1; cycles],
+                    _ => one_hot_words(cycles),
+                };
                 let point: Vec<Fr> = (0..log_t).map(|i| fr(31 + i as u64)).collect();
                 let gamma = fr(47);
                 let shard_counts: &[usize] = if log_t < 2 { &[1] } else { &[1, 2] };
