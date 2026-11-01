@@ -1277,7 +1277,7 @@ impl<F: JoltField> CycleKernel<F> {
     // Pair the four linear RA factors into two quadratics. Their samples at
     // 0, 2, ..., degree need only additions after the initial products; the
     // final coefficient multiplication is accumulated before reduction.
-    fn four_ra_evals(&self, half: usize) -> Vec<F> {
+    fn four_ra_evals(&self, half: usize) -> Option<Vec<F>> {
         fn quadratic<F: JoltField>(a: (F, F), b: (F, F)) -> [F; 4] {
             let zero = a.0 * b.0;
             let one = a.1 * b.1;
@@ -1286,9 +1286,12 @@ impl<F: JoltField> CycleKernel<F> {
             let delta = one - zero + second;
             [zero, one + delta, delta, second]
         }
-        map_reduce_chunks(
+        if self.ra.num_polys() != 4 {
+            return None;
+        }
+        Some(map_reduce_chunks(
             half,
-            CYCLE_GROUP_BATCH,
+            CYCLE_CHUNK,
             |range| {
                 let mut acc = vec![F::Accumulator::default(); self.degree];
                 let mut pairs = [(F::zero(), F::zero()); 4];
@@ -1314,7 +1317,7 @@ impl<F: JoltField> CycleKernel<F> {
             },
             merge_evals,
             || vec![F::zero(); self.degree],
-        )
+        ))
     }
 }
 
@@ -1336,17 +1339,17 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
-        let mut evals = self.grouped_evals(half).unwrap_or_else(|| {
-            if num_ra == 4 {
-                return self.four_ra_evals(half);
-            }
-            par_sum_pair_groups_reusing(
-                half,
-                slots,
-                || vec![(F::zero(), F::zero()); num_ra],
-                |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
-            )
-        });
+        let mut evals = self
+            .grouped_evals(half)
+            .or_else(|| self.four_ra_evals(half))
+            .unwrap_or_else(|| {
+                par_sum_pair_groups_reusing(
+                    half,
+                    slots,
+                    || vec![(F::zero(), F::zero()); num_ra],
+                    |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
+                )
+            });
 
         let (tail_lo, tail_hi) = self.combined.suffix_pair_sums(half);
         #[cfg(feature = "akita")]
@@ -2178,7 +2181,7 @@ mod cycle_group_tests {
                             .sum()
                     })
                     .collect();
-                assert_eq!(kernel.four_ra_evals(GROUPS), expected);
+                assert_eq!(kernel.four_ra_evals(GROUPS), Some(expected));
             }
             let mut pairs = vec![(F::zero(), F::zero()); num_ra];
             for y in 0..GROUPS {
@@ -2300,7 +2303,8 @@ mod grouped_cycle_tests {
             let groups = combined.len() / 2;
             let grouped = kernel.grouped_evals(groups);
             assert_eq!(grouped.is_some(), round < 4);
-            let product = (num_ra == 4).then(|| kernel.four_ra_evals(groups));
+            let product = kernel.four_ra_evals(groups);
+            assert_eq!(product.is_some(), num_ra == 4);
             let at = |poly: &Polynomial<F>, y: usize, t: F| {
                 let (lo, hi) = pair(poly, y);
                 lo + t * (hi - lo)
