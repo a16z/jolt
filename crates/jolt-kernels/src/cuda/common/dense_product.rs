@@ -9,7 +9,7 @@ use allocative::Allocative;
 #[cfg(feature = "allocative")]
 use allocative::Visitor;
 use core::marker::PhantomData;
-use cudarc::driver::{LaunchConfig, PushKernelArg};
+use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::JoltChallengeId;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges, SymbolicSumcheck};
 use jolt_field::{Fr, JoltField};
@@ -42,24 +42,45 @@ pub struct DeviceDenseProduct {
 
 enum ProductFactors {
     Tables(Vec<DeviceFrVec>),
-    RamIncrements {
+    Increments(IncrementColumn),
+}
+
+enum IncrementColumn {
+    Registers(Arc<DeviceMemoryColumns>),
+    Ram {
         columns: Arc<DeviceMemoryColumns>,
         first_bind: Option<Fr>,
     },
+}
+
+impl IncrementColumn {
+    fn words(&self) -> &CudaSlice<u64> {
+        match self {
+            Self::Registers(columns) => &columns.rd_inc,
+            Self::Ram { columns, .. } => &columns.ram_inc,
+        }
+    }
+
+    const fn first_bind(&self) -> Option<Fr> {
+        match self {
+            Self::Registers(_) => None,
+            Self::Ram { first_bind, .. } => *first_bind,
+        }
+    }
 }
 
 impl ProductFactors {
     fn tables(&self) -> &[DeviceFrVec] {
         match self {
             Self::Tables(tables) => tables,
-            Self::RamIncrements { .. } => &[],
+            Self::Increments(_) => &[],
         }
     }
 
     fn finals(&self) -> Result<Vec<Fr>, CudaError> {
         let Self::Tables(tables) = self else {
             return Err(CudaError::InvariantViolation {
-                reason: "RAM increments must be fully bound before reading their final value",
+                reason: "increments must be fully bound before reading their final value",
             });
         };
         tables
@@ -416,24 +437,58 @@ impl DeviceDenseProduct {
         rounds: usize,
         degree: usize,
     ) -> Result<Self, CudaError> {
+        Self::from_increments(
+            context,
+            IncrementColumn::Ram {
+                columns,
+                first_bind: None,
+            },
+            one_hot,
+            lt,
+            rounds,
+            degree,
+        )
+    }
+
+    pub(crate) fn from_register_increments(
+        context: &CudaKernelContext,
+        columns: Arc<DeviceMemoryColumns>,
+        one_hot: DeviceRaPolynomial,
+        lt: DeviceLtPolynomial,
+        rounds: usize,
+        degree: usize,
+    ) -> Result<Self, CudaError> {
+        Self::from_increments(
+            context,
+            IncrementColumn::Registers(columns),
+            one_hot,
+            lt,
+            rounds,
+            degree,
+        )
+    }
+
+    fn from_increments(
+        context: &CudaKernelContext,
+        column: IncrementColumn,
+        one_hot: DeviceRaPolynomial,
+        lt: DeviceLtPolynomial,
+        rounds: usize,
+        degree: usize,
+    ) -> Result<Self, CudaError> {
         let len = 1usize << rounds;
-        if columns.ram_inc.len() < 2 * len {
+        if column.words().len() < 2 * len {
             return Err(CudaError::LengthMismatch {
                 expected: 2 * len,
-                got: columns.ram_inc.len(),
+                got: column.words().len(),
             });
         }
         let mut state =
             Self::from_device_factors(None, Vec::new(), Some(one_hot), Some(lt), rounds, degree)?;
         state.factors = if rounds == 0 {
-            ProductFactors::Tables(vec![
-                context.i128_to_montgomery_device(&columns.ram_inc, len)?
-            ])
+            ProductFactors::Tables(vec![context.i128_to_montgomery_device(column.words(), len)?])
         } else {
-            ProductFactors::RamIncrements {
-                columns,
-                first_bind: None,
-            }
+            ProductFactors::Increments(column)
         };
         Ok(state)
     }
@@ -503,13 +558,10 @@ impl DeviceDenseProduct {
 
         let increment = match &self.factors {
             ProductFactors::Tables(_) => None,
-            ProductFactors::RamIncrements {
-                columns,
-                first_bind,
-            } => Some((
-                &columns.ram_inc,
-                u32::from(first_bind.is_some()),
-                fr_limbs(first_bind.unwrap_or_default()),
+            ProductFactors::Increments(column) => Some((
+                column.words(),
+                u32::from(column.first_bind().is_some()),
+                fr_limbs(column.first_bind().unwrap_or_default()),
             )),
         };
         let kernel = if increment.is_some() {
@@ -547,9 +599,9 @@ impl DeviceDenseProduct {
         // Writes: `partials[c * gridDim.x + blockIdx.x]`, one slot per
         // (lane, block) of `lanes * blocks`. Shared memory is `BLOCK * LIMBS`
         // u64s, matching `shared_mem_bytes`. Every buffer outlives the launch,
-        // borrowed through `&self` or owned by this frame. The compact RAM
+        // borrowed through `&self` or owned by this frame. The compact increment
         // variant reads two i128 entries per pair, or four after the first
-        // bind; from_ram_increments checked the logical two-word extent.
+        // RAM bind; from_increments checked the logical two-word extent.
         // A resident successor row is outside that logical window.
         let _ = unsafe {
             builder.launch(LaunchConfig {
@@ -587,37 +639,35 @@ impl DeviceDenseProduct {
                     *table = context.bind_rows(table, table.len(), challenge)?;
                 }
             }
-            ProductFactors::RamIncrements {
-                columns,
-                first_bind,
-            } => {
-                if first_bind.is_none() && self.rounds > 1 {
-                    *first_bind = Some(challenge);
-                } else {
-                    let len = 1usize << (self.rounds - self.rounds_bound - 1);
-                    let count = CudaKernelContext::count_of(len)?;
-                    let mut table = context.alloc(len)?;
-                    let bound = u32::from(first_bind.is_some());
-                    let first = fr_limbs(first_bind.unwrap_or_default());
-                    let current = fr_limbs(challenge);
-                    let mut builder = context
-                        .stream()
-                        .launch_builder(context.dense_product_increment_bind());
-                    let _ = builder.arg(&columns.ram_inc);
-                    let _ = builder.arg(table.limbs_mut());
-                    let _ = builder.arg(&count);
-                    let _ = builder.arg(&bound);
-                    for limb in first.iter().chain(current.iter()) {
-                        let _ = builder.arg(limb);
-                    }
-                    // SAFETY: thread y < count reads two original increments,
-                    // or four when first_bind is present, and writes one field.
-                    // from_ram_increments checked the original logical extent;
-                    // count excludes any resident successor row. Both buffers
-                    // outlive the launch and each output has a unique writer.
-                    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-                    self.factors = ProductFactors::Tables(vec![table]);
+            ProductFactors::Increments(IncrementColumn::Ram { first_bind, .. })
+                if first_bind.is_none() && self.rounds > 1 =>
+            {
+                *first_bind = Some(challenge);
+            }
+            ProductFactors::Increments(column) => {
+                let len = 1usize << (self.rounds - self.rounds_bound - 1);
+                let count = CudaKernelContext::count_of(len)?;
+                let mut table = context.alloc(len)?;
+                let bound = u32::from(column.first_bind().is_some());
+                let first = fr_limbs(column.first_bind().unwrap_or_default());
+                let current = fr_limbs(challenge);
+                let mut builder = context
+                    .stream()
+                    .launch_builder(context.dense_product_increment_bind());
+                let _ = builder.arg(column.words());
+                let _ = builder.arg(table.limbs_mut());
+                let _ = builder.arg(&count);
+                let _ = builder.arg(&bound);
+                for limb in first.iter().chain(current.iter()) {
+                    let _ = builder.arg(limb);
                 }
+                // SAFETY: thread y < count reads two original increments,
+                // or four when first_bind is present, and writes one field.
+                // from_increments checked the original logical extent;
+                // count excludes any resident successor row. Both buffers
+                // outlive the launch and each output has a unique writer.
+                let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+                self.factors = ProductFactors::Tables(vec![table]);
             }
         }
         if let Some(one_hot) = &mut self.one_hot {
@@ -788,6 +838,15 @@ mod tests {
 
     #[test]
     fn compact_ram_increments_match_field_sums_through_promotion() {
+        check_compact_increments(false);
+    }
+
+    #[test]
+    fn compact_register_increments_match_field_sums_through_promotion() {
+        check_compact_increments(true);
+    }
+
+    fn check_compact_increments(registers: bool) {
         let Some(_) = shared_context() else {
             return;
         };
@@ -848,8 +907,16 @@ mod tests {
                             rs1_address: context.stream().alloc_zeros::<u32>(0).expect("empty"),
                             rs2_address: context.stream().alloc_zeros::<u32>(0).expect("empty"),
                             rd_address: context.stream().alloc_zeros::<u32>(0).expect("empty"),
-                            rd_inc: context.stream().alloc_zeros::<u64>(0).expect("empty"),
-                            ram_inc: context.upload_u64_slice(&native).expect("increments"),
+                            rd_inc: if registers {
+                                context.upload_u64_slice(&native).expect("increments")
+                            } else {
+                                context.stream().alloc_zeros::<u64>(0).expect("empty")
+                            },
+                            ram_inc: if registers {
+                                context.stream().alloc_zeros::<u64>(0).expect("empty")
+                            } else {
+                                context.upload_u64_slice(&native).expect("increments")
+                            },
                         });
                         let ra = DeviceRaPolynomial::from_words(
                             context,
@@ -870,8 +937,16 @@ mod tests {
                         } else {
                             lt.window(shard, shards).expect("LT window")
                         };
-                        states.push((
-                            ordinal,
+                        let product = if registers {
+                            DeviceDenseProduct::from_register_increments(
+                                context,
+                                columns,
+                                ra,
+                                lt,
+                                len.ilog2() as usize,
+                                3,
+                            )
+                        } else {
                             DeviceDenseProduct::from_ram_increments(
                                 context,
                                 columns,
@@ -880,8 +955,8 @@ mod tests {
                                 len.ilog2() as usize,
                                 3,
                             )
-                            .expect("compact product"),
-                        ));
+                        };
+                        states.push((ordinal, product.expect("compact product")));
                     }
                     let mut got = ShardedDenseProduct::new(states).expect("sharded product");
                     for round in 0..log_t {

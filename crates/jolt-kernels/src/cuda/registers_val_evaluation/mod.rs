@@ -4,10 +4,12 @@
 //! and split LT factor. As in optimized, absent writes contribute zero and the
 //! relation supplies the address/cycle opening geometry.
 //!
-//! CUDA promotes increments during preparation and keeps write RA lazy until
-//! the third bind. Optimized instead materializes both factors at the first
-//! bind. Product rounds run over resident cycle windows before gathering their
-//! remaining factors onto GPU 0.
+//! CUDA and optimized keep increments compact through the first round, then
+//! materialize their bound field values. CUDA reads resident `i128` increments;
+//! optimized derives them from typed trace rows. CUDA keeps write RA lazy until
+//! the third bind; optimized materializes it at the first bind. Product rounds
+//! run over resident cycle windows before gathering their remaining factors
+//! onto GPU 0.
 //! Optimized materializes only nonconstant prefixes and keeps their suffixes
 //! implicit; CUDA's increment and write-RA tables span the padded cycle domain.
 
@@ -70,7 +72,6 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
                 reason: "a registers value-evaluation window names an absent device",
             })?;
             let (_, atoms) = session_memory_window(device, session, witness, cycles, window)?;
-            let inc = device.i128_to_montgomery_device(&atoms.rd_inc, window.len)?;
             let slots = device.download_u32(&atoms.rd_address)?;
             if slots
                 .iter()
@@ -97,11 +98,11 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
             };
             states.push((
                 ordinal,
-                DeviceDenseProduct::from_device_factors(
-                    None,
-                    vec![inc],
-                    Some(wa),
-                    Some(lt),
+                DeviceDenseProduct::from_register_increments(
+                    device,
+                    atoms,
+                    wa,
+                    lt,
                     window.len.ilog2() as usize,
                     relation.degree(),
                 )?,
