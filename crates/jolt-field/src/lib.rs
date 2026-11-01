@@ -130,7 +130,7 @@ pub use binary::{F128, F192, F64, F8};
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 #[cfg(feature = "solinas")]
-pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator};
+pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator, Fp128SumAccumulator};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};

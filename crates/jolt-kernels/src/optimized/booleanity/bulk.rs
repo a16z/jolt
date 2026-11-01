@@ -4,6 +4,64 @@
 use super::{BooleanityChunks, ChunkIndexSource};
 use jolt_field::JoltField;
 
+use crate::optimized::lazy_ra::{PairedBranchTables, PAIRED_MATERIALIZE_BRANCHES};
+
+impl BooleanityChunks {
+    #[inline(always)]
+    fn visit_category_pairs<const WIDTH: usize, const BITS: usize>(
+        &self,
+        width: usize,
+        row: usize,
+        radix: usize,
+        columns: usize,
+        mut visit: impl FnMut(usize, usize, usize),
+    ) {
+        let width = if WIDTH == 0 { width } else { WIDTH };
+        let chunk_bits = if BITS == 0 { self.chunk_bits } else { BITS };
+        debug_assert!(width == 1 || width == 2);
+        let instruction = columns.min(self.instruction_chunks);
+        if instruction != 0 {
+            let skip = (self.instruction_chunks - instruction) * chunk_bits;
+            let mask = (1u128 << chunk_bits) - 1;
+            let mut lo0 = self.rows[2 * row * width].lookup_index() >> skip;
+            let mut hi0 = self.rows[(2 * row + 1) * width].lookup_index() >> skip;
+            let mut lo1 = if width == 2 {
+                self.rows[2 * row * width + 1].lookup_index() >> skip
+            } else {
+                0
+            };
+            let mut hi1 = if width == 2 {
+                self.rows[(2 * row + 1) * width + 1].lookup_index() >> skip
+            } else {
+                0
+            };
+            for column in (0..instruction).rev() {
+                let lo = (lo0 & mask) as usize + radix * (lo1 & mask) as usize;
+                let hi = (hi0 & mask) as usize + radix * (hi1 & mask) as usize;
+                visit(column, lo, hi);
+                lo0 >>= chunk_bits;
+                hi0 >>= chunk_bits;
+                lo1 >>= chunk_bits;
+                hi1 >>= chunk_bits;
+            }
+        }
+        for column in instruction..columns {
+            let mut states = [0; 2];
+            let mut weight = 1;
+            for branch in 0..width {
+                for (side, state) in states.iter_mut().enumerate() {
+                    *state += weight
+                        * self
+                            .index(column, (2 * row + side) * width + branch)
+                            .unwrap_or(radix - 1);
+                }
+                weight *= radix;
+            }
+            visit(column, states[0], states[1]);
+        }
+    }
+}
+
 impl ChunkIndexSource for BooleanityChunks {
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
@@ -27,49 +85,39 @@ impl ChunkIndexSource for BooleanityChunks {
         row: usize,
         radix: usize,
         columns: usize,
-        mut visit: impl FnMut(usize, usize, usize),
+        visit: impl FnMut(usize, usize, usize),
     ) {
-        debug_assert!(width == 1 || width == 2);
-        let instruction = columns.min(self.instruction_chunks);
-        if instruction != 0 {
-            let skip = (self.instruction_chunks - instruction) * self.chunk_bits;
-            let mask = (1u128 << self.chunk_bits) - 1;
-            let mut lo0 = self.rows[2 * row * width].lookup_index() >> skip;
-            let mut hi0 = self.rows[(2 * row + 1) * width].lookup_index() >> skip;
-            let mut lo1 = if width == 2 {
-                self.rows[2 * row * width + 1].lookup_index() >> skip
-            } else {
-                0
-            };
-            let mut hi1 = if width == 2 {
-                self.rows[(2 * row + 1) * width + 1].lookup_index() >> skip
-            } else {
-                0
-            };
-            for column in (0..instruction).rev() {
-                let lo = (lo0 & mask) as usize + radix * (lo1 & mask) as usize;
-                let hi = (hi0 & mask) as usize + radix * (hi1 & mask) as usize;
-                visit(column, lo, hi);
-                lo0 >>= self.chunk_bits;
-                hi0 >>= self.chunk_bits;
-                lo1 >>= self.chunk_bits;
-                hi1 >>= self.chunk_bits;
-            }
+        match (self.chunk_bits, width) {
+            (4, 1) => self.visit_category_pairs::<1, 4>(width, row, radix, columns, visit),
+            (4, 2) => self.visit_category_pairs::<2, 4>(width, row, radix, columns, visit),
+            _ => self.visit_category_pairs::<0, 0>(width, row, radix, columns, visit),
         }
-        for column in instruction..columns {
-            let mut states = [0; 2];
-            let mut weight = 1;
-            for branch in 0..width {
-                for (side, state) in states.iter_mut().enumerate() {
-                    *state += weight
-                        * self
-                            .index(column, (2 * row + side) * width + branch)
-                            .unwrap_or(radix - 1);
-                }
-                weight *= radix;
-            }
-            visit(column, states[0], states[1]);
-        }
+    }
+
+    fn visit_paired_values<F: JoltField>(
+        &self,
+        tables: &PairedBranchTables<F>,
+        row: usize,
+        mut visit: impl FnMut(usize, F),
+    ) {
+        let start = row * PAIRED_MATERIALIZE_BRANCHES;
+        let instruction = if self.chunk_bits == 4 {
+            self.instruction_chunks
+        } else {
+            0
+        };
+        tables.visit_four_bit::<PAIRED_MATERIALIZE_BRANCHES>(
+            instruction,
+            |branch| self.rows[start + branch].lookup_index(),
+            &mut visit,
+        );
+        tables.visit_indexed(
+            self,
+            instruction..tables.columns(),
+            start,
+            PAIRED_MATERIALIZE_BRANCHES / 2,
+            visit,
+        );
     }
 
     #[inline]
@@ -136,16 +184,18 @@ impl ChunkIndexSource for BooleanityChunks {
 mod tests {
     use super::super::{ColumnSelector, ConstantSuffix, InstructionCycleRow};
     use super::*;
+    use crate::optimized::lazy_ra::LazyFoldedRa;
     use jolt_field::Fr;
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
+    use jolt_poly::EqPolynomial;
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::RaChunkSelector;
     use std::sync::Arc;
 
     fn check<F: JoltField>() {
-        for bits in [1, 2, 4, 8] {
+        for bits in [1, 2, 3, 4, 8] {
             let instruction = 128 / bits;
             let addresses = 1usize << bits;
             for prefix in [0usize, 13, 17, 63] {
@@ -274,5 +324,96 @@ mod tests {
     #[test]
     fn bulk_instruction_decoding_matches_selectors_fp128() {
         check::<Prime128OffsetA7F7>();
+    }
+
+    fn check_materialized<F: JoltField>(instruction: usize) {
+        let cycles = 1 << 17;
+        for prefix in [cycles - 31, cycles] {
+            let rows = (0..prefix + usize::from(prefix < cycles))
+                .map(|row| {
+                    InstructionCycleRow::new(
+                        (row as u128 + 1).wrapping_mul(0xe387_9fb3_4ce9_ba74_1923_873a_e9b9_8379),
+                        None,
+                        false,
+                        row % 256,
+                        match row % 3 {
+                            0 => None,
+                            1 => Some(0),
+                            _ => Some((row % 4096) as u64),
+                        },
+                        #[cfg(feature = "akita")]
+                        FusedInc::default(),
+                    )
+                })
+                .collect();
+            let selectors = (0..instruction)
+                .map(|i| {
+                    ColumnSelector::Instruction(RaChunkSelector::new(i, instruction, 4).unwrap())
+                })
+                .chain(
+                    (0..2)
+                        .map(|i| ColumnSelector::Bytecode(RaChunkSelector::new(i, 2, 4).unwrap())),
+                )
+                .chain((0..3).map(|i| ColumnSelector::Ram(RaChunkSelector::new(i, 3, 4).unwrap())))
+                .collect();
+            let source = BooleanityChunks {
+                rows: Arc::new(ConstantSuffix::new(rows, cycles)),
+                prefix_len: prefix,
+                selectors,
+                instruction_chunks: instruction,
+                chunk_bits: 4,
+            };
+            let tables: Vec<Vec<F>> = (0..source.num_columns())
+                .map(|column| {
+                    (0..16)
+                        .map(|a| F::from_u64((97 * column + 13 * a + 1) as u64))
+                        .collect()
+                })
+                .collect();
+            let challenges: Vec<F> = [2, 7, 13, 23].into_iter().map(F::from_u64).collect();
+            let point: Vec<F> = challenges.iter().rev().copied().collect();
+            let weights = EqPolynomial::<F>::evals(&point, None);
+            let samples = [0, 17, (prefix - 1) / 16, cycles / 16 - 1];
+            let expected: Vec<Vec<F>> = samples
+                .iter()
+                .map(|&row| {
+                    tables
+                        .iter()
+                        .enumerate()
+                        .map(|(column, table)| {
+                            weights
+                                .iter()
+                                .enumerate()
+                                .map(|(branch, &weight)| {
+                                    source
+                                        .index(column, 16 * row + branch)
+                                        .map_or(F::zero(), |index| weight * table[index])
+                                })
+                                .sum()
+                        })
+                        .collect()
+                })
+                .collect();
+            let mut lazy = LazyFoldedRa::new(tables, source);
+            for challenge in challenges {
+                lazy.bind(challenge);
+            }
+            for (&row, expected) in samples.iter().zip(expected) {
+                for (column, value) in expected.into_iter().enumerate() {
+                    assert_eq!(lazy.value(column, row), value);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn materialized_families_match_multilinear_weights_fr() {
+        check_materialized::<Fr>(20);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn materialized_families_match_multilinear_weights_fp128() {
+        check_materialized::<Prime128OffsetA7F7>(32);
     }
 }

@@ -21,7 +21,7 @@
 //! verifier latency under explicit host-parallel and single-threaded
 //! pools are measured separately. With a prebuilt ELF and fixed input file,
 //! `--result-json` also reports the interval through proof serialization,
-//! including both tracing passes, program preprocessing, and PCS setup.
+//! including tracing, program preprocessing, and PCS setup.
 //! Compilation stays outside that end-to-end interval.
 
 #![expect(
@@ -43,7 +43,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
-use common::jolt_device::{MemoryConfig, MemoryLayout};
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
 #[cfg(not(feature = "akita"))]
@@ -64,7 +63,7 @@ use jolt_profiling::{
     format_memory_size, report_stage_boundaries, setup_tracing_with_trace_path, PeakMemory,
     TracingFormat, BYTES_PER_GIB,
 };
-use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
+use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
@@ -659,6 +658,7 @@ struct ProvenRun {
     verifier_single_threaded: VerificationRun,
     proof_size: usize,
     padded_trace_rows: usize,
+    public_output: Vec<u8>,
 }
 
 struct VerificationRun {
@@ -752,13 +752,18 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     }
     #[cfg(feature = "field-inline")]
     program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
-    let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
+    // Reuse the execution trace for sizing, memory layout, and proving. A
+    // preliminary legacy trace duplicates execution and can leave large
+    // allocator-retained buffers in the measured process.
+    let trace_output = program
+        .trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
+        .expect("modular trace");
+    let trace_length = trace_output.trace.proof_len();
     assert!(
-        sizing_trace.len().next_power_of_two() <= max_trace_length,
+        trace_length.next_power_of_two() <= max_trace_length,
         "Trace is longer than expected"
     );
-    jolt_kernels::mem::drop_in_background_thread(sizing_trace);
-    let memory_layout = io_device.memory_layout.clone();
+    let memory_layout = trace_output.device.memory_layout.clone();
     let jolt_program = Arc::new(program.build_jolt_program().expect("build Jolt program"));
     let program_preprocessing = JoltProgramPreprocessing::new(
         jolt_program.expanded_bytecode.clone(),
@@ -770,10 +775,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     )
     .expect("program preprocessing");
 
-    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
     assert!(!trace_output.device.panic, "benchmark guest panicked");
-    let trace_length = trace_output.trace.proof_len();
-
     let run = prove_workload(
         &jolt_program,
         program_preprocessing,
@@ -797,6 +799,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
             "verify_s": run.verifier_parallel.seconds(),
             "verify_single_s": run.verifier_single_threaded.seconds(),
             "proof_bytes": proof_size,
+            "public_output": &run.public_output,
             "trace_rows": trace_length,
             "padded_trace_rows": run.padded_trace_rows,
         });
@@ -985,6 +988,7 @@ fn prove_workload(
         verifier_single_threaded,
         proof_size,
         padded_trace_rows: config.trace_length,
+        public_output: public_io.outputs,
     }
 }
 
@@ -1118,27 +1122,8 @@ fn prove_workload(
         verifier_single_threaded,
         proof_size,
         padded_trace_rows: config.trace_length,
+        public_output: public_io.outputs,
     }
-}
-
-fn trace_modular(
-    program: &JoltProgram,
-    memory_layout: &MemoryLayout,
-    inputs: &[u8],
-) -> TraceOutput {
-    let memory_config = MemoryConfig {
-        max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
-        max_trusted_advice_size: memory_layout.max_trusted_advice_size,
-        max_input_size: memory_layout.max_input_size,
-        max_output_size: memory_layout.max_output_size,
-        stack_size: memory_layout.stack_size,
-        heap_size: memory_layout.heap_size,
-        program_size: Some(memory_layout.program_size),
-    };
-    let trace_inputs = TraceInputs::new(inputs.to_vec(), Vec::new(), Vec::new(), memory_config);
-    TracerBackend::new()
-        .trace(program, trace_inputs)
-        .expect("modular trace")
 }
 
 fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> TraceBackend {

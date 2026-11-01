@@ -128,6 +128,7 @@ impl CanonicalEncoding for M61 {
 impl_serde_bytes!(impl[] M61, 8);
 
 impl WithAccumulator for M61 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = NaiveAccumulator<M61>;
     type SmallScalarAccumulator = NaiveAccumulator<M61>;
     type SignedProductAccumulator = NaiveAccumulator<M61>;
