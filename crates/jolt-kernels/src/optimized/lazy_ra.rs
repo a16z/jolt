@@ -22,8 +22,10 @@
 //! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
 //! instead of multiplied per cycle. By default the fourth bind materializes
 //! the explicit prefix and drops the index source. If the source establishes
-//! a constant suffix starting at `P`, each vector holds `ceil(P/16)` elements
-//! and one implicit tail value; otherwise it holds `T/16`. Low-bit binding
+//! a constant suffix starting at `P`, each polynomial holds `ceil(P/16)`
+//! elements and one implicit tail value; otherwise it holds `T/16`. Families
+//! of at least `ROW_ORDER_MIN_POLYS` paired-eligible polynomials store those
+//! elements row-major in one vector instead of one vector each. Low-bit binding
 //! preserves a constant suffix and rounds its boundary upward. A consumer
 //! whose base tables are too large to stay cache-resident materializes a bind
 //! earlier, at branch width eight (`max_width`). Large address domains switch
@@ -44,7 +46,7 @@
 //! against the naive dense path.
 
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{bind_prefix_in_place, BindingOrder, Polynomial};
+use jolt_poly::{bind_prefix_in_place, bind_prefix_rows_in_place, BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -121,20 +123,8 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
         }
     }
 
-    /// Consume the adjacent-branch sum tables built by `materialize_paired_values`.
+    /// Consume the adjacent-branch sum tables built by `paired_branch_tables`.
     /// Each pair has radix 17, with the final digit representing a cold row.
-    fn gather_paired_values<F: JoltField>(
-        &self,
-        tables: &[Vec<F>],
-        row: usize,
-        out: &mut [&mut [F]],
-        output_row: usize,
-    ) where
-        Self: Sized,
-    {
-        self.visit_paired_values(tables, row, |column, value| out[column][output_row] = value);
-    }
-
     fn visit_paired_values<F: JoltField>(
         &self,
         tables: &[Vec<F>],
@@ -193,17 +183,13 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
         tail: Vec<F>,
         source: S,
     },
-    /// Sources without a constant-suffix guarantee retain the dense path.
+    /// Narrow families without a constant-suffix guarantee retain the dense path.
     Dense(Vec<Polynomial<F>>),
     /// Explicit nonconstant evaluations followed by one constant per column.
-    Prefix {
-        values: Vec<Vec<F>>,
-        tail: Vec<F>,
-    },
-    Rows {
-        values: Vec<F>,
-        tail: Vec<F>,
-    },
+    Prefix { values: Vec<Vec<F>>, tail: Vec<F> },
+    /// `Prefix` stored row-major: `values[row * tail.len() + poly]`. Without a
+    /// constant suffix the rows cover the domain and `tail` is never read.
+    Rows { values: Vec<F>, tail: Vec<F> },
 }
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
@@ -418,7 +404,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                         )
                     };
                     let materialized_rows = prefix_len.div_ceil(next_width);
-                    let dense = if tables.len() >= 16
+                    let dense = if tables.len() >= ROW_ORDER_MIN_POLYS
                         && can_pair_materialize(&tables, factors, branches, materialized_rows, bind)
                     {
                         Self::Rows {
@@ -475,70 +461,10 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 Self::Prefix { values, tail }
             }
             Self::Rows { mut values, tail } => {
-                Self::bind_rows_in_place(&mut values, &tail, challenge);
+                let _ = bind_prefix_rows_in_place(&mut values, challenge, &tail);
                 Self::Rows { values, tail }
             }
         };
-    }
-
-    fn bind_rows_in_place(values: &mut Vec<F>, tail: &[F], challenge: F) {
-        let columns = tail.len();
-        let rows = values.len() / columns;
-        if rows == 0 {
-            return;
-        }
-        for i in 0..columns {
-            let lo = values[i];
-            let hi = values.get(columns + i).copied().unwrap_or(tail[i]);
-            values[i] = challenge.mul_add(hi - lo, lo);
-        }
-        let mut start = 2;
-        while start < rows {
-            let count = (rows - start).min(start);
-            let (head, rest) = values.split_at_mut(start * columns);
-            let source = &rest[..count * columns];
-            let destination =
-                &mut head[start / 2 * columns..(start / 2 + count.div_ceil(2)) * columns];
-            let bind = |(out, pair): (&mut [F], &[F])| {
-                let (lo, hi) = pair.split_at(columns);
-                for ((out, &lo), &hi) in out.iter_mut().zip(lo).zip(hi) {
-                    *out = challenge.mul_add(hi - lo, lo);
-                }
-            };
-            let complete = &mut destination[..count / 2 * columns];
-            #[cfg(feature = "parallel")]
-            {
-                let min_elements: usize = if F::NUM_BYTES <= 16 { 1 << 14 } else { 1 << 10 };
-                if complete.len() >= min_elements {
-                    complete
-                        .par_chunks_exact_mut(columns)
-                        .zip(source.par_chunks_exact(2 * columns))
-                        .with_min_len(min_elements.div_ceil(columns))
-                        .for_each(bind);
-                } else {
-                    complete
-                        .chunks_exact_mut(columns)
-                        .zip(source.chunks_exact(2 * columns))
-                        .for_each(bind);
-                }
-            }
-            #[cfg(not(feature = "parallel"))]
-            complete
-                .chunks_exact_mut(columns)
-                .zip(source.chunks_exact(2 * columns))
-                .for_each(bind);
-            if count % 2 != 0 {
-                for i in 0..columns {
-                    let lo = source[(count - 1) * columns + i];
-                    destination[count / 2 * columns + i] = challenge.mul_add(tail[i] - lo, lo);
-                }
-            }
-            start *= 2;
-        }
-        values.truncate(rows.div_ceil(2) * columns);
-        if values.capacity() >= 8 * values.len().max(1) {
-            values.shrink_to_fit();
-        }
     }
 }
 
@@ -673,6 +599,9 @@ pub(super) const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
 pub(super) const PAIRED_MATERIALIZE_ADDRESSES: usize = 16;
 const PAIRED_MATERIALIZE_MIN_ROWS: usize = 1 << 12;
 const PAIRED_MATERIALIZE_MAX_BYTES: usize = 2 << 20;
+/// Round messages read every polynomial at a row; once a row spans this many
+/// polynomials, row-major storage keeps those reads contiguous.
+const ROW_ORDER_MIN_POLYS: usize = 16;
 
 /// Row-major fill ranges longer than this are split across rayon tasks.
 #[cfg(feature = "parallel")]
@@ -828,6 +757,10 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
         .collect();
     #[cfg(not(feature = "parallel"))]
     let mut values: Vec<Vec<F>> = (0..tables.len()).map(|_| vec![F::zero(); len]).collect();
+    #[expect(
+        clippy::needless_range_loop,
+        reason = "`row` indexes each column slice inside `out`, not `out` itself"
+    )]
     fn fill<F: JoltField, S: ChunkIndexSource>(
         mut out: Vec<&mut [F]>,
         start: usize,
@@ -847,7 +780,9 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
             return;
         }
         for row in 0..len {
-            source.gather_paired_values(paired, start + row, &mut out, row);
+            source.visit_paired_values(paired, start + row, |column, value| {
+                out[column][row] = value;
+            });
         }
     }
     fill(
@@ -992,6 +927,13 @@ mod prefix_tests {
                 for (i, values) in dense.iter().enumerate() {
                     for (j, value) in values.iter().enumerate() {
                         assert_eq!(lazy.value(i, j), *value);
+                    }
+                }
+                let mut pairs = vec![(F::zero(), F::zero()); columns];
+                for row in 0..dense[0].len() / 2 {
+                    lazy.lo_hi_all(row, &mut pairs);
+                    for (pair, values) in pairs.iter().zip(&dense) {
+                        assert_eq!(*pair, (values[2 * row], values[2 * row + 1]));
                     }
                 }
                 if round == rounds {
