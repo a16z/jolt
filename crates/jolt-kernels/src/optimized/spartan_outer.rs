@@ -1306,18 +1306,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
 
         let blocks = weights.blocks();
         let block = |index: usize| -> Result<Vec<F>, WitnessError> {
-            let (start, inner, outer) = weights.block(index);
+            let block = weights.block(index);
             let mut accumulator = ClaimAccumulator::<F>::default();
-            for (t, &weight) in (start..).zip(inner) {
+            for (t, &weight) in (block.start..).zip(block.inner) {
                 let row = access.row(t)?;
                 accumulator.add_row(weight, &row);
             }
             let mut values = accumulator.finish();
-            if !outer.is_one() {
-                for value in &mut values {
-                    *value *= outer;
-                }
-            }
+            block.scale(&mut values);
             Ok(values)
         };
         let claimed = {

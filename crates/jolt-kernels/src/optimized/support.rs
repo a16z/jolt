@@ -1115,23 +1115,6 @@ impl<B: WitnessBundle + Copy + PartialEq> BundleAccess<'_, B> {
     }
 }
 
-fn cycle_tail_start(num_vars: usize, prefix_cycles: usize) -> usize {
-    prefix_cycles.min((1usize << num_vars) - 1)
-}
-
-pub(crate) fn prefix_cycle_weights<F: JoltField>(point: &[F], prefix_cycles: usize) -> Vec<F> {
-    let prefix = cycle_tail_start(point.len(), prefix_cycles);
-    let eq = TensorEqTable::new(point);
-    let tail_mass = EqPolynomial::suffix_sum(point, prefix);
-    map_indices(prefix + 1, |row| {
-        if row == prefix {
-            tail_mass
-        } else {
-            eq.evaluate_index(row)
-        }
-    })
-}
-
 pub(crate) struct PrefixCycleWeights<F: JoltField> {
     eq: TensorEqTable<F>,
     prefix: usize,
@@ -1142,7 +1125,7 @@ impl<F: JoltField> PrefixCycleWeights<F> {
     const BLOCK_BITS: usize = 12;
 
     pub(crate) fn new(point: &[F], prefix_cycles: usize) -> Self {
-        let prefix = cycle_tail_start(point.len(), prefix_cycles);
+        let prefix = prefix_cycles.min((1usize << point.len()) - 1);
         let active_bits = prefix.next_power_of_two().ilog2() as usize;
         let (leading_point, active_point) = point.split_at(point.len() - active_bits);
         // Every index below the prefix has zero leading coordinates.
@@ -1173,29 +1156,55 @@ impl<F: JoltField> PrefixCycleWeights<F> {
 
     /// Each block has one outer factor. The final singleton carries the entire
     /// constant suffix, including the last row when the prefix fills the domain.
-    pub(crate) fn block(&self, index: usize) -> (usize, &[F], F) {
+    pub(crate) fn block(&self, index: usize) -> PrefixCycleBlock<'_, F> {
         let block_len = self.block_len();
         if index == self.prefix.div_ceil(block_len) {
-            return (self.prefix, std::slice::from_ref(&self.tail_mass), F::one());
+            return PrefixCycleBlock {
+                start: self.prefix,
+                inner: std::slice::from_ref(&self.tail_mass),
+                outer: F::one(),
+            };
         }
         let start = index * block_len;
         let count = block_len.min(self.prefix - start);
         let inner_len = self.eq.e_in().len();
         let inner_start = start % inner_len;
-        (
+        PrefixCycleBlock {
             start,
-            &self.eq.e_in()[inner_start..inner_start + count],
-            self.eq.e_out()[start / inner_len],
-        )
+            inner: &self.eq.e_in()[inner_start..inner_start + count],
+            outer: self.eq.e_out()[start / inner_len],
+        }
     }
 
-    #[cfg(any(test, feature = "field-inline"))]
+    /// One weight per row `0..=prefix`, the last carrying the constant suffix.
+    pub(crate) fn to_dense(&self) -> Vec<F> {
+        map_indices(self.prefix + 1, |row| self.evaluate(row))
+    }
+
     pub(crate) fn evaluate(&self, row: usize) -> F {
         assert!(row <= self.prefix);
         if row == self.prefix {
             self.tail_mass
         } else {
             self.eq.evaluate_index(row)
+        }
+    }
+}
+
+/// Rows `start..start + inner.len()` weigh `outer * inner[i]`.
+pub(crate) struct PrefixCycleBlock<'a, F> {
+    pub(crate) start: usize,
+    pub(crate) inner: &'a [F],
+    pub(crate) outer: F,
+}
+
+impl<F: JoltField> PrefixCycleBlock<'_, F> {
+    /// Applies the block's outer factor to sums accumulated with `inner` weights.
+    pub(crate) fn scale(&self, values: &mut [F]) {
+        if !self.outer.is_one() {
+            for value in values {
+                *value *= self.outer;
+            }
         }
     }
 }
@@ -1439,11 +1448,12 @@ mod prefix_cycle_weights_tests {
                 let weights = PrefixCycleWeights::new(&point, requested);
                 let mut actual = Vec::new();
                 for index in 0..weights.blocks() {
-                    let (start, inner, outer) = weights.block(index);
-                    assert_eq!(start, actual.len());
-                    actual.extend(inner.iter().map(|value| outer * *value));
+                    let block = weights.block(index);
+                    assert_eq!(block.start, actual.len());
+                    actual.extend(block.inner.iter().map(|value| block.outer * *value));
                 }
                 assert_eq!(actual, expected);
+                assert_eq!(weights.to_dense(), expected);
                 for (row, value) in expected.into_iter().enumerate() {
                     assert_eq!(weights.evaluate(row), value);
                 }

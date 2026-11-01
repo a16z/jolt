@@ -643,11 +643,11 @@ impl<F: JoltField> ProductRemainderKernel<F> {
 
         let blocks = weights.blocks();
         let block = |index: usize| -> Result<Vec<F>, WitnessError> {
-            let (start, inner, outer) = weights.block(index);
+            let block = weights.block(index);
             let mut words: [<F as WithAccumulator>::SignedProductAccumulator; 3] =
                 [Default::default(), Default::default(), Default::default()];
             let mut flags: [<F as WithAccumulator>::SmallScalarAccumulator; 5] = Default::default();
-            for (t, &weight) in (start..).zip(inner) {
+            for (t, &weight) in (block.start..).zip(block.inner) {
                 let row = access.row(t)?;
                 words[0].fmadd_u64(weight, row.left_instruction_input.0);
                 words[1].fmadd_i128(weight, row.right_instruction_input.0);
@@ -670,11 +670,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                 noop.reduce(),
                 virtual_instruction.reduce(),
             ];
-            if !outer.is_one() {
-                for value in &mut values {
-                    *value *= outer;
-                }
-            }
+            block.scale(&mut values);
             Ok(values)
         };
         try_par_sum_vecs(blocks, 8, block)
