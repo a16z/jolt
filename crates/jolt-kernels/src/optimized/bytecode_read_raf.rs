@@ -1080,6 +1080,23 @@ const CYCLE_CHUNK: usize = 4096;
 /// Distinct groups the merge cache holds, and the sampled block length.
 const CYCLE_GROUP_ENTRIES: usize = 64;
 
+#[derive(Clone, Copy)]
+struct CycleGrouping {
+    entries: usize,
+    batch: usize,
+}
+
+impl CycleGrouping {
+    const SHORT: Self = Self {
+        entries: CYCLE_GROUP_ENTRIES,
+        batch: CYCLE_CHUNK,
+    };
+    const LONG: Self = Self {
+        entries: 2048,
+        batch: 16384,
+    };
+}
+
 impl BytecodePcChunks {
     /// Every column index is a function of this PC alone, so equal PC tuples
     /// select equal RA factors.
@@ -1097,6 +1114,21 @@ impl BytecodePcChunks {
     fn same_group(&self, left: usize, right: usize, width: usize) -> bool {
         (0..2 * width)
             .all(|offset| self.pc(2 * width * left + offset) == self.pc(2 * width * right + offset))
+    }
+
+    // A long loop can appear nonrepeating inside the short sample windows.
+    fn grouping_plan(&self, groups: usize, width: usize) -> Option<CycleGrouping> {
+        [CycleGrouping::SHORT, CycleGrouping::LONG]
+            .into_iter()
+            .find(|plan| {
+                (plan.entries == CYCLE_GROUP_ENTRIES || groups >= plan.batch)
+                    && repeats_often(
+                        groups,
+                        plan.entries,
+                        |y| self.group_hash(y, width),
+                        |a, b| self.same_group(a, b, width),
+                    )
+            })
     }
 }
 
@@ -1225,25 +1257,18 @@ impl<F: JoltField> CycleKernel<F> {
             return None;
         };
         let width = *width;
-        if !repeats_often(
-            half,
-            CYCLE_GROUP_ENTRIES,
-            |y| source.group_hash(y, width),
-            |a, b| source.same_group(a, b, width),
-        ) {
-            return None;
-        }
+        let plan = source.grouping_plan(half, width)?;
         // Equal ordered PC tuples have identical RA factors at this round. Only
         // their coefficient polynomials are added; fused increments may differ.
         // Every collision and batch end flushes the old contribution. The cache
         // is local to this call, so it cannot survive a binding challenge.
         Some(map_reduce_chunks(
             half,
-            CYCLE_CHUNK,
+            plan.batch,
             |range| {
                 let mut acc = vec![F::zero(); self.degree];
                 let mut pairs = vec![(F::zero(), F::zero()); self.ra.num_polys()];
-                let mut cache = RepeatCache::<(usize, [F; 3])>::new(CYCLE_GROUP_ENTRIES);
+                let mut cache = RepeatCache::<(usize, [F; 3])>::new(plan.entries);
                 for y in range {
                     let entry = cache.entry(source.group_hash(y, width));
                     let coefficients = self.coefficient(y);
@@ -2227,11 +2252,13 @@ mod grouped_cycle_tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    fn check<F: JoltField>(num_ra: usize) {
-        let n = 1 << 16;
+    fn check<F: JoltField>(num_ra: usize, long_period: bool) {
+        let log_n = if long_period { 17 } else { 16 };
+        let n = 1 << log_n;
+        let period = if long_period { 2064 } else { 31 };
         let mut rng = ChaCha20Rng::seed_from_u64(2187);
         let pcs: Vec<usize> = (0..n)
-            .map(|j| if j < n - 17 { (j % 31) * 7 % 256 } else { 0 })
+            .map(|j| if j < n - 17 { (j % period) * 7 } else { 0 })
             .collect();
         let rows = Arc::new(ConstantSuffix::from(
             pcs.iter()
@@ -2268,9 +2295,10 @@ mod grouped_cycle_tests {
                 .map(|i| RaChunkSelector::new(i, num_ra, 4).unwrap())
                 .collect(),
         };
-        let mut cache = RepeatCache::new(CYCLE_GROUP_ENTRIES);
+        let plan = source.grouping_plan(n / 2, 1).unwrap();
+        let mut cache = RepeatCache::new(plan.entries);
         let mut collision = false;
-        for y in 0..31 {
+        for y in 0..period {
             let entry = cache.entry(source.group_hash(y, 1));
             collision |= entry.is_some_and(|old| !source.same_group(old, y, 1));
             *entry = Some(y);
@@ -2286,7 +2314,7 @@ mod grouped_cycle_tests {
         let mut fused_combined = Polynomial::new((0..n).map(|_| F::random(&mut rng)).collect());
         let degree = num_ra + if cfg!(feature = "akita") { 2 } else { 1 };
         let mut kernel = CycleKernel {
-            progress: RoundProgress::new(16),
+            progress: RoundProgress::new(log_n),
             degree,
             ra: LazyFoldedRa::new(tables, source),
             combined: EqPrefix::from_evals(combined.evals().to_vec()),
@@ -2302,7 +2330,7 @@ mod grouped_cycle_tests {
         for round in 0..=4 {
             let groups = combined.len() / 2;
             let grouped = kernel.grouped_evals(groups);
-            assert_eq!(grouped.is_some(), round < 4);
+            assert_eq!(grouped.is_some(), round < if long_period { 3 } else { 4 });
             let product = kernel.four_ra_evals(groups);
             assert_eq!(product.is_some(), num_ra == 4);
             let at = |poly: &Polynomial<F>, y: usize, t: F| {
@@ -2348,11 +2376,18 @@ mod grouped_cycle_tests {
     }
 
     #[test]
+    fn long_period_pc_groups_preserve_independent_coefficients() {
+        check::<Fr>(4, true);
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>(4, true);
+    }
+
+    #[test]
     fn repeated_pc_groups_preserve_independent_coefficients() {
         for num_ra in [2, 4] {
-            check::<Fr>(num_ra);
+            check::<Fr>(num_ra, false);
             #[cfg(feature = "akita")]
-            check::<Prime128OffsetA7F7>(num_ra);
+            check::<Prime128OffsetA7F7>(num_ra, false);
         }
     }
 }
