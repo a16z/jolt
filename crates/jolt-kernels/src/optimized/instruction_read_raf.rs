@@ -37,6 +37,9 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
+mod cycle_groups;
+
+use cycle_groups::CyclePairGroups;
 use std::num::NonZeroU16;
 use std::sync::{Arc, Weak};
 
@@ -1567,61 +1570,89 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 .copied()
                 .unwrap_or(F::zero())
             * cycle.ra.tail_values().iter().copied().product::<F>();
-        let block_lanes = cycle.gruen.par_fold_out_in_prefix(
-            prefix_pairs,
-            || Scratch {
-                lanes: vec![F::Accumulator::default(); factors],
-                pairs: vec![(F::zero(), F::zero()); factors],
-                evals: vec![F::zero(); factors],
-                steps: vec![F::zero(); factors],
-                grid: vec![F::zero(); product_grid_scratch_len(factors)],
-                low_degree: LowDegreeProductSum::default(),
-            },
-            |scratch, row, _x_in, e_in| {
-                let (val, ra) = scratch.pairs.split_at_mut(1);
-                cycle.combined_val.lo_hi_all(row, val);
-                cycle.ra.lo_hi_all(row, ra);
-                let (lo, hi) = val[0];
-                val[0] = (e_in * lo, e_in * hi);
-                for ((&(lo, hi), eval), step) in scratch
-                    .pairs
-                    .iter()
-                    .zip(scratch.evals.iter_mut())
-                    .zip(scratch.steps.iter_mut())
-                {
-                    *eval = hi;
-                    *step = hi - lo;
-                }
-                if !scratch.low_degree.try_accumulate(
+        let groups = match (&cycle.ra, &cycle.combined_val) {
+            (
+                LazyFoldedRa::Lazy {
+                    source, width: 1, ..
+                },
+                LazyFoldedRa::Lazy {
+                    source: claims,
+                    width: 1,
+                    ..
+                },
+            ) => CyclePairGroups::new(source, claims, prefix_pairs, cycle.gruen.e_in_current_len()),
+            _ => None,
+        };
+        let make_scratch = || Scratch {
+            lanes: vec![F::Accumulator::default(); factors],
+            pairs: vec![(F::zero(), F::zero()); factors],
+            evals: vec![F::zero(); factors],
+            steps: vec![F::zero(); factors],
+            grid: vec![F::zero(); product_grid_scratch_len(factors)],
+            low_degree: LowDegreeProductSum::default(),
+        };
+        let eval_row = |scratch: &mut Scratch<F>, row: usize, e_in: F| {
+            let (val, ra) = scratch.pairs.split_at_mut(1);
+            cycle.combined_val.lo_hi_all(row, val);
+            cycle.ra.lo_hi_all(row, ra);
+            let (lo, hi) = val[0];
+            val[0] = (e_in * lo, e_in * hi);
+            for ((&(lo, hi), eval), step) in scratch
+                .pairs
+                .iter()
+                .zip(scratch.evals.iter_mut())
+                .zip(scratch.steps.iter_mut())
+            {
+                *eval = hi;
+                *step = hi - lo;
+            }
+            if !scratch.low_degree.try_accumulate(
+                &scratch.evals,
+                &scratch.steps,
+                tail_products.as_ref(),
+            ) {
+                accumulate_product_grid(
                     &scratch.evals,
                     &scratch.steps,
-                    tail_products.as_ref(),
-                ) {
-                    accumulate_product_grid(
-                        &scratch.evals,
-                        &scratch.steps,
-                        &mut scratch.lanes,
-                        &mut scratch.grid,
-                    );
-                }
-            },
-            |_x_out, e_out, mut scratch| {
-                scratch
-                    .low_degree
-                    .merge_into(&mut scratch.lanes, &mut scratch.grid);
-                let mut out = vec![F::Accumulator::default(); factors];
-                for (out, lane) in out.iter_mut().zip(scratch.lanes) {
-                    out.fmadd(e_out, lane.reduce());
-                }
-                out
-            },
-            |mut a, b| {
-                for (a, b) in a.iter_mut().zip(b) {
-                    a.merge(b);
-                }
-                a
-            },
-        );
+                    &mut scratch.lanes,
+                    &mut scratch.grid,
+                );
+            }
+        };
+        let finish_block = |_x_out: usize, e_out: F, mut scratch: Scratch<F>| {
+            scratch
+                .low_degree
+                .merge_into(&mut scratch.lanes, &mut scratch.grid);
+            let mut out = vec![F::Accumulator::default(); factors];
+            for (out, lane) in out.iter_mut().zip(scratch.lanes) {
+                out.fmadd(e_out, lane.reduce());
+            }
+            out
+        };
+        let merge = |mut a: Vec<F::Accumulator>, b: Vec<F::Accumulator>| {
+            for (a, b) in a.iter_mut().zip(b) {
+                a.merge(b);
+            }
+            a
+        };
+        let block_lanes = if let Some(groups) = groups {
+            groups.fold(
+                &cycle.gruen,
+                prefix_pairs,
+                make_scratch,
+                eval_row,
+                finish_block,
+                merge,
+            )
+        } else {
+            cycle.gruen.par_fold_out_in_prefix(
+                prefix_pairs,
+                make_scratch,
+                |scratch, row, _, weight| eval_row(scratch, row, weight),
+                finish_block,
+                merge,
+            )
+        };
         let mut q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         for value in &mut q_evals[..factors - 1] {
             *value += tail_mass;
@@ -2372,9 +2403,11 @@ mod tests {
 
     #[test]
     fn repeated_lookup_rows_match_reference_across_scan_tasks() {
-        check_repeated_lookup_rows::<Fr>(14, 1 << 14, None);
-        #[cfg(feature = "akita")]
-        check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, 1 << 14, None);
+        for prefix in [6003, 1 << 14] {
+            check_repeated_lookup_rows::<Fr>(14, prefix, None);
+            #[cfg(feature = "akita")]
+            check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, prefix, None);
+        }
     }
 
     #[test]
