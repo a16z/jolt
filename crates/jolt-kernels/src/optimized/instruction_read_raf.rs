@@ -68,7 +68,7 @@ use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
 use super::lazy_ra::{
-    ChunkIndexSource, LazyFoldedRa, PAIRED_MATERIALIZE_ADDRESSES, PAIRED_MATERIALIZE_BRANCHES,
+    ChunkIndexSource, LazyFoldedRa, PairedBranchTables, PAIRED_MATERIALIZE_BRANCHES,
 };
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
@@ -352,63 +352,6 @@ impl LookupIndexChunks {
     }
 }
 
-pub(super) fn visit_paired_four_bit_values<F: JoltField>(
-    packed_index: impl Fn(usize) -> u128,
-    tables: &[Vec<F>],
-    mut visit: impl FnMut(usize, F),
-) {
-    const DIGITS_PER_LIMB: usize = u64::BITS as usize / 4;
-    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-    // Four-bit digits never cross a 64-bit limb boundary.
-    for limb in 0..tables.len().div_ceil(DIGITS_PER_LIMB) {
-        let end = tables.len() - limb * DIGITS_PER_LIMB;
-        let start = end.saturating_sub(DIGITS_PER_LIMB);
-        let mut indices = [0u64; PAIRED_MATERIALIZE_BRANCHES];
-        for (branch, index) in indices.iter_mut().enumerate() {
-            *index = (packed_index(branch) >> (limb * u64::BITS as usize)) as u64;
-        }
-        for (column, table) in tables[start..end].iter().enumerate().rev() {
-            let mut sum = F::Accumulator::default();
-            for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
-                let lo = (indices[0] & 15) as usize;
-                let hi = (indices[1] & 15) as usize;
-                sum.add(table[pair * radix * radix + lo * radix + hi]);
-                indices[0] >>= 4;
-                indices[1] >>= 4;
-            }
-            visit(start + column, sum.reduce());
-        }
-    }
-}
-
-impl LookupIndexChunks {
-    fn visit_paired_values_inner<F: JoltField>(
-        &self,
-        tables: &[Vec<F>],
-        row: usize,
-        mut visit: impl FnMut(usize, F),
-    ) {
-        let bits = self.chunk_bits;
-        let mut indices = [0u128; PAIRED_MATERIALIZE_BRANCHES];
-        for (branch, index) in indices.iter_mut().enumerate() {
-            *index = self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index();
-        }
-        let mask = (1u128 << bits) - 1;
-        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-        for (column, table) in tables.iter().enumerate().rev() {
-            let mut sum = F::Accumulator::default();
-            for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
-                let lo = (indices[0] & mask) as usize;
-                let hi = (indices[1] & mask) as usize;
-                sum.add(table[pair * radix * radix + lo * radix + hi]);
-                indices[0] >>= bits;
-                indices[1] >>= bits;
-            }
-            visit(column, sum.reduce());
-        }
-    }
-}
-
 impl ChunkIndexSource for LookupIndexChunks {
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
@@ -461,17 +404,25 @@ impl ChunkIndexSource for LookupIndexChunks {
 
     fn visit_paired_values<F: JoltField>(
         &self,
-        tables: &[Vec<F>],
+        tables: &PairedBranchTables<F>,
         row: usize,
         visit: impl FnMut(usize, F),
     ) {
-        match self.chunk_bits {
-            4 => visit_paired_four_bit_values(
-                |branch| self.packed_index(row * PAIRED_MATERIALIZE_BRANCHES + branch),
-                tables,
+        let start = row * PAIRED_MATERIALIZE_BRANCHES;
+        if self.chunk_bits == 4 {
+            tables.visit_four_bit::<PAIRED_MATERIALIZE_BRANCHES>(
+                tables.columns(),
+                |branch| self.packed_index(start + branch),
                 visit,
-            ),
-            _ => self.visit_paired_values_inner(tables, row, visit),
+            );
+        } else {
+            tables.visit_indexed(
+                self,
+                0..tables.columns(),
+                start,
+                PAIRED_MATERIALIZE_BRANCHES / 2,
+                visit,
+            );
         }
     }
 
