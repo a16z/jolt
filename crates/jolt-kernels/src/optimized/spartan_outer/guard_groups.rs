@@ -107,52 +107,79 @@ fn guard_key<const M: usize>(guards: &[i64; M]) -> Option<u64> {
 }
 
 #[derive(Clone, Copy)]
-struct GuardFold<F: JoltField> {
+struct GuardEndpointGroup<F: JoltField> {
     key: [u64; 2],
     values: [F; 2],
+    sums: [F::Accumulator; 2],
 }
 
-/// The remainder's A interpolants depend only on the guards and its fixed
-/// Lagrange weights. Collisions replace one slot; scratch never grows with T.
-pub(super) struct GuardFolds<'a, F: JoltField> {
+impl<F: JoltField> GuardEndpointGroup<F> {
+    fn flush(self, endpoints: &mut [F::Accumulator; 2]) {
+        endpoints[0].fmadd(self.values[0], self.sums[0].reduce());
+        endpoints[1].fmadd(self.values[1] - self.values[0], self.sums[1].reduce());
+    }
+}
+
+/// Equal A interpolants factor out of the weighted B sums. Collisions flush
+/// their group before replacement, keeping the per-equality-block scratch bounded.
+pub(super) struct GuardEndpoints<'a, F: JoltField> {
     weights: &'a [F],
-    slots: [Option<GuardFold<F>>; 1 << MAP_BITS],
+    slots: [Option<GuardEndpointGroup<F>>; 1 << MAP_BITS],
+    endpoints: [F::Accumulator; 2],
 }
 
-impl<'a, F: JoltField> GuardFolds<'a, F> {
+impl<'a, F: JoltField> GuardEndpoints<'a, F> {
     pub(super) fn new(weights: &'a [F]) -> Self {
         Self {
             weights,
             slots: [None; 1 << MAP_BITS],
+            endpoints: [F::Accumulator::default(); 2],
         }
     }
 
     #[inline]
-    pub(super) fn fold(
+    pub(super) fn add(
         &mut self,
         first: &[i64; DOMAIN],
         second: &[i64; SECOND_GROUP_LEN],
+        b: [F; 2],
+        weight: F,
     ) -> [F; 2] {
-        let evaluate = || {
-            [
-                fold_guards(self.weights, first),
-                fold_guards(self.weights, second),
-            ]
-        };
+        let weights = self.weights;
+        let evaluate = || [fold_guards(weights, first), fold_guards(weights, second)];
         let (Some(first_key), Some(second_key)) = (guard_key(first), guard_key(second)) else {
-            return evaluate();
+            let values = evaluate();
+            self.add_direct(values, b, weight);
+            return values;
         };
         let key = [first_key, second_key];
         let hash = first_key ^ second_key.rotate_left(27);
         let slot = (hash.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - MAP_BITS)) as usize;
-        if let Some(cached) = self.slots[slot] {
-            if cached.key == key {
-                return cached.values;
-            }
+        let cached = &mut self.slots[slot];
+        if let Some(group) = cached.take_if(|group| group.key != key) {
+            group.flush(&mut self.endpoints);
         }
-        let values = evaluate();
-        self.slots[slot] = Some(GuardFold { key, values });
-        values
+        let group = cached.get_or_insert_with(|| GuardEndpointGroup {
+            key,
+            values: evaluate(),
+            sums: [F::Accumulator::default(); 2],
+        });
+        group.sums[0].fmadd(weight, b[0]);
+        group.sums[1].fmadd(weight, b[1] - b[0]);
+        group.values
+    }
+
+    #[inline]
+    pub(super) fn add_direct(&mut self, a: [F; 2], b: [F; 2], weight: F) {
+        self.endpoints[0].fmadd(weight * a[0], b[0]);
+        self.endpoints[1].fmadd(weight * (a[1] - a[0]), b[1] - b[0]);
+    }
+
+    pub(super) fn finish(&mut self) -> [F; 2] {
+        for group in self.slots.iter_mut().filter_map(Option::take) {
+            group.flush(&mut self.endpoints);
+        }
+        std::mem::take(&mut self.endpoints).map(Accumulator::reduce)
     }
 }
 
@@ -163,9 +190,9 @@ mod tests {
     use crate::optimized::spartan_outer::{
         DOMAIN, DOMAIN_START, EXTENDED_POSITIONS, EXTENDED_START,
     };
-    #[cfg(feature = "akita")]
-    use jolt_field::Fp128;
     use jolt_field::Fr;
+    #[cfg(feature = "akita")]
+    use jolt_field::{Fp128, Prime128OffsetA7F7};
     use jolt_poly::lagrange::centered_lagrange_evals;
 
     fn check<F: JoltField, const M: usize, const LIMBS: usize>() {
@@ -251,7 +278,9 @@ mod tests {
         let weights: Vec<F> = (0..DOMAIN)
             .map(|i| F::from_u64(17 + 13 * i as u64))
             .collect();
-        let mut cache = GuardFolds::new(&weights);
+        let mut cache = GuardEndpoints::new(&weights);
+        assert_eq!(GuardEndpoints::new(&weights).finish(), [F::zero(); 2]);
+        let mut endpoints = [F::zero(); 2];
         // More distinct guard vectors than slots exercise replacement; repeated
         // vectors and out-of-range guards must obey the same linear formula.
         for row in 0..512 {
@@ -273,15 +302,33 @@ mod tests {
                     .sum::<F>()
             };
             let expected = [evaluate(&first), evaluate(&second)];
-            assert_eq!(cache.fold(&first, &second), expected);
-            assert_eq!(cache.fold(&first, &second), expected);
+            for repeat in 0..2 {
+                let weight = F::from_u128((1u128 << 120) + row as u128 * 101 + repeat);
+                let b = [
+                    F::from_u128((1u128 << 110) + row as u128 * 17),
+                    -F::from_u128((1u128 << 115) + row as u128 * 31 + repeat),
+                ];
+                assert_eq!(cache.add(&first, &second, b, weight), expected);
+                endpoints[0] += weight * expected[0] * b[0];
+                endpoints[1] += weight * (expected[1] - expected[0]) * (b[1] - b[0]);
+            }
         }
+        let a = [F::from_u64(29), -F::from_u64(37)];
+        let b = [F::from_u128(1u128 << 125), F::from_u128(1u128 << 123)];
+        let weight = -F::from_u64(41);
+        cache.add_direct(a, b, weight);
+        endpoints[0] += weight * a[0] * b[0];
+        endpoints[1] += weight * (a[1] - a[0]) * (b[1] - b[0]);
+        assert_eq!(cache.finish(), endpoints);
     }
 
     #[test]
-    fn cached_guard_folds_match_linear_combination() {
+    fn grouped_endpoints_match_weighted_linear_products() {
         check_folds::<Fr>();
         #[cfg(feature = "akita")]
-        check_folds::<Fp128<{ u128::MAX - 274 }>>();
+        {
+            check_folds::<Fp128<{ u128::MAX - 274 }>>();
+            check_folds::<Prime128OffsetA7F7>();
+        }
     }
 }

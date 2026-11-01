@@ -115,7 +115,7 @@ use crate::{
 };
 
 mod guard_groups;
-use guard_groups::{GuardFolds, GuardGroups};
+use guard_groups::{GuardEndpoints, GuardGroups};
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
@@ -1194,19 +1194,23 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                      az_chunk: &mut [F],
                      bz_chunk: &mut [F]|
          -> Result<(F, F), WitnessError> {
-            let mut inner_zero = F::zero();
-            let mut inner_infinity = F::zero();
-            let mut guard_folds = GuardFolds::new(lagrange);
+            let mut guard_endpoints = GuardEndpoints::new(lagrange);
             #[cfg(feature = "field-inline")]
             let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, x_out * in_len);
             for x_in in 0..az_chunk.len() / 2 {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
+                let e = e_in[x_in];
                 let mut integer_fold = || {
                     let values = row.group_values();
-                    let [az_zero, az_one] = guard_folds.fold(&values.a_first, &values.a_second);
                     let bz_zero = fold_values(lagrange, &values.b_first, &[0; DOMAIN]);
                     let bz_one = fold_values(lagrange, &values.b_second_lo, &values.b_second_hi);
+                    let [az_zero, az_one] = guard_endpoints.add(
+                        &values.a_first,
+                        &values.a_second,
+                        [bz_zero, bz_one],
+                        e,
+                    );
                     (az_zero, bz_zero, az_one, bz_one)
                 };
                 #[cfg(feature = "field-inline")]
@@ -1215,6 +1219,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                         let values = row.field_group_values(field_row);
                         let (az_zero, bz_zero) = values.fold_first(lagrange);
                         let (az_one, bz_one) = values.fold_second(lagrange);
+                        guard_endpoints.add_direct([az_zero, az_one], [bz_zero, bz_one], e);
                         (az_zero, bz_zero, az_one, bz_one)
                     } else {
                         integer_fold()
@@ -1225,10 +1230,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;
                 bz_chunk[2 * x_in + 1] = bz_one;
-                let e = e_in[x_in];
-                inner_zero += e * (az_zero * bz_zero);
-                inner_infinity += e * ((az_one - az_zero) * (bz_one - bz_zero));
             }
+            let [inner_zero, inner_infinity] = guard_endpoints.finish();
             Ok((e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity))
         };
         let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
