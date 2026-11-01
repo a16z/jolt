@@ -354,7 +354,7 @@ impl AkitaSetupParams {
 #[derive(Debug)]
 pub(crate) struct FullWidthBackendSetup {
     pub(crate) scheme: AkitaCommitmentScheme<JoltDenseFull>,
-    pub(crate) backend: AkitaBackend,
+    pub(crate) backend: Arc<AkitaBackend>,
 }
 
 #[derive(Clone, Debug)]
@@ -398,8 +398,17 @@ impl AkitaProverSetup {
         ]
         .into_iter()
         .flatten()
-        .chain(self.full_width.values().map(|setup| &setup.backend))
-        {
+        .chain(
+            self.full_width
+                .values()
+                .filter(|setup| {
+                    !self
+                        .one_hot_cpu_backend
+                        .as_ref()
+                        .is_some_and(|owner| Arc::ptr_eq(owner, &setup.backend))
+                })
+                .map(|setup| setup.backend.as_ref()),
+        ) {
             let _ = backend.trim_caches().map_err(invalid_setup)?;
         }
         Ok(())

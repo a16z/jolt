@@ -180,11 +180,17 @@ impl AkitaScheduleArtifacts {
     }
 
     pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(
+        self.bounded_dense_scheme()
+            .map(|scheme| scheme.schedules().catalog().clone())
+    }
+
+    pub(crate) fn bounded_dense_scheme(
+        &self,
+    ) -> Result<AkitaCommitmentScheme<JoltDenseBounded>, AkitaError> {
+        AkitaCommitmentScheme::<JoltDenseBounded>::from_schedule_artifact(
             &self.dense,
             self.dense_profile.witness_cfg(),
         )
-        .map(|catalog| catalog.catalog().clone())
     }
 
     pub fn full_dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {

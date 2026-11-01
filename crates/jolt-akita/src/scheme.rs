@@ -1,4 +1,5 @@
 use crate::AkitaScheduleArtifacts;
+use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::PrecommittedGroupProfiles;
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
@@ -120,7 +121,13 @@ impl AkitaScheme {
         }
 
         let dense = dense_polynomials(polynomials)?;
-        Self::commit_dense_backend(setup, layout_digest, num_vars, dense)
+        Self::commit_dense_backend(
+            setup.dense_backend()?.1,
+            setup.verifier.dense_scheme()?.schedules(),
+            layout_digest,
+            num_vars,
+            dense,
+        )
     }
 
     /// Commits a group of row-major one-hot polynomials through the
@@ -363,22 +370,21 @@ impl AkitaScheme {
         ))
     }
 
-    fn commit_dense_backend(
-        setup: &AkitaProverSetup,
+    fn commit_dense_backend<Cfg>(
+        backend: &AkitaBackend,
+        schedules: &TrustedScheduleCatalog<Cfg>,
         layout_digest: AkitaLayoutDigest,
         num_vars: usize,
         dense: Vec<AkitaBackendDensePoly>,
-    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError>
+    where
+        Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaBackendExtField>,
+    {
         let poly_count = dense.len();
-        let (_, backend) = setup.dense_backend()?;
         let (backend_commitment, backend_hint) = with_backend_pool(|| {
             let source = backend.import_source(dense)?;
             backend.commit(
-                setup
-                    .verifier
-                    .dense_scheme()
-                    .map_err(|error| AkitaError::InvalidSetup(error.to_string()))?
-                    .schedules(),
+                schedules,
                 &source,
                 GroupContext::scheduler_without_precommitted_groups(),
             )
@@ -474,10 +480,18 @@ impl CommitmentScheme for AkitaScheme {
                 let scheme = artifacts.full_dense_scheme().map_err(invalid_setup)?;
                 for num_vars in arities {
                     if let Entry::Vacant(entry) = full_width.entry(num_vars) {
-                        let setup = with_backend_pool(|| scheme.setup_prover(num_vars, 1))
-                            .map_err(invalid_setup)?;
-                        let backend =
-                            CpuBackend::new(Arc::clone(&setup.expanded)).map_err(invalid_setup)?;
+                        // The grouped catalog provisions each admitted precommitted
+                        // group's matrix, including full-width dense commitments.
+                        let backend = if let Some(backend) = &one_hot_cpu_backend {
+                            Arc::clone(backend)
+                        } else {
+                            let setup = with_backend_pool(|| scheme.setup_prover(num_vars, 1))
+                                .map_err(invalid_setup)?;
+                            Arc::new(
+                                CpuBackend::new(Arc::clone(&setup.expanded))
+                                    .map_err(invalid_setup)?,
+                            )
+                        };
                         let _ = entry.insert(Arc::new(FullWidthBackendSetup {
                             scheme: scheme.clone(),
                             backend,
@@ -534,7 +548,13 @@ impl CommitmentScheme for AkitaScheme {
         let evals = akita_ordered_evaluations(poly)?;
         let dense =
             vec![AkitaBackendDensePoly::from_field_evals(num_vars, evals).map_err(akita_error)?];
-        Self::commit_dense_backend(setup, setup.default_layout_digest(), num_vars, dense)
+        Self::commit_dense_backend(
+            setup.dense_backend()?.1,
+            setup.verifier.dense_scheme()?.schedules(),
+            setup.default_layout_digest(),
+            num_vars,
+            dense,
+        )
     }
 
     fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
@@ -682,6 +702,26 @@ impl TransparentObjectSetup for AkitaScheme {
         ))
     }
 
+    fn commit_bounded_object(
+        setup: &Self::ProverSetup,
+        num_vars: usize,
+        values: Vec<Self::Field>,
+        layout_digest: [u8; 32],
+    ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
+        let backend = setup
+            .one_hot_cpu_backend
+            .as_deref()
+            .or(setup.cpu_backend.as_deref())
+            .ok_or_else(|| invalid_setup("bounded object has no prepared backend owner"))?;
+        let scheme = setup
+            .schedule_artifacts
+            .bounded_dense_scheme()
+            .map_err(invalid_setup)?;
+        let dense =
+            vec![AkitaBackendDensePoly::from_field_prefix(num_vars, values).map_err(akita_error)?];
+        Self::commit_dense_backend(backend, scheme.schedules(), layout_digest, num_vars, dense)
+    }
+
     fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
         poly: &P,
@@ -691,27 +731,19 @@ impl TransparentObjectSetup for AkitaScheme {
         let cached = setup.full_width.get(&num_vars).ok_or_else(|| {
             invalid_setup("full-width object arity was not admitted during preprocessing")
         })?;
-        let dense = vec![AkitaBackendDensePoly::from_field_evals(
-            num_vars,
-            akita_ordered_evaluations(poly)?,
-        )
+        let dense = vec![match poly.dense_evaluation_prefix() {
+            Some(prefix) => AkitaBackendDensePoly::from_field_prefix(num_vars, prefix.to_vec()),
+            None => {
+                AkitaBackendDensePoly::from_field_evals(num_vars, akita_ordered_evaluations(poly)?)
+            }
+        }
         .map_err(akita_error)?];
-        let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            let source = cached.backend.import_source(dense)?;
-            cached.backend.commit(
-                cached.scheme.schedules(),
-                &source,
-                GroupContext::scheduler_without_precommitted_groups(),
-            )
-        })
-        .map(split_commit_output)
-        .map_err(commit_failed)?;
-        Self::package_commitment(
+        Self::commit_dense_backend(
+            &cached.backend,
+            cached.scheme.schedules(),
             layout_digest,
             num_vars,
-            backend_commitment,
-            backend_hint,
-            AkitaHintSource::Dense { poly_count: 1 },
+            dense,
         )
     }
 
@@ -827,7 +859,7 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_params::PolynomialGroupLayout;
     use akita_schedules::ValidatedScheduleCatalog;
-    use jolt_field::Ring;
+    use jolt_field::{Ring, Zero};
     use jolt_transcript::{prover_transcript, Blake2b512};
 
     #[test]
@@ -845,10 +877,27 @@ mod tests {
         let (bounded, _) = AkitaScheme::setup(params).unwrap();
         let polynomial = Polynomial::new(vec![AkitaField::pow2(80); 1 << 14]);
         assert!(AkitaScheme::commit(&polynomial, &bounded).is_err());
+        assert!(AkitaScheme::commit_bounded_object(
+            &bounded,
+            14,
+            vec![AkitaField::pow2(80)],
+            [7; 32],
+        )
+        .is_err());
         let (commitment, hint) =
             AkitaScheme::commit_full_width_object(&bounded, &polynomial, [7; 32]).unwrap();
         assert_eq!(commitment, hint.commitment);
         assert_eq!(commitment.num_vars, polynomial.num_vars());
+
+        for live in [0, 1, 4097, 1 << 14] {
+            let prefix = vec![AkitaField::from_u64(3); live];
+            let (compact, _) =
+                AkitaScheme::commit_bounded_object(&bounded, 14, prefix.clone(), [7; 32]).unwrap();
+            let mut full = prefix;
+            full.resize(1 << 14, AkitaField::zero());
+            let (expected, _) = AkitaScheme::commit(&Polynomial::new(full), &bounded).unwrap();
+            assert_eq!(compact, expected);
+        }
     }
 
     #[test]
