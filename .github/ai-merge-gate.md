@@ -107,7 +107,7 @@ dismissed it.
 The shared Pika/Jolt format is:
 
 ```text
-I have reviewed pull request #<number> at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort and found no issues.
+This pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
 ```
 
 The number and full SHA must match the PR's current API state. Skill, model and effort must

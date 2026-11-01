@@ -73,7 +73,7 @@ If the review reports nothing to fix and posting is authorized, the Pika App bot
 account in the configured Jolt maintainer team posts a PR comment with this exact standalone line:
 
 ```text
-I have reviewed pull request #<number> at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort and found no issues.
+This pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
 ```
 
 Use the actual skill, model and effort; the gate checks that these fields are nonempty, not a

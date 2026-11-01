@@ -49,8 +49,8 @@ HUMAN_LABEL = "needs-human-review"
 PIKA_BOT_ID = "BOT_kgDOFAtqNQ"
 SIGN_OFF = re.compile(r"AI gate: AUTHORIZED ([0-9a-f]{40})")
 ATTESTATION = re.compile(
-    r"I have reviewed pull request #([1-9][0-9]*) at commit ([0-9a-f]{40}) "
-    r"using skill (.+?) and model (.+?) with (.+?) reasoning effort and found no issues\."
+    r"This pull request #([1-9][0-9]*) has been reviewed at commit ([0-9a-f]{40}) "
+    r"using skill (.+?) and model (.+?) with (.+?) reasoning effort, and no issues were found\."
 )
 # GitHub runs a pull request's own copy of this workflow for that pull request's reviews, so a
 # change to it decides whether the gate hears its approvals being withdrawn. The gate never
@@ -591,9 +591,9 @@ class Gate:
                                    f"An authorized comment attests a clean review of PR #{number} at `{head}`.")
         return Outcome("failure", "Needs a current-head review attestation",
                        "The Pika App bot or a member of the configured core team must post a PR comment "
-                       f"with this standalone line: I have reviewed pull request #{number} at commit {head} "
-                       "using skill <skill name> and model <model name> with <effort> reasoning effort "
-                       "and found no issues.")
+                       f"with this standalone line: This pull request #{number} has been reviewed at commit "
+                       f"{head} using skill <skill name> and model <model name> with <effort> reasoning effort, "
+                       "and no issues were found.")
 
     def can_attest(self, actor: dict) -> bool:
         return (actor.get("__typename") == "Bot" and actor.get("id") == PIKA_BOT_ID

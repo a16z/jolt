@@ -44,8 +44,8 @@ def comment(login, body, edited=False, kind="User", actor_id=None):
 
 
 def attestation(sha=HEAD, number=7, skill="ci-code-review", model="Astra", effort="Max"):
-    return (f"I have reviewed pull request #{number} at commit {sha} using skill {skill} "
-            f"and model {model} with {effort} reasoning effort and found no issues.")
+    return (f"This pull request #{number} has been reviewed at commit {sha} using skill {skill} "
+            f"and model {model} with {effort} reasoning effort, and no issues were found.")
 
 
 def review(login, state, sha=HEAD, body="", kind="User"):

@@ -76,7 +76,7 @@ This is a format example using an existing commit, not an attestation of the cur
 replace the number, full SHA and review details with the actual reviewed values.
 
 ```text
-I have reviewed pull request #2203 at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model Astra with Max reasoning effort and found no issues.
+This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model Astra with Max reasoning effort, and no issues were found.
 ```
 
 Skill, model and effort must be nonempty and may contain spaces. Being the PR author alone
