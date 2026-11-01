@@ -414,8 +414,10 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
         // At a base node, the relation's Lagrange input claim selects the
         // corresponding stage-1 product at the same tau_low. Use the shared
         // relation to preserve the composed lane order, including field-inline.
-        for (lane, value) in t1_values[BASE_START..BASE_START + DOMAIN]
+        for (lane, value) in t1_values
             .iter_mut()
+            .skip(BASE_START)
+            .take(DOMAIN)
             .enumerate()
         {
             let node = F::from_i64(DOMAIN_START + lane as i64);
