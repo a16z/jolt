@@ -81,6 +81,7 @@ pub trait ExtractIndexed<I, R = TraceRow>: Sized {
     ) -> Result<Self, WitnessError>;
 }
 
+#[inline(always)]
 fn instruction_row(row: &TraceRow) -> JoltInstructionRow {
     let circuit_flags = row.circuit_flags();
     JoltInstructionRow {

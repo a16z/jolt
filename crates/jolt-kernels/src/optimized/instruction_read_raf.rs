@@ -68,9 +68,10 @@ use super::lazy_ra::{
     ChunkIndexSource, LazyFoldedRa, PAIRED_MATERIALIZE_ADDRESSES, PAIRED_MATERIALIZE_BRANCHES,
 };
 use super::support::{
-    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
+    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
     product_grid_scratch_len, repeat_hash, repeats_often, scan_chunk_size, BundleAccess,
-    GruenRoundMessage, LowDegreeProductSum, RepeatCache, RoundProgress, TailFactorProducts,
+    GruenRoundMessage, LowDegreeProductSum, PrefixCycleWeights, RepeatCache, RoundProgress,
+    TailFactorProducts,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -1225,7 +1226,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let mut u_evals = prefix_cycle_weights(r_reduction, rows.prefix_len());
+        let mut u_evals = PrefixCycleWeights::new(r_reduction, rows.prefix_len()).to_dense();
         let scan_rows = &rows.representatives()[..u_evals.len()];
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
         let present_tables = map_reduce_chunks(
