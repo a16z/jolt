@@ -1346,6 +1346,7 @@ impl CanonicalEncoding for MleAst {
 }
 
 impl WithAccumulator for MleAst {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = NaiveAccumulator<Self>;
     type SmallScalarAccumulator = NaiveAccumulator<Self>;
     type SignedProductAccumulator = NaiveAccumulator<Self>;

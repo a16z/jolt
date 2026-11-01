@@ -21,7 +21,7 @@ use super::word::mul64_wide;
 use crate::PseudoMersenne;
 use crate::{
     CanonicalBytes, CanonicalEncoding, Field, Fp128Accumulator, Fp128SignedAccumulator,
-    MulBaseUnreduced, Ring, WithAccumulator,
+    Fp128SumAccumulator, MulBaseUnreduced, Ring, WithAccumulator,
 };
 #[cfg(feature = "bytemuck")]
 use bytemuck::{CheckedBitPattern, NoUninit, Zeroable};
@@ -898,23 +898,23 @@ impl<const P: u128> Fp128<P> {
             3 => Self(Self::fold2_canonicalize(limbs[0], limbs[1], limbs[2])),
             4 => Self(Self::reduce_4(limbs[0], limbs[1], limbs[2], limbs[3])),
             5 => {
-                // One fold 320 → 256 bits, then reduce_4. Limb bounds:
-                // s0 ≤ 2(2^64−1) (carry ≤ 1); s1 ≤ 2(2^64−1) + (C−1) + 1
-                // (carry ≤ 2); s2 ≤ (C−1) + (2^64−1) + 2 (carry ≤ 1);
-                // s3 = c4_hi + carry ≤ C < 2^64, so no fifth limb
-                // (debug-asserted). All carries use full u128 shifts.
+                // With B = 2^64 and B^2 ≡ C, fold the top limb directly:
+                // l0 + B*l1 + C*l2 + B*C*l3 + C^2*l4.
+                // C < 2^32, so C^2 fits one limb. The low-limb sum carries
+                // at most 2; the middle-limb sum carries at most 3. Thus
+                // the remaining high limb is at most C + 2 < 2^64, within
+                // fold2_canonicalize's bounds for arbitrary input limbs.
                 let (l0, l1, l2, l3, l4) = (limbs[0], limbs[1], limbs[2], limbs[3], limbs[4]);
                 let (c2_lo, c2_hi) = Self::mul_c_wide(l2);
                 let (c3_lo, c3_hi) = Self::mul_c_wide(l3);
-                let (c4_lo, c4_hi) = Self::mul_c_wide(l4);
+                let c4 = l4 as u128 * (Self::C * Self::C);
 
-                let s0 = l0 as u128 + c2_lo as u128;
-                let s1 = l1 as u128 + c2_hi as u128 + c3_lo as u128 + (s0 >> 64);
-                let s2 = c3_hi as u128 + c4_lo as u128 + (s1 >> 64);
-                let s3 = c4_hi as u128 + (s2 >> 64);
-                debug_assert_eq!(s3 >> 64, 0);
+                let s0 = l0 as u128 + c2_lo as u128 + (c4 as u64) as u128;
+                let s1 = l1 as u128 + c2_hi as u128 + c3_lo as u128 + (c4 >> 64) + (s0 >> 64);
+                let s2 = c3_hi as u128 + (s1 >> 64);
+                debug_assert_eq!(s2 >> 64, 0);
 
-                Self(Self::reduce_4(s0 as u64, s1 as u64, s2 as u64, s3 as u64))
+                Self(Self::fold2_canonicalize(s0 as u64, s1 as u64, s2 as u64))
             }
             n => {
                 assert!(n <= 10, "solinas_reduce supports at most 10 limbs");
@@ -1180,6 +1180,7 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
+    type SumAccumulator = Fp128SumAccumulator<P>;
     type Accumulator = Fp128Accumulator<P>;
     type SmallScalarAccumulator = Fp128SignedAccumulator<P>;
     type SignedProductAccumulator = Fp128SignedAccumulator<P>;

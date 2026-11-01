@@ -41,8 +41,14 @@ impl LookupBits {
     /// odd-position bits become `y`.
     pub fn uninterleave(&self) -> (Self, Self) {
         let (x_bits, y_bits) = uninterleave_bits(u128::from_le_bytes(self.bytes));
-        let x = Self::new(x_bits as u128, (self.len / 2) as usize);
-        let y = Self::new(y_bits as u128, (self.len - x.len) as usize);
+        let x = Self {
+            bytes: u128::from(x_bits).to_le_bytes(),
+            len: self.len / 2,
+        };
+        let y = Self {
+            bytes: u128::from(y_bits).to_le_bytes(),
+            len: self.len - x.len,
+        };
         (x, y)
     }
 
@@ -172,7 +178,6 @@ impl Eq for LookupBits {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::interleave_bits;
 
     #[test]
     fn new_masks_excess_bits() {
@@ -203,14 +208,32 @@ mod tests {
     }
 
     #[test]
-    fn uninterleave_matches_global() {
-        let x: u64 = 0xDEAD;
-        let y: u64 = 0xBEEF;
-        let interleaved = interleave_bits(x, y);
-        let bits = LookupBits::new(interleaved, 32);
-        let (bx, by) = bits.uninterleave();
-        assert_eq!(u64::from(bx), x);
-        assert_eq!(u64::from(by), y);
+    fn uninterleave_preserves_bits_and_lengths() {
+        for len in 0..=128 {
+            for input in [
+                0,
+                u128::MAX,
+                0xAAAA_AAAA_AAAA_AAAA_AAAA_AAAA_AAAA_AAAA,
+                0x5555_5555_5555_5555_5555_5555_5555_5555,
+                0xDEAD_BEEF_CAFE_BABE_1234_5678_9ABC_DEF0,
+            ] {
+                let (x, y) = LookupBits::new(input, len).uninterleave();
+                assert_eq!(x.len(), len / 2);
+                assert_eq!(y.len(), len.div_ceil(2));
+                let mut expected_x = 0u64;
+                let mut expected_y = 0u64;
+                for bit in 0..len {
+                    let value = ((input >> bit) & 1) as u64;
+                    if bit % 2 == 1 {
+                        expected_x |= value << (bit / 2);
+                    } else {
+                        expected_y |= value << (bit / 2);
+                    }
+                }
+                assert_eq!(u128::from(x), u128::from(expected_x));
+                assert_eq!(u128::from(y), u128::from(expected_y));
+            }
+        }
     }
 
     #[test]
