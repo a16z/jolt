@@ -267,6 +267,18 @@ def bundle_file(path, out):
     return {'path': str(path.relative_to(out)), 'sha256': sha256(path)}
 
 
+def build_inputs(config, tier=None, workloads=(), cases=()):
+    inputs, pcs = {}, set()
+    for spec in ([config['tiers'][tier]] if tier else config['tiers'].values()):
+        for case in spec['cases']:
+            if (not case.get('unsupported_reason') and
+                    (not workloads or case['workload'] in workloads) and
+                    (not cases or case['id'] in cases)):
+                inputs.setdefault(case['workload'], set()).add(case['input']['parameters']['operations'])
+                pcs.add(case['pcs'])
+    return inputs, pcs
+
+
 def build(args):
     started, begin = utc_now(), time.perf_counter()
     out = Path(args.out).resolve()
@@ -279,36 +291,28 @@ def build(args):
     runner_source = subprocess.check_output(['git', 'show', f'{harness}:scripts/bench/run.py'], cwd=ROOT)
     if hashlib.sha256(runner_source).hexdigest() != sha256(__file__):
         raise ValueError('build must use the committed runner at --harness-revision')
-    profile_config = {}
-    if args.profile == 'bench-off16':
-        harness_manifest = subprocess.check_output(['git', 'show', f'{harness}:Cargo.toml'], cwd=ROOT)
-        profile_config = tomllib.loads(harness_manifest.decode())['profile'][args.profile]
+    source_manifest = subprocess.check_output(['git', 'show', f'{revision}:Cargo.toml'], cwd=ROOT)
+    profile_config = tomllib.loads(source_manifest.decode())['profile'][args.profile]
     toolchain = capture(['rustc', '--version', '--verbose'])
     source = cache_root() / 'builds' / args.target_cpu / args.profile / 'source'
     existed = (source / 'target').exists()
     manifest = {'schema_version': 1, 'revision': revision, 'harness_revision': harness,
                 'toolchain': toolchain, 'target_cpu': args.target_cpu, 'profile': args.profile,
-                'guest_builder_profile': 'ci', 'profile_config': profile_config,
+                'guest_builder_profile': 'ci', 'guest_builder_rustflags': '', 'profile_config': profile_config,
                 'rustflags': f'-C target-cpu={args.target_cpu}', 'host': host_snapshot(),
                 'started_at': started, 'finished_at': None, 'build_s': None,
                 'status': 'incomplete', 'reason': None, 'binaries': {}, 'guests': {},
                 'cache': {'cargo_target_preexisting': existed,
+                          'source_dir': str(source), 'target_dir': str(source / 'target'),
+                          'host_tools_target_dir': str(source / 'target/host-tools'),
                           'rustc_wrapper': os.environ.get('RUSTC_WRAPPER'),
                           'cargo_build_jobs': os.environ.get('CARGO_BUILD_JOBS'),
                           'hit_status': 'not inferred from target existence'}}
     write_json(out / 'manifest.json', manifest)
     env = dict(build_environment(), RUSTFLAGS=manifest['rustflags'])
     config = parse_json(Path(args.config).read_text())
-    inputs, required_pcs = {}, set()
-    tiers = ([config['tiers'][args.tier]] if getattr(args, 'tier', None)
-             else config['tiers'].values())
-    for tier in tiers:
-        for case in tier['cases']:
-            if (not case.get('unsupported_reason') and
-                    (not getattr(args, 'workload', []) or case['workload'] in args.workload) and
-                    (not getattr(args, 'case', []) or case['id'] in args.case)):
-                inputs.setdefault(case['workload'], set()).add(case['input']['parameters']['operations'])
-                required_pcs.add(case['pcs'])
+    inputs, required_pcs = build_inputs(config, getattr(args, 'tier', None),
+                                       getattr(args, 'workload', []), getattr(args, 'case', []))
     required_inputs = {name: sorted(counts) for name, counts in inputs.items()}
     host_id, reused, cache_misses = manifest['host']['id'], False, []
     try:
@@ -342,6 +346,11 @@ def build(args):
                       for p in tomllib.loads(original_lock.decode())['package']}
             manifest['toolchain'] = capture(['rustc', '--version', '--verbose'], cwd=source, env=env)
             manifest['cargo_version'] = capture(['cargo', '--version'], cwd=source, env=env)
+            manifest['native_tools'] = {name: capture([name, '--version'], cwd=source, env=env)
+                                        for name in ('cc', 'ld', 'ldd')}
+            manifest['rustup_components'] = capture(['rustup', 'component', 'list', '--installed'], cwd=source, env=env)
+            manifest['build_environment'] = {name: os.environ.get(name) for name in (
+                'HOME', 'CARGO_HOME', 'RUSTUP_HOME', 'XDG_CACHE_HOME', 'ImageOS', 'ImageVersion')}
             triple = re.search(r'^host: (.+)$', manifest['toolchain'], re.M).group(1)
             manifest['target_triple'] = triple
             cfg = capture(['rustc', '--print', 'cfg', '--target', triple,
@@ -365,6 +374,7 @@ def build(args):
             identity = {key: manifest[key] for key in (
                 'revision', 'harness_revision', 'toolchain', 'cargo_version', 'target_cpu',
                 'target_triple', 'target_features', 'profile', 'profile_config', 'guest_builder_profile',
+                'guest_builder_rustflags', 'native_tools', 'rustup_components',
                 'rustflags', 'source_cargo_lock_sha256',
                 'cargo_lock_sha256', 'harness_files', 'suite_config_sha256', 'runner')}
             bucket = cache_root() / 'bundles' / hashlib.sha256(
@@ -399,30 +409,34 @@ def build(args):
                 return manifest
             cargo = ['cargo', 'build', '-q', '--message-format=json', '--locked',
                      '--target-dir', str(source / 'target'), '--target', triple]
-            logged([*cargo, '--profile', manifest['guest_builder_profile'], '-p', 'jolt', '--bin', 'jolt'],
-                   source, env, log)
-            profile_args = [argument for key, value in profile_config.items()
-                            for argument in ('--config', f'profile.{args.profile}.{key}={json.dumps(value)}')]
-            for pcs in sorted(required_pcs):
-                features = 'profiling,akita' if pcs == 'akita' else 'profiling'
-                logged([*cargo, *profile_args, '--profile', args.profile, '-p', 'jolt-prover', '--bin', 'jolt-prover',
-                        '--features', features], source, env, log)
-                binary = out / f'jolt-prover-{pcs}'
-                shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
-                manifest['binaries'][pcs] = bundle_file(binary, out)
-            guest_builder = source / 'target' / triple / manifest['guest_builder_profile'] / 'jolt'
+            # Hosted builders need not support the measurement target's ISA. Neither
+            # guest preparation nor the guest compiler executes a target-ISA binary.
+            host_env = build_environment()
+            logged(['cargo', 'build', '-q', '--message-format=json', '--locked',
+                    '--target-dir', str(source / 'target/host-tools'), '--target', triple,
+                    '--profile', manifest['guest_builder_profile'], '-p', 'jolt', '--bin', 'jolt',
+                    '-p', 'jolt-prover', '--bin', 'jolt-prover', '--features', 'jolt-prover/profiling'],
+                   source, host_env, log)
+            guest_builder = source / 'target/host-tools' / triple / manifest['guest_builder_profile'] / 'jolt'
+            prepare_binary = guest_builder.with_name('jolt-prover')
             manifest['guest_builder_sha256'] = sha256(guest_builder)
-            guest_env = dict(env, JOLT_PATH=str(guest_builder))
-            guest_env.pop('RUSTFLAGS', None)
+            manifest['guest_preparer_sha256'] = sha256(prepare_binary)
+            guest_env = dict(host_env, JOLT_PATH=str(guest_builder))
             for workload, counts in inputs.items():
                 prepared = out / 'guests' / workload
-                prepare_binary = out / next(iter(manifest['binaries'].values()))['path']
                 logged([str(prepare_binary), 'prepare', '--name', workload,
                         '--operations', ','.join(map(str, sorted(counts))),
                         '--guest-target-dir', str(source / 'target/bench-guests'), '--out', str(prepared)],
                        source, guest_env, log)
                 manifest['guests'][workload] = {'elf': bundle_file(prepared / 'guest.elf', out),
                     'inputs': {str(n): bundle_file(prepared / f'input-{n}.bin', out) for n in counts}}
+            for pcs in sorted(required_pcs):
+                features = 'profiling,akita' if pcs == 'akita' else 'profiling'
+                logged([*cargo, '--profile', args.profile, '-p', 'jolt-prover', '--bin', 'jolt-prover',
+                        '--features', features], source, env, log)
+                binary = out / f'jolt-prover-{pcs}'
+                shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
+                manifest['binaries'][pcs] = bundle_file(binary, out)
             manifest['requested_workloads'] = sorted(inputs)
             schedules = out / 'akita-schedules'
             schedules.mkdir()
@@ -559,6 +573,11 @@ def validate_metrics(metrics, case):
         raise ValueError('padded trace does not cover the proof rows and final no-op')
     if result['e2e_s'] < result['prove_s'] + result['setup_s']:
         raise ValueError('end-to-end interval does not contain prove and setup')
+    public_output = metrics['public_output']
+    if not isinstance(public_output, list) or any(type(value) is not int or not 0 <= value <= 255
+                                                 for value in public_output):
+        raise ValueError('public_output must contain exact output bytes')
+    result['public_output'] = public_output
     return result
 
 
@@ -918,7 +937,7 @@ def render_comment(result, out):
               'A manual rendering does not authenticate that input.', '',
               f"Wall receipt: {result['wall_time']['scope']}. "
               f"Total seconds: {total_label}. "
-              'Prebuilt execution does not establish the build-inclusive PR budget.', '',
+              'Hosted compilation and artifact transfer are separate intervals.', '',
               'Noise references are observed informational context, not statistical significance, pass/fail decisions or a CI gate. '
               'Raw measurements, proof bytes, verification times, row counts, hashes, compiler flags, '
               'and host settings are in benchmark-results.json.', '']
@@ -982,7 +1001,7 @@ def parse_args():
     for item in (build_parser, suite_parser):
         item.add_argument('--harness-revision', required=True)
         item.add_argument('--target-cpu', required=True)
-        item.add_argument('--profile', choices=['release', 'ci', 'bench-off16'])
+        item.add_argument('--profile', choices=['release', 'ci'], default='release')
     build_parser.add_argument('--revision', required=True)
     build_parser.add_argument('--workload', action='append', default=[],
                               help='prepare only this workload; repeat for an early executable handoff')
@@ -1004,8 +1023,6 @@ def parse_args():
     status_parser.add_argument('--status', choices=['disabled', 'unsupported', 'failed'], required=True)
     status_parser.add_argument('--reason', required=True)
     args = parser.parse_args()
-    if args.command in ('build', 'suite') and args.profile is None:
-        args.profile = 'bench-off16' if getattr(args, 'tier', None) == 'pr' else 'release'
     return args
 
 

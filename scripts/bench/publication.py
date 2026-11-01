@@ -47,8 +47,10 @@ def validate(result, expected, config_bytes):
     if (result['suite']['metric_contract'] != 1 or result['suite']['id'] != config['id']
             or result['suite'].get('selected_cases')):
         raise ValueError('PR suite identity or case selection differs')
-    if result['wall_time']['scope'] != 'sequential-build-preparation-through-results-on-this-host':
-        raise ValueError('PR publication requires a fresh build-inclusive receipt')
+    if result.get('artifacts') != expected['artifacts']:
+        raise ValueError('result uses different hosted artifacts or plan bytes')
+    if result['wall_time']['scope'] != ci.RUN_ONLY_SCOPE or result['wall_time']['build_s'] != 0:
+        raise ValueError('PR publication requires artifact verification and run-only measurement')
     for key in ('build_s', 'benchmark_s', 'total_s'):
         value = result['wall_time'][key]
         if value is None and result['status'] == 'complete':
@@ -74,6 +76,10 @@ def validate(result, expected, config_bytes):
     for key in ('harness_files', 'rustflags', 'target_cpu', 'profile', 'profile_config'):
         if builds['base'][key] != builds['head'][key]:
             raise ValueError(f'paired build mismatch: {key}')
+    for build in builds.values():
+        manifest = {key: value for key, value in build.items() if key != 'leg'}
+        if ci.manifest_digest(manifest) != expected['manifest_digests'][build['revision']]:
+            raise ValueError('result build manifest differs from the hosted builder output')
     topology = {row['cpu']: row for row in result['host']['topology']}
     orders = set()
     for case in cases:
@@ -147,7 +153,7 @@ def validate(result, expected, config_bytes):
     return result
 
 
-def expected_from_github(plan, plan_artifact_id, result_artifact_id):
+def expected_from_github(plan, args):
     run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
     actual = ci.github(f'actions/runs/{run_id}')
     if (actual['name'] != bench.WORKFLOW or actual['path'] != bench.WORKFLOW_FILE
@@ -155,7 +161,9 @@ def expected_from_github(plan, plan_artifact_id, result_artifact_id):
             or actual['head_repository']['full_name'] != 'a16z/jolt'
             or actual['head_sha'] != plan['harness'] or actual['run_attempt'] != int(attempt)):
         raise ValueError('actual producer is not the planned trusted main-branch run')
-    for artifact_id, prefix in [(plan_artifact_id, 'jolt-e2e-plan'), (result_artifact_id, 'jolt-e2e')]:
+    for artifact_id, prefix in [(args.plan_artifact_id, 'jolt-e2e-plan'),
+                               (args.build_artifact_id, 'jolt-e2e-builds'),
+                               (args.result_artifact_id, 'jolt-e2e')]:
         artifact = ci.github(f'actions/artifacts/{artifact_id}')
         if (artifact['name'] != f'{prefix}-{run_id}-{attempt}' or artifact['expired']
                 or artifact['workflow_run']['id'] != int(run_id)):
@@ -185,7 +193,13 @@ def expected_from_github(plan, plan_artifact_id, result_artifact_id):
     config = ci.github(f'contents/scripts/bench/suites.json?ref={plan["harness"]}')
     if config['encoding'] != 'base64' or config['type'] != 'file':
         raise ValueError('expected a committed suite configuration file')
-    expected = {'provenance': prov,
+    digests = bench.parse_json(os.environ['BUILD_MANIFEST_DIGESTS'])
+    if set(digests) != {item['base'], item['head']} or any(
+            not re.fullmatch('[0-9a-f]{64}', digest) for digest in digests.values()):
+        raise ValueError('hosted manifest digests do not match the planned revisions')
+    expected = {'provenance': prov, 'manifest_digests': digests,
+                'artifacts': {'id': args.build_artifact_id, 'index_sha256': args.index_sha256,
+                              'plan_sha256': bench.sha256(args.plan)},
                 'revisions': {'base': item['base'], 'head': item['submitted_head'],
                               'merge': item['head'], 'harness': plan['harness']}}
     return expected, base64.b64decode(config['content'], validate=False)
@@ -197,12 +211,13 @@ def main():
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--plan-artifact-id', type=int, required=True)
     parser.add_argument('--result-artifact-id', type=int, required=True)
+    parser.add_argument('--build-artifact-id', type=int, required=True)
+    parser.add_argument('--index-sha256', required=True)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     if args.results.stat().st_size > 8 * 1024 * 1024:
         raise ValueError('PR result exceeds the 8 MiB JSON limit')
-    expected = expected_from_github(bench.parse_json(args.plan.read_text()), args.plan_artifact_id,
-                                    args.result_artifact_id)
+    expected = expected_from_github(bench.parse_json(args.plan.read_text()), args)
     if expected is None:
         print('The PR or its main base has advanced; no stale comment will be posted.')
         return

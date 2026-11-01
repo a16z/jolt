@@ -4,22 +4,26 @@ These scripts reuse `jolt-prover profile --backend optimized`. They build real
 guest ELFs before measurement, run fresh prover processes, verify every successful
 proof, and retain raw samples. There is no reference-backend timing lane.
 
+GitHub-hosted runners build the base and candidate with the repository's `release`
+profile and `-C target-cpu=znver4`. The dedicated target downloads and verifies the
+artifacts, then runs proofs. It never invokes Cargo, installs a toolchain, or
+rebuilds a missing artifact. Hosted compilation has its own duration; the PR
+target job has a separate 600-second limit, including transfer and result handling.
+The Python execution receipt starts at artifact verification, so it alone does
+not establish the whole target-job duration.
+
 **The sizes and repetition counts are proposals, not a calibrated performance
-gate.** The PR budget is less than 600 seconds, with a 300–420 second aim, for the
-actual workflow path on a real changed-source PR update. It includes every build,
-preparation, transfer, and result-processing interval, measured from the successful
-request's completion through the result artifact and, if enabled, the trusted
-comment job. A target-host `suite` run measures the local
-build/preparation-through-results component; it does not
-include workflow transfers or hosted publication. Runtime-only or prebuilt-only
-runs cannot pass this gate, and a preparation interval already above 600 seconds
-is a miss before downstream work is added.
+gate.** A larger PR matrix is adopted only after a measured target interval below
+600 seconds and a matching per-cell noise reference. The initial three-case,
+24-proof baseline remains available. Hosted build-only PR jobs run while target
+execution is disabled; no runner registration, setting change, or comment is
+needed to produce their artifacts.
 
 ## Workloads and tiers
 
 `suites.json` is the source of the case matrix. Standard-main and nightly run both
 Dory and Akita at exactly 1, 8, or 24 physical cores; PRs run only Akita.
-PR prover executables use `bench-off16`; standard-main and nightly keep `release`.
+All three tiers use `release` without profile overrides.
 The ordinary instruction profile and clear proofs are
 used; no protocol parameter is adjusted for the benchmark.
 
@@ -44,8 +48,15 @@ recorded for each build. `seed: null` means the input generator uses no PRNG.
 
 The fast PR subset has no Dory performance signal. It launches 24 fresh proof
 processes, including warmups and both legs; this count does not establish a wall
-time or build saving. The full changed-source workflow, including preparation,
-transfers and result processing, must still be measured below 600 seconds.
+time. The target interval, including transfers and result processing, must still
+be measured below 600 seconds; hosted build time is reported separately.
+
+`pr-candidate.json` stages 17 cells: the 15 Akita main-size cells and Dory SHA2
+and BTreeMap at 24 cores. Its 136 processes are not the adopted PR suite. Run it
+with `ci.py execute --config scripts/bench/pr-candidate.json` only after checking
+the hosted artifacts. If its measured target interval exceeds 600 seconds,
+remove Dory SHA2 first, then Dory BTreeMap; retain one warmup and three measured
+pairs per retained cell. Larger inputs are already bundled for bounded pilots.
 
 Main trace ceilings are `2^18`, `2^20`, and `2^22` at 1, 8, and 24 cores.
 Nightly uses twice and four times each main operation count and raises the trace
@@ -64,10 +75,11 @@ case must pin serialized signed transactions instead of regenerating them.
 ## Measurement boundaries
 
 ```text
-suite wall: [ pinned build + guest preparation ][ run preparation + all processes + results ]
-process:                                          [ launch ... verification ... exit ]
-e2e:                                                [ load, trace, preprocess, setup, prove, serialize ]
-verify:                                                                                                [ parallel ][ single ]
+hosted: [ pinned release build + guest preparation + artifact upload ]
+target:                                                              [ download ][ verify artifacts + processes + results ]
+process:                                                                          [ launch ... verification ... exit ]
+e2e:                                                                                [ load, trace, preprocess, setup, prove, serialize ]
+verify:                                                                                                                              [ parallel ][ single ]
 ```
 
 `e2e_s` starts before loading the prebuilt ELF and input bytes. It includes the
@@ -80,7 +92,10 @@ neither substitutes for `e2e_s`.
 
 `verify_s` is the existing parallel verifier; `verify_single_s` is its separate
 single-threaded run. Both verify the in-memory proof; there is no deserialize
-step. `process_s` is parent-observed launch through reaped exit,
+step. `public_output` is an array of the exact public output bytes passed to
+those verifiers, emitted after they both succeed. Same-source hosted/local
+controls compare these bytes, proof sizes and row counts; they do not claim
+byte-identical serialized proofs. `process_s` is parent-observed launch through reaped exit,
 including both verifications, output, and teardown. `peak_rss_bytes` is Linux
 `wait4` maximum RSS for that process, converted from KiB to bytes; it is not a
 heap allocation estimate or a host-wide memory reading. `proof_bytes` is the
@@ -89,15 +104,19 @@ padding, not a raw RISC-V instruction count. `padded_trace_rows` is the actual
 `ProverConfig.trace_length`, including the required final no-op and minimum size.
 
 All times are full-resolution numeric seconds. Build time is separate from the
-proof metrics. `suite` measures one continuous build/preparation-through-results
-interval on its executing host. `run` records `prebuilt-execution-only`, with
-`build_s: null`; it never adds historical build timings to claim a fresh total.
+proof metrics. `ci.py prepare` records its hosted interval in `builds.json`.
+`ci.py execute` records `artifact-verification-through-results-on-this-host`,
+with `build_s: 0` and `artifact_verification_s`. Download, checkout, upload and any
+trusted publication are outside that Python interval. `run` records
+`prebuilt-execution-only`, with `build_s: null`. The manual `suite` diagnostic
+still measures a continuous local build-plus-run interval; CI never invokes it.
+None of these commands adds historical build durations to a fresh target total.
 Individual build manifests retain their original construction intervals and host
 identity, including when a completed bundle is reused. Each new `preparation.json`
 records the current validation/copy or build interval. The suite's `build_s` is
 the freshly observed preparation interval, never a sum of old manifest durations.
-The workflow's transfer and trusted result-processing intervals must be measured
-separately before claiming the PR total. Cargo target existence or a configured
+The target's transfer and result-processing intervals must be measured separately
+before claiming its PR budget. Cargo target existence or a configured
 compiler cache does not establish cold or cached state; hit state stays unknown
 without evidence for the actual invocation.
 
@@ -119,12 +138,13 @@ runtime observations; they are not part of native bundle cache identity.
 
 ## Manual commands
 
-Run on Linux with Python 3.11+ through `uv`, Git, `taskset`, `lscpu`, the pinned
-Rust toolchain, its `rust-src` component and configured RISC-V targets. The five
+Run-only targets need Linux, Python 3.11+ through `uv`, Git for the pinned harness
+checkout, `taskset` and `lscpu`. Only build hosts need the pinned Rust toolchain,
+its `rust-src` component and configured RISC-V targets. The five
 prepared guests use `riscv64imac-unknown-none-elf`. The build produces its own
 `jolt` CLI; a stale globally installed CLI is not used.
 
-On Ubuntu, have the administrator provide `gcc`, `g++`, `make`, `dpkg-dev`,
+On an Ubuntu build host, have the administrator provide `gcc`, `g++`, `make`, `dpkg-dev`,
 `libcrypt-dev`, `cmake`, `pkg-config`, and `libssl-dev` through the normal
 package-management process. Keep `libc6-dev` for libc headers/startup objects;
 `libssl-dev` supplies OpenSSL headers. The native tools and headers follow
@@ -164,14 +184,15 @@ that clone. The driver forwards no `CARGO_TARGET_DIR` override. Normal Cargo job
 the manifest records `CARGO_BUILD_JOBS` if supplied, without inferring concurrency
 when it is absent.
 
-Preparation builds the real `jolt` guest-builder CLI from the selected source
-under the existing `ci` Cargo profile, without fat LTO or debug information.
-The benchmark executables use the requested prover profile: `bench-off16` for
-PRs and `release` with fat LTO for main/nightly. Guest builds still receive `--release`. The manifest
-records `guest_builder_profile: "ci"` separately from the measured prover's
-`profile` and retains the CLI's hash. PR preparation
-builds `jolt-prover-akita`; main and nightly build both variants. Guest preparation
-uses an executable present in that bundle. The CLI still depends on the Dory host
+Preparation builds the real `jolt` guest-builder CLI and a host-runnable
+`jolt-prover prepare` under the existing `ci` Cargo profile, without target-CPU
+flags. These helpers never prove, and the hosted CPU need not support the target
+ISA. Guest builds receive `--release`. The measured prover binaries use `release`
+with explicit `znver4` code generation, not the host-generic helper. The manifest
+records both helper hashes, their profile/flags, Rust/Cargo versions and native
+compiler/linker versions. Every bundle prepares both prover variants and the
+union of all configured tiers' guest inputs. Its host-generic tools live in
+`target/host-tools`, separate from the measured release outputs. The CLI still depends on the Dory host
 SDK (`Cargo.toml` and `jolt-sdk/src/host_utils.rs`); omitting the Dory benchmark
 executable does not eliminate Dory dependency compilation. No CLI dependency,
 prover optimization or guest optimization is changed by the builder-profile split.
@@ -198,8 +219,8 @@ Every required PCS and guest/input must exist. All recorded binary, guest, input
 runner, configuration and schedule hashes are checked before copying. A main-tier bundle
 does not qualify merely because its source SHA matches: it may lack a PR input.
 Different PCS/input sets can coexist; a superset may serve a smaller request
-only under the same profile and settings. A release main-history bundle cannot
-serve an off16 PR base. An Akita-only bundle cannot serve a request that also requires Dory.
+only under the same profile and settings. An Akita-only bundle cannot serve a
+request that also requires Dory.
 An invalid or incomplete entry is recorded as a cache miss and rebuilt.
 
 Reuse preserves the construction manifest byte-for-byte. The fresh preparation
@@ -240,29 +261,38 @@ uv run --no-project python scripts/bench/run.py build \
 flags before accepting portability. The runner compares the compiler's recorded
 target triple/features with Linux's observed ISA before launching a prover; that
 does not replace the target's first executable compatibility check. `--profile`
-accepts `release`, `ci`, and `bench-off16`. A standalone `build` defaults to
-`release`; `suite --tier pr` defaults to `bench-off16`, matching CI. Main/nightly
-default to `release`. Use `build --profile bench-off16` to prepare a PR bundle.
-
-The root `Cargo.toml` owns `bench-off16`: it inherits release, disables LTO and
-sets 16 codegen units, retaining release's debug information and other settings.
-The builder reads this table at the pinned harness revision and passes it through
-Cargo's `--config` only to the prover build, including when an older source lacks
-the named profile. `profile_config` records the applied table; cache identity and
-paired-result validation include it. The source revision's other profiles are
-not rewritten. The real CLI stays on `ci`, and guests stay on release.
-
-Paired legs must use the same profile, settings and flags, including manual
-settings experiments. The off16 pilot checked ratio consistency, not release-speed
-equivalence: its proofs were slower than stock release. It is a separate performance
-identity, not a conversion factor for release history or calibration. `ci` also
-disables release's debug information and remains a distinct manual option.
+accepts `release` and `ci`; `build` and `suite` default to `release` for every tier.
+CI always selects `release`. `profile_config` records the selected source's
+profile table, without changing it through Cargo overrides. Paired legs must use
+the same profile, settings and flags. Manual `ci` experiments remain a separate
+performance identity and cannot replace release results or their references.
 
 For an early bundle, repeat `--workload fibonacci --workload sha2-chain
 --workload sha3-chain --workload btreemap`. This changes which guests are prepared,
 not the proving harness. Missing guests remain missing results, never zeroes.
 
-On the measurement host, use the bundled script so its hash matches the manifest:
+For a manual pilot, use the collector at the recorded harness revision after
+validating the artifact hashes. The operational entrypoint instead reads a
+separately pinned plan and the hosted job's build-index digest:
+
+```bash
+uv run --no-project python scripts/bench/ci.py execute \
+  --plan "$PLAN/plan.json" --bundles "$BUNDLES" \
+  --artifact-id "$BUILD_ARTIFACT_ID" --index-sha256 "$BUILD_INDEX_SHA256" \
+  --out "$BENCH_OUT/pr-run"
+```
+
+`ci.py execute` checks the planned source/harness revisions, release settings,
+lockfile and harness hashes, suite configuration, required binaries, guests,
+inputs and schedules before starting a proof. Missing or changed artifacts fail;
+there is no build fallback. It restores executable permission only on verified
+binaries because zipped Actions artifacts do not preserve that permission.
+The downloaded Python files are checked as data, not imported or executed.
+`ci.py verify` takes the same plan, bundle, artifact-ID and index-hash arguments
+without `--out`; it checks every payload and restores binary modes without
+starting a proof. Use it before the first cheap executable/proof readiness check.
+
+The lower-level collector supports separately labelled pilots and references:
 
 ```bash
 uv run --no-project python "$BENCH_OUT/bundle/scripts/bench/run.py" run \
@@ -275,8 +305,8 @@ uv run --no-project python "$BENCH_OUT/bundle/scripts/bench/run.py" run \
 overrides. Select IDs directly from `suites.json`; partial/pilot results are not a
 full PR comparison. Every case uses the exact same profile invocation as CI.
 
-For the local component of a PR dry run, use an exact current-main base, exact
-candidate merge revision, and one committed harness:
+For an explicitly authorized local build-plus-run diagnostic only, use an exact
+base, candidate merge revision, and one committed harness:
 
 ```bash
 uv run --no-project python scripts/bench/run.py suite \
@@ -304,13 +334,12 @@ override changes the comment, not the original raw result. The option does not
 enter build identity or change any native bundle's construction manifest.
 Keep the suite configuration and bundles unchanged when adding observations.
 
-For a PR reference, construct the exact main base under the PR profile using the
-normal locked builder. This is separately timed preparation, not a PR-budget pass;
-do not seed the completed cache or reuse a release-history reference:
+For a PR reference, use the exact hosted base bundle. A separate local build is
+only the off-host equivalence control, not the operational target path:
 
 ```bash
 uv run --no-project python scripts/bench/run.py build \
-  --revision "$BASE" --harness-revision "$HARNESS" --profile bench-off16 \
+  --revision "$BASE" --harness-revision "$HARNESS" --profile release \
   --target-cpu "$TARGET_CPU" --out "$BASE_OUT"
 ```
 
@@ -327,9 +356,8 @@ After deriving the reference, pass it to the actual three-repetition comparison
 without rebuilding that baseline just to add observations:
 
 ```bash
-uv run --no-project python scripts/bench/run.py suite \
-  --tier pr --base-revision "$BASE" --head-revision "$MERGE" \
-  --harness-revision "$HARNESS" --target-cpu "$TARGET_CPU" \
+uv run --no-project python scripts/bench/run.py run \
+  --tier pr --base "$BASE_OUT/manifest.json" --head "$HEAD_OUT/manifest.json" \
   --calibration "$CALIBRATION_JSON" --out "$BENCH_OUT/pr-calibrated"
 ```
 
@@ -345,10 +373,11 @@ raw warmup and measured `samples`. A successful sample is `complete`, exit code
 zero, and has all numeric metrics. Failed, incomplete, unsupported, and missing
 points are explicit, with reasons and null metrics. Non-executed workflows emit
 a `disabled` result instead of scheduling an absent runner. The CI artifact keeps
-raw logs, manifests, fixed inputs, compiler flags, toolchain and lockfile hashes,
-binary/guest hashes, CPU topology, and host settings. It excludes executable
-payloads and the runtime URS cache. A transportable `build` bundle keeps the
-actual binaries, guest ELFs, and Akita schedules for off-host execution.
+raw sample logs, embedded manifests, compiler flags, toolchain and lockfile
+hashes, binary/guest hashes, CPU topology, and host settings. It excludes the
+runtime URS cache. The separate `jolt-e2e-builds-RUN_ID-RUN_ATTEMPT` artifact keeps
+the actual binaries, guest ELFs, fixed inputs, Akita schedules and construction
+logs. `builds.json` binds their manifest hashes to the exact plan bytes.
 
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
@@ -410,17 +439,17 @@ acceptance runs; it is not evidence that the time budget has passed.
    restriction is unavailable for the account, leave execution disabled: a
    PR-editable YAML `if` is not a security boundary. GitHub documents these
    fields in its [runner-group API](https://docs.github.com/en/rest/actions/self-hosted-runner-groups#update-a-self-hosted-runner-group-for-an-organization).
-3. Install the repository's build prerequisites and `uv` through the normal
-   administrator process. Set `JOLT_E2E_TARGET_CPU` only after observing the
-   target ISA. Keep the runner cache outside the action workspace, with ownership
+3. Install the run-only prerequisites above and `uv` through the normal
+   administrator process. Confirm that the target supports the fixed `znver4`
+   ISA. Keep the runner cache outside the action workspace, with ownership
    restricted to that account. Complete a real null pilot and calibrate
    sizes/repetitions without changing protocol parameters.
 4. Enable `JOLT_E2E_ENABLED=true` for an actual changed-source PR workflow run.
    Inspect every expected point, physical affinity, hashes and verified exits.
-   Measure the full request-completion-through-result interval, including build
-   or reuse preparation, checkout/fetch, transfers and result processing. Include
-   trusted comment publication when enabled. Keep a miss as a miss; a prebuilt
-   run or manual local receipt cannot establish the less-than-600-second gate.
+   Measure the target-job interval, including checkout, transfers, verification
+   and result processing. Report hosted compilation and any trusted comment
+   publication separately. Keep a miss as a miss; proof-only timings alone
+   cannot establish the less-than-600-second target gate.
 5. After reviewing trusted publication separately, optionally set
    `JOLT_E2E_COMMENTS_ENABLED=true`. Until then, comments are rendered artifacts
    only. This task does not enable or post them.
@@ -503,14 +532,17 @@ rejects forks, and resolves the PR merge ref's exact current-main parent. No
 `pull_request_target` workflow executes PR code. The persistent measurement job
 has only read permissions; subprocess environments exclude tokens. The runner's
 non-secret `RUNNER_TRACKING_ID` is retained for cancellation cleanup. Trusted
-action checkouts are cleaned normally. The locked source clone, its repo-local
-Cargo target and completed bundles survive outside that workspace. Removing the
-store causes fresh preparation; a compiler-cache hit is never inferred from
-directory existence or from a completed-bundle reuse receipt.
+action checkouts are cleaned normally. The hosted build's source clone, its
+repo-local Cargo target and completed bundles are outside that workspace and
+can be reused within the job. No cross-job compiler cache is configured. The
+target has no source-build step, even when an artifact is absent or invalid.
 
-The hosted plan is transferred by its captured immutable artifact ID, not just
-its name. The hosted read-only validator checks actual workflow/artifact/PR
-records, revisions, matrix, sampling, affinity, and metrics before rendering text.
+The hosted plan and build bundle are transferred by their captured immutable
+artifact IDs, not just names. The target checks the build-index hash against the
+hosted job output, then checks manifest and payload hashes against the plan's
+expected inputs. The hosted read-only publisher checks actual workflow/artifact/PR
+records and the builder's manifest digests as well as revisions, matrix, sampling,
+affinity and metrics before rendering text.
 A separate hosted job receives only that validated text and a PR-write token,
 rechecks current head/base, and updates its own sticky comment. It never executes
 a downloaded script or measured binary. These checks establish recorded
@@ -524,8 +556,8 @@ The self-hosted job has a 10-minute timeout for PRs and 180 minutes for main and
 nightly. A timeout is a failure, not evidence of a completed sub-600-second job.
 Interruption can prevent finalization and artifact upload; missing artifacts or
 results remain unavailable, not passing. A complete manual trial must finish in
-less than 600 seconds, including `ci.py execute`, `ci.py finalize`, preparation,
-transport and result processing. Hosted-only overhead remains unverified.
+less than 600 seconds, including download, `ci.py execute`, `ci.py finalize`,
+upload and result processing. Hosted compilation is a separate recorded interval.
 
 The measured pilot ran each of the 60 supported nightly cases once. It does not establish the full
 nightly suite's duration, variation between runs, or completion within 180
