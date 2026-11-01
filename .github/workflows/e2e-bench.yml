@@ -151,11 +151,7 @@ jobs:
           name: jolt-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             ${{ runner.temp }}/e2e-out
-            !${{ runner.temp }}/e2e-out/**/jolt-prover-*
-            !${{ runner.temp }}/e2e-out/**/guest.elf
             !${{ runner.temp }}/e2e-out/**/runtime-cache/**
-            !${{ runner.temp }}/e2e-out/**/akita-schedules/**
-            !${{ runner.temp }}/e2e-out/**/scripts/**
           if-no-files-found: error
           retention-days: 30
 

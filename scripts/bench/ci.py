@@ -148,7 +148,7 @@ def plan(args):
         output.write(f'tier={tier}\n')
     with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
         summary.write('End-to-end benchmarks: ' + ('enabled' if plan['enabled'] else plan['reason']) + '\n')
-    return int(enabled and not plan['enabled'])
+    return int(build_only and not plan['enabled'])
 
 
 def load_plan(path):
@@ -169,19 +169,34 @@ def prepare(args):
     started, begin = bench.utc_now(), time.perf_counter()
     out = args.out.resolve()
     builds, digests = {}, {}
-    with bench.host_lock():
-        for revision in plan['expected_builds']:
-            if not re.fullmatch('[0-9a-f]{40}', revision):
-                raise ValueError('invalid planned revision')
-            bench.capture(['git', 'fetch', '--no-tags', 'origin', revision], env=bench.build_environment())
-            options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier=None,
-                out=out / revision, revision=revision, harness_revision=plan['harness'],
-                target_cpu=plan['target_cpu'], profile='release', workload=[], case=[])
-            manifest = bench.build(options)
-            if manifest['status'] != 'complete':
-                raise ValueError(f'hosted preparation failed for {revision}: {manifest["reason"]}')
-            builds[revision] = bench.bundle_file(options.out / 'manifest.json', out)
-            digests[revision] = manifest_digest(manifest)
+    snapshot = """date -u '+build resources %Y-%m-%dT%H:%M:%SZ'
+free -b
+df -B1 "$1"
+awk '$1 == "oom_kill" { print "kernel", $0 }' /proc/vmstat
+"""
+    resource_args = ['build-resources', str(bench.cache_root())]
+    env = bench.build_environment()
+    with bench.host_lock(), subprocess.Popen(
+            ['sh', '-c', f'while :; do\n{snapshot}sleep 10\ndone', *resource_args],
+            cwd=bench.ROOT, env=env, start_new_session=True) as resources:
+        try:
+            for revision in plan['expected_builds']:
+                if not re.fullmatch('[0-9a-f]{40}', revision):
+                    raise ValueError('invalid planned revision')
+                bench.capture(['git', 'fetch', '--no-tags', 'origin', revision], env=env)
+                options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier=None,
+                    out=out / revision, revision=revision, harness_revision=plan['harness'],
+                    target_cpu=plan['target_cpu'], profile='release', workload=[], case=[])
+                manifest = bench.build(options)
+                if manifest['status'] != 'complete':
+                    raise ValueError(f'hosted preparation failed for {revision}: {manifest["reason"]}')
+                builds[revision] = bench.bundle_file(options.out / 'manifest.json', out)
+                digests[revision] = manifest_digest(manifest)
+        finally:
+            bench.stop_child(resources)
+            subprocess.run(['sh', '-c', snapshot, *resource_args], cwd=bench.ROOT, env=env, check=False)
+            print('Kernel warnings/errors (read-only; access may be unavailable):', flush=True)
+            subprocess.run(['dmesg', '--level=err,warn'], env=env, check=False)
     index = {'plan_sha256': bench.sha256(args.plan), 'builds': builds,
              'started_at': started, 'finished_at': bench.utc_now(), 'elapsed_s': time.perf_counter() - begin}
     bench.write_json(out / 'builds.json', index)
