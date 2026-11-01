@@ -1,6 +1,6 @@
 use jolt_field::{Accumulator, JoltField};
 
-use super::{extend, EXTENDED_NODE_COUNT};
+use super::{extend, fold_guards, DOMAIN, EXTENDED_NODE_COUNT, SECOND_GROUP_LEN};
 
 const MAX_GROUPS: usize = 32;
 const MAP_BITS: usize = 7;
@@ -34,19 +34,9 @@ impl<F: JoltField, const M: usize, const LIMBS: usize> GuardGroups<F, M, LIMBS> 
         values: [&[i128; M]; LIMBS],
         weight: F,
     ) -> bool {
-        if M > 21 {
+        let Some(key) = guard_key(guards) else {
             return false;
-        }
-        let mut key = 0u64;
-        let mut valid = true;
-        for (index, &guard) in guards.iter().enumerate() {
-            let digit = guard.wrapping_add(3) as u64;
-            valid &= digit <= 6;
-            key |= (digit & 7) << (3 * index);
-        }
-        if !valid {
-            return false;
-        }
+        };
         let mut slot = (key.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - MAP_BITS)) as usize;
         let group_index = loop {
             if let Some(index) = self.slots[slot] {
@@ -98,6 +88,71 @@ impl<F: JoltField, const M: usize, const LIMBS: usize> GuardGroups<F, M, LIMBS> 
             }
         }
         result.map(Accumulator::reduce)
+    }
+}
+
+#[inline]
+fn guard_key<const M: usize>(guards: &[i64; M]) -> Option<u64> {
+    if M > 21 {
+        return None;
+    }
+    let mut key = 0u64;
+    let mut valid = true;
+    for (index, &guard) in guards.iter().enumerate() {
+        let digit = guard.wrapping_add(3) as u64;
+        valid &= digit <= 6;
+        key |= (digit & 7) << (3 * index);
+    }
+    valid.then_some(key)
+}
+
+#[derive(Clone, Copy)]
+struct GuardFold<F: JoltField> {
+    key: [u64; 2],
+    values: [F; 2],
+}
+
+/// The remainder's A interpolants depend only on the guards and its fixed
+/// Lagrange weights. Collisions replace one slot; scratch never grows with T.
+pub(super) struct GuardFolds<'a, F: JoltField> {
+    weights: &'a [F],
+    slots: [Option<GuardFold<F>>; 1 << MAP_BITS],
+}
+
+impl<'a, F: JoltField> GuardFolds<'a, F> {
+    pub(super) fn new(weights: &'a [F]) -> Self {
+        Self {
+            weights,
+            slots: [None; 1 << MAP_BITS],
+        }
+    }
+
+    #[inline]
+    pub(super) fn fold(
+        &mut self,
+        first: &[i64; DOMAIN],
+        second: &[i64; SECOND_GROUP_LEN],
+    ) -> [F; 2] {
+        let evaluate = || {
+            [
+                fold_guards(self.weights, first),
+                fold_guards(self.weights, second),
+            ]
+        };
+        let (Some(first_key), Some(second_key)) = (guard_key(first), guard_key(second)) else {
+            return evaluate();
+        };
+        let key = [first_key, second_key];
+        let hash = first_key ^ second_key.rotate_left(27);
+        let slot = (hash.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - MAP_BITS)) as usize;
+        if let Some(cached) = self.slots[slot] {
+            if cached.key == key {
+                return cached.values;
+            }
+        }
+        let values = evaluate();
+        self.slots[slot] = Some(GuardFold { key, values });
+        values
     }
 }
 
@@ -190,5 +245,43 @@ mod tests {
             check::<Fp128<{ u128::MAX - 274 }>, DOMAIN, 1>();
             check::<Fp128<{ u128::MAX - 274 }>, { DOMAIN - 1 }, 2>();
         }
+    }
+
+    fn check_folds<F: JoltField>() {
+        let weights: Vec<F> = (0..DOMAIN)
+            .map(|i| F::from_u64(17 + 13 * i as u64))
+            .collect();
+        let mut cache = GuardFolds::new(&weights);
+        // More distinct guard vectors than slots exercise replacement; repeated
+        // vectors and out-of-range guards must obey the same linear formula.
+        for row in 0..512 {
+            let mut code = row;
+            let mut first = std::array::from_fn(|_| {
+                let value = (code % 7) as i64 - 3;
+                code /= 7;
+                value
+            });
+            let second = std::array::from_fn(|i| ((row + 3 * i) % 7) as i64 - 3);
+            if row % 17 == 0 {
+                first[0] = 4;
+            }
+            let evaluate = |guards: &[i64]| {
+                weights
+                    .iter()
+                    .zip(guards)
+                    .map(|(&weight, &guard)| weight * F::from_i64(guard))
+                    .sum::<F>()
+            };
+            let expected = [evaluate(&first), evaluate(&second)];
+            assert_eq!(cache.fold(&first, &second), expected);
+            assert_eq!(cache.fold(&first, &second), expected);
+        }
+    }
+
+    #[test]
+    fn cached_guard_folds_match_linear_combination() {
+        check_folds::<Fr>();
+        #[cfg(feature = "akita")]
+        check_folds::<Fp128<{ u128::MAX - 274 }>>();
     }
 }

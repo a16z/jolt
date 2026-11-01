@@ -115,7 +115,7 @@ use crate::{
 };
 
 mod guard_groups;
-use guard_groups::GuardGroups;
+use guard_groups::{GuardFolds, GuardGroups};
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
@@ -796,14 +796,40 @@ fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], lo: &[i128], hi: &[i1
     let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
     for (((&weight, &guard), &lo), &hi) in weights.iter().zip(guards).zip(lo).zip(hi) {
         az.fmadd_i64(weight, guard);
-        let (top, low) = (hi + (lo >> 64), lo as u64);
-        match top {
-            0 => bz.fmadd_signed_u64(weight, low, true),
-            -1 if low != 0 => bz.fmadd_signed_u64(weight, low.wrapping_neg(), false),
-            _ => bz.fmadd_s256(weight, &wide_value(top, low)),
-        }
+        accumulate_group_value(&mut bz, weight, lo, hi);
     }
     (az.reduce(), bz.reduce())
+}
+
+fn fold_guards<F: JoltField>(weights: &[F], guards: &[i64]) -> F {
+    let mut az = <F as WithAccumulator>::SmallScalarAccumulator::default();
+    for (&weight, &guard) in weights.iter().zip(guards) {
+        az.fmadd_i64(weight, guard);
+    }
+    az.reduce()
+}
+
+fn fold_values<F: JoltField>(weights: &[F], lo: &[i128], hi: &[i128]) -> F {
+    let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
+    for ((&weight, &lo), &hi) in weights.iter().zip(lo).zip(hi) {
+        accumulate_group_value(&mut bz, weight, lo, hi);
+    }
+    bz.reduce()
+}
+
+#[inline]
+fn accumulate_group_value<F: JoltField>(
+    sum: &mut F::SignedProductAccumulator,
+    weight: F,
+    lo: i128,
+    hi: i128,
+) {
+    let (top, low) = (hi + (lo >> 64), lo as u64);
+    match top {
+        0 => sum.fmadd_signed_u64(weight, low, true),
+        -1 if low != 0 => sum.fmadd_signed_u64(weight, low.wrapping_neg(), false),
+        _ => sum.fmadd_s256(weight, &wide_value(top, low)),
+    }
 }
 
 /// The uni-skip carry: everything the uni-skip front computes that the
@@ -1170,13 +1196,17 @@ impl<F: JoltField> OuterRemainderKernel<F> {
          -> Result<(F, F), WitnessError> {
             let mut inner_zero = F::zero();
             let mut inner_infinity = F::zero();
+            let mut guard_folds = GuardFolds::new(lagrange);
             #[cfg(feature = "field-inline")]
             let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, x_out * in_len);
             for x_in in 0..az_chunk.len() / 2 {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
-                let integer_fold = || {
-                    let ([az_zero, az_one], [bz_zero, bz_one]) = row.folded_groups(lagrange);
+                let mut integer_fold = || {
+                    let values = row.group_values();
+                    let [az_zero, az_one] = guard_folds.fold(&values.a_first, &values.a_second);
+                    let bz_zero = fold_values(lagrange, &values.b_first, &[0; DOMAIN]);
+                    let bz_one = fold_values(lagrange, &values.b_second_lo, &values.b_second_hi);
                     (az_zero, bz_zero, az_one, bz_one)
                 };
                 #[cfg(feature = "field-inline")]
