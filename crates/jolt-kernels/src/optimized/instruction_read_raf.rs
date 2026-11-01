@@ -1569,15 +1569,17 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 .copied()
                 .unwrap_or(F::zero())
             * cycle.ra.tail_values().iter().copied().product::<F>();
-        let groups = match &cycle.ra {
-            LazyFoldedRa::Lazy {
-                source, width: 1, ..
-            } => CyclePairGroups::new(
-                source,
-                &self.claim_columns,
-                prefix_pairs,
-                cycle.gruen.e_in_current_len(),
-            ),
+        let groups = match (&cycle.ra, &cycle.combined_val) {
+            (
+                LazyFoldedRa::Lazy {
+                    source, width: 1, ..
+                },
+                LazyFoldedRa::Lazy {
+                    source: claims,
+                    width: 1,
+                    ..
+                },
+            ) => CyclePairGroups::new(source, claims, prefix_pairs, cycle.gruen.e_in_current_len()),
             _ => None,
         };
         let make_scratch = || Scratch {

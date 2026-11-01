@@ -1,10 +1,12 @@
-use super::{ConstantSuffix, LookupIndexChunks};
-use jolt_field::JoltField;
-use jolt_poly::GruenSplitEqPolynomial;
 use std::num::NonZeroU16;
 
+use jolt_field::JoltField;
+use jolt_poly::GruenSplitEqPolynomial;
+
+use super::{ClaimBytes, LookupIndexChunks};
+use crate::optimized::support::{repeat_hash, repeats_often, RepeatCache};
+
 const MAX_PAIRS: usize = 1024;
-const SAMPLE_BLOCKS: usize = 32;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct PairKey {
@@ -13,16 +15,15 @@ struct PairKey {
 }
 
 impl PairKey {
-    fn slot(self, slots: usize) -> usize {
+    fn hash(self) -> u64 {
         let [lo, hi] = self.indices;
-        let mut hash = (lo as u64)
-            ^ ((lo >> 64) as u64).rotate_left(11)
-            ^ (hi as u64).rotate_left(23)
-            ^ ((hi >> 64) as u64).rotate_left(37)
-            ^ u64::from(self.classes).wrapping_mul(0x9e37_79b9_7f4a_7c15);
-        hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        ((hash ^ (hash >> 31)) as usize) & (slots - 1)
+        repeat_hash([
+            lo as u64,
+            (lo >> 64) as u64,
+            hi as u64,
+            (hi >> 64) as u64,
+            u64::from(self.classes),
+        ])
     }
 }
 
@@ -30,48 +31,29 @@ impl PairKey {
 /// all factors except the equality weight. Groups stay inside one Gruen block.
 pub(super) struct CyclePairGroups<'a> {
     source: &'a LookupIndexChunks,
-    claims: &'a ConstantSuffix<u8>,
+    claims: &'a ClaimBytes,
     batch_size: usize,
 }
 
 impl<'a> CyclePairGroups<'a> {
     pub(super) fn new(
         source: &'a LookupIndexChunks,
-        claims: &'a ConstantSuffix<u8>,
+        claims: &'a ClaimBytes,
         prefix_pairs: usize,
         inner_len: usize,
     ) -> Option<Self> {
-        let batch_size = inner_len.min(MAX_PAIRS);
-        if prefix_pairs < SAMPLE_BLOCKS * batch_size {
-            return None;
-        }
         let groups = Self {
             source,
             claims,
-            batch_size,
+            batch_size: inner_len.min(MAX_PAIRS),
         };
-        let blocks = prefix_pairs.div_ceil(batch_size);
-        let mut cache = vec![None::<NonZeroU16>; 4 * batch_size];
-        let mut hits = 0;
-        let mut sampled = 0;
-        for sample in 0..SAMPLE_BLOCKS {
-            cache.fill(None);
-            let start = sample * (blocks - 1) / (SAMPLE_BLOCKS - 1) * batch_size;
-            let len = batch_size.min(prefix_pairs - start);
-            sampled += len;
-            for offset in 0..len {
-                let key = groups.key(start + offset);
-                let slot = key.slot(cache.len());
-                if cache[slot].is_some_and(|previous| {
-                    groups.key(start + usize::from(previous.get() - 1)) == key
-                }) {
-                    hits += 1;
-                } else {
-                    cache[slot] = NonZeroU16::new(offset as u16 + 1);
-                }
-            }
-        }
-        (4 * hits >= sampled).then_some(groups)
+        repeats_often(
+            prefix_pairs,
+            groups.batch_size,
+            |row| groups.key(row).hash(),
+            |a, b| groups.key(a) == groups.key(b),
+        )
+        .then_some(groups)
     }
 
     fn key(&self, row: usize) -> PairKey {
@@ -80,7 +62,8 @@ impl<'a> CyclePairGroups<'a> {
                 self.source.packed_index(2 * row),
                 self.source.packed_index(2 * row + 1),
             ],
-            classes: u16::from(self.claims[2 * row]) | (u16::from(self.claims[2 * row + 1]) << 8),
+            classes: u16::from(self.claims.0[2 * row])
+                | (u16::from(self.claims.0[2 * row + 1]) << 8),
         }
     }
 
@@ -120,7 +103,7 @@ struct GroupedScratch<F, A> {
     inner: A,
     rows: Vec<usize>,
     weights: Vec<F>,
-    cache: Vec<Option<NonZeroU16>>,
+    cache: RepeatCache<NonZeroU16>,
     pairs_seen: usize,
 }
 
@@ -130,7 +113,7 @@ impl<F: JoltField, A> GroupedScratch<F, A> {
             inner,
             rows: Vec::with_capacity(batch_size),
             weights: Vec::with_capacity(batch_size),
-            cache: vec![None; 4 * batch_size],
+            cache: RepeatCache::new(batch_size),
             pairs_seen: 0,
         }
     }
@@ -138,17 +121,18 @@ impl<F: JoltField, A> GroupedScratch<F, A> {
     fn push(&mut self, groups: &CyclePairGroups<'_>, row: usize, weight: F) {
         self.pairs_seen += 1;
         let key = groups.key(row);
-        let slot = key.slot(self.cache.len());
-        if let Some(previous) = self.cache[slot] {
-            let previous = usize::from(previous.get() - 1);
-            if groups.key(self.rows[previous]) == key {
-                self.weights[previous] += weight;
-                return;
-            }
+        let rows = &self.rows;
+        let representative = self
+            .cache
+            .find_or_insert(key.hash(), rows.len(), |previous| {
+                groups.key(rows[previous]) == key
+            });
+        if let Some(previous) = representative {
+            self.weights[previous] += weight;
+        } else {
+            self.rows.push(row);
+            self.weights.push(weight);
         }
-        self.rows.push(row);
-        self.weights.push(weight);
-        self.cache[slot] = NonZeroU16::new(self.rows.len() as u16);
     }
 
     fn flush(&mut self, inner_step: &impl Fn(&mut A, usize, F)) {
@@ -160,7 +144,44 @@ impl<F: JoltField, A> GroupedScratch<F, A> {
         }
         self.rows.clear();
         self.weights.clear();
-        self.cache.fill(None);
+        self.cache.clear();
         self.pairs_seen = 0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
+
+    use super::super::{ClaimBytes, InstructionCycleRow, LookupIndexChunks};
+    use super::CyclePairGroups;
+
+    fn engages(period: usize) -> bool {
+        let cycles = 1 << 14;
+        let rows: Vec<_> = (0..cycles)
+            .map(|cycle| {
+                InstructionCycleRow::new(
+                    (cycle % period) as u128,
+                    None,
+                    false,
+                    0,
+                    None,
+                    #[cfg(feature = "akita")]
+                    FusedInc::default(),
+                )
+            })
+            .collect();
+        let source = LookupIndexChunks::new(Arc::new(rows.into()), 16, 4);
+        let claims = ClaimBytes(Arc::new(vec![0u8; cycles].into()));
+        CyclePairGroups::new(&source, &claims, cycles / 2, 1 << 6).is_some()
+    }
+
+    #[test]
+    fn grouping_engages_only_for_repeated_pairs() {
+        assert!(engages(10));
+        assert!(!engages(1 << 14));
     }
 }
