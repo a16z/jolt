@@ -1,5 +1,7 @@
 mod product_sum;
+mod repeat_cache;
 pub(crate) use product_sum::{LowDegreeProductSum, TailFactorProducts};
+pub(crate) use repeat_cache::{repeat_hash, repeats_often, RepeatCache};
 
 use std::ops::Range;
 

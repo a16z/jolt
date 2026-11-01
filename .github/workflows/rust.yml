@@ -818,6 +818,9 @@ jobs:
               cargo nextest run -p "$pkg" "${features[@]}" --no-tests=pass
             fi
           done
+      - name: Check serial Akita kernels
+        if: matrix.shard == 'akita'
+        run: cargo check --locked -p jolt-kernels --no-default-features --features akita
       # The shard loop above tests jolt-transcript with default features, which
       # leave out the Solinas and binary field codecs and their tests.
       - name: Test jolt-transcript with all features
