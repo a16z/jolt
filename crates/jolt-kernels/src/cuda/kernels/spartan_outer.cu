@@ -265,6 +265,29 @@ extern "C" __global__ void so_factors_kernel(
     }
 }
 
+__device__ __forceinline__ void gruen_pair_accumulate(
+    const u64 *az0, const u64 *az1, const u64 *bz0, const u64 *bz1,
+    const u64 *weight, u64 acc[3][LIMBS]) {
+    u64 product[LIMBS], weighted[LIMBS], sum[LIMBS];
+    fr_mul(az0, bz0, product);
+    fr_mul(product, weight, weighted);
+    fr_add(acc[0], weighted, sum);
+    for (int l = 0; l < LIMBS; l++) acc[0][l] = sum[l];
+
+    fr_mul(az1, bz1, product);
+    fr_mul(product, weight, weighted);
+    fr_add(acc[2], weighted, sum);
+    for (int l = 0; l < LIMBS; l++) acc[2][l] = sum[l];
+
+    u64 az_inf[LIMBS], bz_inf[LIMBS];
+    fr_sub(az1, az0, az_inf);
+    fr_sub(bz1, bz0, bz_inf);
+    fr_mul(az_inf, bz_inf, product);
+    fr_mul(product, weight, weighted);
+    fr_add(acc[1], weighted, sum);
+    for (int l = 0; l < LIMBS; l++) acc[1][l] = sum[l];
+}
+
 extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
                                              const u64 *__restrict__ bz,
                                              const u64 *__restrict__ e_in,
@@ -296,24 +319,7 @@ extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
             so_split_eq(e_in, e_out, in_bits, pair, weight);
         }
 
-        u64 product[LIMBS], weighted[LIMBS], sum[LIMBS];
-        fr_mul(az0, bz0, product);
-        fr_mul(product, weight, weighted);
-        fr_add(acc[0], weighted, sum);
-        for (int l = 0; l < LIMBS; l++) acc[0][l] = sum[l];
-
-        fr_mul(az1, bz1, product);
-        fr_mul(product, weight, weighted);
-        fr_add(acc[2], weighted, sum);
-        for (int l = 0; l < LIMBS; l++) acc[2][l] = sum[l];
-
-        u64 az_inf[LIMBS], bz_inf[LIMBS];
-        fr_sub(az1, az0, az_inf);
-        fr_sub(bz1, bz0, bz_inf);
-        fr_mul(az_inf, bz_inf, product);
-        fr_mul(product, weight, weighted);
-        fr_add(acc[1], weighted, sum);
-        for (int l = 0; l < LIMBS; l++) acc[1][l] = sum[l];
+        gruen_pair_accumulate(az0, az1, bz0, bz1, weight, acc);
     }
 
     so_block_reduce(scratch, 3, acc, partials);

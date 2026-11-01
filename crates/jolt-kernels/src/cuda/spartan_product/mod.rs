@@ -5,10 +5,11 @@
 //! centered Lagrange weights to form the uni-skip polynomial, whereas optimized
 //! evaluates the extended domain from typed product rows.
 //!
-//! After uni-skip, CUDA materializes the two challenge-weighted operand tables
-//! on each device before the first remainder round; optimized fuses materialization
-//! with that round. Split-eq rounds fold these tables locally before
-//! gathering the short tail onto GPU 0. Native columns are retained separately
+//! After uni-skip, CUDA and optimized fuse materialization of the two
+//! challenge-weighted operand tables with the first remainder round.
+//! CUDA caches that round's reduced endpoints from each device. Split-eq rounds
+//! fold these tables locally before gathering the short tail onto GPU 0.
+//! Native columns are retained separately
 //! to evaluate the individual output claims.
 //! These CUDA tables include padding cycles. Optimized instead retains a
 //! nonconstant prefix and adds the constant suffix using its equality weight

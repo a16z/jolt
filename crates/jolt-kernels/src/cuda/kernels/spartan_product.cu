@@ -131,14 +131,10 @@ extern "C" __global__ void sp_matrix_kernel(
     so_block_reduce(scratch, SP_MATRIX_LANES, acc, lane_partials);
 }
 
-extern "C" __global__ void sp_factors_kernel(
-    const u64 *__restrict__ narrow, const u64 *__restrict__ wide,
-    const unsigned int *__restrict__ flags, const u64 *__restrict__ weights, unsigned int jump_bit,
-    unsigned int branch_bit, unsigned int noop_bit, unsigned int sign_bit, unsigned int cycles,
-    u64 *__restrict__ left_out, u64 *__restrict__ right_out) {
-    unsigned long long t = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
-    if (t >= cycles) return;
-
+__device__ __forceinline__ void sp_factors_at(
+    const u64 *narrow, const u64 *wide, const unsigned int *flags, const u64 *weights,
+    unsigned int jump_bit, unsigned int branch_bit, unsigned int noop_bit,
+    unsigned int sign_bit, unsigned long long t, u64 *left, u64 *right) {
     unsigned int mask = flags[t];
     const u64 *row = narrow + t * SP_NARROW;
     const u64 *row_wide = wide + t * (SP_WIDE * 2);
@@ -149,14 +145,12 @@ extern "C" __global__ void sp_factors_kernel(
     load4(weights + 2 * LIMBS, w2);
 
     u64 folded[2 * UNR_SLOTS];
-    u64 value[LIMBS];
 
     unr_zero(folded);
     sp_accumulate_word(folded, w0, row[SP_LEFT_SLOT]);
     sp_accumulate_word(folded, w1, row[SP_LOOKUP_SLOT]);
     if ((mask >> jump_bit) & 1u) unr_add_field(folded, w2);
-    unr_finalize(folded, value);
-    store4(left_out + t * LIMBS, value);
+    unr_finalize(folded, left);
 
     unr_zero(folded);
     unsigned long long pair[2];
@@ -173,8 +167,40 @@ extern "C" __global__ void sp_factors_kernel(
     }
     if ((mask >> branch_bit) & 1u) unr_add_field(folded, w1);
     if (((mask >> noop_bit) & 1u) == 0u) unr_add_field(folded, w2);
-    unr_finalize(folded, value);
-    store4(right_out + t * LIMBS, value);
+    unr_finalize(folded, right);
+}
+
+extern "C" __global__ void sp_prepare_kernel(
+    const u64 *__restrict__ narrow, const u64 *__restrict__ wide,
+    const unsigned int *__restrict__ flags, const u64 *__restrict__ weights,
+    unsigned int jump_bit, unsigned int branch_bit, unsigned int noop_bit,
+    unsigned int sign_bit, unsigned int cycles, const u64 *__restrict__ e_in,
+    const u64 *__restrict__ e_out, unsigned int e_in_len, unsigned int in_bits,
+    u64 *__restrict__ left_out, u64 *__restrict__ right_out,
+    u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned long long pair = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    u64 acc[3][LIMBS] = {};
+    if (pair < cycles / 2) {
+        u64 left0[LIMBS], right0[LIMBS], left1[LIMBS], right1[LIMBS];
+        sp_factors_at(narrow, wide, flags, weights, jump_bit, branch_bit, noop_bit,
+                      sign_bit, 2 * pair, left0, right0);
+        sp_factors_at(narrow, wide, flags, weights, jump_bit, branch_bit, noop_bit,
+                      sign_bit, 2 * pair + 1, left1, right1);
+        store4(left_out + (2 * pair) * LIMBS, left0);
+        store4(right_out + (2 * pair) * LIMBS, right0);
+        store4(left_out + (2 * pair + 1) * LIMBS, left1);
+        store4(right_out + (2 * pair + 1) * LIMBS, right1);
+
+        u64 weight[LIMBS];
+        if (e_in_len <= 1) {
+            load4(e_out + pair * LIMBS, weight);
+        } else {
+            so_split_eq(e_in, e_out, in_bits, pair, weight);
+        }
+        gruen_pair_accumulate(left0, left1, right0, right1, weight, acc);
+    }
+    so_block_reduce(scratch, 3, acc, partials);
 }
 
 extern "C" __global__ void sp_claims_kernel(

@@ -60,6 +60,7 @@ pub struct DeviceProductRemainder<F: JoltField> {
     shards: Vec<ProductShard<F>>,
     collapsed: Option<(DeviceFrVec, DeviceFrVec)>,
     eq: DeviceSplitEq<F>,
+    pending_endpoints: Option<[F; 3]>,
     log_t: usize,
     local_rounds: usize,
     challenges: Vec<F>,
@@ -95,14 +96,17 @@ impl<F: JoltField> DeviceProductRemainder<F> {
             centered_lagrange_kernel::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high, uniskip_challenge)
                 .map_err(|_| invalid_domain())?;
 
+        let eq =
+            DeviceSplitEq::new_with_scaling(context, tau_low, BindingOrder::LowToHigh, kernel)?;
+        let whole_eq = &eq;
         let weights = &weights;
-        let tasks: Vec<DeviceTask<'_, ProductShard<F>, CudaError>> = columns
+        type PreparedShard<F> = (ProductShard<F>, [F; 3]);
+        let tasks: Vec<DeviceTask<'_, PreparedShard<F>, CudaError>> = columns
             .into_iter()
             .enumerate()
             .map(|(shard, (ordinal, columns))| {
-                let task: DeviceTask<'_, ProductShard<F>, CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, PreparedShard<F>, CudaError> = Box::new(move || {
                     let device = context_for(ordinal).ok_or(absent())?;
-                    let (left, right) = Self::window_factors(device, &columns, weights)?;
                     let eq = if count == 1 {
                         None
                     } else {
@@ -115,43 +119,71 @@ impl<F: JoltField> DeviceProductRemainder<F> {
                             count,
                         )?)
                     };
-                    Ok(ProductShard {
-                        ordinal,
-                        columns,
-                        left,
-                        right,
-                        eq,
-                    })
+                    let (left, right, endpoints) = Self::prepare_window(
+                        device,
+                        &columns,
+                        weights,
+                        eq.as_ref().unwrap_or(whole_eq),
+                    )?;
+                    Ok((
+                        ProductShard {
+                            ordinal,
+                            columns,
+                            left,
+                            right,
+                            eq,
+                        },
+                        endpoints,
+                    ))
                 });
                 task
             })
             .collect();
-        let shards = fan_out(tasks)?;
-        let eq =
-            DeviceSplitEq::new_with_scaling(context, tau_low, BindingOrder::LowToHigh, kernel)?;
+        let mut shards = Vec::with_capacity(count);
+        let mut endpoints = [F::zero(); 3];
+        for (shard, values) in fan_out(tasks)? {
+            shards.push(shard);
+            for (sum, value) in endpoints.iter_mut().zip(values) {
+                *sum += value;
+            }
+        }
 
         Ok(Self {
             shards,
             collapsed: None,
             eq,
+            pending_endpoints: Some(endpoints),
             log_t,
             local_rounds: log_t - tail_rounds,
             challenges: Vec::with_capacity(log_t),
         })
     }
 
-    fn window_factors(
+    fn prepare_window(
         context: &CudaKernelContext,
         columns: &DeviceProductColumns,
         weights: &[F],
-    ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
+        eq: &DeviceSplitEq<F>,
+    ) -> Result<(DeviceFrVec, DeviceFrVec, [F; 3]), CudaError> {
+        let cycles = columns.cycles();
+        if cycles < 2
+            || !cycles.is_power_of_two()
+            || eq.e_in_current().len() * eq.e_out_current().len() != cycles / 2
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "the product preparation equality factors must cover the local cycle pairs",
+            });
+        }
         let device_weights = context.upload(require_fr_slice(weights)?)?;
 
-        let cycles = columns.cycles();
         let mut left = context.alloc(cycles)?;
         let mut right = context.alloc(cycles)?;
         let count = CudaKernelContext::count_of(cycles)?;
-        let mut builder = context.stream().launch_builder(context.sp_factors());
+        let blocks = (count / 2).div_ceil(BLOCK);
+        let mut partials = context.alloc(3 * blocks as usize)?;
+        let inner_len = CudaKernelContext::count_of(eq.e_in_len())?;
+        let bits = inner_len.max(1).ilog2();
+        let mut builder = context.stream().launch_builder(context.sp_prepare());
         let _ = builder.arg(columns.narrow());
         let _ = builder.arg(columns.wide());
         let _ = builder.arg(columns.flags());
@@ -161,15 +193,27 @@ impl<F: JoltField> DeviceProductRemainder<F> {
         let _ = builder.arg(&NEXT_IS_NOOP_BIT);
         let _ = builder.arg(&SIGN_BIT_BASE);
         let _ = builder.arg(&count);
+        let _ = builder.arg(eq.e_in_current().limbs());
+        let _ = builder.arg(eq.e_out_current().limbs());
+        let _ = builder.arg(&inner_len);
+        let _ = builder.arg(&bits);
         let _ = builder.arg(left.limbs_mut());
         let _ = builder.arg(right.limbs_mut());
-        // SAFETY: thread `t < cycles` reads row `t` of `narrow`, `wide` and
-        // `flags`, all sized `cycles` rows, plus the three uploaded Lagrange
-        // weights. It writes `left[t]` and `right[t]`, one slot per thread
-        // inside both `cycles`-element allocations; `left` and `right` are
-        // fresh and distinct.
-        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-        Ok((left, right))
+        let _ = builder.arg(partials.limbs_mut());
+        // SAFETY: columns own cycles rows and weights spans the three product
+        // lanes. The guard bounds both rows of each pair; each writes distinct
+        // entries of the two fresh output tables. The checked equality shape
+        // covers every pair. Each block writes three partials, with BLOCK *
+        // LIMBS u64 words of shared reduction scratch.
+        let _ = unsafe {
+            builder.launch(LaunchConfig {
+                grid_dim: (blocks, 1, 1),
+                block_dim: (BLOCK, 1, 1),
+                shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
+            })
+        }?;
+        let endpoints = Self::reduce_endpoints(context, partials, blocks)?;
+        Ok((left, right, endpoints))
     }
 
     pub const fn rounds(&self) -> usize {
@@ -204,6 +248,7 @@ impl<F: JoltField> DeviceProductRemainder<F> {
                 .collect();
             let _ = fan_out(tasks)?;
         }
+        self.pending_endpoints = None;
         self.eq.bind(challenge);
         self.challenges.push(challenge);
         if self.shards.len() > 1
@@ -251,6 +296,9 @@ impl<F: JoltField> DeviceProductRemainder<F> {
     }
 
     fn endpoints(&self, context: &CudaKernelContext) -> Result<[F; 3], CudaError> {
+        if let Some(endpoints) = self.pending_endpoints {
+            return Ok(endpoints);
+        }
         if let Some((left, right)) = &self.collapsed {
             return Self::window_endpoints(context, left, right, &self.eq);
         }
@@ -321,7 +369,7 @@ impl<F: JoltField> DeviceProductRemainder<F> {
         // otherwise `e_in[p & mask]` / `e_out[p >> in_bits]`, bounded because
         // `in_bits` is `e_in`'s log length and `e_in_len * e_out_len == half`
         // for the split-eq at this round. It writes only
-        // `partials[lane * blocks + blockIdx.x]` of `2 * blocks`. Shared memory
+        // `partials[lane * blocks + blockIdx.x]` of `3 * blocks`. Shared memory
         // is `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`, and the
         // reduction is outside every early exit.
         let _ = unsafe {
@@ -332,6 +380,14 @@ impl<F: JoltField> DeviceProductRemainder<F> {
             })
         }?;
 
+        Self::reduce_endpoints(context, partials, blocks)
+    }
+
+    fn reduce_endpoints(
+        context: &CudaKernelContext,
+        partials: DeviceFrVec,
+        blocks: u32,
+    ) -> Result<[F; 3], CudaError> {
         let totals = reduce_lanes(context, partials, 3, blocks)?;
         let host = totals.to_host()?;
         let convert = |value: Fr| {
@@ -593,6 +649,8 @@ impl<F: JoltField> ProveRounds<F> for SpartanProductRemainderKernel<F> {
 mod tests {
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_field::{Fr, Ring};
+    use jolt_poly::{EqPolynomial, Polynomial};
+    use jolt_sumcheck::ProveRounds;
     use jolt_witness::collect_bundles;
     use jolt_witness::witnesses::ToField;
     use proptest::prelude::*;
@@ -600,10 +658,11 @@ mod tests {
     use super::{
         branch_flag_product, centered_lagrange_evals, jump_flag_product,
         left_instruction_input_product, lookup_output_product, next_is_noop_product,
-        right_instruction_input_product, DeviceProductRemainder, CLAIM_COLUMNS,
-        PRODUCT_UNISKIP_DOMAIN_SIZE,
+        right_instruction_input_product, DeviceProductRemainder, SpartanProductRemainderKernel,
+        CLAIM_COLUMNS, PRODUCT_UNISKIP_DOMAIN_SIZE,
     };
-    use crate::cuda::common::context::shared_context;
+    use crate::cuda::common::context::{context_for, shared_context};
+    use crate::cuda::common::devices::witness_windows;
     use crate::cuda::common::testing::{arb_point, fr, with_r1cs_witness};
     use crate::cuda::spartan_product::columns::DeviceProductColumns;
     use crate::cuda::spartan_product::witness::{self, SpartanProductWitness};
@@ -617,6 +676,119 @@ mod tests {
         JoltOneHotConfig {
             log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: 32,
+        }
+    }
+
+    #[test]
+    fn product_rounds_match_dense_polynomials_at_extreme_operands() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for log_t in [1usize, 2, 13] {
+            let cycles = 1usize << log_t;
+            let mut rows = witness::sample_rows(71, cycles);
+            for (i, row) in rows.iter_mut().enumerate() {
+                let k = (i / 4) as u64;
+                row.left_instruction_input.0 = [u64::MAX - k, 0, k + 1, 1][i % 4];
+                row.lookup_output.0 = [u64::MAX - k, 1, 0, k + 3][i % 4];
+                row.right_instruction_input.0 =
+                    [i128::MIN + i128::from(k), i128::MAX - i128::from(k), -1, 0][i % 4];
+            }
+            for case in 0..4 {
+                let tau_low: Vec<_> = (0..log_t)
+                    .map(|i| Fr::from_u64(if case < 2 { case } else { 11 + i as u64 }))
+                    .collect();
+                let (tau_high, uniskip) = if case == 3 {
+                    (Fr::from_u64(0), Fr::from_u64(1))
+                } else {
+                    (Fr::from_u64(61), Fr::from_u64(97))
+                };
+                let weights = centered_lagrange_evals::<Fr>(PRODUCT_UNISKIP_DOMAIN_SIZE, uniskip)
+                    .expect("product Lagrange weights");
+                let scaling = super::centered_lagrange_kernel::<Fr>(
+                    PRODUCT_UNISKIP_DOMAIN_SIZE,
+                    tau_high,
+                    uniskip,
+                )
+                .expect("product scaling");
+                if case == 3 {
+                    assert_eq!(scaling, Fr::from_u64(0));
+                }
+                let mut left = Polynomial::new(
+                    rows.iter()
+                        .map(|r| {
+                            weights[0] * r.left_instruction_input.to_field::<Fr>()
+                                + weights[1] * r.lookup_output.to_field::<Fr>()
+                                + weights[2] * r.jump.to_field::<Fr>()
+                        })
+                        .collect(),
+                );
+                let mut right = Polynomial::new(
+                    rows.iter()
+                        .map(|r| {
+                            weights[0] * r.right_instruction_input.to_field::<Fr>()
+                                + weights[1] * r.branch.to_field::<Fr>()
+                                + weights[2] * (Fr::from_u64(1) - r.next_is_noop.to_field::<Fr>())
+                        })
+                        .collect(),
+                );
+                let mut eq = Polynomial::new(EqPolynomial::<Fr>::evals(&tau_low, Some(scaling)));
+                let columns = witness_windows(cycles)
+                    .iter()
+                    .enumerate()
+                    .map(|(ordinal, window)| {
+                        let device = context_for(ordinal).expect("configured device");
+                        let columns = DeviceProductColumns::new(
+                            device,
+                            &witness::pack(&rows[window.start..window.end()]),
+                        )
+                        .expect("product columns");
+                        (ordinal, columns)
+                    })
+                    .collect();
+                let state = DeviceProductRemainder::new(
+                    context, columns, &tau_low, tau_high, uniskip, log_t,
+                )
+                .expect("product remainder");
+                let mut kernel = SpartanProductRemainderKernel::new(context, state, 3);
+                let mut previous_challenge = None;
+                for round in 0..log_t {
+                    let mut expected = [Fr::from_u64(0); 4];
+                    for pair in 0..left.len() / 2 {
+                        for (x, sum) in expected.iter_mut().enumerate() {
+                            let at = |p: &Polynomial<Fr>| {
+                                p.evals()[2 * pair]
+                                    + Fr::from_u64(x as u64)
+                                        * (p.evals()[2 * pair + 1] - p.evals()[2 * pair])
+                            };
+                            *sum += at(&eq) * at(&left) * at(&right);
+                        }
+                    }
+                    let actual = kernel
+                        .prove_round(previous_challenge, round, expected[0] + expected[1])
+                        .expect("product round");
+                    for (x, value) in expected.into_iter().enumerate() {
+                        assert_eq!(
+                            actual.evaluate(Fr::from_u64(x as u64)),
+                            value,
+                            "log_t={log_t}, case={case}, round={round}, x={x}"
+                        );
+                    }
+                    let r = Fr::from_u64(if case < 2 {
+                        (round % 2) as u64
+                    } else {
+                        17 + round as u64
+                    });
+                    previous_challenge = Some(r);
+                    for p in [&mut eq, &mut left, &mut right] {
+                        let _ = p.bind_low_to_high_in_place(r);
+                    }
+                }
+                kernel
+                    .finish_rounds(previous_challenge.expect("nonempty cycle point"))
+                    .expect("final product bind");
+                let _ = kernel.openings().expect("fully bound product openings");
+            }
         }
     }
 

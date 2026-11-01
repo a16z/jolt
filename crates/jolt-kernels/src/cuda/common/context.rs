@@ -234,7 +234,7 @@ pub struct CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     sp_matrix: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
-    sp_factors: CudaFunction,
+    sp_prepare: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     sp_claims: CudaFunction,
     ohf_fold: CudaFunction,
@@ -463,7 +463,7 @@ impl CudaKernelContext {
             #[cfg(not(feature = "field-inline"))]
             sp_matrix: module.load_function("sp_matrix_kernel")?,
             #[cfg(not(feature = "field-inline"))]
-            sp_factors: module.load_function("sp_factors_kernel")?,
+            sp_prepare: module.load_function("sp_prepare_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             sp_claims: module.load_function("sp_claims_kernel")?,
             ohf_fold: module.load_function("ohf_fold_kernel")?,
@@ -1132,8 +1132,8 @@ impl CudaKernelContext {
     }
 
     #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn sp_factors(&self) -> &CudaFunction {
-        &self.sp_factors
+    pub(crate) const fn sp_prepare(&self) -> &CudaFunction {
+        &self.sp_prepare
     }
 
     #[cfg(not(feature = "field-inline"))]
