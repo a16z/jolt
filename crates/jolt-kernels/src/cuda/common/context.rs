@@ -27,6 +27,11 @@ pub const BLOCK: u32 = 256;
 const KERNEL_CUBIN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kernels.cubin"));
 
 pub struct CudaKernelContext {
+    pub(crate) inc_paired_split_round: CudaFunction,
+    pub(crate) inc_paired_native_round: CudaFunction,
+    pub(crate) inc_paired_dense_round: CudaFunction,
+    pub(crate) inc_paired_bind: CudaFunction,
+    pub(crate) inc_paired_weights: CudaFunction,
     ordinal: usize,
     stream: Arc<CudaStream>,
     fr_identity_probe: CudaFunction,
@@ -248,6 +253,11 @@ impl CudaKernelContext {
         let stream = context.new_stream()?;
         let module = context.load_module(Ptx::from_binary(KERNEL_CUBIN.to_vec()))?;
         Ok(Self {
+            inc_paired_split_round: module.load_function("inc_paired_split_round_kernel")?,
+            inc_paired_native_round: module.load_function("inc_paired_native_round_kernel")?,
+            inc_paired_dense_round: module.load_function("inc_paired_dense_round_kernel")?,
+            inc_paired_bind: module.load_function("inc_paired_bind_kernel")?,
+            inc_paired_weights: module.load_function("inc_paired_weights_kernel")?,
             ordinal,
             stream,
             fr_identity_probe: module.load_function("fr_identity_probe")?,
