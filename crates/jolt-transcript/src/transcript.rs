@@ -26,29 +26,39 @@
 //! each starts and ends on a word boundary of the sponge's rate. Encodings
 //! shorter than a word are zero-padded to one; the padding is injective
 //! because its length follows from the message's own length.
+//!
+//! That is the layout on a byte sponge. `PoseidonSponge` absorbs the same
+//! byte encodings, each packed on its own with its length into BN254 `Fr`
+//! elements, so it frames every message itself ([`SpongeUnit`]). There the
+//! split into messages is part of the transcript: the prover and the verifier
+//! must absorb the same messages, not only the same bytes.
 
 use jolt_field::Ring;
 use spongefish::{
-    DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState, Transcript as _,
+    DuplexSpongeInit, DuplexSpongeInterface, Encoding, FromNarg, NargReader, ProverState, Unit,
     VerificationError, VerifierState,
 };
 
-use crate::challenge::message_bytes;
-use crate::codec::{word_padding, BytesMsg, WORD_BYTES};
-use crate::pow::{nonce_word, SpongePow, CHECK_BYTES};
-use crate::{ChallengeCodec, ChallengeSetSize, UniformBytes};
+use crate::codec::{word_padding, BytesMsg, SpongeUnit, Units, WORD_BYTES};
+use crate::pow::{nonce_word, SpongePow};
+use crate::{ChallengeSetSize, ChallengeSponge};
 use sealed::Sealed;
 
 pub(crate) mod sealed {
     use spongefish::{Encoding, VerificationError};
 
+    use crate::SpongeUnit;
+
     /// The three sponge operations every transcript method is built from.
     pub trait Sealed {
+        /// The sponge's alphabet.
+        type Unit: SpongeUnit;
+
         /// Absorbs `message` as a public message.
         fn absorb<M: Encoding + ?Sized>(&mut self, message: &M);
 
-        /// Squeezes `len` bytes and decodes them with `decode`.
-        fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[u8]) -> T) -> T;
+        /// Squeezes `len` units and decodes them with `decode`.
+        fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[Self::Unit]) -> T) -> T;
 
         /// `Ok` when `ok` holds. On failure the verifier also poisons its
         /// state, so later reads and `check_eof` fail.
@@ -87,7 +97,9 @@ pub trait Transcript: Sealed {
     ///
     /// For values whose encodings are whole words, such as every production
     /// field element and Dory's compressed group elements, the padding is
-    /// empty and the sponge absorbs the bytes that one absorb per value would.
+    /// empty and a byte sponge absorbs the bytes that one absorb per value
+    /// would. `PoseidonSponge` frames the whole slice as one message, which
+    /// differs from one message per value.
     /// Shorter encodings, such as an odd count of 4-byte elements, are padded
     /// once at the end. An empty slice absorbs nothing.
     fn append_values<M: Encoding>(&mut self, values: &[M]) {
@@ -114,8 +126,9 @@ pub trait Transcript: Sealed {
     /// For `bits == 0` the proof carries no nonce and the transcript is
     /// unchanged. For `1 <= bits <= MAX_POW_BITS` the nonce must be at most
     /// `2^(bits + 7) - 1`; it is absorbed as one `u64` little-endian word in a
-    /// public message, then eight bytes are squeezed and the low `bits` bits
-    /// of their little-endian `u64` must be zero. This is the layout of
+    /// public message, then the check is squeezed and its low `bits` bits must
+    /// be zero: eight bytes read as a little-endian `u64` on a byte sponge,
+    /// one element's canonical integer on `PoseidonSponge`. This is the layout of
     /// [`VerifierTranscript::check_grind`](crate::VerifierTranscript::check_grind)
     /// with the nonce absorbed as a public message instead of read from the
     /// NARG string; the sponge absorbs the same word.
@@ -140,7 +153,7 @@ pub trait Transcript: Sealed {
             return self.require(false);
         };
         self.absorb(&nonce_word(nonce));
-        let passes = self.squeeze(CHECK_BYTES, |check| pow.accepts(check));
+        let passes = self.squeeze(Self::Unit::CHECK_LEN, |check| pow.accepts(check));
         self.require(passes)
     }
 }
@@ -158,23 +171,27 @@ impl Encoding for WordAligned {
 
 /// A transcript that draws challenges in `F`.
 pub trait FieldTranscript<F>: Transcript {
-    /// Size of the set every challenge is drawn from: the codec's
-    /// [`CHALLENGE_SET_SIZE`](ChallengeCodec::CHALLENGE_SET_SIZE). Prices the
-    /// proof of work before a challenge ([`grind_bits_for_loss`]).
+    /// Size of the set every challenge is drawn from
+    /// ([`ChallengeSponge::CHALLENGE_SET`]). Prices the proof of work before a
+    /// challenge ([`grind_bits_for_loss`]).
     ///
     /// [`grind_bits_for_loss`]: crate::grind_bits_for_loss
     const CHALLENGE_SET: ChallengeSetSize;
 
-    /// Draws `len` challenges as one message of `F`'s [`ChallengeCodec`].
+    /// Draws `len` challenges as one message of the sponge's
+    /// [`ChallengeSponge`] map: `F`'s [`ChallengeCodec`] on a byte sponge,
+    /// squeezed elements on `PoseidonSponge`.
     ///
     /// `len == 0` returns an empty vector without touching the sponge.
     ///
     /// # Errors
-    /// `VerificationError`, before any sponge operation, when the codec does
+    /// `VerificationError`, before any sponge operation, when the map does
     /// not support `len` or the message would exceed
     /// [`MAX_CHALLENGE_BYTES`](crate::MAX_CHALLENGE_BYTES) bytes; otherwise on
     /// rejection-pool exhaustion (probability at most 2^-161). The verifier's
     /// state is poisoned then, so `check_eof` fails too.
+    ///
+    /// [`ChallengeCodec`]: crate::ChallengeCodec
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError>;
 
     /// Draws one challenge, as a message of length one.
@@ -203,39 +220,38 @@ pub trait FieldTranscript<F>: Transcript {
     }
 }
 
-/// One codec message of `len` challenges: the single implementation behind
-/// every [`FieldTranscript`].
-pub(crate) fn draw_challenges<T, F>(
-    transcript: &mut T,
-    len: usize,
-) -> Result<Vec<F>, VerificationError>
+/// One message of `len` challenges from sponge `H`: the single
+/// implementation behind every [`FieldTranscript`].
+fn draw_challenges<T, H, F>(transcript: &mut T, len: usize) -> Result<Vec<F>, VerificationError>
 where
-    T: Sealed + ?Sized,
-    F: ChallengeCodec,
+    T: Sealed<Unit = H::U> + ?Sized,
+    H: ChallengeSponge<F>,
 {
-    // A length the codec rejects poisons the verifier too, so a caller that
+    // A length the map rejects poisons the verifier too, so a caller that
     // drops the error still fails `check_eof`.
-    let bytes = message_bytes::<F>(len);
-    transcript.require(bytes.is_ok())?;
-    let bytes = bytes?;
+    let units = H::challenge_units(len);
+    transcript.require(units.is_some())?;
+    let units = units.ok_or(VerificationError)?;
     if len == 0 {
         return Ok(Vec::new());
     }
-    let challenges = transcript.squeeze(bytes, |tape| F::decode_challenges(tape, len));
+    let challenges = transcript.squeeze(units, |tape| H::decode_challenges(tape, len));
     transcript.require(challenges.is_some())?;
     challenges.ok_or(VerificationError)
 }
 
 impl<H, R> Sealed for ProverState<H, R>
 where
-    H: DuplexSpongeInterface<U = u8>,
+    H: DuplexSpongeInterface<U: SpongeUnit>,
     R: DuplexSpongeInit<U = u8>,
 {
+    type Unit = H::U;
+
     fn absorb<M: Encoding + ?Sized>(&mut self, message: &M) {
-        ProverState::public_message(self, message);
+        ProverState::public_message(self, &Units(message));
     }
 
-    fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[u8]) -> T) -> T {
+    fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[H::U]) -> T) -> T {
         ProverState::verifier_message_as(self, len, decode)
     }
 
@@ -248,44 +264,68 @@ where
     }
 }
 
+/// A prover message that never parses and absorbs nothing: reading it is how
+/// [`Sealed::require`] poisons a verifier over any alphabet. Spongefish's
+/// `Transcript::check` does the same, but only over bytes.
+struct Rejection;
+
+impl<U: Unit> Encoding<U> for Rejection {
+    fn encode(&self) -> impl AsRef<[U]> {
+        let empty: [U; 0] = [];
+        empty
+    }
+}
+
+impl FromNarg for Rejection {
+    fn from_narg(_: &mut NargReader<'_>) -> Result<Self, VerificationError> {
+        Err(VerificationError)
+    }
+}
+
 impl<H> Sealed for VerifierState<'_, H>
 where
-    H: DuplexSpongeInterface<U = u8>,
+    H: DuplexSpongeInterface<U: SpongeUnit>,
 {
+    type Unit = H::U;
+
     fn absorb<M: Encoding + ?Sized>(&mut self, message: &M) {
-        VerifierState::public_message(self, message);
+        VerifierState::public_message(self, &Units(message));
     }
 
-    fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[u8]) -> T) -> T {
+    fn squeeze<T>(&mut self, len: usize, decode: impl FnOnce(&[H::U]) -> T) -> T {
         VerifierState::verifier_message_as(self, len, decode)
     }
 
+    /// Neither branch absorbs or squeezes. Reading no messages fails only on a
+    /// poisoned state; reading a [`Rejection`] always fails and poisons it.
     fn require(&mut self, ok: bool) -> Result<(), VerificationError> {
-        self.check(|| ok)
+        if ok {
+            self.prover_messages_vec::<Rejection>(0).map(drop)
+        } else {
+            self.prover_message::<Rejection>().map(drop)
+        }
     }
 }
 
 impl<H, R, F> FieldTranscript<F> for ProverState<H, R>
 where
-    H: UniformBytes,
+    H: ChallengeSponge<F>,
     R: DuplexSpongeInit<U = u8>,
-    F: ChallengeCodec,
 {
-    const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
+    const CHALLENGE_SET: ChallengeSetSize = H::CHALLENGE_SET;
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
-        draw_challenges(self, len)
+        draw_challenges::<_, H, F>(self, len)
     }
 }
 
 impl<H, F> FieldTranscript<F> for VerifierState<'_, H>
 where
-    H: UniformBytes,
-    F: ChallengeCodec,
+    H: ChallengeSponge<F>,
 {
-    const CHALLENGE_SET: ChallengeSetSize = F::CHALLENGE_SET_SIZE;
+    const CHALLENGE_SET: ChallengeSetSize = H::CHALLENGE_SET;
 
     fn challenge_vector(&mut self, len: usize) -> Result<Vec<F>, VerificationError> {
-        draw_challenges(self, len)
+        draw_challenges::<_, H, F>(self, len)
     }
 }

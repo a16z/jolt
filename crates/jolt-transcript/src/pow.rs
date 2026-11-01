@@ -3,10 +3,12 @@
 //! The prover sends a nonce below `2^(bits + 7)`, a `u64` for every supported
 //! difficulty. The NARG string carries it as canonical LEB128; the sponge
 //! absorbs it as one `u64` little-endian word, in one prover message. Both
-//! parties then squeeze eight bytes and accept iff the low `bits` bits of
-//! their little-endian `u64` are zero. The absorb and the check are each one
-//! word, so the step keeps the transcript word aligned. The step protects the
-//! verifier messages that follow it, up to the next prover message.
+//! parties then squeeze a check and accept iff its low `bits` bits are zero
+//! ([`SpongeUnit::low_word`]): eight bytes read as a little-endian `u64` on a
+//! byte sponge, whose absorb and check are each one word, so the step keeps
+//! the transcript word aligned; one element's canonical integer on
+//! `PoseidonSponge`. The step protects the verifier messages that follow it,
+//! up to the next prover message.
 //!
 //! The prover scans candidate nonces in increasing order, on the calling
 //! thread, against an owned copy of the sponge state: the oracle of
@@ -27,10 +29,7 @@
 //! [`ProverTranscript::public_grind`]: crate::ProverTranscript::public_grind
 //! [`ProverTranscript::verifier_message_oracle`]: crate::ProverTranscript::verifier_message_oracle
 
-use crate::MAX_POW_BITS;
-
-/// Bytes squeezed for a proof-of-work check: one word.
-pub(crate) const CHECK_BYTES: usize = 8;
+use crate::{SpongeUnit, MAX_POW_BITS};
 
 /// The absorbed form of a proof-of-work nonce: one `u64` little-endian word.
 pub(crate) fn nonce_word(nonce: u64) -> [u8; 8] {
@@ -63,15 +62,11 @@ impl SpongePow {
         (self.bits as usize + 13) / 7
     }
 
-    /// The low `bits` bits of the little-endian `u64` of the
-    /// [`CHECK_BYTES`] check bytes are zero. Rejects check bytes of the wrong
-    /// length.
-    pub(crate) fn accepts(self, check: &[u8]) -> bool {
-        let Ok(word) = <[u8; CHECK_BYTES]>::try_from(check) else {
-            return false;
-        };
+    /// The low `bits` bits of the check are zero ([`SpongeUnit::low_word`]).
+    /// Rejects a check of the wrong length.
+    pub(crate) fn accepts<U: SpongeUnit>(self, check: &[U]) -> bool {
         // `bits <= MAX_POW_BITS < 64`, so the shift cannot overflow.
-        u64::from_le_bytes(word) & ((1u64 << self.bits) - 1) == 0
+        U::low_word(check).is_some_and(|word| word & ((1u64 << self.bits) - 1) == 0)
     }
 
     /// Reads a nonce byte by byte through `next`. Returns `None` unless its
@@ -97,12 +92,12 @@ impl SpongePow {
         Ok(None)
     }
 
-    /// The least nonce whose absorbed word makes `oracle`'s next
-    /// [`CHECK_BYTES`] bytes pass the check, scanning in increasing order on
-    /// the calling thread. `None` if no nonce up to `last_nonce` passes.
+    /// The least nonce whose absorbed word makes `oracle`'s next check pass,
+    /// scanning in increasing order on the calling thread. `None` if no nonce
+    /// up to `last_nonce` passes.
     #[cfg(feature = "prover-grinding")]
-    pub(crate) fn search(self, oracle: impl Fn(&[u8], &mut [u8])) -> Option<u64> {
-        let mut check = [0u8; CHECK_BYTES];
+    pub(crate) fn search<U: SpongeUnit>(self, oracle: impl Fn(&[u8], &mut [U])) -> Option<u64> {
+        let mut check = vec![U::ZERO; U::CHECK_LEN];
         (0..=self.last_nonce()).find(|&nonce| {
             oracle(&nonce_word(nonce), &mut check);
             self.accepts(&check)
@@ -186,6 +181,7 @@ mod tests {
         // Seven or nine bytes: rejected whatever their value.
         assert!(!pow.accepts(&[0u8; 7]));
         assert!(!pow.accepts(&[0u8; 9]));
+        assert!(!pow.accepts::<u8>(&[]));
         let full = SpongePow::new(MAX_POW_BITS).unwrap();
         assert!(full.accepts(&(u64::MAX << MAX_POW_BITS).to_le_bytes()));
         assert!(!full.accepts(&(1u64 << (MAX_POW_BITS - 1)).to_le_bytes()));

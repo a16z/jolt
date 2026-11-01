@@ -567,7 +567,7 @@ def check_enum_variant_imports(
             or in_macro[i]
             or in_mod[i]
             or i in singleton_lines
-            or not re.search(r"\buse\b", ln)
+            or not re.search(r"\buse\b(?!<)", ln)
         ):
             continue
         clean = strip_strings_and_line_comments(ln)

@@ -6,7 +6,7 @@
 
 use spongefish::{DuplexSpongeInit, Encoding, SessionId, VerifierState};
 
-use crate::codec::{protocol_tag, BytesMsg, TAG_BYTES};
+use crate::codec::{protocol_tag, BytesMsg, SpongeUnit, Units, TAG_BYTES};
 use crate::digest_hash::{DigestHash, DIGEST_HASH};
 use crate::shake128::{ProverState, Shake128};
 
@@ -49,7 +49,8 @@ pub const PROTOCOL_ID: [u8; TAG_BYTES] = protocol_tag(match DIGEST_HASH {
 /// The spongefish instance: the 32-byte session tag, then the statement as a
 /// [`BytesMsg`]. Never empty, so spongefish's constructors accept it. The tag
 /// has a fixed width and the statement carries its length, so the instance
-/// cannot run into the first message, and it ends on a word boundary.
+/// cannot run into the first message, and it ends on a word boundary. The
+/// sponge absorbs it as one message ([`SpongeUnit`]).
 struct Instance<'a, S: ?Sized> {
     session: &'a [u8; TAG_BYTES],
     statement: &'a S,
@@ -102,9 +103,9 @@ pub fn prover_transcript<H>(
     statement: &(impl Encoding + ?Sized),
 ) -> ProverState<H>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit<U: SpongeUnit>,
 {
-    ProverState::new(&session_id(), &Instance { session, statement })
+    ProverState::new(&session_id(), &Units(Instance { session, statement }))
 }
 
 /// Build a verifier transcript bound to `session` and `statement` over
@@ -118,9 +119,9 @@ pub fn verifier_transcript<'a, H>(
     narg: &'a [u8],
 ) -> VerifierState<'a, H>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit<U: SpongeUnit>,
 {
-    VerifierState::new(&session_id(), &Instance { session, statement }, narg)
+    VerifierState::new(&session_id(), &Units(Instance { session, statement }), narg)
 }
 
 /// Derive the spongefish session identifier from [`PROTOCOL_ID`] using
