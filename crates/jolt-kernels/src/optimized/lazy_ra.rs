@@ -22,8 +22,10 @@
 //! into the `N × 2^b × 2^w` tables at bind time (a few thousand entries)
 //! instead of multiplied per cycle. By default the fourth bind materializes
 //! the explicit prefix and drops the index source. If the source establishes
-//! a constant suffix starting at `P`, each vector holds `ceil(P/16)` elements
-//! and one implicit tail value; otherwise it holds `T/16`. Low-bit binding
+//! a constant suffix starting at `P`, each polynomial holds `ceil(P/16)`
+//! elements and one implicit tail value; otherwise it holds `T/16`. Families
+//! of at least `ROW_ORDER_MIN_POLYS` paired-eligible polynomials store those
+//! elements row-major in one vector instead of one vector each. Low-bit binding
 //! preserves a constant suffix and rounds its boundary upward. A consumer
 //! whose base tables are too large to stay cache-resident materializes a bind
 //! earlier, at branch width eight (`max_width`). Large address domains switch
@@ -43,9 +45,8 @@
 //! are bit-identical. The consumers' in-module parity tests pin this
 //! against the naive dense path.
 
-use super::support::bind_prefix_pairs;
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, Polynomial};
+use jolt_poly::{bind_prefix_in_place, bind_prefix_rows_in_place, BindingOrder, Polynomial};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -122,6 +123,19 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
         }
     }
 
+    /// Consume the adjacent-branch sum tables built by `paired_branch_tables`.
+    /// Each pair has radix 17, with the final digit representing a cold row.
+    fn visit_paired_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        visit: impl FnMut(usize, F),
+    ) where
+        Self: Sized,
+    {
+        visit_paired_columns(self, tables, row, visit, 0);
+    }
+
     fn gather_pairs<F: JoltField>(
         &self,
         tables: &[Vec<F>],
@@ -169,10 +183,13 @@ pub(crate) enum LazyFoldedRa<F: JoltField, S> {
         tail: Vec<F>,
         source: S,
     },
-    /// Sources without a constant-suffix guarantee retain the dense path.
+    /// Narrow families without a constant-suffix guarantee retain the dense path.
     Dense(Vec<Polynomial<F>>),
     /// Explicit nonconstant evaluations followed by one constant per column.
     Prefix { values: Vec<Vec<F>>, tail: Vec<F> },
+    /// `Prefix` stored row-major: `values[row * tail.len() + poly]`. Without a
+    /// constant suffix the rows cover the domain and `tail` is never read.
+    Rows { values: Vec<F>, tail: Vec<F> },
 }
 
 impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
@@ -218,6 +235,7 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             } => tables.len() / factors,
             Self::Dense(polys) => polys.len(),
             Self::Prefix { values, .. } => values.len(),
+            Self::Rows { tail, .. } => tail.len(),
         }
     }
 
@@ -229,12 +247,13 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             } => prefix_len.div_ceil(*width),
             Self::Dense(polys) => polys.first().map_or(0, Polynomial::len),
             Self::Prefix { values, .. } => values.first().map_or(0, Vec::len),
+            Self::Rows { values, tail } => values.len() / tail.len(),
         }
     }
 
     pub(crate) fn tail_values(&self) -> &[F] {
         match self {
-            Self::Lazy { tail, .. } | Self::Prefix { tail, .. } => tail,
+            Self::Lazy { tail, .. } | Self::Prefix { tail, .. } | Self::Rows { tail, .. } => tail,
             Self::Dense(_) => &[],
         }
     }
@@ -254,6 +273,9 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
             } => gather_poly(tables, *factors, *width, source, i, j),
             Self::Dense(polys) => polys[i].evals()[j],
             Self::Prefix { values, tail, .. } => values[i].get(j).copied().unwrap_or(tail[i]),
+            Self::Rows { values, tail } => {
+                values.get(j * tail.len() + i).copied().unwrap_or(tail[i])
+            }
         }
     }
 
@@ -297,6 +319,20 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                 for (out, poly) in out.iter_mut().zip(polys) {
                     let evals = poly.evals();
                     *out = (evals[2 * row], evals[2 * row + 1]);
+                }
+            }
+            Self::Rows { values, tail } => {
+                let columns = tail.len();
+                if 2 * row + 1 < values.len() / columns {
+                    let lo = &values[2 * row * columns..(2 * row + 1) * columns];
+                    let hi = &values[(2 * row + 1) * columns..(2 * row + 2) * columns];
+                    for ((out, &lo), &hi) in out.iter_mut().zip(lo).zip(hi) {
+                        *out = (lo, hi);
+                    }
+                } else {
+                    for (i, out) in out.iter_mut().enumerate() {
+                        *out = (self.value(i, 2 * row), self.value(i, 2 * row + 1));
+                    }
                 }
             }
             Self::Prefix { values, tail, .. } => {
@@ -367,7 +403,15 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                             None,
                         )
                     };
-                    let dense = if prefix_len < source.cycles() {
+                    let materialized_rows = prefix_len.div_ceil(next_width);
+                    let dense = if tables.len() >= ROW_ORDER_MIN_POLYS
+                        && can_pair_materialize(&tables, factors, branches, materialized_rows, bind)
+                    {
+                        Self::Rows {
+                            values: materialize_paired_rows(&tables, &source, materialized_rows),
+                            tail,
+                        }
+                    } else if prefix_len < source.cycles() {
                         Self::Prefix {
                             values: materialize_values(
                                 &tables,
@@ -408,13 +452,17 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
                     .par_iter_mut()
                     .zip(&tail)
                     .for_each(|(values, &tail)| {
-                        bind_prefix_pairs(values, challenge, tail);
+                        let _ = bind_prefix_in_place(values, challenge, tail);
                     });
                 #[cfg(not(feature = "parallel"))]
                 for (values, &tail) in values.iter_mut().zip(&tail) {
-                    bind_prefix_pairs(values, challenge, tail);
+                    let _ = bind_prefix_in_place(values, challenge, tail);
                 }
                 Self::Prefix { values, tail }
+            }
+            Self::Rows { mut values, tail } => {
+                let _ = bind_prefix_rows_in_place(&mut values, challenge, &tail);
+                Self::Rows { values, tail }
             }
         };
     }
@@ -547,6 +595,13 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
 /// the row-major fill touches all tables per row, which only pays while they
 /// stay cache-resident.
 const ROW_MAJOR_FILL_MAX_TABLE_BYTES: usize = 1 << 20;
+pub(super) const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
+pub(super) const PAIRED_MATERIALIZE_ADDRESSES: usize = 16;
+const PAIRED_MATERIALIZE_MIN_ROWS: usize = 1 << 12;
+const PAIRED_MATERIALIZE_MAX_BYTES: usize = 2 << 20;
+/// Round messages read every polynomial at a row; once a row spans this many
+/// polynomials, row-major storage keeps those reads contiguous.
+const ROW_ORDER_MIN_POLYS: usize = 16;
 
 /// Row-major fill ranges longer than this are split across rayon tasks.
 #[cfg(feature = "parallel")]
@@ -599,6 +654,9 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
         }
     }
 
+    if can_pair_materialize(tables, factors, branches, len, bind) {
+        return materialize_paired_values(tables, source, len);
+    }
     let table_bytes = tables.iter().map(Vec::len).sum::<usize>() * std::mem::size_of::<F>();
     if bind.is_some() || table_bytes > ROW_MAJOR_FILL_MAX_TABLE_BYTES {
         return (0..tables.len() / factors)
@@ -632,6 +690,168 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
     values
 }
 
+#[inline]
+pub(super) fn visit_paired_columns<F: JoltField, S: ChunkIndexSource>(
+    source: &S,
+    tables: &[Vec<F>],
+    row: usize,
+    mut visit: impl FnMut(usize, F),
+    first_column: usize,
+) {
+    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+    for (column, table) in tables.iter().enumerate() {
+        let mut sum = F::Accumulator::default();
+        for pair in 0..PAIRED_MATERIALIZE_BRANCHES / 2 {
+            let lo = source
+                .index(
+                    first_column + column,
+                    row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair,
+                )
+                .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+            let hi = source
+                .index(
+                    first_column + column,
+                    row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair + 1,
+                )
+                .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+            sum.add(table[pair * radix * radix + lo * radix + hi]);
+        }
+        visit(first_column + column, sum.reduce());
+    }
+}
+
+fn can_pair_materialize<F: JoltField>(
+    tables: &[Vec<F>],
+    factors: usize,
+    branches: usize,
+    len: usize,
+    bind: Option<F>,
+) -> bool {
+    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+    let paired_bytes = tables
+        .len()
+        .saturating_mul(PAIRED_MATERIALIZE_BRANCHES / 2 * radix * radix * std::mem::size_of::<F>());
+    bind.is_none()
+        && !tables.is_empty()
+        && factors == 1
+        && branches == PAIRED_MATERIALIZE_BRANCHES
+        && len >= PAIRED_MATERIALIZE_MIN_ROWS
+        && paired_bytes <= PAIRED_MATERIALIZE_MAX_BYTES
+        && tables
+            .iter()
+            .all(|table| table.len() == PAIRED_MATERIALIZE_BRANCHES * PAIRED_MATERIALIZE_ADDRESSES)
+}
+
+// The final radix digit represents a cold source row, whose contribution is zero.
+// Pair tables replace two branch gathers with one without changing the bound values.
+fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    source: &S,
+    len: usize,
+) -> Vec<Vec<F>> {
+    let paired = paired_branch_tables(tables);
+    #[cfg(feature = "parallel")]
+    let mut values: Vec<Vec<F>> = (0..tables.len())
+        .into_par_iter()
+        .map(|_| vec![F::zero(); len])
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let mut values: Vec<Vec<F>> = (0..tables.len()).map(|_| vec![F::zero(); len]).collect();
+    #[expect(
+        clippy::needless_range_loop,
+        reason = "`row` indexes each column slice inside `out`, not `out` itself"
+    )]
+    fn fill<F: JoltField, S: ChunkIndexSource>(
+        mut out: Vec<&mut [F]>,
+        start: usize,
+        paired: &[Vec<F>],
+        source: &S,
+    ) {
+        let len = out[0].len();
+        #[cfg(feature = "parallel")]
+        if len > ROW_MAJOR_FILL_SPLIT_ROWS {
+            let mid = len / 2;
+            let (left, right): (Vec<_>, Vec<_>) =
+                out.into_iter().map(|c| c.split_at_mut(mid)).unzip();
+            let _ = rayon::join(
+                || fill(left, start, paired, source),
+                || fill(right, start + mid, paired, source),
+            );
+            return;
+        }
+        for row in 0..len {
+            source.visit_paired_values(paired, start + row, |column, value| {
+                out[column][row] = value;
+            });
+        }
+    }
+    fill(
+        values.iter_mut().map(Vec::as_mut_slice).collect(),
+        0,
+        &paired,
+        source,
+    );
+    values
+}
+
+fn paired_branch_tables<F: JoltField>(tables: &[Vec<F>]) -> Vec<Vec<F>> {
+    let width = PAIRED_MATERIALIZE_BRANCHES;
+    let addresses = PAIRED_MATERIALIZE_ADDRESSES;
+    let radix = addresses + 1;
+    tables
+        .iter()
+        .map(|table| {
+            let mut values = Vec::with_capacity(width / 2 * radix * radix);
+            for pair in 0..width / 2 {
+                for lo in 0..radix {
+                    for hi in 0..radix {
+                        let a = if lo == addresses {
+                            F::zero()
+                        } else {
+                            table[2 * pair * addresses + lo]
+                        };
+                        let b = if hi == addresses {
+                            F::zero()
+                        } else {
+                            table[(2 * pair + 1) * addresses + hi]
+                        };
+                        values.push(a + b);
+                    }
+                }
+            }
+            values
+        })
+        .collect()
+}
+
+fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    source: &S,
+    len: usize,
+) -> Vec<F> {
+    let paired = paired_branch_tables(tables);
+    let columns = tables.len();
+    #[cfg(feature = "parallel")]
+    let mut values: Vec<F> = (0..len * columns)
+        .into_par_iter()
+        .map(|_| F::zero())
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let mut values = vec![F::zero(); len * columns];
+    let fill = |(row, out): (usize, &mut [F])| {
+        source.visit_paired_values(&paired, row, |column, value| out[column] = value);
+    };
+    #[cfg(feature = "parallel")]
+    values
+        .par_chunks_mut(columns)
+        .enumerate()
+        .with_min_len(ROW_MAJOR_FILL_SPLIT_ROWS)
+        .for_each(fill);
+    #[cfg(not(feature = "parallel"))]
+    values.chunks_mut(columns).enumerate().for_each(fill);
+    values
+}
+
 #[cfg(test)]
 mod prefix_tests {
     use super::{ChunkIndexSource, LazyFoldedRa};
@@ -642,10 +862,11 @@ mod prefix_tests {
     struct Source {
         cycles: usize,
         prefix: usize,
+        columns: usize,
     }
     impl ChunkIndexSource for Source {
         fn num_columns(&self) -> usize {
-            2
+            self.columns
         }
         fn cycles(&self) -> usize {
             self.cycles
@@ -670,17 +891,29 @@ mod prefix_tests {
     fn check<F: JoltField>() {
         let small = [0, 1, 2, 15, 16, 17, 63, 64, 65, 111, 127, 128]
             .into_iter()
-            .map(|prefix| (128usize, prefix));
-        for (cycles, prefix) in small.chain([(32768, 32761), (32768, 32768)]) {
-            let source = Source { cycles, prefix };
-            let tables: Vec<Vec<F>> = (0..2)
+            .map(|prefix| (128usize, prefix, 2));
+        for (cycles, prefix, columns) in small.chain([
+            (32768, 32761, 2),
+            (32768, 32768, 2),
+            (65536, 65529, 2),
+            (65536, 65536, 2),
+            (131_072, 131_041, 3),
+            (131_072, 131_041, 16),
+            (131_072, 131_072, 16),
+        ]) {
+            let source = Source {
+                cycles,
+                prefix,
+                columns,
+            };
+            let tables: Vec<Vec<F>> = (0..columns)
                 .map(|i| {
                     (0..16)
                         .map(|j| F::from_u64((5 + i * 13 + j) as u64))
                         .collect()
                 })
                 .collect();
-            let mut dense: Vec<Vec<F>> = (0..2)
+            let mut dense: Vec<Vec<F>> = (0..columns)
                 .map(|i| {
                     (0..cycles)
                         .map(|j| source.index(i, j).map_or(F::zero(), |k| tables[i][k]))
@@ -694,6 +927,13 @@ mod prefix_tests {
                 for (i, values) in dense.iter().enumerate() {
                     for (j, value) in values.iter().enumerate() {
                         assert_eq!(lazy.value(i, j), *value);
+                    }
+                }
+                let mut pairs = vec![(F::zero(), F::zero()); columns];
+                for row in 0..dense[0].len() / 2 {
+                    lazy.lo_hi_all(row, &mut pairs);
+                    for (pair, values) in pairs.iter().zip(&dense) {
+                        assert_eq!(*pair, (values[2 * row], values[2 * row + 1]));
                     }
                 }
                 if round == rounds {

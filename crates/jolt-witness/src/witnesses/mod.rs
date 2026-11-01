@@ -37,7 +37,7 @@ pub use flags::{
     InstructionFlag, InstructionRafFlag, LookupTableFlag, NextIsFirstInSequence, NextIsNoop,
     NextIsVirtual, OpFlag, ShouldBranch, ShouldJump,
 };
-pub use increments::{BalancedIncColumn, BalancedIncRow, FusedInc, RamInc, RdInc};
+pub use increments::{FusedInc, RamInc, RdInc};
 pub use lookups::{LookupIndex, LookupOutput, TableIndex};
 pub use one_hot::{BytecodeRaChunk, InstructionRaChunk, RaChunkSelector, RamRaChunk};
 pub use operands::{
@@ -81,6 +81,7 @@ pub trait ExtractIndexed<I, R = TraceRow>: Sized {
     ) -> Result<Self, WitnessError>;
 }
 
+#[inline(always)]
 fn instruction_row(row: &TraceRow) -> JoltInstructionRow {
     let circuit_flags = row.circuit_flags();
     JoltInstructionRow {

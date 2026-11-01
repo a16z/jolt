@@ -16,6 +16,7 @@ jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-field = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true, features = [
+  "bn254",
   "transcript-blake2b",
   "transcript-keccak",
   "transcript-poseidon",

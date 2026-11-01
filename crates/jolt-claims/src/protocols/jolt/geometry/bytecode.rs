@@ -24,7 +24,7 @@ use super::registers::{
 use super::spartan::{pc_shift, unexpanded_pc_shift};
 
 /// Per-stage (1..=5) gamma-power vector lengths for the bytecode read-RAF stage
-/// folds — the arities of the prover's `challenge_scalar_powers` draws. The
+/// folds — the arities of the prover's `challenge_powers` draws. The
 /// verifier stores each stage's single drawn scalar and expands it with
 /// [`stage_gamma_powers`], so these lengths are single-sourced with the
 /// fold-side `require_len` guards.
@@ -36,9 +36,10 @@ pub const BYTECODE_STAGE_GAMMA_COUNTS: [usize; 5] = [
     // Stage 2: the Jump, Branch, WriteLookupOutputToRD, and VirtualInstruction
     // product-virtualization flags.
     4,
-    // Stage 3: Imm (instruction input), UnexpandedPC (shift), the four
-    // operand-source flags, IsNoop, VirtualInstruction, IsFirstInSequence.
-    9,
+    // Stage 3: Imm (instruction input), UnexpandedPC (shift), the five
+    // operand-source flags (including RdWriteValue), IsNoop,
+    // VirtualInstruction, IsFirstInSequence.
+    10,
     // Stage 4: the RdWa, Rs1Ra, Rs2Ra register read-write openings.
     3,
     // Stage 5: RdWa (registers val evaluation), InstructionRafFlag, then one
@@ -647,11 +648,14 @@ where
     if instruction_flags[InstructionFlags::IsNoop] {
         stage3 += stage3_gammas[6];
     }
-    if circuit_flags[CircuitFlags::VirtualInstruction] {
+    if instruction_flags[InstructionFlags::RightOperandIsRdWriteValue] {
         stage3 += stage3_gammas[7];
     }
-    if circuit_flags[CircuitFlags::IsFirstInSequence] {
+    if circuit_flags[CircuitFlags::VirtualInstruction] {
         stage3 += stage3_gammas[8];
+    }
+    if circuit_flags[CircuitFlags::IsFirstInSequence] {
+        stage3 += stage3_gammas[9];
     }
 
     let operands = instruction.integer_operands();
@@ -748,8 +752,12 @@ where
             ))
         + beta.clone().pow(5) * opening(instruction_flag_input(InstructionFlags::RightOperandIsImm))
         + beta.clone().pow(6) * opening(instruction_flag_shift(InstructionFlags::IsNoop))
-        + beta.clone().pow(7) * opening(op_flag_shift(CircuitFlags::VirtualInstruction))
-        + beta.pow(8) * opening(op_flag_shift(CircuitFlags::IsFirstInSequence))
+        + beta.clone().pow(7)
+            * opening(instruction_flag_input(
+                InstructionFlags::RightOperandIsRdWriteValue,
+            ))
+        + beta.clone().pow(8) * opening(op_flag_shift(CircuitFlags::VirtualInstruction))
+        + beta.pow(9) * opening(op_flag_shift(CircuitFlags::IsFirstInSequence))
 }
 
 pub(crate) fn stage4_claim<F>() -> JoltExpr<F>

@@ -277,26 +277,63 @@ where
     // Summing position weights per `(column, coefficient)` first leaves one
     // packing-weight multiplication per coefficient instead of per nonzero.
     let span = positions_per_block.min(segment_rings);
-    let spans = segment_rings / span;
-    let schedule =
-        trace_block_task_schedule::<D>(source.one_hot_k, span, spans, TASKS_PER_RAYON_WORKER);
+    let prefix_rings = source.nonzero_ring_prefix::<D>()?;
+    let spans = prefix_rings.div_ceil(span);
+    let schedule = trace_block_task_schedule::<D>(
+        source.one_hot_k,
+        span,
+        spans.max(1),
+        TASKS_PER_RAYON_WORKER,
+    );
     let partials = (0..spans * schedule.parts)
         .into_par_iter()
+        .filter(|&task| {
+            let (part_start, _) = schedule.part_range(task % schedule.parts);
+            task / schedule.parts * span + part_start < prefix_rings
+        })
         .map(|task| {
             let (part_start, part_end) = schedule.part_range(task % schedule.parts);
             let ring_start = task / schedule.parts * span + part_start;
             let ring_end = task / schedule.parts * span + part_end;
-            let first_positions = (0..num_columns)
-                .map(|_| ring_start % positions_per_block)
-                .collect::<Vec<_>>();
             let mut sums = vec![E::zero(); num_columns * D];
-            visit_segment_ring_range::<D>(source, ring_start, ring_end, |ring, contributions| {
-                let offset = ring - ring_start;
-                for &(column, coefficient) in contributions {
-                    sums[column * D + coefficient] +=
-                        position_weights[first_positions[column] + offset];
-                }
-            })?;
+            // segment_ring_elems above checks the logical domain's alignment at D.
+            if source.one_hot_k < D && source.rows.num_rows().is_multiple_of(D / source.one_hot_k) {
+                visit_segment_ring_row_range::<D>(
+                    source,
+                    ring_start,
+                    ring_end,
+                    |ring, selected_rows, masks| {
+                        let weight = position_weights[ring % positions_per_block];
+                        for (row_offset, (row, &mask)) in selected_rows
+                            .chunks_exact(num_columns)
+                            .zip(masks)
+                            .enumerate()
+                        {
+                            for (column, &hot) in row.iter().enumerate() {
+                                if row_is_committed(hot, mask, column) {
+                                    let coefficient =
+                                        row_offset * source.one_hot_k + usize::from(hot);
+                                    sums[column * D + coefficient] += weight;
+                                }
+                            }
+                        }
+                    },
+                )?;
+            } else {
+                let first_position = ring_start % positions_per_block;
+                visit_segment_ring_range::<D>(
+                    source,
+                    ring_start,
+                    ring_end,
+                    |ring, contributions| {
+                        let offset = ring - ring_start;
+                        for &(column, coefficient) in contributions {
+                            sums[column * D + coefficient] +=
+                                position_weights[first_position + offset];
+                        }
+                    },
+                )?;
+            }
             let mut blocks = vec![E::zero(); num_columns * subring_dimension];
             for (column_sums, column_blocks) in sums
                 .chunks_exact(D)

@@ -103,6 +103,11 @@ mod algebra;
 mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
+#[cfg(all(
+    feature = "spongefish",
+    any(feature = "bn254", feature = "solinas", feature = "binary")
+))]
+mod encoding;
 mod extension;
 #[cfg(feature = "solinas")]
 mod fp128_accumulators;
@@ -117,7 +122,7 @@ mod unreduced;
 
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
-    MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
+    MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(feature = "binary")]
 pub use binary::{F128, F192, F64, F8};
@@ -125,7 +130,7 @@ pub use binary::{F128, F192, F64, F8};
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 #[cfg(feature = "solinas")]
-pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator};
+pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator, Fp128SumAccumulator};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};

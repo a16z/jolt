@@ -1,11 +1,12 @@
 //! Proof-local ownership of the field-register increment column.
 
-use crate::optimized::support::{bind_prefix_pairs, map_indices};
+use crate::optimized::support::map_indices;
 use crate::{KernelError, ProofSession};
 use jolt_claims::protocols::field_inline::{
     FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
 };
 use jolt_field::JoltField;
+use jolt_poly::bind_prefix_in_place;
 use jolt_witness::field_inline::FieldInlineWitnessOracle;
 use std::sync::Arc;
 
@@ -158,7 +159,9 @@ impl<F: JoltField> IncrementRounds<F> {
                 });
                 *self = Self::Bound(values);
             }
-            Self::Bound(values) => bind_prefix_pairs(values, r, F::zero()),
+            Self::Bound(values) => {
+                let _ = bind_prefix_in_place(values, r, F::zero());
+            }
             Self::Zero => {}
         }
     }

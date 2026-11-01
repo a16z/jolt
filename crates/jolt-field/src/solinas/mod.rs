@@ -171,13 +171,55 @@ pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {
 
 /// Horner reduction of arbitrary-length little-endian bytes modulo the field
 /// order (the >16-byte path of
-/// [`from_bytes_le_reduced`](crate::CanonicalEncoding::from_bytes_le_reduced)).
+/// [`from_bytes_le_reduced`](crate::CanonicalEncoding::from_bytes_le_reduced)),
+/// sixteen bytes at a time: one multiplication per `u128` word rather than
+/// one per byte.
 #[inline(always)]
 pub(crate) fn reduce_le_bytes_mod_order<F: Ring>(bytes: &[u8]) -> F {
-    let base = F::from_u64(256);
-    bytes.iter().rev().fold(F::zero(), |acc, &byte| {
-        acc * base + F::from_u64(byte as u64)
-    })
+    let half = F::from_u128(1 << 64);
+    let base = half * half;
+    let word = |chunk: &[u8]| {
+        F::from_u128(
+            chunk
+                .iter()
+                .rev()
+                .fold(0u128, |acc, &byte| (acc << 8) | u128::from(byte)),
+        )
+    };
+    let mut chunks = bytes.chunks(16).rev();
+    let top = chunks.next().map_or_else(F::zero, word);
+    chunks.fold(top, |acc, chunk| acc * base + word(chunk))
+}
+
+#[cfg(test)]
+mod reduction_tests {
+    use num_bigint::BigUint;
+
+    use super::{reduce_le_bytes_mod_order, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use crate::PseudoMersenne;
+
+    fn check<F: PseudoMersenne>() {
+        let modulus = (BigUint::from(1u8) << F::MODULUS_BITS) - BigUint::from(F::OFFSET);
+        for len in 0..=100usize {
+            let mixed: Vec<u8> = (0..len).map(|i| (i * 151 + 7) as u8).collect();
+            for bytes in [mixed, vec![u8::MAX; len]] {
+                assert_eq!(
+                    BigUint::from_bytes_le(
+                        &reduce_le_bytes_mod_order::<F>(&bytes).to_bytes_le_vec()
+                    ),
+                    BigUint::from_bytes_le(&bytes) % &modulus,
+                    "length {len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn word_fold_matches_big_integer_reduction() {
+        check::<Prime32Offset99>();
+        check::<Prime64Offset59>();
+        check::<Prime128OffsetA7F7>();
+    }
 }
 
 #[cfg(test)]

@@ -154,6 +154,19 @@ impl TraceOneHotColumn {
         1usize << self.num_vars
     }
 
+    /// Rings that can contain nonzero coefficients, within one semantic column.
+    /// This bounds internal work without changing the committed logical shape.
+    pub(super) fn nonzero_ring_prefix<const D: usize>(&self) -> Result<usize, AkitaError> {
+        validate_dimension::<D>(self.one_hot_k)?;
+        self.rows
+            .nonzero_prefix_len()
+            .checked_mul(self.one_hot_k)
+            .map(|coefficients| coefficients.div_ceil(D))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace one-hot prefix ring count overflow".into())
+            })
+    }
+
     pub(super) fn segment_ring_elems<const D: usize>(&self) -> Result<usize, AkitaError> {
         validate_dimension::<D>(self.one_hot_k)?;
         let segment_field_elems = self.num_rows.checked_mul(self.one_hot_k).ok_or_else(|| {

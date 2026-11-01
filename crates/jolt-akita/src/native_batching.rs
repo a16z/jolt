@@ -20,19 +20,19 @@ use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_openings::{
-    BatchOpeningScheme, GroupOpeningClaim, GroupOpeningWithHint, OpeningsError,
-    TaggedGroupOpeningClaim, VerifierOpeningClaim,
+    BatchOpeningScheme, CommitmentGroupRole, GroupOpeningClaim, GroupOpeningWithHint,
+    OpeningsError, TaggedGroupOpeningClaim, VerifierOpeningClaim,
 };
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript, U64Word};
+use jolt_transcript::{protocol_tag, FieldTranscript, TAG_BYTES};
 use tracing::info_span;
 
 use crate::adapters::{
     akita_error, append_batch_statement, append_verifier_setup, bridged_akita_session,
-    invalid_batch, prove_failed, reverse_point, serialize_akita, validate_one_hot_k,
-    with_backend_pool, AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor,
-    AkitaBackendHint, AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource,
-    AkitaProverHint, AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    invalid_batch, prove_failed, reverse_point, validate_one_hot_k, with_backend_pool,
+    AkitaBackendCommitment, AkitaBackendExtField, AkitaBackendFlavor, AkitaBackendHint,
+    AkitaBatchProof, AkitaCommitment, AkitaConfig, AkitaField, AkitaHintSource, AkitaProverHint,
+    AkitaProverSetup, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
@@ -149,6 +149,45 @@ fn validate_trace_batch_statement(
     Ok(())
 }
 
+/// Caller session tag for a grouped Akita batch.
+const GROUP_BATCH_TAG: [u8; TAG_BYTES] = protocol_tag(b"jolt-akita/group-batch/v5");
+/// Caller session tag for a single-commitment Akita batch.
+const BATCH_TAG: [u8; TAG_BYTES] = protocol_tag(b"jolt-akita/batch/v2");
+
+/// Role codes absorbed for each group of a grouped statement under
+/// [`GROUP_BATCH_TAG`]. Group orders collide across roles, so the code table is
+/// separate from them. Code 0 is the main trace group.
+const GROUP_ROLE_CODES: [(&[u8], u64); 6] = [
+    (b"untrusted_advice", 1),
+    (b"trusted_advice", 2),
+    (b"field_inc", 3),
+    (b"program_bytecode", 4),
+    (b"program_image_init", 5),
+    (b"fused_inc", 6),
+];
+
+fn group_role_code(role: Option<CommitmentGroupRole>) -> Result<u64, OpeningsError> {
+    let Some(role) = role else {
+        return Ok(0);
+    };
+    if role.transcript_index().is_some() {
+        return Err(invalid_batch(format!(
+            "Akita grouped statement does not support indexed role `{}`",
+            role.diagnostic_name()
+        )));
+    }
+    GROUP_ROLE_CODES
+        .iter()
+        .find(|(label, _)| *label == role.transcript_label())
+        .map(|&(_, code)| code)
+        .ok_or_else(|| {
+            invalid_batch(format!(
+                "Akita grouped statement has no role code for `{}`",
+                role.diagnostic_name()
+            ))
+        })
+}
+
 fn bind_grouped_statement_transcripts<T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup,
@@ -157,45 +196,26 @@ fn bind_grouped_statement_transcripts<T>(
     main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
 ) -> Result<Vec<u8>, OpeningsError>
 where
-    T: Transcript<Challenge = AkitaField>,
+    T: FieldTranscript<AkitaField>,
 {
     append_verifier_setup(transcript, setup, AkitaBackendFlavor::OneHot)?;
-    transcript.append(&Label(b"akita_precommit_batch_v4"));
-    transcript.append_bytes(&serialize_akita(&selection)?);
+    transcript.append(selection.row_digest.as_bytes());
     let group_count = auxiliary_groups
         .len()
         .checked_add(1)
         .ok_or_else(|| invalid_batch("Akita grouped statement group count overflows"))?;
-    transcript.append(&LabelWithCount(b"akita_groups", group_count as u64));
+    transcript.append(&(group_count as u64));
     let groups = auxiliary_groups
         .iter()
         .map(|entry| (Some(entry.role), &entry.claim))
         .chain(std::iter::once((None, main)));
-    for (index, (role, claim)) in groups.enumerate() {
-        transcript.append(&U64Word(index as u64));
-        if let Some(role) = role {
-            transcript.append_bytes(role.transcript_label());
-            if let Some(role_index) = role.transcript_index() {
-                transcript.append(&U64Word(role_index));
-            }
-        } else {
-            transcript.append_bytes(b"main_trace");
-        }
-        transcript.append(&U64Word(u64::from(role.is_some())));
-        claim.commitment.append_to_transcript(transcript);
-        transcript.append_values(b"akita_group_point", &claim.point);
-        transcript.append(&LabelWithCount(
-            b"akita_group_evaluations",
-            claim.evaluations.len() as u64,
-        ));
-        for evaluation in &claim.evaluations {
-            evaluation.append_to_transcript(transcript);
-        }
+    for (role, claim) in groups {
+        transcript.append(&group_role_code(role)?);
+        transcript.append(&claim.commitment);
+        transcript.append_values(&claim.point);
+        transcript.append_values(&claim.evaluations);
     }
-    Ok(bridged_akita_session(
-        transcript,
-        b"jolt-akita/precommitted-group-batch/v4",
-    ))
+    bridged_akita_session(transcript, &GROUP_BATCH_TAG)
 }
 
 fn prove_one_hot_opening(
@@ -247,7 +267,7 @@ impl AkitaNativeBatching {
         transcript: &mut T,
     ) -> Result<AkitaBatchProof, OpeningsError>
     where
-        T: Transcript<Challenge = AkitaField>,
+        T: FieldTranscript<AkitaField>,
     {
         let auxiliary_claims = auxiliary_groups
             .iter()
@@ -351,7 +371,7 @@ impl AkitaNativeBatching {
         transcript: &mut T,
     ) -> Result<(), OpeningsError>
     where
-        T: Transcript<Challenge = AkitaField>,
+        T: FieldTranscript<AkitaField>,
     {
         validate_trace_batch_statement(setup, auxiliary_groups, main)?;
         let backend_main_point = reverse_point(&main.point);
@@ -529,7 +549,7 @@ fn bind_statement_transcripts<T>(
     point: &[AkitaField],
 ) -> Result<Vec<u8>, OpeningsError>
 where
-    T: Transcript<Challenge = AkitaField>,
+    T: FieldTranscript<AkitaField>,
 {
     {
         let _span = info_span!("AkitaNativeBatching::append_setup_and_statement").entered();
@@ -537,7 +557,7 @@ where
         append_batch_statement(transcript, statement, commitment, point);
     }
     let _span = info_span!("AkitaNativeBatching::bridge_transcripts").entered();
-    Ok(bridged_akita_session(transcript, b"jolt-akita/batch"))
+    bridged_akita_session(transcript, &BATCH_TAG)
 }
 
 fn single_group_batch<'a, Cfg>(
@@ -606,7 +626,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
     ) -> Result<Self::Proof, OpeningsError>
     where
         Self: 'a,
-        T: Transcript<Challenge = Self::Field>,
+        T: FieldTranscript<Self::Field>,
     {
         let ValidatedStatement { commitment, point } = validate_statement(
             &statement,
@@ -681,7 +701,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
         transcript: &mut T,
     ) -> Result<(), OpeningsError>
     where
-        T: Transcript<Challenge = Self::Field>,
+        T: FieldTranscript<Self::Field>,
     {
         let ValidatedStatement { commitment, point } = validate_statement(
             statement,
@@ -755,8 +775,8 @@ mod tests {
 
     use super::*;
     use jolt_field::Zero;
-    use jolt_openings::{CommitmentGroupRole, EvaluationClaim};
-    use jolt_transcript::Blake2bTranscript;
+    use jolt_openings::EvaluationClaim;
+    use jolt_transcript::{prover_transcript, Blake2b512};
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::configs::AkitaChunkProfile;
@@ -812,7 +832,10 @@ mod tests {
             schedule_selection: [0; 32],
             backend_proof: Vec::new(),
         };
-        let mut transcript = Blake2bTranscript::new(b"invalid-transported-setup");
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"invalid-transported-setup"),
+            b"",
+        );
         let error = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &transported,
             &statement,
@@ -860,5 +883,42 @@ mod tests {
         assert!(validate_trace_batch_statement(&setup, &auxiliary_groups, &main).is_ok());
         setup.max_total_batch_polys = 259;
         assert!(validate_trace_batch_statement(&setup, &auxiliary_groups, &main).is_err());
+    }
+
+    #[test]
+    fn group_role_codes_are_distinct_and_unknown_roles_reject() {
+        let roles = [
+            CommitmentGroupRole::new(0, b"untrusted_advice", "untrusted-advice"),
+            CommitmentGroupRole::new(1, b"trusted_advice", "trusted-advice"),
+            CommitmentGroupRole::new(2, b"field_inc", "field-inc"),
+            CommitmentGroupRole::new(2, b"program_bytecode", "program-bytecode"),
+            CommitmentGroupRole::new(3, b"program_image_init", "program-image-init"),
+            CommitmentGroupRole::new(4, b"fused_inc", "fused-inc"),
+        ];
+        let codes = std::iter::once(None)
+            .chain(roles.into_iter().map(Some))
+            .map(|role| group_role_code(role).expect("known role has a code"))
+            .collect::<Vec<_>>();
+        assert_eq!(codes, [0, 1, 2, 3, 4, 5, 6]);
+
+        let unknown = CommitmentGroupRole::new(0, b"precommitted", "auxiliary group");
+        assert!(matches!(
+            group_role_code(Some(unknown)),
+            Err(OpeningsError::InvalidBatch(_))
+        ));
+        let indexed = CommitmentGroupRole::new_indexed(0, b"trusted_advice", "trusted-advice", 1);
+        assert!(matches!(
+            group_role_code(Some(indexed)),
+            Err(OpeningsError::InvalidBatch(_))
+        ));
+    }
+
+    #[test]
+    fn bridge_tags_are_distinct_from_each_other_and_the_old_tags() {
+        // The old grouped tag is 38 bytes, so no 32-byte tag can equal it.
+        let old_batch_tag = protocol_tag(b"jolt-akita/batch");
+        assert_ne!(GROUP_BATCH_TAG, BATCH_TAG);
+        assert_ne!(GROUP_BATCH_TAG, old_batch_tag);
+        assert_ne!(BATCH_TAG, old_batch_tag);
     }
 }

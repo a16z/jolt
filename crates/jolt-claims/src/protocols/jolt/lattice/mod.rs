@@ -32,9 +32,7 @@ pub mod increments;
 pub mod packing;
 pub mod relations;
 
-pub use geometry::{
-    BalancedIncChunking, LatticeGeometryError, FUSED_INC_BITS, LATTICE_BYTECODE_VAL_STAGES,
-};
+pub use geometry::{LatticeGeometryError, LATTICE_BYTECODE_VAL_STAGES};
 pub mod strategy;
 pub use packing::{
     advice_packing_plan, committed_program_packing_plan, one_hot_trace_columns, OneHotTraceShape,

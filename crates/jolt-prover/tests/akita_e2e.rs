@@ -38,13 +38,13 @@ mod akita_tests {
     };
     use jolt_field::Ring;
     use jolt_prover::akita;
-    use jolt_prover::akita::preprocessing::{
-        self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
-    };
+    use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
     use jolt_prover::akita::witness::commit_advice;
     use jolt_prover::JoltBackend;
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+    use jolt_verifier::stages::pow::PowSite;
     use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
@@ -126,7 +126,7 @@ mod akita_tests {
             witness_config(&config, untrusted_advice, has_trusted_advice),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -143,7 +143,7 @@ mod akita_tests {
     }
 
     fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &proved.preprocessing.verifier,
             &proved.public_io,
             &proved.proof,
@@ -264,6 +264,56 @@ mod akita_tests {
         }
     }
 
+    /// Every proof-of-work site rejects a missing, an unexpected, or a wrong
+    /// nonce with its own error.
+    #[test]
+    fn muldiv_akita_rejects_tampered_pow_nonces() {
+        let (run, config) = muldiv_run();
+        let proved = prove_guest(run, config, false, &[]);
+        verify(&proved).expect("Akita proof must verify");
+        let with_nonce = |site: PowSite, nonce: Option<u64>| {
+            let mut proof = proved.proof.clone();
+            proof.stages.pow_nonces.set(site, nonce);
+            ProvedGuest {
+                preprocessing: proved.preprocessing.clone(),
+                public_io: proved.public_io.clone(),
+                proof,
+                trusted_advice_commitment: None,
+            }
+        };
+        let rejected_at = |result: Result<(), VerifierError>, site: PowSite| matches!(result, Err(VerifierError::ProofOfWorkRejected { site: s }) if s == site);
+        let nonces = proved.proof.stages.pow_nonces;
+        assert!(
+            PowSite::ALL.iter().any(|&site| nonces.get(site).is_some()),
+            "the fp128 challenge set needs proof of work"
+        );
+        for site in PowSite::ALL {
+            match nonces.get(site) {
+                Some(nonce) => {
+                    assert!(
+                        rejected_at(verify(&with_nonce(site, None)), site),
+                        "{site:?}"
+                    );
+                    // Another nonce passes the check with probability 2^-bits,
+                    // so some nonce close by must fail it.
+                    assert!(
+                        (1..=64).any(|offset| rejected_at(
+                            verify(&with_nonce(site, Some(nonce.wrapping_add(offset)))),
+                            site
+                        )),
+                        "{site:?}"
+                    );
+                }
+                None => {
+                    assert!(
+                        rejected_at(verify(&with_nonce(site, Some(0))), site),
+                        "{site:?}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn muldiv_e2e_akita_forced_k256() {
         let (run, mut config) = muldiv_run();
@@ -304,7 +354,7 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -347,7 +397,7 @@ mod akita_tests {
                     continue;
                 }
                 config.akita_chunk_profile = requested;
-                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                     JoltBackend::optimized().with_witness(&witness),
                     &preprocessing,
                     &config,
@@ -442,7 +492,7 @@ mod akita_tests {
                 witness_config(&config, true, true),
                 JoltVmWitnessInputs::new(&run.program, &program, run.trace),
             );
-            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                 JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
@@ -450,7 +500,7 @@ mod akita_tests {
                 &public_io,
             )
             .expect("reuse the original advice commitment and opening hint");
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,
@@ -522,7 +572,7 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -544,7 +594,7 @@ mod akita_tests {
                 .expect("transport proof");
         assert_eq!(consumed, encoded.len());
         let verify = |proof: &Proof| {
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &verifier, &public_io, proof, None,
             )
         };
@@ -593,7 +643,7 @@ mod akita_tests {
             witness_config(&config, true, true),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -603,7 +653,7 @@ mod akita_tests {
         .expect("committed advice Akita proof");
 
         assert!(proof.untrusted_advice_commitment.is_some());
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &preprocessing.verifier,
             &public_io,
             &proof,

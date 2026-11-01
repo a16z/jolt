@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::summary::{ProfileSummary, SummaryError, TraceAggregate};
+use crate::summary::{ProfileSummary, RootInstance, SummaryError, TraceAggregate};
 
 /// The page template; `__DATA_JSON__` is replaced by the run's payload.
 const TEMPLATE: &str = include_str!("memory_viz.html");
@@ -41,7 +41,7 @@ pub(crate) fn write_memory_viz(
     aggregate: &TraceAggregate,
     folded: &BTreeMap<String, String>,
 ) -> Result<PathBuf, SummaryError> {
-    let Some((root, _)) = aggregate.root else {
+    let Some(RootInstance { interval: root, .. }) = aggregate.root else {
         return Ok(memory_viz_path(trace_path));
     };
     let to_rel_s = |ts_us: f64| ((ts_us - root.start_us) / 1e6).max(0.0);
@@ -116,6 +116,7 @@ mod tests {
 
     use super::*;
     use crate::memory::PeakMemory;
+    use crate::span_boundary::BoundarySamples;
     use crate::summary::{aggregate_events, build_summary, parse_folded, SummaryContext};
 
     #[test]
@@ -149,7 +150,7 @@ mod tests {
         let summary = build_summary(
             &events,
             &ctx,
-            &[],
+            &BoundarySamples::default(),
             PeakMemory {
                 rss_bytes: Some(1 << 30),
                 footprint_bytes: None,
