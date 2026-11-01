@@ -52,7 +52,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 #[cfg(feature = "akita")]
 use jolt_poly::bind_prefix_in_place;
 use jolt_poly::{
@@ -1273,6 +1273,54 @@ impl<F: JoltField> CycleKernel<F> {
     }
 }
 
+impl<F: JoltField> CycleKernel<F> {
+    // Pair the four linear RA factors into two quadratics. Their samples at
+    // 0, 2, ..., degree need only additions after the initial products; the
+    // final coefficient multiplication is accumulated before reduction.
+    fn four_ra_evals(&self, half: usize) -> Option<Vec<F>> {
+        fn quadratic<F: JoltField>(a: (F, F), b: (F, F)) -> [F; 4] {
+            let zero = a.0 * b.0;
+            let one = a.1 * b.1;
+            let leading = (a.1 - a.0) * (b.1 - b.0);
+            let second = leading + leading;
+            let delta = one - zero + second;
+            [zero, one + delta, delta, second]
+        }
+        if self.ra.num_polys() != 4 {
+            return None;
+        }
+        Some(map_reduce_chunks(
+            half,
+            CYCLE_CHUNK,
+            |range| {
+                let mut acc = vec![F::Accumulator::default(); self.degree];
+                let mut pairs = [(F::zero(), F::zero()); 4];
+                for y in range {
+                    let [at_zero, mut delta, second] = self.coefficient(y);
+                    self.ra.lo_hi_all(y, &mut pairs);
+                    let mut coefficient = at_zero + delta + delta + second;
+                    delta += second + second;
+                    let mut left = quadratic(pairs[0], pairs[1]);
+                    let mut right = quadratic(pairs[2], pairs[3]);
+                    acc[0].fmadd(left[0] * right[0], at_zero);
+                    for lane in &mut acc[1..] {
+                        lane.fmadd(left[1] * right[1], coefficient);
+                        coefficient += delta;
+                        delta += second;
+                        left[2] += left[3];
+                        left[1] += left[2];
+                        right[2] += right[3];
+                        right[1] += right[2];
+                    }
+                }
+                acc.into_iter().map(Accumulator::reduce).collect()
+            },
+            merge_evals,
+            || vec![F::zero(); self.degree],
+        ))
+    }
+}
+
 impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
     fn num_rounds(&self) -> usize {
         self.progress.total()
@@ -1291,14 +1339,17 @@ impl<F: JoltField> ProveRounds<F> for CycleKernel<F> {
         let slots = self.degree;
         let num_ra = self.ra.num_polys();
 
-        let mut evals = self.grouped_evals(half).unwrap_or_else(|| {
-            par_sum_pair_groups_reusing(
-                half,
-                slots,
-                || vec![(F::zero(), F::zero()); num_ra],
-                |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
-            )
-        });
+        let mut evals = self
+            .grouped_evals(half)
+            .or_else(|| self.four_ra_evals(half))
+            .unwrap_or_else(|| {
+                par_sum_pair_groups_reusing(
+                    half,
+                    slots,
+                    || vec![(F::zero(), F::zero()); num_ra],
+                    |acc, ra_pairs, y| self.accumulate_group(y, acc, ra_pairs),
+                )
+            });
 
         let (tail_lo, tail_hi) = self.combined.suffix_pair_sums(half);
         #[cfg(feature = "akita")]
@@ -2072,7 +2123,9 @@ mod akita_tests {
 /// sample point to the next; these tests recompute each sample from scratch.
 #[cfg(test)]
 mod cycle_group_tests {
-    use jolt_field::{Field, Fr, Ring, Zero};
+    use jolt_field::Fr;
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -2080,20 +2133,19 @@ mod cycle_group_tests {
 
     const GROUPS: usize = 4;
 
-    fn random_poly(rng: &mut ChaCha20Rng) -> Polynomial<Fr> {
-        Polynomial::new((0..2 * GROUPS).map(|_| Fr::random(rng)).collect())
+    fn random_poly<F: JoltField>(rng: &mut ChaCha20Rng) -> Polynomial<F> {
+        Polynomial::new((0..2 * GROUPS).map(|_| F::random(rng)).collect())
     }
 
-    fn at(poly: &Polynomial<Fr>, y: usize, t: Fr) -> Fr {
+    fn at<F: JoltField>(poly: &Polynomial<F>, y: usize, t: F) -> F {
         let (lo, hi) = pair(poly, y);
         lo + t * (hi - lo)
     }
 
-    #[test]
-    fn stepped_group_samples_match_recomputed_samples() {
+    fn check_group_samples<F: JoltField>() {
         let mut rng = ChaCha20Rng::seed_from_u64(1966);
         for num_ra in 1..=8 {
-            let ra: Vec<Polynomial<Fr>> = (0..num_ra).map(|_| random_poly(&mut rng)).collect();
+            let ra: Vec<Polynomial<F>> = (0..num_ra).map(|_| random_poly(&mut rng)).collect();
             let combined = random_poly(&mut rng);
             #[cfg(feature = "akita")]
             let (fused_inc, fused_combined) = (random_poly(&mut rng), random_poly(&mut rng));
@@ -2108,19 +2160,36 @@ mod cycle_group_tests {
                 #[cfg(feature = "akita")]
                 fused_inc: LazyFusedInc::Prefix {
                     values: fused_inc.evals().to_vec(),
-                    tail: Fr::zero(),
+                    tail: F::zero(),
                 },
                 #[cfg(feature = "akita")]
                 fused_combined: EqPrefix::from_evals(fused_combined.evals().to_vec()),
                 output_openings: Vec::new(),
             };
-            let mut pairs = vec![(Fr::zero(), Fr::zero()); num_ra];
+            if num_ra == 4 {
+                let expected: Vec<F> = (0..degree)
+                    .map(|slot| {
+                        let t = F::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
+                        (0..GROUPS)
+                            .map(|y| {
+                                let coefficient = at(&combined, y, t);
+                                #[cfg(feature = "akita")]
+                                let coefficient =
+                                    coefficient + at(&fused_inc, y, t) * at(&fused_combined, y, t);
+                                ra.iter().fold(coefficient, |p, poly| p * at(poly, y, t))
+                            })
+                            .sum()
+                    })
+                    .collect();
+                assert_eq!(kernel.four_ra_evals(GROUPS), Some(expected));
+            }
+            let mut pairs = vec![(F::zero(), F::zero()); num_ra];
             for y in 0..GROUPS {
-                let start: Vec<Fr> = (0..degree).map(|_| Fr::random(&mut rng)).collect();
+                let start: Vec<F> = (0..degree).map(|_| F::random(&mut rng)).collect();
                 let mut acc = start.clone();
                 kernel.accumulate_group(y, &mut acc, &mut pairs);
                 for (slot, (acc, start)) in acc.iter().zip(&start).enumerate() {
-                    let t = Fr::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
+                    let t = F::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
                     let coefficient = at(&combined, y, t);
                     #[cfg(feature = "akita")]
                     let coefficient =
@@ -2133,10 +2202,20 @@ mod cycle_group_tests {
             }
         }
     }
+    #[test]
+    fn stepped_group_samples_match_recomputed_samples() {
+        check_group_samples::<Fr>();
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn stepped_group_samples_match_recomputed_samples_fp128() {
+        check_group_samples::<Prime128OffsetA7F7>();
+    }
 }
 
 #[cfg(test)]
-#[expect(clippy::unwrap_used, clippy::expect_used)]
+#[expect(clippy::unwrap_used)]
 mod grouped_cycle_tests {
     use super::*;
     use jolt_field::Fr;
@@ -2148,7 +2227,7 @@ mod grouped_cycle_tests {
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
-    fn check<F: JoltField>() {
+    fn check<F: JoltField>(num_ra: usize) {
         let n = 1 << 16;
         let mut rng = ChaCha20Rng::seed_from_u64(2187);
         let pcs: Vec<usize> = (0..n)
@@ -2169,15 +2248,15 @@ mod grouped_cycle_tests {
                 })
                 .collect::<Vec<_>>(),
         ));
-        let tables: Vec<Vec<F>> = (0..2)
+        let tables: Vec<Vec<F>> = (0..num_ra)
             .map(|_| (0..16).map(|_| F::random(&mut rng)).collect())
             .collect();
         // The oracle constructs the original dense tables directly from PC bits.
-        let mut dense: Vec<Polynomial<F>> = (0..2)
+        let mut dense: Vec<Polynomial<F>> = (0..num_ra)
             .map(|column| {
                 Polynomial::new(
                     pcs.iter()
-                        .map(|pc| tables[column][(pc >> (4 * (1 - column))) & 15])
+                        .map(|pc| tables[column][(pc >> (4 * (num_ra - 1 - column))) & 15])
                         .collect(),
                 )
             })
@@ -2185,8 +2264,8 @@ mod grouped_cycle_tests {
         let source = BytecodePcChunks {
             prefix_len: rows.prefix_len().max(1),
             rows,
-            selectors: (0..2)
-                .map(|i| RaChunkSelector::new(i, 2, 4).unwrap())
+            selectors: (0..num_ra)
+                .map(|i| RaChunkSelector::new(i, num_ra, 4).unwrap())
                 .collect(),
         };
         let mut cache = RepeatCache::new(CYCLE_GROUP_ENTRIES);
@@ -2205,7 +2284,7 @@ mod grouped_cycle_tests {
         let mut fused_inc = Polynomial::new((0..n).map(|_| F::random(&mut rng)).collect());
         #[cfg(feature = "akita")]
         let mut fused_combined = Polynomial::new((0..n).map(|_| F::random(&mut rng)).collect());
-        let degree = 2 + if cfg!(feature = "akita") { 2 } else { 1 };
+        let degree = num_ra + if cfg!(feature = "akita") { 2 } else { 1 };
         let mut kernel = CycleKernel {
             progress: RoundProgress::new(16),
             degree,
@@ -2220,16 +2299,17 @@ mod grouped_cycle_tests {
             fused_combined: EqPrefix::from_evals(fused_combined.evals().to_vec()),
             output_openings: Vec::new(),
         };
-        for round in 0..4 {
+        for round in 0..=4 {
             let groups = combined.len() / 2;
-            let actual = kernel
-                .grouped_evals(groups)
-                .expect("fixture must select grouped evaluation");
+            let grouped = kernel.grouped_evals(groups);
+            assert_eq!(grouped.is_some(), round < 4);
+            let product = kernel.four_ra_evals(groups);
+            assert_eq!(product.is_some(), num_ra == 4);
             let at = |poly: &Polynomial<F>, y: usize, t: F| {
                 let (lo, hi) = pair(poly, y);
                 lo + t * (hi - lo)
             };
-            for (slot, actual) in actual.into_iter().enumerate() {
+            for slot in 0..degree {
                 let t = F::from_u64(if slot == 0 { 0 } else { slot as u64 + 1 });
                 let expected: F = (0..groups)
                     .map(|y| {
@@ -2242,7 +2322,12 @@ mod grouped_cycle_tests {
                             .fold(coefficient, |acc, poly| acc * at(poly, y, t))
                     })
                     .sum();
-                assert_eq!(actual, expected, "round {round}, slot {slot}");
+                if let Some(actual) = &grouped {
+                    assert_eq!(actual[slot], expected, "grouped round {round}, slot {slot}");
+                }
+                if let Some(actual) = &product {
+                    assert_eq!(actual[slot], expected, "product round {round}, slot {slot}");
+                }
             }
             let challenge = match round {
                 0 => F::zero(),
@@ -2264,8 +2349,10 @@ mod grouped_cycle_tests {
 
     #[test]
     fn repeated_pc_groups_preserve_independent_coefficients() {
-        check::<Fr>();
-        #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        for num_ra in [2, 4] {
+            check::<Fr>(num_ra);
+            #[cfg(feature = "akita")]
+            check::<Prime128OffsetA7F7>(num_ra);
+        }
     }
 }
