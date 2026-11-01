@@ -1,19 +1,24 @@
-use super::{BooleanityChunks, ChunkIndexSource, LazyFoldedRa};
+use super::{BooleanityChunks, LazyFoldedRa};
+use crate::optimized::lazy_ra::PairedBranchTables;
 use jolt_field::JoltField;
 
-/// Cache sums of adjacent lazy branches over their small categorical alphabet.
-/// Cold RAM has its own digit, whose branch value is zero.
-pub(super) struct PairedBranchTables<'a, F: JoltField> {
+/// Booleanity's `(lo, hi)` row pairs at branch width four or eight, read
+/// through adjacent-branch sum tables.
+pub(super) struct PairedLoHi<'a, F: JoltField> {
     source: &'a BooleanityChunks,
-    width: usize,
-    values: Vec<Vec<F>>,
+    width: PairWidth,
+    tables: PairedBranchTables<F>,
 }
 
-impl<'a, F: JoltField> PairedBranchTables<'a, F> {
+#[derive(Clone, Copy)]
+enum PairWidth {
+    Four,
+    Eight,
+}
+
+impl<'a, F: JoltField> PairedLoHi<'a, F> {
     const CHUNK_BITS: usize = 4;
-    const ADDRESSES: usize = 1 << Self::CHUNK_BITS;
-    const RADIX: usize = Self::ADDRESSES + 1;
-    const STATES: usize = Self::RADIX * Self::RADIX;
+    /// Building the tables must cost at most one entry per this many rows.
     const MIN_ROWS_PER_CACHED_VALUE: usize = 16;
 
     pub(super) fn new(
@@ -30,105 +35,54 @@ impl<'a, F: JoltField> PairedBranchTables<'a, F> {
         else {
             return None;
         };
+        let pair_width = match width {
+            4 => PairWidth::Four,
+            8 => PairWidth::Eight,
+            _ => return None,
+        };
         if source.chunk_bits != Self::CHUNK_BITS
-            || !matches!(width, 4 | 8)
-            || width / 2 * Self::STATES > source.prefix_len / Self::MIN_ROWS_PER_CACHED_VALUE
+            || PairedBranchTables::<F>::entries(*width)
+                > source.prefix_len / Self::MIN_ROWS_PER_CACHED_VALUE
         {
             return None;
         }
-        let values = tables[..columns]
-            .iter()
-            .map(|table| {
-                let mut paired = Vec::with_capacity(width / 2 * Self::STATES);
-                for branches in table.chunks_exact(2 * Self::ADDRESSES) {
-                    for high in branches[Self::ADDRESSES..]
-                        .iter()
-                        .copied()
-                        .chain(std::iter::once(F::zero()))
-                    {
-                        for low in branches[..Self::ADDRESSES]
-                            .iter()
-                            .copied()
-                            .chain(std::iter::once(F::zero()))
-                        {
-                            paired.push(low + high);
-                        }
-                    }
-                }
-                paired
-            })
-            .collect();
         Some(Self {
             source,
-            width: *width,
-            values,
+            width: pair_width,
+            tables: PairedBranchTables::new(&tables[..columns]),
         })
     }
 
     #[inline]
     pub(super) fn gather(&self, row: usize, out: &mut [(F, F)]) {
         match self.width {
-            4 => self.gather_width::<4>(row, out),
-            8 => self.gather_width::<8>(row, out),
-            _ => unreachable!(),
+            PairWidth::Four => self.gather_width::<4>(row, out),
+            PairWidth::Eight => self.gather_width::<8>(row, out),
         }
     }
 
     #[inline(always)]
     fn gather_width<const WIDTH: usize>(&self, row: usize, out: &mut [(F, F)]) {
-        let columns = self.values.len();
+        let columns = self.tables.columns();
         let instruction = columns.min(self.source.instruction_chunks);
-        for branch in (0..WIDTH).step_by(2) {
-            let base = branch / 2 * Self::STATES;
-            let low_row = 2 * row * WIDTH + branch;
-            let high_row = (2 * row + 1) * WIDTH + branch;
-            if instruction != 0 {
-                let skip = (self.source.instruction_chunks - instruction) * Self::CHUNK_BITS;
-                let mut lo0 = self.source.rows[low_row].lookup_index() >> skip;
-                let mut lo1 = self.source.rows[low_row + 1].lookup_index() >> skip;
-                let mut hi0 = self.source.rows[high_row].lookup_index() >> skip;
-                let mut hi1 = self.source.rows[high_row + 1].lookup_index() >> skip;
-                for column in (0..instruction).rev() {
-                    let lo = (lo0 & (Self::ADDRESSES - 1) as u128) as usize
-                        + Self::RADIX * (lo1 & (Self::ADDRESSES - 1) as u128) as usize;
-                    let hi = (hi0 & (Self::ADDRESSES - 1) as u128) as usize
-                        + Self::RADIX * (hi1 & (Self::ADDRESSES - 1) as u128) as usize;
-                    let values = (
-                        self.values[column][base + lo],
-                        self.values[column][base + hi],
-                    );
-                    if branch == 0 {
-                        out[column] = values;
-                    } else {
-                        out[column].0 += values.0;
-                        out[column].1 += values.1;
-                    }
-                    lo0 >>= Self::CHUNK_BITS;
-                    lo1 >>= Self::CHUNK_BITS;
-                    hi0 >>= Self::CHUNK_BITS;
-                    hi1 >>= Self::CHUNK_BITS;
-                }
-            }
-            for (column, pair) in out.iter_mut().enumerate().take(columns).skip(instruction) {
-                let state = |start| {
-                    self.source.index(column, start).unwrap_or(Self::ADDRESSES)
-                        + Self::RADIX
-                            * self
-                                .source
-                                .index(column, start + 1)
-                                .unwrap_or(Self::ADDRESSES)
-                };
-                let values = (
-                    self.values[column][base + state(low_row)],
-                    self.values[column][base + state(high_row)],
-                );
-                if branch == 0 {
-                    *pair = values;
+        // Instruction column `instruction - 1` lands in the lowest digit.
+        let skip = (self.source.instruction_chunks - instruction) * Self::CHUNK_BITS;
+        for side in 0..2 {
+            let start = (2 * row + side) * WIDTH;
+            let mut set = |column: usize, value: F| {
+                if side == 0 {
+                    out[column].0 = value;
                 } else {
-                    pair.0 += values.0;
-                    pair.1 += values.1;
+                    out[column].1 = value;
                 }
-            }
+            };
+            self.tables.visit_four_bit::<WIDTH>(
+                instruction,
+                |branch| self.source.rows[start + branch].lookup_index() >> skip,
+                &mut set,
+            );
+            self.tables
+                .visit_indexed(self.source, instruction..columns, start, WIDTH / 2, set);
         }
     }
 }
@@ -138,6 +92,7 @@ impl<'a, F: JoltField> PairedBranchTables<'a, F> {
 mod tests {
     use super::*;
     use crate::optimized::booleanity::{ColumnSelector, ConstantSuffix, InstructionCycleRow};
+    use crate::optimized::lazy_ra::ChunkIndexSource;
     use jolt_field::Fr;
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
@@ -206,7 +161,7 @@ mod tests {
                     unreachable!()
                 };
                 for columns in [1, 31, 32, 33, 39] {
-                    let paired = PairedBranchTables::new(&lazy, columns).unwrap();
+                    let paired = PairedLoHi::new(&lazy, columns).unwrap();
                     for row in [
                         0,
                         1,

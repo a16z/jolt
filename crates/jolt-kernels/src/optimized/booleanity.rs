@@ -455,7 +455,7 @@ struct BooleanityChunks {
 mod bulk;
 mod paired;
 
-use paired::PairedBranchTables;
+use paired::PairedLoHi;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
@@ -681,7 +681,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
         let active_polys = gamma_powers.iter().take_while(|rho| !rho.is_zero()).count();
-        let paired = PairedBranchTables::new(tables, active_polys);
+        let paired = PairedLoHi::new(tables, active_polys);
 
         struct Scratch<F: JoltField> {
             lanes: [F::Accumulator; 2],
