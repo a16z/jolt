@@ -24,10 +24,7 @@ use std::collections::BTreeMap;
 
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
-use jolt_claims::protocols::jolt::{
-    BooleanityPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId, JoltRelationId,
-};
-use jolt_claims::{Source, SymbolicSumcheck};
+use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
 use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -271,31 +268,6 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 Polynomial::new(address_fold(witness, opening, dimensions.log_t, r_address)?),
             );
         }
-        // The packed (lattice) shape extends the boolean fold over the
-        // fused-inc one-hot columns: serve them per the relation's own
-        // expression leaves (the base expression references none, so the
-        // loop no-ops there).
-        for term in &relation.symbolic().output_expression::<F>().terms {
-            for factor in &term.factors {
-                let Source::Opening(id) = factor else {
-                    continue;
-                };
-                if matches!(
-                    id.polynomial_id(),
-                    JoltPolynomialId::Committed(
-                        JoltCommittedPolynomial::BalancedIncDigit(_)
-                            | JoltCommittedPolynomial::BalancedIncCarry,
-                    )
-                ) && !opening_tables.contains_key(id)
-                {
-                    let _ = opening_tables.insert(
-                        *id,
-                        Polynomial::new(address_fold(witness, *id, dimensions.log_t, r_address)?),
-                    );
-                }
-            }
-        }
-
         // The fixed address eq factor: both vectors pair positionally in the
         // verifier's `derive_output_term` (each side reversed, so the product
         // is the same either way).

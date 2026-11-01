@@ -121,6 +121,20 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
         }
     }
 
+    /// Consume the adjacent-branch sum tables built by `materialize_paired_values`.
+    /// Each pair has radix 17, with the final digit representing a cold row.
+    fn gather_paired_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) where
+        Self: Sized,
+    {
+        gather_paired_columns(self, tables, row, out, output_row, 0);
+    }
+
     fn gather_pairs<F: JoltField>(
         &self,
         tables: &[Vec<F>],
@@ -546,6 +560,10 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
 /// the row-major fill touches all tables per row, which only pays while they
 /// stay cache-resident.
 const ROW_MAJOR_FILL_MAX_TABLE_BYTES: usize = 1 << 20;
+pub(super) const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
+pub(super) const PAIRED_MATERIALIZE_ADDRESSES: usize = 16;
+const PAIRED_MATERIALIZE_MIN_ROWS: usize = 1 << 12;
+const PAIRED_MATERIALIZE_MAX_BYTES: usize = 2 << 20;
 
 /// Row-major fill ranges longer than this are split across rayon tasks.
 #[cfg(feature = "parallel")]
@@ -598,6 +616,22 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
         }
     }
 
+    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+    let paired_bytes = tables
+        .len()
+        .saturating_mul(PAIRED_MATERIALIZE_BRANCHES / 2 * radix * radix * std::mem::size_of::<F>());
+    if bind.is_none()
+        && !tables.is_empty()
+        && factors == 1
+        && branches == PAIRED_MATERIALIZE_BRANCHES
+        && len >= PAIRED_MATERIALIZE_MIN_ROWS
+        && paired_bytes <= PAIRED_MATERIALIZE_MAX_BYTES
+        && tables
+            .iter()
+            .all(|table| table.len() == PAIRED_MATERIALIZE_BRANCHES * PAIRED_MATERIALIZE_ADDRESSES)
+    {
+        return materialize_paired_values(tables, source, len);
+    }
     let table_bytes = tables.iter().map(Vec::len).sum::<usize>() * std::mem::size_of::<F>();
     if bind.is_some() || table_bytes > ROW_MAJOR_FILL_MAX_TABLE_BYTES {
         return (0..tables.len() / factors)
@@ -628,6 +662,109 @@ fn materialize_values<F: JoltField, S: ChunkIndexSource>(
     let mut values = vec![vec![F::zero(); len]; tables.len() / factors];
     let columns = values.iter_mut().map(Vec::as_mut_slice).collect();
     fill(columns, 0, tables, factors, source, branches);
+    values
+}
+
+#[inline]
+pub(super) fn gather_paired_columns<F: JoltField, S: ChunkIndexSource>(
+    source: &S,
+    tables: &[Vec<F>],
+    row: usize,
+    out: &mut [&mut [F]],
+    output_row: usize,
+    first_column: usize,
+) {
+    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
+    for (column, (values, table)) in out.iter_mut().zip(tables).enumerate() {
+        let mut sum = F::Accumulator::default();
+        for pair in 0..PAIRED_MATERIALIZE_BRANCHES / 2 {
+            let lo = source
+                .index(
+                    first_column + column,
+                    row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair,
+                )
+                .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+            let hi = source
+                .index(
+                    first_column + column,
+                    row * PAIRED_MATERIALIZE_BRANCHES + 2 * pair + 1,
+                )
+                .unwrap_or(PAIRED_MATERIALIZE_ADDRESSES);
+            sum.add(table[pair * radix * radix + lo * radix + hi]);
+        }
+        values[output_row] = sum.reduce();
+    }
+}
+
+// The final radix digit represents a cold source row, whose contribution is zero.
+// Pair tables replace two branch gathers with one without changing the bound values.
+fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
+    tables: &[Vec<F>],
+    source: &S,
+    len: usize,
+) -> Vec<Vec<F>> {
+    let width = PAIRED_MATERIALIZE_BRANCHES;
+    let addresses = PAIRED_MATERIALIZE_ADDRESSES;
+    let radix = addresses + 1;
+    let paired: Vec<Vec<F>> = tables
+        .iter()
+        .map(|table| {
+            let mut values = Vec::with_capacity(width / 2 * radix * radix);
+            for pair in 0..width / 2 {
+                for lo in 0..radix {
+                    for hi in 0..radix {
+                        let a = if lo == addresses {
+                            F::zero()
+                        } else {
+                            table[2 * pair * addresses + lo]
+                        };
+                        let b = if hi == addresses {
+                            F::zero()
+                        } else {
+                            table[(2 * pair + 1) * addresses + hi]
+                        };
+                        values.push(a + b);
+                    }
+                }
+            }
+            values
+        })
+        .collect();
+    #[cfg(feature = "parallel")]
+    let mut values: Vec<Vec<F>> = (0..tables.len())
+        .into_par_iter()
+        .map(|_| vec![F::zero(); len])
+        .collect();
+    #[cfg(not(feature = "parallel"))]
+    let mut values: Vec<Vec<F>> = (0..tables.len()).map(|_| vec![F::zero(); len]).collect();
+    fn fill<F: JoltField, S: ChunkIndexSource>(
+        mut out: Vec<&mut [F]>,
+        start: usize,
+        paired: &[Vec<F>],
+        source: &S,
+    ) {
+        let len = out[0].len();
+        #[cfg(feature = "parallel")]
+        if len > ROW_MAJOR_FILL_SPLIT_ROWS {
+            let mid = len / 2;
+            let (left, right): (Vec<_>, Vec<_>) =
+                out.into_iter().map(|c| c.split_at_mut(mid)).unzip();
+            let _ = rayon::join(
+                || fill(left, start, paired, source),
+                || fill(right, start + mid, paired, source),
+            );
+            return;
+        }
+        for row in 0..len {
+            source.gather_paired_values(paired, start + row, &mut out, row);
+        }
+    }
+    fill(
+        values.iter_mut().map(Vec::as_mut_slice).collect(),
+        0,
+        &paired,
+        source,
+    );
     values
 }
 
@@ -670,7 +807,12 @@ mod prefix_tests {
         let small = [0, 1, 2, 15, 16, 17, 63, 64, 65, 111, 127, 128]
             .into_iter()
             .map(|prefix| (128usize, prefix));
-        for (cycles, prefix) in small.chain([(32768, 32761), (32768, 32768)]) {
+        for (cycles, prefix) in small.chain([
+            (32768, 32761),
+            (32768, 32768),
+            (65536, 65529),
+            (65536, 65536),
+        ]) {
             let source = Source { cycles, prefix };
             let tables: Vec<Vec<F>> = (0..2)
                 .map(|i| {
