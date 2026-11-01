@@ -37,7 +37,6 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
-use std::collections::HashSet;
 use std::num::NonZeroU16;
 use std::sync::{Arc, Weak};
 
@@ -70,8 +69,8 @@ use super::lazy_ra::{
 };
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
-    product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage,
-    LowDegreeProductSum, RoundProgress, TailFactorProducts,
+    product_grid_scratch_len, repeat_hash, repeats_often, scan_chunk_size, BundleAccess,
+    GruenRoundMessage, LowDegreeProductSum, RepeatCache, RoundProgress, TailFactorProducts,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -720,10 +719,6 @@ const SCAN_CLASSES: usize = 2 * (LookupTableKind::<RISCV_XLEN>::COUNT + 1);
 /// Cycles per scan block: a block's rows and weights stay cache-resident
 /// while its class runs gather from them.
 const SCAN_BLOCK: usize = 1 << 10;
-const COALESCE_SAMPLE_BLOCKS: usize = 32;
-// Require at least a quarter repeated rows to amortize coalescing.
-const COALESCE_MIN_DUPLICATE_PERCENT: usize = 25;
-const COALESCE_CACHE_SLOTS: usize = 1 << 12;
 
 const _: () = assert!(SCAN_BLOCK <= u16::MAX as usize, "block offsets are u16");
 
@@ -761,23 +756,12 @@ impl ScanBlock {
     }
 
     fn should_coalesce(rows: &[InstructionCycleRow]) -> bool {
-        if rows.len() < SCAN_BLOCK {
-            return false;
-        }
-        let blocks = rows.len().div_ceil(SCAN_BLOCK);
-        let samples = blocks.min(COALESCE_SAMPLE_BLOCKS);
-        let mut seen = HashSet::with_capacity(SCAN_BLOCK);
-        let mut total = 0;
-        let mut distinct = 0;
-        for sample in 0..samples {
-            let start = sample * blocks / samples * SCAN_BLOCK;
-            seen.clear();
-            for row in &rows[start..(start + SCAN_BLOCK).min(rows.len())] {
-                total += 1;
-                distinct += usize::from(seen.insert((row.lookup_index(), Self::class(row))));
-            }
-        }
-        100 * (total - distinct) >= COALESCE_MIN_DUPLICATE_PERCENT * total
+        repeats_often(
+            rows.len(),
+            SCAN_BLOCK,
+            |row| Self::key_hash(&rows[row]),
+            |a, b| Self::same_key(&rows[a], &rows[b]),
+        )
     }
 
     /// Address phases are linear in the cycle weights. Equal lookup keys
@@ -786,39 +770,41 @@ impl ScanBlock {
     fn coalesced<F: JoltField>(
         rows: &[InstructionCycleRow],
         weights: &mut [F],
-        seen: &mut [Option<NonZeroU16>],
+        cache: &mut RepeatCache<NonZeroU16>,
     ) -> Self {
         let mut block = Self::new(rows);
         let starts = block.starts;
         let mut end = 0;
-        seen.fill(None);
+        cache.clear();
         for (class, range) in starts.windows(2).enumerate() {
             block.starts[class] = end as u16;
             for position in usize::from(range[0])..usize::from(range[1]) {
-                let offset = block.offsets[position];
-                let key = rows[usize::from(offset)].lookup_index();
-                let mut hash = (key as u64) ^ ((key >> 64) as u64).rotate_left(32);
-                hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                let slot = ((hash ^ (hash >> 31)) as usize) & (COALESCE_CACHE_SLOTS - 1);
-                if let Some(previous) = seen[slot] {
-                    let previous = usize::from(previous.get() - 1);
-                    if Self::class(&rows[previous]) == class && rows[previous].lookup_index() == key
-                    {
-                        let weight = weights[usize::from(offset)];
-                        weights[previous] += weight;
-                        continue;
-                    }
+                let offset = usize::from(block.offsets[position]);
+                let row = &rows[offset];
+                let representative =
+                    cache.find_or_insert(Self::key_hash(row), offset, |previous| {
+                        Self::same_key(&rows[previous], row)
+                    });
+                if let Some(previous) = representative {
+                    let weight = weights[offset];
+                    weights[previous] += weight;
+                } else {
+                    block.offsets[end] = offset as u16;
+                    end += 1;
                 }
-                // Collisions leave another live representative; only exact
-                // key-and-class matches combine weights. One probe per row.
-                seen[slot] = NonZeroU16::new(offset + 1);
-                block.offsets[end] = offset;
-                end += 1;
             }
         }
         block.starts[SCAN_CLASSES] = end as u16;
         block
+    }
+
+    fn key_hash(row: &InstructionCycleRow) -> u64 {
+        let key = row.lookup_index();
+        repeat_hash([key as u64, (key >> 64) as u64, Self::class(row) as u64])
+    }
+
+    fn same_key(left: &InstructionCycleRow, right: &InstructionCycleRow) -> bool {
+        left.lookup_index() == right.lookup_index() && Self::class(left) == Self::class(right)
     }
 
     fn class(row: &InstructionCycleRow) -> usize {
@@ -1281,25 +1267,25 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             let chunks = u_evals.par_chunks_mut(SCAN_BLOCK);
             #[cfg(not(feature = "parallel"))]
             let chunks = u_evals.chunks_mut(SCAN_BLOCK);
-            let coalesce = |seen: &mut Vec<Option<NonZeroU16>>,
+            let coalesce = |cache: &mut RepeatCache<NonZeroU16>,
                             (block, weights): (usize, &mut [F])| {
                 ScanBlock::coalesced(
                     &scan_rows[block * SCAN_BLOCK..block * SCAN_BLOCK + weights.len()],
                     weights,
-                    seen,
+                    cache,
                 )
             };
             #[cfg(feature = "parallel")]
             let blocks = chunks
                 .enumerate()
-                .map_init(|| vec![None; COALESCE_CACHE_SLOTS], coalesce)
+                .map_init(|| RepeatCache::new(SCAN_BLOCK), coalesce)
                 .collect();
             #[cfg(not(feature = "parallel"))]
             let blocks = {
-                let mut seen = vec![None; COALESCE_CACHE_SLOTS];
+                let mut cache = RepeatCache::new(SCAN_BLOCK);
                 chunks
                     .enumerate()
-                    .map(|item| coalesce(&mut seen, item))
+                    .map(|item| coalesce(&mut cache, item))
                     .collect()
             };
             blocks
@@ -1951,8 +1937,8 @@ mod tests {
     use crate::SumcheckKernel;
 
     use super::{
-        InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, ScanBlock,
-        COALESCE_CACHE_SLOTS,
+        InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, RepeatCache,
+        ScanBlock,
     };
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
@@ -2319,11 +2305,11 @@ mod tests {
     #[test]
     fn coalescing_preserves_weight_for_colliding_keys_and_classes() {
         fn check<F: JoltField>() {
-            let mut cache = vec![None; COALESCE_CACHE_SLOTS];
+            // Four slots for up to ten distinct (key, class) pairs force collisions.
+            let mut cache = RepeatCache::new(1);
             for length in [64, 17] {
                 let rows: Vec<_> = (0..length)
                     .map(|i| {
-                        // These distinct keys all hash to the same cache slot.
                         let high = [0u64, 0, 1, 2, 0, 3, 3, 4][i % 8];
                         let key = (u128::from(high) << 64) | u128::from(high.rotate_left(32));
                         InstructionCycleRow::new(
