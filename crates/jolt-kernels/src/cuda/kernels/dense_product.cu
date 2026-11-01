@@ -1,13 +1,54 @@
-extern "C" __global__ void dense_product_round_kernel(
+__device__ __forceinline__ void dp_increment_value(
+    const u64 *words, unsigned long long index, unsigned int bound,
+    const u64 *challenge, u64 *out) {
+    if (!bound) {
+        hf_promote_narrow(words + 2 * index, HF_KIND_TWOS_I128, 0, out);
+        return;
+    }
+    u64 lo[LIMBS], hi[LIMBS], difference[LIMBS], scaled[LIMBS];
+    hf_promote_narrow(words + 4 * index, HF_KIND_TWOS_I128, 0, lo);
+    hf_promote_narrow(words + 4 * index + 2, HF_KIND_TWOS_I128, 0, hi);
+    fr_sub(hi, lo, difference);
+    fr_mul(challenge, difference, scaled);
+    fr_add(lo, scaled, out);
+}
+
+extern "C" __global__ void dense_product_increment_bind_kernel(
+    const u64 *__restrict__ increments, u64 *__restrict__ out,
+    unsigned int count, unsigned int increment_bound,
+    u64 r0, u64 r1, u64 r2, u64 r3,
+    u64 s0, u64 s1, u64 s2, u64 s3) {
+    unsigned long long y = (unsigned long long)blockIdx.x * blockDim.x + threadIdx.x;
+    if (y >= count) return;
+    const u64 first[LIMBS] = {r0, r1, r2, r3};
+    const u64 current[LIMBS] = {s0, s1, s2, s3};
+    u64 lo[LIMBS], hi[LIMBS], difference[LIMBS], scaled[LIMBS], value[LIMBS];
+    dp_increment_value(increments, 2 * y, increment_bound, first, lo);
+    dp_increment_value(increments, 2 * y + 1, increment_bound, first, hi);
+    fr_sub(hi, lo, difference);
+    fr_mul(current, difference, scaled);
+    fr_add(lo, scaled, value);
+    store4(out + y * LIMBS, value);
+}
+
+template <bool COMPACT_INCREMENT>
+__device__ __forceinline__ void dp_round(
     const u64 *const *__restrict__ tables, unsigned int table_count,
     unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
     const u64 *__restrict__ lt_lo, const u64 *__restrict__ lt_hi,
     const u64 *__restrict__ eq_hi, const u64 *__restrict__ lt_shift,
     unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
-    unsigned int first_point, unsigned int infinity_lane) {
-    extern __shared__ u64 scratch[];
+    unsigned int first_point, unsigned int infinity_lane,
+    const u64 *increments, unsigned int increment_bound, const u64 *increment_challenge,
+    u64 *scratch) {
     unsigned int tid = threadIdx.x;
     unsigned int y = blockIdx.x * blockDim.x + tid;
+
+    u64 inc_lo[LIMBS], inc_hi[LIMBS];
+    if (COMPACT_INCREMENT && y < half) {
+        dp_increment_value(increments, 2ull * y, increment_bound, increment_challenge, inc_lo);
+        dp_increment_value(increments, 2ull * y + 1, increment_bound, increment_challenge, inc_hi);
+    }
 
     for (unsigned int c = 0; c < lanes; c++) {
         u64 acc[LIMBS] = {0, 0, 0, 0};
@@ -19,6 +60,16 @@ extern "C" __global__ void dense_product_round_kernel(
 
             u64 product[LIMBS];
             load4(FR_ONE, product);
+            if (COMPACT_INCREMENT) {
+                u64 difference[LIMBS], scaled[LIMBS];
+                fr_sub(inc_hi, inc_lo, difference);
+                if (at_infinity) {
+                    load4(difference, product);
+                } else {
+                    fr_mul(point, difference, scaled);
+                    fr_add(inc_lo, scaled, product);
+                }
+            }
             for (unsigned int t = 0; t < table_count; t++) {
                 const u64 *table = tables[t];
                 u64 lo[LIMBS], hi[LIMBS], diff[LIMBS], scaled[LIMBS], value[LIMBS];
@@ -73,6 +124,35 @@ extern "C" __global__ void dense_product_round_kernel(
         }
         __syncthreads();
     }
+}
+
+extern "C" __global__ void dense_product_round_kernel(
+    const u64 *const *__restrict__ tables, unsigned int table_count,
+    unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
+    const u64 *__restrict__ lt_lo, const u64 *__restrict__ lt_hi,
+    const u64 *__restrict__ eq_hi, const u64 *__restrict__ lt_shift,
+    unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
+    unsigned int first_point, unsigned int infinity_lane) {
+    extern __shared__ u64 scratch[];
+    dp_round<false>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
+                    lt_shift, lt_lo_bits, lt_lo_mask, has_lt, first_point, infinity_lane,
+                    nullptr, 0, nullptr, scratch);
+}
+
+extern "C" __global__ void dense_product_increment_round_kernel(
+    const u64 *const *__restrict__ tables, unsigned int table_count,
+    unsigned int half, unsigned int lanes, u64 *__restrict__ partials,
+    const u64 *__restrict__ lt_lo, const u64 *__restrict__ lt_hi,
+    const u64 *__restrict__ eq_hi, const u64 *__restrict__ lt_shift,
+    unsigned int lt_lo_bits, unsigned int lt_lo_mask, unsigned int has_lt,
+    unsigned int first_point, unsigned int infinity_lane,
+    const u64 *__restrict__ increments, unsigned int increment_bound,
+    u64 r0, u64 r1, u64 r2, u64 r3) {
+    extern __shared__ u64 scratch[];
+    const u64 challenge[LIMBS] = {r0, r1, r2, r3};
+    dp_round<true>(tables, table_count, half, lanes, partials, lt_lo, lt_hi, eq_hi,
+                   lt_shift, lt_lo_bits, lt_lo_mask, has_lt, first_point, infinity_lane,
+                   increments, increment_bound, challenge, scratch);
 }
 
 extern "C" __global__ void lane_sum_total_kernel(const u64 *__restrict__ in,

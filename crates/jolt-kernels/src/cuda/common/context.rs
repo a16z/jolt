@@ -53,6 +53,8 @@ pub struct CudaKernelContext {
     pub(super) scan_u32_block: CudaFunction,
     pub(super) scan_u32_add_offsets: CudaFunction,
     dense_product_round: CudaFunction,
+    dense_product_increment_round: CudaFunction,
+    dense_product_increment_bind: CudaFunction,
     lane_sum_total: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
@@ -279,6 +281,10 @@ impl CudaKernelContext {
             scan_u32_block: module.load_function("scan_u32_block_kernel")?,
             scan_u32_add_offsets: module.load_function("scan_u32_add_offsets_kernel")?,
             dense_product_round: module.load_function("dense_product_round_kernel")?,
+            dense_product_increment_round: module
+                .load_function("dense_product_increment_round_kernel")?,
+            dense_product_increment_bind: module
+                .load_function("dense_product_increment_bind_kernel")?,
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
@@ -690,6 +696,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn dense_product_round(&self) -> &CudaFunction {
         &self.dense_product_round
+    }
+
+    pub(crate) const fn dense_product_increment_round(&self) -> &CudaFunction {
+        &self.dense_product_increment_round
+    }
+
+    pub(crate) const fn dense_product_increment_bind(&self) -> &CudaFunction {
+        &self.dense_product_increment_bind
     }
 
     pub(crate) const fn lane_sum_total(&self) -> &CudaFunction {

@@ -2,8 +2,9 @@
 //!
 //! Packed RAM addresses feed a lazy device RA polynomial; the strict
 //! less-than factor uses the same split-table identity as optimized. CUDA
-//! promotes the signed increment column to field values during preparation,
-//! whereas optimized keeps it native through the first two rounds.
+//! and optimized keep increments compact through the first two rounds, then
+//! materialize the quarter-sized field table. CUDA reuses resident `i128`
+//! increments; optimized derives increments from pre/post trace values.
 //!
 //! The shared device RA helper materializes after three binds, versus four in
 //! optimized's usual lazy-RA path. Device windows contribute local product
@@ -69,7 +70,6 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
                 reason: "a RAM value-check window names an absent device",
             })?;
             let (trace, atoms) = session_memory_window(device, session, witness, cycles, window)?;
-            let inc = device.i128_to_montgomery_device(&atoms.ram_inc, window.len)?;
             let (hot, _) = trace.remapped_ram_words(addresses)?;
             let eq_address = device.eq_evals(require_fr_slice(r_address)?)?;
             let ra = DeviceRaPolynomial::from_device_columns(
@@ -91,11 +91,11 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
             };
             states.push((
                 ordinal,
-                DeviceDenseProduct::from_device_factors(
-                    None,
-                    vec![inc],
-                    Some(ra),
-                    Some(lt),
+                DeviceDenseProduct::from_ram_increments(
+                    device,
+                    atoms,
+                    ra,
+                    lt,
                     window.len.ilog2() as usize,
                     relation.degree(),
                 )?,

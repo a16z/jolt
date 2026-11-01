@@ -18,10 +18,12 @@ use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckOutputClaims,
 };
+use jolt_witness::backend::cuda::DeviceMemoryColumns;
+use std::sync::Arc;
 
 use super::context::context_for;
 use super::context::{CudaKernelContext, BLOCK};
-use super::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
+use super::device::{fr_into, fr_limbs, require_fr, DeviceFrVec, LIMBS};
 use super::devices::{fan_out, DeviceTask};
 use super::error::CudaError;
 use super::lt_poly::DeviceLtPolynomial;
@@ -30,12 +32,49 @@ use super::ra_poly::DeviceRaPolynomial;
 
 pub struct DeviceDenseProduct {
     weight: Option<DeviceFrVec>,
-    factors: Vec<DeviceFrVec>,
+    factors: ProductFactors,
     one_hot: Option<DeviceRaPolynomial>,
     lt: Option<DeviceLtPolynomial>,
     degree: usize,
     rounds: usize,
     rounds_bound: usize,
+}
+
+enum ProductFactors {
+    Tables(Vec<DeviceFrVec>),
+    RamIncrements {
+        columns: Arc<DeviceMemoryColumns>,
+        first_bind: Option<Fr>,
+    },
+}
+
+impl ProductFactors {
+    fn tables(&self) -> &[DeviceFrVec] {
+        match self {
+            Self::Tables(tables) => tables,
+            Self::RamIncrements { .. } => &[],
+        }
+    }
+
+    fn finals(&self) -> Result<Vec<Fr>, CudaError> {
+        let Self::Tables(tables) = self else {
+            return Err(CudaError::InvariantViolation {
+                reason: "RAM increments must be fully bound before reading their final value",
+            });
+        };
+        tables
+            .iter()
+            .map(|table| {
+                if table.len() != 1 {
+                    return Err(CudaError::LengthMismatch {
+                        expected: 1,
+                        got: table.len(),
+                    });
+                }
+                table.first()
+            })
+            .collect()
+    }
 }
 
 pub(crate) struct ShardedDenseProduct {
@@ -360,7 +399,7 @@ impl DeviceDenseProduct {
 
         Ok(Self {
             weight,
-            factors,
+            factors: ProductFactors::Tables(factors),
             one_hot,
             lt,
             degree,
@@ -369,13 +408,43 @@ impl DeviceDenseProduct {
         })
     }
 
+    pub(crate) fn from_ram_increments(
+        context: &CudaKernelContext,
+        columns: Arc<DeviceMemoryColumns>,
+        one_hot: DeviceRaPolynomial,
+        lt: DeviceLtPolynomial,
+        rounds: usize,
+        degree: usize,
+    ) -> Result<Self, CudaError> {
+        let len = 1usize << rounds;
+        if columns.ram_inc.len() < 2 * len {
+            return Err(CudaError::LengthMismatch {
+                expected: 2 * len,
+                got: columns.ram_inc.len(),
+            });
+        }
+        let mut state =
+            Self::from_device_factors(None, Vec::new(), Some(one_hot), Some(lt), rounds, degree)?;
+        state.factors = if rounds == 0 {
+            ProductFactors::Tables(vec![
+                context.i128_to_montgomery_device(&columns.ram_inc, len)?
+            ])
+        } else {
+            ProductFactors::RamIncrements {
+                columns,
+                first_bind: None,
+            }
+        };
+        Ok(state)
+    }
+
     fn round_tables(
         &self,
         context: &CudaKernelContext,
     ) -> Result<(Vec<&DeviceFrVec>, Option<DeviceFrVec>), CudaError> {
-        let mut handles: Vec<&DeviceFrVec> = Vec::with_capacity(2 + self.factors.len());
+        let mut handles: Vec<&DeviceFrVec> = Vec::with_capacity(2 + self.factors.tables().len());
         handles.extend(self.weight.as_ref());
-        handles.extend(self.factors.iter());
+        handles.extend(self.factors.tables());
         let materialized = match &self.one_hot {
             None => None,
             Some(one_hot) => match one_hot.dense() {
@@ -432,9 +501,23 @@ impl DeviceDenseProduct {
             None => (&empty, &empty, &empty, &empty, 0, 0),
         };
 
-        let mut builder = context
-            .stream()
-            .launch_builder(context.dense_product_round());
+        let increment = match &self.factors {
+            ProductFactors::Tables(_) => None,
+            ProductFactors::RamIncrements {
+                columns,
+                first_bind,
+            } => Some((
+                &columns.ram_inc,
+                u32::from(first_bind.is_some()),
+                fr_limbs(first_bind.unwrap_or_default()),
+            )),
+        };
+        let kernel = if increment.is_some() {
+            context.dense_product_increment_round()
+        } else {
+            context.dense_product_round()
+        };
+        let mut builder = context.stream().launch_builder(kernel);
         let _ = builder.arg(&pointers);
         let _ = builder.arg(&table_count);
         let _ = builder.arg(&half_count);
@@ -450,6 +533,13 @@ impl DeviceDenseProduct {
         let _ = builder.arg(&first_point);
         let infinity_flag = u32::from(infinity_lane);
         let _ = builder.arg(&infinity_flag);
+        if let Some((words, bound, challenge)) = &increment {
+            let _ = builder.arg(*words);
+            let _ = builder.arg(bound);
+            for limb in challenge {
+                let _ = builder.arg(limb);
+            }
+        }
         // SAFETY: reads, all in bounds — `table[2y]`/`table[2y+1]` for each of
         // `table_count` tables of `2 * half` elements; the LT tables and the
         // single-element `lt_shift` only when
@@ -457,7 +547,10 @@ impl DeviceDenseProduct {
         // Writes: `partials[c * gridDim.x + blockIdx.x]`, one slot per
         // (lane, block) of `lanes * blocks`. Shared memory is `BLOCK * LIMBS`
         // u64s, matching `shared_mem_bytes`. Every buffer outlives the launch,
-        // borrowed through `&self` or owned by this frame.
+        // borrowed through `&self` or owned by this frame. The compact RAM
+        // variant reads two i128 entries per pair, or four after the first
+        // bind; from_ram_increments checked the logical two-word extent.
+        // A resident successor row is outside that logical window.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
@@ -488,8 +581,44 @@ impl DeviceDenseProduct {
         if let Some(weight) = &self.weight {
             self.weight = Some(context.bind_rows(weight, weight.len(), challenge)?);
         }
-        for table in &mut self.factors {
-            *table = context.bind_rows(table, table.len(), challenge)?;
+        match &mut self.factors {
+            ProductFactors::Tables(tables) => {
+                for table in tables {
+                    *table = context.bind_rows(table, table.len(), challenge)?;
+                }
+            }
+            ProductFactors::RamIncrements {
+                columns,
+                first_bind,
+            } => {
+                if first_bind.is_none() && self.rounds > 1 {
+                    *first_bind = Some(challenge);
+                } else {
+                    let len = 1usize << (self.rounds - self.rounds_bound - 1);
+                    let count = CudaKernelContext::count_of(len)?;
+                    let mut table = context.alloc(len)?;
+                    let bound = u32::from(first_bind.is_some());
+                    let first = fr_limbs(first_bind.unwrap_or_default());
+                    let current = fr_limbs(challenge);
+                    let mut builder = context
+                        .stream()
+                        .launch_builder(context.dense_product_increment_bind());
+                    let _ = builder.arg(&columns.ram_inc);
+                    let _ = builder.arg(table.limbs_mut());
+                    let _ = builder.arg(&count);
+                    let _ = builder.arg(&bound);
+                    for limb in first.iter().chain(current.iter()) {
+                        let _ = builder.arg(limb);
+                    }
+                    // SAFETY: thread y < count reads two original increments,
+                    // or four when first_bind is present, and writes one field.
+                    // from_ram_increments checked the original logical extent;
+                    // count excludes any resident successor row. Both buffers
+                    // outlive the launch and each output has a unique writer.
+                    let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+                    self.factors = ProductFactors::Tables(vec![table]);
+                }
+            }
         }
         if let Some(one_hot) = &mut self.one_hot {
             one_hot.bind(context, challenge)?;
@@ -505,10 +634,7 @@ impl DeviceDenseProduct {
         &self,
         context: &CudaKernelContext,
     ) -> Result<Vec<F>, CudaError> {
-        let mut finals = Vec::with_capacity(self.factors.len() + 1);
-        for table in &self.factors {
-            finals.push(table.first()?);
-        }
+        let mut finals = self.factors.finals()?;
         if let Some(one_hot) = &self.one_hot {
             finals.push(one_hot.final_claim(context)?);
         }
@@ -541,11 +667,7 @@ impl DeviceDenseProduct {
         };
         Ok(WindowScalars {
             weight: self.weight.as_ref().map(scalar).transpose()?,
-            factors: self
-                .factors
-                .iter()
-                .map(scalar)
-                .collect::<Result<Vec<_>, _>>()?,
+            factors: self.factors.finals()?,
             one_hot: self
                 .one_hot
                 .as_ref()
@@ -650,9 +772,11 @@ where
 )]
 mod tests {
     use jolt_field::{Fr, Ring};
-    use jolt_poly::{BindingOrder, EqPolynomial};
+    use jolt_poly::{BindingOrder, EqPolynomial, LtPolynomial, Polynomial};
+    use jolt_witness::backend::cuda::DeviceMemoryColumns;
+    use std::sync::Arc;
 
-    use super::super::context::shared_context;
+    use super::super::context::{context_for, device_count, shared_context};
     use super::super::lt_poly::DeviceLtPolynomial;
     use super::super::ra_poly::{DeviceRaPolynomial, COLD};
     use super::super::testing::fr;
@@ -661,6 +785,151 @@ mod tests {
     const LOG_T: usize = 8;
     const LOG_K: usize = 3;
     const DEGREE: usize = 2;
+
+    #[test]
+    fn compact_ram_increments_match_field_sums_through_promotion() {
+        let Some(_) = shared_context() else {
+            return;
+        };
+        for log_t in [0usize, 1, 2, 3, 13] {
+            let cycles = 1usize << log_t;
+            let increments: Vec<i128> = (0..cycles)
+                .map(|i| {
+                    let offset = (i / 5) as i128;
+                    [i128::MIN + offset, -1, 0, 1 << 64, i128::MAX - offset][i % 5]
+                })
+                .collect();
+            let words = one_hot_words(cycles);
+            let eq_address = EqPolynomial::<Fr>::evals(
+                &(0..LOG_K).map(|i| fr(19 + i as u64)).collect::<Vec<_>>(),
+                None,
+            );
+            for case in 0..4 {
+                let point: Vec<Fr> = (0..log_t).map(|i| fr(31 + i as u64)).collect();
+                let gamma = fr(47);
+                let shard_counts: &[usize] = if log_t < 2 { &[1] } else { &[1, 2] };
+                for &shards in shard_counts {
+                    let mut expected = [
+                        Polynomial::new(increments.iter().copied().map(Fr::from_i128).collect()),
+                        Polynomial::new(
+                            words
+                                .iter()
+                                .map(|&word| {
+                                    if word == COLD {
+                                        Fr::from_u64(0)
+                                    } else {
+                                        eq_address[word as usize]
+                                    }
+                                })
+                                .collect(),
+                        ),
+                        Polynomial::new(
+                            LtPolynomial::evaluations(&point)
+                                .into_iter()
+                                .map(|value| value + gamma)
+                                .collect(),
+                        ),
+                    ];
+                    let len = cycles / shards;
+                    let mut states = Vec::new();
+                    for shard in 0..shards {
+                        let ordinal = shard % device_count();
+                        let context = context_for(ordinal).expect("device");
+                        let range = shard * len..(shard + 1) * len;
+                        let mut native: Vec<u64> = increments[range.clone()]
+                            .iter()
+                            .flat_map(|&value| [value as u64, (value >> 64) as u64])
+                            .collect();
+                        if shard + 1 < shards {
+                            native.extend([u64::MAX, i64::MAX as u64]);
+                        }
+                        let columns = Arc::new(DeviceMemoryColumns {
+                            rd_pre_value: context.stream().alloc_zeros::<u64>(0).expect("empty"),
+                            rs1_address: context.stream().alloc_zeros::<u32>(0).expect("empty"),
+                            rs2_address: context.stream().alloc_zeros::<u32>(0).expect("empty"),
+                            rd_address: context.stream().alloc_zeros::<u32>(0).expect("empty"),
+                            rd_inc: context.stream().alloc_zeros::<u64>(0).expect("empty"),
+                            ram_inc: context.upload_u64_slice(&native).expect("increments"),
+                        });
+                        let ra = DeviceRaPolynomial::from_words(
+                            context,
+                            &words[range],
+                            &eq_address,
+                            BindingOrder::LowToHigh,
+                        )
+                        .expect("access polynomial");
+                        let lt = DeviceLtPolynomial::shifted(
+                            context,
+                            &point,
+                            BindingOrder::LowToHigh,
+                            Some(gamma),
+                        )
+                        .expect("LT polynomial");
+                        let lt = if shards == 1 {
+                            lt
+                        } else {
+                            lt.window(shard, shards).expect("LT window")
+                        };
+                        states.push((
+                            ordinal,
+                            DeviceDenseProduct::from_ram_increments(
+                                context,
+                                columns,
+                                ra,
+                                lt,
+                                len.ilog2() as usize,
+                                3,
+                            )
+                            .expect("compact product"),
+                        ));
+                    }
+                    let mut got = ShardedDenseProduct::new(states).expect("sharded product");
+                    for round in 0..log_t {
+                        let mut sums = [Fr::from_u64(0); 3];
+                        for y in 0..expected[0].len() / 2 {
+                            for (lane, sum) in sums.iter_mut().enumerate() {
+                                *sum += expected
+                                    .iter()
+                                    .map(|table| {
+                                        let lo = table.evals()[2 * y];
+                                        let hi = table.evals()[2 * y + 1];
+                                        if lane == 2 {
+                                            hi - lo
+                                        } else {
+                                            lo + Fr::from_u64(lane as u64 + 1) * (hi - lo)
+                                        }
+                                    })
+                                    .product::<Fr>();
+                            }
+                        }
+                        assert_eq!(
+                            got.toom_evals::<Fr>().expect("round"),
+                            sums,
+                            "log_t={log_t}, shards={shards}, case={case}, round={round}"
+                        );
+                        let challenge = match case {
+                            0 => Fr::from_u64(0),
+                            1 => Fr::from_u64(1),
+                            2 => -Fr::from_u64(1),
+                            _ => fr(61 + round as u64),
+                        };
+                        got.bind(challenge).expect("bind");
+                        for table in &mut expected {
+                            table.bind_with_order(challenge, BindingOrder::LowToHigh);
+                        }
+                    }
+                    assert_eq!(
+                        got.factor_finals::<Fr>().expect("factor finals"),
+                        [expected[0].evals()[0], expected[1].evals()[0]]
+                    );
+                    assert_eq!(
+                        got.lt_final::<Fr>().expect("LT final"),
+                        Some(expected[2].evals()[0])
+                    );
+                }
+            }
+        }
+    }
 
     fn tables(cycles: usize) -> (Vec<Fr>, Vec<Vec<Fr>>) {
         let weight: Vec<Fr> = (0..cycles).map(|i| fr(13 + 3 * i as u64)).collect();
