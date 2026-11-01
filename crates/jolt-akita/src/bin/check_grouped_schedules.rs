@@ -128,6 +128,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                                 let result = params.extend_catalog(&dense, &full_dense, &catalog, k, profile)
                                     .and_then(|extended| {
                                         let key = ScheduleLookupKey {
+                                            root_accumulated_setup_prefix_len: 0,
                                             final_group: PolynomialGroupLayout::new(final_arity, 1),
                                             precommitteds,
                                         };

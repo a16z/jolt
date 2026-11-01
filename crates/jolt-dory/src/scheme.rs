@@ -203,6 +203,7 @@ impl CommitmentScheme for DoryScheme {
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
+    type VerificationContext<'a> = ();
     type OpeningHint = DoryHint;
     type SetupParams = usize;
 

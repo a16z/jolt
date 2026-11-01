@@ -22,9 +22,11 @@
 
 mod adapters;
 pub mod configs;
+pub mod deferred;
 pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
+mod prepared;
 mod schedule_artifacts;
 pub mod schedule_registry;
 pub mod schedules;
@@ -35,6 +37,7 @@ mod verifier_resources;
 mod verifier_setup;
 
 pub use akita_pcs::AkitaError;
+pub use akita_pcs::TrustedBytes;
 
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
@@ -48,6 +51,7 @@ pub use adapters::{
     AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
+pub use deferred::AkitaVerificationContext;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };

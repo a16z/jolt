@@ -1,0 +1,28 @@
+{
+  "outer_actual_cycles": 955732363,
+  "outer_padded_trace": 1073741824,
+  "inner_padded_traces": [
+    67108864,
+    67108864
+  ],
+  "program_mode": "committed",
+  "catalog": "jolt-fp128-onehot-k16-w8r4",
+  "active_witness_units": 8,
+  "setup_offloading": true,
+  "selected_row_digest": "61e262305157e9d0e63be6e6a5500df39630e4010c6688d4b879c748c7f39f8b",
+  "nonterminal_folds": 9,
+  "offloading_folds": 1,
+  "direct_folds": 8,
+  "inherited_claims": 12,
+  "expected_pending_claims": 8,
+  "outer_proof_sha256": "d412b1a389b26ea7a1ae497ba43fbaee332aa11dd0e078cfbcd231a89926aee3",
+  "outer_public_io_sha256": "75e275f2238211931cc8f84509758c627ceb46e6d1262d629fd265731d4c87d1",
+  "proof_and_public_io_byte_identical": true,
+  "bundle_sha256": "72e6a112e77e188c1ee4dddc214466023c13f2a682c18c899af3d9819a1dbea7",
+  "expected_output_sha256": "32929cb6ec4c9f9ac24c749c18966c2e50b94cbf3d585e5104d0b4795a0f6dda",
+  "reference_complete_external_guest_cycles": 952939555,
+  "published_stack_complete_external_guest_cycles": 952932363,
+  "published_stack_akita_verification_cycles": 783372767,
+  "published_stack_other_jolt_verification_cycles": 117692939,
+  "published_stack_transport_output_cleanup_cycles": 51866657
+}

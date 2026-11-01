@@ -1,0 +1,40 @@
+[package]
+name = "jolt-akita-recursion-guest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+guest = [
+  "jolt-akita-recursion/akita",
+  "dep:jolt-akita",
+  "jolt/guest-std",
+  "jolt/stdout",
+  "jolt/random",
+  "jolt/thread",
+]
+
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", default-features = false }
+jolt-akita-recursion = { path = ".." }
+jolt-akita = { workspace = true, optional = true }
+
+jolt-transcript = { workspace = true, features = ["blake2-inline"] }
+akita-challenges = { workspace = true, features = ["keccak-inline"] }
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4bdb8ff3ff03397c5cfbf8f5221cf105cda21e74", default-features = false, features = [
+  "blake2-inline",
+] }
+
+[lib]
+test = false
+doctest = false
+
+[[bin]]
+name = "jolt-akita-recursion-guest"
+path = "src/main.rs"
+test = false
+bench = false
+
+# Direct dependencies select the guest transcript and challenge inlines.
+[package.metadata.cargo-machete]
+ignored = ["akita-challenges", "akita-transcript", "jolt-transcript"]

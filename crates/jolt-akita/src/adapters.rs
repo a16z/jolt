@@ -29,6 +29,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
+use crate::deferred::InheritedSetupClaims;
 use crate::one_hot_family::{
     with_one_hot_family, AkitaOneHotBackendScheme, AkitaOneHotBackendVerifier, OneHotFamily,
 };
@@ -359,6 +360,7 @@ pub(crate) struct FullWidthBackendSetup {
 
 #[derive(Clone, Debug)]
 pub struct AkitaProverSetup {
+    pub(crate) inherited_setup: Option<Arc<InheritedSetupClaims>>,
     pub(crate) full_width: BTreeMap<usize, Arc<FullWidthBackendSetup>>,
     pub(crate) backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
     pub(crate) cpu_backend: Option<Arc<AkitaBackend>>,
@@ -650,6 +652,15 @@ pub(crate) struct BackendVerifierCache {
 }
 
 impl BackendVerifierCache {
+    pub(crate) fn install_one_hot(
+        &self,
+        verifier: AkitaOneHotBackendVerifier,
+    ) -> Result<(), OpeningsError> {
+        self.one_hot
+            .set(Arc::new(verifier))
+            .map_err(|_| invalid_setup("one-hot verifier is already initialized"))
+    }
+
     /// A cache keeping this one's decoded catalogs, with empty verifier slots.
     pub(crate) fn decoded_only(&self) -> Self {
         Self {
@@ -921,7 +932,8 @@ impl AkitaBatchProof {
         }
     }
 
-    pub(crate) fn selection(&self) -> OpeningScheduleSelection {
+    /// The exact admitted schedule row selected by this proof.
+    pub fn selection(&self) -> OpeningScheduleSelection {
         OpeningScheduleSelection {
             row_digest: ScheduleRowDigest::from_bytes(self.schedule_selection),
         }

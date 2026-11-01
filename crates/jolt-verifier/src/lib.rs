@@ -64,6 +64,8 @@ pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 pub use verifier::absorb_akita_commitments;
 #[cfg(not(feature = "akita"))]
 pub use verifier::absorb_transcript_commitments;
+#[cfg(feature = "akita")]
+pub use verifier::verify_with_context;
 pub use verifier::{
     absorb_committed_program_commitments, validate_and_seed_transcript, validate_inputs_from_parts,
     verify, CheckedInputs, JoltStatement, ProofTranscriptConfig, JOLT_SESSION,
