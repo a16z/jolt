@@ -779,7 +779,6 @@ pub(crate) fn round_poly_from_skipped_evals<F: JoltField>(
     UnivariatePoly::from_evals(&evals)
 }
 
-#[cfg(feature = "parallel")]
 pub(crate) fn merge_evals<F: JoltField>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
     for (left, right) in left.iter_mut().zip(right) {
         *left += right;
