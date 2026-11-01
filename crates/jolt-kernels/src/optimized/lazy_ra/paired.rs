@@ -5,10 +5,14 @@
 //! `T[2p][lo] + T[2p + 1][hi]`, where digit 16 stands for a cold row whose
 //! branch contributes zero. One lookup replaces two branch gathers; field
 //! addition is exact, so every bound value is unchanged.
+//!
+//! The visits sum each column's two to four lookups with plain field
+//! additions: a deferred `F::Accumulator` reduction costs more than it saves
+//! at that length, and Booleanity calls these visits every round.
 
 use std::ops::Range;
 
-use jolt_field::{Accumulator, JoltField};
+use jolt_field::JoltField;
 
 use super::ChunkIndexSource;
 
@@ -64,7 +68,7 @@ impl<F: JoltField> PairedBranchTables<F> {
     ) {
         for column in columns {
             let table = &self.tables[column];
-            let mut sum = F::Accumulator::default();
+            let mut sum = F::zero();
             for pair in 0..pairs {
                 let lo = source
                     .index(column, start + 2 * pair)
@@ -72,9 +76,9 @@ impl<F: JoltField> PairedBranchTables<F> {
                 let hi = source
                     .index(column, start + 2 * pair + 1)
                     .unwrap_or(PAIR_ADDRESSES);
-                sum.add(table[pair * STATES + lo * RADIX + hi]);
+                sum += table[pair * STATES + lo * RADIX + hi];
             }
-            visit(column, sum.reduce());
+            visit(column, sum);
         }
     }
 
@@ -100,15 +104,15 @@ impl<F: JoltField> PairedBranchTables<F> {
             }
             for column in (start..end).rev() {
                 let table = &self.tables[column];
-                let mut sum = F::Accumulator::default();
+                let mut sum = F::zero();
                 for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
                     let lo = (indices[0] & 15) as usize;
                     let hi = (indices[1] & 15) as usize;
-                    sum.add(table[pair * STATES + lo * RADIX + hi]);
+                    sum += table[pair * STATES + lo * RADIX + hi];
                     indices[0] >>= 4;
                     indices[1] >>= 4;
                 }
-                visit(column, sum.reduce());
+                visit(column, sum);
             }
         }
     }
