@@ -45,6 +45,8 @@ jobs:
     if: github.event.pull_request.number == 2215 && github.event.pull_request.head.repo.full_name == github.repository && vars.JOLT_E2E_ENABLED != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 1
     permissions:
       contents: read
     steps:
