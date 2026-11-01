@@ -352,11 +352,10 @@ impl LookupIndexChunks {
     }
 }
 
-pub(super) fn gather_paired_four_bit_values<F: JoltField>(
+pub(super) fn visit_paired_four_bit_values<F: JoltField>(
     packed_index: impl Fn(usize) -> u128,
     tables: &[Vec<F>],
-    out: &mut [&mut [F]],
-    output_row: usize,
+    mut visit: impl FnMut(usize, F),
 ) {
     const DIGITS_PER_LIMB: usize = u64::BITS as usize / 4;
     let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
@@ -368,7 +367,7 @@ pub(super) fn gather_paired_four_bit_values<F: JoltField>(
         for (branch, index) in indices.iter_mut().enumerate() {
             *index = (packed_index(branch) >> (limb * u64::BITS as usize)) as u64;
         }
-        for (column, table) in out[start..end].iter_mut().zip(&tables[start..end]).rev() {
+        for (column, table) in tables[start..end].iter().enumerate().rev() {
             let mut sum = F::Accumulator::default();
             for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
                 let lo = (indices[0] & 15) as usize;
@@ -377,18 +376,17 @@ pub(super) fn gather_paired_four_bit_values<F: JoltField>(
                 indices[0] >>= 4;
                 indices[1] >>= 4;
             }
-            column[output_row] = sum.reduce();
+            visit(start + column, sum.reduce());
         }
     }
 }
 
 impl LookupIndexChunks {
-    fn gather_paired_values_inner<F: JoltField>(
+    fn visit_paired_values_inner<F: JoltField>(
         &self,
         tables: &[Vec<F>],
         row: usize,
-        out: &mut [&mut [F]],
-        output_row: usize,
+        mut visit: impl FnMut(usize, F),
     ) {
         let bits = self.chunk_bits;
         let mut indices = [0u128; PAIRED_MATERIALIZE_BRANCHES];
@@ -397,7 +395,7 @@ impl LookupIndexChunks {
         }
         let mask = (1u128 << bits) - 1;
         let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-        for (column, table) in out.iter_mut().zip(tables).rev() {
+        for (column, table) in tables.iter().enumerate().rev() {
             let mut sum = F::Accumulator::default();
             for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
                 let lo = (indices[0] & mask) as usize;
@@ -406,7 +404,7 @@ impl LookupIndexChunks {
                 indices[0] >>= bits;
                 indices[1] >>= bits;
             }
-            column[output_row] = sum.reduce();
+            visit(column, sum.reduce());
         }
     }
 }
@@ -461,21 +459,19 @@ impl ChunkIndexSource for LookupIndexChunks {
         }
     }
 
-    fn gather_paired_values<F: JoltField>(
+    fn visit_paired_values<F: JoltField>(
         &self,
         tables: &[Vec<F>],
         row: usize,
-        out: &mut [&mut [F]],
-        output_row: usize,
+        visit: impl FnMut(usize, F),
     ) {
         match self.chunk_bits {
-            4 => gather_paired_four_bit_values(
+            4 => visit_paired_four_bit_values(
                 |branch| self.packed_index(row * PAIRED_MATERIALIZE_BRANCHES + branch),
                 tables,
-                out,
-                output_row,
+                visit,
             ),
-            _ => self.gather_paired_values_inner(tables, row, out, output_row),
+            _ => self.visit_paired_values_inner(tables, row, visit),
         }
     }
 
