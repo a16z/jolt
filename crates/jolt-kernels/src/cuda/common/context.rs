@@ -232,7 +232,7 @@ pub struct CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     sp_gather: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
-    sp_matrix: CudaFunction,
+    sp_uniskip: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     sp_prepare: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
@@ -461,7 +461,7 @@ impl CudaKernelContext {
             #[cfg(not(feature = "field-inline"))]
             sp_gather: module.load_function("sp_gather_kernel")?,
             #[cfg(not(feature = "field-inline"))]
-            sp_matrix: module.load_function("sp_matrix_kernel")?,
+            sp_uniskip: module.load_function("sp_uniskip_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             sp_prepare: module.load_function("sp_prepare_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -1127,8 +1127,8 @@ impl CudaKernelContext {
     }
 
     #[cfg(not(feature = "field-inline"))]
-    pub(crate) const fn sp_matrix(&self) -> &CudaFunction {
-        &self.sp_matrix
+    pub(crate) const fn sp_uniskip(&self) -> &CudaFunction {
+        &self.sp_uniskip
     }
 
     #[cfg(not(feature = "field-inline"))]

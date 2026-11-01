@@ -1,9 +1,9 @@
 //! CUDA Spartan product uni-skip and remainder kernels.
 //!
-//! Preparation reduces the nine pairwise products of the three native left and
-//! right operand lanes on the device. The host combines this matrix with
-//! centered Lagrange weights to form the uni-skip polynomial, whereas optimized
-//! evaluates the extended domain from typed product rows.
+//! Like optimized, preparation extends the three native left/right operand lanes
+//! to the five uni-skip nodes as exact signed integers and reduces their products
+//! with cycle equality weights. The host interpolates these five values and
+//! incorporates the late challenge to form the uni-skip polynomial.
 //!
 //! After uni-skip, CUDA and optimized fuse materialization of the two
 //! challenge-weighted operand tables with the first remainder round.
@@ -53,7 +53,7 @@ pub struct SpartanProductState<F: JoltField> {
     columns: Vec<(usize, DeviceProductColumns)>,
     tau_low: Vec<F>,
     log_t: usize,
-    matrix: Vec<F>,
+    t1_values: Vec<F>,
 }
 
 #[cfg(feature = "allocative")]
@@ -61,7 +61,10 @@ impl<F: JoltField> Allocative for SpartanProductState<F> {
     fn visit<'a, 'b: 'a>(&self, visitor: &'a mut Visitor<'b>) {
         let mut visitor = visitor.enter_self_sized::<Self>();
         visitor.visit_simple(Key::new("tau_low"), self.tau_low.len() * size_of::<F>());
-        visitor.visit_simple(Key::new("matrix"), self.matrix.len() * size_of::<F>());
+        visitor.visit_simple(
+            Key::new("t1_values"),
+            self.t1_values.capacity() * size_of::<F>(),
+        );
         visitor.exit();
     }
 }
@@ -96,13 +99,13 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
                 DeviceProductColumns::from_device(device, &atoms, &operands, window.len)?,
             ));
         }
-        let matrix = uniskip::product_matrix_windows(&columns, tau_low)?;
+        let t1_values = uniskip::extended_products_windows(&columns, tau_low)?;
 
         session.park(SpartanProductState {
             columns,
             tau_low: tau_low.to_vec(),
             log_t,
-            matrix,
+            t1_values,
         });
         Ok(())
     }
@@ -126,7 +129,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
                     reason:
                         "the product uni-skip slot parked no kernel for the first-round polynomial",
                 })?;
-        Ok(uniskip::first_round_poly(&state.matrix, tau_high)?)
+        Ok(uniskip::first_round_poly(&state.t1_values, tau_high)?)
     }
 }
 

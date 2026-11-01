@@ -1,7 +1,9 @@
 use cudarc::driver::{LaunchConfig, PushKernelArg};
 use jolt_claims::protocols::jolt::geometry::dimensions::PRODUCT_UNISKIP_DOMAIN_SIZE;
-use jolt_field::JoltField;
-use jolt_poly::lagrange::{centered_lagrange_evals, interpolate_to_coeffs, poly_mul};
+use jolt_field::{Fr, JoltField, Ring};
+use jolt_poly::lagrange::{
+    centered_domain_start, centered_lagrange_evals, interpolate_to_coeffs, poly_mul,
+};
 use jolt_poly::UnivariatePoly;
 
 use super::columns::DeviceProductColumns;
@@ -15,21 +17,34 @@ use crate::cuda::common::split_eq::split_eq_tables_window;
 
 pub const LANES: usize = PRODUCT_UNISKIP_DOMAIN_SIZE;
 
-pub const MATRIX_LANES: usize = LANES * LANES;
-
 pub const EXTENDED_SIZE: usize = 2 * PRODUCT_UNISKIP_DOMAIN_SIZE - 1;
 
 pub const STRIP: usize = 4;
 
-pub fn node_field<F: JoltField>(node: i64) -> F {
-    if node >= 0 {
-        F::from_u64(node as u64)
-    } else {
-        -F::from_u64(node.unsigned_abs())
+fn extension_coefficients() -> Result<Vec<u32>, CudaError> {
+    let start =
+        centered_domain_start(EXTENDED_SIZE).map_err(|_| CudaError::InvariantViolation {
+            reason: "the Spartan product extension domain is invalid",
+        })?;
+    let mut coefficients = Vec::with_capacity(EXTENDED_SIZE * LANES);
+    for position in 0..EXTENDED_SIZE {
+        let weights = centered_lagrange_evals::<Fr>(LANES, Fr::from_i64(start + position as i64))
+            .map_err(|_| CudaError::InvariantViolation {
+            reason: "the Spartan product uni-skip domain is invalid",
+        })?;
+        for weight in weights {
+            let coefficient = (-3i32..=3)
+                .find(|&candidate| Fr::from_i64(i64::from(candidate)) == weight)
+                .ok_or(CudaError::NotImplemented {
+                    kernel: "CUDA product extension requires integer coefficients of magnitude at most three",
+                })?;
+            coefficients.push(coefficient as u32);
+        }
     }
+    Ok(coefficients)
 }
 
-pub fn product_matrix_windows<F: JoltField>(
+pub fn extended_products_windows<F: JoltField>(
     columns: &[(usize, DeviceProductColumns)],
     tau_low: &[F],
 ) -> Result<Vec<F>, CudaError> {
@@ -42,16 +57,16 @@ pub fn product_matrix_windows<F: JoltField>(
                 let device = context_for(*ordinal).ok_or(CudaError::InvariantViolation {
                     reason: "a Spartan product window names an absent device",
                 })?;
-                product_matrix(device, window, tau_low, shard, shards)
+                extended_products(device, window, tau_low, shard, shards)
             });
             task
         })
         .collect();
-    let mut total = vec![F::zero(); MATRIX_LANES];
+    let mut total = vec![F::zero(); EXTENDED_SIZE];
     for part in fan_out(tasks)? {
-        if part.len() != MATRIX_LANES {
+        if part.len() != EXTENDED_SIZE {
             return Err(CudaError::LengthMismatch {
-                expected: MATRIX_LANES,
+                expected: EXTENDED_SIZE,
                 got: part.len(),
             });
         }
@@ -62,7 +77,7 @@ pub fn product_matrix_windows<F: JoltField>(
     Ok(total)
 }
 
-pub fn product_matrix<F: JoltField>(
+pub fn extended_products<F: JoltField>(
     context: &CudaKernelContext,
     columns: &DeviceProductColumns,
     tau_low: &[F],
@@ -71,25 +86,33 @@ pub fn product_matrix<F: JoltField>(
 ) -> Result<Vec<F>, CudaError> {
     let (e_in, e_out, in_bits) = split_eq_tables_window(context, tau_low, shard, shards)?;
 
+    let coefficients = context.upload_u32_slice(&extension_coefficients()?)?;
     let cycles = columns.cycles();
+    if LANES != 3 || cycles != e_in.len() * e_out.len() {
+        return Err(CudaError::InvariantViolation {
+            reason:
+                "the CUDA product extension requires three lanes and one equality weight per cycle",
+        });
+    }
     let threads = cycles.div_ceil(STRIP);
     let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
         CudaError::InvariantViolation {
-            reason: "the Spartan product matrix launch exceeds a u32 block count",
+            reason: "the Spartan extended products launch exceeds a u32 block count",
         }
     })?;
-    let left_lanes = u32::try_from(LANES).map_err(|_| CudaError::InvariantViolation {
-        reason: "the Spartan product matrix launch exceeds a u32 lane count",
+    let lanes = u32::try_from(EXTENDED_SIZE).map_err(|_| CudaError::InvariantViolation {
+        reason: "the Spartan extended products launch exceeds a u32 lane count",
     })?;
-    let mut partials = context.alloc(MATRIX_LANES * blocks as usize)?;
+    let mut partials = context.alloc(EXTENDED_SIZE * blocks as usize)?;
 
     let bits = CudaKernelContext::count_of(in_bits)?;
     let count = CudaKernelContext::count_of(cycles)?;
     let strip = CudaKernelContext::count_of(STRIP)?;
-    let mut builder = context.stream().launch_builder(context.sp_matrix());
+    let mut builder = context.stream().launch_builder(context.sp_uniskip());
     let _ = builder.arg(columns.narrow());
     let _ = builder.arg(columns.wide());
     let _ = builder.arg(columns.flags());
+    let _ = builder.arg(&coefficients);
     let _ = builder.arg(e_in.limbs());
     let _ = builder.arg(e_out.limbs());
     let _ = builder.arg(&bits);
@@ -100,72 +123,49 @@ pub fn product_matrix<F: JoltField>(
     let _ = builder.arg(&count);
     let _ = builder.arg(&strip);
     let _ = builder.arg(partials.limbs_mut());
-    // SAFETY: thread `(blockIdx.x, threadIdx.x)` of left factor
-    // `blockIdx.y < LANES` covers cycles `base .. base + STRIP` and breaks at
-    // `cycles`, so every read is inside `narrow`'s `cycles * NARROW`, `wide`'s
-    // `cycles * WIDE * 2` and `flags`' `cycles` entries. The eq lookup is
-    // bounded because `in_bits` comes from `e_in`'s length and `t < cycles`
-    // equals `e_in_len * e_out_len`. It writes only
-    // `partials[(blockIdx.y * LANES + lane) * blocks + blockIdx.x]` for
-    // `lane < LANES`, inside the `MATRIX_LANES * blocks` allocation. Shared
-    // memory is `BLOCK * LIMBS` u64s, matching `shared_mem_bytes`, and the
-    // block reduction sits outside every early exit so all threads reach each
-    // `__syncthreads()`.
+    // SAFETY: each node reads three uploaded coefficients and each thread visits
+    // at most STRIP cycles, guarded by `t < cycles`. The checked equality-table
+    // product covers those cycles. The native columns contain one row per cycle;
+    // each block writes one field element within `EXTENDED_SIZE * blocks`.
+    // Shared memory holds BLOCK field elements and all threads reach the reduction.
     let _ = unsafe {
         builder.launch(LaunchConfig {
-            grid_dim: (blocks, left_lanes, 1),
+            grid_dim: (blocks, lanes, 1),
             block_dim: (BLOCK, 1, 1),
             shared_mem_bytes: BLOCK * LIMBS as u32 * size_of::<u64>() as u32,
         })
     }?;
 
-    let lanes = u32::try_from(MATRIX_LANES).map_err(|_| CudaError::InvariantViolation {
-        reason: "the Spartan product matrix launch exceeds a u32 lane count",
-    })?;
     let totals = reduce_lanes(context, partials, lanes, blocks)?;
-    let mut matrix = Vec::with_capacity(MATRIX_LANES);
+    let mut values = Vec::with_capacity(EXTENDED_SIZE);
     for value in totals.to_host()? {
-        matrix.push(fr_into(value).ok_or(CudaError::NotImplemented {
+        values.push(fr_into(value).ok_or(CudaError::NotImplemented {
             kernel: "CUDA kernels support only the BN254 scalar field",
         })?);
     }
-    Ok(matrix)
+    Ok(values)
 }
 
 pub fn first_round_poly<F: JoltField>(
-    matrix: &[F],
+    t1_values: &[F],
     tau_high: F,
 ) -> Result<UnivariatePoly<F>, CudaError> {
-    if matrix.len() != MATRIX_LANES {
+    if t1_values.len() != EXTENDED_SIZE {
         return Err(CudaError::LengthMismatch {
-            expected: MATRIX_LANES,
-            got: matrix.len(),
+            expected: EXTENDED_SIZE,
+            got: t1_values.len(),
         });
     }
-    let domain_start = -((PRODUCT_UNISKIP_DOMAIN_SIZE as i64 - 1) / 2);
-    let extended_start = -((EXTENDED_SIZE as i64 - 1) / 2);
     let invalid_domain = || CudaError::InvariantViolation {
         reason: "the Spartan product uni-skip domain is not a valid centered integer domain",
     };
-
-    let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
-    for (position, value) in t1_values.iter_mut().enumerate() {
-        let node = node_field::<F>(extended_start + position as i64);
-        let weights = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, node)
-            .map_err(|_| invalid_domain())?;
-        let mut sum = F::zero();
-        for (left, &left_weight) in weights.iter().enumerate() {
-            for (right, &right_weight) in weights.iter().enumerate() {
-                sum += left_weight * right_weight * matrix[left * LANES + right];
-            }
-        }
-        *value = sum;
-    }
+    let domain_start = centered_domain_start(LANES).map_err(|_| invalid_domain())?;
+    let extended_start = centered_domain_start(EXTENDED_SIZE).map_err(|_| invalid_domain())?;
 
     let kernel_values = centered_lagrange_evals::<F>(PRODUCT_UNISKIP_DOMAIN_SIZE, tau_high)
         .map_err(|_| invalid_domain())?;
     let kernel_coefficients = interpolate_to_coeffs(domain_start, &kernel_values);
-    let t1_coefficients = interpolate_to_coeffs(extended_start, &t1_values);
+    let t1_coefficients = interpolate_to_coeffs(extended_start, t1_values);
     Ok(UnivariatePoly::new(poly_mul(
         &kernel_coefficients,
         &t1_coefficients,
@@ -188,12 +188,15 @@ mod tests {
     use jolt_witness::witnesses::ToField;
     use proptest::prelude::*;
 
-    use super::{product_matrix, LANES, MATRIX_LANES};
-    use crate::cuda::common::context::shared_context;
+    use super::{extended_products, EXTENDED_SIZE, LANES};
+    use crate::cuda::common::context::{context_for, shared_context};
+    use crate::cuda::common::devices::witness_windows;
+    use crate::cuda::common::error::CudaError;
     use crate::cuda::common::testing::{arb_point, with_r1cs_witness};
     use crate::cuda::spartan_product::columns::DeviceProductColumns;
     use crate::cuda::spartan_product::witness::{self, SpartanProductWitness};
     use crate::reference::views::{dense_view, eq_table};
+    use jolt_poly::lagrange::{centered_domain_start, centered_lagrange_evals};
 
     const LOG_T: usize = 7;
 
@@ -207,7 +210,109 @@ mod tests {
     }
 
     #[test]
-    fn product_matrix_windows_sum_to_the_whole_domain() {
+    fn extended_products_reject_mismatched_equality_domain() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let rows = witness::sample_rows(71, 4);
+        let columns =
+            DeviceProductColumns::new(context, &witness::pack(&rows)).expect("product columns");
+        for log_t in [1, 3] {
+            let tau = vec![Fr::from_u64(7); log_t];
+            assert!(matches!(
+                extended_products(context, &columns, &tau, 0, 1),
+                Err(CudaError::InvariantViolation { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn uniskip_matches_dense_polynomial_at_extreme_operands() {
+        if shared_context().is_none() {
+            return;
+        }
+        for log_t in [1usize, 7, 13] {
+            let cycles = 1usize << log_t;
+            let mut rows = witness::sample_rows(71, cycles);
+            for (i, row) in rows.iter_mut().enumerate() {
+                let k = (i / 8) as u64;
+                row.left_instruction_input.0 =
+                    [u64::MAX - k, 0, 1, k + 1, 0, u64::MAX - k, 1, 0][i % 8];
+                row.lookup_output.0 = [0, u64::MAX - k, 0, 1, k + 1, u64::MAX - k, 1, 0][i % 8];
+                row.right_instruction_input.0 = [
+                    i128::MIN + i128::from(k),
+                    i128::MIN + i128::from(k),
+                    i128::MAX - i128::from(k),
+                    -1,
+                    0,
+                    1,
+                    -1,
+                    i128::MAX - i128::from(k),
+                ][i % 8];
+            }
+            let columns: Vec<_> = witness_windows(cycles)
+                .iter()
+                .enumerate()
+                .map(|(ordinal, window)| {
+                    let context = context_for(ordinal).expect("configured device");
+                    let columns = DeviceProductColumns::new(
+                        context,
+                        &witness::pack(&rows[window.start..window.end()]),
+                    )
+                    .expect("product columns");
+                    (ordinal, columns)
+                })
+                .collect();
+            for case in 0..3 {
+                let tau: Vec<_> = (0..log_t)
+                    .map(|i| Fr::from_u64(if case < 2 { case } else { 11 + i as u64 }))
+                    .collect();
+                let eq = eq_table(&tau);
+                let values = super::extended_products_windows::<Fr>(&columns, &tau)
+                    .expect("extended products");
+                for late_tau in [-1, 0, 1, 37] {
+                    let late_tau = Fr::from_i64(late_tau);
+                    let poly =
+                        super::first_round_poly(&values, late_tau).expect("uni-skip polynomial");
+                    let late_weights =
+                        centered_lagrange_evals::<Fr>(LANES, late_tau).expect("late weights");
+                    for at in [-2, -1, 0, 1, 2, 59] {
+                        let at = Fr::from_i64(at);
+                        let weights =
+                            centered_lagrange_evals::<Fr>(LANES, at).expect("evaluation weights");
+                        let product: Fr = rows
+                            .iter()
+                            .zip(&eq)
+                            .map(|(row, e)| {
+                                let left = weights[0] * row.left_instruction_input.to_field::<Fr>()
+                                    + weights[1] * row.lookup_output.to_field::<Fr>()
+                                    + weights[2] * row.jump.to_field::<Fr>();
+                                let right = weights[0]
+                                    * row.right_instruction_input.to_field::<Fr>()
+                                    + weights[1] * row.branch.to_field::<Fr>()
+                                    + weights[2]
+                                        * (Fr::from_u64(1) - row.next_is_noop.to_field::<Fr>());
+                                *e * left * right
+                            })
+                            .sum();
+                        let scale: Fr = weights
+                            .iter()
+                            .zip(&late_weights)
+                            .map(|(a, b)| *a * *b)
+                            .sum();
+                        assert_eq!(
+                            poly.evaluate(at),
+                            scale * product,
+                            "log_t={log_t}, case={case}, at={at:?}, late_tau={late_tau:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn extended_products_windows_sum_to_the_whole_domain() {
         let Some(context) = shared_context() else {
             return;
         };
@@ -221,9 +326,9 @@ mod tests {
                 .expect("upload a packed product window")
         };
 
-        let whole = product_matrix::<Fr>(context, &build(0, cycles), &tau_low, 0, 1)
-            .expect("the whole-domain product matrix");
-        assert_eq!(whole.len(), MATRIX_LANES);
+        let whole = extended_products::<Fr>(context, &build(0, cycles), &tau_low, 0, 1)
+            .expect("the whole-domain extended products");
+        assert_eq!(whole.len(), EXTENDED_SIZE);
         assert!(
             whole.iter().any(|value| *value != Fr::from_u64(0)),
             "a degenerate fixture would hide a divergence",
@@ -234,16 +339,19 @@ mod tests {
             let windows: Vec<(usize, DeviceProductColumns)> = (0..shards)
                 .map(|shard| (0usize, build(shard * len, len)))
                 .collect();
-            let got = super::product_matrix_windows::<Fr>(&windows, &tau_low)
-                .expect("the windowed product matrix");
-            assert_eq!(got, whole, "shards={shards}: the product matrix diverged");
+            let got = super::extended_products_windows::<Fr>(&windows, &tau_low)
+                .expect("the windowed extended products");
+            assert_eq!(
+                got, whole,
+                "shards={shards}: the extended products diverged"
+            );
         }
     }
 
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(2))]
         #[test]
-        fn product_matrix_matches_cpu(
+        fn extended_products_matches_cpu(
             seed in any::<u64>(),
             tau_low in arb_point(LOG_T),
         ) {
@@ -255,8 +363,8 @@ mod tests {
                 let packed = witness::pack(&rows);
                 let columns = DeviceProductColumns::new(context, &packed)
                     .expect("upload the packed product columns");
-                let got = product_matrix::<Fr>(context, &columns, &tau_low, 0, 1)
-                    .expect("the device product matrix");
+                let got = extended_products::<Fr>(context, &columns, &tau_low, 0, 1)
+                    .expect("the device extended products");
 
                 let view = |opening| {
                     dense_view::<Fr>(witness, opening).expect("the fixture serves the column")
@@ -277,22 +385,25 @@ mod tests {
                 ];
                 let eq = eq_table(&tau_low);
 
-                let mut expected = vec![Fr::from_u64(0); MATRIX_LANES];
-                for (first, left) in left.iter().enumerate() {
-                    for (second, right) in right.iter().enumerate() {
-                        expected[first * LANES + second] = (0..1usize << LOG_T)
-                            .map(|cycle| eq[cycle] * left[cycle] * right[cycle])
-                            .sum();
-                    }
+                let mut expected = vec![Fr::from_u64(0); EXTENDED_SIZE];
+                let start = centered_domain_start(EXTENDED_SIZE).expect("extension domain");
+                for (node, value) in expected.iter_mut().enumerate() {
+                    let weights = centered_lagrange_evals::<Fr>(LANES, Fr::from_i64(start + node as i64))
+                        .expect("Lagrange weights");
+                    *value = (0..1usize << LOG_T).map(|cycle| {
+                        let a: Fr = weights.iter().zip(&left).map(|(w, lane)| *w * lane[cycle]).sum();
+                        let b: Fr = weights.iter().zip(&right).map(|(w, lane)| *w * lane[cycle]).sum();
+                        eq[cycle] * a * b
+                    }).sum();
                 }
 
-                prop_assert_eq!(got, expected, "the product matrix diverged");
+                prop_assert_eq!(got, expected, "the extended products diverged");
                 Ok(())
             })?;
         }
 
         #[test]
-        fn product_matrix_matches_cpu_on_signed_rows(
+        fn extended_products_matches_cpu_on_signed_rows(
             seed in any::<u64>(),
             tau_low in arb_point(LOG_T),
         ) {
@@ -302,8 +413,8 @@ mod tests {
             let packed = witness::pack(&rows);
             let columns = DeviceProductColumns::new(context, &packed)
                 .expect("upload the packed product columns");
-            let got = product_matrix::<Fr>(context, &columns, &tau_low, 0, 1)
-                .expect("the device product matrix");
+            let got = extended_products::<Fr>(context, &columns, &tau_low, 0, 1)
+                .expect("the device extended products");
 
             let left: [Vec<Fr>; LANES] = [
                 rows.iter().map(|row| row.left_instruction_input.to_field()).collect(),
@@ -319,16 +430,19 @@ mod tests {
             ];
             let eq = eq_table(&tau_low);
 
-            let mut expected = vec![Fr::from_u64(0); MATRIX_LANES];
-            for (first, left) in left.iter().enumerate() {
-                for (second, right) in right.iter().enumerate() {
-                    expected[first * LANES + second] = (0..1usize << LOG_T)
-                        .map(|cycle| eq[cycle] * left[cycle] * right[cycle])
-                        .sum();
-                }
+            let mut expected = vec![Fr::from_u64(0); EXTENDED_SIZE];
+            let start = centered_domain_start(EXTENDED_SIZE).expect("extension domain");
+            for (node, value) in expected.iter_mut().enumerate() {
+                let weights = centered_lagrange_evals::<Fr>(LANES, Fr::from_i64(start + node as i64))
+                    .expect("Lagrange weights");
+                *value = (0..1usize << LOG_T).map(|cycle| {
+                    let a: Fr = weights.iter().zip(&left).map(|(w, lane)| *w * lane[cycle]).sum();
+                    let b: Fr = weights.iter().zip(&right).map(|(w, lane)| *w * lane[cycle]).sum();
+                    eq[cycle] * a * b
+                }).sum();
             }
 
-            prop_assert_eq!(got, expected, "the product matrix diverged on signed rows");
+            prop_assert_eq!(got, expected, "the extended products diverged on signed rows");
         }
     }
 }

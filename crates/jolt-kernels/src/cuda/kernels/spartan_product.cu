@@ -2,7 +2,6 @@
 #define SP_WIDE 1
 #define SP_LEFT_SLOT 0
 #define SP_LOOKUP_SLOT 1
-#define SP_MATRIX_LANES 3
 #define SP_CLAIM_LANES 4
 #define SP_KIND_NARROW 0u
 #define SP_KIND_WIDE 1u
@@ -50,85 +49,109 @@ __device__ __forceinline__ void sp_accumulate_word(u64 *folded, const u64 *coeff
     unr_mul_words(coefficient, &word, 1, folded);
 }
 
-__device__ __forceinline__ void sp_accumulate_pair(u64 *folded, const u64 *coefficient,
-                                                   unsigned long long left,
-                                                   unsigned long long lo, unsigned long long hi) {
-    if (left == 0ULL || (lo == 0ULL && hi == 0ULL)) return;
-    if (left == 1ULL) {
-        unsigned long long pair[2] = {lo, hi};
-        unr_mul_words(coefficient, pair, 2, folded);
-        return;
-    }
-    u128 low = (u128)left * (u128)lo;
-    u128 high = (u128)left * (u128)hi + (u128)(unsigned long long)(low >> 64);
-    unsigned long long words[3];
-    words[0] = (unsigned long long)low;
-    words[1] = (unsigned long long)high;
-    words[2] = (unsigned long long)(high >> 64);
-    unr_mul_words(coefficient, words, 3, folded);
-}
-
 __device__ __forceinline__ void sp_negate(const u64 *value, u64 *out) {
     const u64 zero[LIMBS] = {0, 0, 0, 0};
     fr_sub(zero, value, out);
 }
 
-extern "C" __global__ void sp_matrix_kernel(
+// Coefficients are checked on the host to have magnitude at most three.
+// Thus |left| < 2^67, |right| < 2^130 and |product| < 2^197.
+__device__ __forceinline__ void sp_extended_product(
+    const u64 *row, const u64 *wide, unsigned int mask, const int *coefficients,
+    unsigned int jump_bit, unsigned int branch_bit, unsigned int noop_bit,
+    unsigned int sign_bit, u64 *product, bool &negative) {
+    __int128 left = (__int128)coefficients[0] * row[SP_LEFT_SLOT]
+        + (__int128)coefficients[1] * row[SP_LOOKUP_SLOT]
+        + coefficients[2] * (int)((mask >> jump_bit) & 1u);
+    u128 left_abs = left < 0 ? (u128)-left : (u128)left;
+    int c = coefficients[0];
+    u64 magnitude = c < 0 ? -c : c;
+    u128 lo = (u128)wide[0] * magnitude;
+    u128 hi = (u128)wide[1] * magnitude + (lo >> 64);
+    u64 right[3] = {(u64)lo, (u64)hi, (u64)(hi >> 64)};
+    bool right_negative = ((mask >> sign_bit) & 1u) != (c < 0);
+    if (right_negative) {
+        u64 carry = 1;
+        for (int i = 0; i < 3; i++) {
+            u128 value = (u128)~right[i] + carry;
+            right[i] = (u64)value;
+            carry = (u64)(value >> 64);
+        }
+    }
+    int flags = coefficients[1] * (int)((mask >> branch_bit) & 1u)
+        + coefficients[2] * (int)(1u - ((mask >> noop_bit) & 1u));
+    u64 carry = 0;
+    for (int i = 0; i < 3; i++) {
+        u64 word = i == 0 ? (u64)(long long)flags : (flags < 0 ? ~0ULL : 0ULL);
+        u128 value = (u128)right[i] + word + carry;
+        right[i] = (u64)value;
+        carry = (u64)(value >> 64);
+    }
+    right_negative = (right[2] >> 63) != 0;
+    if (right_negative) {
+        carry = 1;
+        for (int i = 0; i < 3; i++) {
+            u128 value = (u128)~right[i] + carry;
+            right[i] = (u64)value;
+            carry = (u64)(value >> 64);
+        }
+    }
+    negative = (left < 0) != right_negative;
+    u64 left_words[2] = {(u64)left_abs, (u64)(left_abs >> 64)};
+    u64 words[5] = {};
+    for (int i = 0; i < 2; i++) {
+        carry = 0;
+        for (int j = 0; j < 3; j++) {
+            u128 value = (u128)left_words[i] * right[j] + words[i + j] + carry;
+            words[i + j] = (u64)value;
+            carry = (u64)(value >> 64);
+        }
+        words[i + 3] = carry;
+    }
+    for (int i = 0; i < 4; i++) product[i] = words[i];
+}
+
+extern "C" __global__ void sp_uniskip_kernel(
     const u64 *__restrict__ narrow, const u64 *__restrict__ wide,
-    const unsigned int *__restrict__ flags, const u64 *__restrict__ e_in,
-    const u64 *__restrict__ e_out, unsigned int in_bits, unsigned int jump_bit,
-    unsigned int branch_bit, unsigned int noop_bit, unsigned int sign_bit, unsigned int cycles,
+    const unsigned int *__restrict__ flags, const int *__restrict__ coefficients,
+    const u64 *__restrict__ e_in, const u64 *__restrict__ e_out,
+    unsigned int in_bits, unsigned int jump_bit, unsigned int branch_bit,
+    unsigned int noop_bit, unsigned int sign_bit, unsigned int cycles,
     unsigned int strip, u64 *__restrict__ partials) {
     extern __shared__ u64 scratch[];
-    unsigned int left_index = blockIdx.y;
+    const int *node = coefficients + 3 * blockIdx.y;
     unsigned long long base =
         ((unsigned long long)blockIdx.x * blockDim.x + threadIdx.x) * (unsigned long long)strip;
-
-    u64 folded[SP_MATRIX_LANES][2 * UNR_SLOTS];
-    for (unsigned int lane = 0; lane < SP_MATRIX_LANES; lane++) unr_zero(folded[lane]);
-
+    // Four-word integer products require one more slot than the shared
+    // three-word accumulator. The strip bound keeps each split slot below u64.
+    u64 folded[16] = {};
     for (unsigned int step = 0; step < strip; step++) {
         unsigned long long t = base + step;
         if (t >= cycles) break;
-
-        unsigned int mask = flags[t];
-        const u64 *row = narrow + t * SP_NARROW;
-        unsigned long long left;
-        if (left_index == 0) {
-            left = row[SP_LEFT_SLOT];
-        } else if (left_index == 1) {
-            left = row[SP_LOOKUP_SLOT];
-        } else {
-            left = (unsigned long long)((mask >> jump_bit) & 1u);
-        }
-        if (left == 0ULL) continue;
-
+        u64 product[4];
+        bool negative;
+        sp_extended_product(narrow + t * SP_NARROW, wide + t * (SP_WIDE * 2),
+                            flags[t], node, jump_bit, branch_bit, noop_bit, sign_bit,
+                            product, negative);
+        if ((product[0] | product[1] | product[2] | product[3]) == 0) continue;
         u64 weight[LIMBS];
         so_split_eq(e_in, e_out, in_bits, t, weight);
-
-        const u64 *row_wide = wide + t * (SP_WIDE * 2);
-        unsigned long long lo = row_wide[0];
-        unsigned long long hi = row_wide[1];
-        if (lo != 0ULL || hi != 0ULL) {
-            if ((mask >> sign_bit) & 1u) {
-                u64 flipped[LIMBS];
-                sp_negate(weight, flipped);
-                sp_accumulate_pair(folded[0], flipped, left, lo, hi);
-            } else {
-                sp_accumulate_pair(folded[0], weight, left, lo, hi);
-            }
-        }
-        if ((mask >> branch_bit) & 1u) sp_accumulate_word(folded[1], weight, left);
-        if (((mask >> noop_bit) & 1u) == 0u) sp_accumulate_word(folded[2], weight, left);
+        if (negative) sp_negate(weight, weight);
+        unr_mul_words(weight, product, 4, folded);
     }
-
-    u64 acc[SP_MATRIX_LANES][LIMBS];
-    for (unsigned int lane = 0; lane < SP_MATRIX_LANES; lane++)
-        unr_finalize(folded[lane], acc[lane]);
-
-    u64 *lane_partials =
-        partials + (unsigned long long)left_index * SP_MATRIX_LANES * gridDim.x * LIMBS;
-    so_block_reduce(scratch, SP_MATRIX_LANES, acc, lane_partials);
+    // A strip sums at most four 451-bit weighted products. Its upper half
+    // is below 2^199, so the shared Montgomery high-half reduction is valid.
+    u64 words[8], carry = 0;
+    for (int i = 0; i < 8; i++) {
+        u128 value = (u128)folded[2 * i] + ((u128)folded[2 * i + 1] << 32) + carry;
+        words[i] = (u64)value;
+        carry = (u64)(value >> 64);
+    }
+    u64 low[LIMBS], high[LIMBS], acc[1][LIMBS];
+    fr_reduce_256(words, low);
+    fr_mul(words + LIMBS, FR_R2, high);
+    fr_add(low, high, acc[0]);
+    so_block_reduce(scratch, 1, acc, partials + (unsigned long long)blockIdx.y * gridDim.x * LIMBS);
 }
 
 __device__ __forceinline__ void sp_factors_at(
