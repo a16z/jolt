@@ -37,6 +37,10 @@
 //!   once the last owner drops. Queued destruction can extend sharing across
 //!   stages.
 
+mod cycle_groups;
+
+use cycle_groups::CyclePairGroups;
+use std::num::NonZeroU16;
 use std::sync::{Arc, Weak};
 
 use jolt_claims::protocols::jolt::geometry::instruction::{
@@ -64,12 +68,13 @@ use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
 use super::lazy_ra::{
-    ChunkIndexSource, LazyFoldedRa, PAIRED_MATERIALIZE_ADDRESSES, PAIRED_MATERIALIZE_BRANCHES,
+    ChunkIndexSource, LazyFoldedRa, PairedBranchTables, PAIRED_MATERIALIZE_BRANCHES,
 };
 use super::support::{
-    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks, prefix_cycle_weights,
-    product_grid_scratch_len, scan_chunk_size, BundleAccess, GruenRoundMessage,
-    LowDegreeProductSum, RoundProgress, TailFactorProducts,
+    accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
+    product_grid_scratch_len, repeat_hash, repeats_often, scan_chunk_size, BundleAccess,
+    GruenRoundMessage, LowDegreeProductSum, PrefixCycleWeights, RepeatCache, RoundProgress,
+    TailFactorProducts,
 };
 use crate::reference::views::eq_table;
 use crate::{
@@ -347,65 +352,6 @@ impl LookupIndexChunks {
     }
 }
 
-pub(super) fn gather_paired_four_bit_values<F: JoltField>(
-    packed_index: impl Fn(usize) -> u128,
-    tables: &[Vec<F>],
-    out: &mut [&mut [F]],
-    output_row: usize,
-) {
-    const DIGITS_PER_LIMB: usize = u64::BITS as usize / 4;
-    let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-    // Four-bit digits never cross a 64-bit limb boundary.
-    for limb in 0..tables.len().div_ceil(DIGITS_PER_LIMB) {
-        let end = tables.len() - limb * DIGITS_PER_LIMB;
-        let start = end.saturating_sub(DIGITS_PER_LIMB);
-        let mut indices = [0u64; PAIRED_MATERIALIZE_BRANCHES];
-        for (branch, index) in indices.iter_mut().enumerate() {
-            *index = (packed_index(branch) >> (limb * u64::BITS as usize)) as u64;
-        }
-        for (column, table) in out[start..end].iter_mut().zip(&tables[start..end]).rev() {
-            let mut sum = F::Accumulator::default();
-            for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
-                let lo = (indices[0] & 15) as usize;
-                let hi = (indices[1] & 15) as usize;
-                sum.add(table[pair * radix * radix + lo * radix + hi]);
-                indices[0] >>= 4;
-                indices[1] >>= 4;
-            }
-            column[output_row] = sum.reduce();
-        }
-    }
-}
-
-impl LookupIndexChunks {
-    fn gather_paired_values_inner<F: JoltField>(
-        &self,
-        tables: &[Vec<F>],
-        row: usize,
-        out: &mut [&mut [F]],
-        output_row: usize,
-    ) {
-        let bits = self.chunk_bits;
-        let mut indices = [0u128; PAIRED_MATERIALIZE_BRANCHES];
-        for (branch, index) in indices.iter_mut().enumerate() {
-            *index = self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index();
-        }
-        let mask = (1u128 << bits) - 1;
-        let radix = PAIRED_MATERIALIZE_ADDRESSES + 1;
-        for (column, table) in out.iter_mut().zip(tables).rev() {
-            let mut sum = F::Accumulator::default();
-            for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
-                let lo = (indices[0] & mask) as usize;
-                let hi = (indices[1] & mask) as usize;
-                sum.add(table[pair * radix * radix + lo * radix + hi]);
-                indices[0] >>= bits;
-                indices[1] >>= bits;
-            }
-            column[output_row] = sum.reduce();
-        }
-    }
-}
-
 impl ChunkIndexSource for LookupIndexChunks {
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
@@ -456,21 +402,27 @@ impl ChunkIndexSource for LookupIndexChunks {
         }
     }
 
-    fn gather_paired_values<F: JoltField>(
+    fn visit_paired_values<F: JoltField>(
         &self,
-        tables: &[Vec<F>],
+        tables: &PairedBranchTables<F>,
         row: usize,
-        out: &mut [&mut [F]],
-        output_row: usize,
+        visit: impl FnMut(usize, F),
     ) {
-        match self.chunk_bits {
-            4 => gather_paired_four_bit_values(
-                |branch| self.packed_index(row * PAIRED_MATERIALIZE_BRANCHES + branch),
-                tables,
-                out,
-                output_row,
-            ),
-            _ => self.gather_paired_values_inner(tables, row, out, output_row),
+        let start = row * PAIRED_MATERIALIZE_BRANCHES;
+        if self.chunk_bits == 4 {
+            tables.visit_four_bit::<PAIRED_MATERIALIZE_BRANCHES>(
+                tables.columns(),
+                |branch| self.packed_index(start + branch),
+                visit,
+            );
+        } else {
+            tables.visit_indexed(
+                self,
+                0..tables.columns(),
+                start,
+                PAIRED_MATERIALIZE_BRANCHES / 2,
+                visit,
+            );
         }
     }
 
@@ -754,6 +706,58 @@ impl ScanBlock {
         Self { starts, offsets }
     }
 
+    fn should_coalesce(rows: &[InstructionCycleRow]) -> bool {
+        repeats_often(
+            rows.len(),
+            SCAN_BLOCK,
+            |row| Self::key_hash(&rows[row]),
+            |a, b| Self::same_key(&rows[a], &rows[b]),
+        )
+    }
+
+    /// Address phases are linear in the cycle weights. Equal lookup keys
+    /// within a class receive identical updates, so retain their summed weight
+    /// at one offset. The cycle rounds still use the original witness rows.
+    fn coalesced<F: JoltField>(
+        rows: &[InstructionCycleRow],
+        weights: &mut [F],
+        cache: &mut RepeatCache<NonZeroU16>,
+    ) -> Self {
+        let mut block = Self::new(rows);
+        let starts = block.starts;
+        let mut end = 0;
+        cache.clear();
+        for (class, range) in starts.windows(2).enumerate() {
+            block.starts[class] = end as u16;
+            for position in usize::from(range[0])..usize::from(range[1]) {
+                let offset = usize::from(block.offsets[position]);
+                let row = &rows[offset];
+                let representative =
+                    cache.find_or_insert(Self::key_hash(row), offset, |previous| {
+                        Self::same_key(&rows[previous], row)
+                    });
+                if let Some(previous) = representative {
+                    let weight = weights[offset];
+                    weights[previous] += weight;
+                } else {
+                    block.offsets[end] = offset as u16;
+                    end += 1;
+                }
+            }
+        }
+        block.starts[SCAN_CLASSES] = end as u16;
+        block
+    }
+
+    fn key_hash(row: &InstructionCycleRow) -> u64 {
+        let key = row.lookup_index();
+        repeat_hash([key as u64, (key >> 64) as u64, Self::class(row) as u64])
+    }
+
+    fn same_key(left: &InstructionCycleRow, right: &InstructionCycleRow) -> bool {
+        left.lookup_index() == right.lookup_index() && Self::class(left) == Self::class(right)
+    }
+
     fn class(row: &InstructionCycleRow) -> usize {
         2 * row.table_index().map_or(0, |table| table + 1) + usize::from(row.raf_flag())
     }
@@ -1011,8 +1015,17 @@ impl<F: JoltField> PhaseScan<'_, F> {
             .zip(u_evals.chunks_mut(SCAN_BLOCK))
         {
             if let Some((shift, v_prev)) = self.condense {
-                for (row, u) in rows.iter().zip(u_evals.iter_mut()) {
-                    *u *= v_prev[((row.lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                let active = usize::from(block.starts[SCAN_CLASSES]);
+                if active == rows.len() {
+                    for (row, u) in rows.iter().zip(u_evals.iter_mut()) {
+                        *u *= v_prev[((row.lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                    }
+                } else {
+                    for &offset in &block.offsets[..active] {
+                        let offset = usize::from(offset);
+                        u_evals[offset] *= v_prev
+                            [((rows[offset].lookup_index() >> shift) as usize) & (CHUNK_SIZE - 1)];
+                    }
                 }
             }
             for (class, range) in block.starts.windows(2).enumerate() {
@@ -1097,8 +1110,8 @@ pub struct OptimizedInstructionReadRafKernel<F: JoltField> {
     r_reduction: Vec<F>,
     rows: Arc<ConstantSuffix<InstructionCycleRow>>,
     blocks: Vec<ScanBlock>,
-    /// The final weight aggregates the constant row suffix. Every address
-    /// phase is linear in these weights and condenses identical rows equally.
+    /// The final weight aggregates the constant row suffix. After coalescing,
+    /// only offsets retained in `blocks` are live; merged-away weights are stale.
     u_evals: Vec<F>,
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     prefix_checkpoints: Vec<PrefixEval<F>>,
@@ -1163,7 +1176,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             });
         }
 
-        let u_evals = prefix_cycle_weights(r_reduction, rows.prefix_len());
+        let mut u_evals = PrefixCycleWeights::new(r_reduction, rows.prefix_len()).to_dense();
         let scan_rows = &rows.representatives()[..u_evals.len()];
         let num_tables = LookupTableKind::<RISCV_XLEN>::COUNT;
         let present_tables = map_reduce_chunks(
@@ -1200,11 +1213,40 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .filter_map(|(index, present)| present.then_some(index))
             .collect();
 
-        let blocks = map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
-            ScanBlock::new(
-                &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
-            )
-        });
+        let blocks = if ScanBlock::should_coalesce(scan_rows) {
+            #[cfg(feature = "parallel")]
+            let chunks = u_evals.par_chunks_mut(SCAN_BLOCK);
+            #[cfg(not(feature = "parallel"))]
+            let chunks = u_evals.chunks_mut(SCAN_BLOCK);
+            let coalesce = |cache: &mut RepeatCache<NonZeroU16>,
+                            (block, weights): (usize, &mut [F])| {
+                ScanBlock::coalesced(
+                    &scan_rows[block * SCAN_BLOCK..block * SCAN_BLOCK + weights.len()],
+                    weights,
+                    cache,
+                )
+            };
+            #[cfg(feature = "parallel")]
+            let blocks = chunks
+                .enumerate()
+                .map_init(|| RepeatCache::new(SCAN_BLOCK), coalesce)
+                .collect();
+            #[cfg(not(feature = "parallel"))]
+            let blocks = {
+                let mut cache = RepeatCache::new(SCAN_BLOCK);
+                chunks
+                    .enumerate()
+                    .map(|item| coalesce(&mut cache, item))
+                    .collect()
+            };
+            blocks
+        } else {
+            map_indices(scan_rows.len().div_ceil(SCAN_BLOCK), |block| {
+                ScanBlock::new(
+                    &scan_rows[block * SCAN_BLOCK..((block + 1) * SCAN_BLOCK).min(scan_rows.len())],
+                )
+            })
+        };
         let mut kernel = Self {
             dimensions,
             gamma,
@@ -1475,61 +1517,89 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
                 .copied()
                 .unwrap_or(F::zero())
             * cycle.ra.tail_values().iter().copied().product::<F>();
-        let block_lanes = cycle.gruen.par_fold_out_in_prefix(
-            prefix_pairs,
-            || Scratch {
-                lanes: vec![F::Accumulator::default(); factors],
-                pairs: vec![(F::zero(), F::zero()); factors],
-                evals: vec![F::zero(); factors],
-                steps: vec![F::zero(); factors],
-                grid: vec![F::zero(); product_grid_scratch_len(factors)],
-                low_degree: LowDegreeProductSum::default(),
-            },
-            |scratch, row, _x_in, e_in| {
-                let (val, ra) = scratch.pairs.split_at_mut(1);
-                cycle.combined_val.lo_hi_all(row, val);
-                cycle.ra.lo_hi_all(row, ra);
-                let (lo, hi) = val[0];
-                val[0] = (e_in * lo, e_in * hi);
-                for ((&(lo, hi), eval), step) in scratch
-                    .pairs
-                    .iter()
-                    .zip(scratch.evals.iter_mut())
-                    .zip(scratch.steps.iter_mut())
-                {
-                    *eval = hi;
-                    *step = hi - lo;
-                }
-                if !scratch.low_degree.try_accumulate(
+        let groups = match (&cycle.ra, &cycle.combined_val) {
+            (
+                LazyFoldedRa::Lazy {
+                    source, width: 1, ..
+                },
+                LazyFoldedRa::Lazy {
+                    source: claims,
+                    width: 1,
+                    ..
+                },
+            ) => CyclePairGroups::new(source, claims, prefix_pairs, cycle.gruen.e_in_current_len()),
+            _ => None,
+        };
+        let make_scratch = || Scratch {
+            lanes: vec![F::Accumulator::default(); factors],
+            pairs: vec![(F::zero(), F::zero()); factors],
+            evals: vec![F::zero(); factors],
+            steps: vec![F::zero(); factors],
+            grid: vec![F::zero(); product_grid_scratch_len(factors)],
+            low_degree: LowDegreeProductSum::default(),
+        };
+        let eval_row = |scratch: &mut Scratch<F>, row: usize, e_in: F| {
+            let (val, ra) = scratch.pairs.split_at_mut(1);
+            cycle.combined_val.lo_hi_all(row, val);
+            cycle.ra.lo_hi_all(row, ra);
+            let (lo, hi) = val[0];
+            val[0] = (e_in * lo, e_in * hi);
+            for ((&(lo, hi), eval), step) in scratch
+                .pairs
+                .iter()
+                .zip(scratch.evals.iter_mut())
+                .zip(scratch.steps.iter_mut())
+            {
+                *eval = hi;
+                *step = hi - lo;
+            }
+            if !scratch.low_degree.try_accumulate(
+                &scratch.evals,
+                &scratch.steps,
+                tail_products.as_ref(),
+            ) {
+                accumulate_product_grid(
                     &scratch.evals,
                     &scratch.steps,
-                    tail_products.as_ref(),
-                ) {
-                    accumulate_product_grid(
-                        &scratch.evals,
-                        &scratch.steps,
-                        &mut scratch.lanes,
-                        &mut scratch.grid,
-                    );
-                }
-            },
-            |_x_out, e_out, mut scratch| {
-                scratch
-                    .low_degree
-                    .merge_into(&mut scratch.lanes, &mut scratch.grid);
-                let mut out = vec![F::Accumulator::default(); factors];
-                for (out, lane) in out.iter_mut().zip(scratch.lanes) {
-                    out.fmadd(e_out, lane.reduce());
-                }
-                out
-            },
-            |mut a, b| {
-                for (a, b) in a.iter_mut().zip(b) {
-                    a.merge(b);
-                }
-                a
-            },
-        );
+                    &mut scratch.lanes,
+                    &mut scratch.grid,
+                );
+            }
+        };
+        let finish_block = |_x_out: usize, e_out: F, mut scratch: Scratch<F>| {
+            scratch
+                .low_degree
+                .merge_into(&mut scratch.lanes, &mut scratch.grid);
+            let mut out = vec![F::Accumulator::default(); factors];
+            for (out, lane) in out.iter_mut().zip(scratch.lanes) {
+                out.fmadd(e_out, lane.reduce());
+            }
+            out
+        };
+        let merge = |mut a: Vec<F::Accumulator>, b: Vec<F::Accumulator>| {
+            for (a, b) in a.iter_mut().zip(b) {
+                a.merge(b);
+            }
+            a
+        };
+        let block_lanes = if let Some(groups) = groups {
+            groups.fold(
+                &cycle.gruen,
+                prefix_pairs,
+                make_scratch,
+                eval_row,
+                finish_block,
+                merge,
+            )
+        } else {
+            cycle.gruen.par_fold_out_in_prefix(
+                prefix_pairs,
+                make_scratch,
+                |scratch, row, _, weight| eval_row(scratch, row, weight),
+                finish_block,
+                merge,
+            )
+        };
         let mut q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         for value in &mut q_evals[..factors - 1] {
             *value += tail_mass;
@@ -1845,7 +1915,10 @@ mod tests {
     use crate::reference::views::eq_table;
     use crate::SumcheckKernel;
 
-    use super::{InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel};
+    use super::{
+        InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, RepeatCache,
+        ScanBlock,
+    };
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
         rows.iter()
@@ -2132,13 +2205,21 @@ mod tests {
             },
             |case| case.point(log_t, challenge(dimensions.instruction_address_bits())),
         );
+        assert_parity_rows(dimensions, &r_reduction, rows);
+    }
+
+    fn assert_parity_rows<F: JoltField>(
+        dimensions: InstructionReadRafDimensions,
+        r_reduction: &[F],
+        rows: Vec<InstructionReadRafWitness>,
+    ) {
         let gamma = F::from_u64(0xACE1_57EF);
 
         let mut reference =
-            InstructionReadRafKernel::new(dimensions, &r_reduction, rows.clone(), gamma).unwrap();
+            InstructionReadRafKernel::new(dimensions, r_reduction, rows.clone(), gamma).unwrap();
         let mut optimized = OptimizedInstructionReadRafKernel::new(
             dimensions,
-            &r_reduction,
+            r_reduction,
             Arc::new(pack(&rows).into()),
             gamma,
         )
@@ -2146,7 +2227,7 @@ mod tests {
 
         let rounds = reference.num_rounds();
         assert_eq!(rounds, optimized.num_rounds());
-        let mut claim = input_claim(&rows, &r_reduction, gamma);
+        let mut claim = input_claim(&rows, r_reduction, gamma);
         for round in 0..rounds {
             let bind = round.checked_sub(1).map(challenge);
             let reference_poly = reference.prove_round(bind, round, claim).unwrap();
@@ -2154,7 +2235,7 @@ mod tests {
             assert_eq!(
                 reference_poly.coefficients(),
                 optimized_poly.coefficients(),
-                "round {round} polynomial mismatch (log_t={log_t}, ra={num_virtual_ra_polys})"
+                "round {round} polynomial mismatch"
             );
             claim = reference_poly.evaluate(challenge(round));
         }
@@ -2180,6 +2261,100 @@ mod tests {
             reference_outputs.instruction_raf_flag,
             optimized_outputs.instruction_raf_flag
         );
+    }
+
+    fn check_repeated_lookup_rows<F: JoltField>(log_t: usize, prefix: usize, constant: Option<F>) {
+        let dimensions =
+            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+        let mut pattern = fixture_rows(5, 97531);
+        pattern[1].lookup_index = pattern[0].lookup_index;
+        pattern[2].lookup_index = pattern[0].lookup_index;
+        pattern[2].table_index = pattern[0].table_index;
+        pattern[2].raf_flag = InstructionRafFlag(!pattern[0].raf_flag.0);
+        let rows: Vec<_> = (0..1 << log_t)
+            .map(|i| pattern[if i < prefix { i % pattern.len() } else { 0 }])
+            .collect();
+        assert!(ScanBlock::should_coalesce(&pack(&rows)));
+        let point: Vec<F> = (0..log_t)
+            .map(|i| constant.unwrap_or_else(|| challenge(i)))
+            .collect();
+        assert_parity_rows(dimensions, &point, rows);
+    }
+
+    #[test]
+    fn coalescing_preserves_weight_for_colliding_keys_and_classes() {
+        fn check<F: JoltField>() {
+            // Four slots for up to ten distinct (key, class) pairs force collisions.
+            let mut cache = RepeatCache::new(1);
+            for length in [64, 17] {
+                let rows: Vec<_> = (0..length)
+                    .map(|i| {
+                        let high = [0u64, 0, 1, 2, 0, 3, 3, 4][i % 8];
+                        let key = (u128::from(high) << 64) | u128::from(high.rotate_left(32));
+                        InstructionCycleRow::new(
+                            key,
+                            None,
+                            i >= length / 2,
+                            0,
+                            None,
+                            #[cfg(feature = "akita")]
+                            FusedInc::default(),
+                        )
+                    })
+                    .collect();
+                let original: Vec<F> = (0..length)
+                    .map(|i| F::from_u64((i * i + 1) as u64))
+                    .collect();
+                let mut weights = original.clone();
+                let block = ScanBlock::coalesced(&rows, &mut weights, &mut cache);
+                for (class, range) in block.starts.windows(2).enumerate() {
+                    for high in 0..5u64 {
+                        let key = (u128::from(high) << 64) | u128::from(high.rotate_left(32));
+                        let expected: F = rows
+                            .iter()
+                            .zip(&original)
+                            .filter(|(row, _)| {
+                                ScanBlock::class(row) == class && row.lookup_index() == key
+                            })
+                            .map(|(_, weight)| *weight)
+                            .sum();
+                        let actual: F = block.offsets[usize::from(range[0])..usize::from(range[1])]
+                            .iter()
+                            .map(|offset| usize::from(*offset))
+                            .filter(|offset| rows[*offset].lookup_index() == key)
+                            .map(|offset| weights[offset])
+                            .sum();
+                        assert_eq!(actual, expected);
+                    }
+                }
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
+    }
+
+    #[test]
+    fn repeated_lookup_rows_match_reference() {
+        fn check<F: JoltField>() {
+            for prefix in [1027, 1 << 11] {
+                for constant in [None, Some(F::zero()), Some(F::one())] {
+                    check_repeated_lookup_rows(11, prefix, constant);
+                }
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
+    }
+
+    #[test]
+    fn repeated_lookup_rows_match_reference_across_scan_tasks() {
+        for prefix in [6003, 1 << 14] {
+            check_repeated_lookup_rows::<Fr>(14, prefix, None);
+            #[cfg(feature = "akita")]
+            check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, prefix, None);
+        }
     }
 
     #[test]
