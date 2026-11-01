@@ -67,6 +67,8 @@ jobs:
     if: needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 1
     permissions:
       contents: read
       actions: read
