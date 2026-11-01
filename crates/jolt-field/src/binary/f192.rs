@@ -159,6 +159,7 @@ impl CanonicalEncoding for F192 {
 }
 
 impl WithAccumulator for F192 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = F192Accumulator;
     type SmallScalarAccumulator = F192Accumulator;
     type SignedProductAccumulator = F192Accumulator;
