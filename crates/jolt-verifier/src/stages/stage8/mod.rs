@@ -17,10 +17,7 @@ mod verify;
 pub use outputs::Stage8ClearOutput;
 pub use outputs::{Stage8Output, Stage8ZkOutput};
 pub use precommitted::precommitted_final_openings;
-#[cfg(not(feature = "akita"))]
 pub use verify::verify;
-#[cfg(feature = "akita")]
-pub use verify::verify_with_akita_opening;
 #[cfg(not(feature = "akita"))]
 pub use verify::{batch_entries, Stage8BatchEntry};
 

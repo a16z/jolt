@@ -19,7 +19,7 @@ use jolt_akita::{
     AkitaChunkProfile, AkitaError, AkitaField, AkitaProverSetup, AkitaScheduleArtifacts,
     AkitaScheme, AkitaVerifierResources,
 };
-use jolt_akita_recursion::{decode_pair, AnswerTape, InnerProof, ProofPair, ReplayEvent, Vc};
+use jolt_akita_recursion::{decode_exact, AnswerTape, InnerProof, ProofPair, ReplayEvent, Vc};
 use jolt_host::{JoltProgramSource, Program};
 use jolt_inlines_sha2 as _;
 use jolt_openings::CommitmentScheme;
@@ -446,7 +446,7 @@ fn run() -> Result<()> {
             setup_log,
             output,
         } => {
-            let mut pair = decode_pair(&fs::read(pair)?);
+            let mut pair: ProofPair = decode_exact(&fs::read(pair)?)?;
             let domain_len = 1usize
                 .checked_shl(setup_log)
                 .ok_or("setup exponent too large")?;
@@ -463,7 +463,7 @@ fn run() -> Result<()> {
             deferred_only,
         } => {
             let bytes = fs::read(pair)?;
-            let pair = decode_pair(&bytes);
+            let pair: ProofPair = decode_exact(&bytes)?;
             let statement = replay(&pair)?;
             let material = report.with_extension("material");
             fs::create_dir_all(&material)?;

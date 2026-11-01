@@ -3,7 +3,7 @@
 use jolt_akita::deferred::SetupMode;
 use jolt_akita::AkitaField;
 use jolt_akita::TrustedBytes;
-use jolt_akita_recursion::{decode_pair, AnswerTape, ReplayEvent};
+use jolt_akita_recursion::{decode_exact, AnswerTape, ProofPair, ReplayEvent};
 
 include!(concat!(env!("OUT_DIR"), "/material.rs"));
 
@@ -17,12 +17,6 @@ fn observe(event: ReplayEvent) {
         ReplayEvent::InnerEnd(index) => {
             jolt::end_cycle_tracking(["inner0_jolt", "inner1_jolt"][index])
         }
-        ReplayEvent::AkitaStart(index) => {
-            jolt::start_cycle_tracking(["inner0_akita", "inner1_akita"][index])
-        }
-        ReplayEvent::AkitaEnd(index) => {
-            jolt::end_cycle_tracking(["inner0_akita", "inner1_akita"][index])
-        }
     }
 }
 
@@ -32,7 +26,7 @@ fn observe(event: ReplayEvent) {
 )]
 fn execute(bytes: &[u8], mode: SetupMode) -> Vec<u8> {
     jolt::start_cycle_tracking("decode_pair");
-    let pair = decode_pair(bytes);
+    let pair: ProofPair = decode_exact(bytes).expect("proof pair");
     jolt::end_cycle_tracking("decode_pair");
     jolt::start_cycle_tracking("verify_pair");
     jolt::start_cycle_tracking("install_prepared_setup");

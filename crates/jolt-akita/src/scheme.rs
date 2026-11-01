@@ -1,4 +1,5 @@
 use crate::AkitaScheduleArtifacts;
+use crate::AkitaVerificationContext;
 use akita_params::PrecommittedGroupProfiles;
 use akita_pcs::custom_source::RootPolyMeta;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
@@ -28,6 +29,7 @@ use crate::adapters::{
     AKITA_SOURCE_RING_DIMENSION,
 };
 use crate::configs::AkitaChunkProfile;
+use crate::deferred::SetupMode;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::one_hot_family::with_one_hot_family;
 use crate::trace_onehot::{TraceOneHotColumn, TraceOneHotRows};
@@ -423,6 +425,7 @@ impl CommitmentScheme for AkitaScheme {
     type Proof = AkitaBatchProof;
     type ProverSetup = AkitaProverSetup;
     type VerifierSetup = AkitaVerifierSetup;
+    type VerificationContext<'a> = AkitaVerificationContext<'a>;
     type OpeningHint = AkitaProverHint;
     type SetupParams = AkitaSetupParams;
 
@@ -652,14 +655,28 @@ impl CommitmentScheme for AkitaScheme {
         final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         proof: &Self::Proof,
         transcript: &mut impl FieldTranscript<Self::Field>,
+        context: &mut Self::VerificationContext<'_>,
     ) -> Result<(), OpeningsError> {
-        AkitaNativeBatching::verify_trace_batch(
+        if context.mode == SetupMode::Defer && context.accumulator.is_none() {
+            return Err(invalid_batch(
+                "deferred verification requires a setup accumulator",
+            ));
+        }
+        if let Some(marker) = context.cycle_marker {
+            jolt_platform::start_cycle_tracking(marker);
+        }
+        let result = AkitaNativeBatching::verify_trace_batch(
             setup,
             auxiliary_groups,
             final_group,
             proof,
             transcript,
-        )
+            context,
+        );
+        if let Some(marker) = context.cycle_marker {
+            jolt_platform::end_cycle_tracking(marker);
+        }
+        result
     }
 }
 

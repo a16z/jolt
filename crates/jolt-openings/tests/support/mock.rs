@@ -55,6 +55,7 @@ where
     type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
+    type VerificationContext<'a> = ();
     type OpeningHint = ();
     type SetupParams = ();
 

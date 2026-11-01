@@ -107,8 +107,8 @@ records both lengths. A smaller outer prefix requires another schedule.
 Deferred replay alone is conditional. A composing application must bind the
 complete public output using `InheritedSetupClaims::from_public_output`, attach it
 with `AkitaProverSetup::with_inherited_setup`, and check the same collection using
-`InheritedSetupClaims::accumulator` in the outer opening. Acceptance also requires
-an empty pending collection after outer verification. Setup answers remain advice
+an explicit `AkitaVerificationContext` accumulator in the outer opening.
+Acceptance also requires an empty pending collection after outer verification. Setup answers remain advice
 until that discharge. This trace harness does not claim to perform that outer proof.
 
 
@@ -178,3 +178,20 @@ output, validate the full canonical statement and supply it through
 This separate layout does not regenerate or modify the saved outer fixture.
 The `external-guest` similarly exports B for an enclosing setup-offloaded
 opening. Final verification uses Check and requires no pending claims.
+
+## Verification context
+
+Ordinary `jolt_verifier::verify` keeps the complete Check policy. Call
+`jolt_verifier::verify_with_context` for setup accumulation, supplying an
+`AkitaVerificationContext` with the selected `SetupMode` and an owned
+`SetupClaimAccumulator`. The accumulator borrows the caller's answer tape;
+reuse the context across inner proofs, then extract and discharge all pending
+claims. Defer without an accumulator is rejected.
+
+Jolt passes this backend-owned context directly to `PCS::verify_batch`.
+There is no replaceable opening-verification callback. The context is runtime
+state and is never serialized with verifier preprocessing or proof bytes.
+Other PCS implementations declare `type VerificationContext<'a> = ()` when
+no per-verification state is needed. Manual native group-batch calls now pass
+a mutable context as their final argument; the separate homomorphic batch API
+is unchanged.

@@ -10,8 +10,6 @@ fn observe(event: Event) {
         Event::PrepareEnd => jolt::end_cycle_tracking("prepare_inherited_batch"),
         Event::JoltStart => jolt::start_cycle_tracking("outer_jolt"),
         Event::JoltEnd => jolt::end_cycle_tracking("outer_jolt"),
-        Event::AkitaStart => jolt::start_cycle_tracking("outer_akita"),
-        Event::AkitaEnd => jolt::end_cycle_tracking("outer_akita"),
         Event::RebindStart => jolt::start_cycle_tracking("rebind_pending_claims"),
         Event::RebindEnd => jolt::end_cycle_tracking("rebind_pending_claims"),
     }
@@ -28,7 +26,13 @@ fn verify_external(bytes: UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
     jolt::start_cycle_tracking("decode_external");
     let advice: OuterAdvice = decode_exact(&bytes).expect("external advice");
     let verifier = decode_exact(&VERIFIER.0).expect("fixed outer verifier");
-    let input = advice.with_verifier(verifier, INHERITED_FIELDS);
+    let input = jolt_akita_external::ExternalInput {
+        preprocessing: verifier,
+        outer: advice.outer,
+        inherited_setup_fields: INHERITED_FIELDS,
+        output_setup_fields: advice.output_setup_fields,
+        answers: advice.answers,
+    };
     jolt::end_cycle_tracking("decode_external");
     jolt::start_cycle_tracking("install_prepared_setup");
     assert!(!KEY.0.is_empty(), "missing prepared verifier material");

@@ -37,6 +37,7 @@ use crate::adapters::{
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
+use crate::AkitaVerificationContext;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
 /// opening protocol.
@@ -379,29 +380,7 @@ impl AkitaNativeBatching {
         main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
         proof: &AkitaBatchProof,
         transcript: &mut T,
-    ) -> Result<(), OpeningsError>
-    where
-        T: FieldTranscript<AkitaField>,
-    {
-        Self::verify_trace_batch_with_setup(
-            setup,
-            auxiliary_groups,
-            main,
-            proof,
-            transcript,
-            None,
-            SetupMode::Check,
-        )
-    }
-
-    pub fn verify_trace_batch_with_setup<T>(
-        setup: &AkitaVerifierSetup,
-        auxiliary_groups: &[TaggedGroupOpeningClaim<AkitaField, AkitaCommitment>],
-        main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
-        proof: &AkitaBatchProof,
-        transcript: &mut T,
-        accumulator: Option<&mut SetupClaimAccumulator<'_, AkitaField>>,
-        mode: SetupMode,
+        context: &mut AkitaVerificationContext<'_>,
     ) -> Result<(), OpeningsError>
     where
         T: FieldTranscript<AkitaField>,
@@ -445,7 +424,14 @@ impl AkitaNativeBatching {
         );
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
         let batch_statement = GroupBatchStatement::new(selection, claims).map_err(akita_error)?;
-        verify_one_hot_statement(setup, proof, &session, batch_statement, accumulator, mode)
+        verify_one_hot_statement(
+            setup,
+            proof,
+            &session,
+            batch_statement,
+            context.accumulator.as_mut(),
+            context.mode,
+        )
     }
 }
 

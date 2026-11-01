@@ -57,6 +57,11 @@ pub trait CommitmentScheme: Commitment {
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 
+    /// Per-verification state, separate from reusable keys and proof transport.
+    /// The default context must perform complete verification. Backends without
+    /// additional verification state use `()`.
+    type VerificationContext<'a>: Default;
+
     /// Auxiliary data from commit reused during opening (e.g. Dory row commitments).
     type OpeningHint: Clone + Send + Sync + Default;
 
@@ -132,6 +137,7 @@ pub trait CommitmentScheme: Commitment {
         _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         _proof: &Self::Proof,
         _transcript: &mut impl FieldTranscript<Self::Field>,
+        _context: &mut Self::VerificationContext<'_>,
     ) -> Result<(), OpeningsError> {
         Err(OpeningsError::InvalidBatch(
             "this commitment scheme has no native group-batch opening".to_owned(),

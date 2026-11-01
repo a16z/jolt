@@ -7,10 +7,11 @@ use crate::support::{
     single_statement,
 };
 use akita_params::PolynomialGroupLayout;
+use jolt_akita::deferred::SetupMode;
 use jolt_akita::{
     AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, GroupedScheduleParams, TraceOneHotRows,
-    AKITA_ONE_HOT_K16,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerificationContext,
+    GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError,
@@ -107,12 +108,32 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         &statement,
         &proof,
         &mut verifier_transcript,
+        &mut Default::default(),
     )
     .expect("original streamed trace evaluations must verify");
     assert_eq!(
         prover_state.verifier_message::<[u8; 32]>(),
         verifier_transcript.verifier_message::<[u8; 32]>()
     );
+
+    // Defer must never silently accept a valid proof without retaining its obligations.
+    let mut deferred = AkitaVerificationContext {
+        mode: SetupMode::Defer,
+        ..Default::default()
+    };
+    let mut deferred_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-streamed-tamper"),
+        b"",
+    );
+    assert!(AkitaScheme::verify_batch(
+        &verifier_setup,
+        &[],
+        &statement,
+        &proof,
+        &mut deferred_transcript,
+        &mut deferred,
+    )
+    .is_err());
 
     statement.evaluations.swap(0, 1);
     let mut verifier_transcript = prover_transcript::<Blake2b512>(
@@ -125,6 +146,7 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         &statement,
         &proof,
         &mut verifier_transcript,
+        &mut Default::default(),
     )
     .is_err());
 }

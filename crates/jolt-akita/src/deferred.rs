@@ -15,6 +15,29 @@ use akita_types::setup_claims::{
 use akita_types::{derive_public_matrix_prefix, AkitaExpandedSetup};
 pub use akita_verifier::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
 
+/// Runtime setup-verification policy and obligations for a native batch.
+///
+/// Keys remain immutable and serializable. Deferred success is conditional:
+/// callers must discharge every claim returned by the accumulator. Discard
+/// this context after a failed verification.
+#[must_use = "deferred setup obligations must be discharged before acceptance"]
+pub struct AkitaVerificationContext<'a> {
+    pub mode: SetupMode,
+    pub accumulator: Option<SetupClaimAccumulator<'a, AkitaField>>,
+    /// Optional diagnostic cycle marker; never part of the proof or transcript.
+    pub cycle_marker: Option<&'static str>,
+}
+
+impl Default for AkitaVerificationContext<'_> {
+    fn default() -> Self {
+        Self {
+            mode: SetupMode::Check,
+            accumulator: None,
+            cycle_marker: None,
+        }
+    }
+}
+
 use crate::adapters::{
     akita_error, invalid_batch, one_hot_setup_prover, one_hot_setup_verifier, AkitaBackend,
 };
@@ -58,10 +81,6 @@ impl InheritedSetupClaims {
             ));
         }
         Ok(Self { level, statement })
-    }
-
-    pub fn accumulator(&self) -> SetupClaimAccumulator<'static, AkitaField> {
-        SetupClaimAccumulator::from_batch(self.level, self.statement.clone())
     }
 }
 

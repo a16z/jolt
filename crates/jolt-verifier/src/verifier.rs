@@ -12,8 +12,6 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
-#[cfg(feature = "akita")]
-use jolt_openings::{GroupOpeningClaim, OpeningsError, TaggedGroupOpeningClaim};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{
@@ -196,31 +194,25 @@ where
     VC::Output: Copy + Encoding,
     T: FieldTranscript<F> + VerifierInit<'a>,
 {
-    verify_with_akita_opening::<F, PCS, VC, T>(
+    verify_with_context::<F, PCS, VC, T>(
         preprocessing,
         public_io,
         proof,
         trusted_advice_commitment,
-        PCS::verify_batch,
+        &mut PCS::VerificationContext::default(),
     )
 }
 
-/// Replay the Jolt stages using a caller-owned final-opening check.
+/// Verify with backend-owned runtime state, keeping the stage replay shared.
 /// Deferred callers must authenticate and discharge every exported setup claim
 /// in an enclosing proof before treating this result as acceptance.
 #[cfg(feature = "akita")]
-pub fn verify_with_akita_opening<'a, F, PCS, VC, T>(
+pub fn verify_with_context<'a, F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
     proof: &'a JoltProof<PCS, VC>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    opening: impl FnOnce(
-        &PCS::VerifierSetup,
-        &[TaggedGroupOpeningClaim<F, PCS::Output>],
-        &GroupOpeningClaim<F, PCS::Output>,
-        &PCS::Proof,
-        &mut T,
-    ) -> Result<(), OpeningsError>,
+    context: &mut PCS::VerificationContext<'_>,
 ) -> Result<(), VerifierError>
 where
     F: JoltField + Encoding,
@@ -301,7 +293,7 @@ where
         &stage4,
         &stage6b,
     )?;
-    let stage8 = stage8::verify_with_akita_opening(
+    let stage8 = stage8::verify(
         &checked,
         preprocessing,
         proof,
@@ -311,7 +303,7 @@ where
         &stage4,
         &stage6b,
         &stage7,
-        opening,
+        context,
     )?;
 
     let Stage8Output::Clear = stage8 else {
@@ -1191,6 +1183,7 @@ mod tests {
         type Proof = ();
         type ProverSetup = ();
         type VerifierSetup = ();
+        type VerificationContext<'a> = ();
         type OpeningHint = ();
         type SetupParams = ();
 

@@ -19,7 +19,7 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltCommittedPolynomial, Jolt
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{
-    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError, TaggedGroupOpeningClaim,
+    CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_poly::Point;
 use jolt_transcript::{Encoding, FieldTranscript};
@@ -261,13 +261,7 @@ pub fn verify<PCS, VC, T>(
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
-    opening: impl FnOnce(
-        &PCS::VerifierSetup,
-        &[TaggedGroupOpeningClaim<PCS::Field, PCS::Output>],
-        &GroupOpeningClaim<PCS::Field, PCS::Output>,
-        &PCS::Proof,
-        &mut T,
-    ) -> Result<(), OpeningsError>,
+    context: &mut PCS::VerificationContext<'_>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -418,12 +412,13 @@ where
         auxiliary_groups.push(fused_inc_claim(commitment, stage6b)?);
     }
 
-    opening(
+    PCS::verify_batch(
         &preprocessing.pcs_setup,
         &auxiliary_groups,
         &main_group,
         proof,
         transcript,
+        context,
     )
     .map_err(opening_failed)?;
 

@@ -51,6 +51,7 @@ pub use adapters::{
     AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
+pub use deferred::AkitaVerificationContext;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };

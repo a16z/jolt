@@ -290,6 +290,7 @@ mod clear {
             &main,
             &output.proof.joint_opening_proof,
             &mut transcript,
+            &mut Default::default(),
         )
         .expect_err("a duplicated field-inline-role group must be rejected");
         // The rejection must come from the canonical role-order check, not

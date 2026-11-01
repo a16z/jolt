@@ -1,10 +1,12 @@
 //! Native timing and compatibility audit against an immutable saved outer bundle.
+use akita_types::setup_claims::SetupBatchStatement;
 use anyhow::{anyhow, ensure, Result};
 use jolt_akita::deferred::SetupMode;
-use jolt_akita::{AkitaField, AkitaVerifierResources};
-use jolt_akita_external::pair_api::ProofPair;
+use jolt_akita::{AkitaField, AkitaScheme, AkitaVerifierResources};
+use jolt_akita_external::pair_api::{ProofPair, Vc};
 use jolt_akita_external::{ExternalInput, OuterAdvice, PairAdvice, Tape};
 use jolt_field::Ring;
+use jolt_transcript::{Blake2b512, VerifierState};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -33,7 +35,8 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if args.len() == 4 && args[1] == "--prepare" {
-        let input = jolt_akita_external::decode(&fs::read(&args[2])?).map_err(|e| anyhow!(e))?;
+        let input = jolt_akita_external::decode_exact::<ExternalInput>(&fs::read(&args[2])?)
+            .map_err(|e| anyhow!(e))?;
         prepare(input, &PathBuf::from(&args[3]))?;
         return Ok(());
     }
@@ -42,14 +45,47 @@ fn main() -> Result<()> {
         "usage: outer-verifier-audit EXTERNAL_INPUT EXPECTED_GUEST_OUTPUT REPORT"
     );
     let path = PathBuf::from(&args[1]);
-    let input: ExternalInput =
-        jolt_akita_external::decode(&fs::read(path)?).map_err(|e| anyhow!(e))?;
+    let mut input: ExternalInput =
+        jolt_akita_external::decode_exact::<ExternalInput>(&fs::read(path)?)
+            .map_err(|e| anyhow!(e))?;
     let output = fs::read(PathBuf::from(&args[2]))?;
     let (expected, tail): (Vec<u8>, &[u8]) = postcard::take_from_bytes(&output)?;
     ensure!(tail.iter().all(|b| *b == 0), "nonzero output padding");
     let start = Instant::now();
     let _resources = AkitaVerifierResources::prepare([Ok(input.preprocessing.pcs_setup.clone())])?;
     let preparation = start.elapsed().as_secs_f64();
+    ensure!(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, Vc, VerifierState<Blake2b512>>(
+            &input.preprocessing,
+            &input.outer.io,
+            &input.outer.proof,
+            None,
+        )
+        .is_err(),
+        "default Check accepted an accumulated proof without its inherited statement"
+    );
+    // Empty inherited statements remain valid transport; attaching a nonempty
+    // batch for proof verification is a separate policy boundary.
+    let empty = SetupBatchStatement::<AkitaField>::new(
+        input
+            .inherited()
+            .map_err(|e| anyhow!(e))?
+            .polynomial()
+            .clone(),
+        2,
+        Vec::new(),
+    )?;
+    let encoded = postcard::to_stdvec(&empty.descriptor_bytes::<AkitaField>()?)?;
+    let original = std::mem::replace(&mut input.outer.io.outputs, encoded);
+    ensure!(
+        input
+            .inherited()
+            .map_err(|e| anyhow!(e))?
+            .claims()
+            .is_empty(),
+        "empty inherited statement rejected"
+    );
+    input.outer.io.outputs = original;
     let mut full = Vec::new();
     let mut deferred = Vec::new();
     for _ in 0..10 {
@@ -81,7 +117,8 @@ fn main() -> Result<()> {
         !input.answers.is_empty(),
         "audit fixture must have direct-fold answers"
     );
-    let mut wrong = jolt_akita_external::decode(&bytes).map_err(|e| anyhow!(e))?;
+    let mut wrong =
+        jolt_akita_external::decode_exact::<ExternalInput>(&bytes).map_err(|e| anyhow!(e))?;
     wrong.answers[0] += AkitaField::from_u64(1);
     ensure!(
         wrong
@@ -89,7 +126,8 @@ fn main() -> Result<()> {
             .is_err(),
         "false candidate accepted"
     );
-    let mut wrong_io = jolt_akita_external::decode(&bytes).map_err(|e| anyhow!(e))?;
+    let mut wrong_io =
+        jolt_akita_external::decode_exact::<ExternalInput>(&bytes).map_err(|e| anyhow!(e))?;
     wrong_io.outer.io.outputs[0] ^= 1;
     ensure!(
         wrong_io
@@ -102,7 +140,7 @@ fn main() -> Result<()> {
         v.sort_by(f64::total_cmp);
         (v[3] + v[4]) / 2.
     };
-    let result = serde_json::json!({"prepare_seconds":preparation,"warmup":2,"measured":8,"full_seconds":full,"deferred_seconds":deferred,"full_median_seconds":median(&full),"deferred_median_seconds":median(&deferred),"pending_claims":expected_pending(&input)?,"full_unresolved":0,"canonical_output_identical":true,"corrupt_advice_rejected":true,"altered_public_output_rejected":true});
+    let result = serde_json::json!({"prepare_seconds":preparation,"warmup":2,"measured":8,"full_seconds":full,"deferred_seconds":deferred,"full_median_seconds":median(&full),"deferred_median_seconds":median(&deferred),"pending_claims":expected_pending(&input)?,"full_unresolved":0,"empty_inherited_statement_decodes":true,"default_check_rejects_missing_inherited_batch":true,"canonical_output_identical":true,"corrupt_advice_rejected":true,"altered_public_output_rejected":true});
     fs::write(PathBuf::from(&args[3]), serde_json::to_vec_pretty(&result)?)?;
     println!("{result}");
     Ok(())

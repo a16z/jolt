@@ -3,12 +3,12 @@
 use akita_types::setup_claims::{SetupBatchStatement, SetupQuery};
 use common::jolt_device::JoltDevice;
 use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
-use jolt_akita::{AkitaError, AkitaField, AkitaNativeBatching, AkitaScheme};
+use jolt_akita::{AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext};
 use jolt_crypto::NoVectorCommitment;
 use jolt_transcript::{Blake2b512, VerifierState};
-use jolt_verifier::verifier::verify_with_akita_opening;
+use jolt_verifier::verifier::verify_with_context;
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::slice::Iter;
 
 pub type Vc = NoVectorCommitment<AkitaField>;
@@ -34,8 +34,6 @@ pub enum ReplayEvent {
     PrepareEnd,
     InnerStart(usize),
     InnerEnd(usize),
-    AkitaStart(usize),
-    AkitaEnd(usize),
 }
 
 impl ProofPair {
@@ -51,43 +49,41 @@ impl ProofPair {
             .pcs_setup
             .setup_polynomial(self.setup_field_len)
             .map_err(|e| e.to_string())?;
-        let mut accumulator = SetupClaimAccumulator::new(polynomial.clone()).with_advice(advice);
+        let mut context = AkitaVerificationContext {
+            mode,
+            accumulator: Some(SetupClaimAccumulator::new(polynomial.clone()).with_advice(advice)),
+            ..Default::default()
+        };
         observe(ReplayEvent::PrepareEnd);
         for (index, inner) in self.inner.iter().enumerate() {
             if inner.io.panic {
                 return Err("inner guest panicked".into());
             }
             observe(ReplayEvent::InnerStart(index));
-            let verified = verify_with_akita_opening::<
-                AkitaField,
-                AkitaScheme,
-                Vc,
-                VerifierState<Blake2b512>,
-            >(
-                &self.preprocessing,
-                &inner.io,
-                &inner.proof,
-                None,
-                |setup, auxiliary, main, proof, transcript| {
-                    observe(ReplayEvent::AkitaStart(index));
-                    let result = AkitaNativeBatching::verify_trace_batch_with_setup(
-                        setup,
-                        auxiliary,
-                        main,
-                        proof,
-                        transcript,
-                        Some(&mut accumulator),
-                        mode,
-                    );
-                    observe(ReplayEvent::AkitaEnd(index));
-                    result
-                },
-            );
+            context.cycle_marker = Some(if index == 0 {
+                "inner0_akita"
+            } else {
+                "inner1_akita"
+            });
+            let verified =
+                verify_with_context::<AkitaField, AkitaScheme, Vc, VerifierState<Blake2b512>>(
+                    &self.preprocessing,
+                    &inner.io,
+                    &inner.proof,
+                    None,
+                    &mut context,
+                );
             observe(ReplayEvent::InnerEnd(index));
             verified.map_err(|e| e.to_string())?;
         }
-        SetupBatchStatement::new(polynomial, 2, accumulator.into_pending())
-            .map_err(|e| e.to_string())
+        SetupBatchStatement::new(
+            polynomial,
+            2,
+            context
+                .accumulator
+                .map_or_else(Vec::new, SetupClaimAccumulator::into_pending),
+        )
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -102,13 +98,11 @@ impl SetupClaimAdvice<AkitaField> for AnswerTape<'_> {
     }
 }
 
-#[expect(
-    clippy::expect_used,
-    reason = "benchmark artifacts must decode; invalid guest inputs set the panic flag checked by the host"
-)]
-pub fn decode_pair(bytes: &[u8]) -> ProofPair {
-    let (pair, consumed) =
-        bincode::serde::decode_from_slice(bytes, bincode::config::standard()).expect("proof pair");
-    assert_eq!(consumed, bytes.len(), "trailing proof pair bytes");
-    pair
+pub fn decode_exact<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, String> {
+    let (value, consumed) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+        .map_err(|e| e.to_string())?;
+    if consumed != bytes.len() {
+        return Err("trailing transport bytes".into());
+    }
+    Ok(value)
 }

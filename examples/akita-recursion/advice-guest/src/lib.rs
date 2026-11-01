@@ -11,12 +11,8 @@ fn observe(event: ReplayEvent) {
         ReplayEvent::PrepareEnd => jolt::end_cycle_tracking("prepare_akita_setup"),
         ReplayEvent::InnerStart(0) => jolt::start_cycle_tracking("inner0_jolt"),
         ReplayEvent::InnerEnd(0) => jolt::end_cycle_tracking("inner0_jolt"),
-        ReplayEvent::AkitaStart(0) => jolt::start_cycle_tracking("inner0_akita"),
-        ReplayEvent::AkitaEnd(0) => jolt::end_cycle_tracking("inner0_akita"),
         ReplayEvent::InnerStart(1) => jolt::start_cycle_tracking("inner1_jolt"),
         ReplayEvent::InnerEnd(1) => jolt::end_cycle_tracking("inner1_jolt"),
-        ReplayEvent::AkitaStart(1) => jolt::start_cycle_tracking("inner1_akita"),
-        ReplayEvent::AkitaEnd(1) => jolt::end_cycle_tracking("inner1_akita"),
         _ => unreachable!(),
     }
 }
@@ -33,7 +29,12 @@ fn verify_advice(bytes: UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
     jolt::start_cycle_tracking("decode_pair");
     let advice: PairAdvice = decode_exact(&bytes).expect("pair advice");
     let verifier = decode_exact(&VERIFIER.0).expect("fixed inner verifier");
-    let pair = advice.with_verifier(verifier);
+    let pair = jolt_akita_external::pair_api::ProofPair {
+        preprocessing: verifier,
+        inner: advice.inner,
+        setup_field_len: advice.output_setup_fields,
+        answers: advice.answers,
+    };
     jolt::end_cycle_tracking("decode_pair");
     jolt::start_cycle_tracking("verify_pair");
     jolt::start_cycle_tracking("install_prepared_setup");

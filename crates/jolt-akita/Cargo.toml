@@ -39,6 +39,7 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
   "parallel",
 ] }
 jolt-poly.workspace = true
+jolt-platform.workspace = true
 jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
   "solinas",
 ] }
