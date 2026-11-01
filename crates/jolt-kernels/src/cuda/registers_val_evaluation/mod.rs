@@ -8,8 +8,11 @@
 //! materialize their bound field values. CUDA reads resident `i128` increments;
 //! optimized derives them from typed trace rows. CUDA keeps write RA lazy until
 //! the third bind and gathers its values inside the product round; optimized
-//! materializes it at the first bind. Product rounds run over resident cycle
-//! windows before gathering their remaining factors onto GPU 0.
+//! materializes it at the first bind. The register domain has only 128 addresses,
+//! so the scaled lookup tables stay small. Deferring dense RA avoids the early
+//! `T/2` and `T/4` buffers and their field binds, at the cost of repeated gathers
+//! and additions. Product rounds run over resident cycle windows before gathering
+//! their remaining factors onto GPU 0.
 //! Optimized materializes only nonconstant prefixes and keeps their suffixes
 //! implicit; CUDA's increment and write-RA tables span the padded cycle domain.
 
