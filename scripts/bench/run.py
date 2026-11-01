@@ -96,14 +96,14 @@ def host_snapshot():
     microcode = re.search(r'^microcode\s*:\s*(.+)$', cpuinfo, re.M)
     meminfo = dict(re.findall(r'^(\w+):\s+(\d+) kB$', Path('/proc/meminfo').read_text(), re.M))
     machine_id = read_optional('/etc/machine-id') or platform.node()
-    control_plane = {'version': None, 'cli_sha256': None, 'shim_sha256': None}
-    for name in ('cli', 'shim'):
+    control_plane = {'version': None, 'cli_sha256': None, 'node_sha256': None}
+    for name in ('cli', 'node'):
         try:
             control_plane[f'{name}_sha256'] = sha256(f'/opt/pika/bin/pika-{name}')
         except OSError:
             pass
     try:
-        control_plane['version'] = capture(['/opt/pika/bin/pika-shim', '--version']) or None
+        control_plane['version'] = capture(['/opt/pika/bin/pika-node', '--version']) or None
     except (OSError, subprocess.CalledProcessError):
         pass
     return {
@@ -211,11 +211,16 @@ def stop_child(child):
 def logged(argv, cwd, env, log):
     log.write(json.dumps(argv) + '\n')
     log.flush()
+    print(json.dumps(argv), flush=True)
     begin, code, outcome = time.perf_counter(), None, 'failed'
     try:
-        with subprocess.Popen(argv, cwd=cwd, env=env, stdout=log, stderr=subprocess.STDOUT,
-                              start_new_session=True) as child:
+        with subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                              text=True, start_new_session=True) as child:
             try:
+                for line in child.stdout:
+                    log.write(line)
+                    log.flush()
+                    print(line, end='', flush=True)
                 code = child.wait()
             except BaseException:
                 stop_child(child)
@@ -224,9 +229,11 @@ def logged(argv, cwd, env, log):
         if code == 0:
             outcome = 'complete'
     finally:
-        log.write('\n' + json.dumps({'command': argv, 'elapsed_s': time.perf_counter() - begin,
-                                    'exit_code': code, 'outcome': outcome}) + '\n')
+        receipt = json.dumps({'command': argv, 'elapsed_s': time.perf_counter() - begin,
+                              'exit_code': code, 'outcome': outcome})
+        log.write('\n' + receipt + '\n')
         log.flush()
+        print('\n' + receipt, flush=True)
     if code:
         raise RuntimeError(f'command exited {code}: {argv[0]} (see build.log)')
 
@@ -797,7 +804,7 @@ def calibration_for_case(result, case):
                         for key in ('id', 'kernel', 'microcode')]
         comparisons += [(f'host.control_plane.{key}', source['control_plane'].get(key),
                          (host.get('control_plane') or {}).get(key))
-                        for key in ('version', 'cli_sha256', 'shim_sha256')]
+                        for key in ('version', 'cli_sha256', 'node_sha256')]
         comparisons += [(f'host.settings.{key}', source['settings'].get(key), host.get('settings', {}).get(key))
                         for key in ('boost', 'smt', 'governor', 'transparent_huge_pages', 'swap_total_bytes')]
         for label, expected, actual in comparisons:
@@ -845,7 +852,7 @@ def render_comment(result, out):
     lines = ['<!-- jolt-e2e-benchmark-v1 -->', '## End-to-end CPU proofs', '',
              f"Status: **{result['status']}**. Tier: {result['tier']}. "
              f"Comparison: {result['kind']}.", '',
-             'Primary time includes guest loading, both tracing passes, preprocessing, PCS setup, '
+             'Primary time includes guest loading, tracing, preprocessing, PCS setup, '
              'proving, and proof serialization. Verification is separate. Memory is process peak '
              'resident set size (RSS).', '',
              'Values are medians; changes use the ratio of head and base medians, with warmups excluded. '

@@ -1,3 +1,4 @@
+import argparse
 import copy
 import hashlib
 import importlib.util
@@ -128,7 +129,7 @@ class E2ePublicationTests(unittest.TestCase):
             self.assertNotIn('+150.00%', text)
             self.assertIn(result['suite']['config_sha256'], text)
             result['host'].update(id='fixture-host', kernel='fixture-kernel', microcode='fixture-microcode',
-                control_plane={'version': 'fixture-shim', 'cli_sha256': '2' * 64, 'shim_sha256': '3' * 64},
+                control_plane={'version': 'fixture-node', 'cli_sha256': '2' * 64, 'node_sha256': '3' * 64},
                 settings={'boost': '1', 'smt': 'on', 'governor': {'2': 'performance'},
                           'transparent_huge_pages': '[madvise]', 'swap_total_bytes': 0})
             for index, build in enumerate(result['builds']):
@@ -187,6 +188,7 @@ class E2ePublicationTests(unittest.TestCase):
                     ('missing host.microcode', ['host', 'microcode'], None),
                     ('mismatch: host.control_plane.version', ['host', 'control_plane', 'version'], 'changed'),
                     ('missing host.control_plane.cli_sha256', ['host', 'control_plane', 'cli_sha256'], None),
+                    ('mismatch: host.control_plane.node_sha256', ['host', 'control_plane', 'node_sha256'], '4' * 64),
                     ('mismatch: collector_sha256', ['builds', 0, 'runner', 'sha256'], 'f' * 64),
                     ('mismatch: base.binary_sha256', ['builds', 0, 'binaries', 'dory', 'sha256'], 'f' * 64),
                     ('mismatch: base.trace_rows', ['cases', 0, 'samples', 2, 'metrics', 'trace_rows'], 5),
@@ -328,4 +330,3 @@ class E2ePublicationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-import argparse

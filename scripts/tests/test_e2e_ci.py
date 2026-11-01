@@ -148,9 +148,32 @@ class E2eCiTests(unittest.TestCase):
             self.assertTrue(all(c['status'] == 'missing' and not c['samples'] for c in result['cases']))
             self.assertIsNone(result['wall_time']['total_s'])
 
+    def test_unsupported_privileged_requests_keep_a_successful_receipt_job(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event = root / 'event.json'
+            event.write_text('{}')
+            for build_only, event_name in ((False, 'workflow_run'), (True, 'pull_request')):
+                with self.subTest(build_only=build_only):
+                    options = argparse.Namespace(config=ci.bench.DEFAULT_CONFIG,
+                        out=root / event_name, build_only=build_only)
+                    with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event),
+                            GITHUB_EVENT_NAME=event_name, GITHUB_REPOSITORY='a16z/jolt',
+                            GITHUB_SHA='a' * 40, JOLT_E2E_ENABLED='true',
+                            GITHUB_OUTPUT=str(root / 'outputs'), GITHUB_STEP_SUMMARY=str(root / 'summary')), \
+                            patch.object(ci, 'resolve', side_effect=ValueError('unsupported fixture request')):
+                        self.assertEqual(ci.plan(options), 1 if build_only else 0)
+                    self.assertFalse(json.loads((options.out / 'plan.json').read_text())['enabled'])
+                    receipt = json.loads((options.out / 'benchmark-results.json').read_text())
+                    self.assertEqual(receipt['status'], 'unsupported')
+                    self.assertTrue(all(not case['samples'] for case in receipt['cases']))
+
     def test_hosted_preparation_uses_release_for_every_tier_and_never_proves(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            cache = root / 'cache'
+            cache.mkdir()
+            spawn = subprocess.Popen
             for tier in ('pr', 'main', 'nightly'):
                 with self.subTest(tier=tier):
                     plan = {'enabled': True, 'tier': tier, 'harness': 'c' * 40,
@@ -169,6 +192,11 @@ class E2eCiTests(unittest.TestCase):
                     plan_path = root / 'plan.json'
                     plan_path.write_text(json.dumps(plan))
                     built = []
+                    children = []
+                    def launch(*args, **kwargs):
+                        child = spawn(*args, **kwargs)
+                        children.append(child)
+                        return child
                     def build(options):
                         self.assertEqual(options.profile, 'release')
                         self.assertEqual(options.target_cpu, 'znver4')
@@ -180,10 +208,20 @@ class E2eCiTests(unittest.TestCase):
                     with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
                             patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
                             patch.object(ci.bench, 'capture'), \
+                            patch.object(ci.bench, 'cache_root', return_value=cache), \
                             patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
+                            patch.object(ci.subprocess, 'Popen', side_effect=launch), \
                             patch.object(ci.bench, 'run', side_effect=AssertionError('builder must not prove')), \
                             patch.object(ci.bench, 'build', side_effect=build):
                         ci.prepare(argparse.Namespace(plan=plan_path, out=root / tier))
+                        if tier == 'pr':
+                            with patch.object(ci.bench, 'build', side_effect=ValueError('fixture build failed')):
+                                with self.assertRaisesRegex(ValueError, 'fixture build failed'):
+                                    ci.prepare(argparse.Namespace(plan=plan_path, out=root / 'failure'))
+                        for child in children:
+                            self.assertIsNotNone(child.returncode)
+                            with self.assertRaises(ChildProcessError):
+                                os.waitpid(child.pid, os.WNOHANG)
                     index = json.loads((root / tier / 'builds.json').read_text())
                     self.assertEqual(built, ['a' * 40, 'b' * 40])
                     self.assertEqual(index['plan_sha256'], ci.bench.sha256(plan_path))

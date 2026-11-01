@@ -15,9 +15,9 @@ not establish the whole target-job duration.
 **The sizes and repetition counts are proposals, not a calibrated performance
 gate.** A larger PR matrix is adopted only after a measured target interval below
 600 seconds and a matching per-cell noise reference. The initial three-case,
-24-proof baseline remains available. Hosted build-only PR jobs run while target
-execution is disabled; no runner registration, setting change, or comment is
-needed to produce their artifacts.
+24-proof baseline remains available. The temporary hosted build-only job is
+limited to PR #2215 while target execution is disabled; no runner registration,
+setting change, or comment is needed to produce its artifacts.
 
 ## Workloads and tiers
 
@@ -83,8 +83,8 @@ verify:                                                                         
 ```
 
 `e2e_s` starts before loading the prebuilt ELF and input bytes. It includes the
-profile harness's first sizing trace, program decoding/expansion and
-preprocessing, its second modular trace, witness construction, PCS setup,
+profile harness's shared trace, program decoding/expansion and
+preprocessing, witness construction, PCS setup,
 proving, and proof serialization. It stops before verification. Both existing
 verification calls must succeed before the JSON metric file is written.
 `prove_s` and `setup_s` surround the existing prove and setup calls, respectively;
@@ -132,7 +132,7 @@ Warmup means an excluded first invocation, not a proven Cargo or URS cache hit.
 Akita's external schedule files are copied into the bundle and hash-checked.
 No host governor, SMT, boost, swap, RAID, or other setting is changed.
 `host.microcode` comes from `/proc/cpuinfo`. `host.control_plane` records the
-readable `/opt/pika/bin/pika-cli` and `pika-shim` SHA256s and the shim's `--version`
+readable `/opt/pika/bin/pika-cli` and `pika-node` SHA256s and the node's `--version`
 output. Unavailable observations are null, never an assumed match. These are
 runtime observations; they are not part of native bundle cache identity.
 
@@ -237,6 +237,12 @@ must hold the same `host.lock`; do not remove the lock file during maintenance.
 and `complete` or `failed` outcome in a flushed JSON line when the attempt finishes.
 The initial argument-vector record is flushed before execution. A start without
 an outcome record is interrupted or unknown, never a completed duration.
+Commands, child output and completion records also stream to the CI step log,
+so a lost runner does not erase all build progress. During hosted preparation,
+memory, swap, free disk bytes and the kernel's `oom_kill` counter are sampled
+every ten seconds. A final sample and readable kernel warnings/errors are logged
+on exit. A denied kernel-log read is reported, not evidence that no OOM occurred.
+These observations describe the build host, never the proof timing process.
 This covers the CLI build, prover builds and guest preparation, including failures;
 a launch failure has no exit code. These are command durations, not separate
 compiler/linker timings. Reuse keeps the original durations in `construction.log`;
@@ -379,6 +385,12 @@ runtime URS cache. The separate `jolt-e2e-builds-RUN_ID-RUN_ATTEMPT` artifact ke
 the actual binaries, guest ELFs, fixed inputs, Akita schedules and construction
 logs. `builds.json` binds their manifest hashes to the exact plan bytes.
 
+If hosted preparation fails, the target job is skipped and no result artifact or
+failure comment is produced. A prior comment retains its old submitted-head
+identity; history consumers treat the absent artifact as unknown. Producing a
+build-failure receipt remains debt to resolve before enabling target execution
+and comment publication.
+
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
 Only the configured measured repetitions contribute; warmups are excluded.
@@ -411,7 +423,7 @@ with an unavailable reference and its reason. Candidate binary, guest and trace
 changes are shown, not rejected. A harness Git revision difference alone is not
 a mismatch when the required binary, collector and metric identities match.
 
-The GitHub artifact is `jolt-e2e-RUN_ID-RUN_ATTEMPT`. Its root always contains
+When produced, the GitHub artifact `jolt-e2e-RUN_ID-RUN_ATTEMPT` contains
 `benchmark-results.json`. For a multi-commit main push, that document is the
 pushed tip; earlier new first-parent commits have
 `commits/FULL_SHA/benchmark-results.json`. `index.json` lists the actual event's
@@ -536,6 +548,12 @@ action checkouts are cleaned normally. The hosted build's source clone, its
 repo-local Cargo target and completed bundles are outside that workspace and
 can be reused within the job. No cross-job compiler cache is configured. The
 target has no source-build step, even when an artifact is absent or invalid.
+
+Environment filtering is not a sandbox for same-repository PR code. That code
+shares the hosted runner user's privileges and may reach Actions runtime state,
+including artifact access and the default-branch cache namespace. This
+pre-existing trust limit remains debt before enablement. No credential access
+or cache poisoning was attempted; an exploitable path has not been demonstrated.
 
 The hosted plan and build bundle are transferred by their captured immutable
 artifact IDs, not just names. The target checks the build-index hash against the

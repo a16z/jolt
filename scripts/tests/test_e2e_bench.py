@@ -1,5 +1,6 @@
 import argparse
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -17,6 +18,28 @@ SPEC.loader.exec_module(bench)
 
 
 class E2eBenchTests(unittest.TestCase):
+    def test_host_snapshot_identifies_the_installed_node(self):
+        capture = bench.capture
+        hashes = {'/opt/pika/bin/pika-cli': '2' * 64, '/opt/pika/bin/pika-node': '3' * 64}
+
+        def installed_command(argv):
+            if argv[0] == 'lscpu':
+                return capture(argv)
+            if argv == ['/opt/pika/bin/pika-node', '--version']:
+                return 'pika-node fixture'
+            raise FileNotFoundError(argv[0])
+
+        def installed_hash(filename):
+            if filename not in hashes:
+                raise FileNotFoundError(filename)
+            return hashes[filename]
+
+        with patch.object(bench, 'capture', side_effect=installed_command), \
+                patch.object(bench, 'sha256', side_effect=installed_hash):
+            identity = bench.host_snapshot()['control_plane']
+        self.assertEqual(identity, {'version': 'pika-node fixture',
+                                   'cli_sha256': '2' * 64, 'node_sha256': '3' * 64})
+
     def test_logged_commands_record_duration_and_outcome_after_owned_process_exit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -29,7 +52,9 @@ class E2eBenchTests(unittest.TestCase):
                             'pathlib.Path(sys.argv[1]).write_text("finished"); '
                             'sys.stdout.write("{\\"child_done\\": true}"); sys.exit(int(sys.argv[2]))',
                             str(marker), str(exit_code), str(output)]
-                    with output.open('w') as log, patch.object(bench.time, 'perf_counter', side_effect=[10, 10.25]):
+                    streamed = io.StringIO()
+                    with output.open('w') as log, patch.object(bench.sys, 'stdout', streamed), \
+                            patch.object(bench.time, 'perf_counter', side_effect=[10, 10.25]):
                         if exit_code:
                             with self.assertRaisesRegex(RuntimeError, 'command exited 7'):
                                 bench.logged(argv, root, bench.build_environment(), log)
@@ -40,6 +65,8 @@ class E2eBenchTests(unittest.TestCase):
                         completed = [r for r in records if isinstance(r, dict) and 'command' in r]
                         self.assertEqual(completed, [{'command': argv, 'elapsed_s': 0.25,
                             'exit_code': exit_code, 'outcome': 'complete' if exit_code == 0 else 'failed'}])
+                    self.assertIn('{"child_done": true}', streamed.getvalue())
+                    self.assertIn(json.dumps(argv), streamed.getvalue())
 
     def test_cancellation_reaps_its_owned_process(self):
         with subprocess.Popen([sys.executable, '-c', 'import sys; sys.stdin.read()'],
