@@ -4,6 +4,9 @@
 use super::{BooleanityChunks, ChunkIndexSource};
 use jolt_field::JoltField;
 
+use crate::optimized::instruction_read_raf::gather_paired_four_bit_values;
+use crate::optimized::lazy_ra::{gather_paired_columns, PAIRED_MATERIALIZE_BRANCHES};
+
 impl ChunkIndexSource for BooleanityChunks {
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
@@ -72,6 +75,36 @@ impl ChunkIndexSource for BooleanityChunks {
         }
     }
 
+    fn gather_paired_values<F: JoltField>(
+        &self,
+        tables: &[Vec<F>],
+        row: usize,
+        out: &mut [&mut [F]],
+        output_row: usize,
+    ) {
+        let instruction = if self.chunk_bits == 4 {
+            self.instruction_chunks
+        } else {
+            0
+        };
+        if instruction != 0 {
+            gather_paired_four_bit_values(
+                |branch| self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index(),
+                &tables[..instruction],
+                &mut out[..instruction],
+                output_row,
+            );
+        }
+        gather_paired_columns(
+            self,
+            &tables[instruction..],
+            row,
+            &mut out[instruction..],
+            output_row,
+            instruction,
+        );
+    }
+
     #[inline]
     fn gather_pairs<F: JoltField>(
         &self,
@@ -136,9 +169,11 @@ impl ChunkIndexSource for BooleanityChunks {
 mod tests {
     use super::super::{ColumnSelector, ConstantSuffix, InstructionCycleRow};
     use super::*;
+    use crate::optimized::lazy_ra::LazyFoldedRa;
     use jolt_field::Fr;
     #[cfg(feature = "akita")]
     use jolt_field::Prime128OffsetA7F7;
+    use jolt_poly::EqPolynomial;
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::RaChunkSelector;
@@ -274,5 +309,96 @@ mod tests {
     #[test]
     fn bulk_instruction_decoding_matches_selectors_fp128() {
         check::<Prime128OffsetA7F7>();
+    }
+
+    fn check_materialized<F: JoltField>(instruction: usize) {
+        let cycles = 1 << 17;
+        for prefix in [cycles - 31, cycles] {
+            let rows = (0..prefix + usize::from(prefix < cycles))
+                .map(|row| {
+                    InstructionCycleRow::new(
+                        (row as u128 + 1).wrapping_mul(0xe387_9fb3_4ce9_ba74_1923_873a_e9b9_8379),
+                        None,
+                        false,
+                        row % 256,
+                        match row % 3 {
+                            0 => None,
+                            1 => Some(0),
+                            _ => Some((row % 4096) as u64),
+                        },
+                        #[cfg(feature = "akita")]
+                        FusedInc::default(),
+                    )
+                })
+                .collect();
+            let selectors = (0..instruction)
+                .map(|i| {
+                    ColumnSelector::Instruction(RaChunkSelector::new(i, instruction, 4).unwrap())
+                })
+                .chain(
+                    (0..2)
+                        .map(|i| ColumnSelector::Bytecode(RaChunkSelector::new(i, 2, 4).unwrap())),
+                )
+                .chain((0..3).map(|i| ColumnSelector::Ram(RaChunkSelector::new(i, 3, 4).unwrap())))
+                .collect();
+            let source = BooleanityChunks {
+                rows: Arc::new(ConstantSuffix::new(rows, cycles)),
+                prefix_len: prefix,
+                selectors,
+                instruction_chunks: instruction,
+                chunk_bits: 4,
+            };
+            let tables: Vec<Vec<F>> = (0..source.num_columns())
+                .map(|column| {
+                    (0..16)
+                        .map(|a| F::from_u64((97 * column + 13 * a + 1) as u64))
+                        .collect()
+                })
+                .collect();
+            let challenges: Vec<F> = [2, 7, 13, 23].into_iter().map(F::from_u64).collect();
+            let point: Vec<F> = challenges.iter().rev().copied().collect();
+            let weights = EqPolynomial::<F>::evals(&point, None);
+            let samples = [0, 17, (prefix - 1) / 16, cycles / 16 - 1];
+            let expected: Vec<Vec<F>> = samples
+                .iter()
+                .map(|&row| {
+                    tables
+                        .iter()
+                        .enumerate()
+                        .map(|(column, table)| {
+                            weights
+                                .iter()
+                                .enumerate()
+                                .map(|(branch, &weight)| {
+                                    source
+                                        .index(column, 16 * row + branch)
+                                        .map_or(F::zero(), |index| weight * table[index])
+                                })
+                                .sum()
+                        })
+                        .collect()
+                })
+                .collect();
+            let mut lazy = LazyFoldedRa::new(tables, source);
+            for challenge in challenges {
+                lazy.bind(challenge);
+            }
+            for (&row, expected) in samples.iter().zip(expected) {
+                for (column, value) in expected.into_iter().enumerate() {
+                    assert_eq!(lazy.value(column, row), value);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn materialized_families_match_multilinear_weights_fr() {
+        check_materialized::<Fr>(20);
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn materialized_families_match_multilinear_weights_fp128() {
+        check_materialized::<Prime128OffsetA7F7>(32);
     }
 }
