@@ -65,6 +65,9 @@ impl<const D: usize> DigitWindows<D> {
             .iter()
             .flat_map(AsRef::as_ref)
             .all(|&shift| shift < D));
+        if Self::try_accumulate_prepared(windows, dst, shifts) {
+            return;
+        }
         if shifts.iter().all(|shifts| shifts.as_ref().is_empty()) {
             return;
         }
@@ -87,6 +90,56 @@ impl<const D: usize> DigitWindows<D> {
                 }
             }
         }
+    }
+
+    // Prepare full-length shifted views once, so the tile loop need not walk
+    // the window/shift lists or recheck each negacyclic slice. Larger batches
+    // retain the ordinary path without allocating a variable-size index.
+    fn try_accumulate_prepared(
+        windows: &[Self],
+        dst: &mut DigitAccumulator<D>,
+        shifts: &[impl AsRef<[usize]>],
+    ) -> bool {
+        const MAX_PREPARED: usize = 64;
+        let Some(first) = windows
+            .first()
+            .and_then(|window| window.digits.first_chunk::<D>())
+        else {
+            return false;
+        };
+        let mut sources = [first; MAX_PREPARED];
+        let mut len = 0;
+        for (window, shifts) in windows.iter().zip(shifts) {
+            for &shift in shifts.as_ref() {
+                if len == MAX_PREPARED {
+                    return false;
+                }
+                let Some(source) = window.digits[D - shift..].first_chunk::<D>() else {
+                    return false;
+                };
+                sources[len] = source;
+                len += 1;
+            }
+        }
+        if len == 0 {
+            return true;
+        }
+        for (tile, out) in dst.chunks_exact_mut(TILE).enumerate() {
+            let mut sums = [[0u32; 8]; TILE];
+            for source in &sources[..len] {
+                for (sum, digits) in sums.iter_mut().zip(&source[tile * TILE..][..TILE]) {
+                    for (sum, &digit) in sum.iter_mut().zip(digits) {
+                        *sum += u32::from(digit);
+                    }
+                }
+            }
+            for (out, sum) in out.iter_mut().zip(sums) {
+                for (lane, sum) in out.0.iter_mut().zip(sum) {
+                    *lane += sum as i32;
+                }
+            }
+        }
+        true
     }
 }
 
