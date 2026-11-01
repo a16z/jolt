@@ -7,6 +7,62 @@ use jolt_field::JoltField;
 use crate::optimized::instruction_read_raf::visit_paired_four_bit_values;
 use crate::optimized::lazy_ra::{visit_paired_columns, PAIRED_MATERIALIZE_BRANCHES};
 
+impl BooleanityChunks {
+    #[inline(always)]
+    fn visit_category_pairs<const WIDTH: usize, const BITS: usize>(
+        &self,
+        width: usize,
+        row: usize,
+        radix: usize,
+        columns: usize,
+        mut visit: impl FnMut(usize, usize, usize),
+    ) {
+        let width = if WIDTH == 0 { width } else { WIDTH };
+        let chunk_bits = if BITS == 0 { self.chunk_bits } else { BITS };
+        debug_assert!(width == 1 || width == 2);
+        let instruction = columns.min(self.instruction_chunks);
+        if instruction != 0 {
+            let skip = (self.instruction_chunks - instruction) * chunk_bits;
+            let mask = (1u128 << chunk_bits) - 1;
+            let mut lo0 = self.rows[2 * row * width].lookup_index() >> skip;
+            let mut hi0 = self.rows[(2 * row + 1) * width].lookup_index() >> skip;
+            let mut lo1 = if width == 2 {
+                self.rows[2 * row * width + 1].lookup_index() >> skip
+            } else {
+                0
+            };
+            let mut hi1 = if width == 2 {
+                self.rows[(2 * row + 1) * width + 1].lookup_index() >> skip
+            } else {
+                0
+            };
+            for column in (0..instruction).rev() {
+                let lo = (lo0 & mask) as usize + radix * (lo1 & mask) as usize;
+                let hi = (hi0 & mask) as usize + radix * (hi1 & mask) as usize;
+                visit(column, lo, hi);
+                lo0 >>= chunk_bits;
+                hi0 >>= chunk_bits;
+                lo1 >>= chunk_bits;
+                hi1 >>= chunk_bits;
+            }
+        }
+        for column in instruction..columns {
+            let mut states = [0; 2];
+            let mut weight = 1;
+            for branch in 0..width {
+                for (side, state) in states.iter_mut().enumerate() {
+                    *state += weight
+                        * self
+                            .index(column, (2 * row + side) * width + branch)
+                            .unwrap_or(radix - 1);
+                }
+                weight *= radix;
+            }
+            visit(column, states[0], states[1]);
+        }
+    }
+}
+
 impl ChunkIndexSource for BooleanityChunks {
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
@@ -30,48 +86,12 @@ impl ChunkIndexSource for BooleanityChunks {
         row: usize,
         radix: usize,
         columns: usize,
-        mut visit: impl FnMut(usize, usize, usize),
+        visit: impl FnMut(usize, usize, usize),
     ) {
-        debug_assert!(width == 1 || width == 2);
-        let instruction = columns.min(self.instruction_chunks);
-        if instruction != 0 {
-            let skip = (self.instruction_chunks - instruction) * self.chunk_bits;
-            let mask = (1u128 << self.chunk_bits) - 1;
-            let mut lo0 = self.rows[2 * row * width].lookup_index() >> skip;
-            let mut hi0 = self.rows[(2 * row + 1) * width].lookup_index() >> skip;
-            let mut lo1 = if width == 2 {
-                self.rows[2 * row * width + 1].lookup_index() >> skip
-            } else {
-                0
-            };
-            let mut hi1 = if width == 2 {
-                self.rows[(2 * row + 1) * width + 1].lookup_index() >> skip
-            } else {
-                0
-            };
-            for column in (0..instruction).rev() {
-                let lo = (lo0 & mask) as usize + radix * (lo1 & mask) as usize;
-                let hi = (hi0 & mask) as usize + radix * (hi1 & mask) as usize;
-                visit(column, lo, hi);
-                lo0 >>= self.chunk_bits;
-                hi0 >>= self.chunk_bits;
-                lo1 >>= self.chunk_bits;
-                hi1 >>= self.chunk_bits;
-            }
-        }
-        for column in instruction..columns {
-            let mut states = [0; 2];
-            let mut weight = 1;
-            for branch in 0..width {
-                for (side, state) in states.iter_mut().enumerate() {
-                    *state += weight
-                        * self
-                            .index(column, (2 * row + side) * width + branch)
-                            .unwrap_or(radix - 1);
-                }
-                weight *= radix;
-            }
-            visit(column, states[0], states[1]);
+        match (self.chunk_bits, width) {
+            (4, 1) => self.visit_category_pairs::<1, 4>(width, row, radix, columns, visit),
+            (4, 2) => self.visit_category_pairs::<2, 4>(width, row, radix, columns, visit),
+            _ => self.visit_category_pairs::<0, 0>(width, row, radix, columns, visit),
         }
     }
 
@@ -171,7 +191,7 @@ mod tests {
     use std::sync::Arc;
 
     fn check<F: JoltField>() {
-        for bits in [1, 2, 4, 8] {
+        for bits in [1, 2, 3, 4, 8] {
             let instruction = 128 / bits;
             let addresses = 1usize << bits;
             for prefix in [0usize, 13, 17, 63] {
