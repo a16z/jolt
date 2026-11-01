@@ -62,8 +62,8 @@ use super::spartan_outer::{FieldInlineRowCursor, FieldSpartanCarry};
 #[cfg(feature = "field-inline")]
 use super::support::map_reduce_chunks;
 use super::support::{
-    pin_derived_term_if_derived, prefix_cycle_weights, try_par_sum_vecs, BundleAccess, BundleStore,
-    GruenRoundMessage, RoundChallenges,
+    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+    PrefixCycleWeights, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -630,27 +630,24 @@ impl<F: JoltField> ProductRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    fn cycle_weights(&self) -> Vec<F> {
+    fn cycle_weights(&self) -> PrefixCycleWeights<F> {
         let reversed: Vec<F> = self.challenges.as_slice().iter().rev().copied().collect();
-        prefix_cycle_weights(&reversed, self.prefix_cycles)
+        PrefixCycleWeights::new(&reversed, self.prefix_cycles)
     }
 
     /// The eight produced opening values at the bound cycle point: one
     /// eq-weighted walk over the typed rows, in the output claims' canonical
     /// field order.
-    fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
-        let cycles = weights.len();
+    fn claimed_inputs(&self, weights: &PrefixCycleWeights<F>) -> Result<Vec<F>, WitnessError> {
         let access = self.rows.access();
 
-        let block_size = 1usize << 12;
-        let blocks = cycles.div_ceil(block_size);
+        let blocks = weights.blocks();
         let block = |index: usize| -> Result<Vec<F>, WitnessError> {
-            let start = index * block_size;
-            let end = (start + block_size).min(cycles);
+            let block = weights.block(index);
             let mut words: [<F as WithAccumulator>::SignedProductAccumulator; 3] =
                 [Default::default(), Default::default(), Default::default()];
             let mut flags: [<F as WithAccumulator>::SmallScalarAccumulator; 5] = Default::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
+            for (t, &weight) in (block.start..).zip(block.inner) {
                 let row = access.row(t)?;
                 words[0].fmadd_u64(weight, row.left_instruction_input.0);
                 words[1].fmadd_i128(weight, row.right_instruction_input.0);
@@ -663,7 +660,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
             }
             let [left_input, right_input, lookup_output] = words;
             let [jump, write_lookup, branch, noop, virtual_instruction] = flags;
-            Ok(vec![
+            let mut values = vec![
                 left_input.reduce(),
                 right_input.reduce(),
                 jump.reduce(),
@@ -672,7 +669,9 @@ impl<F: JoltField> ProductRemainderKernel<F> {
                 branch.reduce(),
                 noop.reduce(),
                 virtual_instruction.reduce(),
-            ])
+            ];
+            block.scale(&mut values);
+            Ok(values)
         };
         try_par_sum_vecs(blocks, 8, block)
     }
@@ -681,14 +680,14 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     /// (`selected_product_remainder_output_openings` order: rs1, rs2, rd) — one
     /// eq-weighted walk over the sparse field-inline rows.
     #[cfg(feature = "field-inline")]
-    fn field_claimed_inputs(&self, weights: &[F]) -> [F; 3] {
+    fn field_claimed_inputs(&self, weights: &PrefixCycleWeights<F>) -> [F; 3] {
         map_reduce_chunks(
             self.field_rows.len(),
             1 << 12,
             |range| {
                 let mut values = [F::zero(); 3];
                 for (cycle, row) in &self.field_rows[range] {
-                    let weight = weights[*cycle];
+                    let weight = weights.evaluate(*cycle);
                     values[0] += weight * row.rs1_value;
                     values[1] += weight * row.rs2_value;
                     values[2] += weight * row.rd_value;
