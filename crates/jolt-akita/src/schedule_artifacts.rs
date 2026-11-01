@@ -9,8 +9,9 @@ use akita_schedules::ValidatedScheduleCatalog;
 use jolt_openings::OpeningsError;
 use serde::{Deserialize, Serialize};
 use std::{
+    fmt,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
 };
 
 /// Runtime bytes for Jolt's base schedule families.
@@ -18,6 +19,9 @@ use std::{
 /// These bytes are ordinary input data. They are intentionally neither
 /// generated Rust nor embedded with `include_bytes!`.
 ///
+/// Each catalog is decoded and audited on first use and kept: decoding a
+/// one-hot catalog takes tens of milliseconds, cloning the decoded one well
+/// under one.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "ScheduleArtifactInputs")]
 pub struct AkitaScheduleArtifacts {
@@ -25,6 +29,44 @@ pub struct AkitaScheduleArtifacts {
     dense: Vec<u8>,
     full_dense: Vec<u8>,
     one_hot: Vec<AkitaOneHotScheduleArtifact>,
+    #[serde(skip_serializing)]
+    decoded: DecodedCatalogs,
+}
+
+/// Catalogs decoded from the bytes beside them, which never change after
+/// construction. Not part of the bundle's identity.
+#[derive(Clone, Default)]
+struct DecodedCatalogs {
+    dense: OnceLock<ValidatedScheduleCatalog>,
+    full_dense: OnceLock<ValidatedScheduleCatalog>,
+    one_hot: Vec<OnceLock<ValidatedScheduleCatalog>>,
+}
+
+impl DecodedCatalogs {
+    fn get(
+        cell: &OnceLock<ValidatedScheduleCatalog>,
+        decode: impl FnOnce() -> Result<ValidatedScheduleCatalog, AkitaError>,
+    ) -> Result<ValidatedScheduleCatalog, AkitaError> {
+        if let Some(catalog) = cell.get() {
+            return Ok(catalog.clone());
+        }
+        let catalog = decode()?;
+        Ok(cell.get_or_init(|| catalog).clone())
+    }
+}
+
+impl PartialEq for DecodedCatalogs {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for DecodedCatalogs {}
+
+impl fmt::Debug for DecodedCatalogs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("DecodedCatalogs")
+    }
 }
 
 /// One application-supplied catalog and the trusted geometry expected at admission.
@@ -62,11 +104,16 @@ impl AkitaScheduleArtifacts {
                 }
             }
         }
+        let decoded = DecodedCatalogs {
+            one_hot: one_hot.iter().map(|_| OnceLock::new()).collect(),
+            ..DecodedCatalogs::default()
+        };
         Ok(Self {
             dense_profile,
             dense,
             full_dense,
             one_hot,
+            decoded,
         })
     }
 
@@ -180,19 +227,23 @@ impl AkitaScheduleArtifacts {
     }
 
     pub fn dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(
-            &self.dense,
-            self.dense_profile.witness_cfg(),
-        )
-        .map(|catalog| catalog.catalog().clone())
+        DecodedCatalogs::get(&self.decoded.dense, || {
+            TrustedScheduleCatalog::<JoltDenseBounded>::from_artifact_bytes(
+                &self.dense,
+                self.dense_profile.witness_cfg(),
+            )
+            .map(|catalog| catalog.catalog().clone())
+        })
     }
 
     pub fn full_dense_catalog(&self) -> Result<ValidatedScheduleCatalog, AkitaError> {
-        TrustedScheduleCatalog::<JoltDenseFull>::from_artifact_bytes(
-            &self.full_dense,
-            self.dense_profile.witness_cfg(),
-        )
-        .map(|catalog| catalog.catalog().clone())
+        DecodedCatalogs::get(&self.decoded.full_dense, || {
+            TrustedScheduleCatalog::<JoltDenseFull>::from_artifact_bytes(
+                &self.full_dense,
+                self.dense_profile.witness_cfg(),
+            )
+            .map(|catalog| catalog.catalog().clone())
+        })
     }
 
     pub(crate) fn full_dense_scheme(
@@ -232,14 +283,21 @@ impl AkitaScheduleArtifacts {
                     "missing one-hot catalog for K={one_hot_k} profile {profile}"
                 ))
             })?;
-        let entry = self.one_hot.get(index).ok_or_else(|| {
+        let outside = || {
             AkitaError::InvalidSetup(
                 "catalog index is outside the normalized collection".to_owned(),
             )
-        })?;
-        with_one_hot_family!(family, |Cfg| {
-            TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(&entry.bytes, profile.witness_cfg())
+        };
+        let entry = self.one_hot.get(index).ok_or_else(outside)?;
+        let cell = self.decoded.one_hot.get(index).ok_or_else(outside)?;
+        DecodedCatalogs::get(cell, || {
+            with_one_hot_family!(family, |Cfg| {
+                TrustedScheduleCatalog::<Cfg>::from_artifact_bytes(
+                    &entry.bytes,
+                    profile.witness_cfg(),
+                )
                 .map(|catalog| catalog.catalog().clone())
+            })
         })
     }
 }

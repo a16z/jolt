@@ -74,8 +74,15 @@ impl DenseFixture {
     }
 }
 
+/// Preprocessing: store the joint prefix commitments in each setup.
+fn provisioned(mut setups: Vec<AkitaVerifierSetup>) -> Vec<AkitaVerifierSetup> {
+    let known = stored_prefixes(&setups).unwrap();
+    provision_prefix_commitments(&mut setups, &known, None).unwrap();
+    setups
+}
+
 fn prepared(registry: &PreparedRegistry, setups: Vec<AkitaVerifierSetup>) -> Arc<Prepared> {
-    let prepared = Arc::new(Prepared::new(setups.into_iter().map(Ok)).unwrap());
+    let prepared = Arc::new(Prepared::new(provisioned(setups).into_iter().map(Ok)).unwrap());
     registry.publish(&prepared);
     prepared
 }
@@ -197,6 +204,73 @@ fn one_hot_proofs_use_the_same_warm_backend_at_different_arities() {
     }
 }
 
+/// A merged setup verifies each admitted shape through its own view, refuses
+/// shapes it does not admit, and rejects a proof whose selection names another
+/// admitted shape's row.
+#[test]
+fn merged_setup_verifies_each_admitted_shape_and_only_its_own_row() {
+    let artifacts = params(14).schedule_artifacts;
+    let request =
+        |vars| AkitaSetupParams::one_hot_only(vars, 1, [5; 32], 16, Arc::clone(&artifacts));
+    let setups = [14, 15].map(|vars| AkitaScheme::setup(request(vars)).unwrap());
+    let verifiers = setups.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>();
+    let merged = crate::verifier_setup::merge_verifier_setups(&verifiers, None).unwrap();
+    assert_eq!(merged.admitted_shapes.len(), 2);
+    assert!(merged.for_shape(16, 1, [5; 32]).is_none());
+    assert!(merged.for_shape(14, 1, [6; 32]).is_none());
+    assert!(merged.for_shape(14, 2, [5; 32]).is_none());
+    let (mut outside, _) = AkitaScheme::setup(request(16)).unwrap();
+    assert!(outside.adopt_verifier_setup(&merged).is_err());
+    merged.prepare().unwrap();
+
+    let transcript = || prover_transcript::<Blake2b512>(&protocol_tag(b"merged-onehot"), b"");
+    let proved = setups.map(|(mut prover, _)| {
+        prover.adopt_verifier_setup(&merged).unwrap();
+        let vars = prover.verifier.max_num_vars;
+        let polynomial = OneHotPolynomial::new(
+            16,
+            (0..1 << (vars - 4)).map(|i| Some((i % 16) as u8)).collect(),
+        );
+        let point = vec![AkitaField::from_u64(3); vars];
+        let evaluation = polynomial.evaluate(&point);
+        let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover).unwrap();
+        let proof = AkitaScheme::open(
+            &polynomial,
+            &point,
+            evaluation,
+            &prover,
+            Some(hint),
+            &mut transcript(),
+        )
+        .unwrap();
+        let view = merged.for_shape(vars, 1, [5; 32]).unwrap();
+        assert_eq!(view.max_num_vars, vars);
+        (commitment, point, evaluation, proof, view)
+    });
+    let verifies = |(commitment, point, evaluation, _, _): &(_, Vec<_>, _, _, _),
+                    proof: &AkitaBatchProof,
+                    view: &AkitaVerifierSetup| {
+        AkitaScheme::verify(
+            commitment,
+            point,
+            *evaluation,
+            proof,
+            view,
+            &mut transcript(),
+        )
+        .is_ok()
+    };
+    let [first, second] = &proved;
+    for (shape, other) in [(first, second), (second, first)] {
+        assert!(verifies(shape, &shape.3, &shape.4));
+        assert!(!verifies(shape, &shape.3, &other.4));
+        let mut foreign_row = shape.3.clone();
+        foreign_row.schedule_selection = other.3.schedule_selection;
+        assert_ne!(foreign_row.schedule_selection, shape.3.schedule_selection);
+        assert!(!verifies(shape, &foreign_row, &shape.4));
+    }
+}
+
 #[test]
 fn prepared_resources_hold_every_required_prefix_and_only_the_verifier_matrix() {
     let setup = metadata(&AkitaSetupParams::one_hot_only(
@@ -209,7 +283,9 @@ fn prepared_resources_hold_every_required_prefix_and_only_the_verifier_matrix() 
     let requirements = AkitaVerifierRequirements::for_setups(std::slice::from_ref(&setup)).unwrap();
     assert!(!requirements.prefix_slots.is_empty());
     assert!(requirements.prefix_field_elements > requirements.retained_field_elements);
-    let state = Prepared::new([Ok(setup)]).unwrap();
+    // Key load without stored commitments fails rather than computing them.
+    assert!(Prepared::new([Ok(setup.clone())]).is_err());
+    let state = Prepared::new(provisioned(vec![setup]).into_iter().map(Ok)).unwrap();
     let material = &state.material;
     assert_eq!(
         material.expanded().descriptor().num_field_elements,
@@ -232,7 +308,12 @@ fn every_catalog_holds_the_prefixes_of_the_rows_its_state_admits() {
         Arc::clone(&artifacts),
     ));
     let dense = metadata(&AkitaSetupParams::dense_only(30, 1, [0; 32], artifacts));
-    let state = Prepared::new([Ok(one_hot.clone()), Ok(dense)]).unwrap();
+    let state = Prepared::new(
+        provisioned(vec![one_hot.clone(), dense])
+            .into_iter()
+            .map(Ok),
+    )
+    .unwrap();
     let descriptor = state.material.expanded().descriptor();
     with_one_hot_family!(scheme one_hot.one_hot_scheme().unwrap(), |scheme| {
         let admitted = SetupRequirements::from_catalog(
@@ -374,6 +455,15 @@ fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
         )
         .is_ok()
     };
+    // Verification never builds state: an unprepared transported setup is
+    // rejected, and so is key load once its stored commitments are removed.
+    let unprepared = transported();
+    assert!(unprepared.prefix_commitments.is_some());
+    assert!(!verifies(&unprepared, evaluation));
+    let mut stripped = transported();
+    stripped.prefix_commitments = None;
+    assert!(PreparedRegistry::new().attach(&stripped).is_err());
+
     let registry = PreparedRegistry::new();
     let alone = transported();
     registry.attach(&alone).unwrap();

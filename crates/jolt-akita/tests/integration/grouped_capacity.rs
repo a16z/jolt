@@ -118,6 +118,9 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         &serde_json::to_string(&verifier_setup).expect("verifier setup should serialize"),
     )
     .expect("verifier setup should deserialize");
+    transported
+        .prepare()
+        .expect("key load prepares the transported setup");
     let prover_tail = prover_state.verifier_message::<[u8; 32]>();
     for setup in [&verifier_setup, &transported] {
         let mut verifier_transcript = prover_transcript::<Blake2b512>(

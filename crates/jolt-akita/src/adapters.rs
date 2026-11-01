@@ -35,7 +35,7 @@ use crate::one_hot_family::{
 pub use crate::one_hot_family::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 use crate::schedule_artifacts::AkitaScheduleArtifacts;
 use crate::schedule_registry::GroupedScheduleParams;
-use crate::verifier_resources::PREPARED_VERIFIER_RESOURCES;
+use crate::verifier_resources::{ExpandedPrefixSource, PREPARED_VERIFIER_RESOURCES};
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = JoltDenseBounded;
@@ -373,6 +373,92 @@ impl AkitaProverSetup {
         self.verifier.max_num_vars
     }
 
+    /// Preprocessing: merge `setups`, verifier setups for other shapes, into
+    /// one verifier setup admitting all of them, and bind this prover to it
+    /// ([`Self::adopt_verifier_setup`]). The merged setup stores one catalog and
+    /// the setup-prefix commitments every shape needs; those no input stores
+    /// are computed from this prover's expanded setup matrix where it holds
+    /// them, instead of from the public seed. All of `setups` must share their
+    /// dense catalog and one-hot family.
+    pub fn merge_and_adopt_verifier_setups(
+        &mut self,
+        setups: &[AkitaVerifierSetup],
+    ) -> Result<AkitaVerifierSetup, OpeningsError> {
+        let expanded = [
+            (&self.backend_prover_setup, &self.cpu_backend),
+            (
+                &self.one_hot_backend_prover_setup,
+                &self.one_hot_cpu_backend,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(setup, backend)| {
+            Some(ExpandedPrefixSource {
+                backend: backend.as_deref()?,
+                field_elements: setup
+                    .as_ref()?
+                    .expanded
+                    .shared_matrix()
+                    .num_field_elements(),
+            })
+        })
+        .max_by_key(|source| source.field_elements);
+        let merged = crate::verifier_setup::merge_verifier_setups(setups, expanded)?;
+        self.adopt_verifier_setup(&merged)?;
+        Ok(merged)
+    }
+
+    /// Bind this prover to `verifier`, a merged setup
+    /// ([`Self::merge_and_adopt_verifier_setups`]) admitting this prover's
+    /// shape, so its transcript binds the catalog that verifier holds.
+    pub fn adopt_verifier_setup(
+        &mut self,
+        verifier: &AkitaVerifierSetup,
+    ) -> Result<(), OpeningsError> {
+        let own = &self.verifier;
+        let view = verifier
+            .for_shape(
+                own.max_num_vars,
+                own.max_num_polys_per_commitment_group,
+                own.default_layout_digest,
+            )
+            .filter(|view| {
+                view.shape() == own.shape()
+                    && view.one_hot_k == own.one_hot_k
+                    && view.akita_chunk_profile() == own.akita_chunk_profile()
+                    && view.schedule_artifacts.dense() == own.schedule_artifacts.dense()
+            })
+            .ok_or_else(|| {
+                invalid_setup("the verifier setup does not admit this prover's shape")
+            })?;
+        // The prover selects rows from its own catalog; the verifier must
+        // resolve every one of them.
+        let covered = match (
+            own.schedule_artifacts.one_hot(),
+            view.schedule_artifacts.one_hot(),
+        ) {
+            (None, None) => true,
+            (Some(rows), Some(catalog)) => {
+                rows == catalog
+                    || crate::schedule_registry::one_hot_catalog_covers(
+                        own.one_hot_k,
+                        own.akita_chunk_profile(),
+                        catalog,
+                        rows,
+                    )
+                    .map_err(invalid_setup)?
+            }
+            _ => false,
+        };
+        if !covered {
+            return Err(invalid_setup(
+                "the verifier setup's catalog does not hold this prover's schedule rows",
+            ));
+        }
+        self.verifier = view;
+        Ok(())
+    }
+
     pub fn max_num_polys_per_commitment_group(&self) -> usize {
         self.verifier.max_num_polys_per_commitment_group
     }
@@ -433,10 +519,27 @@ impl AkitaProverSetup {
     }
 }
 
+/// The one-hot trace group shape a verifier setup's transcript binding and
+/// statement checks are fixed to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AkitaSetupShape {
+    pub(crate) max_num_vars: usize,
+    pub(crate) max_num_polys_per_commitment_group: usize,
+    pub(crate) max_total_batch_polys: usize,
+    pub(crate) default_layout_digest: AkitaLayoutDigest,
+}
+
 /// Serializable public inputs for deriving backend keys.
 ///
-/// The exact validated schedule artifacts are serialized; derived scheme
-/// objects, prepared keys, and caches are rebuilt lazily after transport.
+/// The exact validated schedule artifacts and the setup-prefix commitments
+/// computed at preprocessing are serialized. Key load
+/// ([`AkitaVerifierSetup::prepare`]) derives the matrix prefix and builds the
+/// backend verifiers; verification never derives them.
+///
+/// A setup may admit several trace shapes ([`Self::for_shape`]); its one-hot
+/// catalog then holds every admitted shape's rows, and its own fields describe
+/// the largest.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {
@@ -446,6 +549,13 @@ pub struct AkitaVerifierSetup {
     pub(crate) default_layout_digest: AkitaLayoutDigest,
     pub(crate) one_hot_k: usize,
     pub(crate) schedule_artifacts: Arc<AkitaVerifierScheduleArtifacts>,
+    /// Canonical bytes of the setup-prefix commitments this setup (and every
+    /// shape it was provisioned with) can need, computed once at preprocessing.
+    /// Trusted like the rest of the verifier preprocessing.
+    pub(crate) prefix_commitments: Option<Arc<Vec<u8>>>,
+    /// Every shape this setup verifies, own shape included; empty when it
+    /// verifies only its own.
+    pub(crate) admitted_shapes: Vec<AkitaSetupShape>,
     #[serde(skip)]
     pub(crate) backend_cache: BackendVerifierCache,
 }
@@ -498,6 +608,14 @@ impl AkitaVerifierScheduleArtifacts {
             Self::Dense { .. } => AkitaChunkProfile::default(),
         }
     }
+
+    pub(crate) fn with_one_hot(&self, bytes: Vec<u8>) -> Self {
+        let mut artifacts = self.clone();
+        if let Self::OneHot { one_hot, .. } | Self::Both { one_hot, .. } = &mut artifacts {
+            *one_hot = bytes;
+        }
+        artifacts
+    }
 }
 
 impl AkitaVerifierSetup {
@@ -523,6 +641,77 @@ impl AkitaVerifierSetup {
 
     pub fn akita_chunk_profile(&self) -> AkitaChunkProfile {
         self.schedule_artifacts.akita_chunk_profile()
+    }
+
+    pub(crate) fn shape(&self) -> AkitaSetupShape {
+        AkitaSetupShape {
+            max_num_vars: self.max_num_vars,
+            max_num_polys_per_commitment_group: self.max_num_polys_per_commitment_group,
+            max_total_batch_polys: self.max_total_batch_polys,
+            default_layout_digest: self.default_layout_digest,
+        }
+    }
+
+    /// This setup fixed to the admitted shape whose one-hot trace group has
+    /// `num_vars` columns, `num_polys` polynomials and `layout_digest`. The
+    /// view shares the catalog and prepared backend keys.
+    pub(crate) fn for_shape(
+        &self,
+        num_vars: usize,
+        num_polys: usize,
+        layout_digest: [u8; 32],
+    ) -> Option<Self> {
+        let matches = |shape: &AkitaSetupShape| {
+            shape.max_num_vars == num_vars
+                && shape.max_num_polys_per_commitment_group == num_polys
+                && shape.default_layout_digest == layout_digest
+        };
+        if matches(&self.shape()) {
+            return Some(self.clone());
+        }
+        let shape = self.admitted_shapes.iter().find(|shape| matches(shape))?;
+        let mut view = self.clone();
+        view.max_num_vars = shape.max_num_vars;
+        view.max_num_polys_per_commitment_group = shape.max_num_polys_per_commitment_group;
+        view.max_total_batch_polys = shape.max_total_batch_polys;
+        view.default_layout_digest = shape.default_layout_digest;
+        Some(view)
+    }
+
+    /// Key load: build this setup's backend verifiers from its stored prefix
+    /// commitments and a matrix prefix derived from the public seed, unless a
+    /// live prepared state already covers it. Idempotent.
+    pub fn prepare(&self) -> Result<(), OpeningsError> {
+        if self.is_prepared()? {
+            return Ok(());
+        }
+        PREPARED_VERIFIER_RESOURCES.attach(self)
+    }
+
+    fn needs_one_hot_verifier(&self) -> Result<bool, OpeningsError> {
+        Ok(self.schedule_artifacts.one_hot().is_some()
+            && self.max_num_vars >= validate_one_hot_k(self.one_hot_k)?)
+    }
+
+    fn is_prepared(&self) -> Result<bool, OpeningsError> {
+        let dense =
+            self.schedule_artifacts.dense().is_none() || self.backend_cache.dense.get().is_some();
+        let one_hot = !self.needs_one_hot_verifier()? || self.backend_cache.one_hot.get().is_some();
+        Ok(dense && one_hot)
+    }
+
+    /// Verification-time lookup: adopt a live prepared state if one covers this
+    /// setup, otherwise fail. Building verifier state here would put seed
+    /// derivation and prefix commitments on the verification path.
+    pub(crate) fn require_prepared(&self) -> Result<(), OpeningsError> {
+        if self.is_prepared()? || PREPARED_VERIFIER_RESOURCES.attach_prepared(self) {
+            Ok(())
+        } else {
+            Err(invalid_setup(
+                "Akita verifier setup was not prepared at key load; \
+                 call AkitaVerifierSetup::prepare before verifying",
+            ))
+        }
     }
 
     /// Primes the lazy verifier cache from freshly built backend keys, so
@@ -613,7 +802,7 @@ impl AkitaVerifierSetup {
 
     pub(crate) fn dense_verifier(&self) -> Result<&AkitaVerifier<AkitaConfig>, OpeningsError> {
         if self.backend_cache.dense.get().is_none() {
-            PREPARED_VERIFIER_RESOURCES.attach(self)?;
+            self.require_prepared()?;
         }
         self.backend_cache
             .dense
@@ -628,7 +817,7 @@ impl AkitaVerifierSetup {
             if self.max_num_vars < log_k {
                 return Err(invalid_batch("Akita verifier setup has no one-hot backend"));
             }
-            PREPARED_VERIFIER_RESOURCES.attach(self)?;
+            self.require_prepared()?;
         }
         self.backend_cache
             .one_hot
@@ -805,6 +994,16 @@ impl jolt_openings::GroupCommitmentMetadata for AkitaCommitment {
 impl jolt_openings::GroupSetupMetadata for AkitaVerifierSetup {
     fn max_num_vars(&self) -> usize {
         self.max_num_vars()
+    }
+
+    fn for_shape(
+        &self,
+        num_vars: usize,
+        num_polys: usize,
+        layout_digest: [u8; 32],
+    ) -> Option<std::borrow::Cow<'_, Self>> {
+        self.for_shape(num_vars, num_polys, layout_digest)
+            .map(std::borrow::Cow::Owned)
     }
 
     fn max_num_polys_per_commitment_group(&self) -> usize {

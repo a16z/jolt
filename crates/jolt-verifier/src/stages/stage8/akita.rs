@@ -282,9 +282,14 @@ where
     let plan = ONE_HOT_TRACE_LAYOUT
         .plan(&one_hot_trace_shape)
         .map_err(batch_failed)?;
+    // A setup admitting several trace shapes is fixed here to this proof's.
+    let pcs_setup = preprocessing
+        .pcs_setup
+        .for_shape(plan.num_vars(), plan.ids().len(), plan.layout_digest())
+        .ok_or_else(|| batch_failed("the PCS setup does not admit this proof's trace shape"))?;
     validate_one_hot_trace_metadata(
         one_hot_trace_commitment,
-        &preprocessing.pcs_setup,
+        &*pcs_setup,
         plan.layout_digest(),
         plan.num_vars(),
         plan.ids().len(),
@@ -412,7 +417,7 @@ where
     }
 
     PCS::verify_batch(
-        &preprocessing.pcs_setup,
+        &pcs_setup,
         &auxiliary_groups,
         &main_group,
         proof,

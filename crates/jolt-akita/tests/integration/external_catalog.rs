@@ -38,6 +38,9 @@ fn external_multichunk_catalog_survives_transport() {
             AkitaBatchProof,
         ) = serde_json::from_slice(&fs::read(path).expect("read public verification inputs"))
             .expect("restore verifier without source catalogs");
+        setup
+            .prepare()
+            .expect("key load prepares the restored setup");
         let mut statement = support::single_statement(commitment, &point, evaluation);
         assert_eq!(setup.akita_chunk_profile(), AkitaChunkProfile::new(2, 4));
         let mut transcript =

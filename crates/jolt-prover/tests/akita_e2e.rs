@@ -40,6 +40,9 @@ mod akita_tests {
     use jolt_prover::akita;
     use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
     use jolt_prover::akita::witness::commit_advice;
+    use std::sync::Arc;
+
+    use jolt_program::execution::{JoltProgram, TraceOutput};
     use jolt_prover::JoltBackend;
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
@@ -105,14 +108,38 @@ mod akita_tests {
         trusted_advice: &[u8],
     ) -> ProvedGuest {
         let has_trusted_advice = !trusted_advice.is_empty();
+        let PreparedGuest {
+            program,
+            preprocessing: program_preprocessing,
+            trace,
+        } = run;
         let preprocessing = preprocessing::preprocess_full_with_advice(
             &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
-            run.preprocessing,
+            program_preprocessing,
             &config,
             untrusted_advice,
             has_trusted_advice,
         )
         .expect("Akita preprocessing");
+        prove_preprocessed(
+            preprocessing,
+            &program,
+            trace,
+            config,
+            untrusted_advice,
+            trusted_advice,
+        )
+    }
+
+    fn prove_preprocessed(
+        preprocessing: AkitaProverPreprocessing,
+        program: &Arc<JoltProgram>,
+        trace: TraceOutput,
+        config: ProverConfig,
+        untrusted_advice: bool,
+        trusted_advice: &[u8],
+    ) -> ProvedGuest {
+        let has_trusted_advice = !trusted_advice.is_empty();
         let trusted = has_trusted_advice.then(|| {
             preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
                 .expect("trusted advice commitment")
@@ -121,10 +148,10 @@ mod akita_tests {
         let program_preprocessing = preprocessing
             .program_arc()
             .expect("full program preprocessing");
-        let public_io = run.trace.device.clone();
+        let public_io = trace.device.clone();
         let witness = TraceBackend::new(
             witness_config(&config, untrusted_advice, has_trusted_advice),
-            JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
+            JoltVmWitnessInputs::new(program, &program_preprocessing, trace),
         );
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
@@ -214,6 +241,77 @@ mod akita_tests {
             Err(OpeningsError::InvalidSetup(reason))
                 if reason.contains("dimensions")
         ));
+    }
+
+    /// One verifier preprocessing accepts every shape its program admits. Built
+    /// at two trace lengths and RAM domains (with different one-hot polynomial
+    /// counts) it is byte-identical; a prover for the second shape reuses the
+    /// first one's; and each proof verifies under the transported key.
+    #[test]
+    fn one_verifier_key_accepts_every_admissible_shape() {
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let (short_run, short_config) = muldiv_run();
+        let (long_run, base) = muldiv_run();
+        let mut long_config = ProverConfig::from_padded_dimensions::<AkitaField>(
+            base.trace_length * 2,
+            base.ram_K << 4,
+            long_run.preprocessing.max_padded_trace_length,
+        )
+        .expect("longer padded trace and larger RAM domain");
+        long_config.akita_chunk_profile = base.akita_chunk_profile;
+        assert!(
+            long_config.ram_K
+                <= jolt_program::preprocess::compute_max_ram_k(
+                    &long_run.preprocessing.memory_layout
+                )
+                .expect("maximum RAM domain")
+        );
+        let independent = preprocessing::preprocess_full(
+            &artifacts,
+            long_run.preprocessing.clone(),
+            &long_config,
+        )
+        .expect("verifier preprocessing built at the long shape");
+        let short = prove_guest(short_run, short_config, false, &[]);
+        let reused = preprocessing::preprocess_full_for_verifier(
+            &artifacts,
+            &short.preprocessing.verifier,
+            &long_config,
+            false,
+            false,
+        )
+        .expect("prover preprocessing under an existing verifier key");
+        let long = prove_preprocessed(
+            reused,
+            &long_run.program,
+            long_run.trace,
+            long_config,
+            false,
+            &[],
+        );
+
+        let wire = |verifier: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc>| {
+            bincode::serde::encode_to_vec(verifier, bincode::config::standard())
+                .expect("serialize verifier preprocessing")
+        };
+        let key = wire(&short.preprocessing.verifier);
+        assert!(
+            key == wire(&independent.verifier),
+            "the verifier key depends on the execution's dimensions"
+        );
+        let (transported, _): (JoltVerifierPreprocessing<AkitaScheme, AkitaVc>, usize) =
+            bincode::serde::decode_from_slice(&key, bincode::config::standard())
+                .expect("load verifier key");
+        for proved in [&short, &long] {
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+                &transported,
+                &proved.public_io,
+                &proved.proof,
+                None,
+            )
+            .expect("every admissible shape verifies under the shared key");
+        }
     }
 
     #[test]

@@ -974,7 +974,16 @@ fn prove_workload(
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
-    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params).expect("Akita PCS setup");
+    let (pcs_setup, verifier_setup) = crate::akita::preprocessing::admissible_setup(
+        AkitaScheme::setup(params).expect("Akita PCS setup"),
+        &schedule_artifacts,
+        &shared.program,
+        &config,
+        false,
+        false,
+        &[],
+    )
+    .expect("admissible Akita verifier setup");
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {

@@ -31,6 +31,9 @@ use crate::configs::AkitaChunkProfile;
 use crate::native_batching::{AkitaNativeBatchPolynomials, AkitaNativeBatching};
 use crate::one_hot_family::with_one_hot_family;
 use crate::trace_onehot::{TraceOneHotColumn, TraceOneHotRows};
+use crate::verifier_resources::{
+    merge_prefixes, provision_prefix_commitments, AkitaPrefixRegistry,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AkitaScheme;
@@ -429,7 +432,7 @@ impl CommitmentScheme for AkitaScheme {
     fn setup(
         params: Self::SetupParams,
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
-        let verifier = Self::verifier_setup_from_params(&params)?;
+        let mut verifier = Self::verifier_setup_from_params(&params)?;
         let artifacts = &params.schedule_artifacts;
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k).map_err(invalid_setup)?;
         let (backend_prover_setup, cpu_backend, backend_verifier_setup) =
@@ -486,6 +489,16 @@ impl CommitmentScheme for AkitaScheme {
                 }
             }
         }
+        // The prover setup already committed to its setup prefixes; store them
+        // (plus any the verifier's capacity needs beyond them) for transport.
+        let mut known = AkitaPrefixRegistry::new(akita_types::sample_akita_setup_seed());
+        for backend in [&backend_verifier_setup, &one_hot_backend_verifier_setup]
+            .into_iter()
+            .flatten()
+        {
+            merge_prefixes(&mut known, backend.prefix_slots())?;
+        }
+        provision_prefix_commitments(std::slice::from_mut(&mut verifier), &known, None)?;
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup)?;
         let prover = AkitaProverSetup {
             full_width,
@@ -497,6 +510,14 @@ impl CommitmentScheme for AkitaScheme {
             verifier: verifier.clone(),
         };
         Ok((prover, verifier))
+    }
+
+    fn prepare_verifier_setup(setup: &Self::VerifierSetup) -> Result<(), OpeningsError> {
+        setup.prepare()
+    }
+
+    fn check_verifier_setup_prepared(setup: &Self::VerifierSetup) -> Result<(), OpeningsError> {
+        setup.require_prepared()
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -876,6 +897,8 @@ mod tests {
                     .unwrap(),
             }
             .into(),
+            prefix_commitments: None,
+            admitted_shapes: Vec::new(),
             backend_cache: Default::default(),
         };
         // The next squeeze after binding `setup` under `flavor`: equal for
@@ -1097,11 +1120,11 @@ mod tests {
         }
     }
 
-    /// A serde roundtrip drops the primed key cache; the transported setup
-    /// re-derives a verifier-sized backend key from its shape. Proofs verified
-    /// through such keys are covered in `verifier_resources::tests`.
+    /// A serde roundtrip drops the primed key cache. Verification refuses to
+    /// re-derive it; key load (`prepare`) rebuilds a verifier-sized backend key.
+    /// Proofs verified through such keys are covered in `verifier_resources::tests`.
     #[test]
-    fn serde_transported_setup_rederives_the_backend_key() {
+    fn serde_transported_setup_prepares_its_backend_key_at_load() {
         let artifacts =
             AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let (_, verifier_setup) =
@@ -1117,9 +1140,13 @@ mod tests {
         assert_eq!(consumed, binary.len());
         assert_eq!(binary_transport, verifier_setup);
         assert!(
-            transported.dense_verifier().is_ok(),
-            "shape-only setup re-derives its backend key"
+            transported.dense_verifier().is_err(),
+            "verification must not derive an unprepared backend key"
         );
+        assert!(AkitaScheme::check_verifier_setup_prepared(&transported).is_err());
+        transported.prepare().unwrap();
+        assert!(transported.dense_verifier().is_ok());
+        assert!(AkitaScheme::check_verifier_setup_prepared(&transported).is_ok());
     }
 
     #[test]
