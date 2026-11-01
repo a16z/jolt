@@ -120,6 +120,7 @@ impl CanonicalEncoding for F128 {
 }
 
 impl WithAccumulator for F128 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = F128Accumulator;
     type SmallScalarAccumulator = F128Accumulator;
     type SignedProductAccumulator = F128Accumulator;
