@@ -47,7 +47,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           JOLT_E2E_ENABLED: ${{ vars.JOLT_E2E_ENABLED }}
-          JOLT_E2E_TARGET_CPU: ${{ vars.JOLT_E2E_TARGET_CPU }}
         run: uv run --no-project python scripts/bench/ci.py plan --out "$RUNNER_TEMP/e2e-plan"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         id: upload
@@ -63,8 +62,50 @@ jobs:
           path: ${{ runner.temp }}/e2e-plan/benchmark-results.json
           if-no-files-found: error
 
-  measure:
+  prepare:
     needs: plan
+    if: needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      index_sha256: ${{ steps.prepare.outputs.index_sha256 }}
+      manifest_digests: ${{ steps.prepare.outputs.manifest_digests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.harness }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-plan
+          merge-multiple: true
+      - name: Build release provers and complete guest inputs on the hosted runner
+        id: prepare
+        run: uv run --no-project python scripts/bench/ci.py prepare --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-builds"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
+        if: always()
+        with:
+          name: jolt-e2e-builds-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-builds
+          if-no-files-found: warn
+          retention-days: 14
+
+  measure:
+    needs: [plan, prepare]
     if: needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
     runs-on:
       group: jolt-bench
@@ -86,8 +127,20 @@ jobs:
           artifact-ids: ${{ needs.plan.outputs.artifact_id }}
           path: ${{ runner.temp }}/e2e-plan
           merge-multiple: true
-      - name: Build and measure using the manual suite entry point
-        run: uv run --no-project python scripts/bench/ci.py execute --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-out"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-builds
+          merge-multiple: true
+      - name: Verify artifacts and run proofs without Cargo or a toolchain
+        env:
+          BUILD_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
+          BUILD_INDEX_SHA256: ${{ needs.prepare.outputs.index_sha256 }}
+        run: |
+          uv run --no-project python scripts/bench/ci.py execute \
+            --plan "$RUNNER_TEMP/e2e-plan/plan.json" --bundles "$RUNNER_TEMP/e2e-builds" \
+            --artifact-id "$BUILD_ARTIFACT_ID" --index-sha256 "$BUILD_INDEX_SHA256" \
+            --out "$RUNNER_TEMP/e2e-out"
       - name: Preserve an interrupted or failed root result
         if: always()
         run: uv run --no-project python scripts/bench/ci.py finalize --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-out"
@@ -107,7 +160,7 @@ jobs:
           retention-days: 30
 
   validate-comment:
-    needs: [plan, measure]
+    needs: [plan, prepare, measure]
     if: always() && needs.plan.outputs.tier == 'pr' && needs.measure.outputs.artifact_id != '' && vars.JOLT_E2E_COMMENTS_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -144,10 +197,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PLAN_ARTIFACT: ${{ needs.plan.outputs.artifact_id }}
           RESULT_ARTIFACT: ${{ needs.measure.outputs.artifact_id }}
+          BUILD_ARTIFACT: ${{ needs.prepare.outputs.artifact_id }}
+          BUILD_INDEX_SHA256: ${{ needs.prepare.outputs.index_sha256 }}
+          BUILD_MANIFEST_DIGESTS: ${{ needs.prepare.outputs.manifest_digests }}
         run: |
           uv run --no-project python scripts/bench/publication.py \
             --plan "$RUNNER_TEMP/trusted-plan/plan.json" \
             --plan-artifact-id "$PLAN_ARTIFACT" --result-artifact-id "$RESULT_ARTIFACT" \
+            --build-artifact-id "$BUILD_ARTIFACT" --index-sha256 "$BUILD_INDEX_SHA256" \
             --results "$RUNNER_TEMP/untrusted-results/benchmark-results.json" \
             --out "$RUNNER_TEMP/validated/pr-comment.md"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

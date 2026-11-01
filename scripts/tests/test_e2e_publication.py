@@ -25,6 +25,7 @@ def fixture():
     config = json.dumps({'schema_version': 1, 'id': 'fixture', 'metric_contract': 1,
                          'tiers': {'pr': {'warmups': 1, 'repetitions': 3, 'cases': [case]}}}).encode()
     expected = {'revisions': {'base': 'a' * 40, 'head': 'b' * 40, 'merge': 'c' * 40, 'harness': 'd' * 40},
+                'artifacts': {'id': 456, 'index_sha256': '2' * 64, 'plan_sha256': '3' * 64},
                 'provenance': {'workflow': publication.bench.WORKFLOW, 'workflow_file': publication.bench.WORKFLOW_FILE,
                                'run_id': '123', 'run_attempt': '1', 'event': 'workflow_run',
                                'ref': 'refs/heads/main', 'pr_number': 7, 'request_run_id': 99}}
@@ -43,7 +44,8 @@ def fixture():
                         'order': order, 'status': 'complete', 'exit_code': 0, 'reason': None,
                         'metrics': {'e2e_s': 3.0, 'prove_s': 1.0, 'setup_s': 1.0, 'verify_s': 0.1,
                                     'verify_single_s': 0.2, 'process_s': 4.0, 'peak_rss_bytes': 4096,
-                                    'proof_bytes': 12, 'trace_rows': 4, 'padded_trace_rows': 8}})
+                                    'proof_bytes': 12, 'trace_rows': 4, 'padded_trace_rows': 8,
+                                    'public_output': [42]}})
     measured = copy.deepcopy(case)
     measured.update(cpu_ids=[2], status='complete', reason=None, samples=samples)
     measured['input']['sha256'] = '1' * 64
@@ -52,9 +54,11 @@ def fixture():
               'suite': {'id': 'fixture', 'metric_contract': 1, 'config_sha256': hashlib.sha256(config).hexdigest(),
                         'warmups': 1, 'repetitions': 3, 'selected_cases': []},
               'builds': builds, 'host': {'topology': [{'cpu': 2, 'core': 0, 'socket': 0, 'online': True}]},
-              'wall_time': {'scope': 'sequential-build-preparation-through-results-on-this-host',
-                            'build_s': 10.0, 'benchmark_s': 30.0, 'total_s': 40.0},
+              'wall_time': {'scope': publication.ci.RUN_ONLY_SCOPE,
+                            'build_s': 0, 'benchmark_s': 30.0, 'total_s': 40.0},
               'cases': [measured]}
+    expected['manifest_digests'] = {build['revision']: publication.ci.manifest_digest(
+        {key: value for key, value in build.items() if key != 'leg'}) for build in builds}
     return result, expected, config
 
 
@@ -76,13 +80,14 @@ class E2ePublicationTests(unittest.TestCase):
         result['host']['topology'] = [{'cpu': cpu, 'core': cpu, 'socket': 0, 'online': True}
                                      for cpu in range(24)]
         for build in result['builds']:
-            build.update(profile='bench-off16', profile_config={
-                'inherits': 'release', 'lto': 'off', 'codegen-units': 16})
+            build.update(profile='release', profile_config={'lto': 'fat', 'debug': 1})
             build['binaries'] = {'akita': {'path': '/do/not/open/this', 'sha256': '0' * 64}}
             build['guests'] = {case['workload']: {'inputs': {
                 str(case['input']['parameters']['operations']): {'sha256': '1' * 64}}}
                 for case in result['cases']}
         result['builds'][0]['binaries']['dory'] = {'path': '/do/not/open/this/either', 'sha256': '2' * 64}
+        expected['manifest_digests'] = {build['revision']: publication.ci.manifest_digest(
+            {key: value for key, value in build.items() if key != 'leg'}) for build in result['builds']}
         self.assertIs(publication.validate(result, expected, config), result)
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'comment.md'
@@ -93,8 +98,8 @@ class E2ePublicationTests(unittest.TestCase):
                 self.assertIn(f'| {workload} / akita | {cores} | 3.000000 / 3.000000 | +0.00% |', text)
             self.assertNotIn(' / dory |', text)
             self.assertIn('Shared harness: `' + 'd' * 40 + '`', text)
-            self.assertIn('Prover profiles: base `bench-off16`; head `bench-off16`.', text)
-        for key, value in [('profile', 'release'), ('profile_config', {'lto': 'fat'})]:
+            self.assertIn('Prover profiles: base `release`; head `release`.', text)
+        for key, value in [('profile', 'ci'), ('profile_config', {'lto': 'off'})]:
             changed = copy.deepcopy(result)
             changed['builds'][1][key] = value
             with self.subTest(mismatch=key), self.assertRaisesRegex(ValueError, key):
@@ -164,6 +169,8 @@ class E2ePublicationTests(unittest.TestCase):
             approved.update(calibration=calibration, calibration_sha256=result['suite']['calibration_sha256'])
             config = json.dumps(approved).encode()
             result['suite']['config_sha256'] = hashlib.sha256(config).hexdigest()
+            expected['manifest_digests'] = {build['revision']: publication.ci.manifest_digest(
+                {key: value for key, value in build.items() if key != 'leg'}) for build in result['builds']}
             publication.validate(result, expected, config)
             publication.bench.render_comment(result, output)
             text = output.read_text()
@@ -239,6 +246,12 @@ class E2ePublicationTests(unittest.TestCase):
         result, expected, config = fixture()
         variants = []
         changed = copy.deepcopy(result)
+        changed['artifacts']['id'] = 457
+        variants.append(changed)
+        changed = copy.deepcopy(result)
+        changed['builds'][0]['guests']['fibonacci']['inputs']['1']['sha256'] = 'f' * 64
+        variants.append(changed)
+        changed = copy.deepcopy(result)
         changed['revisions']['head'] = 'f' * 40
         variants.append(changed)
         changed = copy.deepcopy(result)
@@ -264,6 +277,9 @@ class E2ePublicationTests(unittest.TestCase):
         variants.append(changed)
         changed = copy.deepcopy(result)
         changed['cases'][0]['samples'][0]['metrics']['e2e_s'] = float('nan')
+        variants.append(changed)
+        changed = copy.deepcopy(result)
+        changed['cases'][0]['samples'][0]['metrics']['public_output'] = [256]
         variants.append(changed)
         changed = copy.deepcopy(result)
         changed['cases'][0]['samples'][0]['status'] = 'failed'
@@ -306,8 +322,10 @@ class E2ePublicationTests(unittest.TestCase):
         with patch.dict(publication.os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
                 patch.object(publication.ci, 'github', side_effect=github):
             with self.assertRaises(FileNotFoundError):
-                publication.expected_from_github(plan, 10, 20)
+                publication.expected_from_github(plan, argparse.Namespace(
+                    plan_artifact_id=10, build_artifact_id=30, result_artifact_id=20))
 
 
 if __name__ == '__main__':
     unittest.main()
+import argparse

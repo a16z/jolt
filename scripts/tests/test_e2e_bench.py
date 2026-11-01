@@ -117,10 +117,12 @@ class E2eBenchTests(unittest.TestCase):
         case = {'workload': 'fibonacci', 'pcs': 'dory', 'scale_log2': 3}
         values = dict(case, backend='optimized', e2e_s=3.0, prove_s=1.0, setup_s=1.0,
                       verify_s=0.1, verify_single_s=0.1, proof_bytes=12,
-                      trace_rows=4, padded_trace_rows=8)
+                      trace_rows=4, padded_trace_rows=8, public_output=[0, 255])
         self.assertEqual(bench.validate_metrics(values, case)['trace_rows'], 4)
+        self.assertEqual(bench.validate_metrics(values, case)['public_output'], [0, 255])
         for update in ({'e2e_s': float('nan')}, {'e2e_s': 0.5}, {'padded_trace_rows': 4},
-                       {'padded_trace_rows': 7}, {'backend': 'reference'}, {'proof_bytes': 0}):
+                       {'padded_trace_rows': 7}, {'backend': 'reference'}, {'proof_bytes': 0},
+                       {'public_output': [256]}, {'public_output': [True]}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 bench.validate_metrics(dict(values, **update), case)
 
@@ -170,7 +172,7 @@ assert '--guest-elf' in sys.argv and '--input-file' in sys.argv
 path = Path(sys.argv[sys.argv.index('--result-json') + 1])
 path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optimized', scale_log2=3,
     e2e_s=0.003, prove_s=0.001, setup_s=0.001, verify_s=0.0001, verify_single_s=0.0001,
-    proof_bytes=12, trace_rows=4, padded_trace_rows=8)))
+    proof_bytes=12, trace_rows=4, padded_trace_rows=8, public_output=[42])))
 ''')
             binary.chmod(0o700)
             failure = root / 'failure'
@@ -211,6 +213,7 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
             self.assertEqual([s['exit_code'] for s in samples if s['leg'] == 'head'], [7, 7, 7])
             self.assertTrue(all(s['metrics'] is None for s in samples if s['leg'] == 'head'))
             self.assertTrue(all(s['metrics']['peak_rss_bytes'] > 0 for s in samples if s['leg'] == 'base'))
+            self.assertTrue(all(s['metrics']['public_output'] == [42] for s in samples if s['leg'] == 'base'))
             self.assertEqual(result['wall_time']['scope'], 'prebuilt-execution-only')
             self.assertIn('| failed |', (args.out / 'pr-comment.md').read_text())
 
@@ -240,6 +243,7 @@ class BuildCacheTests(unittest.TestCase):
         self.workspace = self.root / 'action-workspace'
         self.workspace.mkdir()
         self.compiles = []
+        self.compile_envs = []
         self.prepares = []
         files = {
             '.gitignore': '/target/\n',
@@ -280,6 +284,8 @@ class BuildCacheTests(unittest.TestCase):
             if argv[0] == 'cargo':
                 self.assertEqual(argv, ['cargo', '--version'])
                 return 'cargo fixture'
+            if argv[0] == 'rustup':
+                return 'rust-src\nrustc-fixture'
             return subprocess.check_output(argv, cwd=cwd or self.workspace, env=env, text=True).strip()
 
         def logged(argv, cwd, env, log):
@@ -292,8 +298,11 @@ class BuildCacheTests(unittest.TestCase):
                 return
             if argv[:2] == ['cargo', 'build']:
                 self.compiles.append(argv)
-                self.assertEqual(Path(argv[argv.index('--target-dir') + 1]), cwd / 'target')
-                target = cwd / 'target' / argv[argv.index('--target') + 1] / argv[argv.index('--profile') + 1]
+                self.compile_envs.append(env)
+                target_dir = Path(argv[argv.index('--target-dir') + 1])
+                expected = cwd / ('target/host-tools' if '--bin' in argv and 'jolt' in argv else 'target')
+                self.assertEqual(target_dir, expected)
+                target = target_dir / argv[argv.index('--target') + 1] / argv[argv.index('--profile') + 1]
                 target.mkdir(parents=True, exist_ok=True)
                 for name in (argv[index + 1] for index, arg in enumerate(argv) if arg == '--bin'):
                     (target / name).write_text('owned compiler output fixture: ' + argv[-1])
@@ -452,15 +461,18 @@ class BuildCacheTests(unittest.TestCase):
                          ['jolt', 'jolt-prover'])
         for argv in self.compiles:
             self.assertIn('--message-format=json', argv)
-        self.assertNotIn('--features', self.compiles[0])
+        self.assertNotIn('RUSTFLAGS', self.compile_envs[0])
+        self.assertEqual(self.compiles[0][-2:], ['--features', 'jolt-prover/profiling'])
         self.assertEqual(self.compiles[1][-2:], ['--features', 'profiling,akita'])
+        self.assertEqual(self.compile_envs[1]['RUSTFLAGS'], '-C target-cpu=x86-64')
         self.assertEqual([argv[argv.index('--profile') + 1] for argv in self.compiles], ['ci', 'release'])
         self.assertEqual(partial['guest_builder_profile'], 'ci')
         self.assertEqual(partial['profile'], 'release')
-        self.assertEqual(self.prepares[0][0][0], str(self.root / 'pr/jolt-prover-akita'))
-        cli = bench.cache_root() / 'builds/x86-64/release/source/target/x86_64-unknown-linux-gnu/ci/jolt'
+        cli = bench.cache_root() / 'builds/x86-64/release/source/target/host-tools/x86_64-unknown-linux-gnu/ci/jolt'
+        self.assertEqual(self.prepares[0][0][0], str(cli.with_name('jolt-prover')))
         self.assertEqual(self.prepares[0][1], str(cli))
         self.assertEqual(partial['guest_builder_sha256'], bench.sha256(cli))
+        self.assertEqual(partial['guest_preparer_sha256'], bench.sha256(cli.with_name('jolt-prover')))
         partial_path = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
         partial_bytes = partial_path.read_bytes()
         self.compiles.clear()
@@ -471,46 +483,22 @@ class BuildCacheTests(unittest.TestCase):
         self.assertEqual(len(list((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))), 2)
         self.assertEqual(partial_path.read_bytes(), partial_bytes)
 
-    def test_pr_profile_uses_pinned_settings_without_changing_cli_or_old_source(self):
-        definition = {'inherits': 'release', 'lto': 'off', 'codegen-units': 16}
-        root_manifest = self.workspace / 'Cargo.toml'
-        root_manifest.write_text(root_manifest.read_text() + '\n[profile.bench-off16]\n'
-                                 'inherits = "release"\nlto = "off"\ncodegen-units = 16\n')
-        self.git('add', 'Cargo.toml')
-        self.commit()
-        harness = self.git('rev-parse', 'HEAD')
-        options = {'tier': 'pr', 'profile': 'bench-off16', 'harness_revision': harness}
-        manifest, _ = self.build('pr-profile', **options)
-        self.assertEqual(manifest['profile_config'], definition)
-        for key, value in [('profile', 'release'), ('profile_config', {'lto': 'fat'})]:
+    def test_release_settings_are_recorded_without_profile_overrides(self):
+        manifest, _ = self.build('release', tier='pr')
+        self.assertEqual(manifest['profile_config'], {'lto': 'fat', 'debug': 1})
+        for argv in self.compiles:
+            self.assertNotIn('--config', argv)
+        for key, value in [('profile', 'ci'), ('profile_config', {'lto': 'off'})]:
             with self.subTest(paired_mismatch=key), \
                     patch.object(bench, 'provenance', return_value=({'run_id': None}, {})), \
                     self.assertRaisesRegex(ValueError, key):
                 bench.result_envelope(argparse.Namespace(context=None), {}, {}, {
                     'base': (None, manifest), 'head': (None, dict(manifest, **{key: value}))})
-        cli, prover = self.compiles
-        self.assertEqual(cli[cli.index('--profile') + 1], 'ci')
-        self.assertNotIn('--config', cli)
-        self.assertEqual(prover[prover.index('--profile') + 1], 'bench-off16')
-        settings = [prover[index + 1] for index, arg in enumerate(prover) if arg == '--config']
-        self.assertEqual(settings, ['profile.bench-off16.inherits="release"',
-                                    'profile.bench-off16.lto="off"',
-                                    'profile.bench-off16.codegen-units=16'])
-        source = bench.cache_root() / 'builds/x86-64/bench-off16/source'
-        self.assertEqual(bench.tomllib.loads((source / 'Cargo.toml').read_text())['profile']['release'],
-                         {'lto': 'fat', 'debug': 1})
-        self.assertNotIn('profile.bench-off16', (source / 'Cargo.toml').read_text())
-        self.assertIn('/ci/jolt', self.prepares[0][1])
         self.compiles.clear()
-        repeated, receipt = self.build('pr-profile-reused', **options)
+        repeated, receipt = self.build('reused', tier='pr')
         self.assertEqual(repeated, manifest)
         self.assertEqual(receipt['mode'], 'reused')
         self.assertFalse(self.compiles)
-        release, receipt = self.build('release-profile', tier='main', harness_revision=harness)
-        self.assertEqual(release['profile'], 'release')
-        self.assertEqual(release['profile_config'], {})
-        self.assertEqual(receipt['mode'], 'built')
-        self.assertEqual(len(self.compiles), 3)
 
     def test_completed_store_keeps_eight_bundles_and_preserves_recent_reuse(self):
         cache = bench.cache_root()

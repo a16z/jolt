@@ -1,5 +1,6 @@
 import argparse
 import contextlib
+import copy
 import importlib.util
 import json
 import os
@@ -45,6 +46,25 @@ class E2eCiTests(unittest.TestCase):
                 ci.resolve('workflow_run', {'workflow_run': {'id': 9}}, 'a16z/jolt', 'a' * 40)
         capture.assert_not_called()
 
+    def test_build_only_request_pins_both_merge_parents_without_privileged_resolution(self):
+        event = {'number': 7, 'pull_request': {
+            'base': {'ref': 'main', 'sha': 'a' * 40},
+            'head': {'sha': 'b' * 40, 'repo': {'full_name': 'a16z/jolt'}}}}
+        with patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
+                patch.object(ci, 'github', side_effect=AssertionError('build-only plan needs no token')), \
+                patch.object(ci.bench, 'capture', return_value=' '.join(x * 40 for x in ('c', 'a', 'b'))):
+            harness, runs, number, request = ci.resolve('pull_request', event, 'a16z/jolt', 'c' * 40)
+            self.assertEqual(harness, 'c' * 40)
+            self.assertEqual(runs, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
+            self.assertEqual(number, 7)
+            self.assertIsNone(request)
+            event['pull_request']['base']['sha'] = 'd' * 40
+            with self.assertRaisesRegex(ValueError, 'merge and its parents'):
+                ci.resolve('pull_request', event, 'a16z/jolt', 'c' * 40)
+            event['pull_request']['head']['repo']['full_name'] = 'outside/jolt'
+            with self.assertRaisesRegex(ValueError, 'same-repository'):
+                ci.resolve('pull_request', event, 'a16z/jolt', 'c' * 40)
+
     def test_main_push_keeps_all_new_first_parent_commits_in_event_order(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -80,25 +100,28 @@ class E2eCiTests(unittest.TestCase):
                           'run_id': '123', 'run_attempt': '1', 'event': 'push',
                           'ref': 'refs/heads/main', 'pr_number': None, 'request_run_id': None}
             plan = {'enabled': True, 'tier': 'main', 'harness': 'c' * 40, 'target_cpu': 'znver4',
+                    'config': ci.bench.bundle_file(ci.bench.DEFAULT_CONFIG, ci.bench.ROOT),
                     'reason': None, 'push_before': 'a' * 40, 'push_after': 'c' * 40,
                     'provenance': provenance, 'runs': [
                         {'base': None, 'head': 'b' * 40, 'submitted_head': 'b' * 40},
                         {'base': None, 'head': 'c' * 40, 'submitted_head': 'c' * 40}]}
             plan_path = root / 'plan.json'
             plan_path.write_text(json.dumps(plan))
-            args = argparse.Namespace(plan=plan_path, out=root / 'artifact')
-            def suite(options):
+            args = argparse.Namespace(plan=plan_path, out=root / 'artifact', artifact_id=456, index_sha256='1' * 64)
+            def run(options):
                 self.assertEqual(options.context['provenance'], provenance)
-                self.assertEqual(options.profile, 'release')
-                ci.bench.write_json(options.out / 'benchmark-results.json',
-                                    {'fixture_revision': options.head_revision})
-                return {'status': 'complete'}
+                return {'status': 'complete', 'fixture_revision': options.head.parent.name,
+                        'wall_time': {'benchmark_s': 0}}
             with patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
                     patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
                     patch.object(ci.bench, 'capture') as capture, \
+                    patch.object(ci.bench, 'build', side_effect=AssertionError('target must not build')), \
+                    patch.object(ci, 'verified_bundles', return_value={
+                        rev * 40: root / (rev * 40) / 'manifest.json' for rev in ('b', 'c')}), \
                     patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
-                    patch.object(ci.bench, 'suite', side_effect=suite) as measured:
+                    patch.object(ci.bench, 'run', side_effect=run) as measured:
                 self.assertEqual(ci.execute(args), 0)
+                capture.assert_not_called()
                 capture.reset_mock()
                 measured.reset_mock()
                 for name, value in [('GITHUB_RUN_ID', '124'), ('GITHUB_RUN_ATTEMPT', '2')]:
@@ -125,13 +148,15 @@ class E2eCiTests(unittest.TestCase):
             self.assertTrue(all(c['status'] == 'missing' and not c['samples'] for c in result['cases']))
             self.assertIsNone(result['wall_time']['total_s'])
 
-    def test_only_pr_selects_the_measured_off16_profile(self):
+    def test_hosted_preparation_uses_release_for_every_tier_and_never_proves(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            for tier, profile in [('pr', 'bench-off16'), ('main', 'release'), ('nightly', 'release')]:
+            for tier in ('pr', 'main', 'nightly'):
                 with self.subTest(tier=tier):
                     plan = {'enabled': True, 'tier': tier, 'harness': 'c' * 40,
                             'target_cpu': 'znver4', 'reason': None,
+                            'config': ci.bench.bundle_file(ci.bench.DEFAULT_CONFIG, ci.bench.ROOT),
+                            'expected_builds': {'a' * 40: {}, 'b' * 40: {}},
                             'push_before': None, 'push_after': 'b' * 40,
                             'provenance': {'workflow': ci.bench.WORKFLOW,
                                 'workflow_file': ci.bench.WORKFLOW_FILE,
@@ -143,22 +168,36 @@ class E2eCiTests(unittest.TestCase):
                                       'head': 'b' * 40, 'submitted_head': ('d' if tier == 'pr' else 'b') * 40}]}
                     plan_path = root / 'plan.json'
                     plan_path.write_text(json.dumps(plan))
+                    built = []
+                    def build(options):
+                        self.assertEqual(options.profile, 'release')
+                        self.assertEqual(options.target_cpu, 'znver4')
+                        self.assertEqual(options.harness_revision, 'c' * 40)
+                        built.append(options.revision)
+                        manifest = {'status': 'complete', 'revision': options.revision}
+                        ci.bench.write_json(options.out / 'manifest.json', manifest)
+                        return manifest
                     with patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
                             patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
                             patch.object(ci.bench, 'capture'), \
                             patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
-                            patch.object(ci.bench, 'suite', return_value={'status': 'complete'}) as suite:
-                        self.assertEqual(ci.execute(argparse.Namespace(plan=plan_path, out=root / tier)), 0)
-                    self.assertEqual(suite.call_args.args[0].profile, profile)
+                            patch.object(ci.bench, 'run', side_effect=AssertionError('builder must not prove')), \
+                            patch.object(ci.bench, 'build', side_effect=build):
+                        ci.prepare(argparse.Namespace(plan=plan_path, out=root / tier))
+                    index = json.loads((root / tier / 'builds.json').read_text())
+                    self.assertEqual(built, ['a' * 40, 'b' * 40])
+                    self.assertEqual(index['plan_sha256'], ci.bench.sha256(plan_path))
+                    self.assertEqual(set(index['builds']), set(built))
                     argv = ['run.py', 'suite', '--tier', tier, '--head-revision', 'b' * 40,
                             '--harness-revision', 'c' * 40, '--target-cpu', 'znver4', '--out', str(root)]
                     with patch.object(sys, 'argv', argv):
-                        self.assertEqual(ci.bench.parse_args().profile, profile)
+                        self.assertEqual(ci.bench.parse_args().profile, 'release')
 
     def test_interrupted_batch_closes_partial_documents_and_keeps_missing_tip_explicit(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            plan = {'tier': 'main', 'harness': 'c' * 40, 'provenance': {}, 'runs': [
+            plan = {'tier': 'main', 'harness': 'c' * 40, 'provenance': {},
+                    'config': ci.bench.bundle_file(ci.bench.DEFAULT_CONFIG, ci.bench.ROOT), 'runs': [
                 {'base': None, 'head': 'b' * 40, 'submitted_head': 'b' * 40},
                 {'base': None, 'head': 'c' * 40, 'submitted_head': 'c' * 40}]}
             plan_path = root / 'plan.json'
@@ -173,6 +212,125 @@ class E2eCiTests(unittest.TestCase):
             self.assertEqual(tip['revisions']['head'], 'c' * 40)
             self.assertEqual(tip['status'], 'incomplete')
             self.assertTrue(all(case['status'] == 'missing' for case in tip['cases']))
+
+    def test_run_only_verifies_planned_artifacts_before_launch_and_never_builds(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / 'scripts/bench/suites.json'
+            config = {'schema_version': 1, 'metric_contract': 1, 'id': 'owned-fixture',
+                'tiers': {'pr': {'warmups': 0, 'repetitions': 1, 'cases': [{
+                    'id': 'owned-case', 'workload': 'fibonacci', 'pcs': 'akita', 'backend': 'optimized',
+                    'physical_cores': 1, 'scale_log2': 3,
+                    'input': {'parameters': {'operations': 1}, 'seed': None}}]}}}
+            ci.bench.write_json(config_path, config)
+            script = Path(ci.bench.__file__)
+            common = {'schema_version': 1, 'harness_revision': 'c' * 40, 'status': 'complete',
+                'toolchain': 'fixture', 'cargo_version': 'fixture', 'profile': 'release',
+                'profile_config': {'lto': 'fat'}, 'guest_builder_profile': 'ci', 'guest_builder_rustflags': '',
+                'target_cpu': 'znver4', 'target_triple': 'x86_64-unknown-linux-gnu',
+                'target_features': [], 'rustflags': '-C target-cpu=znver4',
+                'source_cargo_lock_sha256': '0' * 64, 'cargo_lock_sha256': '0' * 64,
+                'harness_files': {}, 'akita_schedules': [], 'suite_config_sha256': ci.bench.sha256(config_path),
+                'runner': {'path': 'scripts/bench/run.py', 'sha256': ci.bench.sha256(script)},
+                'host': {}, 'started_at': '2026-11-01T00:00:00Z', 'finished_at': '2026-11-01T00:00:01Z',
+                'build_s': 1, 'reason': None, 'cache': {}}
+            expected = {}
+            original = {}
+            for revision in ('a' * 40, 'b' * 40):
+                bundle = root / 'bundles' / revision
+                files = {'guests/fibonacci/guest.elf': b'owned guest',
+                         'guests/fibonacci/input-1.bin': b'\x01',
+                         'scripts/bench/run.py': script.read_bytes(),
+                         'scripts/bench/suites.json': config_path.read_bytes()}
+                for name, contents in files.items():
+                    path = bundle / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(contents)
+                binary = bundle / 'jolt-prover-akita'
+                binary.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
+from pathlib import Path
+assert not any(key in os.environ for key in ('GH_TOKEN', 'PIKA_CLI_TOKEN', 'ACTIONS_RUNTIME_TOKEN'))
+assert '--guest-elf' in sys.argv and '--input-file' in sys.argv
+Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
+    'workload': 'fibonacci', 'pcs': 'akita', 'backend': 'optimized', 'scale_log2': 3,
+    'e2e_s': 0.003, 'prove_s': 0.001, 'setup_s': 0.001, 'verify_s': 0.0001,
+    'verify_single_s': 0.0001, 'proof_bytes': 12, 'trace_rows': 4, 'padded_trace_rows': 8,
+    'public_output': [42]}))
+''')
+                binary.chmod(0o644)
+                manifest = dict(common, revision=revision,
+                    binaries={'akita': ci.bench.bundle_file(binary, bundle)},
+                    guests={'fibonacci': {
+                        'elf': ci.bench.bundle_file(bundle / 'guests/fibonacci/guest.elf', bundle),
+                        'inputs': {'1': ci.bench.bundle_file(bundle / 'guests/fibonacci/input-1.bin', bundle)}}})
+                expected[revision] = {key: manifest[key] for key in (
+                    'revision', 'harness_revision', 'status', 'profile', 'profile_config', 'target_cpu',
+                    'rustflags', 'source_cargo_lock_sha256', 'harness_files', 'runner', 'suite_config_sha256')}
+                original[revision] = manifest
+                ci.bench.write_json(bundle / 'manifest.json', manifest)
+            plan = {'enabled': True, 'tier': 'pr', 'target_cpu': 'znver4', 'harness': 'c' * 40,
+                'push_before': None, 'config': ci.bench.bundle_file(config_path, root),
+                'provenance': {'run_id': None, 'run_attempt': None}, 'expected_builds': expected,
+                'runs': [{'base': 'a' * 40, 'head': 'b' * 40, 'submitted_head': 'd' * 40}]}
+            plan_path = root / 'plan.json'
+            ci.bench.write_json(plan_path, plan)
+            index_path = root / 'bundles/builds.json'
+            index = {'plan_sha256': ci.bench.sha256(plan_path), 'builds': {
+                rev: ci.bench.bundle_file(root / 'bundles' / rev / 'manifest.json', root / 'bundles')
+                for rev in original}}
+            ci.bench.write_json(index_path, index)
+            args = argparse.Namespace(plan=plan_path, bundles=index_path.parent, artifact_id=456,
+                                      index_sha256=ci.bench.sha256(index_path), out=root / 'result')
+            with patch.object(ci.bench, 'ROOT', root), \
+                    patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
+                    patch.object(ci.bench, 'capture', side_effect=AssertionError('target must not fetch or compile')), \
+                    patch.object(ci.bench, 'build', side_effect=AssertionError('target must not build')), \
+                    patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
+                    patch.dict(os.environ, {'GITHUB_RUN_ID': '', 'GITHUB_RUN_ATTEMPT': '',
+                        'GH_TOKEN': 'owned fixture', 'PIKA_CLI_TOKEN': 'owned fixture',
+                        'ACTIONS_RUNTIME_TOKEN': 'owned fixture'}):
+                manifest_path = root / 'bundles' / ('b' * 40) / 'manifest.json'
+                for key, value in [('revision', 'e' * 40), ('harness_revision', 'e' * 40),
+                        ('profile', 'ci'), ('target_cpu', 'native'), ('source_cargo_lock_sha256', 'f' * 64),
+                        ('guests', {})]:
+                    changed = copy.deepcopy(original['b' * 40])
+                    changed[key] = value
+                    ci.bench.write_json(manifest_path, changed)
+                    changed_index = copy.deepcopy(index)
+                    changed_index['builds']['b' * 40]['sha256'] = ci.bench.sha256(manifest_path)
+                    ci.bench.write_json(index_path, changed_index)
+                    args.index_sha256 = ci.bench.sha256(index_path)
+                    with self.subTest(key=key), patch.object(ci.bench, 'run') as run:
+                        with self.assertRaises((ValueError, KeyError)):
+                            ci.execute(args)
+                        run.assert_not_called()
+                ci.bench.write_json(manifest_path, original['b' * 40])
+                ci.bench.write_json(index_path, index)
+                args.index_sha256 = ci.bench.sha256(index_path)
+                input_path = manifest_path.parent / 'guests/fibonacci/input-1.bin'
+                input_path.write_bytes(b'wrong input')
+                with patch.object(ci.bench, 'run') as run:
+                    with self.assertRaisesRegex(ValueError, 'hash mismatch'):
+                        ci.execute(args)
+                    run.assert_not_called()
+                input_path.write_bytes(b'\x01')
+                args.index_sha256 = '0' * 64
+                with patch.object(ci.bench, 'run') as run:
+                    with self.assertRaisesRegex(ValueError, 'hosted job output'):
+                        ci.execute(args)
+                    run.assert_not_called()
+                args.index_sha256 = ci.bench.sha256(index_path)
+                cpu = min(os.sched_getaffinity(0))
+                host = {'architecture': 'x86_64', 'cpu_flags': [],
+                        'topology': [{'cpu': cpu, 'core': 0, 'socket': 0, 'online': True}]}
+                with patch.object(ci.bench, 'host_snapshot', return_value=host):
+                    self.assertEqual(ci.execute(args), 0)
+            result = json.loads((args.out / 'benchmark-results.json').read_text())
+            self.assertEqual(result['status'], 'complete')
+            self.assertEqual(result['wall_time']['build_s'], 0)
+            self.assertEqual(result['wall_time']['scope'], ci.RUN_ONLY_SCOPE)
+            self.assertEqual(result['artifacts']['id'], 456)
+            self.assertEqual(len(result['cases'][0]['samples']), 2)
 
 
 if __name__ == '__main__':
