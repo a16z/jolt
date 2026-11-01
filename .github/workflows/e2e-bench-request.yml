@@ -71,9 +71,24 @@ jobs:
         with:
           components: rust-src
           cache: false
+      - name: Add 24 GB of swap for release linking
+        shell: bash
+        run: |
+          available_bytes=$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1)
+          if ! [ "$available_bytes" -ge 40000000000 ]; then
+            echo "Need 40 GB free for 24 GB swap and 16 GB build space; found $available_bytes bytes" >&2
+            exit 1
+          fi
+          swap_file=$(mktemp "$RUNNER_TEMP/jolt-build-swap.XXXXXX")
+          sudo chown root:root "$swap_file"
+          sudo fallocate -l 24000000000 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
+          free -b
+          swapon --show --bytes
       - name: Build artifacts without target execution or credentials
         id: prepare
-        run: uv run --no-project python scripts/bench/ci.py prepare --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-builds"
+        run: /usr/bin/time -v uv run --no-project python scripts/bench/ci.py prepare --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-builds"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
