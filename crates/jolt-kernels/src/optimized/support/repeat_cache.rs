@@ -45,6 +45,10 @@ impl<V> RepeatCache<V> {
     pub(crate) fn clear(&mut self) {
         self.slots.iter_mut().for_each(|slot| *slot = None);
     }
+
+    pub(crate) fn drain(&mut self) -> impl Iterator<Item = V> + '_ {
+        self.slots.iter_mut().filter_map(Option::take)
+    }
 }
 
 impl RepeatCache<NonZeroU16> {

@@ -77,7 +77,8 @@ use super::instruction_read_raf::InstructionCycleRow;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::support::{
     bind_all, eq_table, gamma_powers, map_reduce_chunks, merge_evals, pair, par_sum_pair_groups,
-    par_sum_pair_groups_reusing, round_poly_from_skipped_evals, RoundProgress,
+    par_sum_pair_groups_reusing, repeat_hash, repeats_often, round_poly_from_skipped_evals,
+    RepeatCache, RoundProgress,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -1064,8 +1065,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
     }
 }
 
-/// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC,
-/// cold on unmapped cycles, off the shared stage-5 rows.
+/// Lazy-RA index source: chunk `i` of the per-cycle mapped bytecode PC, off
+/// the shared stage-5 rows.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct BytecodePcChunks {
     rows: Arc<ConstantSuffix<InstructionCycleRow>>,
@@ -1074,51 +1075,28 @@ struct BytecodePcChunks {
     selectors: Vec<RaChunkSelector>,
 }
 
-const CYCLE_GROUP_CACHE_SLOTS: usize = 256;
-const CYCLE_GROUP_BATCH: usize = 4096;
+/// Groups per map-reduce task; repeated groups merge only within one task.
+const CYCLE_CHUNK: usize = 4096;
+/// Distinct groups the merge cache holds, and the sampled block length.
+const CYCLE_GROUP_ENTRIES: usize = 64;
 
 impl BytecodePcChunks {
+    /// Every column index is a function of this PC alone, so equal PC tuples
+    /// select equal RA factors.
     #[inline]
-    fn group_slot(&self, y: usize, width: usize) -> usize {
-        let mut hash = 0x9e37_79b9_7f4a_7c15u64;
-        for offset in 0..2 * width {
-            hash = (hash ^ self.rows[2 * width * y + offset].bytecode_pc() as u64)
-                .wrapping_mul(0xbf58_476d_1ce4_e5b9);
-            hash ^= hash >> 31;
-        }
-        (hash as usize) & (CYCLE_GROUP_CACHE_SLOTS - 1)
+    fn pc(&self, j: usize) -> usize {
+        self.rows[j].bytecode_pc()
+    }
+
+    #[inline]
+    fn group_hash(&self, y: usize, width: usize) -> u64 {
+        repeat_hash((2 * width * y..2 * width * (y + 1)).map(|j| self.pc(j) as u64))
     }
 
     #[inline]
     fn same_group(&self, left: usize, right: usize, width: usize) -> bool {
-        (0..2 * width).all(|offset| {
-            self.rows[2 * width * left + offset].bytecode_pc()
-                == self.rows[2 * width * right + offset].bytecode_pc()
-        })
-    }
-
-    fn repeats_often(&self, groups: usize, width: usize) -> bool {
-        const SAMPLE_BLOCKS: usize = 32;
-        const SAMPLE_GROUPS: usize = 64;
-        if groups < CYCLE_GROUP_BATCH {
-            return false;
-        }
-        let blocks = groups.div_ceil(SAMPLE_GROUPS);
-        let mut cache = vec![None; CYCLE_GROUP_CACHE_SLOTS];
-        let mut hits = 0;
-        let mut samples = 0;
-        for sample in 0..SAMPLE_BLOCKS {
-            cache.fill(None);
-            let start = (sample * blocks / SAMPLE_BLOCKS) * SAMPLE_GROUPS;
-            for y in start..(start + SAMPLE_GROUPS).min(groups) {
-                let slot = self.group_slot(y, width);
-                hits += usize::from(cache[slot].is_some_and(|old| self.same_group(old, y, width)));
-                cache[slot] = Some(y);
-                samples += 1;
-            }
-        }
-        // Sampling only chooses the evaluation algorithm. Both paths are exact.
-        4 * hits >= samples
+        (0..2 * width)
+            .all(|offset| self.pc(2 * width * left + offset) == self.pc(2 * width * right + offset))
     }
 }
 
@@ -1136,7 +1114,7 @@ impl ChunkIndexSource for BytecodePcChunks {
 
     #[inline]
     fn index(&self, i: usize, j: usize) -> Option<usize> {
-        Some(self.selectors[i].chunk_usize(self.rows[j].bytecode_pc()))
+        Some(self.selectors[i].chunk_usize(self.pc(j)))
     }
 }
 
@@ -1247,7 +1225,12 @@ impl<F: JoltField> CycleKernel<F> {
             return None;
         };
         let width = *width;
-        if width > 8 || !source.repeats_often(half, width) {
+        if !repeats_often(
+            half,
+            CYCLE_GROUP_ENTRIES,
+            |y| source.group_hash(y, width),
+            |a, b| source.same_group(a, b, width),
+        ) {
             return None;
         }
         // Equal ordered PC tuples have identical RA factors at this round. Only
@@ -1256,15 +1239,15 @@ impl<F: JoltField> CycleKernel<F> {
         // is local to this call, so it cannot survive a binding challenge.
         Some(map_reduce_chunks(
             half,
-            CYCLE_GROUP_BATCH,
+            CYCLE_CHUNK,
             |range| {
                 let mut acc = vec![F::zero(); self.degree];
                 let mut pairs = vec![(F::zero(), F::zero()); self.ra.num_polys()];
-                let mut cache: Vec<Option<(usize, [F; 3])>> = vec![None; CYCLE_GROUP_CACHE_SLOTS];
+                let mut cache = RepeatCache::<(usize, [F; 3])>::new(CYCLE_GROUP_ENTRIES);
                 for y in range {
-                    let slot = source.group_slot(y, width);
+                    let entry = cache.entry(source.group_hash(y, width));
                     let coefficients = self.coefficient(y);
-                    if let Some((old, sum)) = &mut cache[slot] {
+                    if let Some((old, sum)) = entry {
                         if source.same_group(*old, y, width) {
                             for (sum, value) in sum
                                 .iter_mut()
@@ -1277,9 +1260,9 @@ impl<F: JoltField> CycleKernel<F> {
                         }
                         self.accumulate_coefficient(*old, *sum, &mut acc, &mut pairs);
                     }
-                    cache[slot] = Some((y, coefficients));
+                    *entry = Some((y, coefficients));
                 }
-                for (y, coefficients) in cache.into_iter().flatten() {
+                for (y, coefficients) in cache.drain() {
                     self.accumulate_coefficient(y, coefficients, &mut acc, &mut pairs);
                 }
                 acc
@@ -2206,12 +2189,12 @@ mod grouped_cycle_tests {
                 .map(|i| RaChunkSelector::new(i, 2, 4).unwrap())
                 .collect(),
         };
-        let mut slots = [None; CYCLE_GROUP_CACHE_SLOTS];
+        let mut cache = RepeatCache::new(CYCLE_GROUP_ENTRIES);
         let mut collision = false;
         for y in 0..31 {
-            let slot = source.group_slot(y, 1);
-            collision |= slots[slot].is_some_and(|old| !source.same_group(old, y, 1));
-            slots[slot] = Some(y);
+            let entry = cache.entry(source.group_hash(y, 1));
+            collision |= entry.is_some_and(|old| !source.same_group(old, y, 1));
+            *entry = Some(y);
         }
         assert!(
             collision,
