@@ -140,10 +140,10 @@ setup advice and altered public output are rejected. The runner refuses to
 replace an existing result directory.
 
 The current replay verifies a saved proof for a `2^30`-cycle execution in
-**962,155,421 complete-guest cycles**, padded to `2^30`: 792,594,087 in Akita,
-117,689,399 in other Jolt verification, and 51,871,935 in transport, output
+**962,012,241 complete-guest cycles**, padded to `2^30`: 792,449,500 in Akita,
+117,690,729 in other Jolt verification, and 51,872,012 in transport, output
 and cleanup. Relative to the original 12,684,355,371-cycle complete-stack
-measurement, this is 92.41% fewer cycles (13.18x), with the padded verifier
+measurement, this is 92.42% fewer cycles (13.19x), with the padded verifier
 trace falling from `2^34` to `2^30`. These are complete-stack measurements,
 not isolated gains for an individual change.
 

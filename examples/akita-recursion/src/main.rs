@@ -1,4 +1,6 @@
 mod cycle_report;
+#[path = "../guest_build.rs"]
+mod guest_build;
 use cycle_report::{Capture, CycleReport};
 
 use std::{
@@ -13,6 +15,7 @@ use std::{
 
 use akita_types::setup_claims::{SetupBatchStatement, SetupPolynomialId, SetupQuery};
 use clap::{Parser, Subcommand};
+use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_akita::deferred::{InheritedSetupClaims, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
@@ -156,22 +159,19 @@ fn artifacts(
     )?))
 }
 
-fn memory(source: &mut Program) -> MemoryConfig {
-    let (_, _, program_size, _) = source.decode();
-    source.memory_config_with_program_size(program_size)
-}
-
 fn prepare(
     source: &mut Program,
     input: Vec<u8>,
     bound: usize,
+    mut memory: MemoryConfig,
 ) -> Result<(
     Arc<JoltProgram>,
     JoltProgramPreprocessing,
     TraceOutput,
     ProverConfig,
 )> {
-    let memory = memory(source);
+    let (_, _, program_size, _) = source.decode();
+    memory.program_size = Some(program_size);
     let program = Arc::new(source.build_jolt_program()?);
     let trace = TracerBackend::new().trace(
         &program,
@@ -252,7 +252,11 @@ fn generate(
         .ok_or("trace exponent too large")?;
     let iterations = iterations.unwrap_or(u32::try_from((bound * 9 / 10 / 3396).max(1))?);
     let mut source = Program::new("sha2-chain-guest");
-    source.set_heap_size(32768);
+    let memory = MemoryConfig {
+        heap_size: 32768,
+        ..Default::default()
+    };
+    source.set_memory_config(memory);
     let mut preprocessing = None;
     let mut _verifier_resources = None;
     let mut proofs = Vec::new();
@@ -264,7 +268,8 @@ fn generate(
         ]
         .concat();
         let trace_started = Instant::now();
-        let (program, program_preprocessing, trace, config) = prepare(&mut source, input, bound)?;
+        let (program, program_preprocessing, trace, config) =
+            prepare(&mut source, input, bound, memory)?;
         let trace_seconds = trace_started.elapsed().as_secs_f64();
         let trace_rows = trace.dimensions.trace_length;
         let planning_started = Instant::now();
@@ -379,26 +384,21 @@ fn generate(
     Ok(())
 }
 
-fn recursion_source(function: &str) -> Program {
-    let mut source = Program::new("jolt-akita-recursion-guest");
-    source.set_func(function);
-    source.set_std(true);
-    source.set_heap_size(1 << 31);
-    source.set_stack_size(1 << 25);
-    source.set_max_input_size(1 << 26);
-    source.set_max_output_size(1 << 20);
-    source.set_linker_memory_size(1 << 30);
-    source
-}
-
 fn execute_pair(
     function: &str,
     bytes: &[u8],
     directory: &Path,
 ) -> Result<(CycleReport, JoltDevice)> {
-    let mut source = recursion_source(function);
-    let memory = memory(&mut source);
-    let elf = source.elf.as_ref().ok_or("guest did not build")?;
+    let mut memory = MemoryConfig {
+        heap_size: 1 << 31,
+        stack_size: 1 << 25,
+        max_input_size: 1 << 26,
+        max_output_size: 1 << 20,
+        ..Default::default()
+    };
+    let elf = guest_build::build("jolt-akita-recursion-guest", function, &memory, 1 << 30)?;
+    let (_, _, program_end, _) = tracer::decode(elf.bytes());
+    memory.program_size = Some(program_end - RAM_START_ADDRESS);
     fs::write(directory.join(format!("{function}.elf")), elf.bytes())?;
     let inputs = postcard::to_stdvec(bytes)?;
     let capture = Capture::default();
