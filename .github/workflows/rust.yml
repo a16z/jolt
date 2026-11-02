@@ -1048,10 +1048,17 @@ jobs:
   #        build: true
   #        test: true
 
+  # Every distinct guest image costs a fat-LTO guest build, which dominates
+  # these jobs. Independent proof sets therefore run as parallel shards, and
+  # commands that bake the same image run back to back so they share one build.
   test-recursion-akita-guest:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    name: Recursion guest verdicts (Akita, embedded setup)
+    timeout-minutes: 30
+    name: Recursion guest verdicts (Akita, ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [single proof, batch and muldiv, field kernels and parsers]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
@@ -1082,39 +1089,94 @@ jobs:
         with:
           tool: nextest
       - name: Guest parser and setup transport rejection tests
+        if: matrix.shard == 'field kernels and parsers'
         run: |
           cargo nextest run --cargo-profile ci -p recursion --features akita,field-inline,ntt-inline
-          cargo nextest run --cargo-profile ci -p jolt-akita -E 'test(current_setup_encoding_decodes_with_optional_payloads)'
-      - name: Recursion guest verdicts (embedded setup)
+          cargo nextest run --cargo-profile ci -p jolt-akita --lib -E 'test(current_setup_encoding_decodes_with_optional_payloads)'
+      - name: Build the recursion host
+        run: cargo build --locked --profile ci -p recursion --features akita,field-inline,ntt-inline
+      - name: Field kernel differential
+        if: matrix.shard == 'field kernels and parsers'
         env:
           CARGO_BUILD_JOBS: 1
         run: |
-          cargo build --locked --profile ci -p recursion --features akita,field-inline,ntt-inline
+          export JOLT_PATH="$(command -v jolt)"
+          target/ci/recursion check-field-kernels
+      - name: Single-proof verdicts (embedded setup)
+        if: matrix.shard == 'single proof'
+        env:
+          CARGO_BUILD_JOBS: 1
+        run: |
           export JOLT_PATH="$(command -v jolt)"
           recursion=target/ci/recursion
           work="$RUNNER_TEMP/recursion"
-          "$recursion" check-field-kernels
           "$recursion" generate --example fibonacci --workdir "$work/proofs"
           "$recursion" check-input-framing --embed --example fibonacci --workdir "$work/proofs"
-          "$recursion" trace --example fibonacci --workdir "$work/proofs"
-          for target in sumcheck claim output panic empty; do
+          for target in sumcheck claim output panic; do
             "$recursion" tamper --target "$target" --example fibonacci --workdir "$work/proofs" --output "$work/$target"
             "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/$target"
           done
+          "$recursion" tamper-opening --example fibonacci --workdir "$work/proofs" --output "$work/tampered"
+          "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/tampered"
+          "$recursion" tamper --target empty --example fibonacci --workdir "$work/proofs" --output "$work/empty"
+          "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/empty"
+          "$recursion" trace --example fibonacci --workdir "$work/proofs"
+      - name: Batch and muldiv verdicts (embedded setup)
+        if: matrix.shard == 'batch and muldiv'
+        env:
+          CARGO_BUILD_JOBS: 1
+        run: |
+          export JOLT_PATH="$(command -v jolt)"
+          recursion=target/ci/recursion
+          work="$RUNNER_TEMP/recursion"
           "$recursion" generate --example fibonacci --proofs 2 --workdir "$work/two-proofs"
           "$recursion" trace --embed --example fibonacci --workdir "$work/two-proofs"
           "$recursion" tamper --target claim --proof-index 1 --example fibonacci --workdir "$work/two-proofs" --output "$work/two-proofs-tampered"
           "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/two-proofs-tampered"
-          "$recursion" tamper-opening --example fibonacci --workdir "$work/proofs" --output "$work/tampered"
-          "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/tampered"
           "$recursion" generate --example muldiv --workdir "$work/muldiv"
           "$recursion" trace --embed --example muldiv --workdir "$work/muldiv"
+
+  test-recursion-dory-guest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: Recursion guest verdicts (Dory, embedded muldiv)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          shared-key: release-tests
+          save-if: false
+          cache-directories: ~/.cache/dory
+      - name: Cache ZeroOS musl toolchain
+        id: cache-zeroos-musl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.zeroos/musl
+          key: zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64
+      - name: Install ZeroOS musl toolchain
+        if: steps.cache-zeroos-musl.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL https://github.com/LayerZero-Labs/ZeroOS/releases/download/musl-toolchain-musl-1.2.3-gcc-9.4.0/zeroos-musl-toolchain-musl-1.2.3-gcc-9.4.0-Linux-x86_64.tar.gz -o /tmp/zeroos-musl.tar.gz
+          mkdir -p ~/.zeroos
+          tar -xzf /tmp/zeroos-musl.tar.gz -C ~/.zeroos
+      - name: Build and install jolt CLI
+        run: cargo install --path . --locked --force --profile ci --target-dir target
+      - name: Install nextest
+        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: nextest
+      - name: Guest parser tests
+        run: cargo nextest run --cargo-profile ci -p recursion --features field-inline
+      - name: Build the recursion host
+        run: cargo build --locked --profile ci -p recursion --features field-inline
       - name: Embedded muldiv with Dory
         env:
           CARGO_BUILD_JOBS: 1
         run: |
-          cargo nextest run --cargo-profile ci -p recursion --features field-inline
-          cargo build --locked --profile ci -p recursion --features field-inline
           export JOLT_PATH="$(command -v jolt)"
           target/ci/recursion check-field-kernels
           target/ci/recursion generate --example muldiv --workdir "$RUNNER_TEMP/recursion-dory-muldiv"
