@@ -124,6 +124,7 @@ pub struct CudaKernelContext {
     rrv_message_dense: CudaFunction,
     brc_tables_init: CudaFunction,
     brc_gather: CudaFunction,
+    brc_gather_bind: CudaFunction,
     brc_message_sparse: CudaFunction,
     brc_message_dense: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
@@ -360,6 +361,7 @@ impl CudaKernelContext {
             rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
             brc_tables_init: module.load_function("brc_tables_init_kernel")?,
             brc_gather: module.load_function("brc_gather_kernel")?,
+            brc_gather_bind: module.load_function("brc_gather_bind_kernel")?,
             brc_message_sparse: module.load_function("brc_message_sparse_kernel")?,
             brc_message_dense: module.load_function("brc_message_dense_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -775,6 +777,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn brc_gather(&self) -> &CudaFunction {
         &self.brc_gather
+    }
+
+    pub(crate) const fn brc_gather_bind(&self) -> &CudaFunction {
+        &self.brc_gather_bind
     }
 
     pub(crate) const fn brc_message_sparse(&self) -> &CudaFunction {

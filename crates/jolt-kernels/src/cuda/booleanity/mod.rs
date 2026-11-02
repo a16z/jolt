@@ -5,13 +5,15 @@
 //! Packed lookup indices, PCs, and RAM addresses share per-family equality
 //! tables rather than starting with one dense field vector per polynomial.
 //!
-//! CUDA doubles the lookup tables through four binds before gathering dense
-//! cycle values, matching optimized's usual cutoff. Optimized has a categorical
+//! Like optimized, CUDA gathers dense cycle values by the fourth bind, or
+//! earlier when the next lookup-table expansion would use at least as many
+//! field elements as the bound dense columns. The early transition gathers and
+//! binds directly without expanding the tables. CUDA compares each resident
+//! window; optimized compares the whole source. Optimized has a categorical
 //! startup for small alphabets; CUDA uses the packed device evaluator for those
 //! rounds. Local window states are gathered onto GPU 0 for the remaining tail.
-//! Optimized can collapse earlier when dense storage is cheaper, and
-//! handles a constant padding suffix through its aggregate equality weight.
-//! CUDA keeps that suffix in the packed windows and subsequent dense tables.
+//! Optimized handles a constant padding suffix through its aggregate equality
+//! weight. CUDA keeps that suffix in the packed windows and subsequent dense tables.
 //! Dense gathering is launched by selector column; optimized decodes a row's
 //! instruction chunks together before filling the columns.
 

@@ -4,13 +4,14 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
-use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::device::{
+    fr_into, fr_limbs, require_fr, require_fr_slice, DeviceFrVec, LIMBS,
+};
 use crate::cuda::common::device_columns::DeviceTraceColumns;
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::ra_poly::RaMaterialization;
 use crate::cuda::common::split_eq::DeviceSplitEq;
-
-pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
 pub const PACKED_BITS: usize = 32;
 
@@ -191,7 +192,7 @@ impl DeviceBooleanityRa {
         }
         match &self.dense {
             Some(dense) => dense.to_host(),
-            None => self.gather(context)?.to_host(),
+            None => self.gather(context, None)?.to_host(),
         }
     }
 
@@ -233,13 +234,17 @@ impl DeviceBooleanityRa {
     pub fn coefficients(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         match &self.dense {
             Some(dense) => dense.try_clone(),
-            None => self.gather(context),
+            None => self.gather(context, None),
         }
     }
 
-    fn gather(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
+    fn gather(
+        &self,
+        context: &CudaKernelContext,
+        bind: Option<Fr>,
+    ) -> Result<DeviceFrVec, CudaError> {
         let polys = self.polys();
-        let len = self.len();
+        let len = self.len() >> usize::from(bind.is_some());
         let mut out = context.alloc(polys * len)?;
         if len == 0 {
             return Ok(out);
@@ -252,7 +257,11 @@ impl DeviceBooleanityRa {
         let slots = CudaKernelContext::count_of(self.slots())?;
         let bits = CudaKernelContext::count_of(self.chunk_bits)?;
         let count = CudaKernelContext::count_of(len)?;
-        let mut builder = context.stream().launch_builder(context.brc_gather());
+        let mut builder = context.stream().launch_builder(if bind.is_some() {
+            context.brc_gather_bind()
+        } else {
+            context.brc_gather()
+        });
         let _ = builder.arg(self.lookup.as_ref());
         let _ = builder.arg(self.pc.as_ref());
         let _ = builder.arg(self.ram.as_ref());
@@ -265,14 +274,22 @@ impl DeviceBooleanityRa {
         let _ = builder.arg(&bits);
         let _ = builder.arg(out.limbs_mut());
         let _ = builder.arg(&count);
+        let challenge = bind.map(fr_limbs);
+        if let Some(challenge) = &challenge {
+            for limb in challenge {
+                let _ = builder.arg(limb);
+            }
+        }
         // SAFETY: thread `(p = blockIdx.y < polys, j < len)` reads the source column
-        // its family selects at cycle `j * slots + s` for `s < slots` — every such
-        // index is below `len * slots == cycles`, so inside `lookup`'s `2 * cycles`
-        // u64s and `pc`/`ram`'s `cycles` u32s — and, only for a cycle whose word is
-        // not the cold sentinel, `tables[p * slots * addresses + s * addresses + a]`
+        // its family selects at cycle `k * slots + s` for `s < slots`, where k is j
+        // or the pair (2*j, 2*j+1) when binding. Every cycle index is below `cycles`,
+        // so inside `lookup`'s `2 * cycles` u64s and `pc`/`ram`'s `cycles` u32s.
+        // For non-cold cycles it reads `tables[p * slots * addresses + s * addresses + a]`
         // with `a` masked below `addresses`, inside `tables`'s
         // `polys * slots * addresses`. It writes only `out[p * len + j]`, one slot per
-        // (poly, cycle) pair, inside `out`'s `polys * len`.
+        // (poly, cycle) pair, inside `out`'s fresh `polys * len` allocation.
+        // `bind` checks for at least two remaining values before pair gathering;
+        // the challenge is passed by value.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (
@@ -335,10 +352,19 @@ impl DeviceBooleanityRa {
                 got: self.len(),
             });
         }
-        self.split_tables(context, challenge)?;
+        if RaMaterialization::Adaptive.before_bind(self.slots() * self.addresses, self.len()) {
+            self.dense = Some(self.gather(context, Some(challenge))?);
+        } else {
+            self.split_tables(context, challenge)?;
+        }
         self.rounds_bound += 1;
-        if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
-            self.dense = Some(self.gather(context)?);
+        if self.dense.is_none()
+            && self.rounds_bound >= RaMaterialization::Adaptive.round()
+            && self.len() > 1
+        {
+            self.dense = Some(self.gather(context, None)?);
+        }
+        if self.dense.is_some() {
             self.tables = context.alloc(0)?;
             self.lookup = Arc::new(context.alloc_u64(0)?);
             self.pc = Arc::new(context.alloc_u32(0)?);
@@ -359,7 +385,7 @@ impl DeviceBooleanityRa {
         }
         let values = match &self.dense {
             Some(dense) => dense.to_host()?,
-            None => self.gather(context)?.to_host()?,
+            None => self.gather(context, None)?.to_host()?,
         };
         values
             .into_iter()
@@ -676,7 +702,7 @@ mod tests {
 
     use std::sync::Arc;
 
-    use super::{DeviceBooleanityRa, COLLAPSE_AFTER_ROUNDS};
+    use super::DeviceBooleanityRa;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::device_columns::DeviceTraceColumns;
     use crate::cuda::common::one_hot_witness::PackedColumns;
@@ -867,11 +893,83 @@ mod tests {
         polys
     }
 
+    #[test]
+    fn adaptive_materialization_matches_dense_binding() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for (log_t, chunk_bits, materialize_at) in [
+            (1, 4, 1),
+            (8, 2, 3),
+            (8, 4, 2),
+            (8, 8, 1),
+            (10, 4, 3),
+            (10, 1, 4),
+            (10, 2, 4),
+        ] {
+            let cycles = 1usize << log_t;
+            let families = [128 / chunk_bits.max(4), 2, 2];
+            let span = 1u32 << (2 * chunk_bits);
+            let mut packed = columns(7, cycles, span, span, 3);
+            packed.lookup[..4].copy_from_slice(&[0, 0, u64::MAX, u64::MAX]);
+            let point: Vec<_> = (0..chunk_bits).map(|i| fr(19 + i as u64)).collect();
+            let gamma = fr(37);
+            for transition_challenge in [Fr::from(0u64), Fr::from(1u64), -Fr::from(1u64), fr(31)] {
+                let uploaded = DeviceTraceColumns {
+                    lookup: Arc::new(
+                        context
+                            .upload_u64_slice(&packed.lookup)
+                            .expect("upload lookup"),
+                    ),
+                    pc: Arc::new(context.upload_u32_slice(&packed.pc).expect("upload pc")),
+                    ram: Arc::new(context.upload_u32_slice(&packed.ram).expect("upload ram")),
+                };
+                let mut got = DeviceBooleanityRa::from_device(
+                    context, uploaded, cycles, chunk_bits, families, &point, gamma,
+                )
+                .expect("device booleanity family");
+                let mut expected =
+                    expected_tables(&packed, cycles, chunk_bits, families, &point, gamma);
+                for round in 1..=log_t {
+                    let challenge = if round == materialize_at {
+                        transition_challenge
+                    } else {
+                        fr(101 + round as u64)
+                    };
+                    got.bind(context, challenge).expect("device bind");
+                    for poly in &mut expected {
+                        poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                    }
+                    assert_eq!(got.is_collapsed(), round >= materialize_at);
+                    let coefficients = got
+                        .coefficients(context)
+                        .expect("device coefficients")
+                        .to_host()
+                        .expect("download coefficients");
+                    for (actual, expected) in coefficients.chunks_exact(got.len()).zip(&expected) {
+                        assert_eq!(
+                            actual,
+                            expected.evals(),
+                            "log_t={log_t}, chunk_bits={chunk_bits}, round={round}",
+                        );
+                    }
+                }
+                assert_eq!(
+                    got.final_claims::<Fr>(context).expect("final claims"),
+                    expected
+                        .iter()
+                        .map(|poly| poly.evals()[0])
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(6))]
         #[test]
         fn device_booleanity_ra_matches_cpu_round_for_round(
-            log_t in (COLLAPSE_AFTER_ROUNDS + 1)..9usize,
+            log_t in 5usize..9,
             chunk_bits in prop::sample::select(vec![4usize, 8]),
             bytecode_polys in 1usize..3,
             ram_polys in 1usize..3,
