@@ -4,6 +4,18 @@
 //! `CommitmentScheme` trait plus an adapter delegating same-point batches to
 //! Akita's native batched opening protocol.
 
+//!
+//! # Verifier setup wire compatibility
+//!
+//! `AkitaVerifierSetup` now encodes catalog and prepared payloads as optional
+//! byte strings and includes an optional prepared-verifier record. This breaks
+//! older bincode setup encodings, including the legacy single-profile encoding
+//! and enclosing verifier preprocessing. Serde defaults do not make positional
+//! bincode structs backward compatible. Discard saved setups/preprocessing,
+//! rerun preprocessing with compatible catalogs, and rebuild recursion images.
+//! This setup encoding has no independent format-version constant; applications
+//! persisting it must associate it with the producing implementation revision.
+
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
 #![forbid(unsafe_code)]
@@ -25,6 +37,7 @@ pub mod configs;
 pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
+mod prepared;
 mod schedule_artifacts;
 pub mod schedule_registry;
 pub mod schedules;
@@ -34,7 +47,7 @@ mod trace_onehot;
 mod verifier_resources;
 mod verifier_setup;
 
-pub use akita_pcs::AkitaError;
+pub use akita_pcs::{AkitaError, TrustedBytes};
 
 #[cfg(feature = "profiling")]
 #[doc(hidden)]

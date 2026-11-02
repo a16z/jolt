@@ -868,14 +868,17 @@ mod tests {
                     .dense_catalog()
                     .unwrap()
                     .to_artifact_bytes()
-                    .unwrap(),
+                    .unwrap()
+                    .into(),
                 one_hot: artifacts
                     .one_hot_catalog(AKITA_ONE_HOT_K256)
                     .unwrap()
                     .to_artifact_bytes()
-                    .unwrap(),
+                    .unwrap()
+                    .into(),
             }
             .into(),
+            prepared: None,
             backend_cache: Default::default(),
         };
         // The next squeeze after binding `setup` under `flavor`: equal for
@@ -1303,6 +1306,85 @@ mod tests {
             &mut original_transcript,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn prepared_verifier_verifies_the_selected_row_after_transport() {
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let (prover_setup, verifier_setup) = AkitaScheme::setup(AkitaSetupParams::dense_only(
+            14,
+            1,
+            [7; 32],
+            Arc::clone(&artifacts),
+        ))
+        .unwrap();
+        let polynomial = Polynomial::new(
+            (0..(1u64 << 14))
+                .map(|i| AkitaField::from_u64(3 + 7 * i))
+                .collect(),
+        );
+        let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover_setup).unwrap();
+        let point = (5..19).map(AkitaField::from_u64).collect::<Vec<_>>();
+        let value = polynomial.evaluate(&point);
+        let statement = vec![VerifierOpeningClaim {
+            commitment,
+            evaluation: EvaluationClaim::new(point, value),
+        }];
+        let mut prover_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"prepared"),
+            b"",
+        );
+        let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+            &prover_setup,
+            statement.clone(),
+            vec![&polynomial],
+            hint,
+            &mut prover_transcript,
+        )
+        .unwrap();
+
+        let mut prepared = verifier_setup.clone();
+        assert!(prepared.prepare_verifier([0; 32]).is_err());
+        prepared
+            .prepare_verifier(proof.schedule_row_digest())
+            .unwrap();
+        let full_digest = verifier_setup
+            .dense_scheme()
+            .unwrap()
+            .schedules()
+            .catalog_digest();
+        let encoded =
+            bincode::serde::encode_to_vec(&prepared, bincode::config::standard()).unwrap();
+        let (mut transported, _): (AkitaVerifierSetup, _) =
+            bincode::serde::decode_from_slice(&encoded, bincode::config::standard()).unwrap();
+        let verify = |setup: &AkitaVerifierSetup| {
+            let mut transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+                &jolt_transcript::protocol_tag(b"prepared"),
+                b"",
+            );
+            <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
+                setup,
+                &statement,
+                &proof,
+                &mut transcript,
+            )
+        };
+        // The view keeps the complete catalog's transcript identity.
+        for setup in [&prepared, &transported] {
+            assert_eq!(
+                setup.dense_scheme().unwrap().schedules().catalog_digest(),
+                full_digest
+            );
+        }
+        verify(&prepared).unwrap();
+        // A decoded record's inline key is never used unchecked.
+        assert!(verify(&transported).is_err());
+
+        // Detached bodies serve again only once attached in place
+        // (`tests/prepared_transport.rs`).
+        let _ = transported.detach_prepared_payloads().unwrap();
+        assert!(verify(&transported).is_err());
     }
 
     #[test]

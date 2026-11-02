@@ -1,2 +1,4 @@
 src/embedded_bytes.rs
+src/embedded_bytecode.rs
+src/embedded.bin
 src/provable_macro.rs

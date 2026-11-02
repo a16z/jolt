@@ -9,7 +9,7 @@ description = "Dory commitment scheme implementation for the Jolt zkVM"
 workspace = true
 
 [dependencies]
-jolt-crypto = { workspace = true }
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true }
 jolt-openings = { workspace = true }
 jolt-poly = { workspace = true }

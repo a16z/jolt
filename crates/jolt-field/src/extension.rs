@@ -93,17 +93,10 @@ pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
         self.mul_unreduced(Self::lift_base(x))
     }
 
-    /// `Σ pows[i]·coeffs[i]` (extension times base) over the shorter of the
-    /// two slices, reduced once.
+    /// `Σ pows[i]·coeffs[i]` (extension times base), reduced once.
     #[inline]
     fn dot_base(pows: &[Self], coeffs: &[F]) -> Self {
-        let accum = pows
-            .iter()
-            .zip(coeffs)
-            .fold(<Self::Product as Zero>::zero(), |acc, (pow, coeff)| {
-                acc + pow.mul_base_unreduced(*coeff)
-            });
-        Self::reduce_product(accum)
+        dot_base_fold(pows, coeffs)
     }
 
     /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]`: each row's dot product with
@@ -112,15 +105,10 @@ pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
     /// # Panics
     ///
     /// Panics unless `rows` and `weights` have equal lengths and every row is
-    /// as long as `pows`.
+    /// as long as `pows`, on every path (the guest kernels require it).
     #[inline]
     fn weighted_dot_base_rows(rows: &[&[F]], weights: &[Self], pows: &[Self]) -> Self {
-        assert_row_shapes(rows, weights.len(), pows.len());
-        rows.iter()
-            .zip(weights)
-            .fold(<Self as Zero>::zero(), |acc, (row, weight)| {
-                acc + *weight * Self::dot_base(pows, row)
-            })
+        weighted_dot_base_rows_fold(rows, weights, pows)
     }
 
     /// `out[i] = Σ_j pows[j]·rows[i][j]`: each row's dot product with the
@@ -129,13 +117,10 @@ pub trait MulBaseUnreduced<F: Field>: ExtField<F> + Unreduced {
     /// # Panics
     ///
     /// Panics unless `out` and `rows` have equal lengths and every row is as
-    /// long as `pows`.
+    /// long as `pows`, on every path (the guest kernels require it).
     #[inline]
     fn dot_base_rows(pows: &[Self], rows: &[&[F]], out: &mut [Self]) {
-        assert_row_shapes(rows, out.len(), pows.len());
-        for (slot, row) in out.iter_mut().zip(rows) {
-            *slot = Self::dot_base(pows, row);
-        }
+        dot_base_rows_fold(pows, rows, out, Self::dot_base);
     }
 }
 
@@ -148,8 +133,66 @@ fn assert_row_shapes<F>(rows: &[&[F]], per_row: usize, width: usize) {
     );
 }
 
+/// The fold behind [`MulBaseUnreduced::dot_base_rows`].
+#[inline]
+fn dot_base_rows_fold<F: Field, E: MulBaseUnreduced<F>>(
+    pows: &[E],
+    rows: &[&[F]],
+    out: &mut [E],
+    dot: impl Fn(&[E], &[F]) -> E,
+) {
+    assert_row_shapes(rows, out.len(), pows.len());
+    for (slot, row) in out.iter_mut().zip(rows) {
+        *slot = dot(pows, row);
+    }
+}
+
+/// The fold behind [`MulBaseUnreduced::weighted_dot_base_rows`].
+#[inline]
+pub(crate) fn weighted_dot_base_rows_fold<F: Field, E: MulBaseUnreduced<F>>(
+    rows: &[&[F]],
+    weights: &[E],
+    pows: &[E],
+) -> E {
+    assert_row_shapes(rows, weights.len(), pows.len());
+    rows.iter()
+        .zip(weights)
+        .fold(<E as Zero>::zero(), |acc, (row, weight)| {
+            acc + *weight * E::dot_base(pows, row)
+        })
+}
+
+/// The deferred-reduction fold behind [`MulBaseUnreduced::dot_base`].
+#[inline]
+pub(crate) fn dot_base_fold<F: Field, E: MulBaseUnreduced<F>>(pows: &[E], coeffs: &[F]) -> E {
+    let accum = pows.iter().zip(coeffs).fold(
+        <<E as Unreduced>::Product as Zero>::zero(),
+        |acc, (pow, coeff)| acc + pow.mul_base_unreduced(*coeff),
+    );
+    E::reduce_product(accum)
+}
+
 /// A base field is its own degree-1 extension; the default body is exact.
-impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {}
+impl<F: PseudoMersenne + Unreduced + ExtField<F>> MulBaseUnreduced<F> for F {
+    /// Takes the field-inline register-resident path when the field has one.
+    #[inline]
+    fn dot_base(pows: &[Self], coeffs: &[F]) -> Self {
+        F::inline_dot(pows, coeffs).unwrap_or_else(|| dot_base_fold(pows, coeffs))
+    }
+
+    #[inline]
+    fn weighted_dot_base_rows(rows: &[&[F]], weights: &[Self], pows: &[Self]) -> Self {
+        F::inline_weighted_dot(rows, weights, pows)
+            .unwrap_or_else(|| weighted_dot_base_rows_fold(rows, weights, pows))
+    }
+
+    #[inline]
+    fn dot_base_rows(pows: &[Self], rows: &[&[F]], out: &mut [Self]) {
+        if !F::inline_dot_rows(rows, pows, out) {
+            dot_base_rows_fold(pows, rows, out, dot_base_fold);
+        }
+    }
+}
 
 /// Arithmetic form of an [`Ext2Config`] non-residue.
 ///

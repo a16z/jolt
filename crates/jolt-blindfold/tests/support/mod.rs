@@ -202,13 +202,20 @@ pub fn assert_empirical_distribution(projection: &StatisticalProjection) {
     assert_runs_around_median(projection);
 }
 
+/// Four standard deviations of the sample correlation of `n` independent
+/// pairs, about `1/sqrt(n)` each: a fixed 0.25 bound is under 3 sigma at 128
+/// samples and fails for ordinary seeds.
+fn correlation_bound(n: usize) -> f64 {
+    4.0 / (n as f64).sqrt()
+}
+
 pub fn assert_empirical_pairwise_independence(
     lhs: &StatisticalProjection,
     rhs: &StatisticalProjection,
 ) {
     let correlation = pearson_correlation(&lhs.values, &rhs.values);
     assert!(
-        correlation.abs() < 0.25,
+        correlation.abs() < correlation_bound(lhs.values.len()),
         "{} and {} have suspicious pairwise correlation: {correlation}",
         lhs.label,
         rhs.label
@@ -272,9 +279,10 @@ fn assert_lag_one_correlation(projection: &StatisticalProjection) {
         &projection.values[..projection.values.len() - 1],
         &projection.values[1..],
     );
+    let bound = correlation_bound(projection.values.len() - 1);
     assert!(
-        correlation.abs() < 0.25,
-        "{} has suspicious lag-one correlation: {correlation}",
+        correlation.abs() < bound,
+        "{} has suspicious lag-one correlation: {correlation} (bound {bound})",
         projection.label
     );
 }

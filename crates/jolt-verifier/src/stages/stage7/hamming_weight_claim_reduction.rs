@@ -22,6 +22,7 @@
 //! `HammingWeightClaimReduction*` names and reaches the live relation through the
 //! aliases re-exported from it, so no consumer needs a `cfg` of its own.
 
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 pub use jolt_claims::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use jolt_claims::protocols::jolt::{
     geometry::ra::JoltRaPolynomialLayout, HammingWeightClaimReductionPublic, JoltDerivedId,
@@ -260,7 +261,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
         id: &JoltDerivedId,
         _input_points: &HammingWeightClaimReductionInputClaims<Vec<F>>,
         output_points: &HammingWeightClaimReductionOutputClaims<Vec<F>>,
-        _challenges: &HammingWeightClaimReductionChallenges<F>,
+        challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
@@ -289,8 +290,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 Ok(eq_at_digit_zero(point))
             }
-            HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
+            HammingWeightClaimReductionPublic::ReservedBalancedIncValueAtAddress => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
+            }
+            HammingWeightClaimReductionPublic::GammaPow(exponent) => {
+                Ok(gamma_pow(challenges.gamma, *exponent))
             }
         }
     }
@@ -302,7 +306,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
     fn derive_input_term(
         &self,
         id: &JoltDerivedId,
-        _challenges: &HammingWeightClaimReductionChallenges<F>,
+        challenges: &HammingWeightClaimReductionChallenges<F>,
     ) -> Result<F, VerifierError> {
         let JoltDerivedId::HammingWeightClaimReduction(public_id) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
@@ -319,11 +323,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for HammingWeightClaimReduction<F> {
                 })?;
                 Ok(eq_at_digit_zero(point))
             }
+            HammingWeightClaimReductionPublic::GammaPow(exponent) => {
+                Ok(gamma_pow(challenges.gamma, *exponent))
+            }
             // Output publics — resolved in `derive_output_term`, never in the
             // input expression.
             HammingWeightClaimReductionPublic::EqBooleanity
             | HammingWeightClaimReductionPublic::EqVirtualization(_)
-            | HammingWeightClaimReductionPublic::BalancedIncValueAtAddress => {
+            | HammingWeightClaimReductionPublic::ReservedBalancedIncValueAtAddress => {
                 Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
             }
         }
