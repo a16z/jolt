@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793521470939,
+  "lastUpdate": 1793581191203,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -217954,6 +217954,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 781520,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bbff64b1120028d96079643be800d7ad39e91148",
+          "message": "perf(kernels): sum paired branch lookups with plain field additions (#2234)\n\nThe shared paired-branch visits reduced a deferred F::Accumulator for every\ncolumn, side and row. Over two to four lookups that reduction costs more\nthan the additions it defers; Booleanity's per-round gather paid it and ran\nabout 50% slower than the specialized gather it replaced in #2201.",
+          "timestamp": "2026-11-01T16:48:09-07:00",
+          "tree_id": "91b9ff574929d68077ad4e3bf09237c414326c42",
+          "url": "https://github.com/a16z/jolt/commit/bbff64b1120028d96079643be800d7ad39e91148"
+        },
+        "date": 1793581185749,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.3265,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 781772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7152,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 425692,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 426084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 428188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8485,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 426064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.9395,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425840,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7834,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 428248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9691,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0141,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 782540,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.8138,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 428392,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.5883,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428440,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.391,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425776,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.1606,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 425952,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 35.9433,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 697968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.2825,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 605104,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 62.7315,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 651788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8531,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 426116,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1386,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 428064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 17.978,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 782164,
             "unit": "KB",
             "extra": ""
           }
