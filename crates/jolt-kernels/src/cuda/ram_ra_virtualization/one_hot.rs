@@ -5,12 +5,11 @@ use jolt_field::{Fr, JoltField};
 use jolt_poly::BindingOrder;
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
-use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::device::{fr_limbs, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::ra_poly::RaMaterialization;
 use crate::cuda::common::split_eq::DeviceSplitEq;
-
-pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
 pub const MAX_LANES: usize = 8;
 
@@ -132,11 +131,15 @@ impl DevicePackedRamRa {
         if self.is_collapsed() {
             return self.dense.iter().map(DeviceFrVec::try_clone).collect();
         }
-        self.gather(context)
+        self.gather(context, None)
     }
 
-    fn gather(&self, context: &CudaKernelContext) -> Result<Vec<DeviceFrVec>, CudaError> {
-        let len = self.len();
+    fn gather(
+        &self,
+        context: &CudaKernelContext,
+        bind: Option<Fr>,
+    ) -> Result<Vec<DeviceFrVec>, CudaError> {
+        let len = self.len() >> usize::from(bind.is_some());
         let mut outputs = Vec::with_capacity(self.polys);
         for _ in 0..self.polys {
             outputs.push(context.alloc(len)?);
@@ -154,7 +157,11 @@ impl DevicePackedRamRa {
         let bits = CudaKernelContext::count_of(self.chunk_bits)?;
         let committed = CudaKernelContext::count_of(self.polys)?;
         let count = CudaKernelContext::count_of(len)?;
-        let mut builder = context.stream().launch_builder(context.rrv_gather());
+        let mut builder = context.stream().launch_builder(if bind.is_some() {
+            context.rrv_gather_bind()
+        } else {
+            context.rrv_gather()
+        });
         let _ = builder.arg(self.packed.as_ref());
         let _ = builder.arg(self.tables.limbs());
         let _ = builder.arg(&pointers);
@@ -163,15 +170,22 @@ impl DevicePackedRamRa {
         let _ = builder.arg(&bits);
         let _ = builder.arg(&committed);
         let _ = builder.arg(&count);
+        let challenge = bind.map(fr_limbs);
+        if let Some(challenge) = &challenge {
+            for limb in challenge {
+                let _ = builder.arg(limb);
+            }
+        }
         // SAFETY: thread `(p = blockIdx.y < polys, j < len)` reads
-        // `packed[j * slots + s]` for `s < slots` — every cycle index is below
-        // `len * slots == cycles`, so inside `packed` — and, only for a cycle whose
-        // packed word is not the cold sentinel,
+        // `packed[k * slots + s]` for `s < slots`, where k is j or the pair
+        // (2*j, 2*j+1) when binding. Every cycle index is below `cycles`,
+        // so inside `packed`. Only a non-cold packed word reads
         // `tables[p * slots * addresses + s * addresses + a]` with `a` masked below
         // `addresses`, inside `tables`'s `polys * slots * addresses`. It writes only
         // `out[p][j]`, one slot per (poly, index) pair, and each `out[p]` is a
         // distinct fresh allocation of `len` elements whose device address is
-        // `pointers[p]`.
+        // `pointers[p]`. `bind` requires at least two remaining values before
+        // requesting pair gathering; its challenge is passed by value.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (count.div_ceil(BLOCK).max(1), committed, 1),
@@ -232,10 +246,19 @@ impl DevicePackedRamRa {
                 got: self.len(),
             });
         }
-        self.split_tables(context, challenge)?;
+        if RaMaterialization::Adaptive.before_bind(self.tables.len() / self.polys, self.len()) {
+            self.dense = self.gather(context, Some(challenge))?;
+        } else {
+            self.split_tables(context, challenge)?;
+        }
         self.rounds_bound += 1;
-        if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
-            self.dense = self.gather(context)?;
+        if !self.is_collapsed()
+            && self.rounds_bound >= RaMaterialization::Adaptive.round()
+            && self.len() > 1
+        {
+            self.dense = self.gather(context, None)?;
+        }
+        if self.is_collapsed() {
             self.tables = context.alloc(0)?;
             self.packed = Arc::new(context.alloc_u32(0)?);
         }
@@ -277,7 +300,7 @@ impl DevicePackedRamRa {
         if !self.dense.is_empty() {
             return self.dense.iter().map(DeviceFrVec::first).collect();
         }
-        self.gather(context)?
+        self.gather(context, None)?
             .iter()
             .map(DeviceFrVec::first)
             .collect()
@@ -296,7 +319,7 @@ impl DevicePackedRamRa {
         let values: Result<Vec<Fr>, CudaError> = if self.is_collapsed() {
             self.dense.iter().map(DeviceFrVec::first).collect()
         } else {
-            self.gather(context)?
+            self.gather(context, None)?
                 .iter()
                 .map(DeviceFrVec::first)
                 .collect()
@@ -608,7 +631,7 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 
-    use super::{DevicePackedRamRa, COLLAPSE_AFTER_ROUNDS};
+    use super::DevicePackedRamRa;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::pack::COLD;
     use crate::cuda::common::testing::{arb_point, fr};
@@ -621,6 +644,91 @@ mod tests {
             .wrapping_mul(0x9E37_79B9_7F4A_7C15)
             .wrapping_add(cycle as u64 + 1);
         ((mix.wrapping_mul(0xBF58_476D_1CE4_E5B9) ^ (mix >> 29)) % u64::from(span)) as u32
+    }
+
+    #[test]
+    fn adaptive_materialization_matches_dense_binding() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for (log_t, chunk_bits, polys, materialize_at) in [
+            (1, 1, 1, 1),
+            (8, 3, 3, 3),
+            (8, 4, 2, 2),
+            (8, 5, 3, 2),
+            (8, 6, 1, 1),
+            (10, 1, 3, 4),
+            (10, 2, 2, 4),
+        ] {
+            let cycles = 1usize << log_t;
+            let addresses = 1usize << chunk_bits;
+            let span = 1u32 << (polys * chunk_bits);
+            let words: Vec<_> = (0..=cycles)
+                .map(|cycle| packed_address(7, cycle, span, 3))
+                .collect();
+            let point: Vec<_> = (0..polys * chunk_bits).map(|i| fr(19 + i as u64)).collect();
+            let coefficients: Vec<Vec<_>> = (0..polys)
+                .map(|p| {
+                    let table = EqPolynomial::<Fr>::evals(
+                        &point[p * chunk_bits..(p + 1) * chunk_bits],
+                        None,
+                    );
+                    let shift = chunk_bits * (polys - 1 - p);
+                    words[..cycles]
+                        .iter()
+                        .map(|&word| {
+                            if word == COLD {
+                                Fr::from_u64(0)
+                            } else {
+                                table[(word as usize >> shift) & (addresses - 1)]
+                            }
+                        })
+                        .collect()
+                })
+                .collect();
+            for first_challenge in [Fr::from_u64(0), Fr::from_u64(1), -Fr::from_u64(1), fr(31)] {
+                let packed = Arc::new(
+                    context
+                        .upload_u32_slice(&words)
+                        .expect("upload packed address"),
+                );
+                let mut got = DevicePackedRamRa::new(context, packed, cycles, chunk_bits, &point)
+                    .expect("packed RAM family");
+                let mut expected: Vec<_> =
+                    coefficients.iter().cloned().map(Polynomial::new).collect();
+                for round in 1..=log_t {
+                    let challenge = if round == 1 {
+                        first_challenge
+                    } else {
+                        fr(101 + round as u64)
+                    };
+                    got.bind(context, challenge).expect("device bind");
+                    for poly in &mut expected {
+                        poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                    }
+                    assert_eq!(got.is_collapsed(), round >= materialize_at);
+                    for (actual, expected) in got
+                        .coefficients(context)
+                        .expect("device coefficients")
+                        .iter()
+                        .zip(&expected)
+                    {
+                        assert_eq!(
+                            actual.to_host().expect("download coefficients"),
+                            expected.evals(),
+                            "log_t={log_t}, chunk_bits={chunk_bits}, round={round}",
+                        );
+                    }
+                }
+                assert_eq!(
+                    got.final_claims::<Fr>(context).expect("final claims"),
+                    expected
+                        .iter()
+                        .map(|poly| poly.evals()[0])
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
     }
 
     proptest! {
@@ -697,7 +805,6 @@ mod tests {
                     .collect::<Vec<Fr>>(),
                 "final claims diverged"
             );
-            prop_assert_eq!(got.is_collapsed(), log_t > COLLAPSE_AFTER_ROUNDS);
         }
     }
 }

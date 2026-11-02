@@ -5,13 +5,14 @@
 //! one packed `u32` address and evaluates the product against split equality
 //! tables on each device.
 //!
-//! The device lookup tables collapse after four binds, matching optimized's
-//! usual lazy-RA schedule. Construction reports a
+//! As in optimized, lookup tables materialize by the fourth bind, or earlier
+//! when expanding them would cost at least as much storage as the bound dense
+//! values. CUDA applies that comparison per device window and gathers and
+//! binds directly from the unexpanded tables. Construction reports a
 //! capability error if the chunks exceed the packed address or message-lane
 //! capacity. Remaining window factors are gathered onto GPU 0.
-//! Optimized may collapse earlier when dense storage is cheaper and omits the
-//! trailing no-access cycles. CUDA retains those zero-valued rows in its windows
-//! and dense tables.
+//! Optimized omits trailing no-access cycles. CUDA retains those zero-valued
+//! rows in its windows and dense tables.
 //!
 //! CUDA includes q(0) in each reduction, avoiding an extra launch when the
 //! equality factor vanishes at zero. Optimized normally recovers q(0) from

@@ -29,11 +29,15 @@ pub enum RaMaterialization {
 }
 
 impl RaMaterialization {
-    const fn round(self) -> usize {
+    pub(crate) const fn round(self) -> usize {
         match self {
             Self::ThirdBind => 3,
             Self::Adaptive => 4,
         }
+    }
+
+    pub(crate) const fn before_bind(self, table_elements: usize, cycles: usize) -> bool {
+        matches!(self, Self::Adaptive) && table_elements.saturating_mul(2) >= cycles / 2
     }
 }
 
@@ -347,8 +351,9 @@ impl DeviceRaPolynomial {
                 got: self.len(),
             });
         }
-        if matches!(self.materialization, RaMaterialization::Adaptive)
-            && self.tables.len().saturating_mul(2) >= self.len() / 2
+        if self
+            .materialization
+            .before_bind(self.tables.len(), self.len())
         {
             self.dense = Some(self.gather_and_bind(context, challenge)?);
         } else {

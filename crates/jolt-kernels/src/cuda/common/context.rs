@@ -118,6 +118,7 @@ pub struct CudaKernelContext {
     irv_message_sparse: CudaFunction,
     irv_message_dense: CudaFunction,
     rrv_gather: CudaFunction,
+    rrv_gather_bind: CudaFunction,
     rrv_message_sparse: CudaFunction,
     rrv_message_dense: CudaFunction,
     brc_tables_init: CudaFunction,
@@ -352,6 +353,7 @@ impl CudaKernelContext {
             irv_message_sparse: module.load_function("irv_message_sparse_kernel")?,
             irv_message_dense: module.load_function("irv_message_dense_kernel")?,
             rrv_gather: module.load_function("rrv_gather_kernel")?,
+            rrv_gather_bind: module.load_function("rrv_gather_bind_kernel")?,
             rrv_message_sparse: module.load_function("rrv_message_sparse_kernel")?,
             rrv_message_dense: module.load_function("rrv_message_dense_kernel")?,
             brc_tables_init: module.load_function("brc_tables_init_kernel")?,
@@ -747,6 +749,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn rrv_gather(&self) -> &CudaFunction {
         &self.rrv_gather
+    }
+
+    pub(crate) const fn rrv_gather_bind(&self) -> &CudaFunction {
+        &self.rrv_gather_bind
     }
 
     pub(crate) const fn rrv_message_sparse(&self) -> &CudaFunction {

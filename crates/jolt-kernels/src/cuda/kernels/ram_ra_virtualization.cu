@@ -45,6 +45,30 @@ extern "C" __global__ void rrv_gather_kernel(const unsigned int *__restrict__ pa
     store4(out[p] + (unsigned long long)j * LIMBS, value);
 }
 
+extern "C" __global__ void rrv_gather_bind_kernel(
+    const unsigned int *__restrict__ packed, const u64 *__restrict__ tables,
+    u64 *const *__restrict__ out, unsigned int addresses, unsigned int slots,
+    unsigned int chunk_bits, unsigned int committed, unsigned int len,
+    u64 r0, u64 r1, u64 r2, u64 r3) {
+    unsigned int p = blockIdx.y;
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= len) return;
+
+    unsigned int shift = chunk_bits * (committed - 1 - p);
+    unsigned int mask = (1u << chunk_bits) - 1u;
+    const u64 *poly_tables = tables + (unsigned long long)p * slots * addresses * LIMBS;
+    unsigned long long base = 2ull * j * slots;
+
+    u64 lo[LIMBS], hi[LIMBS], delta[LIMBS], scaled[LIMBS], value[LIMBS];
+    const u64 challenge[LIMBS] = {r0, r1, r2, r3};
+    rrv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, base, lo);
+    rrv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, base + slots, hi);
+    fr_sub(hi, lo, delta);
+    fr_mul(challenge, delta, scaled);
+    fr_add(lo, scaled, value);
+    store4(out[p] + (unsigned long long)j * LIMBS, value);
+}
+
 __device__ __forceinline__ void rrv_fold_pair(const u64 *p0, const u64 *p1, unsigned int lanes,
                                               bool first, unsigned int first_point, u64 prod[RRV_MAX_LANES][LIMBS]) {
     u64 delta[LIMBS], cur[LIMBS], scaled[LIMBS];
