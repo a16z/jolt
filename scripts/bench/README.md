@@ -612,23 +612,29 @@ A replay created before the current label application is refused. Reruns use a
 new attempt and repeat admission; old attempt plans cannot execute.
 
 After waiting for the shared runner queue and host lock, the target uses public,
-unauthenticated API reads to recheck the same label event, branch and revisions.
-Removal/reapplication or a changed head/base refuses stale work before building;
+unauthenticated API reads to recheck the same label event, the open same-repository
+PR into main, its head branch and its head SHA. It builds the planned base and
+merge commits, so a main advance during the wait does not refuse the run.
+Removal/reapplication or a changed head refuses stale work before building;
 it checks again before proving. Removing a label does not kill an already
 running build or proof. Permission is checked in the hosted planner for each
 new run/attempt, not continuously during execution. API failures fail closed.
 No PR-controlled workflow or harness authorizes itself. No repository secrets or
 publication credentials are sent to the target; trusted checkout/artifact
-actions retain their read-only runtime access. Build/proof subprocess environments
-exclude tokens; `RUNNER_TRACKING_ID` remains for cancellation cleanup.
+actions keep their runtime access, which includes uploading artifacts to this run.
+Build/proof subprocess environments exclude tokens; `RUNNER_TRACKING_ID` remains
+for cancellation cleanup.
 
-A maintainer's label authorizes arbitrary same-repository source, including
-`build.rs`, on a persistent account with warm Cargo/bundle state. Environment
-filtering is not a sandbox: that code may reach the account's files, future
-build state and Actions runtime/artifact access. This expands the prior hosted
-same-repository cache exposure to the persistent target. Use the restricted
-runner group above; do not treat the label or file hashes as host isolation.
-No exploit or credential access was attempted. This remains accepted trust debt.
+A maintainer's label admits arbitrary same-repository source, including
+`build.rs`, on a persistent account with warm Cargo/bundle state. While the label
+remains, any later push to the PR branch, by anyone who can push to it, runs there
+without new approval. Environment filtering is not a sandbox: that code may change
+the account's files and future build state, and so affect later main/nightly
+measurements, uploaded artifacts and the runner registration. This expands the
+prior hosted same-repository cache exposure to the persistent target. Use the
+restricted runner group above; do not treat the label or file hashes as host
+isolation. No exploit or credential access was attempted. This remains accepted
+trust debt.
 
 Main/nightly plan and build bundles transfer by captured immutable artifact IDs.
 The target checks the builder's index hash, then manifests and payloads against
@@ -636,7 +642,8 @@ the exact planned input set. PR-local builds use the same plan and byte checks.
 The hosted read-only comment validator checks actual workflow/artifact/PR
 records, build digests, revisions, matrix, sampling, affinity and metrics.
 Optional sticky comments remain behind `JOLT_E2E_COMMENTS_ENABLED`; a separate
-hosted write-token job receives only validated text and rechecks head/base.
+hosted write-token job receives only validated text and rechecks the PR head and
+test merge.
 The history publisher in the companion draft appends JSON and presents PRs
 separately at `dev/prover-history/`, without modifying `dev/bench/`.
 

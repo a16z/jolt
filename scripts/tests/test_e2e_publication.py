@@ -342,7 +342,7 @@ class E2ePublicationTests(unittest.TestCase):
                   'event': 'pull_request_target', 'head_branch': 'candidate',
                   'head_repository': {'full_name': 'a16z/jolt'}, 'head_sha': 'b' * 40, 'run_attempt': 1}
         pr = {'state': 'open', 'head': {'repo': {'full_name': 'a16z/jolt'}, 'sha': 'b' * 40},
-              'base': {'ref': 'main', 'sha': 'a' * 40}, 'merge_commit_sha': 'c' * 40}
+              'base': {'ref': 'main', 'sha': 'f' * 40}, 'merge_commit_sha': 'c' * 40}
         def github(path):
             if path == 'actions/runs/123':
                 return actual
@@ -365,7 +365,9 @@ class E2ePublicationTests(unittest.TestCase):
                 self.assertEqual(validated['revisions'], expected['revisions'])
                 self.assertEqual(pinned_config, config)
                 self.assertIsNone(validated['artifacts']['id'])
-                pr['head']['sha'] = 'e' * 40
+                pr['merge_commit_sha'] = 'e' * 40
+                self.assertIsNone(publication.expected_from_github(plan, options))
+                pr['merge_commit_sha'], pr['head']['sha'] = 'c' * 40, 'e' * 40
                 self.assertIsNone(publication.expected_from_github(plan, options))
 
 

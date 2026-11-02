@@ -179,7 +179,7 @@ def expected_from_github(plan, args):
     except ValueError:
         return None
     if (pr['state'] != 'open' or pr['head']['repo']['full_name'] != 'a16z/jolt'
-            or pr['head']['sha'] != item['submitted_head'] or pr['base']['sha'] != item['base']
+            or pr['head']['sha'] != item['submitted_head']
             or pr['base']['ref'] != 'main' or pr['merge_commit_sha'] != item['head']
             or admission != plan['admission']):
         return None
@@ -221,7 +221,7 @@ def main():
     with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
         output.write(f'publish=true\npr_number={expected[0]["provenance"]["pr_number"]}\n')
         output.write(f'head={expected[0]["revisions"]["head"]}\n')
-        output.write(f'base={expected[0]["revisions"]["base"]}\n')
+        output.write(f'merge={expected[0]["revisions"]["merge"]}\n')
 
 
 if __name__ == '__main__':

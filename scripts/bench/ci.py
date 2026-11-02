@@ -70,11 +70,11 @@ def labelled_pr(number, *, authenticated):
 def recheck_pr(plan):
     # The hosted planner checks permissions. Public reads on the target bind the
     # same label application after queue/lock waits, without passing it a token.
+    # The plan pins the base and merge it builds. The API base.sha lags merge^1,
+    # and merge_commit_sha changes whenever main advances, so neither is rechecked.
     pr, admission = labelled_pr(plan['provenance']['pr_number'], authenticated=False)
-    item = plan['runs'][0]
-    if (admission != plan['admission'] or pr['head']['sha'] != item['submitted_head']
-            or pr['base']['sha'] != item['base'] or pr['merge_commit_sha'] != item['head']):
-        raise ValueError('PR label, branch or revisions changed after trusted admission')
+    if admission != plan['admission'] or pr['head']['sha'] != plan['runs'][0]['submitted_head']:
+        raise ValueError('PR label, branch or head changed after trusted admission')
 
 
 def resolve(event_name, event, repository, sha):

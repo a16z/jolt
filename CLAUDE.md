@@ -35,17 +35,19 @@ A push voids the line. After every push, review the new head and post a new line
 
 ### Opt-in prover benchmarks
 
-After the benchmark drafts are merged and the restricted `jolt-bench` runner is
-registered/enabled, a maintainer or administrator can add the `benchmark` label
-to a same-repository PR. The label persists across pushes: each admitted run
-builds base and candidate locally with release/znver4, then runs the 17-cell
-suite at 1, 8, and 24 physical cores. Forks and labels applied by write-only
-contributors are not admitted. Results are in the **End-to-end prover benchmarks**
-run's `jolt-e2e-*` artifact and, after the history draft is merged, the dashboard's
-**Pull requests** view at `https://a16z.github.io/jolt/dev/prover-history/`.
-Main commits and nightly runs need no label: their builds run on GitHub-hosted
-runners and only verified artifacts run on the benchmark machine. These drafts
-do not register a runner or activate execution; see `scripts/bench/README.md`.
+When the restricted `jolt-bench` runner is registered and the `JOLT_E2E_ENABLED`
+repository variable is `true` (setup in `scripts/bench/README.md`), a maintainer or
+administrator can add the `benchmark` label to a same-repository PR. The label
+persists across pushes: each admitted run builds base and candidate locally with
+release/znver4, then runs the 17-cell suite at 1, 8, and 24 physical cores. Forks
+and labels applied by write-only contributors are not admitted. While the label
+remains, any later push to the branch, by anyone who can push to it, runs its code
+(including `build.rs`) on the benchmark machine's persistent account without new
+approval. Results are in the **End-to-end prover benchmarks** run's `jolt-e2e-*`
+artifact and the dashboard's **Pull requests** view at
+`https://a16z.github.io/jolt/dev/prover-history/`. Main commits and nightly runs
+need no label: their builds run on GitHub-hosted runners and only verified
+artifacts run on the benchmark machine.
 
 ### Linting and Formatting
 

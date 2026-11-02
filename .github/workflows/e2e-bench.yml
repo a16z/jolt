@@ -126,7 +126,7 @@ jobs:
   measure:
     needs: [plan, prepare]
     if: >-
-      always() && needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main' &&
+      !cancelled() && needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main' &&
       (needs.plan.outputs.tier == 'pr' || needs.prepare.result == 'success')
     runs-on:
       group: jolt-bench
@@ -201,7 +201,7 @@ jobs:
       publish: ${{ steps.validate.outputs.publish }}
       pr_number: ${{ steps.validate.outputs.pr_number }}
       head: ${{ steps.validate.outputs.head }}
-      base: ${{ steps.validate.outputs.base }}
+      merge: ${{ steps.validate.outputs.merge }}
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -262,13 +262,13 @@ jobs:
           COMMENT_PATH: ${{ runner.temp }}/validated/pr-comment.md
           PR_NUMBER: ${{ needs.validate-comment.outputs.pr_number }}
           EXPECTED_HEAD: ${{ needs.validate-comment.outputs.head }}
-          EXPECTED_BASE: ${{ needs.validate-comment.outputs.base }}
+          EXPECTED_MERGE: ${{ needs.validate-comment.outputs.merge }}
         with:
           script: |
             const issue_number = Number(process.env.PR_NUMBER);
             const request = {...context.repo, pull_number: issue_number};
             const {data: pr} = await github.rest.pulls.get(request);
-            if (pr.state !== 'open' || pr.head.sha !== process.env.EXPECTED_HEAD || pr.base.sha !== process.env.EXPECTED_BASE) {
+            if (pr.state !== 'open' || pr.head.sha !== process.env.EXPECTED_HEAD || pr.merge_commit_sha !== process.env.EXPECTED_MERGE) {
               core.notice('The PR changed after validation; no stale comment was posted.');
               return;
             }

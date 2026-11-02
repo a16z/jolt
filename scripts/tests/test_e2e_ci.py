@@ -71,7 +71,7 @@ class E2eCiTests(unittest.TestCase):
     def test_maintainer_label_persists_on_synchronize_and_queue_recheck_is_public(self):
         pr = {'number': 7, 'state': 'open', 'labels': [{'name': 'benchmark'}],
               'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}},
-              'base': {'sha': 'a' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}},
+              'base': {'sha': 'f' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}},
               'merge_commit_sha': 'c' * 40}
         labelled = {'id': 11, 'event': 'labeled', 'label': {'name': 'benchmark'},
                     'actor': {'login': 'maintainer'}, 'created_at': '2026-11-02T18:00:00Z'}
@@ -92,9 +92,14 @@ class E2eCiTests(unittest.TestCase):
             self.assertEqual(runs, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
             self.assertEqual(admission['label_event_id'], 11)
         plan = {'runs': runs, 'provenance': {'pr_number': 7}, 'admission': admission}
+        pr['merge_commit_sha'] = 'd' * 40
         with patch.object(ci, 'github', side_effect=api) as read:
             ci.recheck_pr(plan)
             self.assertTrue(all(call.kwargs == {'authenticated': False} for call in read.call_args_list))
+            pr['head']['sha'] = 'e' * 40
+            with self.assertRaises(ValueError):
+                ci.recheck_pr(plan)
+            pr['head']['sha'] = 'b' * 40
             labelled['id'] = 12
             with self.assertRaises(ValueError):
                 ci.recheck_pr(plan)
