@@ -1034,13 +1034,10 @@ def resolve(event_name: str, event: dict, github: GitHub | None = None) -> int |
             or (run.get("repository") or {}).get("id") != repo["id"]:
         return None
     number = int(match.group(1))
-    if associations := run.get("pull_requests"):
-        return number if any(pull["number"] == number and pull["base"]["repo"]["id"] == repo["id"]
-                             for pull in associations) else None
-    # GitHub omits fork PRs from workflow-run associations. Bind the proposed number to the
-    # source run's exact fork, branch and head through the base repository's PR API instead.
+    # GitHub's run associations can omit closed PRs. Bind every proposed number to the
+    # source repository, branch and exact head through the base repository's PR API.
     source = run.get("head_repository") or {}
-    if github is None or not source.get("id") or source["id"] == repo["id"]:
+    if github is None or not source.get("id"):
         return None
     pull = github.get(f"/repos/{github.repo}/pulls/{number}", missing_ok=True)
     if pull and pull["base"]["repo"]["id"] == repo["id"] \

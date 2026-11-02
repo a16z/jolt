@@ -244,11 +244,11 @@ The gate never runs code from a pull request. Two workflows divide the work:
   the pull request's own copy of this file, without secrets and with a token that has no
   permissions. The file does nothing except finish, which tells the gate that something changed,
   and its run name, `AI merge gate events for PR #<number>`, proposes which pull request changed.
-  The resolver accepts that number only when GitHub associates the run with that PR. For fork
-  runs without an association, it reads the named PR and requires the same base repository,
-  source repository, branch and exact head as the run. A missing or mismatched association
-  starts no evaluation and changes no PR state. A PR can suppress its own events by editing this
-  file, but cannot use its run name alone to start another PR's evaluation.
+  For every run, the resolver reads the named PR and requires the same base repository,
+  source repository, branch and exact head as the run. It does not use the run's PR association
+  list, which can omit closed PRs. A source mismatch starts no evaluation and changes no PR
+  state. A PR can suppress its own events by editing this file, but cannot use its run name alone
+  to start another PR's evaluation.
 - `ai-merge-gate.yml` runs on `issue_comment` and on `workflow_run` after the events workflow.
   GitHub always takes both of these workflows from the default branch. Its `resolve` job takes the
   pull request number from the comment event or validates the events workflow's proposed number
@@ -607,8 +607,8 @@ if retiring them. Keep the separate Pika App and local review skill.
   gate's evaluation of the push dismisses it.
 - The [Checks API](https://docs.github.com/en/rest/checks/runs#create-a-check-run) creates check
   runs for a commit, not a pull request, so pull requests with the same head share cached
-  classifier results. A fork run with no PR association is ignored if its head has since changed
-  or its source repository is unavailable; a later event or a PR comment can evaluate the new
+  classifier results. An events run is ignored if its head has since changed or its source
+  repository is unavailable; a later event or a PR comment can evaluate the new
   state. GitHub also refuses to merge a pull request while another open pull request
   whose head branch points to the same commit has pending or rejected reviews.
 - The model reads the source but does not build or run it, and it reads only text files up to

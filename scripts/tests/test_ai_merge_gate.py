@@ -135,6 +135,7 @@ class FakeApis:
         self.labels, self.draft, self.heads, self.diff, self.counts = list(labels), draft, list(heads), diff, counts
         self.reviewers, self.teams, self.assignees = list(reviewers), list(teams), list(assignees)
         self.state, self.base, self.merged_at = state, base, merged_at
+        self.head_repo_id = 2
         # The pull requests branch forker:fix heads, most recently updated first; 7 stands for this one.
         self.branch_pulls = [{"number": 9, "state": "open", "base": {"ref": "release"}}, 7]
         self.verdict, self.answer_text = verdict, answer_text
@@ -177,7 +178,7 @@ class FakeApis:
             head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
             return self.ok({"number": 7, "state": self.state, "merged_at": self.merged_at, "draft": self.draft,
                             "base": {"ref": self.base, "repo": {"id": 1}},
-                            "head": {"sha": head, "ref": "fix", "repo": {"id": 2}}, "user": {"login": self.author},
+                            "head": {"sha": head, "ref": "fix", "repo": {"id": self.head_repo_id}}, "user": {"login": self.author},
                             "labels": [{"name": name} for name in self.labels],
                             "requested_reviewers": [{"login": login} for login in self.reviewers],
                             "requested_teams": [{"slug": slug} for slug in self.teams],
@@ -1211,12 +1212,15 @@ class AiMergeGateTests(unittest.TestCase):
                 "head_repository": {"id": 2 if fork else 1}, "head_branch": "fix", "head_sha": HEAD,
                 "pull_requests": [{"number": n, "base": {"repo": {"id": 1}}} for n in associations]}}
 
-        self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7")), 7)
         github = GATE.GitHub(FakeApis(), "token", REPO)
+        self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7"), github), 7)
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", ()), github), 7)
-        self.assertIsNone(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (), False), github))
-        # Multiple PRs can share a branch; the title selects only among the run's associations.
-        self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (9, 7))), 7)
+        same_repo = FakeApis()
+        same_repo.head_repo_id = 1
+        self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (), False),
+                                      GATE.GitHub(same_repo, "token", REPO)), 7)
+        # Run associations do not select a sibling or replace the exact source binding.
+        self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (9, 7)), github), 7)
         self.assertIsNone(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #9")))
         for field, value in (("head_sha", OLD), ("head_branch", "other"), ("head_repository", {"id": 3})):
             event = events_run("AI merge gate events for PR #7", ())
@@ -1231,7 +1235,7 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(GATE.resolve("issue_comment", pr_comment), 7)
 
     def test_closing_or_retargeting_withdraws_the_gates_approval_and_merge_eligible(self) -> None:
-        def route_event(apis):
+        def route_event(apis, associations=()):
             """Resolve the events workflow's run for pull request 7, named by its run name, then evaluate."""
             with tempfile.TemporaryDirectory() as directory:
                 event_path, output_path = Path(directory) / "event.json", Path(directory) / "output"
@@ -1239,8 +1243,9 @@ class AiMergeGateTests(unittest.TestCase):
                     "path": ".github/workflows/ai-merge-gate-events.yml", "event": "pull_request",
                     "repository": {"id": 1, "full_name": REPO},
                     "display_title": "AI merge gate events for PR #7",
-                    "head_repository": {"id": 2}, "head_branch": "fix", "head_sha": HEAD,
-                    "pull_requests": []}}))
+                    "head_repository": {"id": apis.head_repo_id}, "head_branch": "fix", "head_sha": HEAD,
+                    "pull_requests": [{"number": n, "base": {"repo": {"id": 1}}}
+                                      for n in associations]}}))
                 env = dict(ENV, GITHUB_EVENT_PATH=str(event_path), GITHUB_EVENT_NAME="workflow_run",
                            GITHUB_OUTPUT=str(output_path))
                 self.assertEqual(run_main(apis, "resolve", env=env), 0)
@@ -1250,19 +1255,22 @@ class AiMergeGateTests(unittest.TestCase):
         # The pull request's branch also heads pull request 9, listed with it newest first.
         into_main = {"number": 9, "state": "open", "base": {"ref": "main"}}
         newer = {"number": 9, "state": "open", "base": {"ref": "release"}}
-        for case, change, branch_pulls, writes in [
+        for head_repo_id, associations, case, change, branch_pulls, writes in [
+            (repo_id, association, *case)
+            for repo_id in (1, 2) for association in ([], [9]) for case in [
             ("closed, the branch heading another into main", {"state": "closed"}, [7, into_main],
              [("DISMISS", HEAD)]),
             ("retargeted, the branch heading a newer one", {"base": "release"}, [newer, 7], [("DISMISS", HEAD)]),
             # A merged pull request cannot reopen; its approval records what let it merge.
             ("merged", {"state": "closed", "merged_at": "2026-11-01T12:00:00Z"}, [newer, 7], []),
-        ]:
-            with self.subTest(case=case):
+        ]]:
+            with self.subTest(case=case, head_repo_id=head_repo_id, associations=associations):
                 apis = FakeApis(records=[record(GATE.CLASSIFIER)], comments=[comment("core-a", attestation())],
                                 reviews=[gate_approval(), review("maintainer", "APPROVED")],
                                 labels=["risk-2", "merge-eligible", "keep"], **change)
                 apis.branch_pulls = branch_pulls
-                route_event(apis)
+                apis.head_repo_id = head_repo_id
+                route_event(apis, associations)
                 self.assertEqual(apis.review_writes, writes)
                 self.assertEqual(set(apis.labels), {"risk-2", "keep"})
                 self.assertEqual(apis.reviews[1]["state"], "APPROVED")
@@ -1270,7 +1278,7 @@ class AiMergeGateTests(unittest.TestCase):
                 if change == {"base": "release"}:
                     # Targeting main again evaluates it as before.
                     apis.base = "main"
-                    route_event(apis)
+                    route_event(apis, associations)
                     self.assertEqual(apis.review_writes, writes + [("APPROVE", HEAD)])
                     self.assertEqual(set(apis.labels), {"risk-2", "merge-eligible", "keep"})
 
