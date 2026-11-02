@@ -5,6 +5,8 @@
 //! separately from the unexpanded instruction address. Register absence, absent
 //! RAM access, and virtual-sequence absence have distinct packed sentinels.
 //! The constants here and the CUDA readers must describe the same layout.
+//! Row-source visits stay sequential; parallel builds pack disjoint output
+//! slices within each bounded source chunk before releasing its borrowed rows.
 
 use super::CUDA_PROFILE;
 use jolt_riscv::{CircuitFlags, JoltTraceRow as TraceRow, RamAccess};
@@ -50,8 +52,9 @@ pub struct PackedTrace {
     pub extras: Vec<u64>,
 }
 
-#[cfg(feature = "parallel")]
-const PACK_CHUNK: usize = 1 << 14;
+const SOURCE_CHUNK: usize = 1 << 14;
+#[cfg(any(feature = "parallel", test))]
+const PACK_CHUNK: usize = 1 << 8;
 
 impl PackedTrace {
     pub fn from_source(source: &dyn RowSource, range: Range<usize>) -> Result<Self, WitnessError> {
@@ -65,7 +68,7 @@ impl PackedTrace {
                 })?;
         let mut packed = Self::with_capacity(len);
         let mut offset = 0;
-        source.visit_chunks(range, 1 << 14, &mut |rows, _, _| {
+        source.visit_chunks(range, SOURCE_CHUNK, &mut |rows, _, _| {
             let end = offset + rows.len();
             if end > len {
                 return Err(WitnessError::InvalidDimensions {
@@ -73,16 +76,7 @@ impl PackedTrace {
                     reason: "row source exceeded the CUDA trace window".to_owned(),
                 });
             }
-            fill(
-                0,
-                rows,
-                &TraceRow::default(),
-                &mut packed.is_noop[offset..end],
-                &mut packed.address[offset..end],
-                &mut packed.virtual_sequence[offset..end],
-                &mut packed.ram_address[offset..end],
-                &mut packed.extras[offset * EXTRA_WORDS..end * EXTRA_WORDS],
-            );
+            packed.fill_window(rows, 0, offset..end);
             offset = end;
             Ok(())
         })?;
@@ -109,25 +103,34 @@ impl PackedTrace {
 
     pub fn fill_range(&mut self, rows: &[TraceRow], cycles: usize, base: usize, len: usize) {
         self.cycles = len;
-        let padding = TraceRow::default();
         let physical = if base >= cycles { &[][..] } else { rows };
-        let offset = base;
+        self.fill_window(physical, base, 0..len);
+    }
+
+    fn fill_window(&mut self, rows: &[TraceRow], base: usize, destination: Range<usize>) {
+        let padding = TraceRow::default();
+        let is_noop = &mut self.is_noop[destination.clone()];
+        let address = &mut self.address[destination.clone()];
+        let virtual_sequence = &mut self.virtual_sequence[destination.clone()];
+        let ram_address = &mut self.ram_address[destination.clone()];
+        let extras =
+            &mut self.extras[destination.start * EXTRA_WORDS..destination.end * EXTRA_WORDS];
 
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
-            self.is_noop[..len]
+            is_noop
                 .par_chunks_mut(PACK_CHUNK)
-                .zip(self.address[..len].par_chunks_mut(PACK_CHUNK))
-                .zip(self.virtual_sequence[..len].par_chunks_mut(PACK_CHUNK))
-                .zip(self.ram_address[..len].par_chunks_mut(PACK_CHUNK))
-                .zip(self.extras[..len * EXTRA_WORDS].par_chunks_mut(PACK_CHUNK * EXTRA_WORDS))
+                .zip(address.par_chunks_mut(PACK_CHUNK))
+                .zip(virtual_sequence.par_chunks_mut(PACK_CHUNK))
+                .zip(ram_address.par_chunks_mut(PACK_CHUNK))
+                .zip(extras.par_chunks_mut(PACK_CHUNK * EXTRA_WORDS))
                 .enumerate()
                 .for_each(
                     |(chunk, ((((is_noop, address), virtual_sequence), ram_address), extras))| {
                         fill(
-                            offset + chunk * PACK_CHUNK,
-                            physical,
+                            base + chunk * PACK_CHUNK,
+                            rows,
                             &padding,
                             is_noop,
                             address,
@@ -140,14 +143,14 @@ impl PackedTrace {
         }
         #[cfg(not(feature = "parallel"))]
         fill(
-            offset,
-            physical,
+            base,
+            rows,
             &padding,
-            &mut self.is_noop[..len],
-            &mut self.address[..len],
-            &mut self.virtual_sequence[..len],
-            &mut self.ram_address[..len],
-            &mut self.extras[..len * EXTRA_WORDS],
+            is_noop,
+            address,
+            virtual_sequence,
+            ram_address,
+            extras,
         );
     }
 
@@ -268,6 +271,10 @@ mod tests {
 
     use super::EXTRA_WORDS;
     use super::*;
+    use crate::backend::ProgramSource;
+    use crate::testing::with_sample_backend;
+    use crate::witnesses::WitnessEnv;
+    use crate::ChunkVisitor;
     use jolt_riscv::{
         JoltInstructionKind, RamRead, RamWrite, RegisterRead, RegisterState, RegisterWrite,
     };
@@ -518,5 +525,83 @@ mod tests {
     fn pack_rejects_a_trace_longer_than_the_domain() {
         let rows = vec![TraceRow::default(); 4];
         assert!(PackedTrace::pack(&rows, 2).is_err());
+    }
+
+    #[test]
+    fn source_range_preserves_rows_across_chunks() {
+        struct Source<'a> {
+            rows: &'a [TraceRow],
+            env: WitnessEnv<'a>,
+            chunk_size: usize,
+        }
+
+        impl RowSource for Source<'_> {
+            fn visit_chunks(
+                &self,
+                range: Range<usize>,
+                chunk_size: usize,
+                visitor: &mut ChunkVisitor<'_>,
+            ) -> Result<(), WitnessError> {
+                let mut end = range.start;
+                for chunk in self.rows[range].chunks(chunk_size.min(self.chunk_size)) {
+                    end += chunk.len();
+                    visitor(chunk, self.rows.get(end), &self.env)?;
+                }
+                Ok(())
+            }
+        }
+
+        with_sample_backend(|backend| {
+            let rows: Vec<_> = (0..4 * SOURCE_CHUNK + 39)
+                .map(|index| {
+                    TraceRow::new(
+                        JoltInstructionRow {
+                            instruction_kind: JoltInstructionKind::ADDI,
+                            address: 0x8000_0000 + 4 * index,
+                            operands: NormalizedOperands {
+                                rd: Some(1),
+                                rs1: Some(2),
+                                imm: index as i128,
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                        RegisterState {
+                            rs1: Some(RegisterRead {
+                                register: 2,
+                                value: index as u64,
+                            }),
+                            rd: Some(RegisterWrite {
+                                register: 1,
+                                pre_value: index as u64 + 1,
+                                post_value: 2 * index as u64,
+                            }),
+                            ..Default::default()
+                        },
+                        RamAccess::NoOp,
+                        index as u32 + 1,
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let range = 17..rows.len() - 5;
+            for chunk_size in [PACK_CHUNK - 3, SOURCE_CHUNK - 3] {
+                let source = Source {
+                    rows: &rows,
+                    env: WitnessEnv::new(backend.program_preprocessing()),
+                    chunk_size,
+                };
+                let packed = PackedTrace::from_source(&source, range.clone()).unwrap();
+                assert_eq!(packed.cycles, range.len());
+                for (index, expected) in rows[range.clone()].iter().enumerate() {
+                    assert_eq!(packed.address[index], expected.unexpanded_pc());
+                    let words = &packed.extras[index * EXTRA_WORDS..(index + 1) * EXTRA_WORDS];
+                    assert_eq!(words[EXTRA_BYTECODE_PC], expected.pc());
+                    assert_eq!(words[EXTRA_RS1], expected.rs1_value());
+                    assert_eq!(words[EXTRA_RD_PRE], expected.rd_pre_value());
+                    assert_eq!(words[EXTRA_RD_POST], expected.rd_write_value());
+                }
+            }
+        });
     }
 }
