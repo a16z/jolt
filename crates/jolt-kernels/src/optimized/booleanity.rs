@@ -211,7 +211,11 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
         }
 
         drop(BooleanityColumns::new(witness, dimensions)?);
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+        let rows = InstructionCycleRow::shared_for_next_consumer(
+            session,
+            witness,
+            1usize << dimensions.log_t,
+        )?;
         let masses = cycle_pushforward(
             &rows,
             dimensions.layout,

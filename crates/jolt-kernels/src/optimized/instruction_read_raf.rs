@@ -31,11 +31,10 @@
 //! - **Split-eq flag claims**: the output lookup-table/RAF flag sums use the
 //!   `E_hi ⊗ E_lo` factorization of `eq(r_cycle, ·)` instead of a `T`-sized
 //!   eq table.
-//! - **Shared witness rows**: re-emulating sources keep a strong
-//!   `SharedInstructionRows` carry in the [`ProofSession`]; slice-backed
-//!   sources keep only `SharedInstructionRowsWeak` and rebuild index-parallel
-//!   once the last owner drops. Queued destruction can extend sharing across
-//!   stages.
+//! - **Shared witness rows**: stage 5 and the address preparations carry rows
+//!   through the [`ProofSession`] to the cycle kernels. Random-access cycle
+//!   consumers release the session's strong reference once they own the rows;
+//!   streaming witnesses retain it to avoid replaying execution.
 
 mod cycle_groups;
 
@@ -267,8 +266,9 @@ impl InstructionCycleRow {
 /// chunks are chunks of the same per-cycle lookup index) and the
 /// stage-6a/6b booleanity kernels (all three one-hot chunk families).
 ///
-/// Non-final consumers reclaim with `take`, clone the [`Arc`], and park the
-/// carry back for the later stages.
+/// Streaming witnesses retain this carry to avoid replaying execution.
+/// Stage 5 and address preparations also use it to hand rows to the next consumer;
+/// `shared` then restores weak caching for random-access witnesses.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<InstructionCycleRow>>);
 
@@ -296,6 +296,19 @@ impl InstructionCycleRow {
             .state::<SharedInstructionRowsWeak>()
             .and_then(|weak| weak.0.upgrade())
             .filter(|rows| rows.len() == cycles)
+    }
+
+    /// Keep one reference for the next consumer even if this kernel releases
+    /// its own rows first; `shared` releases this session
+    /// ownership once a random-access consumer acquires its own reference.
+    pub(crate) fn shared_for_next_consumer<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        cycles: usize,
+    ) -> Result<Arc<ConstantSuffix<Self>>, KernelError<F>> {
+        let rows = Self::shared(session, witness, cycles)?;
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
+        Ok(rows)
     }
 
     /// Reuse cached rows or collect them, retaining a strong carry only for
@@ -495,11 +508,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for OptimizedInstruct
         let rows: Arc<ConstantSuffix<InstructionCycleRow>> = Arc::new(
             InstructionCycleRow::collect(witness, 1 << dimensions.log_t())?,
         );
-        if witness.random_access().is_some() {
-            session.park(SharedInstructionRowsWeak(Arc::downgrade(&rows)));
-        } else {
-            session.park(SharedInstructionRows(Arc::clone(&rows)));
-        }
+        session.park(SharedInstructionRows(Arc::clone(&rows)));
         Ok(Box::new(OptimizedInstructionReadRafKernel::new(
             dimensions,
             &inputs.points.lookup_output,
@@ -2045,15 +2054,17 @@ mod tests {
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
+    use jolt_witness::testing::with_sample_backend;
     #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
     use jolt_witness::witnesses::{InstructionRafFlag, LookupIndex, TableIndex};
+    use jolt_witness::RowSource;
 
     use crate::reference::instruction_read_raf::{
         InstructionReadRafKernel, InstructionReadRafWitness,
     };
     use crate::reference::views::eq_table;
-    use crate::SumcheckKernel;
+    use crate::{ProofSession, SumcheckKernel};
 
     use super::{
         InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, RepeatCache,
@@ -2125,6 +2136,32 @@ mod tests {
                 }
             })
             .collect()
+    }
+
+    #[test]
+    fn shared_rows_survive_handoff_then_release() {
+        with_sample_backend(|backend| {
+            let cycles = backend.random_access().unwrap().cycles();
+            let mut session = ProofSession::default();
+            let rows =
+                InstructionCycleRow::shared_for_next_consumer::<Fr>(&mut session, backend, cycles)
+                    .unwrap();
+            let weak = Arc::downgrade(&rows);
+            drop(rows);
+            assert!(weak.upgrade().is_some());
+
+            let rows =
+                InstructionCycleRow::shared_for_next_consumer::<Fr>(&mut session, backend, cycles)
+                    .unwrap();
+            assert!(Arc::ptr_eq(&weak.upgrade().unwrap(), &rows));
+            drop(rows);
+            assert!(weak.upgrade().is_some());
+
+            let rows = InstructionCycleRow::shared::<Fr>(&mut session, backend, cycles).unwrap();
+            assert!(Arc::ptr_eq(&weak.upgrade().unwrap(), &rows));
+            drop(rows);
+            assert!(weak.upgrade().is_none());
+        });
     }
 
     #[test]

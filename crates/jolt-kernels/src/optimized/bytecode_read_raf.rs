@@ -424,7 +424,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
                 });
             }
         }
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+        let rows = InstructionCycleRow::shared_for_next_consumer(session, witness, cycles)?;
         let push_pc = InstructionCycleRow::bytecode_pc;
         let entry_bytecode_index = relation.entry_bytecode_index();
         if entry_bytecode_index >= addresses
