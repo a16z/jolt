@@ -1,7 +1,7 @@
 use jolt_field::JoltField;
 use thiserror::Error;
 
-use crate::eq_index_msb;
+use crate::{eq_index_msb, EqPolynomial};
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum MleError {
@@ -22,13 +22,35 @@ pub enum MleError {
 }
 
 pub fn sparse_mle_msb<F: JoltField>(start_index: u128, values: &[u64], point: &[F]) -> F {
-    values
-        .iter()
-        .enumerate()
-        .map(|(offset, value)| {
-            F::from_u64(*value) * eq_index_msb(point, start_index + offset as u128)
-        })
-        .sum()
+    // Consecutive indices share their high bits: with `k` low bits,
+    // `eq(point, i) = eq(high, i >> k) · eq(low, i mod 2^k)`, so one low table
+    // serves every aligned block of `2^k` indices the run touches.
+    let Some(len_log2) = values.len().checked_ilog2() else {
+        return F::zero();
+    };
+    let low_bits = (len_log2 as usize).min(point.len());
+    let (high_point, low_point) = point.split_at(point.len() - low_bits);
+    let low = EqPolynomial::<F>::evals(low_point, None);
+    let mask = (1u128 << low_bits) - 1;
+    let mut sum = F::zero();
+    let mut index = start_index;
+    let mut rest = values;
+    loop {
+        let low_start = (index & mask) as usize;
+        let (block, tail) = rest.split_at((low.len() - low_start).min(rest.len()));
+        let partial = block
+            .iter()
+            .zip(&low[low_start..])
+            .fold(F::zero(), |acc, (value, eq)| acc + eq.mul_u64(*value));
+        sum += eq_index_msb(high_point, index >> low_bits) * partial;
+        // Advance only past a block with a successor: a run may end at index
+        // `u128::MAX`.
+        if tail.is_empty() {
+            return sum;
+        }
+        index += block.len() as u128;
+        rest = tail;
+    }
 }
 
 pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
@@ -168,6 +190,16 @@ mod tests {
     }
 
     #[test]
+    fn sparse_mle_accepts_a_run_ending_at_the_last_u128_index() {
+        let point: Vec<Fr> = (0..128).map(|i| Fr::from_u64(i + 2)).collect();
+        let all_ones = point.iter().fold(Fr::one(), |acc, x| acc * x);
+        assert_eq!(
+            sparse_mle_msb(u128::MAX, &[7], &point),
+            all_ones * Fr::from_u64(7)
+        );
+    }
+
+    #[test]
     fn sparse_mle_matches_explicit_sum() {
         let point = [Fr::from_u64(2), Fr::from_u64(3)];
         let values = [7, 11];
@@ -176,6 +208,27 @@ mod tests {
             sparse_mle_msb(1, &values, &point),
             Fr::from_u64(7) * eq_index_msb(&point, 1) + Fr::from_u64(11) * eq_index_msb(&point, 2)
         );
+    }
+
+    #[test]
+    fn sparse_mle_matches_dense_evaluation_across_blocks() {
+        let point: Vec<Fr> = (2..8).map(Fr::from_u64).collect();
+        let dense_eq = EqPolynomial::<Fr>::evals(&point, None);
+        for (start, len) in [(0usize, 0usize), (0, 1), (5, 13), (3, 61), (60, 4)] {
+            let values: Vec<u64> = (0..len as u64).map(|i| 3 * i + 1).collect();
+            let mut dense = vec![0u64; dense_eq.len()];
+            dense[start..start + len].copy_from_slice(&values);
+            let expected = dense_eq
+                .iter()
+                .zip(&dense)
+                .map(|(eq, value)| *eq * Fr::from_u64(*value))
+                .sum::<Fr>();
+            assert_eq!(
+                sparse_mle_msb(start as u128, &values, &point),
+                expected,
+                "{start} {len}"
+            );
+        }
     }
 
     #[test]

@@ -319,6 +319,7 @@ pub(crate) static PREPARED_VERIFIER_RESOURCES: PreparedRegistry = PreparedRegist
 impl AkitaVerifierSetup {
     pub(crate) fn same_catalog(&self, other: &Self) -> bool {
         self.one_hot_k == other.one_hot_k
+            && self.prepared == other.prepared
             && (Arc::ptr_eq(&self.schedule_artifacts, &other.schedule_artifacts)
                 || self.schedule_artifacts == other.schedule_artifacts)
     }

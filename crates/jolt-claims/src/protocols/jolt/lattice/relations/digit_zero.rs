@@ -1,20 +1,22 @@
 //! Stage-7 digit-zero reduction for instruction and bytecode RA columns.
 //! RAM retains its Hamming-weight, Booleanity, and virtualization legs.
 
+use std::collections::BTreeSet;
+
 use jolt_field::Ring;
 use serde::{Deserialize, Serialize};
 
 use crate::protocols::jolt::geometry::claim_reductions::hamming_weight::{
-    booleanity_claim, reduced_claim, virtualization_claim, HammingWeightClaimReductionDimensions,
+    booleanity_claim, gamma_power_expr, reduced_claim, virtualization_claim,
+    HammingWeightClaimReductionDimensions,
 };
 use crate::protocols::jolt::geometry::ra::JoltRaPolynomial;
 use crate::protocols::jolt::geometry::ram::ram_hamming_weight;
 use crate::protocols::jolt::relations::claim_reductions::hamming_weight::HammingWeightClaimReductionChallenges;
 use crate::protocols::jolt::{
-    HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic, JoltExpr,
-    JoltOpeningId, JoltRelationId,
+    HammingWeightClaimReductionPublic, JoltExpr, JoltOpeningId, JoltRelationId,
 };
-use crate::{challenge, derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{derived, opening, InputClaims, OutputClaims, SymbolicSumcheck};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, InputClaims)]
 pub struct LatticeDigitZeroClaimReductionInputClaims<C> {
@@ -94,7 +96,6 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity_digit_zero =
             derived(HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero);
         let mut input = JoltExpr::zero();
@@ -105,9 +106,9 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
                 // includes the digit-zero row.
                 JoltRaPolynomial::Ram(_) => {
                     input = input
-                        + gamma.clone().pow(power) * opening(ram_hamming_weight())
-                        + gamma.clone().pow(power + 1) * opening(booleanity_claim(polynomial))
-                        + gamma.clone().pow(power + 2) * opening(virtualization_claim(polynomial));
+                        + gamma_power_expr(power) * opening(ram_hamming_weight())
+                        + gamma_power_expr(power + 1) * opening(booleanity_claim(polynomial))
+                        + gamma_power_expr(power + 2) * opening(virtualization_claim(polynomial));
                     power += 3;
                 }
                 // Public M_mu = 1: fold eq(r_address, 0) into each input claim.
@@ -115,10 +116,10 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
                     let eq_virtualization_digit_zero =
                         derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
                     input = input
-                        + gamma.clone().pow(power)
+                        + gamma_power_expr(power)
                             * (opening(booleanity_claim(polynomial))
                                 - eq_booleanity_digit_zero.clone())
-                        + gamma.clone().pow(power + 1)
+                        + gamma_power_expr(power + 1)
                             * (opening(virtualization_claim(polynomial))
                                 - eq_virtualization_digit_zero);
                     power += 2;
@@ -129,7 +130,6 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
-        let gamma = challenge(HammingWeightClaimReductionChallenge::Gamma);
         let eq_booleanity = derived(HammingWeightClaimReductionPublic::EqBooleanity);
         let eq_booleanity_digit_zero =
             derived(HammingWeightClaimReductionPublic::EqBooleanityAtDigitZero);
@@ -140,9 +140,9 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
             let eq_virtualization = derived(HammingWeightClaimReductionPublic::EqVirtualization(i));
             let coefficient = match polynomial {
                 JoltRaPolynomial::Ram(_) => {
-                    let c = gamma.clone().pow(power)
-                        + gamma.clone().pow(power + 1) * eq_booleanity.clone()
-                        + gamma.clone().pow(power + 2) * eq_virtualization;
+                    let c = gamma_power_expr(power)
+                        + gamma_power_expr(power + 1) * eq_booleanity.clone()
+                        + gamma_power_expr(power + 2) * eq_virtualization;
                     power += 3;
                     c
                 }
@@ -150,9 +150,9 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
                 JoltRaPolynomial::Instruction(_) | JoltRaPolynomial::Bytecode(_) => {
                     let eq_virtualization_digit_zero =
                         derived(HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(i));
-                    let c = gamma.clone().pow(power)
+                    let c = gamma_power_expr(power)
                         * (eq_booleanity.clone() - eq_booleanity_digit_zero.clone())
-                        + gamma.clone().pow(power + 1)
+                        + gamma_power_expr(power + 1)
                             * (eq_virtualization - eq_virtualization_digit_zero);
                     power += 2;
                     c
@@ -161,6 +161,13 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
             output = output + coefficient * opening(reduced_claim(polynomial));
         }
         output
+    }
+
+    /// Every output term is one reduced opening times a coefficient built from
+    /// public values and challenges alone, so the openings are listed
+    /// without expanding the output.
+    fn expected_output_openings<F: Ring>(&self) -> BTreeSet<JoltOpeningId> {
+        self.shape.layout.polynomials().map(reduced_claim).collect()
     }
 }
 
@@ -172,7 +179,20 @@ mod tests {
     use crate::protocols::jolt::{
         HammingWeightClaimReductionChallenge, JoltChallengeId, JoltDerivedId,
     };
+    use crate::referenced_openings;
     use jolt_field::{Fr, Ring};
+
+    #[test]
+    fn expected_output_openings_match_expanded_output() {
+        let layout = JoltRaPolynomialLayout::new(2, 3, 2).unwrap();
+        let relation = LatticeDigitZeroClaimReduction::new(
+            HammingWeightClaimReductionDimensions::new(layout, 32),
+        );
+        assert_eq!(
+            relation.expected_output_openings::<Fr>(),
+            referenced_openings([relation.output_expression::<Fr>()])
+        );
+    }
 
     #[test]
     fn public_unit_activation_ra_is_reconstructed_but_ram_keeps_base_legs() {
@@ -220,6 +240,9 @@ mod tests {
         };
         let derived_value = |id: &JoltDerivedId| match *id {
             JoltDerivedId::HammingWeightClaimReduction(
+                HammingWeightClaimReductionPublic::GammaPow(exponent),
+            ) => power(exponent),
+            JoltDerivedId::HammingWeightClaimReduction(
                 HammingWeightClaimReductionPublic::EqBooleanity,
             ) => eq_bool,
             JoltDerivedId::HammingWeightClaimReduction(
@@ -232,7 +255,7 @@ mod tests {
                 HammingWeightClaimReductionPublic::EqVirtualizationAtDigitZero(index),
             ) => eq_virt_zero[index],
             JoltDerivedId::HammingWeightClaimReduction(
-                HammingWeightClaimReductionPublic::BalancedIncValueAtAddress,
+                HammingWeightClaimReductionPublic::ReservedBalancedIncValueAtAddress,
             ) => zero,
             _ => zero,
         };
