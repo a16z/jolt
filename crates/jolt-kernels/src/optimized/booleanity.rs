@@ -453,6 +453,9 @@ struct BooleanityChunks {
 }
 
 mod bulk;
+mod paired;
+
+use paired::PairedLoHi;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OptimizedBooleanityCycleKernel<F: JoltField> {
@@ -678,6 +681,7 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         let gamma_powers = &self.gamma_powers;
         let num_polys = gamma_powers.len();
         let active_polys = gamma_powers.iter().take_while(|rho| !rho.is_zero()).count();
+        let paired = PairedLoHi::new(tables, active_polys);
 
         struct Scratch<F: JoltField> {
             lanes: [F::Accumulator; 2],
@@ -697,7 +701,11 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                 pairs: vec![(F::zero(), F::zero()); num_polys],
             },
             |scratch, row, _x_in, e_in| {
-                tables.lo_hi_all(row, &mut scratch.pairs);
+                if let Some(paired) = &paired {
+                    paired.gather(row, &mut scratch.pairs);
+                } else {
+                    tables.lo_hi_all(row, &mut scratch.pairs);
+                }
                 let mut constant = F::Accumulator::default();
                 let mut leading = F::Accumulator::default();
                 for ((h_0, h_1), rho) in scratch.pairs.iter().zip(gamma_powers).take(active_polys) {
@@ -736,7 +744,11 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
                             )
                         },
                         |(pairs, sum), row, _, weight| {
-                            tables.lo_hi_all(row, pairs);
+                            if let Some(paired) = &paired {
+                                paired.gather(row, pairs);
+                            } else {
+                                tables.lo_hi_all(row, pairs);
+                            }
                             let mut value = F::Accumulator::default();
                             for ((_, hi), rho) in pairs.iter().zip(gamma_powers).take(active_polys)
                             {

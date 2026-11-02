@@ -188,13 +188,13 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         })
     }
 
-    /// First-round `q` evaluations over native rows.
-    /// The manual fold permits fallible row extraction.
-    fn native_q_evals(
+    /// Constant and leading coefficients of the native quadratic, with its
+    /// endpoint at one when the equality factor cannot recover it.
+    fn native_q_terms<const TERMS: usize>(
         &self,
         rows: &BundleStore<InstructionInputRow>,
-    ) -> Result<[F; 4], WitnessError> {
-        const POINTS: usize = 4;
+    ) -> Result<[F; TERMS], WitnessError> {
+        const { assert!(TERMS == 2 || TERMS == 3) };
         type Accumulator<F> = <F as WithAccumulator>::SignedProductAccumulator;
         let access = rows.access();
         let e_out = self.gruen.e_out_current();
@@ -204,10 +204,10 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         let pairs = self.prefix_len.div_ceil(2);
         let outer_len = pairs.div_ceil(in_len);
 
-        let block = |x_out: usize| -> Result<[F; POINTS], WitnessError> {
-            let mut right_acc = [Accumulator::<F>::default(); POINTS];
-            let mut right_high_acc = [Accumulator::<F>::default(); POINTS];
-            let mut left_acc = [Accumulator::<F>::default(); POINTS];
+        let block = |x_out: usize| -> Result<[F; TERMS], WitnessError> {
+            let mut right_acc = [Accumulator::<F>::default(); TERMS];
+            let mut right_high_acc = [Accumulator::<F>::default(); TERMS];
+            let mut left_acc = [Accumulator::<F>::default(); TERMS];
             let inner_len = (pairs - x_out * in_len).min(in_len);
             for (x_in, &e_in) in e_in[..inner_len].iter().enumerate() {
                 let y = x_out * in_len + x_in;
@@ -225,32 +225,47 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                 let split = |imm: i128| (imm >> 64, i128::from(imm as u64));
                 let (imm_even_high, imm_even_low) = split(even.imm.0);
                 let (imm_odd_high, imm_odd_low) = split(odd.imm.0);
-                for t in 0..POINTS as i64 {
-                    // |f(t)| ≤ 3, |v(t)| < 2^67, and the Lagrange weights
-                    // |1 − t|, |t| ≤ 3 keep every low sum below 2^71 and the
-                    // high sums below 2^67: exact in `i128` for any immediate.
-                    let f_rs1 = is_rs1 + t * is_rs1_m;
-                    let f_pc = is_pc + t * is_pc_m;
-                    let f_rs2 = is_rs2 + t * is_rs2_m;
-                    let f_imm = is_imm + t * is_imm_m;
-                    let f_rd = is_rd + t * is_rd_m;
-                    let (w_even, w_odd) = (i128::from(f_imm * (1 - t)), i128::from(f_imm * t));
-                    let left = i128::from(f_rs1) * (rs1 + i128::from(t) * rs1_m)
-                        + i128::from(f_pc) * (upc + i128::from(t) * upc_m);
-                    let right = i128::from(f_rs2) * (rs2 + i128::from(t) * rs2_m)
-                        + w_even * imm_even_low
-                        + w_odd * imm_odd_low
-                        + i128::from(f_rd) * (rd + i128::from(t) * rd_m);
-                    let right_high = w_even * imm_even_high + w_odd * imm_odd_high;
-                    right_acc[t as usize].fmadd_i128(e_in, right);
-                    if right_high != 0 {
-                        right_high_acc[t as usize].fmadd_i128(e_in, right_high);
+                let left = [
+                    i128::from(is_rs1) * rs1 + i128::from(is_pc) * upc,
+                    i128::from(is_rs1_m) * rs1_m + i128::from(is_pc_m) * upc_m,
+                ];
+                let right = [
+                    i128::from(is_rs2) * rs2
+                        + i128::from(is_imm) * imm_even_low
+                        + i128::from(is_rd) * rd,
+                    i128::from(is_rs2_m) * rs2_m
+                        + i128::from(is_imm_m) * (imm_odd_low - imm_even_low)
+                        + i128::from(is_rd_m) * rd_m,
+                ];
+                let right_high = [
+                    i128::from(is_imm) * imm_even_high,
+                    i128::from(is_imm_m) * (imm_odd_high - imm_even_high),
+                ];
+                // Flag differences are in {-1, 0, 1}; word and split-immediate
+                // differences have magnitude < 2^64. Each sum fits in i128.
+                for (i, right) in right.into_iter().enumerate() {
+                    right_acc[i].fmadd_i128(e_in, right);
+                    if right_high[i] != 0 {
+                        right_high_acc[i].fmadd_i128(e_in, right_high[i]);
                     }
-                    left_acc[t as usize].fmadd_i128(e_in, left);
+                    left_acc[i].fmadd_i128(e_in, left[i]);
+                }
+                if TERMS == 3 {
+                    let left = i128::from(odd.is_rs1.0) * i128::from(odd.rs1_value.0)
+                        + i128::from(odd.is_pc.0) * i128::from(odd.unexpanded_pc.0);
+                    let right = i128::from(odd.is_rs2.0) * i128::from(odd.rs2_value.0)
+                        + i128::from(odd.is_imm.0) * imm_odd_low
+                        + i128::from(odd.is_rd.0) * i128::from(odd.rd_write_value.0);
+                    let right_high = i128::from(odd.is_imm.0) * imm_odd_high;
+                    right_acc[2].fmadd_i128(e_in, right);
+                    if right_high != 0 {
+                        right_high_acc[2].fmadd_i128(e_in, right_high);
+                    }
+                    left_acc[2].fmadd_i128(e_in, left);
                 }
             }
             let e_out = e_out[x_out];
-            let mut out = [F::zero(); POINTS];
+            let mut out = [F::zero(); TERMS];
             for (slot, ((right, right_high), left)) in out
                 .iter_mut()
                 .zip(right_acc.into_iter().zip(right_high_acc).zip(left_acc))
@@ -260,7 +275,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }
             Ok(out)
         };
-        let merge = |mut a: [F; POINTS], b: [F; POINTS]| {
+        let merge = |mut a: [F; TERMS], b: [F; TERMS]| {
             for (a, b) in a.iter_mut().zip(&b) {
                 *a += *b;
             }
@@ -272,11 +287,11 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             (0..outer_len)
                 .into_par_iter()
                 .map(block)
-                .try_reduce(|| [F::zero(); POINTS], |a, b| Ok(merge(a, b)))
+                .try_reduce(|| [F::zero(); TERMS], |a, b| Ok(merge(a, b)))
         }
         #[cfg(not(feature = "parallel"))]
         {
-            let mut folded = [F::zero(); POINTS];
+            let mut folded = [F::zero(); TERMS];
             for x_out in 0..outer_len {
                 folded = merge(folded, block(x_out)?);
             }
@@ -357,47 +372,63 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         round: usize,
         previous_claim: F,
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let mut q_evals = match &self.state {
-            InputState::Native(rows) => self.native_q_evals(rows).map_err(row_extraction_error)?,
-            InputState::Dense(tables) => {
-                return self.bound_message(
-                    |i, row| {
+        match &self.state {
+            InputState::Native(rows) => {
+                let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
+                    * self.operand_product(&self.tail);
+                if self.gruen.current_linear_evals().1.is_zero() {
+                    let [q_zero, q_leading, q_one] = self
+                        .native_q_terms::<3>(rows)
+                        .map_err(row_extraction_error)?;
+                    self.gruen.checked_cubic(
+                        q_zero + suffix,
+                        q_leading,
+                        previous_claim,
+                        round,
+                        || q_one + suffix,
+                    )
+                } else {
+                    let [q_zero, q_leading] = self
+                        .native_q_terms::<2>(rows)
+                        .map_err(row_extraction_error)?;
+                    // The nonzero equality factor recovers q(1) from the claim.
+                    self.gruen.checked_cubic(
+                        q_zero + suffix,
+                        q_leading,
+                        previous_claim,
+                        round,
+                        F::zero,
+                    )
+                }
+            }
+            InputState::Dense(tables) => self.bound_message(
+                |i, row| {
+                    (
+                        tables[i][2 * row],
+                        tables[i].get(2 * row + 1).copied().unwrap_or(self.tail[i]),
+                    )
+                },
+                round,
+                previous_claim,
+            ),
+            InputState::Packed { operands, flags } => self.bound_message(
+                |i, row| {
+                    if i % 2 == 0 {
+                        (flags.value(i / 2, 2 * row), flags.value(i / 2, 2 * row + 1))
+                    } else {
                         (
-                            tables[i][2 * row],
-                            tables[i].get(2 * row + 1).copied().unwrap_or(self.tail[i]),
+                            operands[i / 2][2 * row],
+                            operands[i / 2]
+                                .get(2 * row + 1)
+                                .copied()
+                                .unwrap_or(self.tail[i]),
                         )
-                    },
-                    round,
-                    previous_claim,
-                )
-            }
-            InputState::Packed { operands, flags } => {
-                return self.bound_message(
-                    |i, row| {
-                        if i % 2 == 0 {
-                            (flags.value(i / 2, 2 * row), flags.value(i / 2, 2 * row + 1))
-                        } else {
-                            (
-                                operands[i / 2][2 * row],
-                                operands[i / 2]
-                                    .get(2 * row + 1)
-                                    .copied()
-                                    .unwrap_or(self.tail[i]),
-                            )
-                        }
-                    },
-                    round,
-                    previous_claim,
-                )
-            }
-        };
-        let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
-            * self.operand_product(&self.tail);
-        for value in &mut q_evals {
-            *value += suffix;
+                    }
+                },
+                round,
+                previous_claim,
+            ),
         }
-        self.gruen
-            .checked_round_poly(&mut q_evals, previous_claim, round)
     }
 
     fn materialize_half(
@@ -655,8 +686,17 @@ mod tests {
                     unexpanded_pc: UnexpandedPc(splitmix(&mut state)),
                     is_rs2: InstructionFlag(raw & 4 != 0),
                     rs2_value: Rs2Value(splitmix(&mut state)),
-                    is_imm: InstructionFlag(raw & 8 != 0),
-                    imm: Imm(if index % 3 == 0 { -wide } else { wide }),
+                    is_imm: InstructionFlag(if index < 4 {
+                        index == 1 || index == 2
+                    } else {
+                        raw & 8 != 0
+                    }),
+                    imm: Imm(match index {
+                        0 | 3 => i128::MIN,
+                        1 | 2 => i128::MAX,
+                        _ if index % 3 == 0 => -wide,
+                        _ => wide,
+                    }),
                     is_rd: InstructionFlag(raw & 16 != 0),
                     rd_write_value: RdWriteValue(splitmix(&mut state)),
                 }
@@ -797,7 +837,9 @@ mod tests {
 
     #[test]
     fn parity_single_round() {
-        assert_parity(1, 4242, 1, false);
+        for exceptional in [false, true] {
+            assert_parity(1, 4242, 1, exceptional);
+        }
     }
 
     #[test]
@@ -817,10 +859,19 @@ mod tests {
     #[cfg(feature = "akita")]
     #[test]
     fn parity_fp128_with_constant_tails_and_exceptional_challenges() {
-        for prefix in [0, 1, 2, 15, 16, 17, 63, 64] {
-            for exceptional in [false, true] {
-                for gamma in [0, 1, 0xDADA_CAFE] {
-                    assert_parity_field::<Prime128OffsetA7F7>(6, 717, prefix, exceptional, gamma);
+        for log_t in [5, 6] {
+            let size = 1usize << log_t;
+            for prefix in [0, 1, 2, 15, 16, 17, size - 1, size] {
+                for exceptional in [false, true] {
+                    for gamma in [0, 1, 0xDADA_CAFE] {
+                        assert_parity_field::<Prime128OffsetA7F7>(
+                            log_t,
+                            717,
+                            prefix,
+                            exceptional,
+                            gamma,
+                        );
+                    }
                 }
             }
         }
