@@ -835,7 +835,7 @@ mod tests {
 
     use super::super::context::{context_for, device_count, shared_context};
     use super::super::lt_poly::DeviceLtPolynomial;
-    use super::super::ra_poly::{DeviceRaPolynomial, COLD};
+    use super::super::ra_poly::{DeviceRaPolynomial, RaMaterialization, COLD};
     use super::super::testing::fr;
     use super::{DeviceDenseProduct, ShardedDenseProduct};
 
@@ -857,7 +857,7 @@ mod tests {
         let Some(_) = shared_context() else {
             return;
         };
-        for log_t in [0usize, 1, 2, 3, 13] {
+        for log_t in [0usize, 1, 2, 3, 4, 5, 13] {
             let cycles = 1usize << log_t;
             let increments: Vec<i128> = (0..cycles)
                 .map(|i| {
@@ -934,6 +934,11 @@ mod tests {
                             &words[range],
                             &eq_address,
                             BindingOrder::LowToHigh,
+                            if registers {
+                                RaMaterialization::ThirdBind
+                            } else {
+                                RaMaterialization::FourthBind
+                            },
                         )
                         .expect("access polynomial");
                         let lt = DeviceLtPolynomial::shifted(
@@ -1115,6 +1120,7 @@ mod tests {
                 &self.words[range.clone()],
                 &self.eq_address,
                 BindingOrder::LowToHigh,
+                RaMaterialization::ThirdBind,
             )
             .expect("one-hot window");
             let lt = DeviceLtPolynomial::new(context, &self.cycle_point, BindingOrder::LowToHigh)

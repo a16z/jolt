@@ -38,7 +38,7 @@ use crate::cuda::common::dense_product::{
 use crate::cuda::common::device::require_fr_slice;
 use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::lt_poly::DeviceLtPolynomial;
-use crate::cuda::common::ra_poly::DeviceRaPolynomial;
+use crate::cuda::common::ra_poly::{DeviceRaPolynomial, RaMaterialization};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -92,6 +92,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for CudaBackend {
                 eq_address,
                 window.len,
                 BindingOrder::LowToHigh,
+                RaMaterialization::ThirdBind,
             )?;
             let lt = DeviceLtPolynomial::new(device, r_cycle, BindingOrder::LowToHigh)?;
             let lt = if shards == 1 {

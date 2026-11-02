@@ -7,8 +7,8 @@
 //! increments; optimized derives increments from pre/post trace values.
 //!
 //! Lazy RA values are gathered inside each product round, as in optimized.
-//! The device RA helper materializes after three binds, versus four in
-//! optimized's usual lazy-RA path. Device windows contribute local product
+//! The device RA helper materializes after four binds, matching optimized's
+//! usual lazy-RA schedule. Device windows contribute local product
 //! messages before the short remaining tables are gathered onto GPU 0.
 //! Optimized can switch its lazy RA to dense storage earlier when that is
 //! cheaper, and omits the zero suffix of its access and increment columns.
@@ -36,7 +36,7 @@ use crate::cuda::common::dense_product::{
 use crate::cuda::common::device::require_fr_slice;
 use crate::cuda::common::devices::witness_windows;
 use crate::cuda::common::lt_poly::DeviceLtPolynomial;
-use crate::cuda::common::ra_poly::DeviceRaPolynomial;
+use crate::cuda::common::ra_poly::{DeviceRaPolynomial, RaMaterialization};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -78,6 +78,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
                 eq_address,
                 window.len,
                 BindingOrder::LowToHigh,
+                RaMaterialization::FourthBind,
             )?;
             let lt = DeviceLtPolynomial::shifted(
                 device,

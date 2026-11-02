@@ -1,12 +1,13 @@
 //! Lazily bound one-hot selectors from device hot indices and address-eq tables.
 //!
 //! Each early bind doubles the challenge-scaled lookup tables; gathers sum the
-//! branches for a cycle without materializing its full one-hot grid. The third
-//! bind materializes `T/8` field values and releases the indices and lookup
-//! tables. Optimized's shared lazy-RA path normally waits until `T/16`.
+//! branches for a cycle without materializing its full one-hot grid. RAM
+//! materializes `T/16` field values at the fourth bind, matching optimized's
+//! usual lazy-RA schedule. Register write RA retains its third-bind `T/8`
+//! schedule. Materialization releases the indices and lookup tables.
 //! Optimized can switch earlier when branch tables would cost as much as dense
 //! storage, and retains only a nonconstant prefix when its source establishes
-//! one. This device helper uses the fixed bind threshold and full cycle domain.
+//! one. This device helper uses fixed bind thresholds and the full cycle domain.
 //! Both binding orders use the same representation with different gather strides.
 
 #[cfg(test)]
@@ -19,7 +20,20 @@ use super::context::CudaKernelContext;
 use super::device::{fr_limbs, require_fr, DeviceFrVec};
 use super::error::CudaError;
 
-pub const COLLAPSE_AFTER_ROUNDS: usize = 3;
+#[derive(Clone, Copy)]
+pub enum RaMaterialization {
+    ThirdBind,
+    FourthBind,
+}
+
+impl RaMaterialization {
+    const fn round(self) -> usize {
+        match self {
+            Self::ThirdBind => 3,
+            Self::FourthBind => 4,
+        }
+    }
+}
 
 pub use crate::cuda::common::pack::COLD;
 
@@ -29,6 +43,7 @@ pub struct DeviceRaPolynomial {
     addresses: usize,
     cycles: usize,
     order: BindingOrder,
+    materialization: RaMaterialization,
     rounds_bound: usize,
     dense: Option<DeviceFrVec>,
 }
@@ -55,6 +70,7 @@ impl DeviceRaPolynomial {
         hot_indices: &[Option<usize>],
         eq_address: &[F],
         order: BindingOrder,
+        materialization: RaMaterialization,
     ) -> Result<Self, CudaError> {
         let cycles = hot_indices.len();
         let addresses = eq_address.len();
@@ -82,7 +98,7 @@ impl DeviceRaPolynomial {
             };
             raw.push(encoded);
         }
-        Self::from_words(context, &raw, eq_address, order)
+        Self::from_words(context, &raw, eq_address, order, materialization)
     }
 
     #[cfg(test)]
@@ -91,9 +107,10 @@ impl DeviceRaPolynomial {
         words: &[u32],
         eq_address: &[F],
         order: BindingOrder,
+        materialization: RaMaterialization,
     ) -> Result<Self, CudaError> {
         let tables = context.upload(require_fr_slice(eq_address)?)?;
-        Self::from_device_tables(context, words, tables, order)
+        Self::from_device_tables(context, words, tables, order, materialization)
     }
 
     pub fn from_device_columns(
@@ -101,6 +118,7 @@ impl DeviceRaPolynomial {
         tables: DeviceFrVec,
         cycles: usize,
         order: BindingOrder,
+        materialization: RaMaterialization,
     ) -> Result<Self, CudaError> {
         let addresses = tables.len();
         if !cycles.is_power_of_two() || !addresses.is_power_of_two() {
@@ -120,6 +138,7 @@ impl DeviceRaPolynomial {
             addresses,
             cycles,
             order,
+            materialization,
             rounds_bound: 0,
             dense: None,
         })
@@ -131,6 +150,7 @@ impl DeviceRaPolynomial {
         words: &[u32],
         tables: DeviceFrVec,
         order: BindingOrder,
+        materialization: RaMaterialization,
     ) -> Result<Self, CudaError> {
         let cycles = words.len();
         let addresses = tables.len();
@@ -145,6 +165,7 @@ impl DeviceRaPolynomial {
             addresses,
             cycles,
             order,
+            materialization,
             rounds_bound: 0,
             dense: None,
         })
@@ -294,7 +315,7 @@ impl DeviceRaPolynomial {
         }
         self.split_tables(context, challenge)?;
         self.rounds_bound += 1;
-        if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS {
+        if self.rounds_bound >= self.materialization.round() {
             self.dense = Some(self.gather(context)?);
             self.tables = context.alloc(0)?;
             self.indices = context.alloc_u32(0)?;
@@ -328,7 +349,7 @@ mod tests {
 
     use super::super::context::shared_context;
     use super::super::testing::arb_point;
-    use super::{reverse_bits, DeviceRaPolynomial, COLLAPSE_AFTER_ROUNDS};
+    use super::{reverse_bits, DeviceRaPolynomial, RaMaterialization};
 
     struct HostRaPolynomial {
         indices: Vec<Option<usize>>,
@@ -438,34 +459,38 @@ mod tests {
         ) {
             let Some(context) = shared_context() else { return Ok(()); };
             for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
-                let (indices, eq_address) = fixture(log_t, log_k, seed);
+                for materialization in [RaMaterialization::ThirdBind, RaMaterialization::FourthBind] {
+                    let (indices, eq_address) = fixture(log_t, log_k, seed);
 
-                let mut expected = HostRaPolynomial::new(&indices, &eq_address, order);
-                let mut got = DeviceRaPolynomial::new(context, &indices, &eq_address, order)
+                    let mut expected = HostRaPolynomial::new(&indices, &eq_address, order);
+                    let mut got = DeviceRaPolynomial::new(
+                        context, &indices, &eq_address, order, materialization,
+                    )
                     .expect("device ra poly");
 
-                for (round, &challenge) in challenges.iter().enumerate().take(log_t) {
-                    let got_coeffs = got
-                        .coefficients(context)
-                        .expect("device coefficients")
-                        .to_host()
-                        .expect("download");
+                    for (round, &challenge) in challenges.iter().enumerate().take(log_t) {
+                        let got_coeffs = got
+                            .coefficients(context)
+                            .expect("device coefficients")
+                            .to_host()
+                            .expect("download");
+                        prop_assert_eq!(
+                            got_coeffs,
+                            expected.coefficients(),
+                            "coefficients diverged at round {} for {:?}",
+                            round,
+                            order
+                        );
+                        prop_assert_eq!(got.len(), expected.len());
+                        prop_assert_eq!(got.is_collapsed(), round >= materialization.round());
+                        got.bind(context, challenge).expect("device bind");
+                        expected.bind(challenge);
+                    }
                     prop_assert_eq!(
-                        got_coeffs,
-                        expected.coefficients(),
-                        "coefficients diverged at round {} for {:?}",
-                        round,
-                        order
+                        got.final_claim(context).expect("final claim"),
+                        expected.coefficients()[0]
                     );
-                    prop_assert_eq!(got.len(), expected.len());
-                    prop_assert_eq!(got.is_collapsed(), round >= COLLAPSE_AFTER_ROUNDS);
-                    got.bind(context, challenge).expect("device bind");
-                    expected.bind(challenge);
                 }
-                prop_assert_eq!(
-                    got.final_claim(context).expect("final claim"),
-                    expected.coefficients()[0]
-                );
             }
         }
     }
