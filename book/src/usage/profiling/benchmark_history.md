@@ -60,10 +60,11 @@ The collector verifies repository, producer workflow/name/path, event, attempt,
 artifact ID/name and source revisions. Main/nightly sources must be main-branch
 push, schedule or dispatch runs. PR sources must be trusted `pull_request_target`
 runs and carry a matching `jolt-e2e-plan-RUN_ID-ATTEMPT` artifact whose PR number
-is in the run's `pull_requests`. GitHub lists only open PRs there, so a run whose
-PR closed before collection is rejected. The plan binds label admission,
-base/head/merge/harness, native build inputs and merge parents; GitHub's run
-head is the submitted PR head, not the trusted harness revision.
+is in the run's `pull_requests`. When GitHub returns no matching PR there, the
+result is archived as rejected; the runs of merged PR 2188 are one observed case.
+The plan binds label admission, base/head/merge/harness, native build inputs and
+merge parents; GitHub's run head is the submitted PR head, not the trusted
+harness revision.
 Current PR state can change after a valid run; that does not rewrite its history.
 Only JSON is read. Downloaded scripts, HTML and binaries are never executed.
 

@@ -345,7 +345,7 @@ def pr_plan(run, artifacts):
             or str(provenance["run_attempt"]) != str(run["run_attempt"])
             or type(provenance["pr_number"]) is not int or provenance["pr_number"] <= 0):
         raise ValueError("PR plan is not from the trusted producer attempt")
-    # GitHub lists only open PRs whose head matches the run; a PR closed before collection is rejected.
+    # GitHub can omit the admitted PR from run.pull_requests, for example after it merges; such a result is archived as rejected.
     if provenance["pr_number"] not in [pr["number"] for pr in run.get("pull_requests") or ()]:
         raise ValueError("PR plan number is not a pull request of the producer run")
     item = plan["runs"][0]
