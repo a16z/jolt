@@ -115,6 +115,7 @@ pub struct CudaKernelContext {
     irv_eq_double: CudaFunction,
     irv_tables_split: CudaFunction,
     irv_gather: CudaFunction,
+    irv_gather_bind: CudaFunction,
     irv_message_sparse: CudaFunction,
     irv_message_dense: CudaFunction,
     rrv_gather: CudaFunction,
@@ -350,6 +351,7 @@ impl CudaKernelContext {
             irv_eq_double: module.load_function("irv_eq_double_kernel")?,
             irv_tables_split: module.load_function("irv_tables_split_kernel")?,
             irv_gather: module.load_function("irv_gather_kernel")?,
+            irv_gather_bind: module.load_function("irv_gather_bind_kernel")?,
             irv_message_sparse: module.load_function("irv_message_sparse_kernel")?,
             irv_message_dense: module.load_function("irv_message_dense_kernel")?,
             rrv_gather: module.load_function("rrv_gather_kernel")?,
@@ -737,6 +739,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn irv_gather(&self) -> &CudaFunction {
         &self.irv_gather
+    }
+
+    pub(crate) const fn irv_gather_bind(&self) -> &CudaFunction {
+        &self.irv_gather_bind
     }
 
     pub(crate) const fn irv_message_sparse(&self) -> &CudaFunction {

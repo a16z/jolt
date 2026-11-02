@@ -4,14 +4,17 @@
 //! one leading chunk per product absorbs the batching weight, and split-eq
 //! recovery reconstructs the round message from quotient evaluations.
 //!
-//! CUDA reads chunks from two packed lookup-index words per cycle and doubles
-//! per-chunk equality tables for four binds before gathering dense values.
+//! CUDA reads chunks from two packed lookup-index words per cycle. As in
+//! optimized, per-chunk equality tables materialize by the fourth bind, or
+//! earlier when expanding them would cost at least as much storage as the
+//! bound dense values. CUDA applies that comparison per device window and
+//! gathers and binds directly from the unexpanded tables.
 //! Window-local rounds remain on their source devices; the short tail runs on
 //! GPU 0. Output claims remove the batching scales from the individual chunks.
-//! Optimized can materialize earlier when dense storage is cheaper, and keeps
-//! constant padding implicit. For four-chunk virtual RAs with small alphabets,
-//! it also precomputes selector-pair products for the first round; CUDA evaluates
-//! those products per cycle.
+//! Optimized keeps constant padding implicit; CUDA retains the full windows.
+//! For four-chunk virtual RAs with small alphabets, optimized also precomputes
+//! selector-pair products for the first round; CUDA evaluates those products
+//! per cycle.
 //! CUDA gathers dense values by selector column, while optimized can decode
 //! all instruction chunks from each packed row together.
 //!

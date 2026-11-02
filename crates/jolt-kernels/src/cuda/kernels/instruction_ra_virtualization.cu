@@ -86,6 +86,30 @@ extern "C" __global__ void irv_gather_kernel(const u64 *__restrict__ packed,
     store4(out[p] + (unsigned long long)j * LIMBS, value);
 }
 
+extern "C" __global__ void irv_gather_bind_kernel(
+    const u64 *__restrict__ packed, const u64 *__restrict__ tables,
+    u64 *const *__restrict__ out, unsigned int addresses, unsigned int slots,
+    unsigned int chunk_bits, unsigned int committed, unsigned int len,
+    u64 r0, u64 r1, u64 r2, u64 r3) {
+    unsigned int p = blockIdx.y;
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= len) return;
+
+    unsigned int shift = chunk_bits * (committed - 1 - p);
+    unsigned int mask = (1u << chunk_bits) - 1u;
+    const u64 *poly_tables = tables + (unsigned long long)p * slots * addresses * LIMBS;
+    unsigned long long base = 2ull * j * slots;
+
+    u64 lo[LIMBS], hi[LIMBS], delta[LIMBS], scaled[LIMBS], value[LIMBS];
+    const u64 challenge[LIMBS] = {r0, r1, r2, r3};
+    irv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, base, lo);
+    irv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask, base + slots, hi);
+    fr_sub(hi, lo, delta);
+    fr_mul(challenge, delta, scaled);
+    fr_add(lo, scaled, value);
+    store4(out[p] + (unsigned long long)j * LIMBS, value);
+}
+
 __device__ __forceinline__ void irv_prod2(const u64 *p0, const u64 *p1, const u64 *q0,
                                           const u64 *q1, u64 *r1, u64 *r2, u64 *r3, u64 *r_inf) {
     u64 p_inf[LIMBS], p2[LIMBS], q_inf[LIMBS], q2[LIMBS];
