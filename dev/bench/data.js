@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793607134388,
+  "lastUpdate": 1793609365942,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -220858,6 +220858,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 781776,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "53157953+markosg04@users.noreply.github.com",
+            "name": "Markos",
+            "username": "markosg04"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c6703570588e88033b8722bd4dec47c7f46f3b16",
+          "message": "feat(recursion): Akita field-inline verifier guest on main (#1911)\n\n* feat(field,inlines): field-inline guest kernels and hash/NTT inlines\n\nFp128 and Fr dot, weighted-row dot, and multiply kernels over the\nfield-inline ISA for RISC-V guests, with canonical readout checks. A\ndigest adapter over the Blake2b inline, used by the transcripts and the\nshared Blake2b-256 hasher. A 64-point i32 NTT and six-product pointwise\ndot inline expanded into existing proved instructions.\n\nThe tracer fixes the unit's modulus, so a guest selects the one field that\nroutes through it: field-inline-guest-bn254 (Fr) or\nfield-inline-guest-fp128 (Prime128OffsetA7F7). Every other field keeps\nthe software path.\n\n* feat(sdk,platform): guest runtime for verifier-as-guest workloads\n\nSize-class allocator for std guests, word-wise memset/memcmp and an\nasm-load memcpy, write(2) and clock_gettime(2) trap shims, and an\nexecute-with-output host entry point.\n\n* perf(claims,verifier): shape verifier algebra for guest costs\n\nDerived leaves for batching powers, direct output-claim value walks,\nindexed claim lookups, the factored Spartan outer clear check, and\ncolumn-dot bytecode folds. The preprocessing digest hashes through the\nshared Blake2b-256 hasher, and the wire form is public for verifiers\nwhose trust root fixes the digest.\n\n* feat(akita): prepared verifier for recursion guests\n\nAkitaVerifierSetup::prepare_verifier carries the expanded key, a\nselected-row catalog view, and the terminal NTT cache for the row a\nproof selected; detach/attach moves the payloads out of the record so a\nguest views them in place. Byte payloads serialize through serde_bytes.\nThe backend pool is behind a default parallel feature.\n\n* feat(recursion): Akita verifier guest with embedded setup\n\nThe recursion example verifies an Akita field-inline proof as a guest.\nEmbedded mode bakes the setup, compiled bytecode rows, and the\npreprocessing digest into the image. trace --expect checks the verdict;\nCI requires acceptance and rejection of a tampered opening. Adds the\ndesign note.\n\n* perf(claims,poly,transcript): cheaper verifier bookkeeping for the guest\n\n- Bytecode read-RAF stage values fold against the address eq table by\n  decoded flag class: rows sharing a flag set share one gamma bucket, and\n  register operands accumulate into per-register buckets. The flag-to-gamma\n  mapping has one owner, read_raf_flag_terms; the flag-class table uses\n  word-sized slots.\n- The stage-1 outer remainder reads its produced openings off its Az and Bz\n  factors instead of expanding tau*Az*Bz; every expanded term is a distinct\n  unit-coefficient monomial, and a test pins the result to the expansion.\n- Contiguous sparse MLE runs read their low eq factor from one table.\n- The digest transcript updates one hasher in place instead of threading it\n  through chain_update; transcript bytes are unchanged.\n\n* perf(field,inlines,akita): guest kernels, inline tuning, and the companion pin\n\n- jolt-field: shared-operand dot_rows, four-factor sum_of_products4, and\n  register-resident signed sums (Field::signed_sum) on the field-inline guest.\n- jolt-inlines-ntt: butterfly sums reduce by a Montgomery product with the\n  stage's first twiddle (the Montgomery form of 1), 5 rows instead of a 7-row\n  conditional reduction; the registered expansion fixture is regenerated.\n- jolt-inlines-blake2: Blake2b::update_block_eager compresses a full\n  non-final block now, so a hasher sharing a constant first block can be\n  prepared once.\n- Recursion guest: the Keccak inline backs Akita's SHAKE sampling\n  (hash-inlines feature).\n- Akita companion pinned at markosg04/akita@6faec6c78: an inline Blake2b\n  transcript sponge byte-identical to spongefish's Blake2b512 (checked by\n  jolt-akita against spongefish), word-window Golomb-Rice decoding,\n  coefficient-major terminal folds, doubleword NTT input stores, inline\n  proof-atom encoding, and batched compression-column evaluation.\n\n* perf(transcript)!: absorb opening claims and round coefficients as one message\n\nSumcheck round coefficients and each batch of opening claims now absorb as\none labeled message carrying the count and the big-endian values, instead\nof one message per scalar. This changes the transcript, and so the proof\nbytes, for every proof.\n\nProver, verifier, and BlindFold absorb through the shared\nappend_round_coefficients and append_opening_claims helpers in\njolt-sumcheck, whose transcript-facing bounds move from AppendToTranscript\nto CanonicalBytes. The Fiat-Shamir absorb- and challenge-site inventories\nare re-blessed, the checked-in jolt-verifier fuzz proof bundles are\nregenerated by their documented ignored tests, and the sumcheck\ncompressed-round differential reference frames rounds through the shared\nhelper. The standalone sumcheck consumer's field implements CanonicalBytes.\n\njolt-blindfold's pairwise and lag-one correlation checks used a fixed 0.25\nbound, under 3 sigma at 128 samples, which also fails for\ntranscript-independent projections at other seeds; they now use 4 sigma,\n4/sqrt(n) over n samples.\n\n* docs(recursion): record the guest-cost mechanisms and the 2^26 ladder\n\n* build(akita): pin canonical LayerZero-Labs/akita\n\nThe Akita companion moves from the personal markosg04/akita fork to\nLayerZero-Labs/akita branch markos/recursion-integration: akita main\n2607265b2 plus the recursion verifier-guest PRs\n(LayerZero-Labs/akita#186-#190). Repin to akita main once those merge.\n\nAkita main moved schedule, geometry, and dispatch types into a new\nakita-params crate and renamed AkitaScheduleLookupKey to\nScheduleLookupKey; jolt-akita imports them from there. The trace-packed\none-hot source implements the new\nOpeningBatchKernel::evaluate_and_fold_batch by folding each source.\n\nAkita main's guided planner now admits the four-group and\ntwo-full-width batches the schedules test expected it to reject. Neither\nshape reaches the full-planner fallback, which still admits only one\nfull-width increment plus at most two advice groups, so the test now\nasserts that they plan through guided planning.\n\nThe guest accepts at 66,175,726 rows (was 66,116,859 on the fork); the\nported companion validates the setup descriptor and prefix registry and\ndecodes the catalog view with postcard.\n\n* fix(recursion): close review findings on trust boundaries and guest paths\n\nAdversarial review of the recursion guest PR:\n\n- Prepared Akita payloads: the backend key and terminal cache are used\n  unchecked, so an inline copy decoded from a setup record is refused\n  there; only payloads this process prepared or a guest attached serve.\n  Attached bodies are akita TrustedBytes tokens, so the one unchecked\n  assumption (canonical key words) is made where the token is built, in\n  the guest or host, and jolt-akita stays free of unsafe code.\n  detach_prepared_payloads checks every payload before moving any. The\n  host verifies proofs through the same detach-and-attach path the guest\n  takes, and an integration test pins it.\n- Field-inline selectors are exclusive on riscv64 (a compile error\n  otherwise); the unit's modulus contract and the reserved FR registers\n  are documented. Row kernels (dot_base_rows, weighted_dot_base_rows)\n  require matching row shapes on every path, as the guest kernels do.\n- Blake2b: jolt-transcript and jolt-claims use the inline hasher only on\n  riscv64, so a host build with blake2-inline no longer panics.\n- The clear Spartan outer check accepts only shapes with affine terms,\n  the shapes its factored form matches.\n- tamper-opening flips a bit inside the Akita opening proof, so CI's\n  reject case runs through the PCS verifier (rejected after ~47.8M rows\n  rather than at stage 1).\n- Guest runtime: zero-length write shim guarded; allocator and heap-split\n  comments corrected; assume_static is an unsafe fn.\n- Docs: flag-class soundness guard, opening-claim message boundaries,\n  non-additive jolt-sdk akita feature, spec measurements at this revision.\n- Akita pin: LayerZero-Labs/akita markos/recursion-integration, main plus\n  the reviewed LayerZero-Labs/akita#186-#190.\n\n* chore(verifier): drop the redundant bn254 feature on jolt-crypto\n\njolt-verifier's library code uses only jolt-crypto's ungated commitment\ntraits. The BN254 types appear only in its unit tests, and jolt-blindfold,\na non-optional dependency, enables jolt-crypto/bn254 itself, so the\nexplicit feature changed nothing in the resolved build.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(sdk): share one size-class arena between Rust and musl in std guests\n\nUnder guest-size-class-alloc, std guests split the heap at boot: ZeroOS's\nkernel heap kept a fixed heap_size/8 and the Rust arena the rest. The kernel\nheap backs every musl mmap (malloc arenas, pthread stacks, C allocations), so\na guest that mapped more than an eighth of its heap failed with ENOMEM even\nwhen the Rust side had room.\n\nstd guests on the size-class allocator now register it as ZeroOS's kernel\nheap, as no_std guests already do, and kinit hands it the whole heap. The\nRust global allocator draws from the same arena. The allocator's SAFETY\ncomment now states why calls cannot overlap with threads enabled.\n\nA guest runtime test maps a 3 MiB malloc and a 3 MiB pthread stack beside a\n4 MiB Rust allocation on a 16 MiB heap; it failed on the split.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(field): rename fr_inline to field_inline\n\nThe guest kernels serve whichever field the field-inline unit computes\nin (Fr or Fp128), so the module and its comments use the field-inline\nterminology: field_inline.rs, \"field registers\", and the field-inline\ninstruction profile.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(claims): list read-RAF and digit-zero output openings directly\n\nThe default expected_output_openings expands output_expression only to\ncollect its opening ids, and the clear verifier's output-shape check\ncalls it before verification builds the expression again. Read-RAF and\nthe digit-zero claim reduction have large expansions. Both outputs are\nsums of distinct monomials, so their openings are listed directly; a\ntest pins each list to the expanded expression, as for the stage-1\nouter remainder. The recursion guest drops 813,367 rows on the\nFibonacci proof (66,254,853 to 65,441,486).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(platform,sdk): drop the fast-mem guest routines\n\nRemove jolt-platform's word-wise memcpy, memset, and memcmp overrides\n(the fast-mem feature) and jolt-sdk's guest-fast-mem, so guests use\nmusl's routines. Owning libc replacements is not worth it here; the\nsub-word access cost they dodge belongs in the ISA (Tiers 1 and 2 of\nspecs/byte-addressable-memory.md, #2013).\n\nThe recursion guest's Fibonacci trace grows from 65,441,486 to\n69,059,130 rows, 1,950,266 over 2^26. The following commits recover\npart of that.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(inlines): pack Blake2b input into message words\n\nThe Blake2b SDK staged input through a 128-byte byte buffer. On a guest,\neach update's variable-length copy and each finalize's padding fill\nlowered to libc memcpy/memset calls, and every hasher clone copied the\nwhole 216-byte struct. The Jolt digest transcript and Akita's transcript\nsponge both hash through this type.\n\nThe buffer is now 16 little-endian message words whose bytes past the\nbuffered length stay zero. Input is ORed in word by word (one aligned\nload per word when the source is aligned), finalize needs no padding\npass, and Clone copies only the buffered words. Volatile word accesses\nkeep LLVM from lowering these loops back into libc calls. Output bytes\nare unchanged; a new test checks every source alignment and split point\nagainst the blake2 crate.\n\nOn its own, this saves the recursion guest 232,593 rows.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(platform): copy whole words when size-class realloc moves a block\n\nBoth blocks are class-aligned and span whole words, so realloc copies\n8-byte words instead of calling memcpy, which a std guest's libc\nperforms partly in sub-word loads and stores. On its own, this saves\nthe recursion guest 61,164 rows.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* perf(cli): inline constant-size guest copies and fills up to 32 stores\n\nLLVM's RISC-V defaults lower constant-size memcpy/memset above a few\nstores to libc calls. In a guest those calls move data partly in\nsub-word loads and stores, each a multi-row sequence, so guest builds\nnow raise the inline limits to 32 stores (-max-store-memcpy,\n-max-store-memset). On its own, this saves the recursion guest 948,480\nrows; btreemap, alloc, collatz, the stdlib and large-alloc guests each\ndrop slightly. 64 and 128 measured worse on the recursion guest than 32.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs(spec): record recursion-guest rows without fast-mem\n\nThe guest now accepts the Fibonacci inner proof at 67,622,320 rows,\n513,456 over 2^26. Record the post-rebase rows, mark the target as\nunmet, and list cheaper sub-word memory as the lever.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(inlines): keep the Blake2b word-packing helper out of the absorb inventory\n\nThe Fiat-Shamir inventory scanner treats any call named `absorb*` as a\ntranscript absorb site, so the Blake2b hasher's input-packing helper,\nnamed `absorb` by db157e75a, left fs_obligations failing on an\nunlisted site. It packs hash input into message words and touches no\ntranscript; rename it `or_into_words` and drop its inventory entries.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs(spec): record recursion-guest rows after merging main\n\nA fresh Fibonacci proof at this revision accepts at 78,896,208 rows\n(76,805,832 verification cycles), 11,787,344 over 2^26. Input mode\naccepts at 86,254,204 rows and the tampered opening proof is rejected\nafter 60,145,138. The increase over 67,622,320 is in the Akita\ntrace-batch opening's root fold under main's native trace batching\n(#2012); the guest still verifies through its prepared payloads.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(sdk): name jolt-sdk's akita feature when it breaks a provable host build\n\njolt-sdk's `akita` feature compiles out the Dory host helpers, because\njolt-prover's `akita` compiles out `jolt_prover::dory`. `#[jolt::provable]`\nstill expanded calls to them, so any host build that unified the feature\nwith a provable crate (`--all-features`, or the recursion example's\n`akita` alongside another example) failed with unresolved paths into the\nmissing Dory API: six errors for the fibonacci guest alone.\n\nThe macro now wraps its Dory prove and verify functions in\n`jolt::__dory_host_items!`. jolt-sdk passes them through, except with\nboth `host` and `akita` enabled, where it replaces them with a single\ncompile error that names the feature and points at\n`jolt::jolt_prover::akita`. Guest builds and tracing helpers are\nunaffected.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(field): generalize sum_of_products4 to sum_of_products<K>\n\nField::sum_of_products::<K> computes Σ_i Π_k terms[i][k] for any arity\n(an empty product is one). On a field-inline guest the kernel loads each\nterm's K factors into the register file with K - 1 multiplies and reads\nthe sum out once, as the four-factor kernel did. Akita's compression\nevaluation, its one caller, compiles to the same per-term sequence: the\nrecursion guest accepts at 78,895,414 rows (was 78,896,208).\n\nsum_of_products4 forwards to it until the Akita companion calls\nsum_of_products; the repin that follows removes it.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* build(akita): repin the companion and drop sum_of_products4\n\nmarkos/recursion-integration now calls Field::sum_of_products directly\n(LayerZero-Labs/akita 38d8deb6, which also pins Jolt at e19eda725), so the\nfour-factor forwarder has no caller left. The recursion guest accepts at\n78,895,975 rows.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(riscv): make flag_class name every row field\n\nThe verifier's folded read-RAF evaluation reads each flag class's flags\nfrom one row, so a row field that a flag reads but flag_class omits\nbreaks soundness, and the class test would not vary a new field.\nflag_class now destructures the row without `..`: adding a field to\nJoltInstructionRow fails to compile there until it is keyed or\nexplicitly excluded. Flags starting to read the already excluded\naddress or operands remain guarded only by\nflag_class_determines_read_raf_flag_terms. Guest rows are unchanged.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(sdk): emit trapped stdout writes in one host call\n\nThe trap handler answered write(2) to fds 1 and 2 by calling putchar per\nbyte, one host print per byte. The tracer decodes each print as UTF-8, so\nevery non-ASCII character reached the host as replacement characters:\na std guest's `println!(\"σ→²\")` printed seven U+FFFD. The shim\nintercepts these writes before ZeroOS's console, so it bypassed #1960's\nsingle-call fix for every std guest.\n\nIt now calls __platform_stdout_write, the console's single-call path,\nwhich also covers a null or empty buffer. The comment notes that fds 1\nand 2 reach the host even if the guest redirected them.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* docs(guests): document what std::time returns in a guest\n\nstd guests' clock_gettime is answered by the runtime with a zero\ntimestamp for every clock, so Instant::now and SystemTime::now succeed\nbut never advance. The guest page now says so under Standard Library,\nthe security model's no-clock rule links to it, and the recursion spec\nstates what its trap shims return.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(verifier): repin the ZK muldiv BlindFold shape at trace length 512\n\nThe jolt CLI's inline-store limits (83b94726f) compile the muldiv guest\nto fewer instructions, so it now runs in under 512 cycles and its padded\ntrace length halves. The golden-shape audit pinned 1024, which failed\nCI's ZK job on every push since the branch could run CI again (from\n179e7a605). With the CLI built without those two flags the old pins\npass, so the change is the fixture, not the protocol. At 512 the\nBlindFold shape has 221 coefficient rows (was 227: one fewer committed\nround in each of six cycle sumchecks); the other counts are unchanged.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(field): bind the field-inline unit's modulus at guest boot\n\njolt-field's guest kernels range-check readouts against the selected\nfield's modulus, which assumes the tracer's field-inline unit computes in\nthat field. Nothing checked it: a BN254-selected guest traced under the\nfp128 unit computed 3*5 in Fr as a wrong value that still read out\ncanonically, and returned it without error.\n\njolt_field::bind_field_inline_modulus accumulates the selected field's\nmodulus into a cleared field register and asserts zero, proving that the\nunit's prime divides it and so equals it. jolt-sdk's std runtime calls it\nonce from __platform_bootstrap, before main; it is a no-op without a\nselector. The same probe guest now fails at trace time\n(\"FIELD_ASSERT_ZERO of nonzero field register 4\"), and under the matching\nunit it returns the right product.\n\nBinding at boot keeps readouts free. Checking a static flag on every\nreadout cost the recursion guest 2.33M rows; this path costs nothing\nmeasurable (78,892,856 rows, was 78,895,975). jolt-field has no no_std\nbuild, so its kernels only run in std guests, and jolt-sdk takes jolt-field\nunder guest-std only, without its default BN254 field.\nFr::MODULUS_LIMBS and Fp128::MODULUS_LIMBS match a16z/jolt#1995's.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* fix(field,poly): keep signed_sum's accumulator safe from its iterator\n\n- field_inline::signed_sum holds its partial sum in REG_ACC while it pulls\n  terms, so an iterator that called dot (or any accumulating kernel)\n  overwrote the sum. The accumulators are now marked lent until the\n  readout; Fp128 dispatch then takes the software path for dot, dot_rows,\n  weighted dot rows, sum_of_products, and a nested signed_sum. The guard\n  costs about 9,000 rows on the recursion guest.\n- sparse_mle_msb advanced its index past the final block, which overflowed\n  for a run ending at index u128::MAX; it now returns after the last block.\n\n* build(akita): repin to the reviewed LayerZero-Labs/akita#186-#190\n\nThe companion moves to recursion-integration 78d31e124: Akita main\n401e7972 plus the review revisions of #186-#190.\n\n- jolt-akita's config presets follow main's RingDimensionSchedule (#192).\n- Akita's guest transcript is now spongefish's own Blake2b sponge over the\n  inline digest adapter, so the jolt-akita test pinning the hand-written\n  sponge and Blake2b::update_block_eager, which only that sponge used, are\n  removed.\n- specs/recursion-guest.md records a fresh proof at 79,348,402 rows.\n\n* docs(recursion): record rows after merging main and the Akita review fixes\n\n* docs(recursion): record rows after merging main\n\n* fix(recursion): follow main's sumcheck transcript and Akita prove APIs\n\n* docs(recursion): record rows after merging main\n\n* test(sumcheck): drop the external consumer's unused opening-claim imports\n\n* ci(recursion): run the Akita guest verdicts as their own job\n\n* docs(recursion): re-measure rows with an isolated guest build\n\n* Fix transcript feature selection after main merge\n\n* Adapt recursion code to main API renames\n\n* Reject malformed recursion records without panicking\n\nUse checked framing, bounded record decoding, and fallible proof and device reads. Return verdict zero for input errors while retaining distinct failures for corrupt embedded preprocessing. Exercise the guest parser on the host with truncations, excessive lengths, invalid padding, noncanonical fields, and malformed devices.\n\n(cherry picked from commit 3e308a58ac0861db2041222a5266dfc733111261)\n\n* Authenticate input setup against an image-fixed digest\n\nBake the complete framed setup digest into input-mode guests and check it before setup decoding or trusted payload attachment. Cover the setup record and every detached key, catalog, and terminal-cache body; reject absent pins and substitutions. Keep embedded setup bound directly by the image.\n\n(cherry picked from commit 4bb679f41f8f8393dd546d41861a94639fe14534)\n\n* Require nonempty recursion batches and complete input consumption\n\nReject zero proofs and trailing bytes after the final device record. Document the exact statement established by the unchanged one-word verdict and the need for consumers to bind the intended count and devices through the runtime input.\n\n(cherry picked from commit 0e3816c2e297a0443865125b9714d1035b66b658)\n\n* Size recursion input regions from the runtime proof section\n\nUse one checked input capacity for the generated guest macro and tracer configuration, including alignment and serialization overhead. Cover embedded muldiv in both commitment builds and check framing across length-prefix boundaries for every example.\n\n(cherry picked from commit f5b9684e907607d671dd327ba923a0496ae4ca41)\n\n* Document and pin the current Akita setup encoding\n\nState the incompatible optional-payload and prepared-verifier encoding and the required regeneration of stored preprocessing. Restore a frozen decode fixture covering absent and present prepared state, detached bodies, and decoded payload provenance. No independent setup-format version exists to bump.\n\n(cherry picked from commit 85a44076c6ba8e0f5f87a69ffe2545b60b54a41d)\n\n* Exercise recursion rejection boundaries and field kernel tails\n\nAdd typed sumcheck, opening-claim, device-output, panic-bit, and empty-batch fixtures, plus input-mode and two-proof acceptance in CI. Compare compiled field arithmetic with native software folds across all row and element tails, including nested accumulator use and boundary operands. Run the checks through the existing guest build and tracer path for both field selectors.\n\n(cherry picked from commit 105e9e841b0891ef7b023efccf01193687848cf1)\n\n* Describe the Akita opening-body tamper accurately\n\nIdentify the PCS proof body as the mutation target and state that the command requires an Akita build. Keep the separate Stage1 claim mutation documented under the typed tamper command.\n\n(cherry picked from commit fe2121ac8503ffe9e5705e51884c0aaa84941bf4)\n\n* Assert matching field dot-product lengths in debug builds\n\nCheck the equal-length contract in the default Field method and the Fp128 override so neither dispatch silently hides a shape mismatch during development.\n\n(cherry picked from commit ff6877f7080c2782bae6a21a969c5dbd9a3cc969)\n\n* Reject conflicting field accumulator loans in release builds\n\nKeep the signed-sum accumulator availability check in optimized guests so an unexpected nested kernel entry fails closed instead of overwriting a live sum.\n\n(cherry picked from commit aee7062319b221015a46106f74a15925431f29a1)\n\n* Define the setup pin in fresh guest builds\n\n* Preserve the lattice test round geometry\n\n* Reject malformed recursion input lengths\n\n(cherry picked from commit e352ad8585b2a7c4bd31aa34ab1b557f398ba6fa)\n\n* Reject nonzero recursion transport padding\n\n(cherry picked from commit 94224503199ecd9f0a3b4304944a546ada357614)\n\n* Select the field instruction profile for Dory inner proofs\n\n(cherry picked from commit 1d37c54a55ae3dbcd90b9d5ce6f73d1bffa5324f)\n\n* Acquire lent field accumulators atomically\n\n(cherry picked from commit 2acd6a2ec404327203958334266f750c67eab708)\n\n* Cover mixed proof batches and Dory tamper rejection\n\n(cherry picked from commit 517df4adb9024d30157825680ff1aefdf7b95863)\n\n* Derive recursion record limits when building the image\n\n(cherry picked from commit a2a5fb2a0e3f75e06bbbd110fc4575f9a6f0c541)\n\n* Fix merged Blake2 finalization and field instruction dispatch\n\n* Revert \"Assert matching field dot-product lengths in debug builds\"\n\nThis reverts commit 4baee14086ae033a6e2ce1fa1ac3f6d22e520c9a.\n\n* Pin Akita to main\n\nLayerZero-Labs/akita#279 is merged; Akita main 1160b0a8 has the same tree as the previously pinned #279 head.\n\n* Regenerate verifier fuzz fixtures and lock for the Akita pin\n\nThe six verifier fuzz bundles are regenerated from the merged protocol and pass decode and verification in clear and ZK builds. Cargo.lock resolves the Akita main pin.\n\n* Apply recorded formatting fixes\n\n* Fix imports and lint findings after main merge\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: acentelles <centelles.alberto@gmail.com>",
+          "timestamp": "2026-11-02T07:56:20Z",
+          "tree_id": "fcf188ea8bbafe99e6800b0f7bda1eea5691c08a",
+          "url": "https://github.com/a16z/jolt/commit/c6703570588e88033b8722bd4dec47c7f46f3b16"
+        },
+        "date": 1793609361801,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 2.1864,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 783904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 0.9845,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 426296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 426064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 428616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.492,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 425148,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.074,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 429028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 2.7049,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 424700,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 2.6285,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.1878,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 784064,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.3694,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 428604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.2788,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 426356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 14.8118,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 3.1256,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 428684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 21.3688,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 696244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 10.5247,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 608856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 43.5946,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 642500,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.0569,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 425788,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.2015,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 425880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 10.2731,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 783824,
             "unit": "KB",
             "extra": ""
           }
