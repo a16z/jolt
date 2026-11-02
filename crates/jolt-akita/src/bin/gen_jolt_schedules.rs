@@ -11,7 +11,6 @@
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use akita_params::PolynomialGroupLayout;
 use akita_planner::emit::{
     publish_artifact_outputs, render_schedule_artifact_outputs_with_validation,
     MaterializationDiagnostics,
@@ -31,20 +30,8 @@ fn main() {
     );
     let mut only = None;
     let mut check = false;
-    let mut direct = false;
-    let mut shape = None;
     for argument in args {
-        if argument == "--direct" {
-            direct = true;
-        } else if let Some(value) = argument.strip_prefix("--shape=") {
-            let (vars, polys) = value
-                .split_once('x')
-                .expect("shape: <variables>x<polynomials>");
-            shape = Some(PolynomialGroupLayout::new(
-                vars.parse().expect("variables"),
-                polys.parse().expect("polynomials"),
-            ));
-        } else if argument == "--check" {
+        if argument == "--check" {
             check = true;
         } else {
             assert!(
@@ -98,16 +85,7 @@ fn main() {
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.contains(only)),
         })
-        .map(|mut fixture| {
-            if let Some(shape) = shape {
-                fixture.spec.keys = vec![shape];
-            }
-            if direct {
-                fixture.prepare_direct()
-            } else {
-                fixture.prepare()
-            }
-        })
+        .map(|fixture| fixture.prepare())
         .collect::<Result<Vec<_>, _>>()
         .expect("prepare direct fixture rows");
     assert!(!specs.is_empty(), "no schedule family matches {only:?}");
