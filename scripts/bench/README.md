@@ -12,17 +12,17 @@ target job has a separate 600-second limit, including transfer and result handli
 The Python execution receipt starts at artifact verification, so it alone does
 not establish the whole target-job duration.
 
-**The sizes and repetition counts are proposals, not a calibrated performance
-gate.** A larger PR matrix is adopted only after a measured target interval below
-600 seconds and a matching per-cell noise reference. The initial three-case,
-24-proof baseline remains available. The temporary hosted build-only job is
-limited to PR #2215 while target execution is disabled; no runner registration,
-setting change, or comment is needed to produce its artifacts.
+The PR matrix has 17 cells and launches 136 proof processes, including warmups.
+`pr-baseline.json` preserves the initial three-cell, 24-proof matrix. Measured
+timing and noise references apply to their exact artifact inputs, not to an
+unmeasured later kernel or a future run. No runner registration, target setting
+change, or comment publication is part of this draft.
 
 ## Workloads and tiers
 
 `suites.json` is the source of the case matrix. Standard-main and nightly run both
-Dory and Akita at exactly 1, 8, or 24 physical cores; PRs run only Akita.
+Dory and Akita at exactly 1, 8, or 24 physical cores. PRs use all 15 Akita
+main-size cells plus Dory SHA2 and BTreeMap at 24 cores.
 All three tiers use `release` without profile overrides.
 The ordinary instruction profile and clear proofs are
 used; no protocol parameter is adjusted for the benchmark.
@@ -40,23 +40,54 @@ signature vector comes from `examples/secp256k1-ecdsa-verify/src/main.rs`; it do
 not replace ECDSA with a synthetic loop. Input bytes and guest ELF hashes are
 recorded for each build. `seed: null` means the input generator uses no PRNG.
 
-| Tier | Proposed cases | Warmups / measured repetitions per leg |
+| Tier | Cases | Warmups / measured repetitions per leg |
 |---|---|---:|
-| `pr` | Fibonacci at 1 core, SHA2 at 8, BTreeMap at 24; Akita only: three points | 1 / 3 |
+| `pr` | All five workloads at 1 / 8 / 24 cores with Akita; Dory SHA2 and BTreeMap at 24 cores: 17 points | 1 / 3 |
 | `main` | All five workloads, all three core counts, both PCS: 30 points | 1 / 3 |
 | `nightly` | Two larger inputs for each main point: 60 points | 1 / 5 |
 
-The fast PR subset has no Dory performance signal. It launches 24 fresh proof
-processes, including warmups and both legs; this count does not establish a wall
-time. The target interval, including transfers and result processing, must still
-be measured below 600 seconds; hosted build time is reported separately.
+The PR target budget includes transfers and result processing; hosted build time
+is reported separately. Process count alone establishes neither a duration nor
+a future timing guarantee.
 
-`pr-candidate.json` stages 17 cells: the 15 Akita main-size cells and Dory SHA2
-and BTreeMap at 24 cores. Its 136 processes are not the adopted PR suite. Run it
-with `ci.py execute --config scripts/bench/pr-candidate.json` only after checking
-the hosted artifacts. If its measured target interval exceeds 600 seconds,
-remove Dory SHA2 first, then Dory BTreeMap; retain one warmup and three measured
-pairs per retained cell. Larger inputs are already bundled for bounded pilots.
+To select the preserved 24-proof baseline, use
+`ci.py execute --config scripts/bench/pr-baseline.json` with artifacts built by
+the matching harness. The original measurement artifacts retain their original
+configuration bytes and source revisions. Larger inputs remain bundled for
+separately scoped measurements.
+
+### Measured PR interval
+
+[Hosted run 41362804476](https://github.com/a16z/jolt/actions/runs/41362804476)
+built base `e37e6f24a4276fb76e85d0db150cdb196cbc26e5` and candidate/harness
+`535840a97b0678a95e47df5c3adf71c5faa04d85`. Both hosted legs contain identical
+native prover bytes. The following measurements used those artifacts on
+`jolt-bench`, not the later kernel merged into the PR.
+
+| Matrix | Fresh processes, including warmups | Manual on-host checkout through packaging | Download request through finalize | Suite execution |
+|---|---:|---:|---:|---:|
+| Preserved three-cell baseline | 24 | 78.999932 s | 67.783 s | 46.969 s |
+| Adopted 17-cell matrix | 136 | 458.583460 s | 448.842 s | 429.834 s |
+
+The manual on-host interval uses one target clock: checkout start through result
+packaging end. It includes downloads, ZIP checks, extraction, payload verification,
+the proof processes, finalization and remote-orchestration gaps. It excludes
+result upload and runner queue/setup; no self-hosted runner was registered. The
+narrower download-to-finalize interval is shown separately. Suite execution
+includes fresh-process setup and gaps; it is not pure proving time. Hosted
+preparation took 2438.71 s for the whole command, outside these target intervals.
+
+The hosted and matched local binaries are not byte-identical as packaged. Their
+GNU build-ID and GCC-version comment sections differ; removing those two metadata
+sections from comparison copies yields byte-identical files for both provers.
+The original artifacts were left unchanged and used for the proof measurements.
+
+The matched hosted/local control had equal public-output bytes, proof sizes and
+trace dimensions, with end-to-end and process-time observations inside the frozen
+per-cell margins. The three secp256k1 cells return no public bytes, so output
+equality alone says nothing about their result. The secp256k1 one-core RSS
+deviation was 4.9399%, outside its 2% margin; its cause is unresolved. RSS was
+not an execution/timing falsifier, and no RSS equivalence is claimed.
 
 Main trace ceilings are `2^18`, `2^20`, and `2^22` at 1, 8, and 24 cores.
 Nightly uses twice and four times each main operation count and raises the trace
@@ -130,11 +161,17 @@ The Dory URS cache begins empty in each result directory and is shared by the tw
 legs. Setup may use system entropy; retained URS files are hash-identified.
 Warmup means an excluded first invocation, not a proven Cargo or URS cache hit.
 Akita's external schedule files are copied into the bundle and hash-checked.
-No host governor, SMT, boost, swap, RAID, or other setting is changed.
+No benchmark-target governor, SMT, boost, swap, RAID, or other setting is changed.
 `host.microcode` comes from `/proc/cpuinfo`. `host.control_plane` records the
 readable `/opt/pika/bin/pika-cli` and `pika-node` SHA256s and the node's `--version`
 output. Unavailable observations are null, never an assumed match. These are
 runtime observations; they are not part of native bundle cache identity.
+
+The disposable GitHub-hosted builder checks for 40 GB of free disk space, then
+adds a 24 GB swap file, reserving 16 GB of disk space for the build. It uses one
+Cargo job and retains the repository's release profile, including fat LTO and
+debug information. Its existing 120-minute job timeout is separate from the
+target's ten-minute PR timeout.
 
 ## Manual commands
 
@@ -237,17 +274,21 @@ must hold the same `host.lock`; do not remove the lock file during maintenance.
 and `complete` or `failed` outcome in a flushed JSON line when the attempt finishes.
 The initial argument-vector record is flushed before execution. A start without
 an outcome record is interrupted or unknown, never a completed duration.
+These command receipts cover the CLI build, prover builds and guest preparation,
+including failures; a launch failure has no exit code. They are command durations,
+not separate compiler/linker timings. Reuse keeps the original durations in
+`construction.log`; current commands remain in `build.log`. Validation, copying
+and all other preparation count in the fresh preparation and wall-time receipts.
 Commands, child output and completion records also stream to the CI step log,
 so a lost runner does not erase all build progress. During hosted preparation,
 memory, swap, free disk bytes and the kernel's `oom_kill` counter are sampled
 every ten seconds. A final sample and readable kernel warnings/errors are logged
 on exit. A denied kernel-log read is reported, not evidence that no OOM occurred.
 These observations describe the build host, never the proof timing process.
-This covers the CLI build, prover builds and guest preparation, including failures;
-a launch failure has no exit code. These are command durations, not separate
-compiler/linker timings. Reuse keeps the original durations in `construction.log`;
-the current commands remain in `build.log`. Validation, copying and all other
-preparation still count in the fresh preparation and full wall-time receipts.
+GNU time records the preparation command's duration and largest reaped process's
+resident high-water mark. That RSS excludes swapped-out pages and is not the
+concurrent process-tree total. Maximum observed swap is a sampled aggregate,
+not a true high-water mark.
 Native Cargo builds emit stable JSON into the same log. Each `compiler-artifact`
 record's `fresh` field distinguishes reused units from executed rustc units;
 `package_id`, `target`, `features` and `profile` identify the unit. Preserve these
@@ -340,16 +381,10 @@ override changes the comment, not the original raw result. The option does not
 enter build identity or change any native bundle's construction manifest.
 Keep the suite configuration and bundles unchanged when adding observations.
 
-For a PR reference, use the exact hosted base bundle. A separate local build is
-only the off-host equivalence control, not the operational target path:
-
-```bash
-uv run --no-project python scripts/bench/run.py build \
-  --revision "$BASE" --harness-revision "$HARNESS" --profile release \
-  --target-cpu "$TARGET_CPU" --out "$BASE_OUT"
-```
-
-Then use its returned bundle and bundled collector for the ten-pair reference:
+For a PR reference, use the exact verified hosted base bundle and its bundled
+collector. Do not rebuild it on the target to add observations. A separately
+authorized local build is only the off-host equivalence control. A new reference
+requires its own scoped ten-pair null measurement:
 
 ```bash
 uv run --no-project python "$BASE_OUT/scripts/bench/run.py" run \
@@ -398,10 +433,16 @@ Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
 
 Without an optional file, `suite.calibration` comes from the supplied configuration.
-The current default is explicitly unavailable. The comment identifies the suite
-configuration and optional input by their SHA256s; a manual rendering does not
-authenticate either source. Trusted publication requires both the calibration
-object and `calibration_sha256` to equal its pinned expected configuration.
+The committed reference is the 17-cell hosted null for base `e37e6f24` and
+harness `535840a9`, recorded by collector `c6afb17a`. Its original JSON file has
+SHA256 `09b4fa3f076d1042724959b8af7479f134fb131b3c4d667b401e6d38cd9dae6b`;
+the configuration retains that exact object and digest. Its time envelopes are
+3–5%, and RSS envelopes are 2–12.5%. These observations do not calibrate another
+base: `12b30fae`, for example, fails the base-revision match.
+The comment identifies the suite configuration and optional input by their
+SHA256s; a manual rendering does not authenticate either source. Trusted
+publication requires both the calibration object and `calibration_sha256` to
+equal its pinned expected configuration.
 An unapproved manual override is rejected, even if the artifact claims the trusted
 suite hash. The hosted workflow continues to use only that pinned configuration.
 
