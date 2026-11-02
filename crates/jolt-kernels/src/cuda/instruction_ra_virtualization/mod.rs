@@ -14,6 +14,12 @@
 //! those products per cycle.
 //! CUDA gathers dense values by selector column, while optimized can decode
 //! all instruction chunks from each packed row together.
+//!
+//! CUDA includes q(0) in each reduction, avoiding an extra launch when the
+//! equality factor vanishes at zero. Optimized normally recovers q(0) from
+//! the running claim. Its smaller grid reduces relation time, but the joint
+//! RAM/instruction minimal-grid path increased whole-proof latency in
+//! two-L4 SHA2 runs with 2^25 padded cycles.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -375,71 +381,79 @@ mod tests {
         ) {
             let Some(_) = shared_context() else { return Ok(()); };
 
-            for (log_k_chunk, virtual_chunk_bits) in CONFIGS {
-                let dimensions = dimensions(log_k_chunk, virtual_chunk_bits);
-                let relation = InstructionRaVirtualization::<Fr>::new(
-                    dimensions,
-                    instruction_address.clone(),
-                    instruction_read_raf_cycle.clone(),
-                    log_k_chunk,
-                );
-                let claims = InstructionRaVirtualizationInputClaims {
-                    instruction_ra: vec![Fr::from_u64(0); dimensions.num_virtual_ra_polys()],
-                };
-                let points = InstructionRaVirtualizationInputClaims {
-                    instruction_ra: (0..dimensions.num_virtual_ra_polys())
-                        .map(|virtual_index| {
-                            (0..virtual_chunk_bits + LOG_T)
-                                .map(|bit| fr((virtual_index * 131 + bit * 17 + 5) as u64))
-                                .collect()
-                        })
-                        .collect(),
-                };
-                let challenge_set = InstructionRaVirtualizationChallenges { gamma };
+            let mut zero_challenges = challenges.clone();
+            zero_challenges[0] = Fr::from_u64(0);
+            for (instruction_read_raf_cycle, challenges) in [
+                (instruction_read_raf_cycle, challenges.clone()),
+                (vec![Fr::from_u64(1); LOG_T], challenges),
+                (vec![Fr::from_u64(1); LOG_T], zero_challenges),
+            ] {
+                for (log_k_chunk, virtual_chunk_bits) in CONFIGS {
+                    let dimensions = dimensions(log_k_chunk, virtual_chunk_bits);
+                    let relation = InstructionRaVirtualization::<Fr>::new(
+                        dimensions,
+                        instruction_address.clone(),
+                        instruction_read_raf_cycle.clone(),
+                        log_k_chunk,
+                    );
+                    let claims = InstructionRaVirtualizationInputClaims {
+                        instruction_ra: vec![Fr::from_u64(0); dimensions.num_virtual_ra_polys()],
+                    };
+                    let points = InstructionRaVirtualizationInputClaims {
+                        instruction_ra: (0..dimensions.num_virtual_ra_polys())
+                            .map(|virtual_index| {
+                                (0..virtual_chunk_bits + LOG_T)
+                                    .map(|bit| fr((virtual_index * 131 + bit * 17 + 5) as u64))
+                                    .collect()
+                            })
+                            .collect(),
+                    };
+                    let challenge_set = InstructionRaVirtualizationChallenges { gamma };
 
-                with_instruction_witness(
-                    LOG_T,
-                    one_hot(log_k_chunk, virtual_chunk_bits),
-                    seed,
-                    |witness| {
-                        let make_inputs = || ProverInputs {
-                            relation: &relation,
-                            claims: &claims,
-                            points: &points,
-                            challenges: &challenge_set,
-                        };
+                    with_instruction_witness(
+                        LOG_T,
+                        one_hot(log_k_chunk, virtual_chunk_bits),
+                        seed,
+                        |witness| {
+                            let make_inputs = || ProverInputs {
+                                relation: &relation,
+                                claims: &claims,
+                                points: &points,
+                                challenges: &challenge_set,
+                            };
 
-                        let input_claim = reference_input_claim(witness, make_inputs);
-                        let mut expected_kernel = ReferenceBackend
-                            .prepare(&mut ProofSession::default(), witness, make_inputs())
-                            .expect("reference prepare");
-                        let mut got_kernel = CudaBackend
-                            .prepare(&mut ProofSession::default(), witness, make_inputs())
-                            .expect("cuda prepare");
+                            let input_claim = reference_input_claim(witness, make_inputs);
+                            let mut expected_kernel = ReferenceBackend
+                                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                                .expect("reference prepare");
+                            let mut got_kernel = CudaBackend
+                                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                                .expect("cuda prepare");
 
-                        let expected = drive(&mut *expected_kernel, input_claim, &challenges);
-                        let got = drive(&mut *got_kernel, input_claim, &challenges);
-                        prop_assert_eq!(
-                            got,
-                            expected,
-                            "round polynomials diverged at log_k_chunk {}",
-                            log_k_chunk
-                        );
+                            let expected = drive(&mut *expected_kernel, input_claim, &challenges);
+                            let got = drive(&mut *got_kernel, input_claim, &challenges);
+                            prop_assert_eq!(
+                                got,
+                                expected,
+                                "round polynomials diverged at log_k_chunk {}",
+                                log_k_chunk
+                            );
 
-                        let expected_claims = expected_kernel
-                            .output_claims(&claims)
-                            .expect("reference claims");
-                        let got_claims =
-                            got_kernel.output_claims(&claims).expect("cuda claims");
-                        prop_assert_eq!(
-                            got_claims.opening_values(),
-                            expected_claims.opening_values(),
-                            "output claims diverged at log_k_chunk {}",
-                            log_k_chunk
-                        );
-                        Ok(())
-                    },
-                )?;
+                            let expected_claims = expected_kernel
+                                .output_claims(&claims)
+                                .expect("reference claims");
+                            let got_claims =
+                                got_kernel.output_claims(&claims).expect("cuda claims");
+                            prop_assert_eq!(
+                                got_claims.opening_values(),
+                                expected_claims.opening_values(),
+                                "output claims diverged at log_k_chunk {}",
+                                log_k_chunk
+                            );
+                            Ok(())
+                        },
+                    )?;
+                }
             }
         }
     }

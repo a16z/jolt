@@ -12,6 +12,12 @@
 //! Optimized may collapse earlier when dense storage is cheaper and omits the
 //! trailing no-access cycles. CUDA retains those zero-valued rows in its windows
 //! and dense tables.
+//!
+//! CUDA includes q(0) in each reduction, avoiding an extra launch when the
+//! equality factor vanishes at zero. Optimized normally recovers q(0) from
+//! the running claim. Its smaller grid reduces relation time, but the joint
+//! RAM/instruction minimal-grid path increased whole-proof latency in
+//! two-L4 SHA2 runs with 2^25 padded cycles.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -362,71 +368,79 @@ mod tests {
         ) {
             let Some(_) = shared_context() else { return Ok(()); };
 
-            for (chunk_bits, ram_log_k) in CONFIGS {
-                let address = ram_reduced_address[..ram_log_k].to_vec();
-                let dimensions = RamRaVirtualizationDimensions::new(
-                    LOG_T,
-                    chunks(chunk_bits, ram_log_k),
-                );
-                let relation = RamRaVirtualization::<Fr>::new(
-                    dimensions,
-                    address.clone(),
-                    ram_reduced_cycle.clone(),
-                    chunk_bits,
-                );
-                let claims = RamRaVirtualizationInputClaims {
-                    ram_ra_reduced: Fr::from_u64(0),
-                };
-                let points = RamRaVirtualizationInputClaims {
-                    ram_ra_reduced: [address.as_slice(), ram_reduced_cycle.as_slice()].concat(),
-                };
-                let challenge_set = NoChallenges::<Fr>::default();
+            let mut zero_challenges = challenges.clone();
+            zero_challenges[0] = Fr::from_u64(0);
+            for (ram_reduced_cycle, challenges) in [
+                (ram_reduced_cycle, challenges.clone()),
+                (vec![Fr::from_u64(1); LOG_T], challenges),
+                (vec![Fr::from_u64(1); LOG_T], zero_challenges),
+            ] {
+                for (chunk_bits, ram_log_k) in CONFIGS {
+                    let address = ram_reduced_address[..ram_log_k].to_vec();
+                    let dimensions = RamRaVirtualizationDimensions::new(
+                        LOG_T,
+                        chunks(chunk_bits, ram_log_k),
+                    );
+                    let relation = RamRaVirtualization::<Fr>::new(
+                        dimensions,
+                        address.clone(),
+                        ram_reduced_cycle.clone(),
+                        chunk_bits,
+                    );
+                    let claims = RamRaVirtualizationInputClaims {
+                        ram_ra_reduced: Fr::from_u64(0),
+                    };
+                    let points = RamRaVirtualizationInputClaims {
+                        ram_ra_reduced: [address.as_slice(), ram_reduced_cycle.as_slice()].concat(),
+                    };
+                    let challenge_set = NoChallenges::<Fr>::default();
 
-                with_ram_witness(
-                    LOG_T,
-                    1usize << ram_log_k,
-                    one_hot(chunk_bits),
-                    seed,
-                    |witness| {
-                        let make_inputs = || ProverInputs {
-                            relation: &relation,
-                            claims: &claims,
-                            points: &points,
-                            challenges: &challenge_set,
-                        };
+                    with_ram_witness(
+                        LOG_T,
+                        1usize << ram_log_k,
+                        one_hot(chunk_bits),
+                        seed,
+                        |witness| {
+                            let make_inputs = || ProverInputs {
+                                relation: &relation,
+                                claims: &claims,
+                                points: &points,
+                                challenges: &challenge_set,
+                            };
 
-                        let input_claim = reference_input_claim(witness, make_inputs);
-                        let mut expected_kernel = ReferenceBackend
-                            .prepare(&mut ProofSession::default(), witness, make_inputs())
-                            .expect("reference prepare");
-                        let mut got_kernel = CudaBackend
-                            .prepare(&mut ProofSession::default(), witness, make_inputs())
-                            .expect("cuda prepare");
+                            let input_claim = reference_input_claim(witness, make_inputs);
+                            let mut expected_kernel = ReferenceBackend
+                                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                                .expect("reference prepare");
+                            let mut got_kernel = CudaBackend
+                                .prepare(&mut ProofSession::default(), witness, make_inputs())
+                                .expect("cuda prepare");
 
-                        let expected = drive(&mut *expected_kernel, input_claim, &challenges);
-                        let got = drive(&mut *got_kernel, input_claim, &challenges);
-                        prop_assert_eq!(
-                            got,
-                            expected,
-                            "round polynomials diverged at chunk_bits {} ram_log_k {}",
-                            chunk_bits,
-                            ram_log_k
-                        );
+                            let expected = drive(&mut *expected_kernel, input_claim, &challenges);
+                            let got = drive(&mut *got_kernel, input_claim, &challenges);
+                            prop_assert_eq!(
+                                got,
+                                expected,
+                                "round polynomials diverged at chunk_bits {} ram_log_k {}",
+                                chunk_bits,
+                                ram_log_k
+                            );
 
-                        let expected_claims = expected_kernel
-                            .output_claims(&claims)
-                            .expect("reference claims");
-                        let got_claims = got_kernel.output_claims(&claims).expect("cuda claims");
-                        prop_assert_eq!(
-                            got_claims.opening_values(),
-                            expected_claims.opening_values(),
-                            "output claims diverged at chunk_bits {} ram_log_k {}",
-                            chunk_bits,
-                            ram_log_k
-                        );
-                        Ok(())
-                    },
-                )?;
+                            let expected_claims = expected_kernel
+                                .output_claims(&claims)
+                                .expect("reference claims");
+                            let got_claims = got_kernel.output_claims(&claims).expect("cuda claims");
+                            prop_assert_eq!(
+                                got_claims.opening_values(),
+                                expected_claims.opening_values(),
+                                "output claims diverged at chunk_bits {} ram_log_k {}",
+                                chunk_bits,
+                                ram_log_k
+                            );
+                            Ok(())
+                        },
+                    )?;
+                }
             }
         }
     }
