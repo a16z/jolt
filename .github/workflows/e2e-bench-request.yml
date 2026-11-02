@@ -39,3 +39,166 @@ jobs:
           else
             echo 'Target execution is disabled. An administrator must complete scripts/bench/README.md before enabling it.' >> "$GITHUB_STEP_SUMMARY"
           fi
+
+  build-capacity:
+    if: github.event.pull_request.number == 2215 && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'ci/reproducible-e2e-bench'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: read
+    env:
+      CARGO_BUILD_JOBS: 1
+    steps:
+      - name: Check out the frozen native harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 535840a97b0678a95e47df5c3adf71c5faa04d85
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - name: Download the frozen expected-input plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          github-token: ${{ github.token }}
+          run-id: 41362804476
+          artifact-ids: 13105948013
+          path: ${{ runner.temp }}/e2e-original-plan
+          merge-multiple: true
+      - name: Validate replay inputs and the empty Cargo cache
+        run: |
+          uv run --no-project python - <<'PY'
+          import hashlib, json, os
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'scripts/bench')
+          import ci
+          root = Path(os.environ['RUNNER_TEMP'])
+          original = (root / 'e2e-original-plan/plan.json').read_bytes()
+          digest = hashlib.sha256(original).hexdigest()
+          if digest != '8defe5393abcada89949989484a5743edf6639a1c04a85f8fa3f555e2a7be0da':
+              raise ValueError('original expected-input plan hash differs')
+          original = json.loads(original)
+          cache = ci.bench.cache_root()
+          if (cache / 'builds').exists() or (cache / 'bundles').exists():
+              raise ValueError('cold replay requires absent private source, Cargo target and completed bundles')
+          event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+          context = {key: os.environ[key] for key in ('GITHUB_WORKFLOW', 'GITHUB_WORKFLOW_REF',
+              'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_SHA')}
+          provenance = dict(original['provenance'], workflow=context['GITHUB_WORKFLOW'],
+              workflow_file=context['GITHUB_WORKFLOW_REF'].split('@', 1)[0].split('/', 2)[2],
+              run_id=context['GITHUB_RUN_ID'], run_attempt=context['GITHUB_RUN_ATTEMPT'],
+              event=context['GITHUB_EVENT_NAME'], ref=context['GITHUB_REF'])
+          plans = root / 'e2e-capacity-plans'
+          plans.mkdir()
+          for phase in ('cold', 'warm'):
+              plan = {key: original[key] for key in ('tier', 'enabled', 'target_cpu', 'harness', 'config', 'expected_builds')}
+              plan.update(provenance=provenance, experiment={'purpose': 'frozen-hosted-build-replay',
+                  'phase': phase, 'source_plan_sha256': digest, 'source_run_id': 41362804476,
+                  'source_plan_artifact_id': 13105948013, 'actual_workflow_context': context,
+                  'submitted_head': event['pull_request']['head']['sha'],
+                  'remote_cache': 'none; same-job Cargo/source state only; completed bundles excluded'})
+              destination = plans / f'{phase}.json'
+              ci.bench.write_json(destination, plan)
+              ci.load_plan(destination)
+          print(json.dumps({'cheap_gate': 'passed', 'harness': original['harness'],
+              'sources': list(original['expected_builds']), 'cache_state': 'empty',
+              'cache_key': None, 'actual_workflow_context': context}), flush=True)
+          PY
+      - name: Add 24 GB of swap for release linking
+        shell: bash
+        run: |
+          available_bytes=$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1)
+          if ! [ "$available_bytes" -ge 40000000000 ]; then
+            echo "Need 40 GB free for 24 GB swap and 16 GB build space; found $available_bytes bytes" >&2
+            exit 1
+          fi
+          swap_file=$(mktemp "$RUNNER_TEMP/jolt-build-swap.XXXXXX")
+          sudo chown root:root "$swap_file"
+          sudo fallocate -l 24000000000 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
+          free -b
+          swapon --show --bytes
+      - name: Preserve the replay plans before building
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jolt-build-capacity-plans-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-capacity-plans
+          retention-days: 3
+          if-no-files-found: error
+      - name: Cold release preparation
+        id: cold
+        run: /usr/bin/time -v uv run --no-project python scripts/bench/ci.py prepare --plan "$RUNNER_TEMP/e2e-capacity-plans/cold.json" --out "$RUNNER_TEMP/e2e-capacity-cold"
+      - name: Publish cold binaries, guest inputs and receipts
+        id: cold_upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jolt-build-capacity-cold-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-capacity-cold
+          retention-days: 3
+          if-no-files-found: error
+      - name: Verify cold artifacts without executing a prover
+        env:
+          INDEX_SHA256: ${{ steps.cold.outputs.index_sha256 }}
+          ARTIFACT_ID: ${{ steps.cold_upload.outputs.artifact-id }}
+        run: uv run --no-project python scripts/bench/ci.py verify --plan "$RUNNER_TEMP/e2e-capacity-plans/cold.json" --bundles "$RUNNER_TEMP/e2e-capacity-cold" --index-sha256 "$INDEX_SHA256" --artifact-id "$ARTIFACT_ID"
+      - name: Retain Cargo state but exclude completed-bundle reuse
+        run: |
+          uv run --no-project python - <<'PY'
+          import json, shutil, sys, time
+          sys.path.insert(0, 'scripts/bench')
+          import run as bench
+          started = time.perf_counter()
+          cache = bench.cache_root()
+          source = cache / 'builds/znver4/release/source'
+          with bench.host_lock():
+              if not (source / '.git').is_dir() or not (source / 'target').is_dir():
+                  raise ValueError('warm replay requires the completed cold source and Cargo target')
+              bundles = cache / 'bundles'
+              if len(list(bundles.glob('*/*/manifest.json'))) != 2:
+                  raise ValueError('expected exactly the two cold completed bundles')
+              shutil.rmtree(bundles)
+          print(json.dumps({'warm_gate': 'passed', 'source_and_cargo_target_retained': True,
+              'completed_bundle_copies_removed': 2, 'elapsed_s': time.perf_counter() - started}), flush=True)
+          PY
+      - name: Warm release preparation
+        id: warm
+        run: /usr/bin/time -v uv run --no-project python scripts/bench/ci.py prepare --plan "$RUNNER_TEMP/e2e-capacity-plans/warm.json" --out "$RUNNER_TEMP/e2e-capacity-warm"
+      - name: Publish warm binaries, guest inputs and receipts
+        id: warm_upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jolt-build-capacity-warm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-capacity-warm
+          retention-days: 3
+          if-no-files-found: error
+      - name: Verify warm artifacts and compare cold and warm payload hashes
+        env:
+          INDEX_SHA256: ${{ steps.warm.outputs.index_sha256 }}
+          ARTIFACT_ID: ${{ steps.warm_upload.outputs.artifact-id }}
+        run: |
+          uv run --no-project python scripts/bench/ci.py verify --plan "$RUNNER_TEMP/e2e-capacity-plans/warm.json" --bundles "$RUNNER_TEMP/e2e-capacity-warm" --index-sha256 "$INDEX_SHA256" --artifact-id "$ARTIFACT_ID"
+          uv run --no-project python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          cold = json.loads((root / 'e2e-capacity-cold/builds.json').read_text())
+          warm = json.loads((root / 'e2e-capacity-warm/builds.json').read_text())
+          for revision in cold['builds']:
+              old = json.loads((root / 'e2e-capacity-cold' / cold['builds'][revision]['path']).read_text())
+              new = json.loads((root / 'e2e-capacity-warm' / warm['builds'][revision]['path']).read_text())
+              receipt = json.loads((root / 'e2e-capacity-warm' / revision / 'preparation.json').read_text())
+              if receipt['mode'] != 'built':
+                  raise ValueError('warm measurement bypassed Cargo through a completed bundle')
+              for key in ('binaries', 'guests', 'akita_schedules', 'harness_files', 'cargo_lock_sha256'):
+                  if old[key] != new[key]:
+                      raise ValueError(f'cold/warm payload identity differs: {revision} {key}')
+          print(json.dumps({'cold_warm_payload_hashes_equal': True, 'sources': list(cold['builds'])}), flush=True)
+          PY
