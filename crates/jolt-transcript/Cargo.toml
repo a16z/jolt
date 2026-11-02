@@ -27,7 +27,11 @@ binary = ["jolt-field/binary"]
 bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
 transcript-blake2b = ["dep:blake2"]
 # Identical BLAKE2b-512 bytes through the existing RISC-V inline.
-blake2-inline = ["transcript-blake2b", "dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
+blake2-inline = [
+  "transcript-blake2b",
+  "dep:jolt-inlines-blake2",
+  "jolt-inlines-blake2/digest",
+]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["bn254", "dep:light-poseidon"]
 # Keccak-256 (`0x01` pad) instead of SHA3-256 for every digest a statement or
