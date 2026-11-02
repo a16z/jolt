@@ -36,8 +36,10 @@
 //! Resident G1 MSMs expand and normalize a device point span, then run GLV
 //! Pippenger and copy the result into the requested slot on the same device.
 //! Resident pointwise updates compute `scalar * a + b` within one device buffer.
-//! G1 multiply-add and G2 fixed-base scaling use full-width scalar loops where
-//! optimized uses GLV; G2 multiply-add uses a four-dimensional Frobenius split.
+//! G1 multiply-add uses the same two-dimensional GLV decomposition and
+//! interleaved multiplication as optimized, decomposing the shared scalar once
+//! on the host. G2 multiply-add uses a four-dimensional Frobenius split;
+//! G2 fixed-base scaling uses full-width scalar loops where optimized uses GLV.
 //! Multiply-add outputs may coincide exactly with an input span or be disjoint
 //! from both. Fixed-base outputs must avoid the base; the wrappers check these
 //! bounds and aliasing conditions before launch.
@@ -81,7 +83,8 @@ mod glv4_table {
     include!("glv4_table.rs");
 }
 
-use ark_bn254::Fr as ArkFr;
+use ark_bn254::{g1::Config as G1Config, Fr as ArkFr};
+use ark_ec::scalar_mul::glv::GLVConfig;
 use ark_ff::BigInt;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
@@ -418,9 +421,7 @@ fn glv_frobenius_coefficients() -> &'static [u64] {
 }
 
 fn glv_endomorphism_coefficient() -> [u64; FQ_LIMBS] {
-    <ark_bn254::g1::Config as ark_ec::scalar_mul::glv::GLVConfig>::ENDO_COEFFS[0]
-        .0
-         .0
+    G1Config::ENDO_COEFFS[0].0 .0
 }
 
 const G2_POINT_BLOCK: u32 = 64;
@@ -942,10 +943,8 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    fn axpy_in_place(
+    pub fn g1_axpy_in_place(
         &self,
-        kernel: &CudaFunction,
-        words: usize,
         buffer: &mut CudaSlice<u64>,
         span: ResidentAxpy,
         scalar: Fr,
@@ -960,7 +959,7 @@ impl CudaKernelContext {
             return Ok(());
         }
         for offset in [a_offset, b_offset, out_offset] {
-            Self::resident_span_end(offset, count, words, buffer)?;
+            Self::resident_span_end(offset, count, 3 * FQ_LIMBS, buffer)?;
         }
         let coincides_or_avoids = |left: usize, right: usize| {
             left == right || left + count <= right || right + count <= left
@@ -972,44 +971,36 @@ impl CudaKernelContext {
             });
         }
 
-        let device_scalar = self.canonical_scalars(&self.upload(&[scalar])?)?;
+        let ((positive0, component0), (positive1, component1)) =
+            G1Config::scalar_decomposition(ArkFr::from(scalar));
+        let first = component0.into_bigint();
+        let second = component1.into_bigint();
+        let parameters = [first.0, second.0, glv_endomorphism_coefficient()];
+        let device_parameters = self.upload_u64_slice(parameters.as_flattened())?;
+        let signs = u32::from(!positive0) | (u32::from(!positive1) << 1);
+        let bits = first.num_bits().max(second.num_bits());
         let a = Self::count_of(a_offset)?;
         let b = Self::count_of(b_offset)?;
         let out = Self::count_of(out_offset)?;
         let points = Self::count_of(count)?;
-        let bits = Self::count_of(FR_SCALAR_BITS)?;
 
-        let mut builder = self.stream().launch_builder(kernel);
+        let mut builder = self.stream().launch_builder(self.msm_g1_axpy());
         let _ = builder.arg(buffer);
-        let _ = builder.arg(&device_scalar);
+        let _ = builder.arg(&device_parameters);
+        let _ = builder.arg(&signs);
         let _ = builder.arg(&a);
         let _ = builder.arg(&b);
         let _ = builder.arg(&out);
         let _ = builder.arg(&points);
         let _ = builder.arg(&bits);
-        // SAFETY: thread `i < points` reads the `words` limbs at points
-        // `a_offset + i` and `b_offset + i` of `buffer` and writes the same span
-        // at point `out_offset + i`; all three spans are checked above to end
-        // inside `buffer`. The three views alias one allocation, so `buf` is
-        // passed once and un-`__restrict__`ed: the write span either coincides
-        // exactly with an operand — in which case thread `i` has already loaded
-        // both operand points into registers before it stores — or is disjoint
-        // from both, which the alias check enforces. Either way no thread reads
-        // a point another thread writes. The scalar is the single canonical
-        // value and bit indices stay below `FR_SCALAR_BITS = 254`, so
-        // `bit >> 6 <= 3` is inside its `FQ_LIMBS` limbs. Threads with
-        // `i >= points` return first.
+        // SAFETY: each thread reads and writes one 12-limb point in the spans
+        // checked above. The output either coincides with an operand elementwise
+        // or is disjoint, and both inputs are loaded before the store. The
+        // parameter buffer contains two four-limb canonical magnitudes and the
+        // four-limb endomorphism coefficient. `bits` bounds both magnitudes;
+        // out-of-range threads return before accessing any buffer.
         let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
         Ok(())
-    }
-
-    pub fn g1_axpy_in_place(
-        &self,
-        buffer: &mut CudaSlice<u64>,
-        span: ResidentAxpy,
-        scalar: Fr,
-    ) -> Result<(), CudaError> {
-        self.axpy_in_place(self.msm_g1_axpy(), 3 * FQ_LIMBS, buffer, span, scalar)
     }
 
     pub fn g2_axpy_in_place(
@@ -5219,8 +5210,8 @@ mod tests {
         use jolt_field::Fr;
 
         use super::{
-            device, flat_g2, flat_jacobian, g2_from_limbs, g2_span, jacobian_span, projectives,
-            unflatten_jacobian,
+            device, flat_g2, flat_jacobian, g2_from_limbs, g2_span, glv_lambda, jacobian_span,
+            projectives, unflatten_jacobian,
         };
         use crate::cuda::common::context::CudaKernelContext;
         use crate::cuda::common::error::CudaError;
@@ -5258,7 +5249,7 @@ mod tests {
             for count in [1, 256, 257] {
                 let points = jacobian_span(3 * count + 11, 0);
                 let flat = flat_jacobian(&points);
-                for scalar in weights() {
+                for scalar in weights().into_iter().chain([Fr::from(glv_lambda())]) {
                     for span in layouts(count) {
                         let mut buffer = context.upload_raw_u64(&flat).expect("upload G1");
                         context

@@ -1792,10 +1792,11 @@ extern "C" __global__ void msm_shared_scalar_rows_glv_kernel(
     }
 }
 
-extern "C" __global__ void msm_g1_axpy_kernel(u64 *buf, const u64 *__restrict__ scalar,
-                                              unsigned int a_offset, unsigned int b_offset,
-                                              unsigned int out_offset, unsigned int count,
-                                              unsigned int scalar_bits) {
+extern "C" __global__ void msm_g1_axpy_kernel(u64 *buf,
+                                              const u64 *__restrict__ parameters,
+                                              unsigned int signs, unsigned int a_offset,
+                                              unsigned int b_offset, unsigned int out_offset,
+                                              unsigned int count, unsigned int scalar_bits) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
 
@@ -1803,26 +1804,35 @@ extern "C" __global__ void msm_g1_axpy_kernel(u64 *buf, const u64 *__restrict__ 
     const u64 *b = buf + ((unsigned long long)b_offset + i) * 3 * LIMBS;
     u64 *out = buf + ((unsigned long long)out_offset + i) * 3 * LIMBS;
 
-    u64 term[3 * LIMBS], acc[3 * LIMBS], tmp[3 * LIMBS];
-    for (int limb = 0; limb < 3; limb++) {
-        load4(a + limb * LIMBS, term + limb * LIMBS);
-    }
+    u64 first[3 * LIMBS], second[3 * LIMBS], acc[3 * LIMBS], tmp[3 * LIMBS];
+    jac_copy(a, first);
     jac_set_zero(acc);
-    if (!jac_is_zero(term)) {
+    if (!jac_is_zero(first)) {
+        jac_copy(first, second);
+        fq_mul(first, parameters + 2 * LIMBS, tmp);
+        fq_copy(tmp, second);
+        if ((signs & 1u) != 0u) {
+            fq_neg(first + LIMBS, tmp);
+            fq_copy(tmp, first + LIMBS);
+        }
+        if ((signs & 2u) != 0u) {
+            fq_neg(second + LIMBS, tmp);
+            fq_copy(tmp, second + LIMBS);
+        }
         for (int bit = (int)scalar_bits - 1; bit >= 0; bit--) {
             jac_double(acc, tmp);
-            if (((scalar[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
-                jac_add(tmp, term, acc);
-            } else {
+            jac_copy(tmp, acc);
+            if (((parameters[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac_add(acc, first, tmp);
+                jac_copy(tmp, acc);
+            }
+            if (((parameters[LIMBS + (bit >> 6)] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac_add(acc, second, tmp);
                 jac_copy(tmp, acc);
             }
         }
     }
-    for (int limb = 0; limb < 3; limb++) {
-        load4(b + limb * LIMBS, term + limb * LIMBS);
-    }
-    jac_add(acc, term, tmp);
-    for (int limb = 0; limb < 3; limb++) {
-        store4(out + limb * LIMBS, tmp + limb * LIMBS);
-    }
+    jac_copy(b, first);
+    jac_add(acc, first, tmp);
+    jac_copy(tmp, out);
 }
