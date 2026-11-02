@@ -116,5 +116,5 @@ codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort=max \
 
 Locally you may read files and run read-only commands such as `rg` or
 `cargo metadata --no-deps` to trace whether changed code is reachable from the verifier. A
-local verdict is advisory: the gate counts only the verdict its GitHub App records as the
+local verdict is advisory: the gate counts only the verdict its own workflow records as the
 `ai-merge-gate/classifier` check on the pull request head.

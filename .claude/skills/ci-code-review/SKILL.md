@@ -39,8 +39,9 @@ codex exec -m gpt-6-astra -c model_reasoning_effort=max \
 Use plain `codex exec`. In Codex CLI 0.162.0, `codex exec review` runs Codex's built-in review
 mode, which turns off subagent tools (the `multi_agent` feature) and adds its own review rubric.
 
-If the review reports nothing to fix and posting is authorized, the Pika App bot or a personal
-account in the configured Jolt maintainer team posts a PR comment with this exact standalone line:
+If the review reports nothing to fix and posting is authorized, the Pika App bot or a
+maintainer, a login in the repository variable `AI_MERGE_GATE_MAINTAINERS`, posts a PR comment
+with this exact standalone line:
 
 ```text
 This pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
@@ -49,12 +50,13 @@ This pull request #<number> has been reviewed at commit <full 40-char head SHA> 
 Use the actual skill, model and effort; the gate checks that these fields are nonempty, not a
 model or skill allowlist. Being the PR author alone is not authority to attest. Review bodies
 do not count, and a push, deletion or edit removing the line invalidates the attestation.
-An edited comment's author and last editor must both be allowed accounts. Human approvals and
-cached CI reviews do not replace the line. The `ai-review` label has no effect.
+An edited comment's author and last editor must both be allowed accounts. Cached CI reviews do
+not replace the line. The `ai-review` label has no effect.
 
-The [gate guide](../../../.github/ai-merge-gate.md) defines the two required checks and risk
-labels. Risk-4 also requires a current-head maintainer approval from someone other than the
-PR author; the review attestation is still mandatory.
+The [gate guide](../../../.github/ai-merge-gate.md) defines the policy and labels. The line is
+what lets the gate approve a risk-1 through risk-3 head; a person's approval satisfies GitHub's
+review rule without it. The gate never approves risk-4, where the policy asks for a current-head
+approval by a maintainer other than the PR author.
 
 ## Reviewer routine
 

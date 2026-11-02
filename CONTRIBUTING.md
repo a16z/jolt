@@ -61,19 +61,20 @@ Spec analysis can also be triggered externally by adding the `claude-spec-review
 
 ## AI Merge Gate
 
-Once its admin setup is in place, merging into `main` requires both `ai-merge-gate` and
-`ai-merge-gate/attestation`. The verifier classifier is the only model called by this gate.
-It assigns `risk-1` for tests/scripts/CI/docs, `risk-2` for non-verifier code, `risk-3` for small,
-scoped verifier-reaching dependency changes, or `risk-4` for protocol/verifier changes and
-uncertainty. The highest applicable level wins. Risk-1 through risk-3 are eligible for native
-auto-merge once the gate, attestation and required CI checks pass; core authorization and
-gate-input protections still apply. Risk-4 also gets `needs-human-review` and needs a
-current-head approval by a maintainer other than the PR author.
+Once its admin setup is in place, merging into `main` needs one approving review, with stale
+approvals dismissed on push, plus the required CI checks. A person's approval counts on its own.
+The gate approves as `github-actions[bot]` when a maintainer wrote or authorized the pull request,
+an allowed account attested a review of its current head, the verifier classifier put it at
+`risk-1` (tests/scripts/CI/docs), `risk-2` (non-verifier code) or `risk-3` (small, scoped
+verifier-reaching dependency changes), and it changes none of the gate's inputs. It never
+approves `risk-4` (protocol/verifier changes and uncertainty), for which the policy asks for a
+current-head approval by a maintainer other than the PR author. The classifier is the only model
+the gate calls.
 
-Run code review outside CI. Once it finds no issues, the Pika App bot or a member of the
-configured Jolt maintainer team posts the exact standalone line below in a **PR comment**.
-This is a format example using an existing commit, not an attestation of the current PR head;
-replace the number, full SHA and review details with the actual reviewed values.
+Run code review outside CI. Once it finds no issues, the Pika App bot or a maintainer listed in
+the repository variable `AI_MERGE_GATE_MAINTAINERS` posts the exact standalone line below in a
+**PR comment**. This is a format example using an existing commit, not an attestation of the
+current PR head; replace the number, full SHA and review details with the actual reviewed values.
 
 ```text
 This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model Astra with Max reasoning effort, and no issues were found.
@@ -81,9 +82,10 @@ This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d95
 
 Skill, model and effort must be nonempty and may contain spaces. Being the PR author alone
 does not qualify. A new head requires a new attestation; editing away or deleting the line
-invalidates it. Human approval, review bodies, old markers and cached CI reviews cannot replace
-it, and the `ai-review` label starts no review. See [the gate guide](.github/ai-merge-gate.md)
-for author permissions, core authorization, risk policy, admin setup and the off switch.
+invalidates it and withdraws the gate's approval. Review bodies, old markers and cached CI
+reviews cannot replace it, and the `ai-review` label starts no review. See
+[the gate guide](.github/ai-merge-gate.md) for maintainer authorization, the labels, the risk
+policy, spend limits, admin setup and turning the gate off.
 
 ## Development Setup
 
