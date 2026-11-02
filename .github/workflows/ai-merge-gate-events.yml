@@ -1,8 +1,8 @@
 # Tells the AI merge gate (ai-merge-gate.yml) that a pull request or its reviews changed.
 # GitHub runs the pull request's own copy of this file, without secrets and with no token
 # permissions, so it does nothing but exist: the gate's workflow_run job re-reads every input
-# from the API and trusts nothing from this run but the pull request number in its run name,
-# which scripts/ci/ai_merge_gate.py parses (RUN_NAME).
+# from the API. The run name proposes a PR number; the resolver validates GitHub's association
+# or, for forks without one, matches the PR's repository, branch and exact head.
 name: AI merge gate events
 run-name: 'AI merge gate events for PR #${{ github.event.pull_request.number }}'
 

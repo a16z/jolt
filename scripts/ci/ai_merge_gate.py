@@ -72,9 +72,14 @@ REVIEW_FIELDS = "state commit { oid } fullDatabaseId"
 # workflow on the default branch can use the gate's secret and token. Python resolves the
 # gate's imports from scripts/ci first, so any module there, a json.py or a __pycache__ entry
 # included, can run with the gate's credentials. The classifier skill, risk policy and closure
-# spec instruct the model.
+# spec instruct the model; the other protected guides define the external review procedure.
 GATE_INPUTS = (".github/workflows/", "scripts/ci/", ".claude/skills/verifier-classifier/",
-               "specs/verifier-closure-lints.md", RISK_POLICY)
+               ".claude/skills/ci-code-review/", ".claude/skills/comment-policy/",
+               ".claude/skills/test-policy/", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md",
+               ".github/ai-merge-gate.md", "specs/verifier-closure-lints.md", RISK_POLICY)
+CLASSIFIER_INPUTS = ("scripts/ci/ai_merge_gate.py", "scripts/ci/diff_classifier.py", WORKFLOW,
+                     ".claude/skills/verifier-classifier/SKILL.md", "specs/verifier-closure-lints.md",
+                     RISK_POLICY)
 # Classifier spend bounds. .github/ai-merge-gate.md derives its price figures from them, so a change
 # here changes that section. The gate counts a request's input as its JSON bytes (no text token
 # covers less than one byte) plus the input and output tokens the API reported for the responses it
@@ -571,7 +576,7 @@ class Gate:
         try:
             metadata = json.loads(output.get("text") or "null")
             risk = metadata["risk"]
-            if metadata["policy_sha256"] != hashlib.sha256((ROOT / RISK_POLICY).read_bytes()).hexdigest():
+            if metadata["classifier_inputs_sha256"] != classifier_inputs_sha256():
                 return None
         except (ValueError, TypeError, KeyError):
             return None
@@ -972,8 +977,9 @@ class Gate:
         return self.github.post(f"/repos/{self.repo}/check-runs", {
             "name": name, "head_sha": head, "external_id": self.run_id, **state,
             "output": {"title": title, "summary": clip(summary),
-                       **({"text": json.dumps({"risk": risk, "policy_sha256": hashlib.sha256(
-                           (ROOT / RISK_POLICY).read_bytes()).hexdigest()})} if risk is not None else {})},
+                       **({"text": json.dumps({"risk": risk,
+                                              "classifier_inputs_sha256": classifier_inputs_sha256()})}
+                          if risk is not None else {})},
         })["id"]
 
     def complete(self, check: int, outcome: Outcome) -> None:
@@ -1004,7 +1010,12 @@ class Gate:
                                   "fullDatabaseId": str(created["id"])})
 
 
-def resolve(event_name: str, event: dict) -> int | None:
+def classifier_inputs_sha256() -> str:
+    return hashlib.sha256(json.dumps({path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+                                     for path in CLASSIFIER_INPUTS}, sort_keys=True).encode()).hexdigest()
+
+
+def resolve(event_name: str, event: dict, github: GitHub | None = None) -> int | None:
     """The pull request an `issue_comment` or bridged `workflow_run` event is about."""
     if event_name == "issue_comment":
         author = event["comment"]["user"]
@@ -1016,11 +1027,28 @@ def resolve(event_name: str, event: dict) -> int | None:
         return event["issue"]["number"] if event["issue"].get("pull_request") else None
     if event_name != "workflow_run":
         return None
-    # The events workflow names each run after its pull request, so a closed or retargeted pull
-    # request is evaluated itself, whatever else its branch heads. A pull request can rename its own
-    # copy's runs; a wrong number only makes the gate evaluate another pull request from scratch.
-    match = RUN_NAME.fullmatch(event["workflow_run"].get("display_title") or "")
-    return int(match.group(1)) if match else None
+    run, repo = event["workflow_run"], event["repository"]
+    match = RUN_NAME.fullmatch(run.get("display_title") or "")
+    if not match or run.get("path") != ".github/workflows/ai-merge-gate-events.yml" \
+            or run.get("event") not in ("pull_request", "pull_request_review") \
+            or (run.get("repository") or {}).get("id") != repo["id"]:
+        return None
+    number = int(match.group(1))
+    if associations := run.get("pull_requests"):
+        return number if any(pull["number"] == number and pull["base"]["repo"]["id"] == repo["id"]
+                             for pull in associations) else None
+    # GitHub omits fork PRs from workflow-run associations. Bind the proposed number to the
+    # source run's exact fork, branch and head through the base repository's PR API instead.
+    source = run.get("head_repository") or {}
+    if github is None or not source.get("id") or source["id"] == repo["id"]:
+        return None
+    pull = github.get(f"/repos/{github.repo}/pulls/{number}", missing_ok=True)
+    if pull and pull["base"]["repo"]["id"] == repo["id"] \
+            and (pull["head"].get("repo") or {}).get("id") == source.get("id") \
+            and pull["head"]["ref"] == run.get("head_branch") \
+            and pull["head"]["sha"] == run.get("head_sha"):
+        return number
+    return None
 
 
 def main(argv: list[str]) -> int:
@@ -1028,7 +1056,8 @@ def main(argv: list[str]) -> int:
     try:
         if argv[1:] == ["resolve"]:
             event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
-            number = resolve(env["GITHUB_EVENT_NAME"], event)
+            number = resolve(env["GITHUB_EVENT_NAME"], event,
+                             GitHub(http, env["GH_TOKEN"], env["GITHUB_REPOSITORY"]))
             with open(env["GITHUB_OUTPUT"], "a") as output:
                 output.write(f"pr={number or ''}\n")
             log(f"{env['GITHUB_EVENT_NAME']} event: PR {number or 'none'}")

@@ -157,9 +157,9 @@ class FakeApis:
             PR_RUN: {"path": f"{GATE.WORKFLOW}@refs/pull/7/merge", "event": "pull_request",
                      "head_repository": {"full_name": "forker/jolt"}},
         }
-        digest = hashlib.sha256((GATE.ROOT / GATE.RISK_POLICY).read_bytes()).hexdigest()
+        digest = GATE.classifier_inputs_sha256()
         self.check_runs = [{"id": index, "output": {"title": "Cached classification", "summary": "cached",
-                                                    "text": json.dumps({"risk": risk, "policy_sha256": digest})},
+                                                    "text": json.dumps({"risk": risk, "classifier_inputs_sha256": digest})},
                             **spec} for index, spec in enumerate(records)]
         self.requests, self.created, self.posted, self.model_requests = [], [], [], []
 
@@ -176,7 +176,8 @@ class FakeApis:
                 self.during_recheck(self)
             head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
             return self.ok({"number": 7, "state": self.state, "merged_at": self.merged_at, "draft": self.draft,
-                            "base": {"ref": self.base}, "head": {"sha": head}, "user": {"login": self.author},
+                            "base": {"ref": self.base, "repo": {"id": 1}},
+                            "head": {"sha": head, "ref": "fix", "repo": {"id": 2}}, "user": {"login": self.author},
                             "labels": [{"name": name} for name in self.labels],
                             "requested_reviewers": [{"login": login} for login in self.reviewers],
                             "requested_teams": [{"slug": slug} for slug in self.teams],
@@ -452,15 +453,18 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(set(apis.labels), {"merge-eligible", "risk-2", "keep-healed"})
 
     def test_invalid_cached_risk_results_cannot_waive_review(self) -> None:
-        for case in ("failed check", "old policy", "legacy result"):
+        for case in ("failed check", "old inputs", "policy-only result", "legacy result"):
             with self.subTest(case=case):
                 apis = FakeApis(records=[record(GATE.CLASSIFIER)], verdict="UNCERTAIN",
                                 comments=[comment("core-a", attestation())])
                 cached = apis.check_runs[0]
                 if case == "failed check":
                     cached["conclusion"] = "failure"
-                elif case == "old policy":
-                    cached["output"]["text"] = json.dumps({"risk": 2, "policy_sha256": "0" * 64})
+                elif case == "old inputs":
+                    cached["output"]["text"] = json.dumps({"risk": 2, "classifier_inputs_sha256": "0" * 64})
+                elif case == "policy-only result":
+                    cached["output"]["text"] = json.dumps({"risk": 2, "policy_sha256": hashlib.sha256(
+                        (GATE.ROOT / GATE.RISK_POLICY).read_bytes()).hexdigest()})
                 else:
                     cached["output"].pop("text")
                 evaluate(apis)
@@ -1106,6 +1110,87 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(template.gate(), ("success", "Review attested by core-a"))
         self.assertEqual((len(template.model_requests), template.approved()), (1, [HEAD]))
 
+    def test_review_instruction_changes_require_human_approval(self) -> None:
+        for path in (".claude/skills/ci-code-review/SKILL.md", ".claude/skills/comment-policy/SKILL.md",
+                     ".claude/skills/test-policy/SKILL.md", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md",
+                     ".github/ai-merge-gate.md"):
+            for approved in (False, True):
+                with self.subTest(path=path, approved=approved):
+                    apis = evaluate(FakeApis(files=[path], risk=1, records=[record(GATE.CLASSIFIER)],
+                                             comments=[comment("core-a", attestation())],
+                                             reviews=[review("maintainer", "APPROVED")] if approved else []))
+                    self.assertEqual(apis.gate()[0], "success" if approved else "failure")
+                    self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
+
+    def test_trusted_input_changes_invalidate_verdict_without_resetting_attempts(self) -> None:
+        paths = ("scripts/ci/ai_merge_gate.py", "scripts/ci/diff_classifier.py",
+                 ".github/workflows/ai-merge-gate.yml", ".claude/skills/verifier-classifier/SKILL.md",
+                 "specs/verifier-closure-lints.md", GATE.RISK_POLICY)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for path in paths:
+                target = root / path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes((GATE.ROOT / path).read_bytes())
+            with mock.patch.object(GATE, "ROOT", root):
+                for path in paths:
+                    for spent in (False, True):
+                        with self.subTest(path=path, spent=spent):
+                            produced = evaluate(FakeApis())
+                            cached = next(run for run in produced.created if run["name"] == GATE.CLASSIFIER)
+                            apis = FakeApis(comments=[comment("core-a", attestation()),
+                                                      ledger({HEAD: 2 if spent else 1})])
+                            apis.check_runs = [cached]
+                            unchanged = FakeApis()
+                            unchanged.check_runs = [cached]
+                            evaluate(unchanged)
+                            self.assertEqual(unchanged.model_requests, [])
+                            target = root / path
+                            original = target.read_bytes()
+                            target.write_bytes(original + b"\n ")
+                            try:
+                                evaluate(apis)
+                            finally:
+                                target.write_bytes(original)
+                            self.assertEqual(len(apis.model_requests), 0 if spent else 1)
+                            self.assertEqual(apis.approved(), [] if spent else [HEAD])
+                            self.assertIn('"' + HEAD + '": 2', apis.comments[-1]["body"])
+
+    def test_workflow_run_cannot_evaluate_an_unassociated_victim(self) -> None:
+        event = {"repository": {"id": 1, "full_name": REPO}, "workflow_run": {
+            "path": ".github/workflows/ai-merge-gate-events.yml", "event": "pull_request",
+            "repository": {"id": 1, "full_name": REPO},
+            "display_title": "AI merge gate events for PR #7",
+            "head_repository": {"id": 3, "full_name": "attacker/jolt"},
+            "head_branch": "fix", "head_sha": HEAD,
+            "pull_requests": [{"number": 9, "base": {"repo": {"id": 1}}}]}}
+        for association, source_id, accepted in (
+            (event["workflow_run"]["pull_requests"], 3, False), ([], 3, False),
+            ([{"number": 7, "base": {"repo": {"id": 1}}}], 2, True), ([], 2, True),
+        ):
+            with self.subTest(association=association, source_id=source_id):
+                event["workflow_run"]["pull_requests"] = association
+                event["workflow_run"]["head_repository"]["id"] = source_id
+                apis = FakeApis(comments=[comment("core-a", attestation())])
+                with tempfile.TemporaryDirectory() as directory:
+                    event_path, output = Path(directory) / "event.json", Path(directory) / "output"
+                    event_path.write_text(json.dumps(event))
+                    env = dict(ENV, GITHUB_EVENT_PATH=str(event_path), GITHUB_EVENT_NAME="workflow_run",
+                               GITHUB_OUTPUT=str(output), OPENAI_API_KEY="sk-test")
+                    self.assertEqual(run_main(apis, "resolve", env=env), 0)
+                    selected = output.read_text().strip().removeprefix("pr=")
+                    if selected:
+                        run_main(apis, "evaluate", selected, env=env)
+                if accepted:
+                    self.assertEqual(len(apis.model_requests), 1)
+                    self.assertEqual(apis.review_writes, [("APPROVE", HEAD)])
+                    self.assertEqual(set(apis.labels), {"risk-2", "merge-eligible"})
+                    self.assertEqual(len(apis.created), 2)
+                    self.assertEqual(len(apis.posted), 2)
+                else:
+                    self.assertEqual((len(apis.model_requests), apis.review_writes, apis.label_writes,
+                                      apis.created, apis.posted), (0, [], [], [], []))
+
     def test_review_label_and_cached_ci_reviews_cannot_replace_the_comment(self) -> None:
         old_review = [record("ai-merge-gate/review")]
         for cached_classifier in ([], [record(GATE.CLASSIFIER)]):
@@ -1119,11 +1204,24 @@ class AiMergeGateTests(unittest.TestCase):
                     self.assertEqual(apis.record("ai-merge-gate/review"), [])
 
     def test_resolve_maps_events_to_their_own_pull_request(self) -> None:
-        def events_run(title):
-            return {"workflow_run": {"display_title": title, "head_repository": {"owner": {"login": "forker"}},
-                                     "head_branch": "fix"}}
+        def events_run(title, associations=(7,), fork=True):
+            return {"repository": {"id": 1, "full_name": REPO}, "workflow_run": {
+                "display_title": title, "path": ".github/workflows/ai-merge-gate-events.yml",
+                "event": "pull_request", "repository": {"id": 1, "full_name": REPO},
+                "head_repository": {"id": 2 if fork else 1}, "head_branch": "fix", "head_sha": HEAD,
+                "pull_requests": [{"number": n, "base": {"repo": {"id": 1}}} for n in associations]}}
 
         self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7")), 7)
+        github = GATE.GitHub(FakeApis(), "token", REPO)
+        self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", ()), github), 7)
+        self.assertIsNone(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (), False), github))
+        # Multiple PRs can share a branch; the title selects only among the run's associations.
+        self.assertEqual(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #7", (9, 7))), 7)
+        self.assertIsNone(GATE.resolve("workflow_run", events_run("AI merge gate events for PR #9")))
+        for field, value in (("head_sha", OLD), ("head_branch", "other"), ("head_repository", {"id": 3})):
+            event = events_run("AI merge gate events for PR #7", ())
+            event["workflow_run"][field] = value
+            self.assertIsNone(GATE.resolve("workflow_run", event, github))
         # Without the run name, GitHub titles the run after the pull request.
         self.assertIsNone(GATE.resolve("workflow_run", events_run("Fix the prover")))
         issue = {"issue": {"number": 3}, "comment": {"user": {"type": "User"}}}
@@ -1137,9 +1235,12 @@ class AiMergeGateTests(unittest.TestCase):
             """Resolve the events workflow's run for pull request 7, named by its run name, then evaluate."""
             with tempfile.TemporaryDirectory() as directory:
                 event_path, output_path = Path(directory) / "event.json", Path(directory) / "output"
-                event_path.write_text(json.dumps({"workflow_run": {
+                event_path.write_text(json.dumps({"repository": {"id": 1, "full_name": REPO}, "workflow_run": {
+                    "path": ".github/workflows/ai-merge-gate-events.yml", "event": "pull_request",
+                    "repository": {"id": 1, "full_name": REPO},
                     "display_title": "AI merge gate events for PR #7",
-                    "head_repository": {"owner": {"login": "forker"}}, "head_branch": "fix"}}))
+                    "head_repository": {"id": 2}, "head_branch": "fix", "head_sha": HEAD,
+                    "pull_requests": []}}))
                 env = dict(ENV, GITHUB_EVENT_PATH=str(event_path), GITHUB_EVENT_NAME="workflow_run",
                            GITHUB_OUTPUT=str(output_path))
                 self.assertEqual(run_main(apis, "resolve", env=env), 0)

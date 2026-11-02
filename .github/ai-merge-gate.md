@@ -243,15 +243,17 @@ The gate never runs code from a pull request. Two workflows divide the work:
 - `ai-merge-gate-events.yml` runs on `pull_request` and `pull_request_review` events. GitHub runs
   the pull request's own copy of this file, without secrets and with a token that has no
   permissions. The file does nothing except finish, which tells the gate that something changed,
-  and its run name, `AI merge gate events for PR #<number>`, says which pull request changed. A
-  pull request that changes the file could keep its own events from reaching the gate or name
-  another pull request, which the gate then evaluates from scratch; such a pull request changes a
-  gate input and never gets the gate's approval.
+  and its run name, `AI merge gate events for PR #<number>`, proposes which pull request changed.
+  The resolver accepts that number only when GitHub associates the run with that PR. For fork
+  runs without an association, it reads the named PR and requires the same base repository,
+  source repository, branch and exact head as the run. A missing or mismatched association
+  starts no evaluation and changes no PR state. A PR can suppress its own events by editing this
+  file, but cannot use its run name alone to start another PR's evaluation.
 - `ai-merge-gate.yml` runs on `issue_comment` and on `workflow_run` after the events workflow.
   GitHub always takes both of these workflows from the default branch. Its `resolve` job takes the
-  pull request number from the comment event or from the events workflow's run name, so a closed
-  or retargeted pull request is itself evaluated and loses the gate's approval and
-  `merge-eligible`, whatever other pull requests its branch heads. Its `evaluate` job checks out
+  pull request number from the comment event or validates the events workflow's proposed number
+  as above, so a closed or retargeted pull request is itself evaluated and loses the gate's
+  approval and `merge-eligible`, whatever other pull requests its branch heads. Its `evaluate` job checks out
   the gate script, risk policy, classifier skill and closure spec from the default branch, reads
   the pull request, its comments and its reviews through the API, calls the classifier when row 6
   applies, and writes check runs, labels, the classifier comment and its review with the job's
@@ -264,7 +266,8 @@ can receive secrets even after an unprivileged workflow; this gate consumes no a
 code from that run.
 
 The `evaluate` job's token has Actions read, Checks write, Contents read and Pull requests write;
-the `resolve` job's has Contents read only. Pull requests write covers
+the `resolve` job's has Contents read and Pull requests read for the fork association lookup.
+Pull requests write covers
 [creating and dismissing reviews](https://docs.github.com/en/rest/pulls/reviews),
 [labels](https://docs.github.com/en/rest/issues/labels) and
 [the classifier comment](https://docs.github.com/en/rest/issues/comments). Checks write covers
@@ -304,8 +307,11 @@ Row 5 keeps the gate from approving changes to itself. Any workflow merged into 
 branch can use the gate's secret and token. Python looks up the gate's imports in `scripts/ci`
 first, so any file merged there, such as a `json.py` that shadows the standard library or a
 `__pycache__` entry, would run with the gate's credentials. The classifier skill, risk policy
-and closure spec are the model's instructions. Other files under `.github/`, such as issue
-templates, go to the classifier like any other change.
+and closure spec are the model's instructions. The gate also protects the review skill, its
+comment/test-policy skills, `CLAUDE.md`, the `AGENTS.md` link, `CONTRIBUTING.md` and this guide:
+these define the review procedure and approval policy. Other files under `.github/`, such as
+issue templates, go to the classifier like any other change. A qualifying human approval still
+satisfies the policy; the gate does not add its own approval of protected-input changes.
 
 The gate stores each classifier verdict and risk level as a check run on the head, whose
 external ID names the workflow run that created it. Later evaluations reuse a verdict instead of
@@ -313,10 +319,12 @@ paying for a new one only when the check run comes from the GitHub Actions app (
 its external ID names a run of `.github/workflows/ai-merge-gate.yml` started by `issue_comment`
 or `workflow_run` in this repository: GitHub runs that file for those events only from the
 default branch, and a job a pull request adds does not choose its check run's external ID.
-Cached results must also carry risk metadata and the current risk policy's SHA-256 digest, with
-a successful or neutral check conclusion. Legacy, failed or old-policy results are classified
-again when authorized. A failed model call is not stored, so the next event may retry it
-within the attempt limits. Attestations are always read from current comments, never from check
+Cached results must also carry risk metadata and a SHA-256 fingerprint of the trusted classifier
+inputs: the gate script, its diff-parser helper, the gate workflow, the classifier skill, the
+closure spec and the risk policy. The conclusion must be successful or neutral. Legacy, failed
+or mismatched-input results are classified again when authorized and attempts remain. Changing
+these inputs does not reset the paid-attempt ledger. A failed model call is not stored, so the
+next event may retry it within the attempt limits. Attestations are always read from current comments, never from check
 runs.
 
 The gate does not use `pull_request_target`. GitHub's default Actions policy for public
@@ -599,7 +607,9 @@ if retiring them. Keep the separate Pika App and local review skill.
   gate's evaluation of the push dismisses it.
 - The [Checks API](https://docs.github.com/en/rest/checks/runs#create-a-check-run) creates check
   runs for a commit, not a pull request, so pull requests with the same head share cached
-  classifier results. GitHub also refuses to merge a pull request while another open pull request
+  classifier results. A fork run with no PR association is ignored if its head has since changed
+  or its source repository is unavailable; a later event or a PR comment can evaluate the new
+  state. GitHub also refuses to merge a pull request while another open pull request
   whose head branch points to the same commit has pending or rejected reviews.
 - The model reads the source but does not build or run it, and it reads only text files up to
   1,000,000 bytes. A change it cannot read, such as a binary file in a verifier crate, should
