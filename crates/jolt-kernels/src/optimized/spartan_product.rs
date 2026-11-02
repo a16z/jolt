@@ -72,9 +72,9 @@ use crate::{
 const DOMAIN: usize = SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
 const EXTENSION_SIZE: usize = DOMAIN - 1;
-const BASE_START: usize = (EXTENDED_SIZE - DOMAIN) / 2;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
+const BASE_START: usize = (DOMAIN_START - EXTENDED_START) as usize;
 
 /// The per-cycle product-virtualization witness: the three left/right factor
 /// lanes plus the two wire passengers, as native small scalars.
@@ -412,8 +412,12 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
             t1_values[position] = *value;
         }
         // At a base node, the relation's Lagrange input claim selects the
-        // corresponding stage-1 product at the same tau_low. Use the shared
-        // relation to preserve the composed lane order, including field-inline.
+        // corresponding stage-1 Spartan-outer product opening; the shared
+        // relation keeps the composed lane order, including field-inline.
+        // Those openings sit at `product_tau_low`'s point by construction in
+        // stage 2, so the uni-skip round sum no longer cross-checks them
+        // against the witness: the stage driver's final-claim self-check and
+        // the verifier do.
         for (lane, value) in t1_values
             .iter_mut()
             .skip(BASE_START)
