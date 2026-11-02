@@ -49,3 +49,22 @@ extern "C" __global__ void ra_gather_kernel(const unsigned int *__restrict__ ind
     ra_gather_value(indices, tables, bases, slots, addresses, stride, j,
                     out + (unsigned long long)j * LIMBS);
 }
+
+extern "C" __global__ void ra_gather_bind_kernel(
+    const unsigned int *__restrict__ indices, const u64 *__restrict__ tables,
+    const unsigned int *__restrict__ bases, unsigned int slots,
+    unsigned int addresses, unsigned int stride, unsigned int low_to_high,
+    u64 r0, u64 r1, u64 r2, u64 r3, u64 *__restrict__ out, unsigned int len) {
+    unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    if (j >= len) return;
+    unsigned long long lo_index = low_to_high ? 2ULL * j : j;
+    unsigned long long hi_index = low_to_high ? lo_index + 1 : lo_index + len;
+    u64 lo[LIMBS], hi[LIMBS], delta[LIMBS], bound[LIMBS];
+    u64 r[LIMBS] = {r0, r1, r2, r3};
+    ra_gather_value(indices, tables, bases, slots, addresses, stride, lo_index, lo);
+    ra_gather_value(indices, tables, bases, slots, addresses, stride, hi_index, hi);
+    fr_sub(hi, lo, delta);
+    fr_mul(delta, r, bound);
+    fr_add(lo, bound, bound);
+    store4(out + (unsigned long long)j * LIMBS, bound);
+}

@@ -7,12 +7,12 @@
 //! increments; optimized derives increments from pre/post trace values.
 //!
 //! Lazy RA values are gathered inside each product round, as in optimized.
-//! The device RA helper materializes after four binds, matching optimized's
-//! usual lazy-RA schedule. Device windows contribute local product
-//! messages before the short remaining tables are gathered onto GPU 0.
-//! Optimized can switch its lazy RA to dense storage earlier when that is
-//! cheaper, and omits the zero suffix of its access and increment columns.
-//! CUDA retains those rows throughout its full-window binds.
+//! The device RA helper follows optimized's adaptive storage rule: materialize
+//! by the fourth bind, or sooner if expanded branch tables would cost at least
+//! as much as dense storage. CUDA applies this comparison per device window.
+//! Device windows contribute local product messages before the short remaining
+//! tables are gathered onto GPU 0. Optimized omits the zero suffix of its access
+//! and increment columns; CUDA retains those rows throughout its full-window binds.
 
 use core::marker::PhantomData;
 use jolt_claims::protocols::jolt::relations::ram::{
@@ -78,7 +78,7 @@ impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for CudaBackend {
                 eq_address,
                 window.len,
                 BindingOrder::LowToHigh,
-                RaMaterialization::FourthBind,
+                RaMaterialization::Adaptive,
             )?;
             let lt = DeviceLtPolynomial::shifted(
                 device,

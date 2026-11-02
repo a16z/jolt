@@ -937,7 +937,7 @@ mod tests {
                             if registers {
                                 RaMaterialization::ThirdBind
                             } else {
-                                RaMaterialization::FourthBind
+                                RaMaterialization::Adaptive
                             },
                         )
                         .expect("access polynomial");

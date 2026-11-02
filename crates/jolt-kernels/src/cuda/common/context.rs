@@ -60,6 +60,7 @@ pub struct CudaKernelContext {
     lane_sum_total: CudaFunction,
     ra_split_tables: CudaFunction,
     ra_gather: CudaFunction,
+    ra_gather_bind: CudaFunction,
     lt_reconstruct: CudaFunction,
     ram_ra_gather_h: CudaFunction,
     ram_ra_fold_suffix: CudaFunction,
@@ -293,6 +294,7 @@ impl CudaKernelContext {
             lane_sum_total: module.load_function("lane_sum_total_kernel")?,
             ra_split_tables: module.load_function("ra_split_tables_kernel")?,
             ra_gather: module.load_function("ra_gather_kernel")?,
+            ra_gather_bind: module.load_function("ra_gather_bind_kernel")?,
             lt_reconstruct: module.load_function("lt_reconstruct_kernel")?,
             ram_ra_gather_h: module.load_function("ram_ra_gather_h_kernel")?,
             ram_ra_fold_suffix: module.load_function("ram_ra_fold_suffix_kernel")?,
@@ -1178,6 +1180,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn ra_gather(&self) -> &CudaFunction {
         &self.ra_gather
+    }
+
+    pub(crate) const fn ra_gather_bind(&self) -> &CudaFunction {
+        &self.ra_gather_bind
     }
 
     pub(crate) const fn lt_reconstruct(&self) -> &CudaFunction {

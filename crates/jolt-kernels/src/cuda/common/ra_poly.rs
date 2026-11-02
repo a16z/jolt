@@ -1,13 +1,15 @@
 //! Lazily bound one-hot selectors from device hot indices and address-eq tables.
 //!
 //! Each early bind doubles the challenge-scaled lookup tables; gathers sum the
-//! branches for a cycle without materializing its full one-hot grid. RAM
-//! materializes `T/16` field values at the fourth bind, matching optimized's
-//! usual lazy-RA schedule. Register write RA retains its third-bind `T/8`
-//! schedule. Materialization releases the indices and lookup tables.
-//! Optimized can switch earlier when branch tables would cost as much as dense
-//! storage, and retains only a nonconstant prefix when its source establishes
-//! one. This device helper uses fixed bind thresholds and the full cycle domain.
+//! branches for a cycle without materializing its full one-hot grid. RAM uses
+//! optimized's adaptive schedule: materialize by the fourth bind, or sooner
+//! when the expanded lookup tables would cost at least as much as the bound
+//! dense vector. That storage comparison uses each resident device window;
+//! optimized uses the whole source. Direct gather-and-bind avoids expanding
+//! oversized tables. Register write RA retains its third-bind `T/8` schedule.
+//! Materialization releases the indices and lookup tables.
+//! Optimized retains only a nonconstant prefix when its source establishes
+//! one; this device helper uses the full cycle domain.
 //! Both binding orders use the same representation with different gather strides.
 
 #[cfg(test)]
@@ -23,14 +25,14 @@ use super::error::CudaError;
 #[derive(Clone, Copy)]
 pub enum RaMaterialization {
     ThirdBind,
-    FourthBind,
+    Adaptive,
 }
 
 impl RaMaterialization {
     const fn round(self) -> usize {
         match self {
             Self::ThirdBind => 3,
-            Self::FourthBind => 4,
+            Self::Adaptive => 4,
         }
     }
 }
@@ -296,6 +298,38 @@ impl DeviceRaPolynomial {
         Ok(())
     }
 
+    fn gather_and_bind<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+        challenge: F,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = context.alloc(self.len() / 2)?;
+        let view = self.gather_view(context)?;
+        let count = CudaKernelContext::count_of(output.len())?;
+        let low_to_high = u32::from(matches!(self.order, BindingOrder::LowToHigh));
+        let challenge = fr_limbs(require_fr(challenge)?);
+        let mut builder = context.stream().launch_builder(context.ra_gather_bind());
+        let _ = builder.arg(view.indices);
+        let _ = builder.arg(view.tables.limbs());
+        let _ = builder.arg(&view.bases);
+        let _ = builder.arg(&view.slots);
+        let _ = builder.arg(&view.addresses);
+        let _ = builder.arg(&view.stride);
+        let _ = builder.arg(&low_to_high);
+        for limb in &challenge {
+            let _ = builder.arg(limb);
+        }
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: each thread writes a distinct output and gathers two positions
+        // below the old length: (2*j, 2*j+1) or (j, j+count). The unchanged view
+        // has the same index/table bounds as `gather`; output is a separate
+        // allocation. `bind` only calls this with at least two remaining rows.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        context.stream().synchronize()?;
+        Ok(output)
+    }
+
     pub fn bind<F: JoltField>(
         &mut self,
         context: &CudaKernelContext,
@@ -313,10 +347,18 @@ impl DeviceRaPolynomial {
                 got: self.len(),
             });
         }
-        self.split_tables(context, challenge)?;
+        if matches!(self.materialization, RaMaterialization::Adaptive)
+            && self.tables.len().saturating_mul(2) >= self.len() / 2
+        {
+            self.dense = Some(self.gather_and_bind(context, challenge)?);
+        } else {
+            self.split_tables(context, challenge)?;
+        }
         self.rounds_bound += 1;
-        if self.rounds_bound >= self.materialization.round() {
+        if self.dense.is_none() && self.rounds_bound >= self.materialization.round() {
             self.dense = Some(self.gather(context)?);
+        }
+        if self.dense.is_some() {
             self.tables = context.alloc(0)?;
             self.indices = context.alloc_u32(0)?;
         }
@@ -449,17 +491,65 @@ mod tests {
         }
     }
 
+    #[test]
+    fn adaptive_materialization_respects_storage_and_width_limits() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for (log_t, log_k, materialize_at) in [
+            (1, 0, 1),
+            (8, 3, 3),
+            (8, 4, 2),
+            (8, 5, 2),
+            (8, 6, 1),
+            (10, 1, 4),
+            (10, 2, 4),
+        ] {
+            for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+                let (indices, eq_address) = fixture(log_t, log_k, 1);
+                let mut expected = Polynomial::new(
+                    indices
+                        .iter()
+                        .map(|index| index.map_or(Fr::from_u64(0), |i| eq_address[i]))
+                        .collect::<Vec<_>>(),
+                );
+                let mut got = DeviceRaPolynomial::new(
+                    context,
+                    &indices,
+                    &eq_address,
+                    order,
+                    RaMaterialization::Adaptive,
+                )
+                .expect("device RA polynomial");
+                for round in 1..=log_t {
+                    let challenge = Fr::from_u64(101 + 7 * round as u64);
+                    got.bind(context, challenge).expect("device bind");
+                    expected.bind_with_order(challenge, order);
+                    assert_eq!(got.is_collapsed(), round >= materialize_at);
+                    assert_eq!(
+                        got.coefficients(context)
+                            .expect("device coefficients")
+                            .to_host()
+                            .expect("download"),
+                        expected.evals().to_vec(),
+                        "log_t={log_t}, log_k={log_k}, round={round}, order={order:?}",
+                    );
+                }
+            }
+        }
+    }
+
     proptest! {
         #[test]
         fn ra_poly_matches_the_host_model(
-            log_t in 1usize..=6,
+            log_t in 1usize..=10,
             log_k in 1usize..=4,
             seed in any::<u64>(),
-            challenges in arb_point(6),
+            challenges in arb_point(10),
         ) {
             let Some(context) = shared_context() else { return Ok(()); };
             for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
-                for materialization in [RaMaterialization::ThirdBind, RaMaterialization::FourthBind] {
+                for materialization in [RaMaterialization::ThirdBind, RaMaterialization::Adaptive] {
                     let (indices, eq_address) = fixture(log_t, log_k, seed);
 
                     let mut expected = HostRaPolynomial::new(&indices, &eq_address, order);
@@ -482,7 +572,15 @@ mod tests {
                             order
                         );
                         prop_assert_eq!(got.len(), expected.len());
-                        prop_assert_eq!(got.is_collapsed(), round >= materialization.round());
+                        match materialization {
+                            RaMaterialization::ThirdBind => {
+                                prop_assert_eq!(got.is_collapsed(), round >= materialization.round());
+                            }
+                            RaMaterialization::Adaptive if round >= materialization.round() => {
+                                prop_assert!(got.is_collapsed());
+                            }
+                            RaMaterialization::Adaptive => {}
+                        }
                         got.bind(context, challenge).expect("device bind");
                         expected.bind(challenge);
                     }
