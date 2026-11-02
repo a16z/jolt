@@ -102,6 +102,8 @@ class E2ePublicationTests(unittest.TestCase):
                               '| 3.000000 / 3.000000 | +0.00% |', text)
             self.assertIn('Shared harness: `' + 'd' * 40 + '`', text)
             self.assertIn('Prover profiles: base `release`; head `release`.', text)
+            self.assertIn('Calibration unavailable:', text)
+            self.assertNotIn('Supplied reference method:', text)
         for key, value in [('profile', 'ci'), ('profile_config', {'lto': 'off'})]:
             changed = copy.deepcopy(result)
             changed['builds'][1][key] = value
