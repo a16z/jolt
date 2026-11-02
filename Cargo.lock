@@ -98,6 +98,7 @@ dependencies = [
  "akita-error",
  "akita-serialization",
  "jolt-field",
+ "jolt-inlines-ntt",
  "jolt-poly",
  "rand_core 0.6.4",
  "rayon",
@@ -175,6 +176,7 @@ dependencies = [
  "akita-transcript",
  "blake2 0.11.0",
  "jolt-field",
+ "jolt-inlines-blake2",
  "serde",
  "sha3 0.12.0",
 ]
@@ -1750,7 +1752,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2303,9 +2305,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "065945e9fff3c7dac5d6f72f8260eac82ad577e7c7009b6290847d1252d14d78"
+checksum = "7b5d5f7616b5c004760187ebfd126cabe14ec311b7b57f6ae6c9dac71284eb7f"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -2575,7 +2577,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3315,6 +3317,7 @@ dependencies = [
  "jolt-transcript",
  "rayon",
  "serde",
+ "serde_bytes",
  "serde_json",
  "tracing",
 ]
@@ -3447,7 +3450,6 @@ dependencies = [
  "num-traits",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "rayon",
  "serde",
  "sha3 0.12.0",
  "thiserror 2.0.20",
@@ -3581,6 +3583,7 @@ dependencies = [
  "bytemuck",
  "cc",
  "criterion",
+ "jolt-riscv",
  "num-bigint 0.4.6",
  "num-traits",
  "rand 0.8.7",
@@ -5770,9 +5773,20 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "clap",
+ "jolt-akita",
+ "jolt-field",
+ "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-ntt",
+ "jolt-poly",
+ "jolt-program",
+ "jolt-riscv",
  "jolt-sdk",
+ "jolt-sumcheck",
+ "jolt-witness",
  "postcard",
  "serde",
+ "tracer",
  "tracing",
  "tracing-subscriber",
 ]
@@ -5782,7 +5796,13 @@ name = "recursion-guest"
 version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
+ "jolt-akita",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-inlines-blake2",
+ "jolt-riscv",
  "jolt-sdk",
+ "jolt-transcript",
  "serde",
 ]
 
@@ -6111,7 +6131,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7023,7 +7043,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7674,7 +7694,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

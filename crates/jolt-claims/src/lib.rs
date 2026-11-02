@@ -41,4 +41,4 @@ pub use claim_data::{
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
 pub use jolt_claims_derive::{InputClaims, OutputClaims, SumcheckChallenges};
 pub use sumcheck::SumcheckDomain;
-pub use symbolic::SymbolicSumcheck;
+pub use symbolic::{referenced_openings, SymbolicSumcheck};

@@ -1,6 +1,7 @@
 #[cfg(feature = "host")]
+use std::error::Error as StdError;
+#[cfg(all(feature = "host", not(feature = "akita")))]
 use std::{
-    error::Error as StdError,
     io::{Error as IoError, ErrorKind},
     sync::Arc,
 };
@@ -15,10 +16,14 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryHint;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 use jolt_dory::{DoryCommitment, DoryScheme};
-#[cfg(feature = "host")]
+#[cfg(any(feature = "host", feature = "guest-verifier"))]
+use jolt_field::Fr;
+#[cfg(all(feature = "host", not(feature = "akita")))]
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 #[cfg(feature = "host")]
-use jolt_prover::{JoltProverPreprocessing as GenericJoltProverPreprocessing, ProverConfig};
+use jolt_prover::JoltProverPreprocessing as GenericJoltProverPreprocessing;
+#[cfg(all(feature = "host", not(feature = "akita")))]
+use jolt_prover::ProverConfig;
 #[cfg(all(
     any(feature = "host", feature = "guest-verifier"),
     feature = "transcript-blake2b"
@@ -35,7 +40,7 @@ use jolt_transcript::ProverState;
 use jolt_transcript::VerifierState;
 #[cfg(feature = "host")]
 use jolt_verifier::ProgramPreprocessing as GenericProgramPreprocessing;
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend as WitnessTraceBackend};
 #[cfg(feature = "host")]
 use tracer::TracerInlineExpansionProvider;
@@ -84,7 +89,7 @@ pub type VerifierPCS = DoryScheme;
 #[cfg(feature = "host")]
 pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(feature = "host")]
-pub type VerifierField = jolt_field::Fr;
+pub type VerifierField = Fr;
 #[cfg(feature = "host")]
 pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
 #[cfg(feature = "host")]
@@ -141,7 +146,7 @@ pub enum ProgramPreprocessingMode {
     Committed,
 }
 
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 pub fn preprocess_program(
     source: &mut dyn host::JoltProgramSource,
     memory_config: MemoryConfig,
@@ -157,7 +162,7 @@ pub fn preprocess_program(
     }
 }
 
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 pub fn verifier_preprocessing_from_prover(
     prover: &JoltProverPreprocessing,
 ) -> JoltVerifierPreprocessing {
@@ -169,7 +174,7 @@ pub type VerifierPCS = DoryScheme;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierVC = Pedersen<Bn254G1>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
-pub type VerifierField = jolt_field::Fr;
+pub type VerifierField = Fr;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
 pub type VerifierTranscript<'a> = VerifierState<'a, ProtocolSponge>;
 #[cfg(all(feature = "guest-verifier", not(feature = "host")))]
@@ -255,7 +260,7 @@ pub fn compute_advice_tape(
     Ok(trace.advice_tape)
 }
 
-#[cfg(feature = "host")]
+#[cfg(all(feature = "host", not(feature = "akita")))]
 #[expect(
     clippy::too_many_arguments,
     reason = "SDK proof boundary mirrors guest inputs"

@@ -4,9 +4,11 @@
 //! boolean. It runs in two phases: the stage-6a address phase binds the
 //! `log_k_chunk` address variables and stages the `BooleanityAddrClaim`
 //! intermediate; this stage-6b cycle phase binds the `log_t` cycle variables and
-//! opens the committed per-family `Ra` claims. The cycle phase's single public,
+//! opens the committed per-family `Ra` claims. The cycle phase's eq public,
 //! `EqAddressCycle`, ties the full two-phase sumcheck point to the reference
 //! address/cycle drawn from the stage-5 instruction opening.
+
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityCyclePhaseChallenges, BooleanityInputClaims, BooleanityOutputClaims,
@@ -101,8 +103,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
         id: &JoltDerivedId,
         _input_points: &SumcheckInputPoints<F, Self>,
         output_points: &SumcheckOutputPoints<F, Self>,
-        _challenges: &BooleanityCyclePhaseChallenges<F>,
+        challenges: &BooleanityCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
+        if let JoltDerivedId::Booleanity(BooleanityPublic::GammaPow { exponent }) = id {
+            return Ok(gamma_pow(challenges.gamma, *exponent));
+        }
         let JoltDerivedId::Booleanity(BooleanityPublic::EqAddressCycle) = id else {
             return Err(VerifierError::MissingStageClaimDerived { id: (*id).into() });
         };

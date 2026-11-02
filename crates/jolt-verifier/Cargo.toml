@@ -12,6 +12,8 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
+# Guest transcript acceleration through the shared claims feature.
+blake2-inline = ["jolt-claims/blake2-inline"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]

@@ -194,7 +194,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use crate::{eq_index_msb, try_eq_mle};
+    use crate::{eq_index_msb, try_eq_mle, EqPolynomial};
     use jolt_field::{Fr, Ring};
     use num_traits::{One, Zero};
 
@@ -221,6 +221,16 @@ mod tests {
     }
 
     #[test]
+    fn sparse_mle_accepts_a_run_ending_at_the_last_u128_index() {
+        let point: Vec<Fr> = (0..128).map(|i| Fr::from_u64(i + 2)).collect();
+        let all_ones = point.iter().fold(Fr::one(), |acc, x| acc * x);
+        assert_eq!(
+            sparse_mle_msb(u128::MAX, &[7], &point),
+            all_ones * Fr::from_u64(7)
+        );
+    }
+
+    #[test]
     fn sparse_mle_matches_explicit_sum() {
         let point = [Fr::from_u64(2), Fr::from_u64(3)];
         let values = [7, 11];
@@ -229,6 +239,27 @@ mod tests {
             sparse_mle_msb(1, &values, &point),
             Fr::from_u64(7) * eq_index_msb(&point, 1) + Fr::from_u64(11) * eq_index_msb(&point, 2)
         );
+    }
+
+    #[test]
+    fn sparse_mle_matches_dense_evaluation_across_blocks() {
+        let point: Vec<Fr> = (2..8).map(Fr::from_u64).collect();
+        let dense_eq = EqPolynomial::<Fr>::evals(&point, None);
+        for (start, len) in [(0usize, 0usize), (0, 1), (5, 13), (3, 61), (60, 4)] {
+            let values: Vec<u64> = (0..len as u64).map(|i| 3 * i + 1).collect();
+            let mut dense = vec![0u64; dense_eq.len()];
+            dense[start..start + len].copy_from_slice(&values);
+            let expected = dense_eq
+                .iter()
+                .zip(&dense)
+                .map(|(eq, value)| *eq * Fr::from_u64(*value))
+                .sum::<Fr>();
+            assert_eq!(
+                sparse_mle_msb(start as u128, &values, &point),
+                expected,
+                "{start} {len}"
+            );
+        }
     }
 
     #[test]
