@@ -68,16 +68,18 @@ impl<F: JoltField> PairedBranchTables<F> {
     ) {
         for column in columns {
             let table = &self.tables[column];
-            let mut sum = F::zero();
-            for pair in 0..pairs {
-                let lo = source
-                    .index(column, start + 2 * pair)
-                    .unwrap_or(PAIR_ADDRESSES);
-                let hi = source
-                    .index(column, start + 2 * pair + 1)
-                    .unwrap_or(PAIR_ADDRESSES);
-                sum += table[pair * STATES + lo * RADIX + hi];
-            }
+            let sum = (0..pairs)
+                .map(|pair| {
+                    let lo = source
+                        .index(column, start + 2 * pair)
+                        .unwrap_or(PAIR_ADDRESSES);
+                    let hi = source
+                        .index(column, start + 2 * pair + 1)
+                        .unwrap_or(PAIR_ADDRESSES);
+                    table[pair * STATES + lo * RADIX + hi]
+                })
+                .reduce(|a, b| a + b)
+                .unwrap_or_else(F::zero);
             visit(column, sum);
         }
     }
@@ -104,14 +106,19 @@ impl<F: JoltField> PairedBranchTables<F> {
             }
             for column in (start..end).rev() {
                 let table = &self.tables[column];
-                let mut sum = F::zero();
-                for (pair, indices) in indices.chunks_exact_mut(2).enumerate() {
-                    let lo = (indices[0] & 15) as usize;
-                    let hi = (indices[1] & 15) as usize;
-                    sum += table[pair * STATES + lo * RADIX + hi];
-                    indices[0] >>= 4;
-                    indices[1] >>= 4;
-                }
+                let sum = indices
+                    .chunks_exact_mut(2)
+                    .enumerate()
+                    .map(|(pair, indices)| {
+                        let lo = (indices[0] & 15) as usize;
+                        let hi = (indices[1] & 15) as usize;
+                        let value = table[pair * STATES + lo * RADIX + hi];
+                        indices[0] >>= 4;
+                        indices[1] >>= 4;
+                        value
+                    })
+                    .reduce(|a, b| a + b)
+                    .unwrap_or_else(F::zero);
                 visit(column, sum);
             }
         }
