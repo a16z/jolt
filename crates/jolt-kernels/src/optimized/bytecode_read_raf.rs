@@ -1085,6 +1085,7 @@ struct CycleGrouping {
     /// Distinct groups the merge cache holds, and the sampled block length.
     entries: usize,
     /// Groups per map-reduce task; repeated groups merge only within one task.
+    #[cfg(feature = "parallel")]
     batch: usize,
     /// Fewest groups for which this window is sampled at all.
     min_groups: usize,
@@ -1096,6 +1097,7 @@ impl CycleGrouping {
 
     const SHORT: Self = Self {
         entries: 64,
+        #[cfg(feature = "parallel")]
         batch: CYCLE_CHUNK,
         min_groups: 0,
     };
@@ -1104,6 +1106,7 @@ impl CycleGrouping {
     /// win more from merging than they lose to parallelism.
     const LONG: Self = Self {
         entries: Self::LONG_ENTRIES,
+        #[cfg(feature = "parallel")]
         batch: Self::LONG_BATCH,
         min_groups: Self::LONG_BATCH,
     };
