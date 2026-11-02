@@ -1,6 +1,7 @@
 use jolt_field::{Accumulator, JoltField};
 
 use super::{extend, fold_guards, DOMAIN, EXTENDED_NODE_COUNT, SECOND_GROUP_LEN};
+use crate::optimized::support::RepeatCache;
 
 const MAX_GROUPS: usize = 32;
 const MAP_BITS: usize = 7;
@@ -106,8 +107,7 @@ fn guard_key<const M: usize>(guards: &[i64; M]) -> Option<u64> {
     valid.then_some(key)
 }
 
-#[derive(Clone, Copy)]
-struct GuardEndpointGroup<F: JoltField> {
+pub(super) struct GuardEndpointGroup<F: JoltField> {
     key: [u64; 2],
     values: [F; 2],
     sums: [F::Accumulator; 2],
@@ -120,19 +120,27 @@ impl<F: JoltField> GuardEndpointGroup<F> {
     }
 }
 
+/// Distinct guard-pair keys per [`GuardEndpoints`] cache; `RepeatCache` keeps
+/// four slots per entry, so 128 slots.
+pub(super) const GUARD_ENDPOINT_ENTRIES: usize = 32;
+
 /// Equal A interpolants factor out of the weighted B sums. Collisions flush
 /// their group before replacement, keeping the per-equality-block scratch bounded.
+/// `groups` must be empty on entry; [`Self::finish`] drains it for the next block.
 pub(super) struct GuardEndpoints<'a, F: JoltField> {
     weights: &'a [F],
-    slots: [Option<GuardEndpointGroup<F>>; 1 << MAP_BITS],
+    groups: &'a mut RepeatCache<GuardEndpointGroup<F>>,
     endpoints: [F::Accumulator; 2],
 }
 
 impl<'a, F: JoltField> GuardEndpoints<'a, F> {
-    pub(super) fn new(weights: &'a [F]) -> Self {
+    pub(super) fn new(
+        weights: &'a [F],
+        groups: &'a mut RepeatCache<GuardEndpointGroup<F>>,
+    ) -> Self {
         Self {
             weights,
-            slots: [None; 1 << MAP_BITS],
+            groups,
             endpoints: [F::Accumulator::default(); 2],
         }
     }
@@ -153,9 +161,12 @@ impl<'a, F: JoltField> GuardEndpoints<'a, F> {
             return values;
         };
         let key = [first_key, second_key];
-        let hash = first_key ^ second_key.rotate_left(27);
-        let slot = (hash.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - MAP_BITS)) as usize;
-        let cached = &mut self.slots[slot];
+        // One multiply instead of `repeat_hash`'s three: `RepeatCache` masks
+        // the low bits, and the byte swap moves the product's mixed high bits there.
+        let hash = (first_key ^ second_key.rotate_left(27))
+            .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+            .swap_bytes();
+        let cached = self.groups.entry(hash);
         if let Some(group) = cached.take_if(|group| group.key != key) {
             group.flush(&mut self.endpoints);
         }
@@ -170,16 +181,21 @@ impl<'a, F: JoltField> GuardEndpoints<'a, F> {
     }
 
     #[inline]
-    pub(super) fn add_direct(&mut self, a: [F; 2], b: [F; 2], weight: F) {
+    fn add_direct(&mut self, a: [F; 2], b: [F; 2], weight: F) {
         self.endpoints[0].fmadd(weight * a[0], b[0]);
         self.endpoints[1].fmadd(weight * (a[1] - a[0]), b[1] - b[0]);
     }
 
-    pub(super) fn finish(&mut self) -> [F; 2] {
-        for group in self.slots.iter_mut().filter_map(Option::take) {
-            group.flush(&mut self.endpoints);
+    pub(super) fn finish(self) -> [F; 2] {
+        let Self {
+            groups,
+            mut endpoints,
+            ..
+        } = self;
+        for group in groups.drain() {
+            group.flush(&mut endpoints);
         }
-        std::mem::take(&mut self.endpoints).map(Accumulator::reduce)
+        endpoints.map(Accumulator::reduce)
     }
 }
 
@@ -278,8 +294,12 @@ mod tests {
         let weights: Vec<F> = (0..DOMAIN)
             .map(|i| F::from_u64(17 + 13 * i as u64))
             .collect();
-        let mut cache = GuardEndpoints::new(&weights);
-        assert_eq!(GuardEndpoints::new(&weights).finish(), [F::zero(); 2]);
+        let mut groups = RepeatCache::new(GUARD_ENDPOINT_ENTRIES);
+        assert_eq!(
+            GuardEndpoints::new(&weights, &mut groups).finish(),
+            [F::zero(); 2]
+        );
+        let mut cache = GuardEndpoints::new(&weights, &mut groups);
         let mut endpoints = [F::zero(); 2];
         // More distinct guard vectors than slots exercise replacement; repeated
         // vectors and out-of-range guards must obey the same linear formula.

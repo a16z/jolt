@@ -107,7 +107,7 @@ use super::prefix_product::PrefixColumn;
 use super::support::map_reduce_chunks;
 use super::support::{
     pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
-    PrefixCycleWeights, RoundChallenges,
+    PrefixCycleWeights, RepeatCache, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -115,7 +115,7 @@ use crate::{
 };
 
 mod guard_groups;
-use guard_groups::{GuardEndpoints, GuardGroups};
+use guard_groups::{GuardEndpointGroup, GuardEndpoints, GuardGroups, GUARD_ENDPOINT_ENTRIES};
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
@@ -221,14 +221,13 @@ struct SpartanOuterRow {
 impl SpartanOuterRow {
     fn folded_groups<F: JoltField>(&self, lagrange: &[F]) -> ([F; 2], [F; 2]) {
         let values = self.group_values();
-        let (a0, b0) = fold_group(lagrange, &values.a_first, &values.b_first, &[0; DOMAIN]);
-        let (a1, b1) = fold_group(
-            lagrange,
-            &values.a_second,
-            &values.b_second_lo,
-            &values.b_second_hi,
-        );
-        ([a0, a1], [b0, b1])
+        (
+            [
+                fold_guards(lagrange, &values.a_first),
+                fold_guards(lagrange, &values.a_second),
+            ],
+            values.fold_b(lagrange),
+        )
     }
 }
 
@@ -350,6 +349,15 @@ struct RowGroupValues {
     b_second_hi: [i128; SECOND_GROUP_LEN],
 }
 
+impl RowGroupValues {
+    fn fold_b<F: JoltField>(&self, weights: &[F]) -> [F; 2] {
+        [
+            fold_values(weights, &self.b_first, &[0; DOMAIN]),
+            fold_values(weights, &self.b_second_lo, &self.b_second_hi),
+        ]
+    }
+}
+
 /// One active field-inline cycle's composed group values, in field form: the
 /// field-inline magnitudes are full field elements, so the integer pipeline cannot
 /// carry them. Its work is proportional to active cycles, which may occupy
@@ -393,34 +401,20 @@ impl<F: JoltField> FieldGroupValues<F> {
         })
     }
 
-    fn fold_first(&self, weights: &[F]) -> (F, F) {
-        let (a, b) = fold_group(
-            weights,
-            &self.integer.a_first,
-            &self.integer.b_first,
-            &[0; DOMAIN],
-        );
-        let correction: F = weights[RV64_FIRST_GROUP_LEN..]
+    /// Only B carries field corrections; the A folds are `self.integer`'s.
+    fn fold_b(&self, weights: &[F]) -> [F; 2] {
+        let [first, second] = self.integer.fold_b(weights);
+        let first_correction: F = weights[RV64_FIRST_GROUP_LEN..]
             .iter()
             .zip(self.b_first)
             .map(|(c, b)| *c * b)
             .sum();
-        (a, b + correction)
-    }
-
-    fn fold_second(&self, weights: &[F]) -> (F, F) {
-        let (a, b) = fold_group(
-            weights,
-            &self.integer.a_second,
-            &self.integer.b_second_lo,
-            &self.integer.b_second_hi,
-        );
-        let correction: F = weights[RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
+        let second_correction: F = weights[RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
             .iter()
             .zip(self.b_second)
             .map(|(c, b)| *c * b)
             .sum();
-        (a, b + correction)
+        [first + first_correction, second + second_correction]
     }
 }
 
@@ -789,16 +783,6 @@ fn wide_value(top: i128, low: u64) -> S256 {
         )
     };
     S256::new([low, top as u64, (top >> 64) as u64, 0], is_positive)
-}
-
-fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], lo: &[i128], hi: &[i128]) -> (F, F) {
-    let mut az = <F as WithAccumulator>::SmallScalarAccumulator::default();
-    let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
-    for (((&weight, &guard), &lo), &hi) in weights.iter().zip(guards).zip(lo).zip(hi) {
-        az.fmadd_i64(weight, guard);
-        accumulate_group_value(&mut bz, weight, lo, hi);
-    }
-    (az.reduce(), bz.reduce())
 }
 
 fn fold_guards<F: JoltField>(weights: &[F], guards: &[i64]) -> F {
@@ -1190,42 +1174,39 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         };
         #[cfg(feature = "field-inline")]
         let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
-        let block = |x_out: usize,
+        // `try_reduce` discards every block result once one block fails, so
+        // groups an aborted block leaves in a reused cache never reach a result.
+        let block = |groups: &mut RepeatCache<GuardEndpointGroup<F>>,
+                     x_out: usize,
                      az_chunk: &mut [F],
                      bz_chunk: &mut [F]|
          -> Result<(F, F), WitnessError> {
-            let mut guard_endpoints = GuardEndpoints::new(lagrange);
+            let mut guard_endpoints = GuardEndpoints::new(lagrange, groups);
             #[cfg(feature = "field-inline")]
             let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, x_out * in_len);
             for x_in in 0..az_chunk.len() / 2 {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
-                let e = e_in[x_in];
-                let mut integer_fold = || {
-                    let values = row.group_values();
-                    let bz_zero = fold_values(lagrange, &values.b_first, &[0; DOMAIN]);
-                    let bz_one = fold_values(lagrange, &values.b_second_lo, &values.b_second_hi);
-                    let [az_zero, az_one] = guard_endpoints.add(
-                        &values.a_first,
-                        &values.a_second,
-                        [bz_zero, bz_one],
-                        e,
-                    );
-                    (az_zero, bz_zero, az_one, bz_one)
-                };
                 #[cfg(feature = "field-inline")]
-                let (az_zero, bz_zero, az_one, bz_one) =
-                    if let Some(field_row) = field_cursor.advance(t) {
-                        let values = row.field_group_values(field_row);
-                        let (az_zero, bz_zero) = values.fold_first(lagrange);
-                        let (az_one, bz_one) = values.fold_second(lagrange);
-                        guard_endpoints.add_direct([az_zero, az_one], [bz_zero, bz_one], e);
-                        (az_zero, bz_zero, az_one, bz_one)
-                    } else {
-                        integer_fold()
-                    };
+                let (values, [bz_zero, bz_one]) = if let Some(field_row) = field_cursor.advance(t) {
+                    let values = row.field_group_values(field_row);
+                    let bz = values.fold_b(lagrange);
+                    (values.integer, bz)
+                } else {
+                    let values = row.group_values();
+                    let bz = values.fold_b(lagrange);
+                    (values, bz)
+                };
                 #[cfg(not(feature = "field-inline"))]
-                let (az_zero, bz_zero, az_one, bz_one) = integer_fold();
+                let values = row.group_values();
+                #[cfg(not(feature = "field-inline"))]
+                let [bz_zero, bz_one] = values.fold_b(lagrange);
+                let [az_zero, az_one] = guard_endpoints.add(
+                    &values.a_first,
+                    &values.a_second,
+                    [bz_zero, bz_one],
+                    e_in[x_in],
+                );
                 az_chunk[2 * x_in] = az_zero;
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;
@@ -1241,7 +1222,10 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .par_chunks_mut(width)
             .zip(bz.par_chunks_mut(width))
             .enumerate()
-            .map(|(x_out, (az_chunk, bz_chunk))| block(x_out, az_chunk, bz_chunk))
+            .map_init(
+                || RepeatCache::new(GUARD_ENDPOINT_ENTRIES),
+                |groups, (x_out, (az_chunk, bz_chunk))| block(groups, x_out, az_chunk, bz_chunk),
+            )
             .try_reduce(
                 || (F::zero(), F::zero()),
                 |left, right| Ok(add(left, right)),
@@ -1249,10 +1233,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let endpoints = {
             let mut folded = (F::zero(), F::zero());
+            let mut groups = RepeatCache::new(GUARD_ENDPOINT_ENTRIES);
             for (x_out, (az_chunk, bz_chunk)) in
                 az.chunks_mut(width).zip(bz.chunks_mut(width)).enumerate()
             {
-                folded = add(folded, block(x_out, az_chunk, bz_chunk)?);
+                folded = add(folded, block(&mut groups, x_out, az_chunk, bz_chunk)?);
             }
             folded
         };
@@ -1956,7 +1941,7 @@ mod tests {
     }
 
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None);
+        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None, None);
     }
 
     fn parity_case_with_eq(
@@ -1966,8 +1951,14 @@ mod tests {
         exceptional: Option<ExceptionalEq>,
         zero_scale: bool,
         prefix: Option<usize>,
+        period: Option<usize>,
     ) {
         let mut rows = synthetic_rows(log_t, seed);
+        if let Some(period) = period {
+            for t in period..rows.len() {
+                rows[t] = rows[t % period];
+            }
+        }
         if let Some(prefix) = prefix {
             let tail = rows[rows.len() - 1];
             rows[prefix..].fill(tail);
@@ -2127,9 +2118,19 @@ mod tests {
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
         with_sample_backend(|dummy| {
             for case in ExceptionalEq::ALL {
-                parity_case_with_eq(dummy, 4, 389, Some(case), false, None);
+                parity_case_with_eq(dummy, 4, 389, Some(case), false, None, None);
             }
-            parity_case_with_eq(dummy, 4, 389, None, true, None);
+            parity_case_with_eq(dummy, 4, 389, None, true, None, None);
+        });
+    }
+
+    #[test]
+    fn remainder_matches_reference_with_repeated_guard_rows() {
+        with_sample_backend(|dummy| {
+            // log_t = 12 gives 64-row blocks; period 48 repeats 16 rows per
+            // block and collides keys in the 128-slot guard-endpoint cache.
+            parity_case_with_eq(dummy, 12, 389, None, false, None, Some(48));
+            parity_case_with_eq(dummy, 12, 390, None, false, Some(3000), Some(48));
         });
     }
 
@@ -2138,12 +2139,12 @@ mod tests {
         with_sample_backend(|dummy| {
             for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
                 for seed in [389, 390] {
-                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix));
+                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix), None);
                     for case in ExceptionalEq::ALL {
-                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix));
+                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix), None);
                     }
                 }
-                parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix));
+                parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix), None);
             }
         });
     }
