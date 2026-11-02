@@ -61,6 +61,8 @@ jobs:
         run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
       - name: Test benchmark profile selection
         run: python3 -m unittest scripts.tests.test_benchmark_profiles -v
+      - name: Test the AI merge gate
+        run: python3 -m unittest scripts.tests.test_ai_merge_gate -v
 
   field-stack:
     name: Shared field feature matrix

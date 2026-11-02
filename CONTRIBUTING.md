@@ -54,9 +54,38 @@ These Claude Code skills are available in this repo:
 | `/new-spec <name>` | Create a new spec file from the template |
 | `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
 | `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
-| `/ci-code-review` | Deep PR code review with parallel analysis agents |
+| `/ci-code-review` | Deepest possible PR review outside CI, subagents encouraged, before a review attestation |
+| `/verifier-classifier` | Classify verifier impact and assign review-risk levels |
 
 Spec analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
+
+## AI Merge Gate
+
+Once its admin setup is in place, merging into `main` needs one approving review, with stale
+approvals dismissed on push, plus the required CI checks. A person's approval counts on its own.
+The gate approves as `github-actions[bot]` when a maintainer wrote or authorized the pull request,
+an allowed account attested a review of its current head, the verifier classifier put it at
+`risk-1` (tests/scripts/CI/docs), `risk-2` (non-verifier code) or `risk-3` (small, scoped
+verifier-reaching dependency changes), and it changes none of the gate's inputs. It never
+approves `risk-4` (protocol/verifier changes and uncertainty), for which the policy asks for a
+current-head approval by a maintainer other than the PR author. The classifier is the only model
+the gate calls.
+
+Run code review outside CI. Once it finds no issues, the Pika App bot or a maintainer listed in
+the repository variable `AI_MERGE_GATE_MAINTAINERS` posts the exact standalone line below in a
+**PR comment**. This is a format example using an existing commit, not an attestation of the
+current PR head; replace the number, full SHA and review details with the actual reviewed values.
+
+```text
+This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model Astra with Max reasoning effort, and no issues were found.
+```
+
+Skill, model and effort must be nonempty and may contain spaces. Being the PR author alone
+does not qualify. A new head requires a new attestation; editing away or deleting the line
+invalidates it and withdraws the gate's approval. Review bodies, old markers and cached CI
+reviews cannot replace it, and the `ai-review` label starts no review. See
+[the gate guide](.github/ai-merge-gate.md) for maintainer authorization, the labels, the risk
+policy, spend limits, admin setup and turning the gate off.
 
 ## Development Setup
 
