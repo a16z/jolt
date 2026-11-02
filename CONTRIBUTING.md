@@ -54,7 +54,7 @@ These Claude Code skills are available in this repo:
 | `/new-spec <name>` | Create a new spec file from the template |
 | `/analyze-spec` | Interactive Socratic analysis of a spec (local) |
 | `/implement-spec` | Autonomous implementation from an approved spec (local/cloud) |
-| `/ci-code-review` | One-pass code review outside CI, before posting a review attestation |
+| `/ci-code-review` | Deepest possible PR review outside CI, subagents encouraged, before a review attestation |
 | `/verifier-classifier` | Classify verifier impact and assign review-risk levels |
 
 Spec analysis can also be triggered externally by adding the `claude-spec-review-request` label to a PR.
