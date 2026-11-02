@@ -418,7 +418,6 @@ dependencies = [
  "jolt-riscv",
  "jolt-transcript",
  "jolt-utils",
- "rayon",
  "serde",
  "sha3",
  "thiserror",
