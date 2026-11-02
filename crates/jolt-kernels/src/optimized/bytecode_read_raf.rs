@@ -41,6 +41,7 @@
 //! same value on every row.
 
 use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_claims::protocols::jolt::geometry::bytecode::{
@@ -1075,25 +1076,36 @@ struct BytecodePcChunks {
     selectors: Vec<RaChunkSelector>,
 }
 
-/// Groups per map-reduce task; repeated groups merge only within one task.
+/// Groups per map-reduce task of the four-factor walk and the short window.
 const CYCLE_CHUNK: usize = 4096;
-/// Distinct groups the merge cache holds, and the sampled block length.
-const CYCLE_GROUP_ENTRIES: usize = 64;
 
+/// A window in which repeated PC groups are detected and merged.
 #[derive(Clone, Copy)]
 struct CycleGrouping {
+    /// Distinct groups the merge cache holds, and the sampled block length.
     entries: usize,
+    /// Groups per map-reduce task; repeated groups merge only within one task.
     batch: usize,
+    /// Fewest groups for which this window is sampled at all.
+    min_groups: usize,
 }
 
 impl CycleGrouping {
+    const LONG_ENTRIES: usize = 2048;
+    const LONG_BATCH: usize = 16384;
+
     const SHORT: Self = Self {
-        entries: CYCLE_GROUP_ENTRIES,
+        entries: 64,
         batch: CYCLE_CHUNK,
+        min_groups: 0,
     };
+    /// Sampled only when a round fills at least one task. A higher gate keeps
+    /// rounds with few tasks off this window, but on SHA-2 those rounds still
+    /// win more from merging than they lose to parallelism.
     const LONG: Self = Self {
-        entries: 2048,
-        batch: 16384,
+        entries: Self::LONG_ENTRIES,
+        batch: Self::LONG_BATCH,
+        min_groups: Self::LONG_BATCH,
     };
 }
 
@@ -1116,12 +1128,13 @@ impl BytecodePcChunks {
             .all(|offset| self.pc(2 * width * left + offset) == self.pc(2 * width * right + offset))
     }
 
-    // A long loop can appear nonrepeating inside the short sample windows.
+    /// The first window whose sample repeats often. A long loop can appear
+    /// nonrepeating inside the short window.
     fn grouping_plan(&self, groups: usize, width: usize) -> Option<CycleGrouping> {
         [CycleGrouping::SHORT, CycleGrouping::LONG]
             .into_iter()
             .find(|plan| {
-                (plan.entries == CYCLE_GROUP_ENTRIES || groups >= plan.batch)
+                groups >= plan.min_groups
                     && repeats_often(
                         groups,
                         plan.entries,
@@ -1260,41 +1273,47 @@ impl<F: JoltField> CycleKernel<F> {
         let plan = source.grouping_plan(half, width)?;
         // Equal ordered PC tuples have identical RA factors at this round. Only
         // their coefficient polynomials are added; fused increments may differ.
-        // Every collision and batch end flushes the old contribution. The cache
-        // is local to this call, so it cannot survive a binding challenge.
-        Some(map_reduce_chunks(
-            half,
-            plan.batch,
-            |range| {
-                let mut acc = vec![F::zero(); self.degree];
-                let mut pairs = vec![(F::zero(), F::zero()); self.ra.num_polys()];
-                let mut cache = RepeatCache::<(usize, [F; 3])>::new(plan.entries);
-                for y in range {
-                    let entry = cache.entry(source.group_hash(y, width));
-                    let coefficients = self.coefficient(y);
-                    if let Some((old, sum)) = entry {
-                        if source.same_group(*old, y, width) {
-                            for (sum, value) in sum
-                                .iter_mut()
-                                .zip(coefficients)
-                                .take(if cfg!(feature = "akita") { 3 } else { 2 })
-                            {
-                                *sum += value;
-                            }
-                            continue;
+        // Every collision and batch end flushes the old contribution, and the
+        // final drain leaves the cache empty for the worker's next batch. The
+        // caches are local to this call, so they cannot survive a binding
+        // challenge.
+        let batch = |cache: &mut RepeatCache<(usize, [F; 3])>, range: Range<usize>| {
+            let mut acc = vec![F::zero(); self.degree];
+            let mut pairs = vec![(F::zero(), F::zero()); self.ra.num_polys()];
+            for y in range {
+                let entry = cache.entry(source.group_hash(y, width));
+                let coefficients = self.coefficient(y);
+                if let Some((old, sum)) = entry {
+                    if source.same_group(*old, y, width) {
+                        for (sum, value) in sum
+                            .iter_mut()
+                            .zip(coefficients)
+                            .take(if cfg!(feature = "akita") { 3 } else { 2 })
+                        {
+                            *sum += value;
                         }
-                        self.accumulate_coefficient(*old, *sum, &mut acc, &mut pairs);
+                        continue;
                     }
-                    *entry = Some((y, coefficients));
+                    self.accumulate_coefficient(*old, *sum, &mut acc, &mut pairs);
                 }
-                for (y, coefficients) in cache.drain() {
-                    self.accumulate_coefficient(y, coefficients, &mut acc, &mut pairs);
-                }
-                acc
-            },
-            merge_evals,
-            || vec![F::zero(); self.degree],
-        ))
+                *entry = Some((y, coefficients));
+            }
+            for (y, coefficients) in cache.drain() {
+                self.accumulate_coefficient(y, coefficients, &mut acc, &mut pairs);
+            }
+            acc
+        };
+        #[cfg(feature = "parallel")]
+        let evals = (0..half.div_ceil(plan.batch))
+            .into_par_iter()
+            .map_init(
+                || RepeatCache::new(plan.entries),
+                |cache, c| batch(cache, c * plan.batch..((c + 1) * plan.batch).min(half)),
+            )
+            .reduce(|| vec![F::zero(); self.degree], merge_evals);
+        #[cfg(not(feature = "parallel"))]
+        let evals = batch(&mut RepeatCache::new(plan.entries), 0..half);
+        Some(evals)
     }
 }
 
