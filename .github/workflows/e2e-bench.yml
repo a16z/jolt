@@ -1,9 +1,9 @@
 name: End-to-end prover benchmarks
 
 on:
-  workflow_run:
-    workflows: ['End-to-end prover benchmark requests']
-    types: [completed]
+  pull_request_target:
+    branches: [main]
+    types: [labeled, synchronize]
   push:
     branches: [main]
   schedule:
@@ -19,14 +19,16 @@ on:
 permissions:
   contents: read
   actions: read
-
-concurrency:
-  group: e2e-${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && format('pr-{0}-{1}', github.event.workflow_run.head_repository.full_name, github.event.workflow_run.head_branch) || format('run-{0}', github.run_id) }}
-  cancel-in-progress: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
+  pull-requests: read
 
 jobs:
   plan:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'pull_request_target' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'benchmark') &&
+        (github.event.action == 'synchronize' || github.event.label.name == 'benchmark')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -64,7 +66,7 @@ jobs:
 
   prepare:
     needs: plan
-    if: needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
+    if: needs.plan.outputs.enabled == 'true' && needs.plan.outputs.tier != 'pr' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     env:
@@ -123,16 +125,23 @@ jobs:
 
   measure:
     needs: [plan, prepare]
-    if: needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main'
+    if: >-
+      always() && needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main' &&
+      (needs.plan.outputs.tier == 'pr' || needs.prepare.result == 'success')
     runs-on:
       group: jolt-bench
       labels: jolt-bench
-    timeout-minutes: ${{ needs.plan.outputs.tier == 'pr' && 10 || 180 }}
+    timeout-minutes: ${{ needs.plan.outputs.tier == 'pr' && 120 || 180 }}
+    concurrency:
+      group: jolt-bench-host
+      queue: max
     permissions:
       contents: read
       actions: read
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      index_sha256: ${{ steps.local.outputs.index_sha256 }}
+      manifest_digests: ${{ steps.local.outputs.manifest_digests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -145,11 +154,13 @@ jobs:
           path: ${{ runner.temp }}/e2e-plan
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.tier != 'pr'
         with:
           artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
           path: ${{ runner.temp }}/e2e-builds
           merge-multiple: true
       - name: Verify artifacts and run proofs without Cargo or a toolchain
+        if: needs.plan.outputs.tier != 'pr'
         env:
           BUILD_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
           BUILD_INDEX_SHA256: ${{ needs.prepare.outputs.index_sha256 }}
@@ -158,6 +169,10 @@ jobs:
             --plan "$RUNNER_TEMP/e2e-plan/plan.json" --bundles "$RUNNER_TEMP/e2e-builds" \
             --artifact-id "$BUILD_ARTIFACT_ID" --index-sha256 "$BUILD_INDEX_SHA256" \
             --out "$RUNNER_TEMP/e2e-out"
+      - name: Recheck the PR label, then build and prove using local Cargo state
+        if: needs.plan.outputs.tier == 'pr'
+        id: local
+        run: uv run --no-project python scripts/bench/ci.py local --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-out"
       - name: Preserve an interrupted or failed root result
         if: always()
         run: uv run --no-project python scripts/bench/ci.py finalize --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-out"
@@ -169,6 +184,7 @@ jobs:
           path: |
             ${{ runner.temp }}/e2e-out
             !${{ runner.temp }}/e2e-out/**/runtime-cache/**
+            !${{ runner.temp }}/e2e-out/builds/**
           if-no-files-found: error
           retention-days: 30
 
@@ -210,14 +226,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PLAN_ARTIFACT: ${{ needs.plan.outputs.artifact_id }}
           RESULT_ARTIFACT: ${{ needs.measure.outputs.artifact_id }}
-          BUILD_ARTIFACT: ${{ needs.prepare.outputs.artifact_id }}
-          BUILD_INDEX_SHA256: ${{ needs.prepare.outputs.index_sha256 }}
-          BUILD_MANIFEST_DIGESTS: ${{ needs.prepare.outputs.manifest_digests }}
+          BUILD_INDEX_SHA256: ${{ needs.measure.outputs.index_sha256 }}
+          BUILD_MANIFEST_DIGESTS: ${{ needs.measure.outputs.manifest_digests }}
         run: |
           uv run --no-project python scripts/bench/publication.py \
             --plan "$RUNNER_TEMP/trusted-plan/plan.json" \
             --plan-artifact-id "$PLAN_ARTIFACT" --result-artifact-id "$RESULT_ARTIFACT" \
-            --build-artifact-id "$BUILD_ARTIFACT" --index-sha256 "$BUILD_INDEX_SHA256" \
+            --index-sha256 "$BUILD_INDEX_SHA256" \
             --results "$RUNNER_TEMP/untrusted-results/benchmark-results.json" \
             --out "$RUNNER_TEMP/validated/pr-comment.md"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

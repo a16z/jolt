@@ -4,13 +4,13 @@ These scripts reuse `jolt-prover profile --backend optimized`. They build real
 guest ELFs before measurement, run fresh prover processes, verify every successful
 proof, and retain raw samples. There is no reference-backend timing lane.
 
-GitHub-hosted runners build the base and candidate with the repository's `release`
-profile and `-C target-cpu=znver4`. The dedicated target downloads and verifies the
-artifacts, then runs proofs. It never invokes Cargo, installs a toolchain, or
-rebuilds a missing artifact. Hosted compilation has its own duration; the PR
-target job has a separate 600-second limit, including transfer and result handling.
-The Python execution receipt starts at artifact verification, so it alone does
-not establish the whole target-job duration.
+PR benchmarks are opt-in. A maintainer or administrator adds `benchmark` to a
+same-repository PR; subsequent pushes retain that admission while the label stays
+applied. The target builds both legs using its local Cargo state, then proves.
+Every main push's new first-parent commits and the nightly run instead build on
+GitHub-hosted runners; the target downloads, verifies and runs those artifacts
+without any Cargo/toolchain fallback. Both routes keep the repository's `release`
+profile (fat LTO and debug information) and explicit `-C target-cpu=znver4`.
 
 The PR matrix has 17 cells and launches 136 proof processes, including warmups.
 `pr-baseline.json` preserves the initial three-cell, 24-proof matrix. Measured
@@ -47,9 +47,10 @@ recorded for each build. `seed: null` means the input generator uses no PRNG.
 | `main` | All five workloads, all three core counts, both PCS: 30 points | 1 / 3 |
 | `nightly` | Two larger inputs for each main point: 60 points | 1 / 5 |
 
-The PR target budget includes transfers and result processing; hosted build time
-is reported separately. Process count alone establishes neither a duration nor
-a future timing guarantee.
+The historical sub-600-second interval below excludes compilation. The new PR
+route includes local builds and has no measured sub-600-second promise. A warm
+Cargo directory is not proof that a changed PR will compile quickly. Process
+count alone establishes neither a duration nor a future timing guarantee.
 
 To select the preserved 24-proof baseline, use
 `ci.py execute --config scripts/bench/pr-baseline.json` with artifacts built by
@@ -158,8 +159,10 @@ proof metrics. `ci.py prepare` records its hosted interval in `builds.json`.
 `ci.py execute` records `artifact-verification-through-results-on-this-host`,
 with `build_s: 0` and `artifact_verification_s`. Download, checkout, upload and any
 trusted publication are outside that Python interval. `run` records
-`prebuilt-execution-only`, with `build_s: null`. The manual `suite` diagnostic
-still measures a continuous local build-plus-run interval; CI never invokes it.
+`prebuilt-execution-only`, with `build_s: null`. PR CI uses `ci.py local`, which
+reuses preparation and execution under one host lock and records
+`sequential-build-preparation-through-results-on-this-host`. Its current build
+time and total interval include both legs; no hosted build is part of that route.
 None of these commands adds historical build durations to a fresh target total.
 Individual build manifests retain their original construction intervals and host
 identity, including when a completed bundle is reused. Each new `preparation.json`
@@ -190,12 +193,13 @@ The disposable GitHub-hosted builder checks for 40 GB of free disk space, then
 adds a 24 GB swap file, reserving 16 GB of disk space for the build. It uses one
 Cargo job and retains the repository's release profile, including fat LTO and
 debug information. Its existing 120-minute job timeout is separate from the
-target's ten-minute PR timeout.
+target's 120-minute PR build-plus-run timeout. Main/nightly target jobs allow
+180 minutes. These are failure limits, not duration estimates.
 
 ## Manual commands
 
-Run-only targets need Linux, Python 3.11+ through `uv`, Git for the pinned harness
-checkout, `taskset` and `lscpu`. Only build hosts need the pinned Rust toolchain,
+Run-only execution needs Linux, Python 3.11+ through `uv`, Git for the pinned harness
+checkout, `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs the pinned Rust toolchain,
 its `rust-src` component and configured RISC-V targets. The five
 prepared guests use `riscv64imac-unknown-none-elf`. The build produces its own
 `jolt` CLI; a stale globally installed CLI is not used.
@@ -421,7 +425,8 @@ points are explicit, with reasons and null metrics. Non-executed workflows emit
 a `disabled` result instead of scheduling an absent runner. The CI artifact keeps
 raw sample logs, embedded manifests, compiler flags, toolchain and lockfile
 hashes, binary/guest hashes, CPU topology, and host settings. It excludes the
-runtime URS cache. The separate `jolt-e2e-builds-RUN_ID-RUN_ATTEMPT` artifact keeps
+runtime URS cache and local build payloads. For main/nightly, the separate
+`jolt-e2e-builds-RUN_ID-RUN_ATTEMPT` artifact keeps
 the actual binaries, guest ELFs, fixed inputs, Akita schedules and construction
 logs. `builds.json` binds their manifest hashes to the exact plan bytes.
 
@@ -506,19 +511,20 @@ acceptance runs; it is not evidence that the time budget has passed.
    restriction is unavailable for the account, leave execution disabled: a
    PR-editable YAML `if` is not a security boundary. GitHub documents these
    fields in its [runner-group API](https://docs.github.com/en/rest/actions/self-hosted-runner-groups#update-a-self-hosted-runner-group-for-an-organization).
-3. Install the run-only prerequisites above and `uv` through the normal
+3. Install the build and run prerequisites above and `uv` through the normal
    administrator process. Confirm that the target supports the fixed `znver4`
    ISA. Keep the runner cache outside the action workspace, with ownership
    restricted to that account. Resolve and validate the automatic-calibration
    lifecycle described above before enablement. The saved manual null experiment
    does not satisfy that requirement; committing a refreshed JSON reference is
    not a working refresh procedure.
-4. Enable `JOLT_E2E_ENABLED=true` for an actual changed-source PR workflow run.
+4. Enable `JOLT_E2E_ENABLED=true`, then have a maintainer/admin apply `benchmark`
+   to a same-repository PR for an actual changed-source workflow run.
    Inspect every expected point, physical affinity, hashes and verified exits.
-   Measure the target-job interval, including checkout, transfers, verification
-   and result processing. Report hosted compilation and any trusted comment
-   publication separately. Keep a miss as a miss; proof-only timings alone
-   cannot establish the less-than-600-second target gate.
+   Measure the target-job interval, including checkout, local compilation,
+   verification and result processing. For main/nightly, report hosted
+   compilation separately. The earlier artifact-only interval is not a timing
+   promise for local PR builds.
 5. After reviewing trusted publication separately, optionally set
    `JOLT_E2E_COMMENTS_ENABLED=true`. Until then, comments are rendered artifacts
    only. This task does not enable or post them.
@@ -595,44 +601,55 @@ gh api --paginate "orgs/a16z/actions/runner-groups/$jolt_bench_group_id/runners"
   --jq '.runners[] | select(.name == "jolt-bench") | {id, name, status, labels: [.labels[].name]}'
 ```
 
-The hosted PR request workflow runs on code PRs and skips docs-only changes. A
-default-branch `workflow_run` producer validates the request against GitHub,
-rejects forks, and resolves the PR merge ref's exact current-main parent. No
-`pull_request_target` workflow executes PR code. The persistent measurement job
-has only read permissions; subprocess environments exclude tokens. The runner's
-non-secret `RUNNER_TRACKING_ID` is retained for cancellation cleanup. Trusted
-action checkouts are cleaned normally. The hosted build's source clone, its
-repo-local Cargo target and completed bundles are outside that workspace and
-can be reused within the job. No cross-job compiler cache is configured. The
-target has no source-build step, even when an artifact is absent or invalid.
+The contract-test workflow runs on PR code on disposable hosted runners; it has
+no authority to schedule target work. The producer uses `pull_request_target`
+with `labeled` and `synchronize`, so its workflow and admission code come from the
+default branch. A hosted read-only plan job checks the current PR, same-repository
+head, main base, current label application and its actual applier's API
+`role_name`: only `maintain` and `admin` qualify (`write` does not). It resolves
+the exact current-main merge parents and records the label event ID and actor.
+A replay created before the current label application is refused. Reruns use a
+new attempt and repeat admission; old attempt plans cannot execute.
 
-Environment filtering is not a sandbox for same-repository PR code. That code
-shares the hosted runner user's privileges and may reach Actions runtime state,
-including artifact access and the default-branch cache namespace. This
-pre-existing trust limit remains debt before enablement. No credential access
-or cache poisoning was attempted; an exploitable path has not been demonstrated.
+After waiting for the shared runner queue and host lock, the target uses public,
+unauthenticated API reads to recheck the same label event, branch and revisions.
+Removal/reapplication or a changed head/base refuses stale work before building;
+it checks again before proving. Removing a label does not kill an already
+running build or proof. Permission is checked in the hosted planner for each
+new run/attempt, not continuously during execution. API failures fail closed.
+No PR-controlled workflow or harness authorizes itself. No repository secrets or
+publication credentials are sent to the target; trusted checkout/artifact
+actions retain their read-only runtime access. Build/proof subprocess environments
+exclude tokens; `RUNNER_TRACKING_ID` remains for cancellation cleanup.
 
-The hosted plan and build bundle are transferred by their captured immutable
-artifact IDs, not just names. The target checks the build-index hash against the
-hosted job output, then checks manifest and payload hashes against the plan's
-expected inputs. The hosted read-only publisher checks actual workflow/artifact/PR
-records and the builder's manifest digests as well as revisions, matrix, sampling,
-affinity and metrics before rendering text.
-A separate hosted job receives only that validated text and a PR-write token,
-rechecks current head/base, and updates its own sticky comment. It never executes
-a downloaded script or measured binary. These checks establish recorded
-provenance, not independent cryptographic attestation of a persistent host.
+A maintainer's label authorizes arbitrary same-repository source, including
+`build.rs`, on a persistent account with warm Cargo/bundle state. Environment
+filtering is not a sandbox: that code may reach the account's files, future
+build state and Actions runtime/artifact access. This expands the prior hosted
+same-repository cache exposure to the persistent target. Use the restricted
+runner group above; do not treat the label or file hashes as host isolation.
+No exploit or credential access was attempted. This remains accepted trust debt.
 
-PR requests and comparisons cancel superseded runs per PR branch. Main and
-nightly use unique run groups; GitHub's single-pending replacement behavior
-cannot silently discard main commits. The dedicated runner and owned file lock
-serialize execution. Nightly is scheduled at 07:00 UTC (03:00 EDT / 02:00 EST).
-The self-hosted job has a 10-minute timeout for PRs and 180 minutes for main and
-nightly. A timeout is a failure, not evidence of a completed sub-600-second job.
-Interruption can prevent finalization and artifact upload; missing artifacts or
-results remain unavailable, not passing. A complete manual trial must finish in
-less than 600 seconds, including download, `ci.py execute`, `ci.py finalize`,
-upload and result processing. Hosted compilation is a separate recorded interval.
+Main/nightly plan and build bundles transfer by captured immutable artifact IDs.
+The target checks the builder's index hash, then manifests and payloads against
+the exact planned input set. PR-local builds use the same plan and byte checks.
+The hosted read-only comment validator checks actual workflow/artifact/PR
+records, build digests, revisions, matrix, sampling, affinity and metrics.
+Optional sticky comments remain behind `JOLT_E2E_COMMENTS_ENABLED`; a separate
+hosted write-token job receives only validated text and rechecks head/base.
+The history publisher in the companion draft appends JSON and presents PRs
+separately at `dev/prover-history/`, without modifying `dev/bench/`.
+
+All target jobs share `jolt-bench-host` with `concurrency.queue: max` and no
+cancellation. The kernel file lock also covers local preparation through proofs.
+Hosted builds may overlap; target builds and proof processes may not. Main pushes
+retain each new first-parent commit in their result index. GitHub's native queue
+holds at most 100 pending jobs, ordered by entry into that queue rather than push
+time; overflow cancels a job and requires an explicit rerun. This is a provider
+capacity limit, not silent single-pending replacement or unlimited coverage.
+[GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
+Nightly remains at 07:00 UTC. Target timeouts are 120 minutes for PRs, 180 for
+main/nightly. An interrupted or missing result is unavailable, never a pass.
 
 The measured pilot ran each of the 60 supported nightly cases once. It does not establish the full
 nightly suite's duration, variation between runs, or completion within 180

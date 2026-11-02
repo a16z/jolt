@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Resolve pinned inputs, prepare hosted artifacts, then measure without building."""
+"""Admit opt-in PR builds and artifact-only main/nightly measurements."""
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -12,14 +13,14 @@ import subprocess
 import time
 import tomllib
 import urllib.request
+from urllib.parse import quote
 
 import run as bench
 
 
-REQUEST_WORKFLOW = 'End-to-end prover benchmark requests'
-REQUEST_FILE = '.github/workflows/e2e-bench-request.yml'
 TARGET_CPU = 'znver4'
 RUN_ONLY_SCOPE = 'artifact-verification-through-results-on-this-host'
+LOCAL_SCOPE = 'sequential-build-preparation-through-results-on-this-host'
 
 
 def git_file(revision, name):
@@ -30,31 +31,67 @@ def manifest_digest(manifest):
     return hashlib.sha256(json.dumps(manifest, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
-def github(path):
+def github(path, *, authenticated=True):
+    headers = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+    if authenticated:
+        headers['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
     request = urllib.request.Request('https://api.github.com/repos/a16z/jolt/' + path,
-        headers={'Accept': 'application/vnd.github+json',
-                 'Authorization': 'Bearer ' + os.environ['GH_TOKEN']})
+                                     headers=headers)
     with urllib.request.urlopen(request, timeout=30) as response:
         return json.load(response)
 
 
+def labelled_pr(number, *, authenticated):
+    pr = github(f'pulls/{number}', authenticated=authenticated)
+    if (pr['state'] != 'open' or (pr['head']['repo'] or {}).get('full_name') != 'a16z/jolt'
+            or pr['base']['repo']['full_name'] != 'a16z/jolt' or pr['base']['ref'] != 'main'
+            or 'benchmark' not in [label['name'] for label in pr['labels']]):
+        raise ValueError('benchmark requires an open, labelled, same-repository PR into main')
+    latest, page = None, 1
+    while True:
+        events = github(f'issues/{number}/events?per_page=100&page={page}', authenticated=authenticated)
+        for event in events:
+            if event['event'] in ('labeled', 'unlabeled') and event['label']['name'] == 'benchmark':
+                latest = event
+        if len(events) < 100:
+            break
+        page += 1
+    if latest is None or latest['event'] != 'labeled':
+        raise ValueError('benchmark label has no current application event')
+    admission = {'label_event_id': latest['id'], 'label_actor': latest['actor']['login'],
+                 'label_created_at': latest['created_at'], 'head_ref': pr['head']['ref']}
+    if authenticated:
+        permission = github(f'collaborators/{quote(admission["label_actor"], safe="")}/permission')
+        if permission['role_name'] not in ('maintain', 'admin'):
+            raise ValueError('benchmark label must be applied by a maintainer or administrator')
+    return pr, admission
+
+
+def recheck_pr(plan):
+    # The hosted planner checks permissions. Public reads on the target bind the
+    # same label application after queue/lock waits, without passing it a token.
+    pr, admission = labelled_pr(plan['provenance']['pr_number'], authenticated=False)
+    item = plan['runs'][0]
+    if (admission != plan['admission'] or pr['head']['sha'] != item['submitted_head']
+            or pr['base']['sha'] != item['base'] or pr['merge_commit_sha'] != item['head']):
+        raise ValueError('PR label, branch or revisions changed after trusted admission')
+
+
 def resolve(event_name, event, repository, sha):
+    if repository != 'a16z/jolt':
+        raise ValueError('benchmark producer must run in a16z/jolt')
     harness = bench.git_revision('HEAD')
-    request_run_id = None
-    if event_name == 'workflow_run':
-        request_run_id = event['workflow_run']['id']
-        request = github(f'actions/runs/{request_run_id}')
-        if (request['name'] != REQUEST_WORKFLOW or request['path'] != REQUEST_FILE
-                or request['event'] != 'pull_request' or request['conclusion'] != 'success'
-                or request['head_repository']['full_name'] != repository):
-            raise ValueError('only successful same-repository PR requests may use the benchmark runner')
-        if len(request['pull_requests']) != 1:
-            raise ValueError('the request must identify exactly one PR')
-        number = request['pull_requests'][0]['number']
-        pr = github(f'pulls/{number}')
-        if (pr['state'] != 'open' or pr['head']['repo']['full_name'] != repository
-                or pr['base']['ref'] != 'main' or pr['head']['sha'] != request['head_sha']):
-            raise ValueError('the same-repository PR request is no longer current')
+    if event_name == 'pull_request_target':
+        if event['action'] not in ('labeled', 'synchronize') or (
+                event['action'] == 'labeled' and event['label']['name'] != 'benchmark'):
+            raise ValueError('only benchmark label applications and subsequent pushes request a PR run')
+        number = event['pull_request']['number']
+        pr, admission = labelled_pr(number, authenticated=True)
+        submitted = event['pull_request']['head']
+        if (pr['head']['sha'] != submitted['sha'] or pr['head']['ref'] != submitted['ref']
+                or (submitted['repo'] or {}).get('full_name') != repository
+                or (event['action'] == 'labeled' and event['sender']['login'] != admission['label_actor'])):
+            raise ValueError('the labelled PR request is no longer current')
         bench.capture(['git', 'fetch', '--no-tags', 'origin',
                        '+refs/heads/main:refs/e2e/main',
                        f'+refs/pull/{number}/merge:refs/e2e/merge'])
@@ -63,7 +100,7 @@ def resolve(event_name, event, repository, sha):
         head = bench.git_revision(f'{merge}^2')
         if head != pr['head']['sha'] or base != bench.git_revision('refs/e2e/main'):
             raise ValueError('the PR merge ref does not contain the current main and submitted head')
-        return harness, [{'base': base, 'head': merge, 'submitted_head': head}], number, request_run_id
+        return harness, [{'base': base, 'head': merge, 'submitted_head': head}], number, admission
     if event_name == 'push':
         before, after = event['before'], event['after']
         if not re.fullmatch('[0-9a-f]{40}', before) or before == '0' * 40:
@@ -74,6 +111,8 @@ def resolve(event_name, event, repository, sha):
         if not commits:
             raise ValueError('the main push contains no new first-parent commits')
         return harness, [{'base': None, 'head': commit, 'submitted_head': commit} for commit in commits], None, None
+    if event_name not in ('schedule', 'workflow_dispatch'):
+        raise ValueError('unsupported benchmark event')
     head = bench.git_revision(sha)
     return harness, [{'base': None, 'head': head, 'submitted_head': head}], None, None
 
@@ -81,7 +120,7 @@ def resolve(event_name, event, repository, sha):
 def plan(args):
     event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
     name = os.environ['GITHUB_EVENT_NAME']
-    tier = ('pr' if name == 'workflow_run' else 'main' if name == 'push'
+    tier = ('pr' if name == 'pull_request_target' else 'main' if name == 'push'
             else event.get('inputs', {}).get('tier', 'nightly'))
     enabled = os.environ.get('JOLT_E2E_ENABLED') == 'true'
     plan = {'tier': tier, 'enabled': False, 'reason': None, 'target_cpu': TARGET_CPU,
@@ -91,9 +130,16 @@ def plan(args):
     try:
         if not enabled:
             raise ValueError('benchmark runner is disabled; an admin must complete scripts/bench/README.md')
-        plan['harness'], plan['runs'], pr, request_id = resolve(
+        plan['harness'], plan['runs'], pr, plan['admission'] = resolve(
             name, event, os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'])
-        plan['provenance'].update(pr_number=pr, request_run_id=request_id)
+        plan['provenance'].update(pr_number=pr)
+        if pr is not None:
+            actual = github(f'actions/runs/{os.environ["GITHUB_RUN_ID"]}')
+            if (actual['event'] != 'pull_request_target' or actual['path'] != bench.WORKFLOW_FILE
+                    or actual['head_sha'] != plan['runs'][0]['submitted_head']
+                    or actual['run_attempt'] != int(os.environ['GITHUB_RUN_ATTEMPT'])
+                    or actual['created_at'] < plan['admission']['label_created_at']):
+                raise ValueError('stale or replayed label request; apply the label again or push a new revision')
         harness = plan['harness']
         if git_file(harness, plan['config']['path']) != args.config.read_bytes():
             raise ValueError('suite configuration differs from the committed harness')
@@ -150,7 +196,7 @@ def load_plan(path):
     return plan
 
 
-def prepare(args):
+def prepare(args, *, locked=False):
     plan = load_plan(args.plan)
     started, begin = bench.utc_now(), time.perf_counter()
     out = args.out.resolve()
@@ -162,7 +208,7 @@ awk '$1 == "oom_kill" { print "kernel", $0 }' /proc/vmstat
 """
     resource_args = ['build-resources', str(bench.cache_root())]
     env = bench.build_environment()
-    with bench.host_lock(), subprocess.Popen(
+    with (contextlib.nullcontext() if locked else bench.host_lock()), subprocess.Popen(
             ['sh', '-c', f'while :; do\n{snapshot}sleep 10\ndone', *resource_args],
             cwd=bench.ROOT, env=env, start_new_session=True) as resources:
         try:
@@ -175,7 +221,7 @@ awk '$1 == "oom_kill" { print "kernel", $0 }' /proc/vmstat
                     target_cpu=plan['target_cpu'], profile='release', workload=[], case=[])
                 manifest = bench.build(options)
                 if manifest['status'] != 'complete':
-                    raise ValueError(f'hosted preparation failed for {revision}: {manifest["reason"]}')
+                    raise ValueError(f'build preparation failed for {revision}: {manifest["reason"]}')
                 builds[revision] = bench.bundle_file(options.out / 'manifest.json', out)
                 digests[revision] = manifest_digest(manifest)
         finally:
@@ -243,7 +289,7 @@ def verified_bundles(args, plan, revisions):
     return manifests
 
 
-def execute(args):
+def execute(args, *, locked=False):
     plan = load_plan(args.plan)
     config = (getattr(args, 'config', None) or bench.ROOT / plan['config']['path']).resolve()
     if getattr(args, 'config', None) and git_file(plan['harness'], str(config.relative_to(bench.ROOT))) != config.read_bytes():
@@ -259,7 +305,9 @@ def execute(args):
     if plan['tier'] == 'main':
         bench.write_json(out / 'index.json', index)
     failed = False
-    with bench.host_lock():
+    with (contextlib.nullcontext() if locked else bench.host_lock()):
+        if plan['tier'] == 'pr':
+            recheck_pr(plan)
         for item, entry in zip(plan['runs'], index['documents']):
             started, begin = bench.utc_now(), time.perf_counter()
             manifests = verified_bundles(args, plan, {rev for rev in (item['base'], item['head']) if rev})
@@ -282,6 +330,27 @@ def execute(args):
                 bench.render_comment(result, run_out / 'pr-comment.md')
             failed |= result['status'] not in ('complete', 'unsupported')
     return int(failed)
+
+
+def local(args):
+    plan = load_plan(args.plan)
+    if plan['tier'] != 'pr':
+        raise ValueError('local builds are restricted to admitted PR comparisons')
+    with bench.host_lock():
+        recheck_pr(plan)
+        started, begin = bench.utc_now(), time.perf_counter()
+        preparation = argparse.Namespace(plan=args.plan, out=args.out / 'builds')
+        prepare(preparation, locked=True)
+        build_s = time.perf_counter() - begin
+        execution = argparse.Namespace(plan=args.plan, out=args.out, bundles=preparation.out,
+            index_sha256=bench.sha256(preparation.out / 'builds.json'), artifact_id=None)
+        failed = execute(execution, locked=True)
+        result = bench.parse_json((args.out / 'benchmark-results.json').read_text())
+        result['started_at'] = started
+        result['wall_time'].update(build_s=build_s, total_s=time.perf_counter() - begin, scope=LOCAL_SCOPE)
+        bench.write_json(args.out / 'benchmark-results.json', result)
+        bench.render_comment(result, args.out / 'pr-comment.md')
+    return failed
 
 
 def verify(args):
@@ -316,6 +385,9 @@ def finalize(args):
                               'merge': item['head'] if plan['tier'] == 'pr' else None,
                               'harness': plan['harness']}
     result['kind'] = 'comparison' if plan['tier'] == 'pr' else 'history'
+    if plan['tier'] == 'pr':
+        result['wall_time']['scope'] = LOCAL_SCOPE
+        result['artifacts'] = {'id': None, 'index_sha256': None, 'plan_sha256': bench.sha256(args.plan)}
     bench.write_json(root, result)
 
 
@@ -341,9 +413,12 @@ def main():
     finalization = commands.add_parser('finalize')
     finalization.add_argument('--plan', type=Path, required=True)
     finalization.add_argument('--out', type=Path, required=True)
+    local_run = commands.add_parser('local', help='build and prove an admitted PR under one host lock')
+    local_run.add_argument('--plan', type=Path, required=True)
+    local_run.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     return {'prepare': prepare, 'verify': verify, 'execute': execute,
-            'plan': plan, 'finalize': finalize}[args.command](args)
+            'local': local, 'plan': plan, 'finalize': finalize}[args.command](args)
 
 
 if __name__ == '__main__':

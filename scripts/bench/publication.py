@@ -26,8 +26,6 @@ def validate(result, expected, config_bytes):
             raise ValueError(f'workflow provenance mismatch: {key}')
     if result['provenance']['workflow'] != bench.WORKFLOW or result['provenance']['workflow_file'] != bench.WORKFLOW_FILE:
         raise ValueError('unexpected producer workflow')
-    if result['provenance'].get('request_run_id') != expected['provenance'].get('request_run_id'):
-        raise ValueError('PR request provenance mismatch')
     for key in ('base', 'head', 'merge', 'harness'):
         value = result['revisions'][key]
         if not re.fullmatch('[0-9a-f]{40}', value or '') or value != expected['revisions'][key]:
@@ -48,9 +46,9 @@ def validate(result, expected, config_bytes):
             or result['suite'].get('selected_cases')):
         raise ValueError('PR suite identity or case selection differs')
     if result.get('artifacts') != expected['artifacts']:
-        raise ValueError('result uses different hosted artifacts or plan bytes')
-    if result['wall_time']['scope'] != ci.RUN_ONLY_SCOPE or result['wall_time']['build_s'] != 0:
-        raise ValueError('PR publication requires artifact verification and run-only measurement')
+        raise ValueError('result uses different build index or plan bytes')
+    if result['wall_time']['scope'] != ci.LOCAL_SCOPE:
+        raise ValueError('PR publication requires the local build-through-measurement interval')
     for key in ('build_s', 'benchmark_s', 'total_s'):
         value = result['wall_time'][key]
         if value is None and result['status'] == 'complete':
@@ -79,7 +77,7 @@ def validate(result, expected, config_bytes):
     for build in builds.values():
         manifest = {key: value for key, value in build.items() if key != 'leg'}
         if ci.manifest_digest(manifest) != expected['manifest_digests'][build['revision']]:
-            raise ValueError('result build manifest differs from the hosted builder output')
+            raise ValueError('result build manifest differs from the builder output')
     topology = {row['cpu']: row for row in result['host']['topology']}
     orders = set()
     for case in cases:
@@ -157,12 +155,13 @@ def expected_from_github(plan, args):
     run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
     actual = ci.github(f'actions/runs/{run_id}')
     if (actual['name'] != bench.WORKFLOW or actual['path'] != bench.WORKFLOW_FILE
-            or actual['event'] != 'workflow_run' or actual['head_branch'] != 'main'
+            or actual['event'] != 'pull_request_target'
             or actual['head_repository']['full_name'] != 'a16z/jolt'
-            or actual['head_sha'] != plan['harness'] or actual['run_attempt'] != int(attempt)):
+            or actual['head_branch'] != plan['admission']['head_ref']
+            or actual['head_sha'] != plan['runs'][0]['submitted_head']
+            or actual['run_attempt'] != int(attempt)):
         raise ValueError('actual producer is not the planned trusted main-branch run')
     for artifact_id, prefix in [(args.plan_artifact_id, 'jolt-e2e-plan'),
-                               (args.build_artifact_id, 'jolt-e2e-builds'),
                                (args.result_artifact_id, 'jolt-e2e')]:
         artifact = ci.github(f'actions/artifacts/{artifact_id}')
         if (artifact['name'] != f'{prefix}-{run_id}-{attempt}' or artifact['expired']
@@ -175,18 +174,15 @@ def expected_from_github(plan, args):
     if type(number) is not int:
         raise ValueError('invalid PR number')
     item = plan['runs'][0]
-    pr = ci.github(f'pulls/{number}')
+    try:
+        pr, admission = ci.labelled_pr(number, authenticated=True)
+    except ValueError:
+        return None
     if (pr['state'] != 'open' or pr['head']['repo']['full_name'] != 'a16z/jolt'
             or pr['head']['sha'] != item['submitted_head'] or pr['base']['sha'] != item['base']
-            or pr['base']['ref'] != 'main' or pr['merge_commit_sha'] != item['head']):
+            or pr['base']['ref'] != 'main' or pr['merge_commit_sha'] != item['head']
+            or admission != plan['admission']):
         return None
-    request = ci.github(f'actions/runs/{prov["request_run_id"]}')
-    if (request['name'] != ci.REQUEST_WORKFLOW or request['path'] != ci.REQUEST_FILE
-            or request['event'] != 'pull_request' or request['conclusion'] != 'success'
-            or request['head_repository']['full_name'] != 'a16z/jolt'
-            or request['head_sha'] != item['submitted_head']
-            or [p['number'] for p in request['pull_requests']] != [number]):
-        raise ValueError('request is not the current same-repository PR run')
     commit = ci.github(f'commits/{item["head"]}')
     if [parent['sha'] for parent in commit['parents']] != [item['base'], item['submitted_head']]:
         raise ValueError('measured merge has different parents')
@@ -196,9 +192,9 @@ def expected_from_github(plan, args):
     digests = bench.parse_json(os.environ['BUILD_MANIFEST_DIGESTS'])
     if set(digests) != {item['base'], item['head']} or any(
             not re.fullmatch('[0-9a-f]{64}', digest) for digest in digests.values()):
-        raise ValueError('hosted manifest digests do not match the planned revisions')
+        raise ValueError('manifest digests do not match the planned revisions')
     expected = {'provenance': prov, 'manifest_digests': digests,
-                'artifacts': {'id': args.build_artifact_id, 'index_sha256': args.index_sha256,
+                'artifacts': {'id': None, 'index_sha256': args.index_sha256,
                               'plan_sha256': bench.sha256(args.plan)},
                 'revisions': {'base': item['base'], 'head': item['submitted_head'],
                               'merge': item['head'], 'harness': plan['harness']}}
@@ -211,7 +207,6 @@ def main():
     parser.add_argument('--plan', type=Path, required=True)
     parser.add_argument('--plan-artifact-id', type=int, required=True)
     parser.add_argument('--result-artifact-id', type=int, required=True)
-    parser.add_argument('--build-artifact-id', type=int, required=True)
     parser.add_argument('--index-sha256', required=True)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()

@@ -1,4 +1,4 @@
-name: End-to-end prover benchmark requests
+name: End-to-end prover benchmark contracts
 
 on:
   pull_request:
@@ -35,7 +35,7 @@ jobs:
           ENABLED: ${{ vars.JOLT_E2E_ENABLED }}
         run: |
           if [ "$ENABLED" = true ]; then
-            echo 'The default-branch producer will validate this request. Fork PRs cannot use the benchmark runner.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Benchmarking requires a maintainer-applied benchmark label. The trusted default-branch workflow checks admission; this job cannot authorize execution.' >> "$GITHUB_STEP_SUMMARY"
           else
             echo 'Target execution is disabled. An administrator must complete scripts/bench/README.md before enabling it.' >> "$GITHUB_STEP_SUMMARY"
           fi

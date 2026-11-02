@@ -1,4 +1,5 @@
 import argparse
+import base64
 import copy
 import hashlib
 import importlib.util
@@ -26,10 +27,10 @@ def fixture():
     config = json.dumps({'schema_version': 1, 'id': 'fixture', 'metric_contract': 1,
                          'tiers': {'pr': {'warmups': 1, 'repetitions': 3, 'cases': [case]}}}).encode()
     expected = {'revisions': {'base': 'a' * 40, 'head': 'b' * 40, 'merge': 'c' * 40, 'harness': 'd' * 40},
-                'artifacts': {'id': 456, 'index_sha256': '2' * 64, 'plan_sha256': '3' * 64},
+                'artifacts': {'id': None, 'index_sha256': '2' * 64, 'plan_sha256': '3' * 64},
                 'provenance': {'workflow': publication.bench.WORKFLOW, 'workflow_file': publication.bench.WORKFLOW_FILE,
-                               'run_id': '123', 'run_attempt': '1', 'event': 'workflow_run',
-                               'ref': 'refs/heads/main', 'pr_number': 7, 'request_run_id': 99}}
+                               'run_id': '123', 'run_attempt': '1', 'event': 'pull_request_target',
+                               'ref': 'refs/heads/main', 'pr_number': 7}}
     builds = [{'leg': leg, 'revision': revision, 'harness_revision': 'd' * 40, 'status': 'complete',
                'harness_files': {'profile.rs': '0' * 64}, 'rustflags': '-C target-cpu=znver4',
                'target_cpu': 'znver4', 'profile': 'release', 'profile_config': {}, 'guest_builder_profile': 'ci',
@@ -55,8 +56,8 @@ def fixture():
               'suite': {'id': 'fixture', 'metric_contract': 1, 'config_sha256': hashlib.sha256(config).hexdigest(),
                         'warmups': 1, 'repetitions': 3, 'selected_cases': []},
               'builds': builds, 'host': {'topology': [{'cpu': 2, 'core': 0, 'socket': 0, 'online': True}]},
-              'wall_time': {'scope': publication.ci.RUN_ONLY_SCOPE,
-                            'build_s': 0, 'benchmark_s': 30.0, 'total_s': 40.0},
+              'wall_time': {'scope': publication.ci.LOCAL_SCOPE,
+                            'build_s': 5.0, 'benchmark_s': 30.0, 'total_s': 40.0},
               'cases': [measured]}
     expected['manifest_digests'] = {build['revision']: publication.ci.manifest_digest(
         {key: value for key, value in build.items() if key != 'leg'}) for build in builds}
@@ -264,7 +265,7 @@ class E2ePublicationTests(unittest.TestCase):
         changed['provenance']['run_id'] = '456'
         variants.append(changed)
         changed = copy.deepcopy(result)
-        changed['provenance']['request_run_id'] = 100
+        changed['provenance']['pr_number'] = 100
         variants.append(changed)
         changed = copy.deepcopy(result)
         changed['suite']['calibration'] = {'status': 'proposed', 'reason': 'artifact-selected calibration'}
@@ -316,10 +317,11 @@ class E2ePublicationTests(unittest.TestCase):
             publication.bench.parse_json('{"metadata": {"unread_field": NaN}}')
 
     def test_captured_artifact_id_cannot_be_replaced_by_a_same_named_artifact(self):
-        plan = {'harness': 'd' * 40}
+        plan = {'harness': 'd' * 40, 'admission': {'head_ref': 'candidate'},
+                'runs': [{'submitted_head': 'b' * 40}]}
         actual = {'name': publication.bench.WORKFLOW, 'path': publication.bench.WORKFLOW_FILE,
-                  'event': 'workflow_run', 'head_branch': 'main',
-                  'head_repository': {'full_name': 'a16z/jolt'}, 'head_sha': 'd' * 40, 'run_attempt': 1}
+                  'event': 'pull_request_target', 'head_branch': 'candidate',
+                  'head_repository': {'full_name': 'a16z/jolt'}, 'head_sha': 'b' * 40, 'run_attempt': 1}
         def github(path):
             if path == 'actions/runs/123':
                 return actual
@@ -329,7 +331,42 @@ class E2ePublicationTests(unittest.TestCase):
                 patch.object(publication.ci, 'github', side_effect=github):
             with self.assertRaises(FileNotFoundError):
                 publication.expected_from_github(plan, argparse.Namespace(
-                    plan_artifact_id=10, build_artifact_id=30, result_artifact_id=20))
+                    plan_artifact_id=10, result_artifact_id=20))
+
+    def test_pr_target_metadata_binds_submitted_head_and_label_not_the_harness_sha(self):
+        result, expected, config = fixture()
+        admission = {'head_ref': 'candidate', 'label_event_id': 11, 'label_actor': 'maintainer'}
+        plan = {'harness': 'd' * 40, 'admission': admission, 'provenance': expected['provenance'],
+                'runs': [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}]}
+        actual = {'name': publication.bench.WORKFLOW, 'path': publication.bench.WORKFLOW_FILE,
+                  'event': 'pull_request_target', 'head_branch': 'candidate',
+                  'head_repository': {'full_name': 'a16z/jolt'}, 'head_sha': 'b' * 40, 'run_attempt': 1}
+        pr = {'state': 'open', 'head': {'repo': {'full_name': 'a16z/jolt'}, 'sha': 'b' * 40},
+              'base': {'ref': 'main', 'sha': 'a' * 40}, 'merge_commit_sha': 'c' * 40}
+        def github(path):
+            if path == 'actions/runs/123':
+                return actual
+            if path.startswith('actions/artifacts/'):
+                prefix = 'jolt-e2e-plan' if path.endswith('/10') else 'jolt-e2e'
+                return {'name': f'{prefix}-123-1', 'expired': False, 'workflow_run': {'id': 123}}
+            if path == 'commits/' + 'c' * 40:
+                return {'parents': [{'sha': 'a' * 40}, {'sha': 'b' * 40}]}
+            self.assertEqual(path, 'contents/scripts/bench/suites.json?ref=' + 'd' * 40)
+            return {'encoding': 'base64', 'type': 'file', 'content': base64.b64encode(config).decode()}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'plan.json'
+            path.write_text(json.dumps(plan))
+            options = argparse.Namespace(plan=path, plan_artifact_id=10, result_artifact_id=20, index_sha256='2' * 64)
+            with patch.dict(publication.os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1',
+                    BUILD_MANIFEST_DIGESTS=json.dumps(expected['manifest_digests'])), \
+                    patch.object(publication.ci, 'github', side_effect=github), \
+                    patch.object(publication.ci, 'labelled_pr', return_value=(pr, admission)):
+                validated, pinned_config = publication.expected_from_github(plan, options)
+                self.assertEqual(validated['revisions'], expected['revisions'])
+                self.assertEqual(pinned_config, config)
+                self.assertIsNone(validated['artifacts']['id'])
+                pr['head']['sha'] = 'e' * 40
+                self.assertIsNone(publication.expected_from_github(plan, options))
 
 
 if __name__ == '__main__':

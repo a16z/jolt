@@ -1,6 +1,7 @@
 import argparse
 import contextlib
 import copy
+import fcntl
 import importlib.util
 import json
 import os
@@ -33,18 +34,70 @@ class E2eCiTests(unittest.TestCase):
         self.assertIn('      tier: ${{ steps.plan.outputs.tier }}', workflow)
         tiers = json.loads(ci.bench.DEFAULT_CONFIG.read_text())['tiers']
         actual = {tier: int(timeout[2] if tier == timeout[1] else timeout[3]) for tier in tiers}
-        self.assertEqual(actual, {'pr': 10, 'main': 180, 'nightly': 180})
+        self.assertEqual(actual, {'pr': 120, 'main': 180, 'nightly': 180})
 
-    def test_fork_request_is_rejected_before_checkout_or_compilation(self):
-        request = {'name': ci.REQUEST_WORKFLOW, 'path': ci.REQUEST_FILE,
-                   'event': 'pull_request', 'conclusion': 'success',
-                   'head_repository': {'full_name': 'outside/jolt'}}
-        with patch.object(ci, 'github', return_value=request), \
-                patch.object(ci.bench, 'git_revision', return_value='a' * 40), \
-                patch.object(ci.bench, 'capture') as capture:
-            with self.assertRaisesRegex(ValueError, 'same-repository'):
-                ci.resolve('workflow_run', {'workflow_run': {'id': 9}}, 'a16z/jolt', 'a' * 40)
-        capture.assert_not_called()
+    def test_pr_admission_rejects_unlabelled_fork_nonmaintainer_and_stale_events(self):
+        pr = {'number': 7, 'state': 'open', 'labels': [{'name': 'benchmark'}],
+              'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}},
+              'base': {'sha': 'a' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}}}
+        labelled = {'id': 11, 'event': 'labeled', 'label': {'name': 'benchmark'},
+                    'actor': {'login': 'maintainer'}, 'created_at': '2026-11-02T18:00:00Z'}
+        for fault in ('unlabelled', 'fork', 'write-only', 'removed', 'stale-head', 'untrusted-event'):
+            current, timeline, role = copy.deepcopy(pr), [labelled], 'maintain'
+            event = {'action': 'synchronize', 'pull_request': copy.deepcopy(pr)}
+            name = 'pull_request_target'
+            if fault == 'unlabelled':
+                current['labels'] = []
+            elif fault == 'fork':
+                current['head']['repo']['full_name'] = 'outside/jolt'
+            elif fault == 'write-only':
+                role = 'write'
+            elif fault == 'removed':
+                timeline += [dict(labelled, id=12, event='unlabeled')]
+            elif fault == 'stale-head':
+                current['head']['sha'] = 'e' * 40
+            else:
+                name = 'pull_request'
+            def api(path, **_):
+                return ({'role_name': role} if path.startswith('collaborators/')
+                        else timeline if '/events?' in path else current)
+            with self.subTest(fault=fault), patch.object(ci, 'github', side_effect=api), \
+                    patch.object(ci.bench, 'git_revision', return_value='a' * 40), \
+                    patch.object(ci.bench, 'capture') as capture:
+                with self.assertRaises(ValueError):
+                    ci.resolve(name, event, 'a16z/jolt', 'a' * 40)
+                capture.assert_not_called()
+
+    def test_maintainer_label_persists_on_synchronize_and_queue_recheck_is_public(self):
+        pr = {'number': 7, 'state': 'open', 'labels': [{'name': 'benchmark'}],
+              'head': {'sha': 'b' * 40, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}},
+              'base': {'sha': 'a' * 40, 'ref': 'main', 'repo': {'full_name': 'a16z/jolt'}},
+              'merge_commit_sha': 'c' * 40}
+        labelled = {'id': 11, 'event': 'labeled', 'label': {'name': 'benchmark'},
+                    'actor': {'login': 'maintainer'}, 'created_at': '2026-11-02T18:00:00Z'}
+        def api(path, **_):
+            return ({'role_name': 'maintain'} if path.startswith('collaborators/')
+                    else [labelled] if '/events?' in path else pr)
+        revisions = {'HEAD': 'a' * 40, 'refs/e2e/merge': 'c' * 40,
+                     'c' * 40 + '^1': 'a' * 40, 'c' * 40 + '^2': 'b' * 40,
+                     'refs/e2e/main': 'a' * 40}
+        for action in ('labeled', 'synchronize'):
+            event = {'action': action, 'label': {'name': 'benchmark'},
+                     'sender': {'login': 'maintainer'}, 'pull_request': pr}
+            with self.subTest(action=action), patch.object(ci, 'github', side_effect=api), \
+                    patch.object(ci.bench, 'git_revision', side_effect=revisions.__getitem__), \
+                    patch.object(ci.bench, 'capture'):
+                harness, runs, number, admission = ci.resolve('pull_request_target', event, 'a16z/jolt', 'a' * 40)
+            self.assertEqual((harness, number), ('a' * 40, 7))
+            self.assertEqual(runs, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
+            self.assertEqual(admission['label_event_id'], 11)
+        plan = {'runs': runs, 'provenance': {'pr_number': 7}, 'admission': admission}
+        with patch.object(ci, 'github', side_effect=api) as read:
+            ci.recheck_pr(plan)
+            self.assertTrue(all(call.kwargs == {'authenticated': False} for call in read.call_args_list))
+            labelled['id'] = 12
+            with self.assertRaises(ValueError):
+                ci.recheck_pr(plan)
 
     def test_main_push_keeps_all_new_first_parent_commits_in_event_order(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -129,6 +182,61 @@ class E2eCiTests(unittest.TestCase):
             self.assertTrue(all(c['status'] == 'missing' and not c['samples'] for c in result['cases']))
             self.assertIsNone(result['wall_time']['total_s'])
 
+    def test_local_build_and_proof_share_the_owned_host_lock_and_keep_current_wall_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = root / 'plan.json'
+            plan.write_text('{}')
+            phases = []
+            def held():
+                with (root / 'host.lock').open('a') as other:
+                    with self.assertRaises(BlockingIOError):
+                        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            def prepare(options, *, locked):
+                self.assertTrue(locked)
+                held()
+                phases.append('build')
+                ci.bench.write_json(options.out / 'builds.json', {})
+            def execute(options, *, locked):
+                self.assertTrue(locked)
+                held()
+                phases.append('prove')
+                self.assertEqual(phases, ['build', 'prove'])
+                self.assertIsNone(options.artifact_id)
+                ci.bench.write_json(options.out / 'benchmark-results.json',
+                    {'status': 'complete', 'wall_time': {'benchmark_s': 0, 'build_s': 0}})
+                return 0
+            with patch.object(ci, 'load_plan', return_value={'tier': 'pr'}), \
+                    patch.object(ci, 'recheck_pr'), patch.object(ci.bench, 'cache_root', return_value=root), \
+                    patch.object(ci, 'prepare', side_effect=prepare), patch.object(ci, 'execute', side_effect=execute), \
+                    patch.object(ci.bench, 'render_comment'):
+                self.assertEqual(ci.local(argparse.Namespace(plan=plan, out=root / 'out')), 0)
+            with (root / 'host.lock').open('a') as other:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            result = json.loads((root / 'out/benchmark-results.json').read_text())
+            self.assertEqual(result['wall_time']['scope'], ci.LOCAL_SCOPE)
+            self.assertGreaterEqual(result['wall_time']['total_s'], result['wall_time']['build_s'])
+
+    def test_replayed_label_run_is_refused_before_native_input_planning(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event = root / 'event.json'
+            event.write_text('{}')
+            resolved = ('a' * 40, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}], 7,
+                        {'label_created_at': '2026-11-02T18:00:02Z'})
+            actual = {'event': 'pull_request_target', 'path': ci.bench.WORKFLOW_FILE, 'head_sha': 'b' * 40,
+                      'run_attempt': 2, 'created_at': '2026-11-02T18:00:01Z'}
+            with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME='pull_request_target',
+                    GITHUB_REPOSITORY='a16z/jolt', GITHUB_SHA='a' * 40, GITHUB_RUN_ID='123',
+                    GITHUB_RUN_ATTEMPT='2', JOLT_E2E_ENABLED='true', GITHUB_OUTPUT=str(root / 'outputs'),
+                    GITHUB_STEP_SUMMARY=str(root / 'summary')), patch.object(ci, 'resolve', return_value=resolved), \
+                    patch.object(ci, 'github', return_value=actual), patch.object(ci, 'git_file') as source:
+                self.assertEqual(ci.plan(argparse.Namespace(config=ci.bench.DEFAULT_CONFIG, out=root / 'plan')), 0)
+                source.assert_not_called()
+            receipt = json.loads((root / 'plan/plan.json').read_text())
+            self.assertFalse(receipt['enabled'])
+            self.assertIn('stale or replayed', receipt['reason'])
+
     def test_unsupported_privileged_requests_keep_a_successful_receipt_job(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -136,7 +244,7 @@ class E2eCiTests(unittest.TestCase):
             event.write_text('{}')
             options = argparse.Namespace(config=ci.bench.DEFAULT_CONFIG, out=root / 'unsupported')
             with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event),
-                    GITHUB_EVENT_NAME='workflow_run', GITHUB_REPOSITORY='a16z/jolt',
+                    GITHUB_EVENT_NAME='pull_request_target', GITHUB_REPOSITORY='a16z/jolt',
                     GITHUB_SHA='a' * 40, JOLT_E2E_ENABLED='true',
                     GITHUB_OUTPUT=str(root / 'outputs'), GITHUB_STEP_SUMMARY=str(root / 'summary')), \
                     patch.object(ci, 'resolve', side_effect=ValueError('unsupported fixture request')):
@@ -162,7 +270,7 @@ class E2eCiTests(unittest.TestCase):
                             'provenance': {'workflow': ci.bench.WORKFLOW,
                                 'workflow_file': ci.bench.WORKFLOW_FILE,
                                 'run_id': '123', 'run_attempt': '1',
-                                'event': 'workflow_run' if tier == 'pr' else ('push' if tier == 'main' else 'schedule'),
+                                'event': 'pull_request_target' if tier == 'pr' else ('push' if tier == 'main' else 'schedule'),
                                 'ref': 'refs/heads/main', 'pr_number': 7 if tier == 'pr' else None,
                                 'request_run_id': 99 if tier == 'pr' else None},
                             'runs': [{'base': 'a' * 40 if tier == 'pr' else None,
@@ -300,6 +408,7 @@ Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
             with patch.object(ci.bench, 'ROOT', root), \
                     patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
                     patch.object(ci.bench, 'capture', side_effect=AssertionError('target must not fetch or compile')), \
+                    patch.object(ci, 'recheck_pr'), \
                     patch.object(ci.bench, 'build', side_effect=AssertionError('target must not build')), \
                     patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
                     patch.dict(os.environ, {'GITHUB_RUN_ID': '', 'GITHUB_RUN_ATTEMPT': '',
