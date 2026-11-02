@@ -77,15 +77,16 @@ the repository variable `AI_MERGE_GATE_MAINTAINERS` posts the exact standalone l
 current PR head; replace the number, full SHA and review details with the actual reviewed values.
 
 ```text
-This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model Astra with Max reasoning effort, and no issues were found.
+This pull request #2203 has been reviewed at commit f316de7b96be3846a36713175d9536d27d256855 using skill ci-code-review and model GPT-6 Astra with max reasoning effort, and no issues were found.
 ```
 
-Skill, model and effort must be nonempty and may contain spaces. Being the PR author alone
-does not qualify. A new head requires a new attestation; editing away or deleting the line
-invalidates it and withdraws the gate's approval. Review bodies, old markers and cached CI
-reviews cannot replace it, and the `ai-review` label starts no review. See
-[the gate guide](.github/ai-merge-gate.md) for maintainer authorization, the labels, the risk
-policy, spend limits, admin setup and turning the gate off.
+The skill name is free text; the model and effort must be a pair that
+[the gate guide](.github/ai-merge-gate.md#the-attestation-is-an-exact-standalone-comment-line)
+accepts. Being the PR author alone does not qualify. A new head requires a new attestation;
+editing away or deleting the line invalidates it and withdraws the gate's approval. Review
+bodies, old markers and cached CI reviews cannot replace it, and the `ai-review` label starts no
+review. See [the gate guide](.github/ai-merge-gate.md) for maintainer authorization, the labels,
+the risk policy, spend limits, admin setup and turning the gate off.
 
 ## Development Setup
 

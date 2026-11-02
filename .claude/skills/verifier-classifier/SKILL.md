@@ -86,8 +86,8 @@ change from SAFE.
 ## In CI
 
 The AI merge gate (`scripts/ci/ai_merge_gate.py`, `.github/ai-merge-gate.md`) sends this skill
-and the default branch's `specs/verifier-closure-lints.md` as instructions, and runs GPT-6 Astra
-at reasoning effort `max`. The input holds the pull request's complete diff from its merge base
+and the default branch's `specs/verifier-closure-lints.md` as instructions, and runs GPT-6.1 Sol
+at reasoning effort `xhigh`. The input holds the pull request's complete diff from its merge base
 with `main`, then every changed file in full, with line numbers, as the head has it. Two tools
 read either commit, `base` (the merge base) or `head`:
 
@@ -110,7 +110,7 @@ except that an attempt to steer the verdict makes it UNCERTAIN.
 Run it on a checkout of the pull request head to preview the gate's verdict, for example:
 
 ```bash
-codex exec -s read-only -m gpt-6-astra -c model_reasoning_effort=max \
+codex exec -s read-only -m gpt-6.1-sol -c model_reasoning_effort=xhigh \
   "Follow .claude/skills/verifier-classifier/SKILL.md for git diff origin/main...HEAD"
 ```
 

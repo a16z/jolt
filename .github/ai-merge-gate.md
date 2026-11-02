@@ -17,8 +17,8 @@ The gate never approves risk-4. A human approval satisfies GitHub's rule on its 
 neither repeats nor converts it. A maintainer is a login in the repository variable
 `AI_MERGE_GATE_MAINTAINERS`; a writer is an account with write, maintain or admin access.
 
-Only the verifier-impact classifier calls a model in this gate: OpenAI's `gpt-6-astra` at
-reasoning effort `max`, through the Responses API, within the spend limits below. It reads the
+Only the verifier-impact classifier calls a model in this gate: OpenAI's `gpt-6.1-sol` at
+reasoning effort `xhigh`, through the Responses API, within the spend limits below. It reads the
 pull request's merge base and head through two read-only tools. Code review happens outside CI,
 and the attestation records it.
 
@@ -181,11 +181,15 @@ The shared Pika/Jolt format is:
 This pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
 ```
 
-The number and full SHA must match the PR's current API state. Skill, model and effort must
-each contain non-whitespace text; names may contain spaces, and there is no skill or model
-allowlist. The line must match exactly, with no prefix, indentation, quotation marker or
-suffix. It may appear between other lines in the comment. `Review: CONFIRMED`, short SHAs and
-attestations only in review bodies do not count.
+The number and full SHA must match the PR's current API state. The skill name must contain
+non-whitespace text and may contain spaces. The model must be exactly `GPT-6 Astra` or
+`Claude Opus 5.5`, and the effort exactly `max` or `xhigh`, in any combination. Other names,
+aliases, API model IDs and case variants, such as `Astra`, `gpt-6-astra`, `GPT-6.1 Sol` or
+`Max`, do not count; the classifier's model is not a review model. The gate holds these lists
+as `REVIEW_MODELS` and `REVIEW_EFFORTS` in `scripts/ci/ai_merge_gate.py`. The line must match
+exactly, with no prefix, indentation, quotation marker or suffix. It may appear between other
+lines in the comment. `Review: CONFIRMED`, short SHAs and attestations only in review bodies do
+not count.
 
 An allowed author is either a maintainer's personal account or the Pika App bot. Being the PR
 author or having repository write access alone grants no attestation authority. The Pika
@@ -210,8 +214,9 @@ work and the gate's approval for an author who is not a maintainer; it does not 
 for each new head and records its verdict as the `ai-merge-gate/classifier` check, with its
 reasoning in a pull request comment. Run the review outside CI on that exact head, using
 `.claude/skills/ci-code-review/SKILL.md` or the chosen review skill. Once it finds no issues, an
-allowed account posts the attestation with the actual skill, model and effort, and at risk-1
-through risk-3 the gate approves. The `ai-review` label has no effect and starts no review.
+allowed account posts the attestation with the actual skill, model and effort, which must be a
+review model and effort listed above, and at risk-1 through risk-3 the gate approves. The
+`ai-review` label has no effect and starts no review.
 
 **Other authors.** The gate spends nothing on a pull request from someone who is not a
 maintainer until a maintainer posts `AI gate: AUTHORIZED <head SHA>`. Post that line only after
@@ -353,27 +358,30 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
 - **Tier.** Requests set `service_tier` to `default`, which the API documents as "standard
   pricing and performance for the selected model", rather than inheriting the project's tier.
 
-[OpenAI's price list for gpt-6-astra](https://developers.openai.com/api/docs/models/gpt-6-astra)
-charges, per million tokens, $10 for input, $1 for cached input, $12.50 for cache writes and $50
+[OpenAI's price list for gpt-6.1-sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+charges, per million tokens, $2 for input, $0.10 for cached input, $2.50 for cache writes and $10
 for output. Prompts over 272,000 input tokens "are priced at 2x input and cache rates and 1.5x
-output for the full request". Two figures follow, both at list price; actual use has not been
-measured.
+output for the full request". Each input token is billed once, at the input, cached-input or
+cache-write rate ([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)).
+Two figures follow, both at list price; [Prompt caching](#prompt-caching) below gives measured
+use on one pull request.
 
-- **The gate's nominal figure: $43.125 per pull request.** Charging each counted input token at
+- **The gate's nominal figure: $8.625 per pull request.** Charging each counted input token at
   the cache-write rate, the highest standard input rate, one request costs at most 150,000 ×
-  $12.50/M + 20,000 × $50/M = $2.875, one attempt 5 × $2.875 = $14.375, and one pull request
-  3 × $14.375 = $43.125. The gate's count leaves out OpenAI's framing, so this figure is an
+  $2.50/M + 20,000 × $10/M = $0.575, one attempt 5 × $0.575 = $2.875, and one pull request
+  3 × $2.875 = $8.625. The gate's count leaves out OpenAI's framing, so this figure is an
   estimate, not a proven ceiling.
-- **A bound on the cost of accepted requests: $416.25 per pull request.** The model's context
+- **A bound on the cost of accepted requests: $83.25 per pull request.** The model's context
   window is 1,050,000 tokens, and under the default `truncation` setting, which the gate keeps,
   "if the input size will exceed the context window size for a model, the request will fail with
   a 400 error" ([Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)).
   A request that runs therefore carries at most 1,050,000 input tokens and generates at most
-  20,000. At the long-context rates, $25/M for cache writes and $75/M for output, that is
-  1,050,000 × $25/M + 20,000 × $75/M = $27.75 per request, $138.75 per attempt and $416.25 per
-  pull request. This bound holds under two assumptions: OpenAI does not bill a request it
-  rejects for exceeding the context window, which its documentation does not say, and the
-  attempt ledger above stands, which writers can reset.
+  20,000. The model page also lists 922,000 maximum input tokens; the bound uses the context
+  window, the limit the rejection rule names. At the long-context rates, $5/M for cache writes
+  and $15/M for output, that is 1,050,000 × $5/M + 20,000 × $15/M = $5.55 per request, $27.75 per
+  attempt and $83.25 per pull request. This bound holds under two assumptions: OpenAI does not
+  bill a request it rejects for exceeding the context window, which its documentation does not
+  say, and the attempt ledger above stands, which writers can reset.
 
 The limits above are enforced by the gate's code. As a second cap, give the key its own OpenAI
 project and set a monthly hard spend limit on that project. OpenAI's
@@ -383,6 +391,45 @@ spend limit makes affected requests return HTTP 429 with `project_spend_limit_ex
 "Enforcement is not instantaneous, so recorded spend can slightly exceed the configured amount."
 When the limit is reached, classifier attempts fail and the gate approves nothing until the
 limit resets or is raised.
+
+### Prompt caching
+
+OpenAI caches the gate's prompt up to its last user message or tool result. For at least 30
+minutes after a request writes or reads that prefix, a request that starts with the same prefix
+can read it at the cached-input rate instead of the input rate
+([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)). Every
+classifier request starts with the trusted instructions and the two tool definitions, which are
+byte-identical across turns and across evaluations from the same default branch, then the pull
+request's material, then the earlier turns, which `previous_response_id` carries. The turn that
+withholds the tools sets `tool_choice` to `none` and keeps their definitions, as the caching
+guide recommends for keeping a prefix reusable. Each request also sets `prompt_cache_key` to the
+repository and pull request number, such as `a16z/jolt#2231`, for every turn, head and re-run.
+For this model the guide describes the key as optional, keeping cache reuse and cache accounting
+separate per key; it does not promise a cache hit.
+
+The evaluate job's log records, for each request, the input, cache-read (`cached_tokens`),
+cache-write (`cache_write_tokens`) and output token counts OpenAI reports, and names a count a
+response leaves out rather than logging zero. The counts do not overlap: a request's uncached
+input is its input minus its cache reads and cache writes. This cache is OpenAI's. It is separate
+from the gate's reuse of a recorded classifier verdict for the same head, which makes no model
+call at all.
+
+On November 2, 2026, the gate's classifier code (`Gate.classify` and the `Model` request loop,
+with its one GitHub write, the classifier comment, redirected to a local file) ran twice from a
+local machine on [pull request #2231](https://github.com/a16z/jolt/pull/2231), a one-file prover
+change, at head `9e2e8397c1afbaf0956177878323cff3a4570a37`. Each run started its own
+conversation:
+
+| Run | Requests | Input tokens | Cache reads | Cache writes | Output tokens | Cost at list price |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 | 3 | 68,113 | 35,646 (52%) | 32,458 | 1,153 | $0.096 |
+| 2 | 4 | 98,556 | 75,177 (76%) | 23,367 | 1,337 | $0.079 |
+
+Every request after a run's first read from the cache all but the last 3 tokens of the previous
+request's prompt. Run 2's first request, sent 46 seconds after run 1's first, read 14,165 of its
+14,168 input tokens from the cache entry that run 1's first request wrote. Both runs answered
+SAFE at risk-2. One small prover change does not predict other pull requests' use, and no request
+in either run withheld the tools.
 
 ## Trust
 
@@ -445,7 +492,7 @@ identity needs a reviewed code change, not a guessed replacement login.
 ### 3. Provide the OpenAI key
 
 The gate reads the repository secret `OPENAI_API_KEY`, which must hold a key for an OpenAI
-project that may call `gpt-6-astra` through the Responses API. Give that project its own hard
+project that may call `gpt-6.1-sol` through the Responses API. Give that project its own hard
 spend limit, as [Classifier spend limits](#classifier-spend-limits) describes. The classifier sends
 PR source to OpenAI in requests with `background: true` and `store: true`; confirm the project's
 data controls during activation, which this draft does not verify.
@@ -561,8 +608,10 @@ if retiring them. Keep the separate Pika App and local review skill.
   peak memory: the gate downloads a commit's whole archive before checking its files, and builds
   a search's matches before refusing more than 200 of them. A very large tree can exhaust the
   runner, which fails the run without an approval.
-- Whether max-effort classifications fit in 20,000 output tokens has not been measured. If they
-  often do not, attempts fail and the gate falls back to human review until the limit is raised.
+- In the two runs under [Prompt caching](#prompt-caching), no `xhigh` request generated more
+  than 729 output tokens, reasoning included; larger or harder pull requests may need far more.
+  A response that reaches the 20,000-token limit fails its attempt, and if that happens often,
+  the gate falls back to human review until the limit is raised.
 - GitHub has no head-conditional label transaction. A push between a label API read and write
   can briefly leave the old head's labels, and labels stay as they were while an evaluation runs.
   Closing a pull request removes only `merge-eligible`. Label permissions, availability and API
@@ -575,6 +624,7 @@ if retiring them. Keep the separate Pika App and local review skill.
   for an edited attestation. The gate does not establish who performed the review.
 
 This draft activates nothing. Focused fixtures exercise API state, the emitted reviews,
-dismissals, labels and check conclusions; live webhook delivery, the Actions approval setting,
-dismissal permission, branch rules and classifier accuracy remain unverified until the admin
-activation checks above.
+dismissals, labels and check conclusions. The classifier's OpenAI calls ran locally on one
+public pull request, as [Prompt caching](#prompt-caching) describes; the classifier has not run
+in CI. Live webhook delivery, the Actions approval setting, dismissal permission, branch rules
+and classifier accuracy remain unverified until the admin activation checks above.

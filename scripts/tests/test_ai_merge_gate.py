@@ -1,3 +1,4 @@
+import contextlib
 import difflib
 import hashlib
 import io
@@ -51,7 +52,7 @@ def comment(login, body, edited=False, kind="User", actor_id=None):
             "lastEditedAt": "2026-10-30T12:00:00Z" if edited else None, "fullDatabaseId": "11"}
 
 
-def attestation(sha=HEAD, number=7, skill="ci-code-review", model="Astra", effort="Max"):
+def attestation(sha=HEAD, number=7, skill="ci-code-review", model="GPT-6 Astra", effort="max"):
     return (f"This pull request #{number} has been reviewed at commit {sha} using skill {skill} "
             f"and model {model} with {effort} reasoning effort, and no issues were found.")
 
@@ -124,7 +125,7 @@ class FakeApis:
     def __init__(self, author="core-a", comments=(), reviews=(), labels=(), draft=False,
                  records=(), heads=(HEAD,), diff=PLAIN_DIFF, files=("crates/jolt-prover/src/lib.rs",),
                  counts=(1, 1, 1), verdict="SAFE", risk=2, risks=None, answer_text=None,
-                 served_model="gpt-6-astra-2026-09-30", trees=None, tool_calls=(),
+                 served_model="gpt-6.1-sol", trees=None, tool_calls=(),
                  reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None) -> None:
         # The pull request's file list, which follows its branch; the commits' trees do not move.
         self.files = [entry if isinstance(entry, dict) else {"filename": entry} for entry in files]
@@ -290,7 +291,7 @@ class FakeApis:
             output = [{"type": "message", "content": [{"type": "output_text", "text": text}]}]
         input_tokens, output_tokens = self.usage(size)
         return self.ok({"id": f"resp_{len(self.model_requests)}", "status": "completed", "model": self.served_model,
-                        "reasoning": {"effort": "max"}, "output": output,
+                        "reasoning": data["reasoning"], "output": output,
                         "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}})
 
     @staticmethod
@@ -539,7 +540,16 @@ class AiMergeGateTests(unittest.TestCase):
         cases = [
             (valid, "success"),
             (f"Review complete.\r\n{valid}\r\n", "success"),
-            (attestation(skill="Independent security review", model="A different model", effort="very high"), "success"),
+            *((attestation(skill="Independent security review", model=model, effort=effort), "success")
+              for model, effort in [("GPT-6 Astra", "max"), ("GPT-6 Astra", "xhigh"),
+                                    ("Claude Opus 5.5", "max"), ("Claude Opus 5.5", "xhigh")]),
+            # Only those exact model and effort spellings count: no aliases, API IDs or case variants.
+            (attestation(model="Astra"), "failure"),
+            (attestation(model="gpt-6-astra"), "failure"),
+            (attestation(model="GPT-6.1 Sol"), "failure"),
+            (attestation(model="claude opus 5.5"), "failure"),
+            (attestation(effort="Max"), "failure"),
+            (attestation(effort="high"), "failure"),
             (f"Review: CONFIRMED {HEAD}", "failure"),
             (attestation(number=8), "failure"),
             (attestation(number="07"), "failure"),
@@ -741,7 +751,8 @@ class AiMergeGateTests(unittest.TestCase):
             self.assertFalse(sentinel.exists())
         self.assertEqual(apis.gate(), ("success", "Review attested by " + PIKA_LOGIN))
         [request] = apis.model_requests
-        self.assertEqual((request["model"], request["reasoning"]), ("gpt-6-astra", {"effort": "max"}))
+        self.assertEqual((request["model"], request["reasoning"]), ("gpt-6.1-sol", {"effort": "xhigh"}))
+        self.assertEqual(request["prompt_cache_key"], "a16z/jolt#7")
         self.assertEqual((request["max_output_tokens"], request["service_tier"]), (GATE.MAX_OUTPUT_TOKENS, "default"))
         self.assertEqual(request["text"]["format"]["name"], "verifier_classification")
         self.assertTrue(request["text"]["format"]["strict"])
@@ -794,7 +805,8 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(sorted(fetched), sorted([["tarball", HEAD], ["trees", HEAD], ["tarball", BASE], ["trees", BASE]]))
         first, second = apis.model_requests
         self.assertEqual((second["previous_response_id"], second["tool_choice"]), ("resp_1", "none"))
-        self.assertEqual((second["instructions"], second["tools"]), (first["instructions"], first["tools"]))
+        fields = ("instructions", "tools", "prompt_cache_key")
+        self.assertEqual([second[field] for field in fields], [first[field] for field in fields])
         answers = {item["call_id"]: item["output"] for item in second["input"]}
         self.assertEqual(answers["call_0"], '1\t[package]\n2\tname = "jolt-verifier"\n')
         self.assertEqual(answers["call_1"], "crates/jolt-prover/src/lib.rs:1: fn helper() {}")
@@ -1004,6 +1016,26 @@ class AiMergeGateTests(unittest.TestCase):
             model.run({"input": "x"}, GATE.MODEL_DEADLINE_SECONDS)
         self.assertEqual(calls[-1], ("POST", "/v1/responses/resp_1/cancel"))
         self.assertLessEqual(now[0], GATE.MODEL_CALL_SECONDS + GATE.POLL_SECONDS)
+
+    def test_each_model_turn_logs_the_token_counts_openai_reports(self) -> None:
+        reported = {"input_tokens": 30_000, "output_tokens": 900,
+                    "input_tokens_details": {"cached_tokens": 24_000, "cache_write_tokens": 5_000}}
+        for usage, logged in [
+            (reported, ["input 30000", "cache reads 24000", "cache writes 5000", "output 900"]),
+            # A count the response leaves out is named, never logged as zero.
+            ({"input_tokens": 30_000, "output_tokens": 900}, ["cache reads not reported", "cache writes not reported"]),
+        ]:
+            with self.subTest(usage=usage):
+                def openai(method, url, headers, body, usage=usage):
+                    return 200, json.dumps({"id": "resp_1", "status": "completed", "model": GATE.MODEL,
+                                            "reasoning": {"effort": GATE.EFFORT}, "usage": usage}).encode()
+
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    GATE.Model(openai, "sk-test", clock=lambda: 0.0).run({"input": "x"}, GATE.MODEL_DEADLINE_SECONDS)
+                [line] = out.getvalue().splitlines()
+                self.assertTrue(line.startswith(f"ai-merge-gate: {GATE.MODEL} response resp_1 completed"), line)
+                for count in logged:
+                    self.assertIn(count, line)
 
     def test_path_rows_and_model_input_read_the_evaluated_commits(self) -> None:
         # While the gate evaluates head A, the author pushes B and then restores A. The pull

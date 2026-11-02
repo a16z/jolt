@@ -34,10 +34,9 @@ from diff_classifier import parse_diff
 ROOT = Path(__file__).resolve().parents[2]
 GITHUB_API = "https://api.github.com"
 OPENAI_API = "https://api.openai.com/v1"
-# "Astra Max" is GPT-6 Astra at reasoning effort `max`
-# (developers.openai.com/api/docs/models/gpt-6-astra).
-MODEL = "gpt-6-astra"
-EFFORT = "max"
+# The classifier's model and reasoning effort (developers.openai.com/api/docs/models/gpt-6.1-sol).
+MODEL = "gpt-6.1-sol"
+EFFORT = "xhigh"
 GATE = "ai-merge-gate"
 CLASSIFIER = "ai-merge-gate/classifier"
 # Starts the body of each approving review the gate submits; only those does it ever dismiss.
@@ -61,6 +60,10 @@ ATTESTATION = re.compile(
     r"This pull request #([1-9][0-9]*) has been reviewed at commit ([0-9a-f]{40}) "
     r"using skill (.+?) and model (.+?) with (.+?) reasoning effort, and no issues were found\."
 )
+# The only review models and efforts an attestation may name, spelled as .github/ai-merge-gate.md
+# lists them; any model may pair with any effort.
+REVIEW_MODELS = ("GPT-6 Astra", "Claude Opus 5.5")
+REVIEW_EFFORTS = ("max", "xhigh")
 LEDGER = re.compile(r"<!-- ai-merge-gate/attempts (\{.*\}) -->")
 # The run-name of .github/workflows/ai-merge-gate-events.yml, which GitHub reports as display_title.
 RUN_NAME = re.compile(r"AI merge gate events for PR #([1-9][0-9]*)")
@@ -76,7 +79,7 @@ GATE_INPUTS = (".github/workflows/", "scripts/ci/", ".claude/skills/verifier-cla
 # here changes that section. The gate counts a request's input as its JSON bytes (no text token
 # covers less than one byte) plus the input and output tokens the API reported for the responses it
 # continues; OpenAI's own framing of the request is not counted. 272,000 input tokens is where
-# gpt-6-astra's long-context price starts.
+# gpt-6.1-sol's long-context price starts.
 MAX_OUTPUT_TOKENS = 20_000
 MAX_CALL_INPUT_TOKENS = 150_000
 MAX_TOOL_ROUNDS = 4
@@ -328,7 +331,7 @@ class Source:
 
 
 class Model:
-    """Structured Responses API questions, each turn in background mode so a long max-effort run
+    """Structured Responses API questions, each turn in background mode so a long reasoning run
     does not depend on one HTTP connection staying open."""
 
     def __init__(self, transport, key: str, sleep=time.sleep, clock=time.monotonic) -> None:
@@ -358,10 +361,11 @@ class Model:
             if self.clock() > deadline:
                 # Cancelling ends the wait, not necessarily the billing: tokens the response already
                 # generated, at most max_output_tokens, may still be charged.
-                self.call("POST", f"/responses/{response['id']}/cancel", {})
+                self.log_usage(self.call("POST", f"/responses/{response['id']}/cancel", {}))
                 raise GateError(f"{MODEL} gave no answer before the gate's deadline")
             self.sleep(POLL_SECONDS)
             response = self.call("GET", f"/responses/{response['id']}")
+        self.log_usage(response)
         if response.get("status") != "completed":
             detail = response.get("error") or response.get("incomplete_details")
             raise GateError(f"{MODEL} response {response.get('status')}: {detail}")
@@ -373,15 +377,29 @@ class Model:
             raise GateError(f"{MODEL} response {response.get('id')} reported no token usage")
         return response
 
-    def ask(self, instructions: str, material: str, name: str, schema: dict, tool, admit) -> dict:
+    @staticmethod
+    def log_usage(response: dict) -> None:
+        """Log the token counts OpenAI reports for a response, naming each one it leaves out."""
+        usage = response.get("usage") or {}
+        details = usage.get("input_tokens_details") or {}
+        counts = [("input", usage.get("input_tokens")), ("cache reads", details.get("cached_tokens")),
+                  ("cache writes", details.get("cache_write_tokens")), ("output", usage.get("output_tokens"))]
+        log(f"{MODEL} response {response.get('id')} {response.get('status')}, tokens: " + ", ".join(
+            f"{name} {count if type(count) is int else 'not reported'}" for name, count in counts))
+
+    def ask(self, instructions: str, material: str, name: str, schema: dict, tool, admit, key: str) -> dict:
         """Ask one question, answering the model's tool calls with `tool(name, arguments)` until
         it answers. After MAX_TOOL_ROUNDS turns, once the answers reach MAX_SOURCE_CHARS, or when the
         answers would take the next request past MAX_CALL_INPUT_TOKENS, the next turn withholds the
-        tools, so the model must answer from what it has read: at most MAX_TOOL_ROUNDS + 1 paid calls."""
+        tools, so the model must answer from what it has read: at most MAX_TOOL_ROUNDS + 1 paid calls.
+        Every turn sends `key` as its prompt cache key."""
         if not self.key:
             raise GateError("OPENAI_API_KEY is not set")
         # previous_response_id carries the conversation, reasoning included, but not the
-        # instructions, so every turn repeats the whole request.
+        # instructions, so every turn repeats the whole request. The instructions and tools stay
+        # byte-identical, and the turn that withholds the tools sets tool_choice "none" instead of
+        # dropping them, so each turn's prompt starts with the previous turn's and OpenAI can read
+        # that prefix from its prompt cache.
         request = {
             "model": MODEL,
             "reasoning": {"effort": EFFORT},
@@ -391,6 +409,9 @@ class Model:
             "instructions": instructions,
             "text": {"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}},
             "tools": TOOLS,
+            # Keeps this pull request's prompt cache, and its cache accounting, apart from other
+            # pull requests'; it does not promise a cache hit.
+            "prompt_cache_key": key,
             "background": True,
             "store": True,
         }
@@ -656,7 +677,8 @@ class Gate:
         material = self.material(pull)
         answer = self.model.ask(f"{skill}\n\n## Trusted risk policy: {RISK_POLICY}\n\n{policy}"
                                 f"\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
-                                material, "verifier_classification", CLASSIFICATION_SCHEMA, self.source.call, admit)
+                                material, "verifier_classification", CLASSIFICATION_SCHEMA, self.source.call, admit,
+                                f"{self.repo}#{number}")
         paths = self.path_risks(pull)
         risks = {}
         for item in answer["risks"]:
@@ -687,7 +709,8 @@ class Gate:
             for line in node["body"].splitlines():
                 match = ATTESTATION.fullmatch(line)
                 if not match or match.group(1) != str(number) or match.group(2) != head \
-                        or not all(field.strip() for field in match.groups()[2:]):
+                        or not match.group(3).strip() or match.group(4) not in REVIEW_MODELS \
+                        or match.group(5) not in REVIEW_EFFORTS:
                     continue
                 actors = [author, node.get("editor") or {}] if node.get("lastEditedAt") else [author]
                 if all(self.can_attest(actor) for actor in actors):
@@ -790,7 +813,9 @@ class Gate:
                        "A writer other than the author can approve. Otherwise the Pika App bot or a "
                        "maintainer posts a PR comment with this standalone line, and the gate approves: "
                        f"This pull request #{number} has been reviewed at commit {head} using skill <skill name> "
-                       "and model <model name> with <effort> reasoning effort, and no issues were found.")
+                       "and model <model name> with <effort> reasoning effort, and no issues were found. "
+                       f"The model must be {' or '.join(REVIEW_MODELS)}, and the effort "
+                       f"{' or '.join(REVIEW_EFFORTS)}.")
 
     def labels(self, pull: dict, policy: Outcome) -> set[str]:
         """The managed labels for a policy result. needs-maintainer-review reports a missing maintainer

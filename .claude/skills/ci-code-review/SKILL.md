@@ -47,11 +47,12 @@ with this exact standalone line:
 This pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
 ```
 
-Use the actual skill, model and effort; the gate checks that these fields are nonempty, not a
-model or skill allowlist. Being the PR author alone is not authority to attest. Review bodies
-do not count, and a push, deletion or edit removing the line invalidates the attestation.
-An edited comment's author and last editor must both be allowed accounts. Cached CI reviews do
-not replace the line. The `ai-review` label has no effect.
+Use the actual skill, model and effort. The gate accepts only the review models and efforts the
+[gate guide](../../../.github/ai-merge-gate.md#the-attestation-is-an-exact-standalone-comment-line)
+lists; the skill name is free text. Being the PR author alone is not authority to attest.
+Review bodies do not count, and a push, deletion or edit removing the line invalidates the
+attestation. An edited comment's author and last editor must both be allowed accounts. Cached
+CI reviews do not replace the line. The `ai-review` label has no effect.
 
 The [gate guide](../../../.github/ai-merge-gate.md) defines the policy and labels. The line is
 what lets the gate approve a risk-1 through risk-3 head; a person's approval satisfies GitHub's
