@@ -1,129 +1,26 @@
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-use std::marker::PhantomData;
-
-use jolt_field::{
-    CanonicalBytes, Ext2, Field, FpExt4, Prime128Offset275, Prime32Offset99, Prime64Offset59, Ring,
-};
+use jolt_field::{Ext2, Field, FpExt4, Prime32Offset99, Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    append_opening_claims, prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude,
-    BooleanHypercube, CenteredIntegerDomain, ClearSumcheckRecorder, CompressedSumcheckProof,
-    ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
-    SumcheckVerifier, OPENING_CLAIM_TRANSCRIPT_LABEL, SUMCHECK_CLAIM_TRANSCRIPT_LABEL,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL, UNISKIP_ROUND_TRANSCRIPT_LABEL,
+    prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
+    CenteredIntegerDomain, ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds,
+    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
+    SumcheckVerifier,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
-use num_traits::Zero;
+use jolt_transcript::{
+    prover_transcript, verifier_transcript, Blake2b512, ChallengeCodec, Encoding, FieldTranscript,
+    Transcript,
+};
 use serde::{Deserialize, Serialize};
 
-trait ChallengeField: Field + CanonicalBytes + 'static {
-    fn challenge_from_seed(seed: u64) -> Self;
-}
+/// A field the challenge codecs cover, absorbed through its encoding.
+trait ChallengeField: Field + Encoding + ChallengeCodec + 'static {}
+
+impl<F: Field + Encoding + ChallengeCodec + 'static> ChallengeField for F {}
 
 type Quadratic = Ext2<Prime64Offset59>;
 type Quartic = FpExt4<Prime32Offset99>;
-
-impl ChallengeField for Quadratic {
-    fn challenge_from_seed(seed: u64) -> Self {
-        Self::new(
-            Prime64Offset59::from_u64(seed + 1),
-            Prime64Offset59::from_u64(seed + 11),
-        )
-    }
-}
-
-impl ChallengeField for Quartic {
-    fn challenge_from_seed(seed: u64) -> Self {
-        Self::new(std::array::from_fn(|index| {
-            Prime32Offset99::from_u64(seed + 3 * index as u64 + 1)
-        }))
-    }
-}
-
-impl ChallengeField for Prime128Offset275 {
-    fn challenge_from_seed(seed: u64) -> Self {
-        Self::from_u64(seed + 1)
-    }
-}
-
-struct ExtensionTranscript<F> {
-    state: [u8; 32],
-    cursor: usize,
-    challenge_index: u64,
-    _field: PhantomData<F>,
-}
-
-impl<F> Default for ExtensionTranscript<F> {
-    fn default() -> Self {
-        Self {
-            state: [0; 32],
-            cursor: 0,
-            challenge_index: 0,
-            _field: PhantomData,
-        }
-    }
-}
-
-impl<F: ChallengeField> Transcript for ExtensionTranscript<F> {
-    type Challenge = F;
-
-    fn new(label: &'static [u8]) -> Self {
-        let mut transcript = Self::default();
-        transcript.append_bytes(label);
-        transcript
-    }
-
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        for byte in bytes {
-            let index = self.cursor % self.state.len();
-            self.state[index] = self.state[index]
-                .wrapping_mul(31)
-                .wrapping_add(*byte)
-                .wrapping_add(1);
-            self.cursor += 1;
-        }
-    }
-
-    fn challenge(&mut self) -> F {
-        self.append_bytes(b"extension_challenge");
-        let state_seed = u64::from_le_bytes(self.state[..8].try_into().unwrap());
-        let seed = state_seed.wrapping_add(self.challenge_index);
-        self.challenge_index = self.challenge_index.wrapping_add(1);
-        F::challenge_from_seed(seed)
-    }
-
-    fn state(&self) -> [u8; 32] {
-        self.state
-    }
-}
-
-#[derive(Default)]
-struct CapturingTranscript {
-    absorbed: Vec<u8>,
-}
-
-impl Transcript for CapturingTranscript {
-    type Challenge = Quadratic;
-
-    fn new(label: &'static [u8]) -> Self {
-        Self {
-            absorbed: label.to_vec(),
-        }
-    }
-
-    fn append_bytes(&mut self, bytes: &[u8]) {
-        self.absorbed.extend_from_slice(bytes);
-    }
-
-    fn challenge(&mut self) -> Self::Challenge {
-        Quadratic::zero()
-    }
-
-    fn state(&self) -> [u8; 32] {
-        [0; 32]
-    }
-}
 
 struct ProductOfAffines<F: Field> {
     num_rounds: usize,
@@ -215,10 +112,11 @@ where
     let right = affine_table(right_coefficients);
     let input_claim: F = left.iter().zip(&right).map(|(&a, &b)| a * b).sum();
 
-    let mut prover_transcript = ExtensionTranscript::<F>::new(b"extension-sumcheck");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"extension-sumcheck"), b"");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
-    recorder.absorb_input_claims(&[input_claim], &mut prover_transcript);
-    let coefficient = prover_transcript.challenge_scalar();
+    recorder.absorb_input_claims(&[input_claim], &mut prover_state);
+    let coefficient = prover_state.challenge().unwrap();
     let prelude = BatchPrelude::try_new(
         vec![BatchMember {
             input_claim,
@@ -237,11 +135,11 @@ where
         &mut members,
         &mut SequentialRounds,
         &mut recorder,
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
     let recorded = recorder
-        .finish(&proved.member_claims, &mut prover_transcript)
+        .finish(&proved.member_claims, &mut prover_state)
         .unwrap();
     let proof = recorded.proof;
 
@@ -250,26 +148,34 @@ where
         bincode::serde::decode_from_slice(&wire, bincode::config::standard()).unwrap();
     assert_eq!(read, wire.len());
 
-    let mut verifier_transcript = ExtensionTranscript::<F>::new(b"extension-sumcheck");
-    verifier_transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, &input_claim);
-    let verifier_coefficient = verifier_transcript.challenge_scalar();
+    let mut verifier_transcript = verifier_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"extension-sumcheck"),
+        b"",
+        &[],
+    );
+    verifier_transcript.append(&input_claim);
+    let verifier_coefficient: F = verifier_transcript.challenge().unwrap();
     assert_eq!(verifier_coefficient, coefficient);
     let reduced = SumcheckVerifier::verify_compressed(
         &SumcheckClaim::new(2, 2, coefficient * input_claim),
         &proof,
         BooleanHypercube,
-        SUMCHECK_ROUND_TRANSCRIPT_LABEL,
         &mut verifier_transcript,
     )
     .unwrap();
-    append_opening_claims(&mut verifier_transcript, &proved.member_claims);
+    for claim in &proved.member_claims {
+        verifier_transcript.append(claim);
+    }
 
     let point: [F; 2] = reduced.point.as_slice().try_into().unwrap();
     let expected = affine(left_coefficients, point) * affine(right_coefficients, point);
     assert_eq!(proved.member_claims, vec![expected]);
     assert_eq!(reduced.value, coefficient * expected);
     assert_eq!(proved.final_claim, reduced.value);
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
 fn run_uniskip_roundtrip<F>(coefficients: [F; 3])
@@ -281,41 +187,41 @@ where
         .into_iter()
         .map(|point| polynomial.evaluate(F::from_i64(point)))
         .sum();
-    let mut prover_transcript = ExtensionTranscript::<F>::new(b"extension-uniskip");
-    let proved = prove_uniskip_clear::<F, _>(
-        polynomial.clone(),
-        input_claim,
-        2,
-        3,
-        &mut prover_transcript,
-    )
-    .unwrap();
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"extension-uniskip"), b"");
+    let proved =
+        prove_uniskip_clear::<F, _>(polynomial.clone(), input_claim, 2, 3, &mut prover_state)
+            .unwrap();
 
-    let mut verifier_transcript = ExtensionTranscript::<F>::new(b"extension-uniskip");
+    let mut verifier_transcript = verifier_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"extension-uniskip"),
+        b"",
+        &[],
+    );
     let reduced = SumcheckProof::<F, ()>::from(proved.proof)
         .verify(
             &SumcheckClaim::new(1, 2, input_claim),
             CenteredIntegerDomain::new(3),
-            UNISKIP_ROUND_TRANSCRIPT_LABEL,
             &mut verifier_transcript,
         )
         .unwrap();
-    verifier_transcript.append_labeled(OPENING_CLAIM_TRANSCRIPT_LABEL, &reduced.value);
+    verifier_transcript.append(&reduced.value);
 
     assert_eq!(reduced.point.as_slice(), &[proved.challenge]);
     assert_eq!(reduced.value, polynomial.evaluate(proved.challenge));
     assert_eq!(reduced.value, proved.output_claim);
-    assert_eq!(prover_transcript.state(), verifier_transcript.state());
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
 #[test]
-fn quadratic_transcript_absorption_reverses_the_complete_payload() {
+fn quadratic_encoding_is_the_canonical_little_endian_bytes() {
     let value = Quadratic::new(Prime64Offset59::from_u64(1), Prime64Offset59::from_u64(2));
-    let mut transcript = CapturingTranscript::default();
-    value.append_to_transcript(&mut transcript);
     assert_eq!(
-        transcript.absorbed,
-        [0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 1]
+        value.encode().as_ref(),
+        [1, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0]
     );
 }
 

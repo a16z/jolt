@@ -8,6 +8,9 @@ name = "recursion"
 path = "src/main.rs"
 
 [features]
+# Verifier guest only: keep the host prover feature graph unchanged.
+recursion-sparse-term-cache = []
+recursion-wide-row-batch = []
 terminal-contraction = ["jolt-akita?/terminal-contraction"]
 segment-setup = ["jolt-akita?/segment-setup"]
 immutable-recipes = [
@@ -17,7 +20,6 @@ immutable-recipes = [
   "jolt-sdk/immutable-recipes-record",
   "dep:jolt-claims",
   "jolt-claims/immutable-recipes-record",
-  "dep:jolt-field",
   "dep:sha2",
   "dep:hex",
 ]
@@ -97,12 +99,22 @@ akita = [
 # byte coefficients of a sparse challenge in through one field sum when
 # evaluating it at powers; same field values. Default on; effective only with
 # `akita`.
-# setup-weight-tiles: the verifier guest's direct setup scan adds the setup
-# weights by fixed tiles on field-register addition; same field values. Default
-# on; effective only with `akita`.
+# setup-weight-tiles: the verifier guest's direct setup scan accumulates the
+# setup weights by borrowed tiles on field-register addition; same field
+# values. Default on; effective only with `akita`.
 # challenge-word-decode: the verifier guest (and the host's Akita) decode the
 # signed sparse challenges from whole SHAKE output words; same consumption,
 # rejection and field values. Default on; effective only with `akita`.
+# recursion-sparse-term-cache and recursion-wide-row-batch: default-on
+# verifier guest recovery; configured_recursion_program forwards both only
+# with `akita`, using the same selection as the other recursion defaults.
+# challenge-embed-fused: the verifier guest (and the host's Akita) validate and
+# embed sparse challenges in one pass for subrings of at most 64 positions;
+# same embedded challenges. Default on; effective only with `akita`.
+# compressed-poly-horner: the verifier guest evaluates compressed sumcheck
+# polynomials with Horner's rule; same field values. Default on for either PCS.
+# The recursion verifier uses these defaults with the stock Akita build features;
+# configured_recursion_program forwards both levers into the verifier guest.
 default = [
   "l3-compression-weights",
   "l2-terminal-quotient",
@@ -129,6 +141,10 @@ default = [
   "signed-byte-sum",
   "setup-weight-tiles",
   "challenge-word-decode",
+  "recursion-sparse-term-cache",
+  "recursion-wide-row-batch",
+  "challenge-embed-fused",
+  "compressed-poly-horner",
 ]
 guest-codegen = []
 l3-compression-weights = ["jolt-akita?/l3-compression-weights"]
@@ -137,7 +153,6 @@ word-decode = ["jolt-akita?/word-decode"]
 tensor-no-carry = ["jolt-akita?/tensor-no-carry"]
 tensor-eq-runs = ["jolt-akita?/tensor-eq-runs"]
 # Each remaining arm is selected independently and forwarded to the guest.
-word-transcript = ["akita", "jolt-akita/word-transcript"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 # Row pointers (default on): forwards `rowptr-registers` to the verifier guest.
 rowptr-registers = []
@@ -145,6 +160,9 @@ rowptr-registers = []
 setup-sop-structured = ["jolt-akita?/setup-sop-structured"]
 weighted-dot-horner = []
 weighted-dot-horner-triplet = ["weighted-dot-horner"]
+# compressed-poly-horner: evaluate the verifier guest's compressed sumcheck
+# polynomials with Horner's rule.
+compressed-poly-horner = []
 # Prevalidated catalog: the host prevalidates the embedded one-hot catalog view
 # and the guest rebuilds it from that record when its bytes are equal. Effective
 # only with `akita`.
@@ -173,21 +191,19 @@ fill-ingress = ["jolt-akita?/fill-ingress"]
 setup-lane-streams = ["jolt-akita?/setup-lane-streams"]
 # carry-graph: compiled carry-state graphs for the eq-pair tensor recurrences.
 carry-graph = ["jolt-akita?/carry-graph"]
-# mle-leaf-tiles: low-variable multilinear evaluation by fixed leaf tiles.
 mle-leaf-tiles = ["jolt-akita?/mle-leaf-tiles"]
-# signed-byte-sum: sparse challenge evaluation at powers through one signed-byte
-# field sum.
 signed-byte-sum = ["jolt-akita?/signed-byte-sum"]
-# setup-weight-tiles: the direct setup scan adds its setup weights by fixed
-# tiles on field-register addition.
 setup-weight-tiles = ["jolt-akita?/setup-weight-tiles"]
-# challenge-word-decode: signed sparse challenges decoded from whole SHAKE
-# output words.
 challenge-word-decode = ["jolt-akita?/challenge-word-decode"]
+# challenge-embed-fused: combine sparse challenge validation and embedding
+# for subrings of at most 64 positions.
+challenge-embed-fused = ["jolt-akita?/challenge-embed-fused"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }
-jolt-field = { path = "../../crates/jolt-field", optional = true }
+jolt-field.workspace = true
+jolt-poly.workspace = true
+jolt-sumcheck.workspace = true
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
 serde_json = { workspace = true, features = ["std"], optional = true }
@@ -201,7 +217,7 @@ jolt-inlines-ntt = { workspace = true, features = ["host"], optional = true }
 jolt-inlines-blake2 = { workspace = true, features = ["host"] }
 # Registers the Keccak inline the Akita SHAKE samplers use.
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
-jolt-sdk = { workspace = true, features = ["host"] }
+jolt-sdk = { workspace = true, features = ["host", "transcript-blake2b"] }
 tracing-subscriber.workspace = true
 tracing.workspace = true
 postcard.workspace = true

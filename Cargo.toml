@@ -151,7 +151,7 @@ path = "./src/main.rs"
 [dependencies]
 clap.workspace = true
 eyre.workspace = true
-rand.workspace = true
+rand = { workspace = true, features = ["std", "std_rng"] }
 sysinfo.workspace = true
 syn.workspace = true
 toml_edit.workspace = true
@@ -294,33 +294,29 @@ ark-serialize-derive = { version = "0.5.0", default-features = false }
 ark-std = { version = "0.5.0", default-features = false }
 sha2 = "0.11"
 sha3 = "=0.12.0"
+shake = { version = "=0.1.0", default-features = false }
 blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
 light-poseidon = "0.4"
 digest = "0.11"
-spongefish = { git = "https://github.com/arkworks-rs/spongefish", rev = "ef9741346a150039427d9e0c02d6b2d73e93ec81", default-features = false }
+spongefish = { version = "=0.8.0", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
-dory = { package = "dory-pcs", version = "0.4.2", features = [
+dory = { package = "dory-pcs", version = "0.5.0", features = [
   "backends",
   "cache",
   "disk-persistence",
   "zk",
 ] }
-# Akita pin: commit 13128559, the previous pin 9f778c0c (d04bf51f plus the
-# optional, default-off MLE leaf tiles and signed-byte challenge evaluation)
-# plus the optional, default-off setup-weight tiles (setup-weight-tiles) and
-# word-level challenge decode (challenge-word-decode), fetched from
-# LayerZero-Labs/akita by hash. Repin to the merge commit on
-# markos/recursion-integration once those changes land there.
-akita-algebra = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-config = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-error = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-pcs = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-planner = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-schedules = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-challenges = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-types = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
-akita-params = { git = "https://github.com/LayerZero-Labs/akita", rev = "13128559e8dd3cfba462e1789cc87f6d0b4f87ad", default-features = false }
+# Akita main with the recursion verifier features, pinned to the public fork.
+akita-algebra = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-config = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-error = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-pcs = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-planner = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-schedules = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-challenges = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-types = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
+akita-params = { git = "https://github.com/Acentelles/akita-lz.git", rev = "f24c420313029efcc4baed5c3835e49f65d99acc", default-features = false }
 
 # Core Utilities
 clap = { version = "4.6.1", features = ["derive"] }
@@ -407,9 +403,9 @@ object = { version = "0.40.0", features = [
   "elf",
 ], default-features = false }
 addr2line = "0.27.0"
-getrandom = { version = "0.2.16", default-features = false }
 getrandom_v02 = { version = "0.2.16", package = "getrandom", default-features = false }
 getrandom_v03 = { version = "0.3.3", package = "getrandom", default-features = false }
+getrandom_v04 = { version = "0.4", package = "getrandom", default-features = false }
 
 # Build and Development
 ctor = { version = "0.6" }
@@ -440,10 +436,8 @@ riscv = { version = "0.16", default-features = false }
 alloy-primitives = "1"
 alloy-consensus = "2"
 alloy-eips = "2"
-reth-primitives-traits = { version = "0.7", features = ["rayon", "serde"] }
-reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", features = [
-  "serde",
-] }
+reth-primitives-traits = { version = "0.8", features = ["rayon"] }
+reth-ethereum-primitives = { git = "https://github.com/paradigmxyz/reth", default-features = false }
 secp256k1 = { version = "0.33", features = ["recovery", "rand"] }
 
 # Internal dependencies

@@ -8,7 +8,7 @@ use std::io::{BufWriter, Write};
 
 use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use akita_planner::emit::{bounded_parallel_filter_map, offline_planning_worker_count};
-use jolt_akita::schedule_registry::dense_group_profile;
+use jolt_akita::schedule_registry::{dense_group_profile, GroupedScheduleError};
 use jolt_akita::{
     AkitaChunkProfile, AkitaError, AkitaScheduleArtifacts, GroupedScheduleParams,
     AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
@@ -17,28 +17,18 @@ use jolt_akita::{
 enum Outcome {
     Admitted,
     UnsupportedProducer(AkitaError),
-    UnsupportedGroupedShape(AkitaError),
+    UnsupportedGroupedShape(GroupedScheduleError),
     Failed(AkitaError),
 }
 
 impl Outcome {
-    fn grouped(
-        result: Result<(), AkitaError>,
-        k: usize,
-        profile: AkitaChunkProfile,
-        final_arity: usize,
-    ) -> Self {
+    fn grouped(result: Result<(), GroupedScheduleError>) -> Self {
         match result {
             Ok(()) => Self::Admitted,
-            Err(AkitaError::UnsupportedSchedule(message))
-                if profile == AkitaChunkProfile::Single
-                    && message.starts_with(&format!(
-                        "one-hot K={k} profile Single final arity {final_arity} has no recursive child fold in its scalar guide; bounded grouped provisioning requires one; requested groups: "
-                    )) =>
-            {
-                Self::UnsupportedGroupedShape(AkitaError::UnsupportedSchedule(message))
+            Err(error @ GroupedScheduleError::MissingRecursiveGuide { .. }) => {
+                Self::UnsupportedGroupedShape(error)
             }
-            Err(error) => Self::Failed(error),
+            Err(GroupedScheduleError::Backend(error)) => Self::Failed(error),
         }
     }
 }
@@ -54,7 +44,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             "usage: check_grouped_schedules <catalog-dir> <report.csv> [full|boundary]".into(),
         );
     }
-    let artifacts = AkitaScheduleArtifacts::from_directory(directory)?;
+    let artifacts =
+        AkitaScheduleArtifacts::from_directory(directory, AkitaChunkProfile::new(8, 2))?;
     let dense = artifacts.dense_catalog()?;
     let full_dense = artifacts.full_dense_catalog()?;
     let mut report = BufWriter::new(File::create(output)?);
@@ -66,14 +57,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut failed = 0usize;
     let mut unsupported = 0usize;
     for k in [AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256] {
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             if mode == "boundary"
-                && (k != AKITA_ONE_HOT_K16 || profile == AkitaChunkProfile::Single)
+                && (k != AKITA_ONE_HOT_K16 || profile == AkitaChunkProfile::new(1, 0))
             {
                 continue;
             }
@@ -149,11 +135,11 @@ fn main() -> Result<(), Box<dyn Error>> {
                                         if row.profiles().precommitteds != key.precommitteds
                                             || row.schedule().root.params.witness_chunk.num_chunks != profile.num_chunks()
                                         {
-                                            return Err(AkitaError::InvalidSetup("provisioned row changed producer profiles or trace chunks".to_owned()));
+                                            return Err(AkitaError::InvalidSetup("provisioned row changed producer profiles or trace chunks".to_owned()).into());
                                         }
                                         Ok(())
                                     });
-                                Outcome::grouped(result, k, profile, final_arity)
+                                Outcome::grouped(result)
                             }
                         };
                         Ok(Some((untrusted, trusted, outcome)))
@@ -182,12 +168,12 @@ fn main() -> Result<(), Box<dyn Error>> {
                     let trusted = trusted.map(|arity| arity.to_string()).unwrap_or_default();
                     writeln!(
                         report,
-                        "{k},{profile:?},{final_arity},{untrusted},{trusted},{status},\"{}\"",
+                        "{k},{profile},{final_arity},{untrusted},{trusted},{status},\"{}\"",
                         error.replace('"', "\"\"")
                     )?;
                 }
                 report.flush()?;
-                eprintln!("K={k} {profile:?} final={final_arity}: {passed} passed, {failed} failed, {unsupported} unsupported inputs");
+                eprintln!("K={k} {profile} final={final_arity}: {passed} passed, {failed} failed, {unsupported} unsupported inputs");
             }
         }
     }
@@ -206,7 +192,8 @@ mod tests {
 
     #[test]
     fn only_the_known_scalar_guide_rejection_is_expected() -> Result<(), Box<dyn Error>> {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let params = GroupedScheduleParams::new(
             None,
             Some(14),
@@ -219,31 +206,20 @@ mod tests {
                 &artifacts.full_dense_catalog()?,
                 &artifacts.one_hot_catalog(AKITA_ONE_HOT_K16)?,
                 AKITA_ONE_HOT_K16,
-                AkitaChunkProfile::Single,
+                AkitaChunkProfile::new(1, 0),
             )
             .map(|_| ());
         assert!(matches!(
-            Outcome::grouped(result, AKITA_ONE_HOT_K16, AkitaChunkProfile::Single, 12),
+            Outcome::grouped(result),
             Outcome::UnsupportedGroupedShape(_)
         ));
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
-            assert!(matches!(
-                Outcome::grouped(
-                    Err(AkitaError::UnsupportedSchedule(
-                        "unexpected planner rejection".to_owned()
-                    )),
-                    AKITA_ONE_HOT_K16,
-                    profile,
-                    12,
-                ),
-                Outcome::Failed(_)
-            ));
-        }
+        assert!(matches!(
+            Outcome::grouped(Err(AkitaError::UnsupportedSchedule(
+                "unexpected planner rejection".to_owned()
+            )
+            .into())),
+            Outcome::Failed(_)
+        ));
         Ok(())
     }
 }

@@ -9,6 +9,8 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+recursion-sparse-term-cache = ["akita-pcs/recursion-sparse-term-cache"]
+recursion-wide-row-batch = ["akita-pcs/recursion-wide-row-batch"]
 terminal-contraction = [
   "akita-pcs/terminal-contraction",
   "jolt-field/terminal-contraction",
@@ -41,7 +43,6 @@ profiling = ["parallel"]
 l3-compression-weights = ["akita-types/l3-compression-weights"]
 
 # Byte-preserving recursion experiments, default off.
-word-transcript = ["jolt-transcript/word-transcript"]
 word-decode = ["jolt-field/word-decode"]
 ont-static-base = ["akita-challenges/ont-static-base"]
 tensor-no-carry = ["akita-algebra/tensor-no-carry"]
@@ -63,16 +64,13 @@ fill-ingress = ["akita-algebra/fill-ingress", "jolt-field/fill-ingress"]
 setup-lane-streams = ["akita-pcs/setup-lane-streams"]
 # Compiled carry-state graphs for the eq-pair tensor recurrences (default off).
 carry-graph = ["akita-algebra/carry-graph"]
-# Low-variable multilinear evaluation by fixed leaf tiles (default off).
 mle-leaf-tiles = ["akita-pcs/mle-leaf-tiles"]
-# Sparse challenge evaluation at powers through one signed-byte field sum
-# (default off; enables jolt-field/signed-byte-sum on the Akita side).
 signed-byte-sum = ["akita-pcs/signed-byte-sum"]
-# Direct setup scan weights added by fixed tiles on field-register addition
-# (default off; enables jolt-field/setup-weight-tiles on the Akita side).
 setup-weight-tiles = ["akita-pcs/setup-weight-tiles"]
-# Signed sparse challenges decoded from whole SHAKE output words (default off).
 challenge-word-decode = ["akita-pcs/challenge-word-decode"]
+# Validate and embed sparse challenges in one pass for subrings of at most
+# 64 positions (default off).
+challenge-embed-fused = ["akita-pcs/challenge-embed-fused"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
@@ -99,7 +97,9 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
   "parallel",
 ] }
 jolt-poly.workspace = true
-jolt-transcript = { path = "../jolt-transcript", default-features = false }
+jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
+  "solinas",
+] }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_bytes.workspace = true

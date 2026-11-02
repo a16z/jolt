@@ -14,6 +14,8 @@
 //! the transcript binds. Callers must bind the payload bytes to the verifier
 //! program identity, for example by embedding them in the guest image.
 
+use std::sync::Arc;
+
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_pcs::{
     build_riscv64_terminal_ntt_cache, AkitaDeserialize, AkitaSerialize, Compress, TrustedBytes,
@@ -123,6 +125,12 @@ impl PreparedBytes {
             .skip(skew)
             .ok_or_else(|| invalid_setup("truncated prepared payload body"))?;
         Ok(Self::Attached(payload))
+    }
+}
+
+impl From<Vec<u8>> for PreparedBytes {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self::Owned(bytes)
     }
 }
 
@@ -257,7 +265,7 @@ impl AkitaVerifierSetup {
     pub fn detach_prepared_payloads(&mut self) -> Result<Vec<Vec<u8>>, OpeningsError> {
         // Check every payload before moving any, so an error leaves the setup
         // as it was.
-        for slot in self.schedule_artifacts.slots() {
+        for slot in Arc::make_mut(&mut self.schedule_artifacts).slots() {
             let _ = slot.bytes()?;
         }
         // Aligning the key's coefficients lets the guest view them in place.
@@ -273,7 +281,7 @@ impl AkitaVerifierSetup {
             None => None,
         };
         let mut bodies = Vec::new();
-        for slot in self.schedule_artifacts.slots() {
+        for slot in Arc::make_mut(&mut self.schedule_artifacts).slots() {
             bodies.push(slot.detach(0)?);
         }
         if let (Some(prepared), Some(offset)) = (&mut self.prepared, key_offset) {
@@ -300,17 +308,16 @@ impl AkitaVerifierSetup {
         bodies: &[TrustedBytes],
     ) -> Result<(), OpeningsError> {
         let mut bodies = bodies.iter();
-        let slots =
-            self.schedule_artifacts
-                .slots()
-                .into_iter()
-                .chain(self.prepared.iter_mut().flat_map(|prepared| {
-                    [
-                        &mut prepared.key,
-                        &mut prepared.catalog,
-                        &mut prepared.terminal_ntt,
-                    ]
-                }));
+        let slots = Arc::make_mut(&mut self.schedule_artifacts)
+            .slots()
+            .into_iter()
+            .chain(self.prepared.iter_mut().flat_map(|prepared| {
+                [
+                    &mut prepared.key,
+                    &mut prepared.catalog,
+                    &mut prepared.terminal_ntt,
+                ]
+            }));
         for slot in slots.filter(|slot| matches!(slot, PreparedBytes::Detached)) {
             let body = bodies.next().ok_or_else(|| {
                 invalid_setup("fewer prepared payload bodies than detached slots")
@@ -324,5 +331,77 @@ impl AkitaVerifierSetup {
         }
         self.backend_cache = Default::default();
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    #![expect(
+        clippy::unwrap_used,
+        clippy::indexing_slicing,
+        reason = "wire fixtures assert decoding and exact byte boundaries"
+    )]
+    use super::*;
+    use crate::adapters::AkitaVerifierScheduleArtifacts;
+    use crate::AkitaChunkProfile;
+
+    #[test]
+    fn current_setup_encoding_decodes_with_optional_payloads() {
+        // Frozen transport fixture: small dimensions, digest [3; 32], K16,
+        // OneHot catalog Some(b"abc"), no prepared verifier. Catalog validity
+        // is checked by the backend separately from this wire-format contract.
+        const BYTES: &[u8] = &[
+            2, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+            3, 3, 3, 3, 3, 3, 16, 1, 1, 0, 1, 3, 97, 98, 99, 0,
+        ];
+        let config = bincode::config::standard();
+        let (setup, consumed): (AkitaVerifierSetup, _) =
+            bincode::serde::decode_from_slice(BYTES, config).unwrap();
+        let mut expected = AkitaVerifierSetup {
+            max_num_vars: 2,
+            max_num_polys_per_commitment_group: 1,
+            max_total_batch_polys: 1,
+            default_layout_digest: [3; 32],
+            one_hot_k: 16,
+            schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
+                profile: AkitaChunkProfile::new(1, 0),
+                one_hot: PreparedBytes::Decoded(b"abc".to_vec()),
+            }
+            .into(),
+            prepared: None,
+            backend_cache: Default::default(),
+        };
+        assert_eq!(consumed, BYTES.len());
+        assert_eq!(setup, expected);
+        assert_eq!(
+            bincode::serde::encode_to_vec(&setup, config).unwrap(),
+            BYTES
+        );
+        assert!(bincode::serde::decode_from_slice::<AkitaVerifierSetup, _>(
+            &BYTES[..BYTES.len() - 1],
+            config
+        )
+        .is_err());
+
+        let mut prepared_bytes = BYTES[..BYTES.len() - 1].to_vec();
+        prepared_bytes.extend_from_slice(&[1, 1]); // Some, OneHot
+        prepared_bytes.extend_from_slice(&[4; 32]);
+        prepared_bytes.extend_from_slice(&[0, 1, 1, 9, 0]); // None, Some([9]), None
+        expected.prepared = Some(PreparedVerifier {
+            flavor: AkitaBackendFlavor::OneHot,
+            row_digest: [4; 32],
+            key: PreparedBytes::Detached,
+            catalog: PreparedBytes::Decoded(vec![9]),
+            terminal_ntt: PreparedBytes::Detached,
+        });
+        let (setup, consumed): (AkitaVerifierSetup, _) =
+            bincode::serde::decode_from_slice(&prepared_bytes, config).unwrap();
+        assert_eq!(consumed, prepared_bytes.len());
+        assert_eq!(setup, expected);
+        assert_eq!(
+            bincode::serde::encode_to_vec(&setup, config).unwrap(),
+            prepared_bytes
+        );
+        assert!(setup.prepared.unwrap().catalog.trusted_bytes().is_err());
     }
 }

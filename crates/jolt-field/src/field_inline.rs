@@ -458,8 +458,12 @@ mod guest {
     pub fn signed_sum<'a, const N: usize>(
         terms: impl IntoIterator<Item = (&'a [u64; N], bool)>,
     ) -> [u64; N] {
-        debug_assert!(accumulators_free());
-        ACC_LENT.store(true, Ordering::Relaxed);
+        assert!(
+            ACC_LENT
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok(),
+            "field accumulators are already lent"
+        );
         emit::acc_zero();
         for (term, negative) in terms {
             load(REG_A, term);
@@ -470,7 +474,7 @@ mod guest {
             }
         }
         let sum = read_out(REG_ACC);
-        ACC_LENT.store(false, Ordering::Relaxed);
+        ACC_LENT.store(false, Ordering::Release);
         sum
     }
 
@@ -644,13 +648,10 @@ mod guest {
         }
         finish()
     }
-
     #[cfg(feature = "signed-byte-sum")]
     include!("field_inline/signed_byte_sum.rs");
 }
 
-#[cfg(feature = "signed-byte-sum")]
-pub use guest::sum_signed_bytes;
 pub use guest::{
     accumulators_free, add, bind_modulus, dot, dot_rows, inv, mul, neg, signed_sum, sub,
     sum_of_products, weighted_dot_rows,
@@ -694,6 +695,9 @@ pub(crate) mod scale {
         }
     }
 }
+
+#[cfg(feature = "signed-byte-sum")]
+pub use guest::sum_signed_bytes;
 
 #[cfg(feature = "setup-weight-tiles")]
 pub(crate) mod setup_weight_tiles;

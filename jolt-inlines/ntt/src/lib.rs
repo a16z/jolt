@@ -26,7 +26,8 @@ jolt_inlines_sdk::register_inlines! {
     ops: [ForwardNtt64, PointwiseDot64],
 }
 
-/// Twist, then forward DIF NTT, with bit-reversed output in Montgomery form.
+/// Twist, then forward DIF NTT, with bit-reversed output in the input's
+/// representation (Montgomery-form tables preserve it).
 ///
 /// `psi[i]` is the Montgomery form of psi^i. Stage twiddles occupy
 /// `twiddles[len - 1..2*len - 1]`, for half-lengths 32 down to 1.

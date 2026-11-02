@@ -14,6 +14,10 @@ ARCH_TEST_RUNNER  := $(MAKEFILE_DIR)/tests/arch-tests/run.sh
 EMULATOR_BIN      := $(MAKEFILE_DIR)/target/debug/jolt-emu
 SMOKE_DIR         := $(MAKEFILE_DIR)/tests/arch-tests/smoke
 SMOKE_ELF         := $(SMOKE_DIR)/fail.elf
+# Optional suite selection for arch-tests-run: a basename glob and the exact
+# number of ELFs it must select, e.g. ARCH_TEST_MATCH='I-*' ARCH_TEST_EXPECT=<n>.
+ARCH_TEST_MATCH   ?= *
+ARCH_TEST_EXPECT  ?=
 
 # Number of parallel jobs for the ACT4 generator. Falls back to 1 when
 # neither `nproc` nor `sysctl` is available.
@@ -51,7 +55,9 @@ arch-tests-run: ## Run all generated ELFs through jolt-emu and report pass/fail
 	$(ARCH_TEST_RUNNER) \
 		--emulator $(EMULATOR_BIN) \
 		--work-dir $(ARCH_TEST_WORK) \
-		--skip-file $(ARCH_TEST_SKIP)
+		--skip-file $(ARCH_TEST_SKIP) \
+		--match '$(ARCH_TEST_MATCH)' \
+		$(if $(ARCH_TEST_EXPECT),--expect $(ARCH_TEST_EXPECT))
 
 arch-tests-smoke: build-emulator $(SMOKE_ELF) ## Deliberate-failure smoke test — confirms the harness surfaces failures
 	@echo "smoke: running deliberate-failure ELF through jolt-emu"

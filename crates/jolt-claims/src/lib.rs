@@ -23,7 +23,6 @@
 // this crate those paths only resolve via this self-alias.
 extern crate self as jolt_claims;
 
-pub mod blake2b256;
 mod claim_data;
 mod claims;
 mod formula_error;

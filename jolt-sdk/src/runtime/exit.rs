@@ -14,7 +14,7 @@ cfg_if::cfg_if! {
         /// Exit the program.
         ///
         /// Enters an infinite loop (`j .`) which the Jolt emulator detects via PC stall
-        /// (prev_pc == pc) and treats as clean termination.
+        /// and treats as clean termination.
         #[no_mangle]
         pub extern "C" fn __platform_exit(_code: i32) -> ! {
             unsafe {

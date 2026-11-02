@@ -6,7 +6,7 @@ use ark_ff::{AdditiveGroup, Field as ArkField, PrimeField};
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
 use jolt_field::JoltField;
 
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::Encoding;
 
 use crate::JoltGroup;
 
@@ -150,21 +150,16 @@ impl MulAssign for Bn254GT {
     }
 }
 
+/// The 384-byte uncompressed serialization: fixed-width.
 #[expect(clippy::expect_used)]
-impl AppendToTranscript for Bn254GT {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+impl Encoding for Bn254GT {
+    fn encode(&self) -> impl AsRef<[u8]> {
         use ark_serialize::CanonicalSerialize;
         let mut buf = Vec::with_capacity(self.0.uncompressed_size());
         self.0
             .serialize_uncompressed(&mut buf)
             .expect("GT serialization cannot fail");
-        buf.reverse();
-        transcript.append_bytes(&buf);
-    }
-
-    fn transcript_payload_len(&self) -> Option<u64> {
-        use ark_serialize::CanonicalSerialize;
-        Some(self.0.uncompressed_size() as u64)
+        buf
     }
 }
 

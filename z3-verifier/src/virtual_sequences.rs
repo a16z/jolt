@@ -9,6 +9,15 @@ use tracer::{
         addi::ADDI,
         addiw::ADDIW,
         addw::ADDW,
+        amoaddw::AMOADDW,
+        amoandw::AMOANDW,
+        amomaxuw::AMOMAXUW,
+        amomaxw::AMOMAXW,
+        amominuw::AMOMINUW,
+        amominw::AMOMINW,
+        amoorw::AMOORW,
+        amoswapw::AMOSWAPW,
+        amoxorw::AMOXORW,
         and::AND,
         andi::ANDI,
         andn::ANDN,
@@ -17,8 +26,8 @@ use tracer::{
         divuw::DIVUW,
         divw::DIVW,
         format::{
-            format_i::FormatI, format_load::FormatLoad, format_r::FormatR, format_s::FormatS,
-            normalize_imm,
+            format_amo::FormatAMO, format_i::FormatI, format_load::FormatLoad, format_r::FormatR,
+            format_s::FormatS, normalize_imm,
         },
         lb::LB,
         lbu::LBU,
@@ -33,6 +42,7 @@ use tracer::{
         mulhsu::MULHSU,
         mulhu::MULHU,
         mulw::MULW,
+        or::OR,
         ori::ORI,
         rem::REM,
         remu::REMU,
@@ -45,6 +55,7 @@ use tracer::{
         slli::SLLI,
         slliw::SLLIW,
         sllw::SLLW,
+        slt::SLT,
         sltu::SLTU,
         sra::SRA,
         srai::SRAI,
@@ -58,14 +69,14 @@ use tracer::{
         subw::SUBW,
         sw::SW,
         virtual_advice::VirtualAdvice,
-        virtual_align_addr::VirtualAlignAddr,
         virtual_assert_eq::VirtualAssertEQ,
-        virtual_assert_halfword_alignment::VirtualAssertHalfwordAlignment,
         virtual_assert_lte::VirtualAssertLTE,
         virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow,
         virtual_assert_valid_div0::VirtualAssertValidDiv0,
         virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder,
-        virtual_assert_word_alignment::VirtualAssertWordAlignment,
+        virtual_load_b::VirtualLoadB,
+        virtual_load_h::VirtualLoadH,
+        virtual_load_w::VirtualLoadW,
         virtual_movsign::VirtualMovsign,
         virtual_muli::VirtualMULI,
         virtual_muliw::VirtualMULIW,
@@ -88,6 +99,9 @@ use tracer::{
         virtual_srli::VirtualSRLI,
         virtual_srliw::VirtualSRLIW,
         virtual_srlw::VirtualSRLW,
+        virtual_store_b::VirtualStoreB,
+        virtual_store_h::VirtualStoreH,
+        virtual_store_w::VirtualStoreW,
         virtual_window_mask_b::VirtualWindowMaskB,
         virtual_window_mask_h::VirtualWindowMaskH,
         virtual_window_mask_w::VirtualWindowMaskW,
@@ -156,7 +170,8 @@ struct SymbolicCpu {
     /// WARNING: the LD/SD arms key by the raw `rs1 + imm`; the
     /// no-partial-alias invariant is guaranteed by the expansions, not the
     /// arms. `expand_amo_d` loads from a raw `rs1`, so a future AMO.D entry
-    /// must revisit this model.
+    /// must revisit this model. The floor-addressed arms key by
+    /// [`floor_address`], which assumes the access is aligned.
     mem: Array,
     advice_vars: Vec<BV>,
     asserts: Vec<Bool>,
@@ -353,13 +368,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let val2 = cpu.x[operands.rs2 as usize].clone();
             cpu.asserts.push(val1.bvule(&val2));
         }
-        Instruction::VirtualAssertHalfwordAlignment(VirtualAssertHalfwordAlignment {
-            operands,
-            ..
-        }) => {
-            let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
-            cpu.asserts.push(addr.extract(0, 0).eq(0))
-        }
         Instruction::VirtualAssertMulUNoOverflow(VirtualAssertMulUNoOverflow {
             operands, ..
         }) => {
@@ -384,12 +392,6 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             cpu.asserts.push(divisor.eq(0) | remainder.bvult(&divisor));
         }
 
-        Instruction::VirtualAssertWordAlignment(VirtualAssertWordAlignment {
-            operands, ..
-        }) => {
-            let addr = &cpu.x[operands.rs1 as usize] + operands.imm;
-            cpu.asserts.push(addr.extract(1, 0).eq(0))
-        }
         Instruction::VirtualNegateIf(VirtualNegateIf { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
@@ -473,12 +475,32 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let value = cpu.x[operands.rs2 as usize].clone();
             cpu.mem = cpu.mem.store(&addr, &value);
         }
-        Instruction::VirtualAlignAddr(VirtualAlignAddr { operands, .. }) => {
-            // (rs1 + imm) & !7: the containing doubleword address. The mask
-            // constant truncates to bv_bits, so reduced widths stay faithful.
-            let rs1 = cpu.x[operands.rs1 as usize].clone();
-            let imm = normalize_imm(operands.imm);
-            cpu.x[operands.rd as usize] = (rs1 + imm) & cpu.bv_u64(-8i64 as u64);
+        Instruction::VirtualLoadB(VirtualLoadB { operands, .. }) => {
+            let addr = floor_address(cpu, operands.rs1, operands.imm, 7);
+            cpu.x[operands.rd as usize] = cpu.mem.select(&addr).as_bv().unwrap();
+        }
+        Instruction::VirtualLoadH(VirtualLoadH { operands, .. }) => {
+            let addr = floor_address(cpu, operands.rs1, operands.imm, 6);
+            cpu.x[operands.rd as usize] = cpu.mem.select(&addr).as_bv().unwrap();
+        }
+        Instruction::VirtualLoadW(VirtualLoadW { operands, .. }) => {
+            let addr = floor_address(cpu, operands.rs1, operands.imm, 4);
+            cpu.x[operands.rd as usize] = cpu.mem.select(&addr).as_bv().unwrap();
+        }
+        Instruction::VirtualStoreB(VirtualStoreB { operands, .. }) => {
+            let addr = floor_address(cpu, operands.rs1, operands.imm, 7);
+            let value = cpu.x[operands.rs2 as usize].clone();
+            cpu.mem = cpu.mem.store(&addr, &value);
+        }
+        Instruction::VirtualStoreH(VirtualStoreH { operands, .. }) => {
+            let addr = floor_address(cpu, operands.rs1, operands.imm, 6);
+            let value = cpu.x[operands.rs2 as usize].clone();
+            cpu.mem = cpu.mem.store(&addr, &value);
+        }
+        Instruction::VirtualStoreW(VirtualStoreW { operands, .. }) => {
+            let addr = floor_address(cpu, operands.rs1, operands.imm, 4);
+            let value = cpu.x[operands.rs2 as usize].clone();
+            cpu.mem = cpu.mem.store(&addr, &value);
         }
         Instruction::VirtualWindowMaskW(VirtualWindowMaskW { operands, .. }) => {
             let ea = cpu.x[operands.rs1 as usize].clone() + normalize_imm(operands.imm);
@@ -506,7 +528,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         Instruction::VirtualShiftDataB(VirtualShiftDataB { operands, .. }) => {
             let byte_bits = (cpu.bv_bits / 8) as u64;
             let data = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((1u64 << byte_bits) - 1);
-            let ea = cpu.x[operands.rs2 as usize].clone();
+            let ea = cpu.x[operands.rs2 as usize].clone() + operands.imm;
             let offset = ea.extract(2, 0).zero_ext(cpu.bv_bits - 3);
             let shift = offset * cpu.bv_u64(byte_bits);
             cpu.x[operands.rd as usize] = data.bvshl(shift);
@@ -514,7 +536,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
         Instruction::VirtualShiftDataH(VirtualShiftDataH { operands, .. }) => {
             let half_bits = (cpu.bv_bits / 4) as u64;
             let data = cpu.x[operands.rs1 as usize].clone() & cpu.bv_u64((1u64 << half_bits) - 1);
-            let ea = cpu.x[operands.rs2 as usize].clone();
+            let ea = cpu.x[operands.rs2 as usize].clone() + operands.imm;
             let offset = ea.extract(2, 1).zero_ext(cpu.bv_bits - 2);
             let shift = offset * cpu.bv_u64(half_bits);
             cpu.x[operands.rd as usize] = data.bvshl(shift);
@@ -523,7 +545,7 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let word_bits = cpu.word_bits as u64;
             let data = cpu.x[operands.rs1 as usize].clone()
                 & cpu.word_ones().zero_ext(cpu.bv_bits - cpu.word_bits);
-            let ea = cpu.x[operands.rs2 as usize].clone();
+            let ea = cpu.x[operands.rs2 as usize].clone() + operands.imm;
             let offset = ea.extract(2, 2).zero_ext(cpu.bv_bits - 1);
             let shift = offset * cpu.bv_u64(word_bits);
             cpu.x[operands.rd as usize] = data.bvshl(shift);
@@ -635,6 +657,16 @@ fn symbolic_exec(instr: &Instruction, cpu: &mut SymbolicCpu) {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
             let rs2 = cpu.x[operands.rs2 as usize].clone();
             cpu.x[operands.rd as usize] = cpu.sign_extend(&rs1.bvxor(&rs2));
+        }
+        Instruction::OR(OR { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = cpu.sign_extend(&rs1.bvor(&rs2));
+        }
+        Instruction::SLT(SLT { operands, .. }) => {
+            let rs1 = cpu.x[operands.rs1 as usize].clone();
+            let rs2 = cpu.x[operands.rs2 as usize].clone();
+            cpu.x[operands.rd as usize] = rs1.bvslt(&rs2).ite(&cpu.bv_u64(1), &cpu.bv_zero());
         }
         Instruction::SLTU(SLTU { operands, .. }) => {
             let rs1 = cpu.x[operands.rs1 as usize].clone();
@@ -830,6 +862,17 @@ fn test_consistency(instr: &Instruction) {
     }
 }
 
+/// The RAM address a floor-addressed row records, `ea − (ea & offset_mask)`.
+/// Its alignment is pushed as an assumption: RAM RAF evaluation rejects a row
+/// whose address keeps a low bit, which is how a misaligned access is ruled
+/// out.
+fn floor_address(cpu: &mut SymbolicCpu, rs1: u8, imm: i64, offset_mask: u64) -> BV {
+    let ea = cpu.x[rs1 as usize].clone() + imm;
+    let address = ea.clone() - (ea & cpu.bv_u64(offset_mask));
+    cpu.asserts.push(address.extract(2, 0).eq(0));
+    address
+}
+
 /// The scaled sub-word load semantics: the `eighths`-byte lane of the
 /// containing doubleword at `rs1 + imm` (lanes are `bv_bits/8` wide so
 /// reduced solver widths stay faithful), sign- or zero-extended.
@@ -850,8 +893,8 @@ fn lane_load(cpu: &SymbolicCpu, rs1: u8, imm: i64, eighths: u32, signed: bool) -
 }
 
 /// The scaled sub-word store semantics: replace the `eighths`-byte lane of
-/// the containing doubleword at `rs1 + imm` with the low lane of `rs2`.
-fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, rs2: u8, imm: i64, eighths: u32) {
+/// the containing doubleword at `rs1 + imm` with the low lane of `data`.
+fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, data: BV, imm: i64, eighths: u32) {
     let ea = cpu.x[rs1 as usize].clone() + imm;
     let aligned = ea.clone() & cpu.bv_u64(-8i64 as u64);
     let old = cpu.mem.select(&aligned).as_bv().unwrap();
@@ -861,7 +904,7 @@ fn lane_store(cpu: &mut SymbolicCpu, rs1: u8, rs2: u8, imm: i64, eighths: u32) {
     let offset = ea & cpu.bv_u64(8 - eighths as u64);
     let shift = offset * cpu.bv_u64(byte_bits as u64);
     let mask = lane_ones.clone().bvshl(&shift);
-    let data = (cpu.x[rs2 as usize].clone() & lane_ones).bvshl(&shift);
+    let data = (data & lane_ones).bvshl(&shift);
     let updated = (old & mask.bvnot()) | data;
     cpu.mem = cpu.mem.store(&aligned, &updated);
 }
@@ -1099,31 +1142,71 @@ test_sequence!(
     }
 );
 test_sequence!(SB, FormatS, |instr: &SB, cpu| {
-    lane_store(
-        cpu,
-        instr.operands.rs1,
-        instr.operands.rs2,
-        instr.operands.imm,
-        1,
-    );
+    let data = cpu.x[instr.operands.rs2 as usize].clone();
+    lane_store(cpu, instr.operands.rs1, data, instr.operands.imm, 1);
 });
 test_sequence!(SH, FormatS, |instr: &SH, cpu| {
-    lane_store(
-        cpu,
-        instr.operands.rs1,
-        instr.operands.rs2,
-        instr.operands.imm,
-        2,
-    );
+    let data = cpu.x[instr.operands.rs2 as usize].clone();
+    lane_store(cpu, instr.operands.rs1, data, instr.operands.imm, 2);
 });
 test_sequence!(SW, FormatS, |instr: &SW, cpu| {
-    lane_store(
-        cpu,
-        instr.operands.rs1,
-        instr.operands.rs2,
-        instr.operands.imm,
-        4,
-    );
+    let data = cpu.x[instr.operands.rs2 as usize].clone();
+    lane_store(cpu, instr.operands.rs1, data, instr.operands.imm, 4);
+});
+
+/// The word AMO semantics: the word lane at `rs1` receives the low word of
+/// `update(old, rs2)` and `rd` the old word sign-extended, both computed from
+/// the initial state.
+fn amo_word(
+    cpu: &mut SymbolicCpu,
+    operands: FormatAMO,
+    update: impl FnOnce(&SymbolicCpu, BV, BV) -> BV,
+) {
+    let old = lane_load(cpu, operands.rs1, 0, 4, true);
+    let rs2 = cpu.x[operands.rs2 as usize].clone();
+    let new = update(cpu, old.clone(), rs2);
+    lane_store(cpu, operands.rs1, new, 0, 4);
+    cpu.x[operands.rd as usize] = old;
+}
+
+test_sequence!(AMOADDW, FormatAMO, |instr: &AMOADDW, cpu| {
+    amo_word(cpu, instr.operands, |_, old, rs2| old + rs2);
+});
+test_sequence!(AMOANDW, FormatAMO, |instr: &AMOANDW, cpu| {
+    amo_word(cpu, instr.operands, |_, old, rs2| old & rs2);
+});
+test_sequence!(AMOORW, FormatAMO, |instr: &AMOORW, cpu| {
+    amo_word(cpu, instr.operands, |_, old, rs2| old | rs2);
+});
+test_sequence!(AMOXORW, FormatAMO, |instr: &AMOXORW, cpu| {
+    amo_word(cpu, instr.operands, |_, old, rs2| old ^ rs2);
+});
+test_sequence!(AMOSWAPW, FormatAMO, |instr: &AMOSWAPW, cpu| {
+    amo_word(cpu, instr.operands, |_, _, rs2| rs2);
+});
+test_sequence!(AMOMINW, FormatAMO, |instr: &AMOMINW, cpu| {
+    amo_word(cpu, instr.operands, |cpu, old, rs2| {
+        let (o, r) = (cpu.word_extract(&old), cpu.word_extract(&rs2));
+        r.bvslt(&o).ite(&rs2, &old)
+    });
+});
+test_sequence!(AMOMAXW, FormatAMO, |instr: &AMOMAXW, cpu| {
+    amo_word(cpu, instr.operands, |cpu, old, rs2| {
+        let (o, r) = (cpu.word_extract(&old), cpu.word_extract(&rs2));
+        o.bvslt(&r).ite(&rs2, &old)
+    });
+});
+test_sequence!(AMOMINUW, FormatAMO, |instr: &AMOMINUW, cpu| {
+    amo_word(cpu, instr.operands, |cpu, old, rs2| {
+        let (o, r) = (cpu.word_extract(&old), cpu.word_extract(&rs2));
+        r.bvult(&o).ite(&rs2, &old)
+    });
+});
+test_sequence!(AMOMAXUW, FormatAMO, |instr: &AMOMAXUW, cpu| {
+    amo_word(cpu, instr.operands, |cpu, old, rs2| {
+        let (o, r) = (cpu.word_extract(&old), cpu.word_extract(&rs2));
+        o.bvult(&r).ite(&rs2, &old)
+    });
 });
 
 // Negative immediates exercise the sign-extension path through the
@@ -1169,13 +1252,8 @@ fn test_SH_negative_imm_correctness() {
     };
     test_correctness(
         |instr: &SH, cpu| {
-            lane_store(
-                cpu,
-                instr.operands.rs1,
-                instr.operands.rs2,
-                instr.operands.imm,
-                2,
-            );
+            let data = cpu.x[instr.operands.rs2 as usize].clone();
+            lane_store(cpu, instr.operands.rs1, data, instr.operands.imm, 2);
         },
         &instr,
     );

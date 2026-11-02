@@ -21,6 +21,9 @@
 //! [`CenteredIntegerDomain`] and the uni-skip provers reject domains whose
 //! integer points collide in the field, before transcript absorption. Thus
 //! binary fields support integer-domain sizes 1 and 2, but reject larger sizes.
+//! With the `binary` feature, `F8Domain` supports sizes 1 through 256,
+//! including sizes above 2, for full clear round verification. The uni-skip
+//! prover entry points remain integer-only.
 //! The committed recorder and R1CS lowering are not supported over binary fields.
 //!
 //! # Crate structure
@@ -64,10 +67,8 @@
 //! ## Per-round proof types
 //! - [`RoundMessage`] — degree bound and transcript absorption.
 //! - [`ClearRound<F>`] — clear round polynomial evaluation and well-formedness.
-//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — raw, unlabelled absorb.
-//! - [`LabeledRoundPoly`] — borrowed wrapper adding a `LabelWithCount` prefix.
-//! - [`CompressedLabeledRoundPoly`] — borrowed wrapper using the compressed
-//!   wire format (omits the linear coefficient).
+//! - [`UnivariatePoly<F>`](jolt_poly::UnivariatePoly) — absorbs a `u64` count
+//!   word, then its coefficients.
 //!
 //! # Dependency position
 //!
@@ -81,10 +82,9 @@
 //!
 //! Polynomial and clear sumcheck arithmetic is generic over
 //! [`Field`](jolt_field::Field). Stock clear transcript adapters additionally
-//! require [`CanonicalBytes`] where field values are absorbed, each labeled
-//! vector as one transcript message. Optimized Jolt kernels and commitment
-//! backends retain their stronger capability bounds at their own integration
-//! points.
+//! require [`Encoding`](jolt_transcript::Encoding) where
+//! field values are absorbed. Optimized Jolt kernels and commitment backends
+//! retain their stronger capability bounds at their own integration points.
 //!
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -103,15 +103,14 @@
     clippy::wildcard_enum_match_arm
 )]
 
-use jolt_field::CanonicalBytes;
-use jolt_transcript::{AppendToTranscript, Transcript};
-
 pub mod batch;
 pub mod claim;
 pub mod committed;
 pub mod domain;
 pub mod error;
+mod pow;
 pub mod proof;
+#[cfg(feature = "prover")]
 pub mod prover;
 #[cfg(feature = "r1cs")]
 pub mod r1cs;
@@ -119,68 +118,31 @@ pub mod recorder;
 pub mod round_proof;
 pub mod verifier;
 
-#[cfg(all(test, feature = "committed"))]
+#[cfg(all(test, feature = "committed", feature = "prover"))]
 mod round_scheduler_tests;
-#[cfg(all(test, feature = "committed"))]
+#[cfg(all(test, feature = "committed", feature = "prover"))]
 mod tests;
-
-/// Transcript label used for ordinary sumcheck round polynomials.
-pub const SUMCHECK_ROUND_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_poly";
-/// Transcript label used for univariate-skip round polynomials.
-pub const UNISKIP_ROUND_TRANSCRIPT_LABEL: &[u8] = b"uniskip_poly";
-/// Transcript label used when a sumcheck claim scalar is absorbed before batching.
-pub const SUMCHECK_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"sumcheck_claim";
-/// Transcript label used when a produced opening claim is absorbed in the clear.
-pub const OPENING_CLAIM_TRANSCRIPT_LABEL: &[u8] = b"opening_claim";
-
-/// Absorbs produced opening claims in their canonical order as one message
-/// under [`OPENING_CLAIM_TRANSCRIPT_LABEL`], shared by the prover and verifier
-/// for every clear relation's output claims; an empty claim list absorbs
-/// nothing. Message boundaries are part of the transcript format. The uni-skip
-/// output claim, a lone scalar, is absorbed by itself under the same label.
-pub fn append_opening_claims<F, T>(transcript: &mut T, values: &[F])
-where
-    F: CanonicalBytes,
-    T: Transcript,
-{
-    if !values.is_empty() {
-        transcript.append_scalars(OPENING_CLAIM_TRANSCRIPT_LABEL, values);
-    }
-}
-
-/// Absorbs one round polynomial's transmitted coefficients as one message
-/// under `label`. Shared by the round-message encoders and the clear verifier.
-pub fn append_round_coefficients<F, T>(transcript: &mut T, label: &'static [u8], coefficients: &[F])
-where
-    F: CanonicalBytes,
-    T: Transcript,
-{
-    transcript.append_scalars(label, coefficients);
-}
-
-/// Absorbs a sumcheck claim scalar using Jolt's canonical transcript label.
-pub fn append_sumcheck_claim<A, T>(transcript: &mut T, claim: &A)
-where
-    A: AppendToTranscript,
-    T: Transcript,
-{
-    transcript.append_labeled(SUMCHECK_CLAIM_TRANSCRIPT_LABEL, claim);
-}
 
 pub use batch::{BatchMember, BatchPrelude};
 pub use claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub use committed::CommittedSumcheckBuilder;
 pub use committed::{
     BatchedCommittedSumcheckConsistency, CommittedOutputClaims, CommittedRound,
     CommittedRoundWitness, CommittedSumcheckConsistency, CommittedSumcheckProof,
     CommittedSumcheckWitness, VerifiedCommittedRound,
 };
+#[cfg(feature = "binary")]
+pub use domain::F8Domain;
 pub use domain::{BooleanHypercube, CenteredIntegerDomain, SumcheckDomain, SumcheckDomainSpec};
 pub use error::SumcheckError;
+#[cfg(feature = "prover")]
+pub use pow::grind_round;
+pub use pow::round_pow_bits;
 pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub use prover::prove_uniskip_committed;
+#[cfg(feature = "prover")]
 pub use prover::{
     prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
     ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
@@ -191,8 +153,8 @@ pub use r1cs::{
     append_sumcheck_r1cs_constraints_for_domain, SumcheckR1csError, SumcheckR1csLayout,
     SumcheckR1csRound, SumcheckR1csRoundLayout,
 };
-#[cfg(feature = "committed")]
+#[cfg(all(feature = "committed", feature = "prover"))]
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
-pub use round_proof::{ClearRound, CompressedLabeledRoundPoly, LabeledRoundPoly, RoundMessage};
+pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
 pub use verifier::SumcheckVerifier;

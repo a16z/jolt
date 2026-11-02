@@ -23,14 +23,10 @@
 //! hint-anchored round messages a divergent witness surfaces at the driver's
 //! final-claim check rather than a per-round check.
 //!
-//! Supports cycle-first and full address-first binding. Address-first starts
-//! with a dense `T`-element eq table alongside the retained Gruen split-eq
-//! tables, plus one `AddressMajorEntry<F>` per RAM access (four field elements
-//! and two `u32` indices; 136 bytes with BN254 `Fr`). This state remains during
-//! the `log_K` address rounds. At the cycle handoff, the dense eq table is
-//! dropped and the matrix becomes two `T`-element cycle tables (`ra`, `val`);
-//! Gruen factoring then handles the cycle rounds. Address-first still uses
-//! O(T + K) storage, but with a larger peak constant than cycle-first.
+//! Supports cycle-first and full address-first binding. Address-first keeps
+//! cycle equality weights only through the last RAM access, alongside the sparse matrix.
+//! At the cycle handoff, RAM selectors have a zero suffix and values have
+//! a constant suffix equal to the final checkpoint; both remain implicit.
 //! Mixed cycle/address schedules are explicitly unsupported.
 
 use jolt_claims::protocols::jolt::geometry::ram::ram_inc;
@@ -38,7 +34,7 @@ use jolt_claims::protocols::jolt::{
     JoltDerivedId, JoltPolynomialId, JoltVirtualPolynomial, RamReadWritePublic,
 };
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, Polynomial, TensorEqTable, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputClaims,
@@ -49,13 +45,14 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::{
 };
 use jolt_witness::JoltWitnessPlane;
 
+use super::prefix_product::PrefixColumn;
 use super::ram_trace::RamAccessColumns;
 use super::read_write::ReadWriteOrder;
 use super::rw_matrix::{
     round0_bind, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
     AddressMajorMatrix, CycleMajorMatrix,
 };
-use super::support::{pin_derived_term_if_derived, GruenRoundMessage};
+use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
 use super::OptimizedBackend;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -65,12 +62,12 @@ use crate::{
 enum Phase<F: JoltField> {
     AddressFirst {
         matrix: AddressMajorMatrix<F>,
-        eq: Polynomial<F>,
+        eq: Vec<F>,
         gruen: GruenSplitEqPolynomial<F>,
     },
     DenseCycle {
-        ra: Polynomial<F>,
-        val: Polynomial<F>,
+        ra: PrefixColumn<F>,
+        val: PrefixColumn<F>,
         gruen: GruenSplitEqPolynomial<F>,
     },
     Round0 {
@@ -83,10 +80,10 @@ enum Phase<F: JoltField> {
     },
     Address {
         matrix: AddressMajorMatrix<F>,
-        merged_eq: Polynomial<F>,
+        merged_eq: Vec<F>,
     },
     Done {
-        merged_eq: Polynomial<F>,
+        merged_eq: Vec<F>,
         #[cfg_attr(feature = "allocative", allocative(skip))]
         final_ra: F,
         #[cfg_attr(feature = "allocative", allocative(skip))]
@@ -97,7 +94,7 @@ enum Phase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct RamReadWriteKernel<F: JoltField> {
     phase: Option<Phase<F>>,
-    inc: Polynomial<F>,
+    inc: PrefixColumn<F>,
     val_init: Polynomial<F>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     gamma: F,
@@ -146,8 +143,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 matrix.bind(r, &mut self.val_init);
                 if round + 1 == self.log_k {
                     crate::mem::drop_in_background_thread(eq);
-                    let (ra, val) =
-                        matrix.into_cycle_tables(1usize << self.log_t, self.val_init.evals()[0]);
+                    let (ra, val) = matrix.into_cycle_tables(self.val_init.evals()[0]);
                     Phase::DenseCycle { ra, val, gruen }
                 } else {
                     Phase::AddressFirst { matrix, eq, gruen }
@@ -158,15 +154,15 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 mut val,
                 mut gruen,
             } => {
-                let _ = ra.bind_low_to_high_in_place(r);
-                let _ = val.bind_low_to_high_in_place(r);
-                let _ = self.inc.bind_low_to_high_in_place(r);
+                let _ = ra.bind(r);
+                let _ = val.bind(r);
+                let _ = self.inc.bind(r);
                 gruen.bind(r);
                 if round + 1 == self.log_t + self.log_k {
                     Phase::Done {
-                        merged_eq: gruen.merge(),
-                        final_ra: ra.evals()[0],
-                        final_val: val.evals()[0],
+                        merged_eq: vec![gruen.current_scalar()],
+                        final_ra: ra.value(0),
+                        final_val: val.value(0),
                     }
                 } else {
                     Phase::DenseCycle { ra, val, gruen }
@@ -185,10 +181,10 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         round: usize,
     ) -> Phase<F> {
         gruen.bind(r);
-        let _ = self.inc.bind_low_to_high_in_place(r);
+        let _ = self.inc.bind(r);
         let phase = if round + 1 == self.log_t {
             let matrix = matrix.into_address_major();
-            let merged_eq = gruen.merge();
+            let merged_eq = vec![gruen.current_scalar()];
             crate::mem::drop_in_background_thread(gruen);
             if self.log_k == 0 {
                 self.finish_address(matrix, merged_eq)
@@ -204,7 +200,7 @@ impl<F: JoltField> RamReadWriteKernel<F> {
         phase
     }
 
-    fn finish_address(&self, matrix: AddressMajorMatrix<F>, merged_eq: Polynomial<F>) -> Phase<F> {
+    fn finish_address(&self, matrix: AddressMajorMatrix<F>, merged_eq: Vec<F>) -> Phase<F> {
         let (final_ra, final_val) = matrix.final_values(&self.val_init);
         Phase::Done {
             merged_eq,
@@ -249,12 +245,13 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 )
             }
             Some(Phase::DenseCycle { ra, val, gruen }) => {
-                let quadratic = gruen.par_fold_out_in(
+                let quadratic = gruen.par_fold_out_in_prefix(
+                    ra.values.len().div_ceil(2),
                     || [F::zero(); 2],
                     |acc, row, _x_in, e_in| {
-                        let pair = |table: &Polynomial<F>| {
-                            let lo = table.evals()[2 * row];
-                            [lo, table.evals()[2 * row + 1] - lo]
+                        let pair = |table: &PrefixColumn<F>| {
+                            let (lo, hi) = table.pair(row);
+                            [lo, hi - lo]
                         };
                         let ra = pair(ra);
                         let val = pair(val);
@@ -282,11 +279,11 @@ impl<F: JoltField> RamReadWriteKernel<F> {
                 }
                 Some(Phase::Cycle { matrix, .. }) => matrix.q_at_one(weight, &self.inc, self.gamma),
                 Some(Phase::DenseCycle { ra, val, .. }) => {
-                    (0..ra.evals().len() / 2).fold(F::zero(), |sum, pair| {
+                    (0..ra.values.len().div_ceil(2)).fold(F::zero(), |sum, pair| {
                         let row = 2 * pair + 1;
                         sum + weight(pair)
-                            * ra.evals()[row]
-                            * val_slope_term(val.evals()[row], self.inc.evals()[row], self.gamma)
+                            * ra.value(row)
+                            * val_slope_term(val.value(row), self.inc.value(row), self.gamma)
                     })
                 }
                 _ => unreachable!("cycle phase was checked above"),
@@ -358,7 +355,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
         Ok(RamReadWriteOutputClaims {
             val: *final_val,
             ra: *final_ra,
-            inc: self.inc.evals()[0],
+            inc: self.inc.value(0),
         })
     }
 
@@ -384,7 +381,7 @@ impl<F: JoltField> SumcheckKernel<F> for RamReadWriteKernel<F> {
             input_points,
             output_points,
             challenges,
-            merged_eq.evals()[0],
+            merged_eq[0],
         )
     }
 }
@@ -418,11 +415,15 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
         let columns = RamAccessColumns::collect_full(session, witness, log_t)?;
         super::ram_trace::validate_addresses(&columns.addresses, 1usize << log_k)?;
 
-        let inc = Polynomial::new(witness.oracle_table(ram_inc().polynomial_id())?);
+        let inc_rows = witness.shape(ram_inc().polynomial_id())?.rows();
+        let inc = PrefixColumn {
+            values: map_indices(columns.value_prefix_len(), |cycle| columns.increment(cycle)),
+            tail: [F::zero(); 2],
+        };
         let val_final = witness.oracle_table(JoltPolynomialId::Virtual(
             JoltVirtualPolynomial::RamValFinal,
         ))?;
-        if inc.len() != 1usize << log_t || val_final.len() != 1usize << log_k {
+        if inc_rows != 1usize << log_t || val_final.len() != 1usize << log_k {
             return Err(KernelError::InvariantViolation {
                 reason: "RAM read-write witness tables disagree with the relation geometry",
             });
@@ -436,7 +437,10 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
                 let matrix = AddressMajorMatrix::from_columns(&columns);
                 Phase::AddressFirst {
                     matrix,
-                    eq: gruen.merge(),
+                    eq: {
+                        let eq = TensorEqTable::new(tau_low);
+                        map_indices(columns.addresses.prefix_len(), |row| eq.evaluate_index(row))
+                    },
                     gruen,
                 }
             }

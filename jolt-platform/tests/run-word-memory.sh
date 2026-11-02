@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Linux rental only. The test executes the same assembly that the guest links.
+# Linux only. The test executes the same assembly that the guest links.
 if [[ "$(uname -s)" != Linux ]]; then
     echo "word-memory tests require the Linux validation box" >&2
     exit 2

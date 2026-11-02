@@ -371,15 +371,22 @@ impl Observation {
         })
     }
 
-    /// Which RAM access a row records is a static property of its kind: only
-    /// `Ld` and `Sd` touch RAM in final bytecode.
+    /// Which RAM access a row records is a static property of its kind: the
+    /// `Load`/`Store` circuit flag, which `JoltTraceRow::new` checks against
+    /// the access.
     fn ram_access(&self, kind: JoltInstructionKind) -> RamAccess {
         match kind {
-            JoltInstructionKind::LD => RamAccess::Read(RamRead {
+            JoltInstructionKind::LD
+            | JoltInstructionKind::VirtualLoadB
+            | JoltInstructionKind::VirtualLoadH
+            | JoltInstructionKind::VirtualLoadW => RamAccess::Read(RamRead {
                 address: self.ram_address,
                 value: self.ram_pre,
             }),
-            JoltInstructionKind::SD => RamAccess::Write(RamWrite {
+            JoltInstructionKind::SD
+            | JoltInstructionKind::VirtualStoreB
+            | JoltInstructionKind::VirtualStoreH
+            | JoltInstructionKind::VirtualStoreW => RamAccess::Write(RamWrite {
                 address: self.ram_address,
                 pre_value: self.ram_pre,
                 post_value: self.ram_post,
@@ -685,7 +692,9 @@ impl ChunkedExecutionBackend for X86TracerBackend {
 #[expect(clippy::expect_used)]
 mod tests {
     use super::*;
-    use jolt_riscv::{NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES};
+    use jolt_riscv::{
+        Flags, JoltInstruction, NormalizedOperands, RV64IMAC_JOLT, RV64IMAC_JOLT_ALL_INLINES,
+    };
 
     fn program_with_profile(profile: jolt_riscv::JoltInstructionProfile) -> JoltProgram {
         let terminal = JoltInstructionRow {
@@ -709,6 +718,27 @@ mod tests {
             0x8000_1000,
             profile,
         )
+    }
+
+    /// `JoltTraceRow::new` rejects a row whose RAM access disagrees with its
+    /// `Load`/`Store` circuit flag, so the kind list must match the flags.
+    #[test]
+    fn ram_access_matches_memory_circuit_flags() {
+        let observation = Observation::default();
+        for &kind in JoltInstructionKind::ALL {
+            let flags = JoltInstruction::from(JoltInstructionRow {
+                instruction_kind: kind,
+                ..JoltInstructionRow::default()
+            })
+            .circuit_flags();
+            let expected = (flags[CircuitFlags::Load], flags[CircuitFlags::Store]);
+            let actual = match observation.ram_access(kind) {
+                RamAccess::Read(_) => (true, false),
+                RamAccess::Write(_) => (false, true),
+                RamAccess::NoOp => (false, false),
+            };
+            assert_eq!(actual, expected, "{kind:?}");
+        }
     }
 
     /// Same ELF under a different instruction profile expands to different

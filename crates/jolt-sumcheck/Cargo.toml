@@ -7,6 +7,7 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 
 [features]
 default = []
+binary = ["jolt-poly/binary", "jolt-field/binary"]
 parallel = [
   "jolt-field/parallel",
   "jolt-poly/parallel",
@@ -16,6 +17,10 @@ transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
 committed = ["dep:jolt-crypto", "dep:rand_core"]
+# The prove side: the round loop, the recorders' rounds and the per-round
+# proof-of-work search, which copies the sponge state. Verifier builds leave it
+# off.
+prover = ["jolt-transcript/prover-grinding"]
 r1cs = ["dep:jolt-r1cs"]
 
 [lints]
@@ -38,15 +43,31 @@ jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-field = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
+  "solinas",
+  "binary",
   "transcript-blake2b",
   "transcript-keccak",
+  "prover-grinding",
+  "test-utils",
 ] }
-num-traits = { workspace = true }
-rand_core = { workspace = true }
+rand_core = { workspace = true, features = ["getrandom"] }
 
 [[test]]
 name = "committed"
 required-features = ["committed"]
 
+[[test]]
+name = "binary_fields"
+required-features = ["prover"]
+
+[[test]]
+name = "extension_fields"
+required-features = ["prover"]
+
+[[test]]
+name = "f8_domain"
+required-features = ["binary", "prover"]
+
 [[example]]
-name = "clear_custom_transcript"
+name = "clear_sumcheck"
+required-features = ["prover"]

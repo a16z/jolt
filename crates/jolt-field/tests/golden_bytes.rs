@@ -1,8 +1,7 @@
 //! Golden byte-compatibility fixtures.
 //!
 //! These pin the exact wire (bincode) and transcript (`to_bytes_le`)
-//! encodings — and the BN254 legacy challenge derivations — to the byte
-//! streams produced by the original `jolt-field` crate, guarding the hard
+//! encodings to the byte streams produced by the original `jolt-field` crate, guarding the hard
 //! invariant that replacing that crate does not change proof bytes.
 //!
 //! GENERATED from jolt-field at commit
@@ -15,9 +14,8 @@
 //! and splice `target/tmp/golden_fixtures.txt` into the const blocks below.
 //!
 //! Row format: `(input hex, expected hex)` where the element is
-//! `from_bytes_le_reduced(input)` (prime fields) or
-//! `from_challenge_bytes` / `from_scalar_challenge_bytes(input)`
-//! (challenge fixtures), and `expected` is the canonical LE encoding.
+//! `from_bytes_le_reduced(input)` and `expected` is the canonical LE
+//! encoding.
 //! Extension rows are `(canonical coefficients, bincode wire hex)`.
 
 // The whole file is backend fixture data; without a backend there is nothing
@@ -180,162 +178,10 @@ const FIX_BN254_FQ: &[(&str, &str)] = &[
         "dfed64a254d67c2dd024df9ea19fc8b1c9b09f6b34135a653ef1654596ea1006",
     ),
 ];
-#[cfg(feature = "bn254")]
-const FIX_BN254_FR_CHALLENGE: &[(&str, &str)] = &[
-    (
-        "00000000000000000000000000000000",
-        "0000000000000000000000000000000000000000000000000000000000000000",
-    ),
-    (
-        "ffffffffffffffffffffffffffffffff",
-        "922306fba4417702705b58c72aed7f2e72a8da6190063056ab362c65cdc32617",
-    ),
-    (
-        "dae623d2aa29f41845b9a32a1d819bb6",
-        "3b6bccb3eae3ebb5d9133924500858a3fac6c42854d0d35ae53b1e8f9f71200e",
-    ),
-    (
-        "5e7ca3106f280413e0638df8a0029a4d",
-        "7f37873e17701c776900992bbf4d097271100afd8855cf1859fe2dc56226e00b",
-    ),
-    (
-        "7c41df5c178ab67358fb5375991fe1ba",
-        "e77a83d4edd8d4a65ada9fd99b800bf3afba689fbd890e2c3dc10db8948c790f",
-    ),
-    (
-        "909e7d5a185156624bd8be7123e5d34b",
-        "3c1f49d192ebb7e7f8a0be53b8e30491a1a98c2e45558f3b7cd443d88538c814",
-    ),
-    (
-        "f0496a0db0d44aecb71a5457bac1cd1f",
-        "2be6dfd869df0b3ae480a5ad51a4fc21150cb9ffca8faca48897f93285b78b22",
-    ),
-    (
-        "004ed4e1b8a4ad0fda75893f75f9e34b",
-        "f8c2174ea5e97eb646b7b0fd9a6a047dca24236aa1a61e02e964d8aaa051c926",
-    ),
-];
-#[cfg(feature = "bn254")]
-const FIX_BN254_FR_SCALAR_CHALLENGE: &[(&str, &str)] = &[
-    (
-        "0000000000000000000000000000000000000000000000000000000000000000",
-        "0000000000000000000000000000000000000000000000000000000000000000",
-    ),
-    (
-        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-        "faffff4f1c3496ac29cd609f9576fc362e4679786fa36e662fdf079ac1770a0e",
-    ),
-    (
-        "dae623d2aa29f41845b9a32a1d819bb65e7ca3106f280413e0638df8a0029a4d",
-        "499a02e0a8b7dbd0ce414288ee01adbd413a7c17508c78647173632507ea5419",
-    ),
-    (
-        "7c41df5c178ab67358fb5375991fe1ba909e7d5a185156624bd8be7123e5d34b",
-        "49d3e54349d314c43f75de24c9ac364000311d9608c85ae81f7627557642791b",
-    ),
-    (
-        "f0496a0db0d44aecb71a5457bac1cd1f004ed4e1b8a4ad0fda75893f75f9e34b",
-        "47e3f9b5efb2edcacaeabed1bf337f5faa6bbcb47d3dd9d545ca0d2c4230b82e",
-    ),
-    (
-        "a3697a40313c6c012a94dd33469644182c96bcbf573df48ae896963ea3675f9e",
-        "9b5f67d382b5f01cd7a211eae503fbb3003b12c20f0ca401848ba78de78e3c12",
-    ),
-    (
-        "cd49341848ecb614e2aee4b81d74bc679583ce92d4db5b516e29348f760fc986",
-        "82c90fb63f5ea15e0c99f5ed702db4f4f25a6f17decd6d016e3526c44cfab70b",
-    ),
-    (
-        "4388d11302c44ae8b30ca39efc96d6cf965cba921500e6806331d6ea881d2dcc",
-        "cb2d1d9856e14f1fef75479b49d2286e727e157be85dbcfabeaa9221a0822413",
-    ),
-];
-#[cfg(feature = "bn254")]
-const FIX_BN254_FQ_CHALLENGE: &[(&str, &str)] = &[
-    (
-        "00000000000000000000000000000000",
-        "0000000000000000000000000000000000000000000000000000000000000000",
-    ),
-    (
-        "ffffffffffffffffffffffffffffffff",
-        "00000000000000000000000000000000ffffffffffffffffffffffffffffff1f",
-    ),
-    (
-        "dae623d2aa29f41845b9a32a1d819bb6",
-        "00000000000000000000000000000000dae623d2aa29f41845b9a32a1d819b16",
-    ),
-    (
-        "5e7ca3106f280413e0638df8a0029a4d",
-        "000000000000000000000000000000005e7ca3106f280413e0638df8a0029a0d",
-    ),
-    (
-        "7c41df5c178ab67358fb5375991fe1ba",
-        "000000000000000000000000000000007c41df5c178ab67358fb5375991fe11a",
-    ),
-    (
-        "909e7d5a185156624bd8be7123e5d34b",
-        "00000000000000000000000000000000909e7d5a185156624bd8be7123e5d30b",
-    ),
-    (
-        "f0496a0db0d44aecb71a5457bac1cd1f",
-        "00000000000000000000000000000000f0496a0db0d44aecb71a5457bac1cd1f",
-    ),
-    (
-        "004ed4e1b8a4ad0fda75893f75f9e34b",
-        "00000000000000000000000000000000004ed4e1b8a4ad0fda75893f75f9e30b",
-    ),
-];
-#[cfg(feature = "bn254")]
-const FIX_BN254_FQ_SCALAR_CHALLENGE: &[(&str, &str)] = &[
-    (
-        "0000000000000000000000000000000000000000000000000000000000000000",
-        "0000000000000000000000000000000000000000000000000000000000000000",
-    ),
-    (
-        "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-        "9c0d8fc58d435dd33d0bc7f528eb780a2c4679786fa36e662fdf079ac1770a0e",
-    ),
-    (
-        "dae623d2aa29f41845b9a32a1d819bb65e7ca3106f280413e0638df8a0029a4d",
-        "31a50e3e9d5de1efded960cdcaf87600403a7c17508c78647173632507ea5419",
-    ),
-    (
-        "7c41df5c178ab67358fb5375991fe1ba909e7d5a185156624bd8be7123e5d34b",
-        "bdd8eb7243a697d347c16d4737a89b61ff301d9608c85ae81f7627557642791b",
-    ),
-    (
-        "f0496a0db0d44aecb71a5457bac1cd1f004ed4e1b8a4ad0fda75893f75f9e34b",
-        "2fee0514e458f3e9da82dd169c2a49a2a86bbcb47d3dd9d545ca0d2c4230b82e",
-    ),
-    (
-        "a3697a40313c6c012a94dd33469644182c96bcbf573df48ae896963ea3675f9e",
-        "c967f019faf13434e394e81d0b7d1266ff3a12c20f0ca401848ba78de78e3c12",
-    ),
-    (
-        "cd49341848ecb614e2aee4b81d74bc679583ce92d4db5b516e29348f760fc986",
-        "6ad41b143404a77d1c3114334d247e37f15a6f17decd6d016e3526c44cfab70b",
-    ),
-    (
-        "4388d11302c44ae8b30ca39efc96d6cf965cba921500e6806331d6ea881d2dcc",
-        "8530a0afd34a1127f31b8fac0050dbfe717e157be85dbcfabeaa9221a0822413",
-    ),
-];
 
 #[cfg(feature = "bn254")]
 mod bn254 {
     use super::*;
-
-    fn check_challenge_rows<F: CanonicalEncoding>(rows: &[(&str, &str)], scalar: bool) {
-        for (input, expected) in rows {
-            let (input, expected) = (unhex(input), unhex(expected));
-            let e = if scalar {
-                F::from_scalar_challenge_bytes(&input)
-            } else {
-                F::from_challenge_bytes(&input)
-            };
-            assert_eq!(e.to_bytes_le_vec(), expected, "challenge bytes diverge");
-        }
-    }
 
     #[test]
     fn fr_bytes_match_fixtures() {
@@ -345,18 +191,6 @@ mod bn254 {
     #[test]
     fn fq_bytes_match_fixtures() {
         check_prime_rows::<two::Fq>(FIX_BN254_FQ);
-    }
-
-    #[test]
-    fn fr_challenges_match_fixtures() {
-        check_challenge_rows::<two::Fr>(FIX_BN254_FR_CHALLENGE, false);
-        check_challenge_rows::<two::Fr>(FIX_BN254_FR_SCALAR_CHALLENGE, true);
-    }
-
-    #[test]
-    fn fq_challenges_match_fixtures() {
-        check_challenge_rows::<two::Fq>(FIX_BN254_FQ_CHALLENGE, false);
-        check_challenge_rows::<two::Fq>(FIX_BN254_FQ_SCALAR_CHALLENGE, true);
     }
 }
 

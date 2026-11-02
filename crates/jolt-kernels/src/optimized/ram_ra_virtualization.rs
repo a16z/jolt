@@ -34,7 +34,7 @@ use jolt_verifier::stages::stage6b::ram_ra_virtualization::RamRaVirtualization;
 use jolt_witness::JoltWitnessPlane;
 
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
-use super::ram_trace::{SharedRamAddresses, NO_ACCESS};
+use super::ram_trace::{RamAddresses, SharedRamAddresses, NO_ACCESS};
 use super::support::{
     accumulate_product_grid, pin_derived_term, product_grid_scratch_len, GruenRoundMessage,
     RoundProgress, MAX_GRID_FACTORS,
@@ -111,12 +111,16 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct RamAddressChunks {
-    addresses: Arc<Vec<u32>>,
+    addresses: Arc<RamAddresses>,
     num_committed: usize,
     committed_chunk_bits: usize,
 }
 
 impl ChunkIndexSource for RamAddressChunks {
+    fn constant_suffix_start(&self) -> usize {
+        self.addresses.prefix_len()
+    }
+
     fn num_columns(&self) -> usize {
         self.num_committed
     }
@@ -166,18 +170,40 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
             return self.message_few_factors(round, previous_claim);
         }
         let folded_ra = &self.folded_ra;
+        let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
+        // A common zero endpoint makes the product a scalar times t^N or
+        // (1-t)^N. Accumulate the scalar before expanding this fixed grid.
+        let zero_side_grids: [Vec<F>; 2] = std::array::from_fn(|side| {
+            let mut grid: Vec<F> = (1..num_committed)
+                .map(|point| {
+                    let point = F::from_u64(point as u64);
+                    let value = if side == 0 { point } else { F::one() - point };
+                    (0..num_committed).fold(F::one(), |power, _| power * value)
+                })
+                .collect();
+            let leading = if side == 1 && !num_committed.is_multiple_of(2) {
+                -F::one()
+            } else {
+                F::one()
+            };
+            grid.push(leading);
+            grid
+        });
 
         struct Scratch<F: JoltField> {
             lanes: Vec<F::Accumulator>,
+            zero_side_sums: [F::Accumulator; 2],
             pairs: Vec<(F, F)>,
             evals: Vec<F>,
             steps: Vec<F>,
             grid: Vec<F>,
         }
 
-        let block_lanes = self.gruen.par_fold_out_in(
+        let block_lanes = self.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || Scratch {
                 lanes: vec![F::Accumulator::default(); num_committed],
+                zero_side_sums: [F::Accumulator::default(); 2],
                 pairs: vec![(F::zero(), F::zero()); num_committed],
                 evals: vec![F::zero(); num_committed],
                 steps: vec![F::zero(); num_committed],
@@ -185,6 +211,29 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
             },
             |scratch, row, _x_in, e_in| {
                 folded_ra.lo_hi_all(row, &mut scratch.pairs);
+                let (lo, hi) = scratch.pairs[0];
+                // A zero linear factor annihilates every product-grid evaluation.
+                if lo.is_zero() && hi.is_zero() {
+                    return;
+                }
+                let zero_side = if lo.is_zero()
+                    && scratch.pairs[1..].iter().all(|pair| pair.0.is_zero())
+                {
+                    Some(0)
+                } else if hi.is_zero() && scratch.pairs[1..].iter().all(|pair| pair.1.is_zero()) {
+                    Some(1)
+                } else {
+                    None
+                };
+                if let Some(side) = zero_side {
+                    let select = |&(lo, hi): &(F, F)| if side == 0 { hi } else { lo };
+                    let last = num_committed - 1;
+                    let product = scratch.pairs[..last]
+                        .iter()
+                        .fold(e_in, |product, pair| product * select(pair));
+                    scratch.zero_side_sums[side].fmadd(product, select(&scratch.pairs[last]));
+                    return;
+                }
                 for ((&(lo, hi), eval), step) in scratch
                     .pairs
                     .iter()
@@ -203,7 +252,13 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
                     &mut scratch.grid,
                 );
             },
-            |_x_out, e_out, scratch| {
+            |_x_out, e_out, mut scratch| {
+                for (sum, grid) in scratch.zero_side_sums.into_iter().zip(&zero_side_grids) {
+                    let sum = sum.reduce();
+                    for (lane, &coefficient) in scratch.lanes.iter_mut().zip(grid) {
+                        lane.fmadd(sum, coefficient);
+                    }
+                }
                 let mut out = vec![F::Accumulator::default(); num_committed];
                 for (out, lane) in out.iter_mut().zip(scratch.lanes) {
                     out.fmadd(e_out, lane.reduce());
@@ -221,7 +276,8 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
         let q_evals: Vec<F> = block_lanes.into_iter().map(|lane| lane.reduce()).collect();
         self.gruen
             .checked_toom(&q_evals, previous_claim, round, || {
-                self.gruen.par_fold_out_in(
+                self.gruen.par_fold_out_in_prefix(
+                    prefix_pairs,
                     || {
                         (
                             vec![(F::zero(), F::zero()); num_committed],
@@ -250,8 +306,14 @@ impl<F: JoltField> RamRaVirtualizationKernel<F> {
     ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
         let num_committed = self.folded_ra.num_polys();
         let points = num_committed + 2;
+        let prefix_pairs = if num_committed == 0 {
+            self.gruen.e_out_current_len() * self.gruen.e_in_current_len()
+        } else {
+            self.folded_ra.prefix_len().div_ceil(2)
+        };
 
-        let mut q_evals = self.gruen.par_fold_out_in(
+        let mut q_evals = self.gruen.par_fold_out_in_prefix(
+            prefix_pairs,
             || vec![F::zero(); points],
             |acc, row, _x_in, e_in| {
                 if num_committed == 0 {
@@ -516,6 +578,40 @@ mod tests {
                 RamOp::Write { word: 63, post: 2 },
             ],
             433,
+        );
+    }
+
+    #[test]
+    fn parity_interior_no_access_pairs() {
+        run_parity(
+            FixtureShape {
+                log_t: 4,
+                ram_k: 256,
+            },
+            vec![
+                RamOp::Write { word: 200, post: 7 },
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::None,
+                RamOp::Read { word: 200 },
+            ],
+            457,
+        );
+    }
+
+    #[test]
+    fn parity_odd_degree_with_one_sided_accesses() {
+        run_parity(
+            FixtureShape {
+                log_t: 6,
+                ram_k: 1 << 12,
+            },
+            mixed_ops(),
+            461,
         );
     }
 

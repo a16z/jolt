@@ -9,6 +9,8 @@
 //! <metric>   ::= prover_time_s         (root-span duration, seconds)
 //!              | peak_rss_gib          (process-lifetime getrusage high-water mark)
 //!              | peak_memory_gib       (max over memory samples in the root span)
+//!              | instructions          (user-space instructions retired in the root span)
+//!              | instructions:<span-label> (the same, summed over all instances)
 //!              | total:<span-label>    (inclusive time summed over all instances, seconds)
 //!              | self:<span-label>     (exclusive time summed over all instances, seconds)
 //!              | heap:<snapshot>       (allocative snapshot total, exact bytes)
@@ -54,6 +56,12 @@ pub enum TelemetryMetric {
     PeakRssGib,
     /// Max over memory samples inside the root span, GiB.
     PeakMemoryGib,
+    /// User-space instructions the process retired inside the root span.
+    Instructions,
+    /// User-space instructions the process retired inside one span label,
+    /// summed over all instances; present only for labels that run on the
+    /// profiled orchestrating thread.
+    SpanInstructions(&'static str),
     /// Inclusive time of one span label summed over all instances, seconds.
     Total(&'static str),
     /// Exclusive time of one span label summed over all instances, seconds.
@@ -170,8 +178,11 @@ impl TelemetryObjective {
             "prover_time_s" => TelemetryMetric::ProverTimeS,
             "peak_rss_gib" => TelemetryMetric::PeakRssGib,
             "peak_memory_gib" => TelemetryMetric::PeakMemoryGib,
+            "instructions" => TelemetryMetric::Instructions,
             other => {
-                if let Some(label) = other.strip_prefix("total:") {
+                if let Some(label) = other.strip_prefix("instructions:") {
+                    TelemetryMetric::SpanInstructions(intern(label))
+                } else if let Some(label) = other.strip_prefix("total:") {
                     TelemetryMetric::Total(intern(label))
                 } else if let Some(label) = other.strip_prefix("self:") {
                     TelemetryMetric::SelfTime(intern(label))
@@ -222,6 +233,9 @@ impl TelemetryObjective {
             | TelemetryMetric::SelfTime(_) => Some("s"),
             TelemetryMetric::PeakRssGib | TelemetryMetric::PeakMemoryGib => Some("GiB"),
             TelemetryMetric::Heap { .. } => Some("bytes"),
+            TelemetryMetric::Instructions | TelemetryMetric::SpanInstructions(_) => {
+                Some("instructions")
+            }
         }
     }
 
@@ -377,6 +391,37 @@ impl TelemetryObjective {
                         "summary has no root peak_memory_gib (no monitor samples in the root span)",
                     )
                 }),
+            TelemetryMetric::Instructions => summary
+                .pointer("/root/instructions")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| {
+                    MeasurementError::new(
+                        "summary has no root instruction count (no hardware counter, or the \
+                         kernel multiplexed it)",
+                    )
+                }),
+            TelemetryMetric::SpanInstructions(label) => {
+                let span = summary
+                    .get("spans")
+                    .and_then(|spans| spans.get(label))
+                    .ok_or_else(|| {
+                        MeasurementError::new(format!(
+                            "span label {label:?} absent from summary (key {}); absent \
+                             labels are an error, never 0.0",
+                            self.key
+                        ))
+                    })?;
+                span.get("instructions")
+                    .and_then(Value::as_f64)
+                    .ok_or_else(|| {
+                        MeasurementError::new(format!(
+                            "span label {label:?} has no instruction count (key {}): some \
+                             instance ran off the orchestrating thread, or no hardware \
+                             counter / the kernel multiplexed it",
+                            self.key
+                        ))
+                    })
+            }
             TelemetryMetric::Total(label) | TelemetryMetric::SelfTime(label) => {
                 let field = match self.metric {
                     TelemetryMetric::Total(_) => "total_ns",
@@ -561,6 +606,43 @@ mod tests {
         );
         let rss = TelemetryObjective::parse("telemetry:fibonacci:peak_rss_gib").unwrap();
         assert_eq!(rss.extract(&summary).unwrap(), 4.0);
+    }
+
+    #[test]
+    fn instruction_extraction_reads_root_and_spans_and_errors_on_null() {
+        let summary: Value = serde_json::json!({
+            "schema_version": 1,
+            "root": { "wall_time_ns": 1u64, "instructions": 9_000u64 },
+            "spans": {
+                "RamReadWriteChecking::prove_round": { "count": 29, "instructions": 5_000u64 },
+                "EqPolynomial::evals": { "count": 8, "instructions": null },
+            },
+        });
+        let root = TelemetryObjective::parse("telemetry:fibonacci:instructions").unwrap();
+        assert_eq!(root.units(), Some("instructions"));
+        assert_eq!(root.extract(&summary).unwrap(), 9_000.0);
+        let span = TelemetryObjective::parse(
+            "telemetry:fibonacci:instructions:RamReadWriteChecking::prove_round",
+        )
+        .unwrap();
+        assert_eq!(
+            span.metric,
+            TelemetryMetric::SpanInstructions("RamReadWriteChecking::prove_round")
+        );
+        assert_eq!(span.extract(&summary).unwrap(), 5_000.0);
+
+        let null =
+            TelemetryObjective::parse("telemetry:fibonacci:instructions:EqPolynomial::evals")
+                .unwrap();
+        assert!(null.extract(&summary).is_err(), "null is an error, not 0.0");
+        let absent =
+            TelemetryObjective::parse("telemetry:fibonacci:instructions:NoSuchSpan").unwrap();
+        assert!(absent.extract(&summary).is_err());
+        let counter_off: Value = serde_json::json!({
+            "schema_version": 1,
+            "root": { "wall_time_ns": 1u64, "instructions": null },
+        });
+        assert!(root.extract(&counter_off).is_err());
     }
 
     #[test]

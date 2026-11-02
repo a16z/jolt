@@ -3,13 +3,11 @@ use crate::{
     committed::{CommittedSumcheckConsistency, CommittedSumcheckProof},
     domain::{BooleanHypercube, SumcheckDomain},
     error::SumcheckError,
-    round_proof::LabeledRoundPoly,
     verifier::SumcheckVerifier,
-    SUMCHECK_ROUND_TRANSCRIPT_LABEL,
 };
-use jolt_field::{CanonicalBytes, Field};
+use jolt_field::Field;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript};
 use serde::{Deserialize, Serialize};
 
 /// A sumcheck proof consisting of one univariate round polynomial per variable.
@@ -27,6 +25,9 @@ use serde::{Deserialize, Serialize};
 pub struct ClearSumcheckProof<F: Field> {
     /// Round polynomials $s_1, \ldots, s_n$ in the order they were generated.
     pub round_polynomials: Vec<UnivariatePoly<F>>,
+    /// One proof-of-work nonce per round, ground after the round polynomial
+    /// and before its challenge; empty when the round difficulty is zero.
+    pub pow_nonces: Vec<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +35,8 @@ pub struct ClearSumcheckProof<F: Field> {
 pub struct CompressedSumcheckProof<F: Field> {
     /// Boolean-hypercube round polynomials with the linear coefficient omitted.
     pub round_polynomials: Vec<CompressedPoly<F>>,
+    /// One proof-of-work nonce per round, as in [`ClearSumcheckProof`].
+    pub pow_nonces: Vec<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,23 +102,21 @@ impl<F: Field, C> SumcheckProof<F, C> {
         &self,
         claim: &SumcheckClaim<F>,
         domain: D,
-        round_label: &'static [u8],
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: CanonicalBytes,
-        T: Transcript<Challenge = F>,
+        F: Encoding,
+        T: FieldTranscript<F>,
         D: SumcheckDomain<F>,
     {
         match self {
-            Self::Clear(ClearProof::Full(proof)) => {
-                let rounds = proof
-                    .round_polynomials
-                    .iter()
-                    .map(|poly| LabeledRoundPoly::new(poly, round_label))
-                    .collect::<Vec<_>>();
-                SumcheckVerifier::verify(claim, &rounds, domain, transcript)
-            }
+            Self::Clear(ClearProof::Full(proof)) => SumcheckVerifier::verify(
+                claim,
+                &proof.round_polynomials,
+                &proof.pow_nonces,
+                domain,
+                transcript,
+            ),
             Self::Clear(ClearProof::Compressed(_)) => Err(SumcheckError::WrongProofEncoding {
                 expected: "full clear",
                 got: "compressed clear",
@@ -141,15 +142,14 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
     where
-        F: CanonicalBytes,
-        T: Transcript<Challenge = F>,
+        F: Encoding,
+        T: FieldTranscript<F>,
     {
         match self {
             Self::Clear(ClearProof::Compressed(proof)) => SumcheckVerifier::verify_compressed(
                 &SumcheckClaim::new(num_vars, degree, claimed_sum),
                 proof,
                 BooleanHypercube,
-                SUMCHECK_ROUND_TRANSCRIPT_LABEL,
                 transcript,
             ),
             Self::Clear(ClearProof::Full(_)) => Err(SumcheckError::WrongProofEncoding {
@@ -175,8 +175,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         match self {
             Self::Committed(proof) => proof.verify_committed_consistency(statement, transcript),
@@ -202,8 +202,8 @@ impl<F: Field, C> SumcheckProof<F, C> {
         transcript: &mut T,
     ) -> Result<CommittedSumcheckConsistency<F, C>, SumcheckError<F>>
     where
-        T: Transcript<Challenge = F>,
-        C: Clone + AppendToTranscript,
+        T: FieldTranscript<F>,
+        C: Clone + Encoding,
     {
         self.verify_committed_consistency(SumcheckStatement::new(num_vars, degree), transcript)
     }

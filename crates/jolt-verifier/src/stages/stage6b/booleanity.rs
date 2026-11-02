@@ -7,16 +7,8 @@
 //! opens the committed per-family `Ra` claims. The cycle phase's eq public,
 //! `EqAddressCycle`, ties the full two-phase sumcheck point to the reference
 //! address/cycle drawn from the stage-5 instruction opening.
-//!
-//! Under the `akita` feature the symbolic swaps to the lattice cycle phase,
-//! which extends the same boolean fold over the increment digit and carry
-//! one-hot columns, all opened at the shared `(r_address ‖ r_cycle)` point.
-//! Their batching weights are resolved as derived gamma powers.
 
 use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
-#[cfg(feature = "akita")]
-use jolt_claims::protocols::jolt::lattice::relations::booleanity as lattice_booleanity;
-#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
 pub use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityCyclePhaseChallenges, BooleanityInputClaims, BooleanityOutputClaims,
@@ -31,18 +23,8 @@ use jolt_poly::try_eq_mle;
 use crate::stages::relations::{ConcreteSumcheck, SumcheckInputPoints, SumcheckOutputPoints};
 use crate::VerifierError;
 
-#[cfg(not(feature = "akita"))]
 type CyclePhaseSymbolic = relations::booleanity::BooleanityCyclePhase;
-#[cfg(feature = "akita")]
-type CyclePhaseSymbolic = lattice_booleanity::LatticeBooleanityCyclePhase;
-
-/// The cycle phase's shape: the base dimensions, plus (akita) the inc
-/// chunking they imply. The driver constructs it, keeping this member's
-/// constructor infallible.
-#[cfg(not(feature = "akita"))]
 pub type BooleanityCycleDimensions = BooleanityDimensions;
-#[cfg(feature = "akita")]
-pub type BooleanityCycleDimensions = lattice_booleanity::LatticeBooleanityDimensions;
 
 #[derive(Clone)]
 pub struct Booleanity<F: JoltField> {
@@ -70,19 +52,8 @@ impl<F: JoltField> Booleanity<F> {
         }
     }
 
-    fn base_dimensions(&self) -> &BooleanityDimensions {
-        #[cfg(not(feature = "akita"))]
-        {
-            &self.dimensions
-        }
-        #[cfg(feature = "akita")]
-        {
-            &self.dimensions.base
-        }
-    }
-
     pub fn dimensions(&self) -> BooleanityDimensions {
-        *self.base_dimensions()
+        self.dimensions
     }
 
     pub fn r_address(&self) -> &[F] {
@@ -119,26 +90,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
     ) -> Result<SumcheckOutputPoints<F, Self>, VerifierError> {
         let r_cycle = sumcheck_point.iter().rev().copied().collect::<Vec<_>>();
         let opening_point = [self.r_address.as_slice(), r_cycle.as_slice()].concat();
-        let layout = self.base_dimensions().layout;
-        #[cfg(not(feature = "akita"))]
-        {
-            let _ = &r_cycle;
-            Ok(BooleanityOutputClaims {
-                instruction_ra: vec![opening_point.clone(); layout.instruction()],
-                bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
-                ram_ra: vec![opening_point; layout.ram()],
-            })
-        }
-        #[cfg(feature = "akita")]
-        Ok(lattice_booleanity::LatticeBooleanityOutputClaims {
+        let layout = self.dimensions.layout;
+        Ok(BooleanityOutputClaims {
             instruction_ra: vec![opening_point.clone(); layout.instruction()],
             bytecode_ra: vec![opening_point.clone(); layout.bytecode()],
-            ram_ra: vec![opening_point.clone(); layout.ram()],
-            balanced_inc_digits: vec![
-                opening_point.clone();
-                self.dimensions.chunking().chunk_count()
-            ],
-            balanced_inc_carry: opening_point,
+            ram_ra: vec![opening_point; layout.ram()],
         })
     }
 
@@ -165,7 +121,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for Booleanity<F> {
             .or_else(|| output_points.bytecode_ra().first())
             .or_else(|| output_points.ram_ra().first())
             .ok_or_else(|| public_input_failed("booleanity produced no openings"))?;
-        let log_k_chunk = self.base_dimensions().log_k_chunk;
+        let log_k_chunk = self.dimensions.log_k_chunk;
         let (r_address, r_cycle) = opening_point.split_at(log_k_chunk);
         let full_sumcheck_point = r_address
             .iter()

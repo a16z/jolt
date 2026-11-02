@@ -34,7 +34,7 @@ mod tests {
         dory, JoltBackend, JoltProverPreprocessing, JoltSharedPreprocessing, ProverConfig,
         ProverError,
     };
-    use jolt_transcript::LegacyBlake2bTranscript;
+    use jolt_transcript::{Keccak, ProverState};
     use jolt_witness::{
         ChunkVisitor, JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle,
         JoltWitnessPlane, ProgramSource, RowSource, Shape, TraceBackend, WitnessError,
@@ -188,7 +188,7 @@ mod tests {
                 Fr,
                 DoryScheme,
                 Pedersen<Bn254G1>,
-                LegacyBlake2bTranscript,
+                ProverState<Keccak>,
             >(&mut context, &preprocessing, &config, None, &public_io);
             assert!(
                 matches!(result, Err(ProverError::Witness(WitnessError::InvalidWitnessData { label: "stage-0 validation", reason }))
@@ -220,7 +220,7 @@ mod tests {
                 trace_length: config.trace_length,
             });
             let context = KernelContext::new(&registry, &witness, session);
-            let result = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, LegacyBlake2bTranscript>(
+            let result = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 context,
                 &preprocessing,
                 &proof_config,

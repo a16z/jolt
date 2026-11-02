@@ -6,13 +6,16 @@ use jolt_field::{Fp128x8i32, Zero};
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
+use super::ntt_commit::PreparedNttCommit;
 use super::source::TraceOneHotColumn;
 use super::traversal::{
     flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
     validate_block_geometry, visit_segment_ring_range, visit_segment_ring_row_range,
     DeferredFp128Ring,
 };
-use super::{K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW};
+use super::{
+    COMMIT_TASKS_PER_RAYON_WORKER, K256_ROW_BATCH, MAX_WIDE_ACCUMULATIONS, NO_SELECTED_ROW,
+};
 use crate::AkitaField;
 
 pub(super) fn commit_columns<const D: usize>(
@@ -52,6 +55,7 @@ pub(super) fn commit_columns<const D: usize>(
         .ring_view::<D>(plan.n_a, active_cols)?;
     let a_rows = a_view.rows().collect::<Vec<_>>();
     let max_per_ring = (D / source.one_hot_k).max(1);
+    let prefix_rings = source.nonzero_ring_prefix::<D>()?;
     drop(_prepare_span);
 
     let coefficients = if segment_rings >= plan.num_positions_per_block {
@@ -60,12 +64,17 @@ pub(super) fn commit_columns<const D: usize>(
             blocks_per_column * plan.num_positions_per_block,
             segment_rings
         );
+        // Blocks wholly past the constant suffix hold no work.
         let schedule = trace_block_task_schedule::<D>(
             source.one_hot_k,
             plan.num_positions_per_block,
-            blocks_per_column,
+            prefix_rings.div_ceil(plan.num_positions_per_block),
+            COMMIT_TASKS_PER_RAYON_WORKER,
         );
         let num_columns = source.rows.num_columns();
+        let ntt_commit = a_rows
+            .first()
+            .and_then(|row| PreparedNttCommit::new(source, plan, row));
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate",
             num_blocks,
@@ -81,11 +90,23 @@ pub(super) fn commit_columns<const D: usize>(
             .map(|task| {
                 let trace_block = task / schedule.parts;
                 let part = task % schedule.parts;
-                let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let block_ring_start = trace_block * plan.num_positions_per_block;
                 let (part_start, part_end) = schedule.part_range(part);
                 let ring_start = block_ring_start + part_start;
                 let ring_end = block_ring_start + part_end;
+                if ring_start >= prefix_rings {
+                    return Ok(None);
+                }
+                if let Some(ntt_commit) = &ntt_commit {
+                    return ntt_commit
+                        .commit_part(
+                            source,
+                            block_ring_start,
+                            ring_start..ring_end.min(prefix_rings),
+                        )
+                        .map(Some);
+                }
+                let mut reduced = vec![CyclotomicRing::zero(); num_columns * plan.n_a];
                 let rank_tiled_k256 = matches!(D, 64 | 128 | 256)
                     && source.one_hot_k == 256
                     && plan.num_positions_per_block >= source.one_hot_k / D
@@ -149,7 +170,7 @@ pub(super) fn commit_columns<const D: usize>(
                     debug_assert_eq!(ring_start % rings_per_row, 0);
                     debug_assert_eq!(ring_end % rings_per_row, 0);
                     let row_start = ring_start / rings_per_row;
-                    let row_end = ring_end / rings_per_row;
+                    let row_end = (ring_end / rings_per_row).min(source.rows.nonzero_prefix_len());
                     let mut selected_rows = vec![NO_SELECTED_ROW; num_columns];
                     let mut hot_values = vec![0u8; K256_ROW_BATCH * num_columns];
                     let mut ring_masks = vec![[0u32; 4]; K256_ROW_BATCH];
@@ -233,7 +254,7 @@ pub(super) fn commit_columns<const D: usize>(
                 if budget != 0 {
                     flush_wide(&mut wide, &mut reduced);
                 }
-                Ok::<_, AkitaError>(reduced)
+                Ok::<_, AkitaError>(Some(reduced))
             })
             .collect::<Result<Vec<_>, _>>()?;
         drop(_accumulate_span);
@@ -250,6 +271,9 @@ pub(super) fn commit_columns<const D: usize>(
         let mut coefficients =
             vec![vec![AkitaField::zero(); blocks_per_column * block_width]; num_columns];
         for (task, block_rows) in partials.into_iter().enumerate() {
+            let Some(block_rows) = block_rows else {
+                continue;
+            };
             let trace_block = task / schedule.parts;
             let part = task % schedule.parts;
             for (column, coefficients) in coefficients.iter_mut().enumerate() {

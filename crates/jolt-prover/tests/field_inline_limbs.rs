@@ -26,7 +26,7 @@ use jolt_field::CanonicalBytes;
 use jolt_field::Fr as Field;
 use jolt_field::Ring;
 use jolt_host::field_inline::canonical_limbs;
-use jolt_host::{default_target_dir, Program};
+use jolt_host::{default_target_dir, GuestElf, Program};
 use jolt_platform::{FieldInlineModulus, FIELD_INLINE_MODULUS_ENV};
 use tracer::instruction::field_inline::advice_limb::inject_advice_limbs;
 use tracer::instruction::field_inline::FIELD_INLINE_MODULUS;
@@ -195,8 +195,10 @@ fn foreign_field_guest_rejects_import_and_readout() {
     );
     let mut program = Program::new("field-limbs-guest");
     program.enable_field_inline();
-    program.elf = Some(target.join("riscv64imac-unknown-none-elf/release/field-limbs-guest"));
-    assert!(program.elf.as_ref().expect("ELF path").exists());
+    program.elf = Some(
+        GuestElf::read(target.join("riscv64imac-unknown-none-elf/release/field-limbs-guest"))
+            .expect("read foreign-field ELF"),
+    );
     for request in [(Some([0u64; 6]), None), (None, Some(6u8))] {
         let inputs = postcard::to_stdvec(&request).expect("serialize isolated conversion");
         let failure = catch_unwind(AssertUnwindSafe(|| {

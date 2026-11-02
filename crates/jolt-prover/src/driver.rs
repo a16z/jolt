@@ -34,7 +34,7 @@ use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     ProveRounds, RecordedSumcheck, RoundScheduler, SumcheckError, SumcheckRecorder,
 };
-use jolt_transcript::Transcript;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -79,7 +79,7 @@ pub trait StageProver<F: JoltField>: Sized {
         B: ?Sized,
         for<'a> KernelContext<'a, F, B>: KernelSource<F, Self>,
         Rec: SumcheckRecorder<F>,
-        T: Transcript<Challenge = F>;
+        T: FieldTranscript<F> + ProverTranscript;
 
     /// The stage's absorbed opening scalars, in the stage's curated order
     /// (stage 6b's runtime point dedup reorders the returned values). The
@@ -480,7 +480,7 @@ macro_rules! impl_stage_prover {
                 B: ?Sized,
                 for<'a> ::jolt_kernels::KernelContext<'a, F, B>: $crate::driver::KernelSource<F, Self>,
                 Rec: ::jolt_sumcheck::SumcheckRecorder<F>,
-                T: ::jolt_transcript::Transcript<Challenge = F>,
+                T: ::jolt_transcript::FieldTranscript<F> + ::jolt_transcript::ProverTranscript,
             {
                 let __stage_span =
                     ::tracing::info_span!(concat!($label, "::prove")).entered();

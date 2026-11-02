@@ -54,19 +54,40 @@ fn main() {
     };
     std::fs::create_dir_all(&generation_dir).expect("create artifact output directory");
 
-    // The documented selectors are family-name infixes, except the explicit
+    // The documented selectors are filename infixes, except the explicit
     // `*-single` selectors that distinguish base one-hot catalogs from their
     // multi-chunk companions.
     let specs = family_specs(generation_dir.clone())
         .expect("every family must declare a valid contract")
         .into_iter()
-        .filter(|family| match only.as_deref() {
+        .filter(|fixture| match only.as_deref() {
             None => true,
-            Some("k16-single") => family.family_name == "jolt-fp128-onehot-k16",
-            Some("k256-single") => family.family_name == "jolt-fp128-onehot-k256",
-            Some(only) => family.family_name.contains(only),
+            Some("k16-single") => {
+                fixture
+                    .spec
+                    .output_path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    == Some("jolt-fp128-onehot-k16")
+            }
+            Some("k256-single") => {
+                fixture
+                    .spec
+                    .output_path
+                    .file_stem()
+                    .and_then(|name| name.to_str())
+                    == Some("jolt-fp128-onehot-k256")
+            }
+            Some(only) => fixture
+                .spec
+                .output_path
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(only)),
         })
-        .collect::<Vec<_>>();
+        .map(|fixture| fixture.prepare())
+        .collect::<Result<Vec<_>, _>>()
+        .expect("prepare direct fixture rows");
     assert!(!specs.is_empty(), "no schedule family matches {only:?}");
     for family in &specs {
         println!(
@@ -78,7 +99,10 @@ fn main() {
     let result = (|| -> Result<(), String> {
         let outputs = render_schedule_artifact_outputs_with_validation(
             &specs,
-            MaterializationDiagnostics { row_progress: true },
+            MaterializationDiagnostics {
+                row_progress: true,
+                ..Default::default()
+            },
             |_, _| Ok(()),
         )?;
         let mut stale = Vec::new();

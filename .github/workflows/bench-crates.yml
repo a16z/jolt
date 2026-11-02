@@ -78,6 +78,9 @@ jobs:
             if grep -q '^binary = ' crates/jolt-field/Cargo.toml; then
               features+=,jolt-field/binary
             fi
+            if grep -q '^transcript-blake2b = ' crates/jolt-transcript/Cargo.toml; then
+              features+=,jolt-transcript/transcript-blake2b,jolt-transcript/transcript-keccak,jolt-transcript/transcript-poseidon
+            fi
             cargo bench \
               -p jolt-crypto \
               -p jolt-field \

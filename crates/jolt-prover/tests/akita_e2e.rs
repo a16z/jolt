@@ -38,13 +38,13 @@ mod akita_tests {
     };
     use jolt_field::Ring;
     use jolt_prover::akita;
-    use jolt_prover::akita::preprocessing::{
-        self, AkitaProverPreprocessing, AkitaTranscript, AkitaVc,
-    };
+    use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
     use jolt_prover::akita::witness::commit_advice;
     use jolt_prover::JoltBackend;
     use jolt_prover::{PreprocessingError, ProverConfig, ProverError};
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+    use jolt_verifier::stages::pow::PowSite;
     use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
@@ -106,7 +106,7 @@ mod akita_tests {
     ) -> ProvedGuest {
         let has_trusted_advice = !trusted_advice.is_empty();
         let preprocessing = preprocessing::preprocess_full_with_advice(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
             untrusted_advice,
@@ -126,7 +126,7 @@ mod akita_tests {
             witness_config(&config, untrusted_advice, has_trusted_advice),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -143,7 +143,7 @@ mod akita_tests {
     }
 
     fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &proved.preprocessing.verifier,
             &proved.public_io,
             &proved.proof,
@@ -180,7 +180,7 @@ mod akita_tests {
             log_k_chunk: config.one_hot_config.committed_chunk_bits(),
         };
         let preprocessing = preprocessing::preprocess_full_with_advice(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
             false,
@@ -245,20 +245,14 @@ mod akita_tests {
             proof
         };
         let one = AkitaField::from_u64(1);
+        let mut missing = proved.proof.clone();
+        missing.fused_inc_commitment = None;
+        let mut swapped = proved.proof.clone();
+        swapped.fused_inc_commitment = Some(swapped.commitments.clone());
         for proof in [
             tamper(&|claims| claims.stage6b.bytecode_read_raf.fused_inc += one),
-            tamper(&|claims| {
-                claims
-                    .stage7
-                    .hamming_weight_claim_reduction
-                    .balanced_inc_digits[0] += one;
-            }),
-            tamper(&|claims| {
-                claims
-                    .stage7
-                    .hamming_weight_claim_reduction
-                    .balanced_inc_carry += one;
-            }),
+            missing,
+            swapped,
         ] {
             let tampered = ProvedGuest {
                 preprocessing: proved.preprocessing.clone(),
@@ -267,6 +261,56 @@ mod akita_tests {
                 trusted_advice_commitment: None,
             };
             assert!(verify(&tampered).is_err());
+        }
+    }
+
+    /// Every proof-of-work site rejects a missing, an unexpected, or a wrong
+    /// nonce with its own error.
+    #[test]
+    fn muldiv_akita_rejects_tampered_pow_nonces() {
+        let (run, config) = muldiv_run();
+        let proved = prove_guest(run, config, false, &[]);
+        verify(&proved).expect("Akita proof must verify");
+        let with_nonce = |site: PowSite, nonce: Option<u64>| {
+            let mut proof = proved.proof.clone();
+            proof.stages.pow_nonces.set(site, nonce);
+            ProvedGuest {
+                preprocessing: proved.preprocessing.clone(),
+                public_io: proved.public_io.clone(),
+                proof,
+                trusted_advice_commitment: None,
+            }
+        };
+        let rejected_at = |result: Result<(), VerifierError>, site: PowSite| matches!(result, Err(VerifierError::ProofOfWorkRejected { site: s }) if s == site);
+        let nonces = proved.proof.stages.pow_nonces;
+        assert!(
+            PowSite::ALL.iter().any(|&site| nonces.get(site).is_some()),
+            "the fp128 challenge set needs proof of work"
+        );
+        for site in PowSite::ALL {
+            match nonces.get(site) {
+                Some(nonce) => {
+                    assert!(
+                        rejected_at(verify(&with_nonce(site, None)), site),
+                        "{site:?}"
+                    );
+                    // Another nonce passes the check with probability 2^-bits,
+                    // so some nonce close by must fail it.
+                    assert!(
+                        (1..=64).any(|offset| rejected_at(
+                            verify(&with_nonce(site, Some(nonce.wrapping_add(offset)))),
+                            site
+                        )),
+                        "{site:?}"
+                    );
+                }
+                None => {
+                    assert!(
+                        rejected_at(verify(&with_nonce(site, Some(0))), site),
+                        "{site:?}"
+                    );
+                }
+            }
         }
     }
 
@@ -287,7 +331,7 @@ mod akita_tests {
         config.trace_polynomial_order = TracePolynomialOrder::AddressMajor;
 
         let result = preprocessing::preprocess_full(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         );
@@ -298,7 +342,7 @@ mod akita_tests {
 
         let (run, mut config) = muldiv_run();
         let preprocessing = preprocessing::preprocess_full(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         )
@@ -310,7 +354,7 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -327,11 +371,13 @@ mod akita_tests {
 
     #[test]
     fn akita_rejects_chunk_profile_mismatch() {
-        for setup_profile in [AkitaChunkProfile::Single, AkitaChunkProfile::Four] {
+        for setup_profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             let (run, mut config) = muldiv_run();
             config.akita_chunk_profile = setup_profile;
             let preprocessing = preprocessing::preprocess_full(
-                &AkitaScheduleArtifacts::shared_from_default_directory(),
+                &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(
+                    8, 2,
+                )),
                 run.preprocessing,
                 &config,
             )
@@ -343,16 +389,15 @@ mod akita_tests {
                 JoltVmWitnessInputs::new(&run.program, &program, run.trace),
             );
             for requested in [
-                AkitaChunkProfile::Single,
-                AkitaChunkProfile::Two,
-                AkitaChunkProfile::Four,
-                AkitaChunkProfile::Eight,
+                AkitaChunkProfile::new(1, 0),
+                AkitaChunkProfile::new(8, 2),
+                AkitaChunkProfile::new(8, 3),
             ] {
                 if requested == setup_profile {
                     continue;
                 }
                 config.akita_chunk_profile = requested;
-                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                     JoltBackend::optimized().with_witness(&witness),
                     &preprocessing,
                     &config,
@@ -389,18 +434,8 @@ mod akita_tests {
     }
 
     #[test]
-    fn advice_e2e_akita_two_chunks() {
-        advice_chunk_roundtrip(AkitaChunkProfile::Two);
-    }
-
-    #[test]
-    fn advice_e2e_akita_four_chunks() {
-        advice_chunk_roundtrip(AkitaChunkProfile::Four);
-    }
-
-    #[test]
     fn advice_e2e_akita_eight_chunks() {
-        advice_chunk_roundtrip(AkitaChunkProfile::Eight);
+        advice_chunk_roundtrip(AkitaChunkProfile::new(8, 2));
     }
 
     fn advice_chunk_roundtrip(profile: AkitaChunkProfile) {
@@ -425,7 +460,8 @@ mod akita_tests {
 
     #[test]
     fn trusted_advice_commitment_reused_across_chunk_profiles() {
-        let artifacts = AkitaScheduleArtifacts::shared_from_default_directory();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let inputs = postcard::to_stdvec(&12u64).expect("serialize inputs");
         let untrusted = postcard::to_stdvec(&5u64).expect("serialize untrusted advice");
         let trusted = postcard::to_stdvec(&7u64).expect("serialize trusted advice");
@@ -436,12 +472,7 @@ mod akita_tests {
             DEFAULT_MAX_TRUSTED_ADVICE_SIZE as usize,
         )
         .expect("commit trusted advice before selecting a trace chunk profile");
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
             let mut config = derive_config(&run);
             config.akita_chunk_profile = profile;
@@ -461,7 +492,7 @@ mod akita_tests {
                 witness_config(&config, true, true),
                 JoltVmWitnessInputs::new(&run.program, &program, run.trace),
             );
-            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
                 JoltBackend::optimized().with_witness(&witness),
                 &preprocessing,
                 &config,
@@ -469,7 +500,7 @@ mod akita_tests {
                 &public_io,
             )
             .expect("reuse the original advice commitment and opening hint");
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,
@@ -498,7 +529,7 @@ mod akita_tests {
         assert!(run.preprocessing.bytecode.bytecode.len() > 2);
         run.preprocessing.bytecode.code_size = 2;
         let error = preprocessing::preprocess_committed(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         )
@@ -514,7 +545,7 @@ mod akita_tests {
         let (run, mut config) = muldiv_run();
         config.akita_chunk_profile = profile;
         let preprocessing = preprocessing::preprocess_committed(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
         )
@@ -541,7 +572,7 @@ mod akita_tests {
             witness_config(&config, false, false),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -563,7 +594,7 @@ mod akita_tests {
                 .expect("transport proof");
         assert_eq!(consumed, encoded.len());
         let verify = |proof: &Proof| {
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &verifier, &public_io, proof, None,
             )
         };
@@ -584,12 +615,7 @@ mod akita_tests {
 
     #[test]
     fn muldiv_e2e_akita_committed_program() {
-        for profile in [
-            AkitaChunkProfile::Single,
-            AkitaChunkProfile::Two,
-            AkitaChunkProfile::Four,
-            AkitaChunkProfile::Eight,
-        ] {
+        for profile in [AkitaChunkProfile::new(1, 0), AkitaChunkProfile::new(8, 2)] {
             committed_e2e(profile);
         }
     }
@@ -602,7 +628,7 @@ mod akita_tests {
         let run = guest_run("advice-consumer-guest", &inputs, &untrusted, &trusted);
         let config = derive_config(&run);
         let preprocessing = preprocessing::preprocess_committed_with_advice(
-            &AkitaScheduleArtifacts::shared_from_default_directory(),
+            &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
             run.preprocessing,
             &config,
             true,
@@ -617,7 +643,7 @@ mod akita_tests {
             witness_config(&config, true, true),
             JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
         );
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             &config,
@@ -627,7 +653,7 @@ mod akita_tests {
         .expect("committed advice Akita proof");
 
         assert!(proof.untrusted_advice_commitment.is_some());
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &preprocessing.verifier,
             &public_io,
             &proof,

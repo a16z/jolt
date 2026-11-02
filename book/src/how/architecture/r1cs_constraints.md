@@ -16,7 +16,7 @@ These constraints capture:
 
 Jolt leverages Twist and Shout instances, each comprising sumchecks.
 Jolt's R1CS constraints provide essential "links" between these sumchecks, enforcing relationships between different polynomials.
-For example, R1CS ensures consistency between independent components such as the RAM and register Twist instances: for instructions like `LB` or `LW`, an R1CS constraint ensures the value read from RAM matches the value written into the destination register (`rd`).
+For example, R1CS ensures consistency between independent components such as the RAM and register Twist instances: for load instructions such as `LD`, an R1CS constraint ensures the value read from RAM matches the value written into the destination register (`rd`).
 This is critical because RAM and registers operate as independent Twist memory checking instances, and we need to enforce this relationship between otherwise disjoint witnesses.
 
 ## Arithmetic instructions
@@ -37,7 +37,7 @@ Some examples of circuit flags:
 
 - Jump Flag: Indicates jump instructions (JAL, JALR).
 
-- Load Flag: Indicates load instructions (e.g. LB, LW).
+- Load Flag: Indicates load instructions (`LD`, and the `VirtualLoad*` doubleword loads that sub-word loads expand into).
 
 - AddOperands Flag: Indicates that the instruction operands should be added "in the field", as described [above](#arithmetic-instructions) (e.g. ADD, ADDI, AUIPC).
 

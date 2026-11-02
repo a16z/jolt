@@ -942,6 +942,8 @@ fn stage3_formula_output_openings() -> Vec<(&'static str, JoltOpeningId)> {
             instruction::rs2_value(),
             instruction::right_operand_is_imm(),
             instruction::imm(),
+            instruction::right_operand_is_rd_write_value(),
+            instruction::rd_write_value(),
             instruction::left_operand_is_rs1(),
             instruction::rs1_value(),
             instruction::left_operand_is_pc(),

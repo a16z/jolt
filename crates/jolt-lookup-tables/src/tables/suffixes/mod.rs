@@ -10,7 +10,7 @@
 
 use crate::lookup_bits::LookupBits;
 
-mod align_addr;
+mod address_offset;
 mod and;
 mod andnot;
 mod div_by_zero;
@@ -49,7 +49,6 @@ mod sign_extension;
 mod sign_extension_right_operand;
 mod sign_extension_upper_half;
 mod sign_extension_w;
-mod two_lsb;
 mod upper_word;
 mod window_sign;
 mod window_sign_pow2;
@@ -59,7 +58,7 @@ mod xor_rot;
 mod xor_rotl1;
 mod xor_rotw;
 
-use align_addr::AlignAddrSuffix;
+use address_offset::AddressOffsetSuffix;
 use and::AndSuffix;
 use andnot::AndNotSuffix;
 use div_by_zero::DivByZeroSuffix;
@@ -101,7 +100,6 @@ use sign_extension::SignExtensionSuffix;
 use sign_extension_right_operand::SignExtensionRightOperandSuffix;
 use sign_extension_upper_half::SignExtensionUpperHalfSuffix;
 use sign_extension_w::SignExtensionWSuffix;
-use two_lsb::TwoLsbSuffix;
 use upper_word::UpperWordSuffix;
 pub(crate) use window_sign::window_sign_bit;
 use window_sign::WindowSignSuffix;
@@ -154,7 +152,6 @@ pub enum Suffixes {
     RightShiftHelper,
     SignExtension,
     LeftShift,
-    TwoLsb,
     SignExtensionUpperHalf,
     SignExtensionRightOperand,
     RightShiftW,
@@ -184,7 +181,6 @@ pub enum Suffixes {
     X31Y0,
     Pow2OffsetB,
     Pow2OffsetH,
-    AlignAddr,
     ShiftDataB,
     ShiftDataH,
     ShiftDataW,
@@ -194,6 +190,9 @@ pub enum Suffixes {
     XorRotL1Pairs,
     TopYBit,
     BottomXBit,
+    AddressOffsetB,
+    AddressOffsetH,
+    AddressOffsetW,
 }
 
 impl Suffixes {
@@ -212,7 +211,6 @@ impl Suffixes {
                 | Suffixes::LeftOperandIsZero
                 | Suffixes::RightOperandIsZero
                 | Suffixes::Lsb
-                | Suffixes::TwoLsb
                 | Suffixes::DivByZero
                 | Suffixes::OverflowBitsZero
                 | Suffixes::WindowSign
@@ -248,7 +246,6 @@ impl Suffixes {
             Suffixes::RightShiftHelper => RightShiftHelperSuffix::suffix_mle(b),
             Suffixes::SignExtension => SignExtensionSuffix::suffix_mle(b),
             Suffixes::LeftShift => LeftShiftSuffix::suffix_mle(b),
-            Suffixes::TwoLsb => TwoLsbSuffix::suffix_mle(b),
             Suffixes::SignExtensionUpperHalf => SignExtensionUpperHalfSuffix::suffix_mle(b),
             Suffixes::SignExtensionRightOperand => SignExtensionRightOperandSuffix::suffix_mle(b),
             Suffixes::RightShiftW => RightShiftWSuffix::suffix_mle(b),
@@ -276,7 +273,6 @@ impl Suffixes {
             Suffixes::X31Y0 => X31Y0Suffix::suffix_mle(b),
             Suffixes::Pow2OffsetB => Pow2OffsetBSuffix::suffix_mle(b),
             Suffixes::Pow2OffsetH => Pow2OffsetHSuffix::suffix_mle(b),
-            Suffixes::AlignAddr => AlignAddrSuffix::suffix_mle(b),
             Suffixes::ShiftDataB => ShiftDataSuffix::<1>::suffix_mle(b),
             Suffixes::ShiftDataH => ShiftDataSuffix::<2>::suffix_mle(b),
             Suffixes::ShiftDataW => ShiftDataSuffix::<4>::suffix_mle(b),
@@ -286,6 +282,9 @@ impl Suffixes {
             Suffixes::XorRotL1Pairs => XorRotL1PairsSuffix::suffix_mle(b),
             Suffixes::TopYBit => TopYBitSuffix::suffix_mle(b),
             Suffixes::BottomXBit => BottomXBitSuffix::suffix_mle(b),
+            Suffixes::AddressOffsetB => AddressOffsetSuffix::<1>::suffix_mle(b),
+            Suffixes::AddressOffsetH => AddressOffsetSuffix::<2>::suffix_mle(b),
+            Suffixes::AddressOffsetW => AddressOffsetSuffix::<4>::suffix_mle(b),
         }
     }
 

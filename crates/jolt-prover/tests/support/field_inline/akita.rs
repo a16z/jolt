@@ -3,10 +3,11 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::AkitaProverSetup;
-use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_prover::JoltBackend;
 use jolt_prover::{akita, ProverConfig};
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::proof::JoltProof;
 use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
 use jolt_witness::field_inline::FieldInlineWitnessOracle;
@@ -53,7 +54,7 @@ pub fn prove<D>(
     let log_t = config.trace_length.ilog2() as usize;
     let untrusted_advice = !case.untrusted_advice.is_empty();
     let prover_preprocessing = akita::preprocessing::preprocess_full_with_advice(
-        &AkitaScheduleArtifacts::shared_from_default_directory(),
+        &AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
         program_preprocessing,
         &config,
         untrusted_advice,
@@ -78,7 +79,7 @@ pub fn prove<D>(
         &prover_preprocessing.pcs_setup,
     );
 
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -101,7 +102,7 @@ pub fn verify_full(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
         preprocessing,
         public_io,
         proof,

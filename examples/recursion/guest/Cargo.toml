@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+# The recursion host enables both recovery features through its default list
+# and forwards them here with `akita`. Keep guest selection explicit so host
+# --no-default-features overrides retain the off and single-feature paths.
+recursion-sparse-term-cache = ["akita", "jolt-akita/recursion-sparse-term-cache"]
+recursion-wide-row-batch = ["akita", "jolt-akita/recursion-wide-row-batch"]
 terminal-contraction = [
   "jolt-akita?/terminal-contraction",
   "jolt-field/terminal-contraction",
@@ -17,6 +22,7 @@ immutable-recipes = [
 ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 word-memory = ["jolt_sdk/word-memory"]
+kernel-tests = ["field-inline"]
 field-inline = ["jolt_sdk/field-inline"]
 # The field the field-inline unit computes in: BN254 `Fr` under Dory, the
 # Fp128 protocol prime under Akita. The host selects the one its tracer uses.
@@ -40,7 +46,6 @@ hash-inlines = [
 # L3 recursion experiment: factorized compression-weight evaluation.
 l3-compression-weights = ["akita", "jolt-akita/l3-compression-weights"]
 
-word-transcript = ["akita", "jolt-akita/word-transcript"]
 word-decode = ["akita", "jolt-akita/word-decode"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 tensor-no-carry = ["akita", "jolt-akita/tensor-no-carry"]
@@ -65,6 +70,10 @@ mle-leaf-tiles = ["akita", "jolt-akita/mle-leaf-tiles"]
 signed-byte-sum = ["akita", "jolt-akita/signed-byte-sum"]
 setup-weight-tiles = ["akita", "jolt-akita/setup-weight-tiles"]
 challenge-word-decode = ["akita", "jolt-akita/challenge-word-decode"]
+# These levers are selected by the host recursion defaults and forwarded
+# explicitly; the guest needs no separate default list.
+challenge-embed-fused = ["akita", "jolt-akita/challenge-embed-fused"]
+compressed-poly-horner = ["dep:jolt-poly", "jolt-poly/compressed-poly-horner"]
 [package.metadata.cargo-machete]
 # The jolt-field edge selects the guest's field-inline arithmetic; generated
 # embedded_bytecode.rs imports jolt-riscv types when the host prepares an
@@ -72,9 +81,12 @@ challenge-word-decode = ["akita", "jolt-akita/challenge-word-decode"]
 ignored = ["jolt-field", "jolt-riscv"]
 
 [dependencies]
+jolt-poly = { path = "../../../crates/jolt-poly", default-features = false, optional = true }
+jolt-inlines-blake2.workspace = true
 jolt-riscv = { path = "../../../crates/jolt-riscv" }
 jolt_sdk = { package = "jolt-sdk", path = "../../../jolt-sdk", features = [
   "guest-verifier",
+  "transcript-blake2b",
   "thread",
   "random",
 ] }

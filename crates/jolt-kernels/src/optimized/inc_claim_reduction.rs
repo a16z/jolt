@@ -322,7 +322,7 @@ impl<F: JoltField> ProveRounds<F> for IncKernel<F> {
                             let group = group(y)?;
                             acc[0] += group[0];
                             acc[1] += group[1];
-                            Ok(acc)
+                            Ok::<_, SumcheckError<F>>(acc)
                         },
                     )
                     .try_reduce(|| vec![F::zero(); 2], |a, b| Ok(merge_evals(a, b)))?;

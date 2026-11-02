@@ -10,4 +10,5 @@ crate::recipe_id! { jolt_riscv; InstructionFlags {
     RightOperandIsRs2Value = 3,
     Branch = 4,
     IsNoop = 5,
+    RightOperandIsRdWriteValue = 6,
 } }

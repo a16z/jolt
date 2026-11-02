@@ -49,8 +49,8 @@ internal digit decomposition supports arbitrary fp128 values. Jolt supplies
 one field value per cycle; it does not split increments into external limb
 columns or carry separate limb evaluations in the proof.
 
-Only the field-increment object uses the full-width configuration. Advice
-and committed-program objects retain their existing bounded configurations
+Only the field-increment object uses the full-width configuration. The RV64
+`FusedInc` object, advice, and committed-program objects retain bounded configurations
 and digit policies. The joint opening selects the configuration for each
 object's role; it does not widen those objects' value bounds.
 
@@ -60,12 +60,12 @@ as the advice and one-hot trace objects. Its `CommitmentGroupRole` has order 2
 and transcript label `field_inc`; the batch order is:
 
 ```text
-[UntrustedAdvice, TrustedAdvice, FieldInc, OneHotTrace]
+[UntrustedAdvice?, TrustedAdvice?, FieldInc, FusedInc, OneHotTrace]
 ```
 
 `GroupedScheduleParams` records the object shapes needed to plan this batch.
 Its `DenseGroupLayout::FullWidth` entry selects the field-increment source
-bound. The polynomial values and commitment are created from the execution
+bound; the mandatory RV64 `FusedInc` entry uses `DenseGroupLayout::Bounded`. The polynomial values and commitment are created from the execution
 witness in stage 0; preprocessing only provisions the grouped schedule.
 
 `FieldIncLayout` in `crates/jolt-claims/src/protocols/field_inline/lattice/`

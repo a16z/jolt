@@ -8,10 +8,11 @@
 # ::run_test).
 #
 # Usage:
-#   run.sh --emulator <path> --work-dir <dir> [--skip-file <path>] [--timeout-secs N]
+#   run.sh --emulator <path> --work-dir <dir> [--skip-file <path>] [--timeout-secs N] [--match <glob>] [--expect <n>]
 #
 # --work-dir is the ACT4 build output directory containing <test>/elfs/*.elf.
-# Exits 0 on full success; non-zero if any executed test fails or times out.
+# --match filters basenames without .elf; --expect checks that count before skips.
+# Exits 0 on full success; non-zero if selection fails or an executed test fails.
 
 set -euo pipefail
 
@@ -19,10 +20,13 @@ EMULATOR=""
 WORK_DIR=""
 SKIP_FILE=""
 TIMEOUT_SECS="60"
+MATCH_GLOB="*"
+EXPECT_COUNT=""
+EXPECT_SET=0
 
 usage() {
     cat >&2 <<EOF
-usage: $0 --emulator <path> --work-dir <dir> [--skip-file <path>] [--timeout-secs N]
+usage: $0 --emulator <path> --work-dir <dir> [--skip-file <path>] [--timeout-secs N] [--match <glob>] [--expect <n>]
 EOF
     exit 2
 }
@@ -33,6 +37,8 @@ while [[ $# -gt 0 ]]; do
         --work-dir)     WORK_DIR="${2:-}"; shift 2 ;;
         --skip-file)    SKIP_FILE="${2:-}"; shift 2 ;;
         --timeout-secs) TIMEOUT_SECS="${2:-}"; shift 2 ;;
+        --match)        [[ $# -ge 2 ]] || usage; MATCH_GLOB="$2"; shift 2 ;;
+        --expect)       [[ $# -ge 2 ]] || usage; EXPECT_COUNT="$2"; EXPECT_SET=1; shift 2 ;;
         -h|--help)      usage ;;
         *)              echo "unknown arg: $1" >&2; usage ;;
     esac
@@ -40,6 +46,11 @@ done
 
 [[ -n "$EMULATOR" ]] || { echo "--emulator is required" >&2; usage; }
 [[ -n "$WORK_DIR" ]] || { echo "--work-dir is required" >&2; usage; }
+
+if [[ "$EXPECT_SET" -eq 1 && ! "$EXPECT_COUNT" =~ ^(0|[1-9][0-9]*)$ ]]; then
+    echo "--expect must be a nonnegative integer without leading zeroes" >&2
+    exit 2
+fi
 
 if [[ ! -x "$EMULATOR" ]]; then
     echo "emulator not found or not executable: $EMULATOR" >&2
@@ -101,7 +112,24 @@ if [[ -z "$ELFS_LIST" ]]; then
     exit 2
 fi
 
+MATCHED_ELFS=""
+while IFS= read -r elf; do
+    name="$(basename "$elf" .elf)"
+    if [[ "$name" == $MATCH_GLOB ]]; then
+        MATCHED_ELFS="${MATCHED_ELFS}${elf}"$'\n'
+    fi
+done <<< "$ELFS_LIST"
+if [[ -z "$MATCHED_ELFS" ]]; then
+    echo "no ELFs match '$MATCH_GLOB' under $WORK_DIR" >&2
+    exit 2
+fi
+ELFS_LIST="${MATCHED_ELFS%$'\n'}"
 total=$(printf '%s\n' "$ELFS_LIST" | wc -l | tr -d ' ')
+# This count describes the selected suite before privileged-test skips.
+if [[ -n "$EXPECT_COUNT" && "$total" != "$EXPECT_COUNT" ]]; then
+    echo "expected $EXPECT_COUNT matching ELFs, found $total for '$MATCH_GLOB'" >&2
+    exit 2
+fi
 passed=0
 failed=0
 skipped=0

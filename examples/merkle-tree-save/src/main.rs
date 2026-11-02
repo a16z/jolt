@@ -1,6 +1,6 @@
 // This is a variant of examples/merkle-tree that adds:
 // 1. `--save` flag to serialize verifier objects to /tmp/
-// 2. Transcript feature flags (transcript-poseidon, etc.) in Cargo.toml
+// 2. The `transcript-blake2b` feature flag in Cargo.toml
 //
 // The upstream merkle-tree example is left unmodified. This crate reuses its guest.
 

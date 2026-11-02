@@ -1,29 +1,69 @@
-//! Tests for KeccakTranscript implementation.
+//! Tests for the Keccak transcript.
+
+#![expect(clippy::unwrap_used, reason = "tests")]
 
 mod common;
 
-use jolt_field::Fr;
-use jolt_transcript::KeccakTranscript;
+use jolt_transcript::Keccak;
 
-type Kec = KeccakTranscript<Fr>;
+transcript_tests!(Keccak);
 
-transcript_tests!(Kec);
-
+#[cfg_attr(
+    feature = "keccak256-digests",
+    ignore = "pinned for SHA3-256 digests; keccak256-digests changes the session identifier"
+)]
 #[test]
 fn test_keccak_known_vector() {
-    use ark_ff::PrimeField;
-    use jolt_transcript::Transcript;
+    let mut transcript = transcript(b"Jolt");
+    transcript.append(&12345u64);
+    let challenge: Fr = transcript.challenge().unwrap();
+    // Pins the session derived from PROTOCOL_ID, the instance absorb, one
+    // `u64` public message and one 56-byte challenge squeeze reduced mod r.
+    assert_eq!(
+        format!("{challenge:?}"),
+        "20976167774209758444602434529208306535997730698984815987397147984409024377219"
+    );
+}
 
-    let mut transcript = KeccakTranscript::<Fr>::new(b"Jolt");
-    transcript.append_bytes(&12345u64.to_be_bytes());
-    let challenge: Fr = transcript.challenge();
+#[test]
+fn public_message_after_challenge_agrees_including_empty() {
+    use jolt_transcript::{BytesMsg, ProverTranscript};
 
-    // Pinned wire-format check; see Blake2b counterpart for rationale.
-    let expected: ark_bn254::Fr = ark_bn254::Fr::from_le_bytes_mod_order(&[
-        0x2E, 0xDF, 0x34, 0x68, 0x85, 0xEE, 0x1C, 0x8B, 0xEC, 0xBD, 0x68, 0xA6, 0x3E, 0x23, 0x00,
-        0x9F, 0x10, 0x00, 0xBC, 0xA3, 0xC4, 0xBA, 0x1C, 0xF4, 0x63, 0xDC, 0x84, 0x8D, 0x45, 0xD9,
-        0xDD, 0x1E,
-    ]);
-    let got: ark_bn254::Fr = challenge.into();
-    assert_eq!(got, expected, "Keccak known-vector regression");
+    const PUBLIC: [u8; 32] = protocol_tag(b"keccak-public");
+    for public in [b"public after squeeze".as_slice(), &[]] {
+        let mut prover = prover_transcript::<Keccak>(&PUBLIC, &[0u8; 32]);
+        let first: [u8; 17] = prover.verifier_message();
+        prover.public_message_as(public, |bytes| bytes);
+        let second: [u8; 32] = prover.verifier_message();
+        prover.send(&BytesMsg(b"response".to_vec()));
+        let third: [u8; 32] = prover.verifier_message();
+
+        let mut verifier = verifier_transcript::<Keccak>(&PUBLIC, &[0u8; 32], prover.narg_string());
+        assert_eq!(verifier.verifier_message::<[u8; 17]>(), first);
+        verifier.public_message_as(public, |bytes| bytes);
+        assert_eq!(verifier.verifier_message::<[u8; 32]>(), second);
+        assert_eq!(
+            verifier.prover_message::<BytesMsg>().unwrap(),
+            BytesMsg(b"response".to_vec()),
+        );
+        assert_eq!(verifier.verifier_message::<[u8; 32]>(), third);
+        verifier.check_eof().unwrap();
+
+        let mut uninterrupted = prover_transcript::<Keccak>(&PUBLIC, &[0u8; 32]);
+        let stream: [u8; 49] = uninterrupted.verifier_message();
+        assert_eq!(&stream[..17], &first);
+        if public.is_empty() {
+            assert_eq!(
+                &stream[17..],
+                &second,
+                "empty absorb preserves squeeze stream"
+            );
+        } else {
+            assert_ne!(
+                &stream[17..],
+                &second,
+                "public bytes bind the next challenge"
+            );
+        }
+    }
 }

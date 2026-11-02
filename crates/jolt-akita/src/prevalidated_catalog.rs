@@ -18,7 +18,8 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_pcs::AkitaError;
 use akita_schedules::PrevalidatedVerifierView;
 
-use crate::one_hot_family::{AkitaOneHotBackendScheme, OneHotFamily};
+use crate::configs::AkitaChunkProfile;
+use crate::one_hot_family::{AkitaOneHotBackendScheme, OneHotFamily, OneHotFamilyKind};
 
 /// Environment variable naming the generated file for a guest build.
 pub const PREVALIDATED_CATALOG_VARIABLE: &str = "JOLT_PREVALIDATED_CATALOG_RS";
@@ -28,47 +29,35 @@ pub const PREVALIDATED_CATALOG_VARIABLE: &str = "JOLT_PREVALIDATED_CATALOG_RS";
 /// the variant's constructor at compile time.
 #[cfg_attr(target_arch = "riscv64", allow(unused_macros))]
 macro_rules! cfg_of {
-    (K16Single) => {
+    (K16) => {
         crate::configs::JoltOneHotK16
     };
-    (K256Single) => {
+    (K256) => {
         crate::configs::JoltOneHotK256
-    };
-    (K16W2R2) => {
-        crate::configs::JoltOneHotK16W2R2
-    };
-    (K256W2R2) => {
-        crate::configs::JoltOneHotK256W2R2
-    };
-    (K16W4R2) => {
-        crate::configs::JoltOneHotK16W4R2
-    };
-    (K256W4R2) => {
-        crate::configs::JoltOneHotK256W4R2
-    };
-    (K16W8R2) => {
-        crate::configs::JoltOneHotK16W8R2
-    };
-    (K256W8R2) => {
-        crate::configs::JoltOneHotK256W8R2
     };
 }
 
 /// The scheme over `view` for `expected`'s config, or `None` when `family` is
-/// another family or the view does not match the record.
+/// another family (kind or witness chunking profile) or the view does not
+/// match the record.
 #[cfg_attr(target_arch = "riscv64", allow(dead_code))]
 #[inline(never)]
 fn rebuild_one<Cfg: CommitmentConfig>(
     family: OneHotFamily,
-    expected: OneHotFamily,
+    expected: (OneHotFamilyKind, AkitaChunkProfile),
     variant: fn(TrustedScheduleCatalog<Cfg>) -> AkitaOneHotBackendScheme,
     view: &[u8],
     prevalidated: &PrevalidatedVerifierView<'_>,
 ) -> Option<AkitaOneHotBackendScheme> {
-    if family != expected {
+    if (family.kind, family.profile()) != expected {
         return None;
     }
-    TrustedScheduleCatalog::<Cfg>::from_prevalidated_verifier_view(view, prevalidated).map(variant)
+    TrustedScheduleCatalog::<Cfg>::from_prevalidated_verifier_view(
+        view,
+        prevalidated,
+        family.profile().witness_cfg(),
+    )
+    .map(variant)
 }
 
 /// The generated file's view bytes, aligned to 8 bytes. The setup section
@@ -110,7 +99,7 @@ pub(crate) fn one_hot_scheme(
 
 #[cfg(not(target_arch = "riscv64"))]
 macro_rules! define_prevalidated_host {
-    (; $(($variant:ident, $k:path, $profile:ident, $family_cfg:ty, $direct:ty, $artifact:ident)),+ $(,)?) => {
+    (; $(($variant:ident, $k:path, $cfg:ty)),+ $(,)?) => {
         /// Host: canonical load of `view` for `family`, the variant's name, and a
         /// rebuild of the result through `rebuild_one` with the same config the
         /// generated file names (a wrong `cfg_of!` arm does not compile).
@@ -118,9 +107,12 @@ macro_rules! define_prevalidated_host {
             family: OneHotFamily,
             view: &[u8],
         ) -> Result<(akita_schedules::PrevalidatedVerifierRecord, &'static str, bool), AkitaError> {
-            match family {
-                $(OneHotFamily::$variant => {
-                    let record = TrustedScheduleCatalog::<cfg_of!($variant)>::prevalidate_verifier_view(view)?;
+            match family.kind {
+                $(OneHotFamilyKind::$variant => {
+                    let record = TrustedScheduleCatalog::<cfg_of!($variant)>::prevalidate_verifier_view(
+                        view,
+                        family.profile().witness_cfg(),
+                    )?;
                     let prevalidated = PrevalidatedVerifierView {
                         view,
                         policy_digest: record.policy_digest,
@@ -129,7 +121,7 @@ macro_rules! define_prevalidated_host {
                     };
                     let rebuilt = rebuild_one::<cfg_of!($variant)>(
                         family,
-                        OneHotFamily::$variant,
+                        (OneHotFamilyKind::$variant, family.profile()),
                         |catalog| AkitaOneHotBackendScheme::$variant(akita_pcs::AkitaCommitmentScheme::new(catalog)),
                         view,
                         &prevalidated,
@@ -169,6 +161,7 @@ pub(crate) fn render(family: OneHotFamily, view: &[u8]) -> Result<String, AkitaE
         .join(",");
     Ok(source(
         variant,
+        family.profile(),
         view.len(),
         &bytes(view),
         &bytes(&record.policy_digest),
@@ -182,14 +175,16 @@ pub(crate) fn render(family: OneHotFamily, view: &[u8]) -> Result<String, AkitaE
 #[cfg(not(target_arch = "riscv64"))]
 fn source(
     variant: &str,
+    profile: AkitaChunkProfile,
     view_len: usize,
     view: &str,
     policy_digest: &str,
     catalog_digest: &str,
     rows: &str,
 ) -> String {
+    let (chunks, levels) = (profile.chunks, profile.levels);
     format!(
-        "static VIEW_BYTES: super::AlignedViewBytes<{view_len}> = super::AlignedViewBytes([{view}]);\nstatic VIEW: akita_schedules::PrevalidatedVerifierView<'static> = akita_schedules::PrevalidatedVerifierView {{\nview: &VIEW_BYTES.0,\npolicy_digest: [{policy_digest}],\ncatalog_digest: [{catalog_digest}],\ncarried_row_digests: &[{rows}],\n}};\npub(super) fn rebuild(family: super::OneHotFamily, view: &[u8]) -> Option<super::AkitaOneHotBackendScheme> {{\nsuper::rebuild_one::<cfg_of!({variant})>(family, super::OneHotFamily::{variant}, |catalog| super::AkitaOneHotBackendScheme::{variant}(akita_pcs::AkitaCommitmentScheme::new(catalog)), view, &VIEW)\n}}\n",
+        "static VIEW_BYTES: super::AlignedViewBytes<{view_len}> = super::AlignedViewBytes([{view}]);\nstatic VIEW: akita_schedules::PrevalidatedVerifierView<'static> = akita_schedules::PrevalidatedVerifierView {{\nview: &VIEW_BYTES.0,\npolicy_digest: [{policy_digest}],\ncatalog_digest: [{catalog_digest}],\ncarried_row_digests: &[{rows}],\n}};\npub(super) fn rebuild(family: super::OneHotFamily, view: &[u8]) -> Option<super::AkitaOneHotBackendScheme> {{\nsuper::rebuild_one::<cfg_of!({variant})>(family, (super::OneHotFamilyKind::{variant}, super::AkitaChunkProfile::new({chunks}, {levels})), |catalog| super::AkitaOneHotBackendScheme::{variant}(akita_pcs::AkitaCommitmentScheme::new(catalog)), view, &VIEW)\n}}\n",
     )
 }
 
@@ -199,7 +194,7 @@ pub const EMPTY_PREVALIDATED_CATALOG_SOURCE: &str = "pub(super) fn rebuild(_fami
 
 #[cfg(all(test, not(target_arch = "riscv64")))]
 mod tests {
-    use super::{source, AlignedViewBytes};
+    use super::{source, AkitaChunkProfile, AlignedViewBytes};
 
     #[test]
     fn view_bytes_static_is_8_aligned() {
@@ -212,13 +207,21 @@ mod tests {
 
     #[test]
     fn generated_source_borrows_the_aligned_view_bytes() {
-        let text = source("K16Single", 3, "1,2,3", "4", "5", "[6]");
+        let text = source(
+            "K16",
+            AkitaChunkProfile::new(8, 2),
+            3,
+            "1,2,3",
+            "4",
+            "5",
+            "[6]",
+        );
         assert!(text.starts_with(
             "static VIEW_BYTES: super::AlignedViewBytes<3> = super::AlignedViewBytes([1,2,3]);\n"
         ));
         assert!(text.contains("\nview: &VIEW_BYTES.0,\npolicy_digest: [4],\ncatalog_digest: [5],\ncarried_row_digests: &[[6]],\n};\n"));
         assert!(text.contains(
-            "super::rebuild_one::<cfg_of!(K16Single)>(family, super::OneHotFamily::K16Single,"
+            "super::rebuild_one::<cfg_of!(K16)>(family, (super::OneHotFamilyKind::K16, super::AkitaChunkProfile::new(8, 2)),"
         ));
         assert_eq!(text.matches("1,2,3").count(), 1);
         assert_eq!(text.matches("static ").count(), 2);

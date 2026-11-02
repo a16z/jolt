@@ -3,7 +3,7 @@
 //! Encoding: 0x00100073 (SYSTEM opcode, funct3=000, imm=1)
 //!
 //! In a zkVM context without a debugger, EBREAK serves as a termination point.
-//! The emulator detects termination when PC doesn't change (prev_pc == pc).
+//! The emulator detects termination when PC doesn't change.
 
 use crate::instruction::registers::i::RegisterStateI;
 
@@ -24,7 +24,7 @@ declare_riscv_instr!(
 
 impl EBREAK {
     fn exec(&self, cpu: &mut Cpu, _: &mut <EBREAK as RISCVInstruction>::RamAccess) {
-        // Don't advance PC - emulator will detect prev_pc == pc and terminate
+        // Don't advance PC - emulator will detect the stall and terminate
         cpu.pc = self.address;
     }
 }

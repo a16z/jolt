@@ -143,7 +143,8 @@ pub enum HammingWeightClaimReductionPublic {
     /// Akita path: `eq(r_virtualization_address_i, 0)` — the digit-zero
     /// baseline weight of a virtualization leg.
     EqVirtualizationAtDigitZero(usize),
-    BalancedIncValueAtAddress,
+    /// Reserved ordinal for the retired balanced-increment representation.
+    ReservedBalancedIncValueAtAddress,
     /// `gamma^k` for `k >= 2` as one derived leaf: the batching coefficient of
     /// the k-th leg.
     GammaPow(usize),
@@ -355,10 +356,9 @@ pub enum JoltCommittedPolynomial {
     TrustedAdvice,
     UntrustedAdvice,
     ProgramImageInit,
-    // Lattice-mode committed polynomials (columns of the native trace group); base
-    // mode never constructs these. Appended for codec stability.
-    BalancedIncDigit(usize),
-    BalancedIncCarry,
+    // Reserved codec slots; uninhabited and rejected during deserialization.
+    Reserved9(RetiredIdentifier),
+    Reserved10(RetiredIdentifier),
     ProgramBytecode,
 }
 
@@ -672,7 +672,7 @@ crate::recipe_id! { crate::protocols::jolt; HammingWeightClaimReductionPublic {
     EqBooleanityAtDigitZero = 1,
     EqVirtualization(value0: usize) = 2,
     EqVirtualizationAtDigitZero(value0: usize) = 3,
-    BalancedIncValueAtAddress = 4,
+    ReservedBalancedIncValueAtAddress = 4,
     GammaPow(value0: usize) = 5,
 } }
 #[cfg(feature = "immutable-recipes")]
@@ -829,8 +829,8 @@ crate::recipe_id! { crate::protocols::jolt; JoltCommittedPolynomial {
     TrustedAdvice = 6,
     UntrustedAdvice = 7,
     ProgramImageInit = 8,
-    BalancedIncDigit(value0: usize) = 9,
-    BalancedIncCarry = 10,
+    Reserved9(value0: RetiredIdentifier) = 9,
+    Reserved10(value0: RetiredIdentifier) = 10,
     ProgramBytecode = 11,
 } }
 #[cfg(feature = "immutable-recipes")]

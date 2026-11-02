@@ -27,7 +27,8 @@ const MAX_FALLBACK_KEYS: usize = MAX_KEYS;
 
 // The reviewed23-owner coverage plus actual Expr output evaluators. The
 // factored Outer output stays canonical and is not recorded. Bytecode anchor21
-// contributes input only; Full output is20.
+// contributes input only; Full output is20. Tag 22 (lattice booleanity) left
+// with main's #2145, which deleted that relation.
 const REQUIRED: &[(u64, Phase)] = &[
     (1, Phase::Support),
     (2, Phase::Input),
@@ -79,8 +80,6 @@ const REQUIRED: &[(u64, Phase)] = &[
     (19, Phase::Output),
     (20, Phase::Output),
     (21, Phase::Input),
-    (22, Phase::Input),
-    (22, Phase::Output),
     (23, Phase::Input),
     (23, Phase::Output),
     (24, Phase::Input),

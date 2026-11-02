@@ -1,6 +1,6 @@
 use jolt_field::JoltField;
 use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use crate::stages::relations::{OutputClaims, SumcheckBatch};
 use crate::stages::zk::outputs::CommittedOutputClaimOutput;
@@ -103,10 +103,12 @@ impl<F: JoltField> Stage4OutputClaims<F> {
         values
     }
 
-    /// Append every produced opening to the transcript in canonical order as one
-    /// opening-claim message, matching the prover's commitment order.
-    pub fn append_to_transcript<T: Transcript<Challenge = F>>(&self, transcript: &mut T) {
-        jolt_sumcheck::append_opening_claims(transcript, &self.opening_values());
+    /// Append every produced opening to the transcript in canonical order,
+    /// matching the prover's commitment order.
+    pub fn append_to_transcript<T: FieldTranscript<F>>(&self, transcript: &mut T) {
+        for value in self.opening_values() {
+            transcript.append(&value);
+        }
     }
 }
 
@@ -191,7 +193,7 @@ impl<F: JoltField, C> Stage4Output<F, C> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, squeeze, TranscriptEvent};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::geometry::dimensions::{
@@ -201,7 +203,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::FieldTranscript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -288,12 +290,12 @@ mod tests {
         }
     }
 
-    /// Pins the batch's `draw_challenges` to the inline draw order: one `challenge_scalar` per
+    /// Pins the batch's `draw_challenges` to the inline draw order: one `challenge()` per
     /// leading member — the registers gamma, under `field-inline` the field-register
     /// read-write gamma (the spec's draw slot: after the registers gamma, before the RAM
-    /// value-check draw) — then the RAM value-check draw (its domain separator + gamma; that
-    /// draw's byte exactness is pinned by its own member test). The replica reuses the RAM
-    /// member's `draw_challenges` so this test pins the member ORDER.
+    /// value-check draw) — then the RAM value-check gamma (pinned by its own member test).
+    /// No absorb sits between the draws. The replica reuses the RAM member's
+    /// `draw_challenges` so this test pins the member ORDER.
     #[test]
     fn draw_challenges_matches_inline_draw_sequence() {
         use crate::stages::relations::ConcreteSumcheck as _;
@@ -305,7 +307,7 @@ mod tests {
         let leading_gamma_draws = 2usize;
         let (inline_events, (inline_gammas, inline_ram_gamma)) = record(|t| {
             let gammas = (0..leading_gamma_draws)
-                .map(|_| t.challenge_scalar())
+                .map(|_| t.challenge().unwrap())
                 .collect::<Vec<Fr>>();
             let ram = sumchecks.ram_val_check.draw_challenges(t).unwrap();
             (gammas, ram.gamma)
@@ -313,10 +315,10 @@ mod tests {
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        assert!(matches!(draw_events.first(), Some(DrawEvent::Squeeze(1))));
+        assert_eq!(draw_events.first(), Some(&squeeze(1)));
         assert!(draw_events
             .iter()
-            .any(|event| matches!(event, DrawEvent::Append(_))));
+            .all(|event| matches!(event, TranscriptEvent::Challenges(_))));
         #[cfg(not(feature = "field-inline"))]
         let drawn_gammas = vec![challenges.registers_read_write.gamma];
         #[cfg(feature = "field-inline")]

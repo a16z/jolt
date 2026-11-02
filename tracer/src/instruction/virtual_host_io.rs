@@ -1,18 +1,18 @@
-use crate::instruction::registers::i::RegisterStateI;
+use crate::instruction::registers::no_operands::RegisterStateNoOperands;
 use serde::{Deserialize, Serialize};
 
 use jolt_platform::{JOLT_ADVICE_WRITE_CALL_ID, JOLT_CYCLE_TRACK_CALL_ID, JOLT_PRINT_CALL_ID};
 
 use crate::{declare_riscv_instr, emulator::cpu::Cpu};
 
-use super::{format::format_i::FormatI, RISCVInstruction, RISCVTrace};
+use super::{format::format_no_operands::FormatNoOperands, RISCVInstruction, RISCVTrace};
 
 declare_riscv_instr!(
     name   = VirtualHostIO,
     mask   = 0,
     match  = 0,
-    format = FormatI,
-    registers = RegisterStateI,
+    format = FormatNoOperands,
+    registers = RegisterStateNoOperands,
     ram    = ()
 );
 

@@ -12,12 +12,21 @@ use jolt_field::{
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+#[cfg(feature = "spongefish")]
+use spongefish::Encoding;
 
 const P: u64 = (1 << 61) - 1;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct M61(u64);
+
+#[cfg(feature = "spongefish")]
+impl Encoding for M61 {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.to_le_bytes()
+    }
+}
 
 fn reduce128(v: u128) -> u64 {
     (v % P as u128) as u64
@@ -90,6 +99,7 @@ impl CanonicalBytes for M61 {
 
 impl CanonicalEncoding for M61 {
     const MODULUS_BITS: u32 = 61;
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [P, 0, 0, 0];
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let base = M61::from_u64(256);
         bytes
@@ -113,14 +123,12 @@ impl CanonicalEncoding for M61 {
     fn num_bits(&self) -> u32 {
         64 - self.0.leading_zeros()
     }
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl_serde_bytes!(impl[] M61, 8);
 
 impl WithAccumulator for M61 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = NaiveAccumulator<M61>;
     type SmallScalarAccumulator = NaiveAccumulator<M61>;
     type SignedProductAccumulator = NaiveAccumulator<M61>;
@@ -229,14 +237,6 @@ fn canonical_surface() {
         M61::from_bytes_le_reduced(&wide),
         M61::from_u128_reduced(u128::from_le_bytes(wide))
     );
-    assert_eq!(
-        M61::from_challenge_bytes(&wide),
-        M61::from_bytes_le_reduced(&wide)
-    );
-    assert_eq!(
-        M61::from_scalar_challenge_bytes(&wide),
-        M61::from_challenge_bytes(&wide)
-    );
     assert_eq!(M61::zero().num_bits(), 0);
     assert_eq!(M61(0b1011).num_bits(), 4);
     assert_eq!(M61(u64::MAX % P).to_u64_checked(), Some(u64::MAX % P));
@@ -309,7 +309,8 @@ fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
 #[test]
 fn jolt_field_blanket() {
     // M61 satisfies the JoltField bundle from the component traits alone —
-    // the derive above is the `allocative` feature's supertrait, not a JoltField impl.
+    // the derive and the `Encoding` impl above are the `allocative` and
+    // `spongefish` features' supertraits, not a JoltField impl.
     let xs = [M61(2), M61(3)];
     let ys = [M61(5), M61(7)];
     assert_eq!(inner_product(&xs, &ys), M61(31));

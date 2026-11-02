@@ -91,7 +91,7 @@ pub extern "sysv64" fn host_io(state: *mut GuestState) -> u64 {
     }
 }
 
-/// `Ld` slow path: device-region, unaligned, or out-of-bounds effective
+/// `Ld`/`VirtualLoad*` slow path: device-region, unaligned, or out-of-bounds
 /// addresses. Returns the loaded doubleword in rax on success.
 pub extern "sysv64" fn slow_load_doubleword(state: *mut GuestState, address: u64) -> u64 {
     let (state, host) = host_context(state);
@@ -133,8 +133,8 @@ fn record_device_store_pre(state: &mut GuestState, host: &HostContext, address: 
     unsafe { (*state.obs_cursor).ram_pre = pre };
 }
 
-/// `Sd` slow path: device-region, unaligned, stack-canary, or out-of-bounds
-/// effective addresses. `JoltDevice::store` also handles the
+/// `Sd`/`VirtualStore*` slow path: device-region, unaligned, stack-canary, or
+/// out-of-bounds addresses. `JoltDevice::store` also handles the
 /// panic/termination bits.
 pub extern "sysv64" fn slow_store_doubleword(
     state: *mut GuestState,
@@ -176,13 +176,14 @@ pub extern "sysv64" fn slow_store_doubleword(
     0
 }
 
-/// A virtual assert failed. The interpreter panics; the x86 backend surfaces
-/// a `TraceError` (accepted asymmetry, spec invariant 7).
+/// A virtual assert or a floor-addressed row's alignment check failed. The
+/// interpreter panics; the x86 backend surfaces a `TraceError` (accepted
+/// asymmetry, spec invariant 7).
 pub extern "sysv64" fn assert_failed(state: *mut GuestState, code: u64, value: u64) -> u64 {
     let (state, host) = host_context(state);
     let message = match code {
-        0 => format!("RAM access (LH or LHU) is not halfword aligned: {value:x}"),
-        1 => format!("RAM access (LW or LWU) is not word aligned: {value:x}"),
+        0 => format!("RAM access is not halfword aligned: {value:#x}"),
+        1 => format!("RAM access is not word aligned: {value:#x}"),
         2 => "VirtualAssertLTE failed".to_string(),
         3 => format!("VirtualAssertEQ failed (lhs {value:x})"),
         4 => format!("VirtualAssertValidDiv0 failed (quotient {value:x})"),

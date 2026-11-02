@@ -17,7 +17,7 @@
 
 use super::simd::SimdWord;
 use crate::solinas::{Fp32, Fp64};
-use crate::{Ext2NonResidueKind, Packed};
+use crate::{Ext2NonResidueKind, Packed, PseudoMersenne};
 
 pub(crate) use super::fp128::PackedFp128;
 
@@ -263,15 +263,9 @@ impl<const P: u64, I: SimdWord> PackedFp64<P, I> {
     } else {
         (1u64 << Self::BITS) - 1
     };
-    /// Whether two folds and one subtraction reduce a sum of three products.
-    const EXT2_TWO_FUSION_SAFE: bool =
-        Self::BITS < 64 && 3 * (Self::C as u128) * (Self::C as u128 + 1) < P as u128;
-
-    #[inline(always)]
-    fn reduce_three_product_sum(lo: u64, hi: u64) -> u64 {
-        debug_assert!(Self::EXT2_TWO_FUSION_SAFE);
-        Fp64::<P>::reduce_sub_word_wide(lo, hi, hi >> Self::BITS)
-    }
+    /// Whether the vector-limb path reduces a sum of three products: two
+    /// folds and one subtraction, for sub-word primes only.
+    const EXT2_TWO_FUSION_SAFE: bool = Self::BITS < 64 && Fp64::<P>::EXT2_FUSION_SAFE;
 
     #[inline(always)]
     fn add128(a: [I::V64; 2], b: [I::V64; 2]) -> [I::V64; 2] {
@@ -413,27 +407,29 @@ impl<const P: u64, I: SimdWord> Packed for PackedFp64<P, I> {
         b0: Self,
         b1: Self,
     ) -> (Self, Self) {
+        if I::FP64_MUL_BY_LANES
+            && C::NON_RESIDUE_KIND != Ext2NonResidueKind::Generic
+            && Fp64::<P>::EXT2_FUSION_SAFE
+        {
+            // The scalar fused kernel per lane; LLVM drops the products the
+            // unused coordinate does not need.
+            let lane = |lane: usize, coordinate: usize| {
+                let a = [
+                    Fp64::<P>(I::v64_lane(a0.0, lane)),
+                    Fp64(I::v64_lane(a1.0, lane)),
+                ];
+                let b = [
+                    Fp64::<P>(I::v64_lane(b0.0, lane)),
+                    Fp64(I::v64_lane(b1.0, lane)),
+                ];
+                Fp64::<P>::ext2_mul::<C>(a, b)[coordinate].0
+            };
+            return (
+                Self(I::v64_from_fn(|i| lane(i, 0))),
+                Self(I::v64_from_fn(|i| lane(i, 1))),
+            );
+        }
         if C::NON_RESIDUE_KIND == Ext2NonResidueKind::Two && Self::EXT2_TWO_FUSION_SAFE {
-            if I::FP64_MUL_BY_LANES {
-                let c0 = I::v64_from_fn(|lane| {
-                    let a0 = I::v64_lane(a0.0, lane) as u128;
-                    let a1 = I::v64_lane(a1.0, lane) as u128;
-                    let b0 = I::v64_lane(b0.0, lane) as u128;
-                    let b1 = I::v64_lane(b1.0, lane) as u128;
-                    let z = a0 * b0 + 2 * a1 * b1;
-                    Self::reduce_three_product_sum(z as u64, (z >> 64) as u64)
-                });
-                let c1 = I::v64_from_fn(|lane| {
-                    let a0 = I::v64_lane(a0.0, lane) as u128;
-                    let a1 = I::v64_lane(a1.0, lane) as u128;
-                    let b0 = I::v64_lane(b0.0, lane) as u128;
-                    let b1 = I::v64_lane(b1.0, lane) as u128;
-                    let z = a0 * b1 + a1 * b0;
-                    Self::reduce_three_product_sum(z as u64, (z >> 64) as u64)
-                });
-                return (Self(c0), Self(c1));
-            }
-
             let p00 = I::mul64_wide(a0.0, b0.0);
             let p11 = I::mul64_wide(a1.0, b1.0);
             let p01 = I::mul64_wide(a0.0, b1.0);

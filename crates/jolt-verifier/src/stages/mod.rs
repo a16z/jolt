@@ -23,6 +23,7 @@ pub(crate) mod derivations;
 #[cfg(feature = "field-inline")]
 pub mod field_inline_bytecode;
 pub mod ids;
+pub mod pow;
 pub mod relations;
 pub mod stage1;
 pub mod stage2;

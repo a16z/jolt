@@ -255,6 +255,28 @@ pub(crate) fn with_ram_fixture_init<R>(
     f(&backend)
 }
 
+/// Restricts sparse field-inline rows to an integer-constant `prefix`. With
+/// `late`, payloads are also kept at the boundary, mid-suffix and `T - 1`, so
+/// the explicit prefix must stretch over field activity that the constant
+/// integer tail does not cover.
+#[cfg(feature = "field-inline")]
+pub(crate) fn trim_field_rows<R: Copy>(
+    rows: &mut Vec<(usize, R)>,
+    log_t: usize,
+    prefix: usize,
+    late: bool,
+) {
+    let len = 1usize << log_t;
+    let payload = rows.first().map(|(_, row)| *row);
+    rows.retain(|(cycle, _)| *cycle < prefix);
+    if let (true, Some(payload)) = (late, payload) {
+        let mut cycles = vec![prefix, prefix + (len - prefix) / 2, len - 1];
+        cycles.retain(|&cycle| cycle >= prefix && cycle < len);
+        cycles.dedup();
+        rows.extend(cycles.into_iter().map(|cycle| (cycle, payload)));
+    }
+}
+
 pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
     let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(seed);
     (0..count).map(|_| Fr::random(&mut rng)).collect()

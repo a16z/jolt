@@ -9,7 +9,7 @@
 //! formulation and dominates the cost.
 
 use crate::solinas::{FpExt2, FpExt4, FpExt8};
-use crate::{Ext2Config, Field, Packed, PseudoMersenne, WithPacking};
+use crate::{Ext2Config, Packed, PseudoMersenne, WithPacking};
 use std::marker::PhantomData;
 use std::ops::{Add, Mul, Sub};
 
@@ -66,7 +66,10 @@ impl<PF: Packed, C: Ext2Config<PF::Scalar>> Mul for PackedFpExt2<PF, C> {
     }
 }
 
-impl<PF: Packed, C: Ext2Config<PF::Scalar> + 'static> Packed for PackedFpExt2<PF, C> {
+impl<PF: Packed, C: Ext2Config<PF::Scalar> + 'static> Packed for PackedFpExt2<PF, C>
+where
+    PF::Scalar: PseudoMersenne,
+{
     type Scalar = FpExt2<PF::Scalar, C>;
     const WIDTH: usize = PF::WIDTH;
 
@@ -94,7 +97,7 @@ impl<PF: Packed, C: Ext2Config<PF::Scalar> + 'static> Packed for PackedFpExt2<PF
 
 impl<F, C> WithPacking for FpExt2<F, C>
 where
-    F: Field + WithPacking,
+    F: PseudoMersenne + WithPacking,
     C: Ext2Config<F> + 'static,
 {
     type Packing = PackedFpExt2<F::Packing, C>;

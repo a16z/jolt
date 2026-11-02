@@ -5,7 +5,9 @@ pub mod analyze;
 pub mod field_inline;
 mod program;
 
+use std::io::Error as IoError;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use common::constants::RAM_START_ADDRESS;
 use jolt_program::{JoltProgram, ProgramError};
@@ -33,8 +35,36 @@ pub struct Program {
     max_output_size: u64,
     std: bool,
     backtrace: Option<String>,
-    pub elf: Option<PathBuf>,
-    pub elf_compute_advice: Option<PathBuf>,
+    pub elf: Option<GuestElf>,
+    pub elf_compute_advice: Option<GuestElf>,
+}
+
+/// A guest ELF and the bytes read from it once.
+///
+/// Guest builds replace the file at `path` even when nothing was recompiled
+/// (cargo removes and re-links its uplifted binary), so the bytes are read a
+/// single time and every later consumer uses them instead of the path.
+#[derive(Clone)]
+pub struct GuestElf {
+    path: PathBuf,
+    bytes: Arc<[u8]>,
+}
+
+impl GuestElf {
+    pub fn read(path: PathBuf) -> Result<Self, IoError> {
+        let bytes = std::fs::read(&path)?.into();
+        Ok(Self { path, bytes })
+    }
+
+    /// Where the ELF was read from; the tracer uses it only to symbolize
+    /// guest panics.
+    pub fn path(&self) -> &PathBuf {
+        &self.path
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
 }
 
 /// An ELF-backed source accepted by SDK-generated preprocessing and proving APIs.

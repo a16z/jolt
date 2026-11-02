@@ -23,4 +23,3 @@
         ACC_LENT.store(false, Ordering::Relaxed);
         result
     }
-

@@ -10,6 +10,9 @@ use std::sync::OnceLock;
 use tracing_chrome::ChromeLayerBuilder;
 use tracing_subscriber::{fmt::format::FmtSpan, prelude::*, EnvFilter};
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::span_boundary::SpanBoundaryLayer;
+
 /// Thread-safe storage for the pprof output prefix.
 ///
 /// Initialized once during [`setup_tracing`] and read by [`PprofGuard`](crate::PprofGuard)
@@ -113,9 +116,10 @@ pub fn setup_tracing_with_trace_path(
         tracing::info!("Chrome tracing enabled. Output: {}", trace_path.display());
     }
 
-    // Boundary RSS sampling for the prover-stage spans; inert for all others.
+    // Instruction sampling at span boundaries on this thread, plus RSS at
+    // the prover-stage spans.
     #[cfg(not(target_arch = "wasm32"))]
-    layers.push(crate::stage_memory::StageMemoryLayer.boxed());
+    layers.push(SpanBoundaryLayer.boxed());
 
     tracing_subscriber::registry().with(layers).init();
 
@@ -132,6 +136,16 @@ pub fn setup_tracing_with_trace_path(
                 .unwrap_or(0.1),
         )
     }));
+
+    // Opened after the chrome writer and monitor threads exist: the
+    // inherited counter covers only threads spawned from here on, keeping
+    // the profiler's own threads out of the span instruction counts.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Err(e) = crate::instructions::open_process_counter() {
+        tracing::warn!(
+            "hardware instruction counter unavailable ({e}); span instruction counts will be null"
+        );
+    }
 
     TracingGuards(guards)
 }

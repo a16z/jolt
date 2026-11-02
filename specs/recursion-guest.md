@@ -4,7 +4,7 @@ The recursion example executes Jolt's Akita verifier as a RISC-V guest: it
 verifies an inner Akita, field-inline proof and reports the verdict. The cost of
 interest is the guest's **total trace rows**, the length an outer proof of that
 execution would have to cover, including setup and proof decoding. The working
-target is a Fibonacci inner proof below 2^26 rows; this revision is 11,158,718
+target is a Fibonacci inner proof below 2^26 rows; this revision is 11,924,024
 rows above it (see [Measurements](#measurements)). This document records the
 mechanisms the guest uses, the trust they rely on, and where the rows go.
 
@@ -16,7 +16,11 @@ proof of it is generated.
 The guest distinguishes two kinds of input.
 
 - **Proof data** (the inner proof and its I/O device) is untrusted and goes
-  through the ordinary verifier unchanged.
+  through fallible record decoding and the ordinary verifier. Malformed framing,
+  noncanonical fields, and decoding failures return `0`. Each encoded record is
+  limited to 16 MiB, with a conservative 16 MiB aggregate collection-storage
+  budget during decoding; excess lengths reject before collection allocation.
+  Raw setup bodies are borrowed within the checked stream bounds.
 - **Setup data** is trusted. It is the verifier preprocessing, the Akita
   verifier key with its public matrix, a catalog view of the selected schedule
   row, and that row's terminal-matrix NTT cache. The guest takes the matrix as
@@ -25,9 +29,14 @@ The guest distinguishes two kinds of input.
 
 Trusted setup data must be bound to the program identity. With `--embed` the
 host bakes it into the guest image, so the ELF digest is the binding. In input
-mode the setup arrives through the guest input, and whoever consumes the
-execution must authenticate those bytes. The preprocessing digest alone does not
-cover the detached payloads. Embedded mode is the configuration the row count
+mode the host bakes a BLAKE2b-512 digest into the image at build time. It covers
+the entire framed setup section: the preprocessing record, detached-body count,
+and every detached body (key matrix, catalog view, and terminal NTT cache),
+including their lengths and padding. The leading input-alignment record is
+excluded. The guest checks this pin before decoding setup or constructing any
+`TrustedBytes`; a missing digest or mismatch returns verdict `0`. Rebuilding
+with a different setup changes the image identity, which the consumer must pin.
+The preprocessing digest alone does not cover the detached payloads. Embedded mode is the configuration the row count
 refers to.
 
 What the guest still checks on setup data:
@@ -38,6 +47,57 @@ What the guest still checks on setup data:
 - The NTT cache checks its header, its setup and schedule bindings, its
   geometry, its lengths, and its alignment.
 - Field-inline readouts reject non-canonical integers.
+
+## Recursive statement
+
+The recursive statement is: under the setup bound by this guest image, the
+postcard-decoded record slice contains a nonempty batch of valid inner
+proof/device pairs. The count must be at least one and no bytes may follow the
+last padded record within that slice. The entry point also requires every byte
+from the end of the postcard envelope to the end of the input capacity to be
+zero. The runtime exposes a zero-padded region, not the submitted input length,
+so an explicit zero suffix is indistinguishable from unused capacity and is
+allowed. A nonzero transport suffix, malformed envelope, or malformed record
+returns `0`; acceptance returns `1`. The output is
+still one `u32` and does not commit separately to the count or inner devices.
+A consumer checking a particular computation must bind the runtime input and
+inspect the intended count and devices; checking the verdict alone establishes
+only that some nonempty batch verifies under the image's setup.
+
+## Record limits
+
+The image builder runs the same bounded serde adapter over each supplied setup,
+count, proof, and device record and logs both its encoded length and its charged
+size. The byte cap is the next power of two of the largest record, with a 16 MiB
+floor. The allocation-charge cap is the next power of two of twice the largest
+charge, also with a 16 MiB floor. Both caps are constants in the generated guest;
+untrusted runtime lengths cannot raise them. Detached setup bodies are borrowed
+and are not decoded records. Embedded setup removes the bytecode vector before
+encoding, so using the full input-mode setup to size its cap is conservative;
+the additional embedded digest record is only 32 bytes.
+
+A trace of `2^20` rows does not bound the size of the program image, bytecode,
+public I/O, or schedule catalog. There is consequently no universal largest
+honest record at that trace length. In full-program mode the setup can dominate:
+`JoltInstructionRow` contains at least an eight-byte address and a sixteen-byte
+immediate, so a `2^20`-row bytecode vector alone incurs at least
+`2 * 24 * 2^20 = 48 MiB` of charge before the nested struct/operand charges,
+PC map, RAM image, and setup metadata. A `2^20`-word RAM vector adds
+`2 * 8 * 2^20 = 16 MiB`. These terms alone exceed the former 16 MiB cap.
+For comparison, a vector of `2^20` Fp128 values has 16 MiB of field bytes but
+costs `2 * 16 * 2^20` for vector storage plus `2 * 16 * 2^20` for the fixed
+byte-array decodes: 64 MiB of charge. This is a type-based estimate, not a claim
+that sumcheck proofs contain one scalar per trace row.
+
+Image-specific sizing avoids guessing a universal cap from trace length. It
+admits the records supplied to the builder under the supported 64-bit host and
+guest layouts, including the input-mode setup; other record shapes must fit the
+pinned limits or need a newly sized image. The builder reserves at least eight
+times the charge cap for the heap, accounting for the resident setup, proof,
+and device plus growth and verifier work. The charge is not a peak-heap proof:
+custom deserializers and backend verification can allocate outside the adapter,
+and transient vector growth can exceed its factor-of-two charge. Runtime peak
+memory and acceptance at large sizes still require Linux validation.
 
 ## Mechanisms
 
@@ -205,12 +265,10 @@ companion; the last row traces a fresh proof at this revision.
 | Merge `main`: native Akita trace batching (#2012), Akita `d98400c5` (#175), fresh proof | 78,896,208 |
 | Akita review revisions of LayerZero-Labs/akita#186-#190 on Akita `main` `401e7972`, spongefish's own Blake2b sponge, lent-accumulator `signed_sum`, fresh proof | 79,348,402 |
 | Merge `main`: Akita `318c3221` (#193), unified trace rows (#1996), fallible chunked decode and live-entry residual tables, fresh proof (77,245,072 verification cycles) | 79,335,454 |
-| Merge `main`: Akita `cf95fd05` (BlockDigits dense commit, #236-#242), whole-table bytecode (#2030), fresh proof (76,947,621 verification cycles) | 79,032,888 |
-| **Packed-word recognition of constant BLAKE2b prefixes**, same inner proof (76,182,318 verification cycles) | **78,267,582** |
+| **Merge `main`: Akita `cf95fd05` (BlockDigits dense commit, #236-#242), whole-table bytecode (#2030), fresh proof** (76,947,621 verification cycles) | **79,032,888** |
 
 The first row was rebuilt and re-measured from its archived sources and
-reproduces its recorded numbers exactly. At the #1911 baseline
-(`125fa70aa`), input mode, which reads the setup
+reproduces its recorded numbers exactly. Input mode, which reads the setup
 from the guest input, accepts at 86,461,879 rows. A proof with one bit flipped
 in its Akita opening proof is rejected after 60,136,155 rows, inside the PCS
 verifier.
@@ -221,52 +279,14 @@ fold (`verify_root`, 14.56M to 24.46M rows): its relation-matrix evaluation
 and direct setup-contribution scan run over the natively batched trace
 columns. The terminal checks are unchanged.
 
-The review-revision increase from 78,896,208 to 79,348,402 rows nets two
-measured effects, besides the boot-time modulus binding. Replacing the
+The last row's 452,194-row increase nets two measured effects, besides the
+boot-time modulus binding. Replacing the
 hand-written transcript sponge, which reused each phase's compressed mask block,
 with spongefish's sponge over the inline adapter costs about 1.16M rows, and the
 remaining review revisions save about 0.71M. The `signed_sum` accumulator guard
-costs about 9,000 rows. A prior recognizer for the mask blocks cost more rows (0.36M) than it
-saved, because its 128-byte check ran bytewise in the guest.
-
-### Constant BLAKE2b prefixes (2026-10-20)
-
-Spongefish's three public domain masks are full 128-byte blocks. The SDK now
-recognizes them after packing into sixteen words, and reuses their compression
-outputs computed at compile time by the existing BLAKE2b implementation. The
-fast path requires a nonfinal first block at counter 128, the complete
-BLAKE2b-512 initial state, and an exact match of all message words. This preserves
-all hash bytes, including final-block, shorter-digest, salt and personalization
-semantics. Other blocks still use the inline; Spongefish itself is unchanged.
-The high-level hash API has content-dependent execution, not a constant-time
-contract. The prefixes optimized in recursion are public.
-
-A short squeeze-to-absorb-to-squeeze transition now needs four dynamic
-compressions instead of seven. The complete verifier improvement is smaller:
-**765,306 fewer rows, or 0.9683%**, on the same checksum-sealed inner proof.
-Verification uses 931,381 fewer virtual instructions and 166,078 more ordinary
-RV64IMAC instructions, accounting for the recognition overhead. Both the
-baseline and candidate remain in the $2^{27}$ padded domain; this alone does
-not reach the $2^{26}$ target.
-
-The same typed opening-tamper fixture still rejects without a panic: its total
-trace falls from 60,136,155 to 59,512,842 rows (623,313 saved). Both source states
-return 1 for the valid proof and 0 for the tampered proof. Fixture checksums
-were verified unchanged after both candidate runs.
-
-The baseline was independently reproduced at `125fa70aa657e78bce49f58f701f2756d52a69da`,
-with Akita `ee03aa30`. Both arms ran on a Linux AMD EPYC 7K62 host, Rust 1.95.0,
-CI-profile host and release guest, embedded setup, the same inner proof, and
-`RAYON_NUM_THREADS=1`. Separate guest target directories prevent cross-arm
-artifact reuse. All 14 BLAKE2b nextest tests passed, including independent digest
-compatibility and inline execution checks; formatting and both workspace Clippy
-modes (`host`, `host,zk`) passed. This is a trace-count result, not a native
-elapsed-time or outer recursive-proof measurement.
-
-The successor branch retains #1911's public recursion companion. Merging
-current main's runtime-catalog policy (#2091) and Spongefish migration (#2095)
-requires companion integration and fresh validation; these counts do not
-represent that future merge.
+costs about 9,000 rows. Recovering the mask compressions through a digest that
+recognizes the mask blocks cost more rows (0.36M) than it saved, because the
+128-byte check runs bytewise in the guest.
 
 ## Levers not taken here
 
@@ -300,10 +320,10 @@ represent that future merge.
 ## Reproduction
 
 ```bash
-export RUST_LOG=info RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1
-cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
+export RAYON_NUM_THREADS=1 RUST_MIN_STACK=268435456 CARGO_BUILD_JOBS=1
+cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
   generate --example fibonacci --workdir /tmp/recursion
-cargo run --release -p recursion --features akita,field-inline,ntt-inline,immutable-recipes -- \
+cargo run --release -p recursion --features akita,field-inline,ntt-inline -- \
   trace --embed --example fibonacci --workdir /tmp/recursion
 ```
 

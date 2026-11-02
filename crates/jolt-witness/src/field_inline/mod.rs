@@ -96,6 +96,16 @@ pub trait FieldInlineWitnessOracle<F: JoltField>:
     /// Read one increment, including zero padding.
     fn rd_increment_at(&self, cycle: usize) -> Result<F, WitnessError>;
 
+    /// Upper bound on the nonzero increment prefix. Entries beyond this bound
+    /// are zero; the polynomial's logical domain still comes from `shape`.
+    fn rd_increment_prefix_len(&self) -> Result<usize, WitnessError> {
+        Ok(self
+            .shape(FieldInlinePolynomialId::Committed(
+                FieldInlineCommittedPolynomial::FieldRdInc,
+            ))?
+            .rows())
+    }
+
     /// Fill a range within the increment domain without materializing another
     /// column. Sparse trace providers seek once per range and visit its field
     /// events in order.
@@ -171,6 +181,22 @@ impl<F: JoltField> FieldInlineWitnessOracle<F> for TraceBackedFieldInlineWitness
 
     fn oracle_table(&self, id: FieldInlinePolynomialId) -> Result<Vec<F>, WitnessError> {
         TraceBackedFieldInlineWitness::oracle_table::<F>(self, id)
+    }
+
+    fn rd_increment_prefix_len(&self) -> Result<usize, WitnessError> {
+        self.trace_data
+            .field_events()
+            .last()
+            .map_or(Ok(0), |event| {
+                event
+                    .cycle
+                    .checked_add(1)
+                    .filter(|end| *end <= self.rows)
+                    .ok_or_else(|| WitnessError::InvalidDimensions {
+                        label: FIELD_INLINE_LABEL,
+                        reason: "field event exceeds trace domain".to_owned(),
+                    })
+            })
     }
 
     fn rd_increment_at(&self, cycle: usize) -> Result<F, WitnessError> {
@@ -679,7 +705,7 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
 mod tests {
     use common::constants::RAM_START_ADDRESS;
     use jolt_claims::protocols::jolt::JoltOneHotConfig;
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, Ring, Zero};
     use jolt_program::{
         execution::{JoltProgram, TraceOutput},
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},
@@ -939,6 +965,16 @@ mod tests {
             .unwrap();
         assert_eq!(shape.rows(), 8);
         assert_eq!(shape.encoding, PolynomialEncoding::Dense);
+        let prefix = FieldInlineWitnessOracle::<Fr>::rd_increment_prefix_len(&provider).unwrap();
+        let full = owned_view(
+            &provider,
+            FieldInlinePolynomialId::Committed(FieldInlineCommittedPolynomial::FieldRdInc),
+        );
+        assert_eq!(prefix, 4);
+        assert!(full[prefix..].iter().all(|value| value.is_zero()));
+        let mut values = vec![Fr::zero(); prefix];
+        provider.fill_rd_increments(0, &mut values).unwrap();
+        assert_eq!(values, full[..prefix]);
     }
 
     #[test]

@@ -4,6 +4,18 @@
 //! `CommitmentScheme` trait plus an adapter delegating same-point batches to
 //! Akita's native batched opening protocol.
 
+//!
+//! # Verifier setup wire compatibility
+//!
+//! `AkitaVerifierSetup` now encodes catalog and prepared payloads as optional
+//! byte strings and includes an optional prepared-verifier record. This breaks
+//! older bincode setup encodings, including the legacy single-profile encoding
+//! and enclosing verifier preprocessing. Serde defaults do not make positional
+//! bincode structs backward compatible. Discard saved setups/preprocessing,
+//! rerun preprocessing with compatible catalogs, and rebuild recursion images.
+//! This setup encoding has no independent format-version constant; applications
+//! persisting it must associate it with the producing implementation revision.
+
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
 #![forbid(unsafe_code)]
@@ -25,13 +37,15 @@ pub mod configs;
 pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
-mod planning;
 mod prepared;
+mod schedule_artifacts;
 pub mod schedule_registry;
 pub mod schedules;
 mod scheme;
 mod shape_guard;
 mod trace_onehot;
+mod verifier_resources;
+mod verifier_setup;
 
 pub use akita_pcs::{AkitaError, TrustedBytes};
 
@@ -43,13 +57,14 @@ pub use adapters::{
 };
 pub use adapters::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaSetupParams,
-    AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
+    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
+    AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
+pub use schedule_artifacts::{AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts};
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 pub use scheme::{AkitaScheme, TraceOneHotCommitment};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
@@ -57,7 +72,9 @@ pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw
 /// backend use the exact transform the adapter uses.
 #[doc(hidden)]
-pub use adapters::{jolt_to_akita_evals, jolt_to_akita_index, reverse_point};
+pub use adapters::{jolt_to_akita_evals, reverse_point};
+
+pub use verifier_resources::AkitaVerifierResources;
 
 #[cfg(feature = "carry-graph")]
 pub use akita_algebra::offset_eq::carry_graph;

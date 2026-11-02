@@ -26,6 +26,13 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
     fn num_columns(&self) -> usize;
     fn fill_row(&self, row: usize, selected_rows: &mut [u8]);
 
+    /// All committed coefficients after this row are zero, including every
+    /// column's committed-zero mask. This bounds computation, not the logical
+    /// polynomial domain. Sources without this guarantee retain the full scan.
+    fn nonzero_prefix_len(&self) -> usize {
+        self.num_rows()
+    }
+
     /// Bit `i` is set when column `i` commits row zero in this trace row.
     fn committed_digit_zero_mask(&self, _row: usize) -> u64 {
         0
@@ -38,6 +45,14 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
         for (row_offset, row_indices) in selected_rows.chunks_exact_mut(num_columns).enumerate() {
             self.fill_row(row_start + row_offset, row_indices);
         }
+    }
+
+    /// Fills row-major selectors and their committed-zero masks together.
+    /// `masks` contains one entry per row in `selected_rows`; both buffers
+    /// are overwritten. Sources can share extraction work between the outputs.
+    fn fill_rows_with_masks(&self, row_start: usize, selected_rows: &mut [u8], masks: &mut [u64]) {
+        self.fill_rows(row_start, selected_rows);
+        self.fill_committed_digit_zero_masks(row_start, masks);
     }
 
     /// Fills the masks for consecutive rows, overwriting the entire buffer.
@@ -108,6 +123,11 @@ impl TraceOneHotColumn {
             ));
         }
         let num_rows = rows.num_rows();
+        if rows.nonzero_prefix_len() > num_rows {
+            return Err(AkitaError::InvalidInput(
+                "trace one-hot nonzero prefix exceeds its logical row domain".into(),
+            ));
+        }
         let total_field_elems = num_rows.checked_mul(one_hot_k).ok_or_else(|| {
             AkitaError::InvalidInput("trace one-hot column domain overflow".to_string())
         })?;
@@ -132,6 +152,19 @@ impl TraceOneHotColumn {
 
     pub(super) fn total_field_elems(&self) -> usize {
         1usize << self.num_vars
+    }
+
+    /// Rings that can contain nonzero coefficients, within one semantic column.
+    /// This bounds internal work without changing the committed logical shape.
+    pub(super) fn nonzero_ring_prefix<const D: usize>(&self) -> Result<usize, AkitaError> {
+        validate_dimension::<D>(self.one_hot_k)?;
+        self.rows
+            .nonzero_prefix_len()
+            .checked_mul(self.one_hot_k)
+            .map(|coefficients| coefficients.div_ceil(D))
+            .ok_or_else(|| {
+                AkitaError::InvalidInput("trace one-hot prefix ring count overflow".into())
+            })
     }
 
     pub(super) fn segment_ring_elems<const D: usize>(&self) -> Result<usize, AkitaError> {

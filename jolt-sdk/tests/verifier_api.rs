@@ -1,10 +1,10 @@
 #[cfg(test)]
-// The fixtures are Dory proofs, and `VerifierPCS` is Dory. With `akita`,
-// `jolt_verifier::verify` is the Akita path, whose bounds Dory does not meet.
+// These fixtures contain Dory proofs; Akita uses a different proof envelope.
 #[cfg(all(feature = "host", not(feature = "akita")))]
 mod tests {
     use jolt_sdk::{
         deserialize_verifier_object, JoltDevice, JoltVerifierPreprocessing, RV64IMACProof,
+        VerifierTranscript,
     };
 
     #[test]
@@ -42,7 +42,7 @@ mod tests {
             jolt_sdk::VerifierField,
             jolt_sdk::VerifierPCS,
             jolt_sdk::VerifierVC,
-            jolt_sdk::VerifierTranscript,
+            VerifierTranscript<'_>,
         >(&preprocessing, &device, &proof, None);
         let duration = start.elapsed();
         println!("Verification took: {} ms", duration.as_millis());

@@ -468,7 +468,11 @@ impl<'ast> Visit<'ast> for InventoryVisitor {
             .to_token_stream()
             .to_string()
             .replace(' ', "");
-        if name == "append_to_transcript"
+        // Building a transcript from the statement binds the instance.
+        let binds_statement =
+            (name == "init" || name.ends_with("_transcript")) && arguments.contains("statement");
+        if binds_statement
+            || name == "append_to_transcript"
             || name.starts_with("absorb")
             || ((name.starts_with("append_") || name.starts_with("bind_"))
                 && arguments.to_ascii_lowercase().contains("transcript"))
@@ -552,21 +556,13 @@ fn prover_only_name(name: &str) -> bool {
 }
 
 fn is_challenge_call(name: &str) -> bool {
-    matches!(
-        name,
-        "challenge" | "challenge_scalar" | "challenge_vector" | "challenge_scalar_powers"
-    )
+    matches!(name, "challenge" | "challenge_vector" | "challenge_powers")
 }
 
 fn is_absorb_method(name: &str) -> bool {
     matches!(
         name,
-        "append"
-            | "append_bytes"
-            | "append_labeled"
-            | "append_scalars"
-            | "append_to_transcript"
-            | "append_values"
+        "append" | "append_bytes" | "append_to_transcript" | "append_values" | "check_public_grind"
     )
 }
 

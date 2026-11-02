@@ -2,7 +2,7 @@
 #![expect(clippy::unwrap_used, reason = "tests construct canonical fixtures")]
 
 use jolt_field::solinas::Prime128OffsetA7F7 as Field;
-use jolt_field::{CanonicalBytes, CanonicalEncoding};
+use jolt_field::CanonicalEncoding;
 
 const MODULUS: u128 = u128::MAX - (0xffff_a7f7 - 1);
 
@@ -20,9 +20,6 @@ fn word_canonical_tuple_boundaries_and_consumption() {
             bincode::serde::encode_to_vec(field, config).unwrap(),
             value.to_le_bytes()
         );
-        let mut big_endian = [0u8; 16];
-        field.to_bytes_be(&mut big_endian);
-        assert_eq!(big_endian, value.to_be_bytes());
     }
     for value in [MODULUS, MODULUS + 1, u128::MAX] {
         assert!(
@@ -45,26 +42,4 @@ fn word_truncated_and_single_bit_tuples() {
             bincode::serde::decode_from_slice(&value.to_le_bytes(), config).unwrap();
         assert_eq!((field.to_u128_checked(), consumed), (Some(value), 16));
     }
-}
-
-#[test]
-fn word_scalar_challenge_lengths_and_reduction() {
-    assert_eq!(
-        Field::from_scalar_challenge_bytes(&[]).to_u128_checked(),
-        Some(0)
-    );
-    assert_eq!(
-        Field::from_scalar_challenge_bytes(&[0x34, 0x12]).to_u128_checked(),
-        Some(0x1234)
-    );
-    assert_eq!(
-        Field::from_scalar_challenge_bytes(&MODULUS.to_le_bytes()).to_u128_checked(),
-        Some(0)
-    );
-    let mut wide = [0u8; 17];
-    wide[16] = 1;
-    assert_eq!(
-        Field::from_scalar_challenge_bytes(&wide).to_u128_checked(),
-        Some(0xffff_a7f7)
-    );
 }

@@ -12,7 +12,8 @@ fn main() {
     let embedded_bytes_path = Path::new("src/embedded_bytes.rs");
 
     if !embedded_bytes_path.exists() {
-        let fallback_content = r#"pub static EMBEDDED_BYTES: &[u8] = &[];"#;
+        let fallback_content = r#"pub static EMBEDDED_BYTES: &[u8] = &[];
+pub static SETUP_DIGEST: Option<[u8; 64]> = None;"#;
         fs::write(embedded_bytes_path, fallback_content).unwrap();
         println!("cargo:warning=Created fallback embedded_bytes.rs with empty bytes");
     } else {
@@ -22,9 +23,14 @@ fn main() {
     let provable_macro_path = Path::new("src/provable_macro.rs");
 
     if !provable_macro_path.exists() {
-        let fallback_content = r#"macro_rules! provable_with_config {
+        let fallback_content = r#"const RECORD_LIMITS: bounded::RecordLimits = bounded::RecordLimits {
+    bytes: 16 * 1024 * 1024,
+    allocation: 16 * 1024 * 1024,
+};
+macro_rules! provable_with_config {
     ($item: item) => {
         #[jolt::provable(
+            input_error = 0,
             max_input_size = 4096,
             max_output_size = 4096,
             heap_size = 33554432,

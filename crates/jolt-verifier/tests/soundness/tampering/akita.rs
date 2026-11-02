@@ -25,13 +25,14 @@
 )]
 
 use jolt_akita::{AkitaField, AkitaScheme};
-use jolt_claims::protocols::jolt::lattice::relations::{
-    booleanity::LatticeBooleanityOutputClaims, read_raf::LatticeBytecodeReadRafOutputClaims,
-};
+use jolt_claims::protocols::jolt::relations::booleanity::BooleanityOutputClaims;
+
+use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::{JoltField, Ring};
-use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+use jolt_prover::akita::preprocessing::AkitaVc;
+use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::preprocessing::{CommittedProgramPreprocessing, ProgramPreprocessing};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
@@ -284,9 +285,11 @@ fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn Fn
         rs2_value,
         right_operand_is_imm,
         imm,
+        right_operand_is_rd_write_value,
+        rd_write_value: ii_rd_write_value,
     } = instruction_input;
     let RegistersClaimReductionOutputClaims {
-        rd_write_value,
+        rd_write_value: rcr_rd_write_value,
         rs1_value: rcr_rs1_value,
         rs2_value: rcr_rs2_value,
     } = registers_claim_reduction;
@@ -304,7 +307,9 @@ fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn Fn
         rs2_value,
         right_operand_is_imm,
         imm,
-        rd_write_value,
+        right_operand_is_rd_write_value,
+        ii_rd_write_value,
+        rcr_rd_write_value,
         rcr_rs1_value,
         rcr_rs2_value,
     ] {
@@ -408,12 +413,10 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
         f(scalar);
     }
     f(fused_inc);
-    let LatticeBooleanityOutputClaims {
+    let BooleanityOutputClaims {
         instruction_ra,
         bytecode_ra: booleanity_bytecode_ra,
         ram_ra,
-        balanced_inc_digits,
-        balanced_inc_carry,
     } = booleanity;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -424,10 +427,6 @@ fn visit_stage6b<F: JoltField>(claims: &mut Stage6bOutputClaims<F>, f: &mut dyn 
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in balanced_inc_digits.iter_mut() {
-        f(scalar);
-    }
-    f(balanced_inc_carry);
     let RamHammingBooleanityOutputClaims { ram_hamming_weight } = ram_hamming_booleanity;
     f(ram_hamming_weight);
     let RamRaVirtualizationOutputClaims {
@@ -469,8 +468,6 @@ fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn Fn
         instruction_ra,
         bytecode_ra,
         ram_ra,
-        balanced_inc_digits,
-        balanced_inc_carry,
     } = hamming_weight_claim_reduction;
     for scalar in instruction_ra.iter_mut() {
         f(scalar);
@@ -481,10 +478,6 @@ fn visit_stage7<F: JoltField>(claims: &mut Stage7OutputClaims<F>, f: &mut dyn Fn
     for scalar in ram_ra.iter_mut() {
         f(scalar);
     }
-    for scalar in balanced_inc_digits.iter_mut() {
-        f(scalar);
-    }
-    f(balanced_inc_carry);
     if let Some(BytecodeReductionAddressPhaseOutputClaims { bytecode }) = bytecode_address_phase {
         f(bytecode);
     }
@@ -629,6 +622,21 @@ fn every_commitment_wire_rejects_perturbation() {
             proof.commitments = commitment;
             case.verify_proof(&proof)
         });
+        sweep_commitment(
+            case.proof
+                .fused_inc_commitment
+                .as_ref()
+                .expect("required increment commitment"),
+            6,
+            |commitment| {
+                let mut proof = case.proof.clone();
+                proof.fused_inc_commitment = Some(commitment);
+                case.verify_proof(&proof)
+            },
+        );
+        let mut missing = case.proof.clone();
+        missing.fused_inc_commitment = None;
+        assert_rejects(case.verify_proof(&missing));
     }
 
     let advice = akita_advice_case();
@@ -641,7 +649,7 @@ fn every_commitment_wire_rejects_perturbation() {
     }
     if let Some(trusted) = &advice.trusted_advice_commitment {
         sweep_commitment(trusted, 6, |commitment| {
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &advice.preprocessing,
                 &advice.public_io,
                 &advice.proof,
@@ -662,7 +670,7 @@ fn every_commitment_wire_rejects_perturbation() {
                     panic!("committed fixture must carry committed preprocessing");
                 };
                 replace(program, commitment);
-                jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                     &preprocessing,
                     &committed.public_io,
                     &committed.proof,
@@ -710,7 +718,7 @@ fn akita_proof_shape_tampers_reject() {
         AkitaField,
         AkitaScheme,
         AkitaVc,
-        AkitaTranscript,
+        VerifierState<'_, Keccak>,
     >(
         &preprocessing,
         &committed.public_io,
@@ -730,7 +738,7 @@ fn akita_proof_shape_tampers_reject() {
         AkitaField,
         AkitaScheme,
         AkitaVc,
-        AkitaTranscript,
+        VerifierState<'_, Keccak>,
     >(
         &preprocessing,
         &committed.public_io,
@@ -744,7 +752,7 @@ fn akita_proof_shape_tampers_reject() {
 #[test]
 fn akita_advice_commitment_presence_rejects() {
     let advice = akita_advice_case();
-    let result = jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    let result = jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
         &advice.preprocessing,
         &advice.public_io,
         &advice.proof,

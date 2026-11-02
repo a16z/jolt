@@ -112,10 +112,9 @@ pub fn trace(
             // Termination matches the lazy path: stop on the first step that
             // emits no rows (PC stall or a trap that produced no trace).
             let mut trace: Vec<Cycle> = Vec::with_capacity(trace_capacity_reserve());
-            let mut prev_pc: u64 = 0;
             loop {
                 let rows_before = trace.len();
-                step_emulator(&mut emulator, &mut prev_pc, Some(&mut trace));
+                step_emulator(&mut emulator, Some(&mut trace));
                 if trace.len() == rows_before {
                     break;
                 }
@@ -199,14 +198,8 @@ pub fn execute(
         memory_config,
         advice_tape,
     );
-    let mut prev_pc: u64 = 0;
-    loop {
-        let pc = emulator.get_cpu().read_pc();
-        if pc == prev_pc {
-            break;
-        }
+    while !emulator.get_cpu().has_stalled() {
         emulator.tick(None);
-        prev_pc = pc;
     }
 
     let executed = emulator.get_cpu().trace_len;
@@ -325,16 +318,10 @@ pub(crate) fn parallel_config_from_env() -> Option<TwoPassConfig> {
     })
 }
 
-fn step_emulator(emulator: &mut Emulator, prev_pc: &mut u64, trace: Option<&mut Vec<Cycle>>) {
-    let pc = emulator.get_cpu().read_pc();
-    // This is a trick to see if the program has terminated by throwing itself
-    // into an infinite loop. It seems to be a good heuristic for now but we
-    // should eventually migrate to an explicit shutdown signal.
-    if *prev_pc == pc {
-        return;
+fn step_emulator(emulator: &mut Emulator, trace: Option<&mut Vec<Cycle>>) {
+    if !emulator.get_cpu().has_stalled() {
+        emulator.tick(trace);
     }
-    emulator.tick(trace);
-    *prev_pc = pc;
 }
 
 #[tracing::instrument(skip_all)]
@@ -471,7 +458,6 @@ impl<T> GeneralizedLazyTraceIter<T> {
 #[derive(Clone, Debug)]
 pub struct Checkpoint {
     emulator_state: Emulator,
-    prev_pc: u64,
     current_traces: Vec<Cycle>,
     trace_steps_remaining: usize,
     cycle_count: usize,
@@ -483,13 +469,11 @@ unsafe impl Send for Checkpoint {}
 impl Checkpoint {
     pub(crate) fn new_with_empty_memory(
         emulator_state: &Emulator,
-        prev_pc: u64,
         current_traces: &[Cycle],
         cycle_count: usize,
     ) -> Self {
         Self {
             emulator_state: emulator_state.save_state_with_empty_memory(),
-            prev_pc,
             current_traces: current_traces.to_vec(),
             trace_steps_remaining: 0,
             cycle_count,
@@ -542,11 +526,7 @@ impl LazyTracer for Checkpoint {
 
         self.cycle_count += 1;
 
-        step_emulator(
-            &mut self.emulator_state,
-            &mut self.prev_pc,
-            Some(&mut self.current_traces),
-        );
+        step_emulator(&mut self.emulator_state, Some(&mut self.current_traces));
         if self.current_traces.is_empty() {
             None
         } else {
@@ -571,7 +551,6 @@ impl LazyTracer for Checkpoint {
 #[derive(Clone, Debug)]
 pub struct CheckpointingTracer {
     emulator_state: Emulator,
-    prev_pc: u64,
     current_traces: Vec<Cycle>,
     trace_steps_since_last_checkpoint: usize,
     cycle_count: usize,
@@ -584,7 +563,6 @@ impl CheckpointingTracer {
     pub fn new(emulator_state: Emulator) -> Self {
         Self {
             emulator_state,
-            prev_pc: 0,
             current_traces: vec![],
             trace_steps_since_last_checkpoint: 0,
             cycle_count: 0,
@@ -599,7 +577,6 @@ impl CheckpointingTracer {
     pub fn start_saving_checkpoints(&mut self) {
         self.saved_processor_state = Some(Checkpoint::new_with_empty_memory(
             &self.emulator_state,
-            self.prev_pc,
             &self.current_traces,
             self.cycle_count,
         ));
@@ -630,7 +607,6 @@ impl CheckpointingTracer {
 
         let mut new_processor_state = Checkpoint::new_with_empty_memory(
             &self.emulator_state,
-            self.prev_pc,
             &self.current_traces,
             self.cycle_count,
         );
@@ -691,11 +667,7 @@ impl LazyTracer for CheckpointingTracer {
 
         self.cycle_count += 1;
 
-        step_emulator(
-            &mut self.emulator_state,
-            &mut self.prev_pc,
-            Some(&mut self.current_traces),
-        );
+        step_emulator(&mut self.emulator_state, Some(&mut self.current_traces));
         if self.current_traces.is_empty() {
             self.finished = true;
             let emulator = &mut self.emulator_state;
@@ -962,12 +934,11 @@ mod tests {
         let mut em_exec = setup_emulator(&elf, &INPUTS, &[], &[], &memory_config);
 
         let mut rows: Vec<Cycle> = Vec::new();
-        let mut prev_pc: u64 = 0;
         let mut tick_idx: usize = 0;
         loop {
             let pc = em_trace.get_cpu().read_pc();
             assert_eq!(pc, em_exec.get_cpu().read_pc(), "pc at tick {tick_idx}");
-            if pc == prev_pc {
+            if em_trace.get_cpu().has_stalled() {
                 break;
             }
             rows.clear();
@@ -977,7 +948,6 @@ mod tests {
             if let Some(diff) = em_trace.get_cpu().arch_state_diff(em_exec.get_cpu()) {
                 panic!("state diverged at tick {tick_idx}: {diff}");
             }
-            prev_pc = pc;
             tick_idx += 1;
         }
         assert!(tick_idx > 0, "program did not execute");
@@ -1005,19 +975,13 @@ mod tests {
         let mut emulator = setup_emulator(elf, &INPUTS, &[], &[], memory_config);
         let mut rows: Vec<Cycle> = Vec::new();
         let mut rows_per_tick: Vec<usize> = Vec::new();
-        let mut prev_pc: u64 = 0;
-        loop {
-            let pc = emulator.get_cpu().read_pc();
-            if pc == prev_pc {
-                break;
-            }
+        while !emulator.get_cpu().has_stalled() {
             let before = rows.len();
             emulator.tick(Some(&mut rows));
             if rows.len() == before {
                 break;
             }
             rows_per_tick.push(rows.len() - before);
-            prev_pc = pc;
         }
         (rows, rows_per_tick)
     }
