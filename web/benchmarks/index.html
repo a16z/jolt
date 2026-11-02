@@ -15,7 +15,7 @@
       <div>
         <p class="eyebrow">Jolt / Performance</p>
         <h1>CPU benchmark history</h1>
-        <p class="subtitle">Fixed inputs. 1, 8, or 24 physical cores. Standard main runs and nightly runs stay separate.</p>
+        <p class="subtitle">Fixed inputs. 1, 8, or 24 physical cores. Main, nightly, and opt-in pull requests stay separate.</p>
       </div>
       <a class="control-link" href="../bench/">Legacy benchmarks</a>
     </header>
@@ -23,6 +23,7 @@
     <nav class="tiers" aria-label="Benchmark tier">
       <button type="button" data-tier="main" aria-pressed="true">Standard main</button>
       <button type="button" data-tier="nightly" aria-pressed="false">Nightly</button>
+      <button type="button" data-tier="pr" aria-pressed="false">Pull requests</button>
       <button type="button" data-tier="other" aria-pressed="false" hidden>Other runs</button>
       <button type="button" data-tier="preview" aria-pressed="false" hidden>Manual previews</button>
     </nav>
@@ -39,6 +40,9 @@
         <a class="control-link" href="history.json" download>Download history index</a>
       </div>
       <div class="filters">
+        <label id="pr-filter" hidden>Pull request
+          <select id="pr-select"><option value="all">All pull requests</option></select>
+        </label>
         <label class="wide">Workload, input, and cores
           <select id="point-select" disabled><option>No measurements loaded</option></select>
         </label>

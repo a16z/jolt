@@ -1,244 +1,153 @@
-# Benchmark history keeps each run and its raw measurements
+# Prover benchmark history
 
-The dashboard publishes CPU measurements at `dev/prover-history/` on the existing
-`gh-pages` branch. Standard main history and nightly history have separate views.
-The legacy `dev/bench/` files are neither converted nor replaced. The entire
-publication job is skipped unless `JOLT_BENCH_PAGES_ENABLED` is `true`. An
-administrator configures Pages before enabling that variable; merging this code
-does not change repository settings or activate publication.
+The dashboard lives at `dev/prover-history/` on the existing `gh-pages` branch.
+It appends each result and its raw JSON without changing `dev/bench/` or other
+site files. Main, nightly and opted-in PR comparisons have separate views.
+These drafts are not live until merged. Benchmark execution still requires the
+restricted runner and producer setup in `scripts/bench/README.md`; publication
+needs neither a new repository variable nor a Pages-source change.
 
-## Compare one input and configuration at a time
+## Read one benchmark point
 
-The producer owns the version-one `benchmark-results.json` contract. The publisher
-archives that JSON without rewriting it. The browser derives a median and a
-minimum–maximum range for each complete case using only its measured repetitions.
-Warmups remain in the download. A failed case, failed build, missing metric, or
-incomplete repetition set has no plotted value and breaks the line.
+| View | Source and build route |
+| --- | --- |
+| Standard main | Every main push's new first-parent commits; hosted build, target run-only |
+| Nightly | Wider suite on main at 07:00 UTC; hosted build, target run-only |
+| Pull requests | Same-repository PRs with a maintainer/admin-applied `benchmark` label; local build and proof |
+| Manual previews | Explicitly labelled imported measurements, never authenticated main history |
 
-The three measurement tiers have different purposes.
+The PR label persists across pushes. The trusted producer checks the actual label
+applier, current label and merge parents; a write-only collaborator or fork is
+not admitted. The target rechecks the label and revisions after queue/lock waits.
+The dashboard shows the PR link, submitted head, base and measured merge, source
+run/attempt, admission event, and raw result. Select a PR, workload/input/core
+count, base or head leg, host/build configuration, and metric. PR legs do not enter
+the main trend. Automatic calibration remains unavailable: these are observed
+measurements, not statistical significance or a future false-positive guarantee.
 
-| Tier | Purpose | History view |
-| --- | --- | --- |
-| PR | Fast comparison subset | Kept by the producer; not published as main history |
-| Main | Standard suite on each main push, including its new first-parent commits | Standard main |
-| Nightly | Wider suite with larger inputs and more repetitions | Nightly |
+A point is the median of complete measured repetitions. The table shows its
+minimum–maximum range; raw JSON retains warmups. Failed cases/builds, incomplete
+repetitions and missing metrics have no plotted value and break the line. The
+initial view loads the newest 30 records; **Load older runs** retains and reads
+earlier records. Each rerun attempt remains distinct.
 
-Selectors separate workload, polynomial commitment scheme, CPU backend, fixed
-input, input-size target, and exactly 1, 8, or 24 physical cores. Host settings,
-CPU affinity, compiler version, target, flags, profile, build host, and measurement
-harness settings separate configurations. Source revisions, lockfile hashes,
-Akita schedule hashes, binary hashes, and guest hashes remain per-point provenance:
-source and dependency changes do not by themselves start a new configuration.
-The runtime reading `settings.swap_free_bytes` is excluded from both measurement-
-and build-host configuration keys. Swap capacity and all other host settings stay
-in those keys. Both host observations remain in each run's raw JSON; the original
-build host also remains in **Build and source**.
+Inputs, PCS, core count (1/8/24), scale, tier and leg separate points. Host,
+CPU affinity, compiler, target, flags, profile and harness separate configurations.
+Source revisions, binary/guest/lockfile/schedule hashes remain per-point metadata.
+Only the changing `swap_free_bytes` observation is omitted from configuration
+identity; capacity and other settings remain. **Build and source** retains the
+original full build manifest. Its construction time is not the current cost of
+reusing a bundle; current preparation is `wall_time.build_s`.
 
-**Build and source** shows the original construction manifests. Their `build_s`
-and timestamps are provenance, not current preparation time when a bundle is
-reused. Current preparation, when recorded, is in the raw result's
-`wall_time.build_s`; it includes cache lookup, fetch, validation and copying, or a
-new build. A prebuilt-only run can leave that field null.
+`e2e_s` covers prebuilt guest loading, tracing, preprocessing, setup, proving and
+serialization, excluding compilation and verification. `prove_s` covers only the
+prove call. `process_s` includes launch, both verifications, logging and reaped
+exit; peak RSS spans that process. The metric selector states each boundary.
+Local PR build time and total time are separate from proof metrics. Historical
+artifact-only timings do not predict changed-source PR compilation time.
 
-The primary `e2e_s` timer includes prebuilt guest loading, both sizing and proof
-traces, preprocessing, commitment setup, proving, and serialization. It excludes
-compilation and verification. `prove_s` covers only the prove call. `process_s`
-includes process startup, both verifications, logging, and teardown; peak resident
-memory spans that same process. The metric selector states these boundaries.
-Verification time, serialized proof bytes, and actual trace rows are available
-without pooling different inputs or configurations.
+## Trusted collection and append-only publication
 
-Each rerun attempt gets its own record. The page initially loads the newest 30
-records in the selected view; **Load older runs** reads earlier records without
-deleting any history. A manual preview remains in **Manual previews**, with its
-original PR/main/nightly tier and comparison/null/settings/history purpose.
-Pilot data does not become an authenticated main or nightly trend.
+`prover-history.yml` reacts to completed **End-to-end prover benchmarks** runs,
+including failures, or a manual dispatch on `main`. Its executable collector and
+UI assets are checked out from `main`, never from the source PR or an artifact.
+The workflow can only publish the configured legacy site: `gh-pages` at `/`.
+It does not edit that setting or a deployment environment.
 
-## Publication runs only trusted code
+The collector verifies repository, producer workflow/name/path, event, attempt,
+artifact ID/name and source revisions. Main/nightly sources must be main-branch
+push, schedule or dispatch runs. PR sources must be trusted `pull_request_target`
+runs and carry a matching `jolt-e2e-plan-RUN_ID-ATTEMPT` artifact. The plan binds
+label admission, base/head/merge/harness, native build inputs and merge parents;
+GitHub's run head is the submitted PR head, not the trusted harness revision.
+Current PR state can change after a valid run; that does not rewrite its history.
+Only JSON is read. Downloaded scripts, HTML and binaries are never executed.
 
-`.github/workflows/prover-history.yml` runs on completion of **End-to-end prover
-benchmarks** (`.github/workflows/e2e-bench.yml`) and **CI Benchmarks**
-(`.github/workflows/ci-bench.yml`). It also supports an explicit manual dispatch.
-Both source workflows must retain those names and paths. GitHub requires the
-receiving `workflow_run` file on the default branch and emits completion events
-regardless of the source conclusion. [GitHub workflow events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+For multi-commit pushes, `index.json` declares the oldest-first documents. The
+tip uses `benchmark-results.json`; earlier commits use
+`commits/FULL_SHA/benchmark-results.json`. GitHub commit ancestry checks the chain
+and order, including absent document gaps. The producer-recorded `push_before`
+is not independent proof of the original event boundary. The original index is
+archived with the results. The page shows received records, not proof that no
+provider job was missed.
 
-`JOLT_BENCH_PAGES_ENABLED` gates the entire publication job, before the
-`github-pages` environment is evaluated. Unset or `false` skips producer, legacy,
-and manual publication. `JOLT_BENCH_HISTORY_ENABLED` controls only new history
-processing. After Pages activation, legacy **CI Benchmarks** completions deploy
-the existing site with
-that variable either `true` or `false`. They invoke neither the history collector
-nor the append parser, so a rejected artifact or invalid history index cannot
-block legacy publication. PR-originated completions remain excluded.
+Each immutable key includes measured revision, source run ID and attempt.
+Identical replay is a no-op; conflicting bytes are refused. Expired upstream
+artifacts cannot erase archived results. Missing, rejected, unsupported and
+failed runs remain visible rather than becoming zero timings. JSON is limited
+to 32 MiB and result archives to 128 MiB. No automatic retention deletes history.
 
-The write-token job checks out executable code and dashboard assets from `main`,
-not the producer revision or a pull request. The history path accepts only this
-repository's completed main-branch push, schedule, or manual producer runs. It
-checks the run ID, attempt, workflow, repository, branch, artifact identity, and recorded source
-revisions against GitHub metadata. The exact artifact name is
-`jolt-e2e-RUN_ID-RUN_ATTEMPT`. Only JSON members are read; downloaded scripts,
-HTML, binaries, and manifest file paths are never executed or dereferenced.
-Artifact reads require `actions: read`. [GitHub artifact API](https://docs.github.com/en/rest/actions/artifacts#list-workflow-run-artifacts)
-
-For a multi-commit main push, the producer's root `index.json` declares the
-oldest-first documents. The tip uses `benchmark-results.json`; other entries must
-use `commits/FULL_SHA/benchmark-results.json`. GitHub's commit graph verifies
-first-parent ancestry and order, including gaps for absent documents. The
-producer's `push_before` is retained as a recorded lower bound, **not** an
-independently verified original push-event field. With a null lower bound, the
-oldest declared revision sets the checked range; earlier coverage is unknown.
-The original push index is downloadable beside each result.
-
-The publisher writes only `dev/prover-history/` in a fresh Pages checkout. Its
-immutable key includes measured revision, source run ID, and rerun attempt.
-Replaying identical data adds nothing. Conflicting bytes are refused; an expired
-upstream artifact cannot erase archived data. Missing, expired, disabled, and
-rejected results retain explicit records instead of zero-valued timings.
-
-The publication job uses `concurrency.queue: max` and does not cancel an active
-publisher. GitHub allows at most 100 pending jobs in that group; further jobs can
-be canceled. Ordering is by when jobs begin waiting, not original dispatch time.
-The publisher also retries a rejected non-force Git push against the newest
-`gh-pages` tree, preserving updates made by the independent legacy writer.
+The publisher serializes with `concurrency.queue: max` (100 pending jobs), then
+retries non-force pushes against the latest `gh-pages` tree. Only
+`dev/prover-history/` is staged. This preserves concurrent updates by the legacy
+benchmark writer. Queue overflow or provider limits still require an explicit
+replay; no custom scheduler is introduced.
 [GitHub concurrency limits](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
 
-## An administrator enables the existing Pages site
+## Pages deployment without changing its source
 
-This setup preserves the old site while changing how it is deployed. The workflow
-uploads the whole `gh-pages` site with `actions/upload-pages-artifact`
-and deploys it with `actions/deploy-pages`. Completion of the legacy benchmark
-workflow also triggers this full-site deployment. There is no reliance on a
-`gh-pages` push event, and no second workflow copy on the data branch.
-[GitHub publishing sources](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site),
-[custom Pages workflows](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
+A `GITHUB_TOKEN` push alone is not the deployment contract: GitHub documents that
+such pushes do not trigger Pages builds. The existing legacy benchmark job has
+nevertheless produced built Pages receipts for its pushed commits; those
+observations do not establish a supported trigger guarantee.
+[Branch publishing](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site)
 
-1. Merge the reviewed producer and publisher changes into `main`. Enable Actions
-   for **End-to-end prover benchmarks**, **CI Benchmarks**, and **Publish prover
-   benchmark history**. The producer's runner setup and execution gate are
-   separate prerequisites; the publisher itself uses a hosted Ubuntu runner.
-2. Preserve the existing `gh-pages` branch and its complete site tree. In the
-   repository's **Settings → Pages → Build and deployment → Source**, select
-   **GitHub Actions**, following GitHub's publishing-source instructions above.
-   Do not replace the branch or delete `dev/bench/`.
-3. Ensure the `github-pages` deployment environment permits `main`. Retain the
-   repository's existing deployment protections. The allowed-action policy must
-   permit the pinned `actions/checkout`, `astral-sh/setup-uv`,
-   `actions/upload-pages-artifact`, and `actions/deploy-pages` actions.
-4. After configuring Pages and its environment, set the repository Actions
-   variable `JOLT_BENCH_PAGES_ENABLED` to `true` to enable publication. The job
-   still requires the Pages API to report `build_type: workflow`; that check
-   fails if activation is incomplete. The workflow does not enable or
-   reconfigure Pages itself. Legacy deployment and no-run-ID manual redeployment
-   now work without history processing.
-5. Separately set `JOLT_BENCH_HISTORY_ENABLED` to `true` to enable history
-   collection and updates. Dispatch the publisher on `main` without a source run
-   ID for the initial full-site refresh. Confirm both `dev/bench/` and
-   `dev/prover-history/` after deployment. Normal producer completions then
-   archive and deploy new results.
+After appending to `gh-pages`, this publisher explicitly requests a Pages build
+with `POST /repos/a16z/jolt/pages/builds`. That endpoint accepts GitHub App
+installation tokens with `pages: write`; `GITHUB_TOKEN` is such an installation
+token. The workflow also needs `contents: write` for the branch and `actions: read`
+for producer artifacts. It uses no personal token, OIDC deployment, new enable
+variable or Pages-source switch. The request's acceptance is not proof the later
+Pages build completed: check that build and both URLs after the first merged run.
+This draft has not called the build endpoint or published the site.
+[Pages build API](https://docs.github.com/en/rest/pages/pages#request-a-github-pages-build),
+[GITHUB_TOKEN type](https://docs.github.com/en/actions/concepts/security/github_token)
 
-This implementation makes a site-wide tradeoff: one workflow owns
-deployment of both the legacy site and the new history. Turning off history
-processing leaves legacy deployment active. To roll back, first disable Pages
-activation, then restore branch-based Pages publication for `gh-pages` at `/`.
-Live deployment remains unverified until an administrator activates and checks
-this route.
-
-The publisher needs only the following job permissions. It does not need issue,
-pull-request, administration, or `deployments: write` permissions. The PR test job
-has only `contents: read` and never runs with the publisher's credentials.
-
-| Permission | Use |
-| --- | --- |
-| `contents: write` | Read source and append to the existing `gh-pages` branch |
-| `actions: read` | Read source-run metadata and download its artifact |
-| `pages: write` | Deploy the static Pages artifact |
-| `id-token: write` | Authenticate that Pages deployment through GitHub's identity token |
-
-GitHub documents the last two permissions and the deployment environment as
-requirements of `actions/deploy-pages`. Its uploader excludes repository metadata
-such as `.git` and `.github`; the branch's legacy files remain untouched.
-[Pages deployment requirements](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages),
-[uploader implementation](https://github.com/actions/upload-pages-artifact/blob/7b1f4a764d45c48632c6b24a0339c27f5614fb0b/action.yml)
-
-## Replay publication before source artifacts expire
-
-These are administrator operations, not commands run by a preview. Use a real
-producer run ID and its specific attempt when backfilling a missed publication.
+Merge the reviewed producer and publisher, preserving the existing branch-based
+site and allowed actions. Then a producer completion appends and requests a
+build automatically. A user with workflow-dispatch permission can refresh assets
+or replay an existing producer attempt before its artifact expires:
 
 ```sh
-# Refresh the existing full site, including legacy assets.
+# Refresh history assets and request a build of the existing site.
 gh workflow run prover-history.yml --repo a16z/jolt --ref main
 
-# Archive one existing producer attempt; set these variables to its numeric IDs.
+# Append a specific existing producer attempt, preserving its original identity.
 gh workflow run prover-history.yml --repo a16z/jolt --ref main \
   -f run_id="$RUN_ID" -f run_attempt="$RUN_ATTEMPT"
 ```
 
-All dispatches require `JOLT_BENCH_PAGES_ENABLED=true`. A dispatch with a run ID
-also requires `JOLT_BENCH_HISTORY_ENABLED=true`. Without a run ID, it redeploys
-the existing whole site even when history is disabled; when history is enabled,
-it also initializes or refreshes the history assets.
+A valid recorded attempt is immutable. Repair a rejected producer result with a
+new attempt, not relabelled bytes. If the Pages build API is denied by repository
+policy, keep the failed request visible; do not substitute a token or change
+settings. Pages size, build-frequency and build-duration limits still apply.
+[Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
 
-Queue overflow, a failed publication job, a disabled publisher, or an expired
-source artifact can leave gaps. The page does not claim that every merge ran.
-GitHub's default artifact retention is 90 days, but repository and producer
-settings can shorten it. Once a receipt has archived valid JSON, source-artifact
-expiry does not remove that copy. A recorded invalid or missing attempt is not
-overwritten by a later replay; repair the producer and create a new run attempt.
-[Artifact access and retention](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/download-workflow-artifacts)
+## Local preview and focused checks
 
-There is no rolling deletion. JSON documents are limited to 32 MiB and downloaded
-producer archives to 128 MiB; exceeding either produces a rejected receipt.
-GitHub currently limits a published Pages site to 1 GB and a deployment to 10
-minutes. Custom Actions publication is exempt from the soft ten-builds-per-hour
-limit, not from all Pages limits. If the archive reaches a provider limit, arrange
-an explicit retention or storage decision instead of deleting old points.
-[GitHub Pages limits](https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits)
-
-Setting `JOLT_BENCH_HISTORY_ENABLED` to `false` stops new history collection and
-updates. While Pages activation remains enabled, legacy completions and
-no-run-ID manual refreshes continue to deploy the existing site without parsing
-history JSON. To restore the previous publication mode, first set
-`JOLT_BENCH_PAGES_ENABLED` to `false` or remove it. Then an administrator selects
-**Deploy from a branch**, with `gh-pages` and `/`, in the publishing-source
-settings and verifies the legacy site. The legacy writer can still update
-`gh-pages`; the branch and its existing files are retained.
-
-## Preview and test without publishing
-
-Use a task-owned directory. This command reads one producer JSON document and
-copies static assets; it never contacts GitHub, runs benchmarks, or pushes a
-branch. Keep the label faithful to the measurement purpose.
+Preview preserves manual provenance; it never contacts GitHub or publishes.
+Use a task-owned directory and a label describing the actual measurement:
 
 ```sh
 uv run --no-project python scripts/ci/benchmark_history.py preview \
   --input "$RESULTS_JSON" --site "$TMPDIR/jolt-history-preview" \
-  --label "Manual pilot; partial suite"
+  --label "Manual hosted-artifact comparison; not an automated PR run"
 uv run --no-project python -m http.server 8000 --bind 127.0.0.1 \
   --directory "$TMPDIR/jolt-history-preview"
 ```
 
-Open `http://127.0.0.1:8000/dev/prover-history/`. This is unauthenticated manual
-preview evidence, not proof that GitHub publication is enabled. The HTML page
-loads data over HTTP; opening it with a `file:` URL is not supported.
-
-Focused checks use only synthetic fixtures, never checked-in example trends.
+Open `http://127.0.0.1:8000/dev/prover-history/`; `file:` URLs are unsupported.
+The same renderer handles real campaign previews and explicit synthetic route
+fixtures. Never relabel a manual sample as authenticated PR/main/nightly data.
 
 ```sh
 uv run --no-project python -m unittest scripts.tests.test_benchmark_history -v
-uv run --no-project --with playwright==1.61.0 playwright install webkit
+uv run --no-project --with playwright==1.61.0 playwright install chromium
 uv run --no-project --with playwright==1.61.0 python -m unittest scripts.tests.test_benchmark_history_browser -v
 ```
 
-Browser checks use the bundled headless WebKit. Playwright is pinned because
-1.64.1's WebKit 27.2 reports false CSP errors for native selects; the page keeps
-its strict content policy and does not filter those errors. Tests check actual
-controls, raw downloads, failure gaps, hostile strings, and mobile/desktop layout.
-[Upstream reproduction](https://github.com/microsoft/playwright/issues/43617)
-
-Collect screenshots separately from functional console assertions. Playwright's
-WebKit screenshot preparation injects an inline `body {}` stylesheet, which this
-page's CSP rejects even on a script-free control page. Preserve those capture
-events as tool telemetry; do not disable the page's CSP or ignore application
-errors to obtain screenshots.
+Browser checks use bundled headless Chromium and the page's unchanged content
+policy. They exercise PR/main separation, filters, details, raw downloads,
+failure gaps, hostile strings and mobile/desktop layout. A live dashboard still
+needs merged workflows, an enabled restricted runner and actual received runs;
+source and preview checks do not establish live execution or deployment.

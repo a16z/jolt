@@ -81,9 +81,26 @@ def synthetic_run(data):
         "id": int(data["provenance"]["run_id"]), "run_attempt": data["provenance"]["run_attempt"],
         "repository": {"full_name": "a16z/jolt"}, "head_repository": {"full_name": "a16z/jolt"},
         "path": ".github/workflows/e2e-bench.yml", "name": "End-to-end prover benchmarks",
-        "head_branch": "main", "head_sha": data["revisions"]["head"], "event": data["provenance"]["event"],
+        "head_branch": "candidate" if data["tier"] == "pr" else "main",
+        "head_sha": data["revisions"]["head"], "event": data["provenance"]["event"],
         "status": "completed", "conclusion": "success", "run_started_at": data["started_at"],
     }
+
+
+def synthetic_pr_result():
+    data = synthetic_result(120, tier="pr")
+    data["kind"] = "comparison"
+    data["revisions"].update(base="b" * 40, merge="c" * 40)
+    data["provenance"].update(event="pull_request_target", pr_number=7)
+    data["builds"][0]["revision"] = "c" * 40
+    data["builds"].append(dict(copy.deepcopy(data["builds"][0]), leg="base", revision="b" * 40))
+    samples = data["cases"][0]["samples"]
+    for sample in samples:
+        sample["revision"] = "c" * 40
+    samples.extend(dict(copy.deepcopy(sample), leg="base", revision="b" * 40) for sample in list(samples))
+    data["artifacts"] = {"id": None, "index_sha256": "d" * 64}
+    data["wall_time"].update(build_s=5, total_s=65, scope="sequential-build-preparation-through-results-on-this-host")
+    return data
 
 
 def collected_fixture(data, *, run=None, missing=False, extra_zip=None, artifact_change=None):
@@ -100,14 +117,36 @@ def collected_fixture(data, *, run=None, missing=False, extra_zip=None, artifact
         "workflow_run": {"id": run["id"], "head_sha": run["head_sha"]},
     }
     artifact.update(artifact_change or {})
+    extra_artifacts = []
+    if data["tier"] == "pr" and data["provenance"]["event"] == "pull_request_target":
+        plan = {"enabled": True, "tier": "pr", "harness": REVISION,
+                "provenance": copy.deepcopy(data["provenance"]),
+                "runs": [{"base": "b" * 40, "head": "c" * 40, "submitted_head": REVISION}],
+                "admission": {"label_event_id": 11, "label_actor": "maintainer", "head_ref": "candidate"},
+                "expected_builds": {sha: {"revision": sha, "harness_revision": REVISION,
+                    "profile": "release", "rustflags": "-C target-cpu=synthetic"} for sha in ("b" * 40, "c" * 40)}}
+        plan_raw = json.dumps(plan).encode()
+        data["artifacts"]["plan_sha256"] = history.digest(plan_raw)
+        raw = (json.dumps(data, indent=4) + "\n").encode()
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("benchmark-results.json", raw)
+        plan_archive = io.BytesIO()
+        with zipfile.ZipFile(plan_archive, "w") as bundle:
+            bundle.writestr("plan.json", plan_raw)
+        extra_artifacts = [dict(artifact, id=43, name=f"jolt-e2e-plan-{run['id']}-{run['run_attempt']}")]
 
     def api(path):
         if "/attempts/" in path:
             return json.dumps(run).encode()
         if "/artifacts?" in path:
-            return json.dumps({"artifacts": [] if missing else [artifact]}).encode()
+            return json.dumps({"artifacts": extra_artifacts + ([] if missing else [artifact])}).encode()
         if path.endswith("/artifacts/42/zip"):
             return archive.getvalue()
+        if path.endswith("/artifacts/43/zip"):
+            return plan_archive.getvalue()
+        if path.endswith("/commits/" + "c" * 40):
+            return json.dumps({"parents": [{"sha": "b" * 40}, {"sha": REVISION}]}).encode()
         raise AssertionError(f"Unexpected API call: {path}")
 
     with mock.patch.object(history, "gh", side_effect=api):
@@ -171,6 +210,24 @@ class BenchmarkHistoryTests(unittest.TestCase):
 
     def index(self):
         return json.loads((self.site / "dev/prover-history/history.json").read_text())
+
+    def test_trusted_pr_comparison_keeps_admission_and_cannot_become_main_history(self):
+        data = synthetic_pr_result()
+        record, raw = collected_fixture(data)
+        self.assertEqual((record["tier"], record["kind"], record["publication_status"]), ("pr", "comparison", "ready"))
+        self.assertEqual(record["source"]["pr_number"], 7)
+        self.assertEqual(record["source"]["label_event_id"], 11)
+        self.assertEqual(record["source"]["merge_commit"], "c" * 40)
+        self.assertEqual(history.append_site(self.site, [(record, raw)])["appended"], 1)
+        original = synthetic_run(data)
+        for field, value in (("tier", "main"), ("kind", "history")):
+            changed = copy.deepcopy(data)
+            changed[field] = value
+            record, _ = collected_fixture(changed, run=original)
+            self.assertEqual(record["publication_status"], "rejected")
+        for event in ("pull_request", "workflow_run"):
+            with self.subTest(event=event), self.assertRaises(ValueError):
+                collected_fixture(data, run=dict(original, event=event))
 
     def test_append_is_immutable_idempotent_and_preserves_legacy(self):
         legacy = self.site / "dev/bench/data.js"

@@ -1,4 +1,4 @@
-"""Render synthetic publisher output through HTTP in bundled headless WebKit."""
+"""Render synthetic publisher output through HTTP in bundled headless Chromium."""
 
 import copy
 from functools import partial
@@ -12,7 +12,7 @@ import threading
 import unittest
 
 from scripts.tests.test_benchmark_history import (
-    REVISION, SCRIPT, collected_fixture, collected_push, history, synthetic_result,
+    REVISION, SCRIPT, collected_fixture, collected_push, history, synthetic_result, synthetic_pr_result,
 )
 
 try:
@@ -29,6 +29,8 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.directory = Path(cls.temporary.name)
         cls.site = cls.directory / "site"
+        record, raw = collected_fixture(synthetic_pr_result())
+        history.append_site(cls.site, [(record, raw)])
         for number in [*range(101, 113), 114, 115, 116, 117]:
             data = synthetic_result(number, tier="nightly" if number == 110 else "main", revision=f"{number:040x}")
             data["started_at"] = f"2026-01-{number - 100:02}T00:00:00Z"
@@ -106,7 +108,7 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
         cls.url = f"http://127.0.0.1:{cls.server.server_port}/dev/prover-history/"
         cls.playwright = sync_playwright().start()
         cls.addClassCleanup(cls.playwright.stop)
-        cls.browser = cls.playwright.webkit.launch(headless=True)
+        cls.browser = cls.playwright.chromium.launch(headless=True)
         cls.addClassCleanup(cls.browser.close)
 
     def setUp(self):
@@ -139,6 +141,27 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
     def assert_clean(self):
         self.assertEqual(self.errors, [])
         self.assertTrue(all(url.startswith(self.url) for url in self.requests), self.requests)
+
+    def test_pr_records_filter_separately_and_link_base_head_and_raw_data(self):
+        self.assertEqual(self.page.get_by_role("link", name="PR #7", exact=True).count(), 0)
+        self.page.get_by_role("button", name="Pull requests", exact=True).click()
+        expect(self.page.locator("#load-status")).to_contain_text("1 archived run records")
+        self.page.select_option("#pr-select", "7")
+        expect(self.page.locator("#history-rows tr")).to_have_count(1)
+        self.assertEqual(self.page.get_by_role("link", name="PR #7", exact=True).get_attribute("href"),
+                         "https://github.com/a16z/jolt/pull/7")
+        self.assertEqual({json.loads(value)["leg"] for value in self.page.locator("#point-select option").evaluate_all(
+            "options => options.map(o => o.value)")}, {"base", "head"})
+        row = self.page.locator("#history-rows tr")
+        row.get_by_text("Build and source", exact=True).click()
+        expect(row.locator("pre")).to_be_visible()
+        self.assertEqual(json.loads(row.locator("pre").text_content())["source"]["label_event_id"], 11)
+        self.assertEqual(self.page.request.get(self.url + row.get_by_role("link", name="Raw JSON", exact=True)
+                         .get_attribute("href")).json()["provenance"]["pr_number"], 7)
+        self.page.get_by_role("button", name="Standard main", exact=True).click()
+        expect(self.page.locator("#load-status")).to_contain_text("archived run records")
+        self.assertEqual(self.page.get_by_role("link", name="PR #7", exact=True).count(), 0)
+        self.assert_clean()
 
     def test_dimension_selectors_keep_revisions_comparable_without_pooling(self):
         self.select_point()

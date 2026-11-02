@@ -43,6 +43,7 @@ const short = (value) => typeof value === "string" ? value.slice(0, 12) : "unkno
 
 function group(record) {
   if (record.source.type === "manual") return "preview";
+  if (record.kind === "comparison" && record.tier === "pr") return "pr";
   return record.kind === "history" && ["main", "nightly"].includes(record.tier) ? record.tier : "other";
 }
 
@@ -169,6 +170,12 @@ function renderRows(rows) {
     } else commit.append(element("span", "Unknown revision"));
     appendMeta(commit, `Run started ${record.started_at.replace("T", " ").replace("+00:00", "Z")} (UTC)`);
     if (record.source.type === "github") {
+      if (Number.isSafeInteger(record.source.pr_number) && record.source.pr_number > 0) {
+        const pr = element("a", `PR #${record.source.pr_number}`);
+        pr.href = `https://github.com/a16z/jolt/pull/${record.source.pr_number}`;
+        commit.prepend(pr, document.createElement("br"));
+        appendMeta(commit, `Base ${short(record.source.base_commit)} / measured merge ${short(record.source.merge_commit)}`);
+      }
       appendMeta(commit, `Run ${record.source.run_id}, attempt ${record.source.run_attempt}`);
       appendMeta(commit, `Workflow: ${record.source.conclusion}`);
       if (record.source.push_range) appendMeta(commit, `Main commit ${record.source.commit_index + 1} of ${record.source.push_range.commits} in the recorded range`);
@@ -320,7 +327,9 @@ async function fetchRecord(record) {
 
 async function loadTier() {
   const request = ++generation;
-  const all = index.runs.filter((record) => group(record) === tier);
+  $("pr-filter").hidden = tier !== "pr";
+  const all = index.runs.filter((record) => group(record) === tier &&
+    (tier !== "pr" || $("pr-select").value === "all" || String(record.source.pr_number) === $("pr-select").value));
   const batch = all.slice(0, limit);
   $("load-status").textContent = "Loading run records…";
   visible = [];
@@ -340,6 +349,7 @@ async function loadTier() {
   $("tier-description").textContent = {
     main: "Standard suite for main commits. Each source run and rerun attempt is retained separately.",
     nightly: "Wider nightly suite on main. Larger input sizes and repetitions are never pooled with standard runs.",
+    pr: "Maintainer-opted-in PR comparisons, built and proved on the benchmark host. Select a PR and base or head leg; these points never enter main history. Automatic calibration is unavailable.",
     other: "Unclassified or non-history runs. Their original tier and purpose remain visible; these are not main or nightly trends.",
     preview: "Manual data with no authenticated GitHub publication provenance. Original tiers and control purposes are preserved.",
   }[tier];
@@ -363,6 +373,7 @@ async function loadTier() {
 $("point-select").addEventListener("change", renderRegimes);
 $("regime-select").addEventListener("change", render);
 $("metric-select").addEventListener("change", render);
+$("pr-select").addEventListener("change", () => { limit = 30; loadTier(); });
 $("load-more").addEventListener("click", () => { limit += 30; loadTier(); });
 for (const button of document.querySelectorAll("[data-tier]")) {
   button.addEventListener("click", () => { tier = button.dataset.tier; limit = 30; loadTier(); });
@@ -375,6 +386,9 @@ async function start() {
     if (!response.ok) throw new Error(`History index could not be read (HTTP ${response.status}).`);
     index = await response.json();
     if (index.format_version !== 1 || !Array.isArray(index.runs)) throw new Error("Unsupported history index.");
+    const prs = [...new Set(index.runs.filter((record) => group(record) === "pr").map((record) => record.source.pr_number))]
+      .filter((value) => Number.isSafeInteger(value) && value > 0).sort((a, b) => b - a);
+    choices($("pr-select"), [["all", "All pull requests"], ...prs.map((value) => [String(value), `PR #${value}`])], "No PR runs");
     for (const optional of ["other", "preview"]) {
       document.querySelector(`[data-tier="${optional}"]`).hidden = !index.runs.some((record) => group(record) === optional);
     }

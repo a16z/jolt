@@ -2,9 +2,8 @@ name: Publish prover benchmark history
 
 on:
   workflow_run:
-    workflows: [End-to-end prover benchmarks, CI Benchmarks]
+    workflows: [End-to-end prover benchmarks]
     types: [completed]
-    branches: [main]
   pull_request:
     paths:
       - .github/workflows/prover-history.yml
@@ -38,34 +37,26 @@ jobs:
         with:
           enable-cache: false
       - run: uv run --no-project python -m unittest scripts.tests.test_benchmark_history -v
-      # WebKit 27.2 reports false CSP errors for native selects: microsoft/playwright#43617.
-      - run: uv run --no-project --with playwright==1.61.0 playwright install --with-deps webkit
+      - run: uv run --no-project --with playwright==1.61.0 playwright install --with-deps chromium
       - run: uv run --no-project --with playwright==1.61.0 python -m unittest scripts.tests.test_benchmark_history_browser -v
 
   publish:
     if: >-
-      vars.JOLT_BENCH_PAGES_ENABLED == 'true' &&
       github.repository == 'a16z/jolt' &&
       ((github.event_name == 'workflow_run' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&
-        github.event.workflow_run.head_branch == 'main' &&
-        contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event.workflow_run.event) &&
-        (github.event.workflow_run.path == '.github/workflows/ci-bench.yml' ||
-         (vars.JOLT_BENCH_HISTORY_ENABLED == 'true' && github.event.workflow_run.path == '.github/workflows/e2e-bench.yml'))) ||
-       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' &&
-        (inputs.run_id == '' || vars.JOLT_BENCH_HISTORY_ENABLED == 'true')))
+        (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.event == 'pull_request_target') &&
+        contains(fromJSON('["push","schedule","workflow_dispatch","pull_request_target"]'), github.event.workflow_run.event) &&
+        github.event.workflow_run.path == '.github/workflows/e2e-bench.yml') ||
+       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
       pages: write
-      id-token: write
     concurrency:
       group: jolt-benchmark-history-publication
       queue: max
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -77,14 +68,13 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
           enable-cache: false
-      - name: Require the admin-configured Pages source
+      - name: Check the existing branch-based Pages source without changing it
         run: |
-          test "$(gh api repos/a16z/jolt/pages --jq .build_type)" = workflow
+          gh api repos/a16z/jolt/pages --jq '{build_type, source}' > "$RUNNER_TEMP/pages-source.json"
+          jq -e '.build_type == "legacy" and .source.branch == "gh-pages" and .source.path == "/"' "$RUNNER_TEMP/pages-source.json"
       - name: Collect the producer attempt as data
         if: >-
-          vars.JOLT_BENCH_HISTORY_ENABLED == 'true' &&
-          ((github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/e2e-bench.yml') ||
-           (github.event_name == 'workflow_dispatch' && inputs.run_id != ''))
+          github.event_name == 'workflow_run' || inputs.run_id != ''
         env:
           SOURCE_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
           SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.run_attempt }}
@@ -98,10 +88,6 @@ jobs:
           ref: gh-pages
           path: site
       - name: Append history without replacing legacy files
-        if: >-
-          vars.JOLT_BENCH_HISTORY_ENABLED == 'true' &&
-          ((github.event_name == 'workflow_run' && github.event.workflow_run.path == '.github/workflows/e2e-bench.yml') ||
-           github.event_name == 'workflow_dispatch')
         shell: bash
         run: |
           record_args=()
@@ -127,10 +113,5 @@ jobs:
               exit 1
             fi
           done
-      - name: Upload the whole existing public site
-        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
-        with:
-          path: site
-      - name: Deploy GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4
+      - name: Request a build of the existing Pages site
+        run: gh api --method POST repos/a16z/jolt/pages/builds

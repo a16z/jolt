@@ -221,6 +221,8 @@ def validate_result(data):
             if identity in sample_ids:
                 raise ValueError("Duplicate sample repetition")
             sample_ids.add(identity)
+            if sample["metrics"] is None and sample["status"] != "complete":
+                continue
             require_fields(sample["metrics"], METRICS if sample["status"] == "complete" else (), "Metrics")
             if sample["status"] == "complete" and (type(sample["exit_code"]) is not int or sample["exit_code"] != 0):
                 raise ValueError("A complete sample must have exit_code 0")
@@ -250,23 +252,45 @@ def validate_source(run, run_id, attempt):
         or run["repository"]["full_name"] != REPOSITORY
         or (run.get("head_repository") or {}).get("full_name") != REPOSITORY
         or run["path"] != WORKFLOW_FILE or run["name"] != WORKFLOW
-        or run["head_branch"] != "main" or run["event"] not in {"push", "schedule", "workflow_dispatch"}
+        or run["event"] not in {"push", "schedule", "workflow_dispatch", "pull_request_target"}
+        or (run["event"] != "pull_request_target" and run["head_branch"] != "main")
         or run["status"] != "completed" or not revision(run["head_sha"])
     ):
-        raise ValueError("Refusing a foreign, PR, unfinished, or mismatched producer run")
+        raise ValueError("Refusing a foreign, untrusted, unfinished, or mismatched producer run")
 
 
-def validate_provenance(data, run, measured_revision):
+def validate_provenance(data, run, measured_revision, plan=None):
     provenance = data["provenance"]
     expected = {
         "workflow": WORKFLOW, "workflow_file": WORKFLOW_FILE,
-        "event": run["event"], "ref": "refs/heads/main", "pr_number": None,
+        "event": run["event"], "ref": "refs/heads/main",
+        "pr_number": plan["provenance"]["pr_number"] if plan else None,
     }
     if any(provenance[key] != value for key, value in expected.items()):
         raise ValueError("Artifact provenance does not match its GitHub workflow")
     for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"])):
         if str(provenance[field]) != str(value):
             raise ValueError(f"Artifact {field} does not match GitHub")
+    if plan is not None:
+        item = plan["runs"][0]
+        expected_revisions = {"base": item["base"], "head": item["submitted_head"],
+                              "merge": item["head"], "harness": plan["harness"]}
+        if (data["tier"] != "pr" or data["kind"] != "comparison"
+                or data["revisions"] != expected_revisions
+                or data.get("artifacts", {}).get("plan_sha256") != plan["sha256"]
+                or data["wall_time"]["scope"] != "sequential-build-preparation-through-results-on-this-host"):
+            raise ValueError("PR result differs from its trusted admission plan")
+        legs = {"base": item["base"], "head": item["head"]}
+        for build in data["builds"]:
+            if build["revision"] != legs[build["leg"]] or build["harness_revision"] != plan["harness"]:
+                raise ValueError("PR build differs from the admitted revisions")
+            if build["status"] == "complete" and any(build.get(key) != value for key, value in
+                    plan["expected_builds"][build["revision"]].items()):
+                raise ValueError("PR build differs from the planned native inputs")
+        for case in data["cases"]:
+            if any(sample["revision"] != legs[sample["leg"]] for sample in case["samples"]):
+                raise ValueError("PR sample differs from the admitted revisions")
+        return
     expected_tier = {"push": "main", "schedule": "nightly"}.get(run["event"])
     if (
         data["tier"] not in {"main", "nightly"} or data["kind"] != "history"
@@ -293,6 +317,44 @@ def artifact_json(bundle, member):
     if entries[0].file_size > MAX_JSON_BYTES:
         raise ValueError("Benchmark JSON exceeds the 32 MiB publication limit")
     return bundle.read(entries[0])
+
+
+def pr_plan(run, artifacts):
+    matches = [item for item in artifacts if item["name"] == f"jolt-e2e-plan-{run['id']}-{run['run_attempt']}"]
+    if len(matches) != 1:
+        raise ValueError("PR history requires exactly one trusted plan artifact")
+    artifact = matches[0]
+    actual = artifact.get("workflow_run") or {}
+    if (actual.get("id") != run["id"] or actual.get("head_sha") != run["head_sha"]
+            or artifact["expired"] or artifact["size_in_bytes"] > 8 * 1024 * 1024):
+        raise ValueError("PR plan artifact is expired, oversized, or from another run")
+    archive = gh(f"repos/{REPOSITORY}/actions/artifacts/{int(artifact['id'])}/zip")
+    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+        raw = artifact_json(bundle, "plan.json")
+    if raw is None:
+        raise ValueError("PR plan artifact has no plan.json")
+    plan = read_json(raw)
+    require_fields(plan, ("enabled", "tier", "runs", "harness", "provenance", "admission", "expected_builds"), "PR plan")
+    if (plan["enabled"] is not True or plan["tier"] != "pr" or len(plan["runs"]) != 1
+            or not revision(plan["harness"])):
+        raise ValueError("PR plan does not admit one comparison")
+    provenance = plan["provenance"]
+    if (provenance["event"] != "pull_request_target" or provenance["ref"] != "refs/heads/main"
+            or provenance["workflow_file"] != WORKFLOW_FILE or provenance["workflow"] != WORKFLOW
+            or str(provenance["run_id"]) != str(run["id"])
+            or str(provenance["run_attempt"]) != str(run["run_attempt"])
+            or type(provenance["pr_number"]) is not int or provenance["pr_number"] <= 0):
+        raise ValueError("PR plan is not from the trusted producer attempt")
+    item = plan["runs"][0]
+    admission = plan["admission"]
+    if (item["submitted_head"] != run["head_sha"] or not revision(item["base"])
+            or not revision(item["head"]) or admission["head_ref"] != run["head_branch"]
+            or type(admission["label_event_id"]) is not int or not admission["label_actor"]):
+        raise ValueError("PR plan does not match the source branch and head")
+    commit = json.loads(gh(f"repos/{REPOSITORY}/commits/{item['head']}"))
+    if [parent["sha"] for parent in commit["parents"]] != [item["base"], item["submitted_head"]]:
+        raise ValueError("PR merge parents differ from the admitted base and head")
+    return dict(plan, sha256=digest(raw), artifact_id=artifact["id"])
 
 
 def first_parent_revisions(before, after, oldest):
@@ -370,8 +432,9 @@ def source_record(run, publisher_revision, measured_revision):
             "conclusion": run["conclusion"], "artifact": None,
         },
         "started_at": utc_timestamp(run["run_started_at"]),
-        "tier": {"push": "main", "schedule": "nightly"}.get(run["event"], "unknown"),
-        "kind": "history", "status": "missing", "publication_status": "missing",
+        "tier": {"push": "main", "schedule": "nightly", "pull_request_target": "pr"}.get(run["event"], "unknown"),
+        "kind": "comparison" if run["event"] == "pull_request_target" else "history",
+        "status": "missing", "publication_status": "missing",
         "reason": "Producer completed without the expected artifact; the point values are unknown.",
         "benchmark_schema": None, "sha256": None, "push_index": None, "push_index_sha256": None,
         "publisher_revision": publisher_revision,
@@ -387,11 +450,19 @@ def collect(run_id, attempt, publisher_revision):
     page = 1
     while True:
         batch = json.loads(gh(f"{root}/runs/{run_id}/artifacts?per_page=100&page={page}"))["artifacts"]
-        artifacts.extend(item for item in batch if item["name"] == expected_name)
+        artifacts.extend(batch)
         if len(batch) < 100:
             break
         page += 1
     record = source_record(run, publisher_revision, run["head_sha"])
+    plan = None
+    if run["event"] == "pull_request_target":
+        try:
+            plan = pr_plan(run, artifacts)
+        except (ValueError, TypeError, KeyError, zipfile.BadZipFile) as error:
+            record.update(publication_status="rejected", status="rejected", reason=str(error))
+            return [(record, None)], None
+    artifacts = [item for item in artifacts if item["name"] == expected_name]
     root_raw = None
     raw_index = None
     if len(artifacts) > 1:
@@ -422,6 +493,12 @@ def collect(run_id, attempt, publisher_revision):
                     records = []
                     for position, sha in enumerate(expected):
                         item = source_record(run, publisher_revision, sha)
+                        if plan is not None:
+                            item["source"].update(pr_number=plan["provenance"]["pr_number"],
+                                base_commit=plan["runs"][0]["base"], merge_commit=plan["runs"][0]["head"],
+                                harness_revision=plan["harness"], label_event_id=plan["admission"]["label_event_id"],
+                                label_actor=plan["admission"]["label_actor"],
+                                plan_artifact_id=plan["artifact_id"], plan_sha256=plan["sha256"])
                         item["source"]["artifact"] = record["source"]["artifact"]
                         item["source"]["commit_index"] = position
                         if bounds is not None:
@@ -440,7 +517,7 @@ def collect(run_id, attempt, publisher_revision):
                                 if isinstance(data, dict):
                                     item["benchmark_schema"] = data.get("schema_version")
                                 validate_result(data)
-                                validate_provenance(data, run, sha)
+                                validate_provenance(data, run, sha, plan)
                                 item.update(tier=data["tier"], kind=data["kind"], status=data["status"], publication_status="ready", reason=data["reason"])
                             except (ValueError, TypeError) as error:
                                 item.update(publication_status="rejected", status="rejected", reason=str(error))
