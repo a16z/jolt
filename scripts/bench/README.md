@@ -15,8 +15,9 @@ not establish the whole target-job duration.
 The PR matrix has 17 cells and launches 136 proof processes, including warmups.
 `pr-baseline.json` preserves the initial three-cell, 24-proof matrix. Measured
 timing and noise references apply to their exact artifact inputs, not to an
-unmeasured later kernel or a future run. No runner registration, target setting
-change, or comment publication is part of this draft.
+unmeasured later kernel or a future run. Automatic PR calibration is unavailable;
+the measured bands below belong to the pinned manual experiment. No runner
+registration, target setting change, or comment publication is part of this draft.
 
 ## Workloads and tiers
 
@@ -381,26 +382,12 @@ override changes the comment, not the original raw result. The option does not
 enter build identity or change any native bundle's construction manifest.
 Keep the suite configuration and bundles unchanged when adding observations.
 
-For a PR reference, use the exact verified hosted base bundle and its bundled
-collector. Do not rebuild it on the target to add observations. A separately
-authorized local build is only the off-host equivalence control. A new reference
-requires its own scoped ten-pair null measurement:
-
-```bash
-uv run --no-project python "$BASE_OUT/scripts/bench/run.py" run \
-  --tier pr --kind null --warmups 1 --repetitions 10 \
-  --base "$BASE_OUT/manifest.json" \
-  --head "$BASE_OUT/manifest.json" --out "$NULL_OUT"
-```
-
-After deriving the reference, pass it to the actual three-repetition comparison
-without rebuilding that baseline just to add observations:
-
-```bash
-uv run --no-project python scripts/bench/run.py run \
-  --tier pr --base "$BASE_OUT/manifest.json" --head "$HEAD_OUT/manifest.json" \
-  --calibration "$CALIBRATION_JSON" --out "$BENCH_OUT/pr-calibrated"
-```
+This option is manual-only. It can render a saved comparison against its exact
+measured reference without changing the original results or build manifests.
+It does not refresh calibration for the trusted workflow. Committing a reference
+or rebuilding its base cannot repair the current commit-bound lifecycle described
+below. A separately authorized local build remains only the off-host equivalence
+control, not a replacement for the hosted base.
 
 The source revisions, native harness revision, collector hash and calibration
 source remain distinct. A later renderer does not change the collector that
@@ -432,19 +419,27 @@ Only the configured measured repetitions contribute; warmups are excluded.
 Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
 
-Without an optional file, `suite.calibration` comes from the supplied configuration.
-The committed reference is the 17-cell hosted null for base `e37e6f24` and
-harness `535840a9`, recorded by collector `c6afb17a`. Its original JSON file has
-SHA256 `09b4fa3f076d1042724959b8af7479f134fb131b3c4d667b401e6d38cd9dae6b`;
-the configuration retains that exact object and digest. Its time envelopes are
-3–5%, and RSS envelopes are 2–12.5%. These observations do not calibrate another
-base: `12b30fae`, for example, fails the base-revision match.
-The comment identifies the suite configuration and optional input by their
-SHA256s; a manual rendering does not authenticate either source. Trusted
-publication requires both the calibration object and `calibration_sha256` to
-equal its pinned expected configuration.
-An unapproved manual override is rejected, even if the artifact claims the trusted
-suite hash. The hosted workflow continues to use only that pinned configuration.
+`suites.json` explicitly marks automatic PR calibration unavailable. The trusted
+PR producer requires the current main revision as its base and the suite
+configuration committed at its harness revision. That configuration is part of
+build identity. Reference matching requires the exact base revision, and trusted
+publication accepts only calibration from the same committed configuration.
+Committing a measured reference therefore advances the base before that reference
+can be used. An unapproved manual override is rejected, even if the artifact
+claims the trusted suite hash.
+
+Automatic calibration needs a later native-build-identity and measurement-scheduling
+design before enablement. This draft does not implement that design or relax any
+identity check. Until then, automatic comparisons show measured medians and
+signed deltas with an unavailable reference, not calibrated regression thresholds.
+
+The verified manual reference remains evidence for the 17-cell hosted null at
+base `e37e6f24`, harness `535840a9` and collector `c6afb17a`. Its original JSON has
+SHA256 `09b4fa3f076d1042724959b8af7479f134fb131b3c4d667b401e6d38cd9dae6b`.
+Its time envelopes are 3–5%, and RSS envelopes are 2–12.5%. The saved reference
+and raw results retain their original identities; they are not an automatic
+reference for a later base. Manual output identifies the supplied reference by
+SHA256, but that rendering does not authenticate the source.
 
 The measured method is `null-median3-symmetric-envelope-v2`: ten same-binary null
 pairs supply eight overlapping windows of three pairs. Each window compares the
@@ -452,7 +447,8 @@ two leg medians in both directions and retains the larger percentage increase.
 The informational threshold is 1.5 times the largest window increase, with floors
 of 3% for time and 2% for peak RSS, rounded up to 0.5 percentage points. The
 windows are not independent observations; no statistical significance or pass/fail
-claim follows. The comment displays each cell's threshold and observed maximum.
+claim follows. A manual comment using the matching reference displays each cell's
+threshold and observed maximum.
 
 References apply only to three measured repetitions. Match each cell against the
 base leg's revision, binary, guest, input, trace rows, compiler settings and
@@ -495,8 +491,10 @@ acceptance runs; it is not evidence that the time budget has passed.
 3. Install the run-only prerequisites above and `uv` through the normal
    administrator process. Confirm that the target supports the fixed `znver4`
    ISA. Keep the runner cache outside the action workspace, with ownership
-   restricted to that account. Complete a real null pilot and calibrate
-   sizes/repetitions without changing protocol parameters.
+   restricted to that account. Resolve and validate the automatic-calibration
+   lifecycle described above before enablement. The saved manual null experiment
+   does not satisfy that requirement; committing a refreshed JSON reference is
+   not a working refresh procedure.
 4. Enable `JOLT_E2E_ENABLED=true` for an actual changed-source PR workflow run.
    Inspect every expected point, physical affinity, hashes and verified exits.
    Measure the target-job interval, including checkout, transfers, verification
