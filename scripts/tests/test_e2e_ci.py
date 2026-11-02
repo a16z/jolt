@@ -46,25 +46,6 @@ class E2eCiTests(unittest.TestCase):
                 ci.resolve('workflow_run', {'workflow_run': {'id': 9}}, 'a16z/jolt', 'a' * 40)
         capture.assert_not_called()
 
-    def test_build_only_request_pins_both_merge_parents_without_privileged_resolution(self):
-        event = {'number': 7, 'pull_request': {
-            'base': {'ref': 'main', 'sha': 'a' * 40},
-            'head': {'sha': 'b' * 40, 'repo': {'full_name': 'a16z/jolt'}}}}
-        with patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
-                patch.object(ci, 'github', side_effect=AssertionError('build-only plan needs no token')), \
-                patch.object(ci.bench, 'capture', return_value=' '.join(x * 40 for x in ('c', 'a', 'b'))):
-            harness, runs, number, request = ci.resolve('pull_request', event, 'a16z/jolt', 'c' * 40)
-            self.assertEqual(harness, 'c' * 40)
-            self.assertEqual(runs, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
-            self.assertEqual(number, 7)
-            self.assertIsNone(request)
-            event['pull_request']['base']['sha'] = 'd' * 40
-            with self.assertRaisesRegex(ValueError, 'merge and its parents'):
-                ci.resolve('pull_request', event, 'a16z/jolt', 'c' * 40)
-            event['pull_request']['head']['repo']['full_name'] = 'outside/jolt'
-            with self.assertRaisesRegex(ValueError, 'same-repository'):
-                ci.resolve('pull_request', event, 'a16z/jolt', 'c' * 40)
-
     def test_main_push_keeps_all_new_first_parent_commits_in_event_order(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
@@ -143,8 +124,8 @@ class E2eCiTests(unittest.TestCase):
             with patch.object(ci.bench, 'provenance', return_value=({'run_id': None}, {})):
                 result = ci.bench.disabled(args)
             self.assertEqual(result['status'], 'disabled')
-            self.assertEqual(len(result['cases']), 3)
-            self.assertEqual({case['pcs'] for case in result['cases']}, {'akita'})
+            self.assertEqual(len(result['cases']), 17)
+            self.assertEqual({case['pcs'] for case in result['cases']}, {'akita', 'dory'})
             self.assertTrue(all(c['status'] == 'missing' and not c['samples'] for c in result['cases']))
             self.assertIsNone(result['wall_time']['total_s'])
 
@@ -153,20 +134,17 @@ class E2eCiTests(unittest.TestCase):
             root = Path(directory)
             event = root / 'event.json'
             event.write_text('{}')
-            for build_only, event_name in ((False, 'workflow_run'), (True, 'pull_request')):
-                with self.subTest(build_only=build_only):
-                    options = argparse.Namespace(config=ci.bench.DEFAULT_CONFIG,
-                        out=root / event_name, build_only=build_only)
-                    with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event),
-                            GITHUB_EVENT_NAME=event_name, GITHUB_REPOSITORY='a16z/jolt',
-                            GITHUB_SHA='a' * 40, JOLT_E2E_ENABLED='true',
-                            GITHUB_OUTPUT=str(root / 'outputs'), GITHUB_STEP_SUMMARY=str(root / 'summary')), \
-                            patch.object(ci, 'resolve', side_effect=ValueError('unsupported fixture request')):
-                        self.assertEqual(ci.plan(options), 1 if build_only else 0)
-                    self.assertFalse(json.loads((options.out / 'plan.json').read_text())['enabled'])
-                    receipt = json.loads((options.out / 'benchmark-results.json').read_text())
-                    self.assertEqual(receipt['status'], 'unsupported')
-                    self.assertTrue(all(not case['samples'] for case in receipt['cases']))
+            options = argparse.Namespace(config=ci.bench.DEFAULT_CONFIG, out=root / 'unsupported')
+            with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event),
+                    GITHUB_EVENT_NAME='workflow_run', GITHUB_REPOSITORY='a16z/jolt',
+                    GITHUB_SHA='a' * 40, JOLT_E2E_ENABLED='true',
+                    GITHUB_OUTPUT=str(root / 'outputs'), GITHUB_STEP_SUMMARY=str(root / 'summary')), \
+                    patch.object(ci, 'resolve', side_effect=ValueError('unsupported fixture request')):
+                self.assertEqual(ci.plan(options), 0)
+            self.assertFalse(json.loads((options.out / 'plan.json').read_text())['enabled'])
+            receipt = json.loads((options.out / 'benchmark-results.json').read_text())
+            self.assertEqual(receipt['status'], 'unsupported')
+            self.assertTrue(all(not case['samples'] for case in receipt['cases']))
 
     def test_hosted_preparation_uses_release_for_every_tier_and_never_proves(self):
         with tempfile.TemporaryDirectory() as directory:

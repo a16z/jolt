@@ -82,11 +82,13 @@ class E2ePublicationTests(unittest.TestCase):
                                      for cpu in range(24)]
         for build in result['builds']:
             build.update(profile='release', profile_config={'lto': 'fat', 'debug': 1})
-            build['binaries'] = {'akita': {'path': '/do/not/open/this', 'sha256': '0' * 64}}
-            build['guests'] = {case['workload']: {'inputs': {
-                str(case['input']['parameters']['operations']): {'sha256': '1' * 64}}}
-                for case in result['cases']}
-        result['builds'][0]['binaries']['dory'] = {'path': '/do/not/open/this/either', 'sha256': '2' * 64}
+            build['binaries'] = {
+                'akita': {'path': '/do/not/open/this', 'sha256': '0' * 64},
+                'dory': {'path': '/do/not/open/this/either', 'sha256': '2' * 64}}
+            build['guests'] = {}
+            for case in result['cases']:
+                guest = build['guests'].setdefault(case['workload'], {'inputs': {}})
+                guest['inputs'][str(case['input']['parameters']['operations'])] = {'sha256': '1' * 64}
         expected['manifest_digests'] = {build['revision']: publication.ci.manifest_digest(
             {key: value for key, value in build.items() if key != 'leg'}) for build in result['builds']}
         self.assertIs(publication.validate(result, expected, config), result)
@@ -95,9 +97,9 @@ class E2ePublicationTests(unittest.TestCase):
             publication.bench.render_comment(result, output)
             text = output.read_text()
             self.assertTrue(text.startswith('<!-- jolt-e2e-benchmark-v1 -->'))
-            for workload, cores in [('fibonacci', 1), ('sha2-chain', 8), ('btreemap', 24)]:
-                self.assertIn(f'| {workload} / akita | {cores} | 3.000000 / 3.000000 | +0.00% |', text)
-            self.assertNotIn(' / dory |', text)
+            for case in result['cases']:
+                self.assertIn(f'| {case["workload"]} / {case["pcs"]} | {case["physical_cores"]} '
+                              '| 3.000000 / 3.000000 | +0.00% |', text)
             self.assertIn('Shared harness: `' + 'd' * 40 + '`', text)
             self.assertIn('Prover profiles: base `release`; head `release`.', text)
         for key, value in [('profile', 'ci'), ('profile_config', {'lto': 'off'})]:

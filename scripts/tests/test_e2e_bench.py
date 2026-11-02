@@ -252,8 +252,26 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
         self.assertEqual([(c['workload'], c['pcs'], c['backend'], c['physical_cores'],
                            c['scale_log2'], c['input']['parameters']['operations']) for c in pr['cases']],
                          [('fibonacci', 'akita', 'optimized', 1, 18, 16000),
+                          ('fibonacci', 'akita', 'optimized', 8, 20, 64000),
+                          ('fibonacci', 'akita', 'optimized', 24, 22, 250000),
+                          ('sha2-chain', 'akita', 'optimized', 1, 18, 64),
                           ('sha2-chain', 'akita', 'optimized', 8, 20, 256),
-                          ('btreemap', 'akita', 'optimized', 24, 22, 2048)])
+                          ('sha2-chain', 'dory', 'optimized', 24, 22, 1024),
+                          ('sha2-chain', 'akita', 'optimized', 24, 22, 1024),
+                          ('sha3-chain', 'akita', 'optimized', 1, 18, 48),
+                          ('sha3-chain', 'akita', 'optimized', 8, 20, 192),
+                          ('sha3-chain', 'akita', 'optimized', 24, 22, 768),
+                          ('btreemap', 'akita', 'optimized', 1, 18, 128),
+                          ('btreemap', 'akita', 'optimized', 8, 20, 512),
+                          ('btreemap', 'dory', 'optimized', 24, 22, 2048),
+                          ('btreemap', 'akita', 'optimized', 24, 22, 2048),
+                          ('secp256k1-batch', 'akita', 'optimized', 1, 18, 1),
+                          ('secp256k1-batch', 'akita', 'optimized', 8, 20, 4),
+                          ('secp256k1-batch', 'akita', 'optimized', 24, 22, 16)])
+        _, baseline = bench.config_cases(bench.DEFAULT_CONFIG.with_name('pr-baseline.json'), 'pr')
+        self.assertEqual([case['id'] for case in baseline], [
+            'fibonacci-akita-c1-s18-n16000-v1', 'sha2-chain-akita-c8-s20-n256-v1',
+            'btreemap-akita-c24-s22-n2048-v1'])
         expected = {'fibonacci', 'sha2-chain', 'sha3-chain', 'btreemap', 'secp256k1-batch'}
         for tier in ('main', 'nightly'):
             _, cases = bench.config_cases(bench.DEFAULT_CONFIG, tier)

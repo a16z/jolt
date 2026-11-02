@@ -41,15 +41,6 @@ def github(path):
 def resolve(event_name, event, repository, sha):
     harness = bench.git_revision('HEAD')
     request_run_id = None
-    if event_name == 'pull_request':
-        pr = event['pull_request']
-        if pr['head']['repo']['full_name'] != repository or pr['base']['ref'] != 'main':
-            raise ValueError('build-only requests must be same-repository PRs targeting main')
-        merge, base, head = bench.git_revision(sha), pr['base']['sha'], pr['head']['sha']
-        parents = bench.capture(['git', 'rev-list', '--parents', '-n', '1', merge]).split()[1:]
-        if merge != harness or parents != [base, head]:
-            raise ValueError('build-only checkout does not match the event merge and its parents')
-        return harness, [{'base': base, 'head': merge, 'submitted_head': head}], event['number'], None
     if event_name == 'workflow_run':
         request_run_id = event['workflow_run']['id']
         request = github(f'actions/runs/{request_run_id}')
@@ -90,12 +81,9 @@ def resolve(event_name, event, repository, sha):
 def plan(args):
     event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
     name = os.environ['GITHUB_EVENT_NAME']
-    build_only = args.build_only
-    if build_only != (name == 'pull_request'):
-        raise ValueError('only the unprivileged PR entrypoint may request a build-only plan')
-    tier = ('pr' if name in ('workflow_run', 'pull_request') else 'main' if name == 'push'
+    tier = ('pr' if name == 'workflow_run' else 'main' if name == 'push'
             else event.get('inputs', {}).get('tier', 'nightly'))
-    enabled = build_only or os.environ.get('JOLT_E2E_ENABLED') == 'true'
+    enabled = os.environ.get('JOLT_E2E_ENABLED') == 'true'
     plan = {'tier': tier, 'enabled': False, 'reason': None, 'target_cpu': TARGET_CPU,
             'push_before': event.get('before'), 'push_after': event.get('after'),
             'harness': None, 'runs': [], 'provenance': bench.provenance()[0],
@@ -106,8 +94,6 @@ def plan(args):
         plan['harness'], plan['runs'], pr, request_id = resolve(
             name, event, os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'])
         plan['provenance'].update(pr_number=pr, request_run_id=request_id)
-        if build_only:
-            plan['provenance']['workflow_file'] = REQUEST_FILE
         harness = plan['harness']
         if git_file(harness, plan['config']['path']) != args.config.read_bytes():
             raise ValueError('suite configuration differs from the committed harness')
@@ -148,7 +134,7 @@ def plan(args):
         output.write(f'tier={tier}\n')
     with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
         summary.write('End-to-end benchmarks: ' + ('enabled' if plan['enabled'] else plan['reason']) + '\n')
-    return int(build_only and not plan['enabled'])
+    return 0
 
 
 def load_plan(path):
@@ -339,7 +325,6 @@ def main():
     commands = parser.add_subparsers(dest='command', required=True)
     planning = commands.add_parser('plan')
     planning.add_argument('--out', type=Path, required=True)
-    planning.add_argument('--build-only', action='store_true')
     planning.add_argument('--config', type=Path, default=bench.DEFAULT_CONFIG)
     preparation = commands.add_parser('prepare')
     preparation.add_argument('--plan', type=Path, required=True)
