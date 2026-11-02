@@ -62,6 +62,8 @@ ATTESTATION = re.compile(
     r"using skill (.+?) and model (.+?) with (.+?) reasoning effort, and no issues were found\."
 )
 LEDGER = re.compile(r"<!-- ai-merge-gate/attempts (\{.*\}) -->")
+# The run-name of .github/workflows/ai-merge-gate-events.yml, which GitHub reports as display_title.
+RUN_NAME = re.compile(r"AI merge gate events for PR #([1-9][0-9]*)")
 REVIEW_FIELDS = "state commit { oid } fullDatabaseId"
 # Merged changes here act on every later evaluation, so the gate never approves them. Any
 # workflow on the default branch can use the gate's secret and token. Python resolves the
@@ -977,7 +979,7 @@ class Gate:
                                   "fullDatabaseId": str(created["id"])})
 
 
-def resolve(github: GitHub, event_name: str, event: dict, default_branch: str) -> int | None:
+def resolve(event_name: str, event: dict) -> int | None:
     """The pull request an `issue_comment` or bridged `workflow_run` event is about."""
     if event_name == "issue_comment":
         author = event["comment"]["user"]
@@ -987,32 +989,27 @@ def resolve(github: GitHub, event_name: str, event: dict, default_branch: str) -
         if author["type"] == "Bot" and author["node_id"] != PIKA_BOT_ID:
             return None
         return event["issue"]["number"] if event["issue"].get("pull_request") else None
-    if event_name != "workflow_run" or not event["workflow_run"].get("head_repository"):
+    if event_name != "workflow_run":
         return None
-    run = event["workflow_run"]
-    head = f"{run['head_repository']['owner']['login']}:{run['head_branch']}"
-    # Closed and retargeted pull requests count too, so that the gate withdraws from them. A branch
-    # can head several: its open one into the default branch comes first, else the most recently
-    # updated one, which is normally the one the event changed.
-    query = urllib.parse.urlencode({"state": "all", "head": head, "sort": "updated", "direction": "desc",
-                                    "per_page": 100})
-    pulls = github.get(f"/repos/{github.repo}/pulls?{query}")
-    current = [pull for pull in pulls if pull["state"] == "open" and pull["base"]["ref"] == default_branch]
-    return next((pull["number"] for pull in current + pulls), None)
+    # The events workflow names each run after its pull request, so a closed or retargeted pull
+    # request is evaluated itself, whatever else its branch heads. A pull request can rename its own
+    # copy's runs; a wrong number only makes the gate evaluate another pull request from scratch.
+    match = RUN_NAME.fullmatch(event["workflow_run"].get("display_title") or "")
+    return int(match.group(1)) if match else None
 
 
 def main(argv: list[str]) -> int:
     env = os.environ
     try:
-        github = GitHub(http, env["GH_TOKEN"], env["GITHUB_REPOSITORY"])
         if argv[1:] == ["resolve"]:
             event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
-            number = resolve(github, env["GITHUB_EVENT_NAME"], event, env["DEFAULT_BRANCH"])
+            number = resolve(env["GITHUB_EVENT_NAME"], event)
             with open(env["GITHUB_OUTPUT"], "a") as output:
                 output.write(f"pr={number or ''}\n")
             log(f"{env['GITHUB_EVENT_NAME']} event: PR {number or 'none'}")
             return 0
         if len(argv) == 3 and argv[1] == "evaluate":
+            github = GitHub(http, env["GH_TOKEN"], env["GITHUB_REPOSITORY"])
             model = Model(http, env.get("OPENAI_API_KEY", ""))
             Gate(github, model, env["DEFAULT_BRANCH"], env.get("AI_MERGE_GATE_MAINTAINERS", ""),
                  env["GITHUB_RUN_ID"]).evaluate(int(argv[2]))

@@ -24,7 +24,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      pull-requests: read
     outputs:
       pr: ${{ steps.resolve.outputs.pr }}
     steps:
@@ -34,9 +33,6 @@ jobs:
           persist-credentials: false
           sparse-checkout: scripts/ci
       - id: resolve
-        env:
-          GH_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: python3 scripts/ci/ai_merge_gate.py resolve
 
   evaluate:

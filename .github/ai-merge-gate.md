@@ -237,18 +237,20 @@ The gate never runs code from a pull request. Two workflows divide the work:
 
 - `ai-merge-gate-events.yml` runs on `pull_request` and `pull_request_review` events. GitHub runs
   the pull request's own copy of this file, without secrets and with a token that has no
-  permissions. The file does nothing except finish, which tells the gate that something changed.
-  A pull request that changes it could keep its own events from reaching the gate, but such a
-  pull request changes a gate input and never gets the gate's approval.
+  permissions. The file does nothing except finish, which tells the gate that something changed,
+  and its run name, `AI merge gate events for PR #<number>`, says which pull request changed. A
+  pull request that changes the file could keep its own events from reaching the gate or name
+  another pull request, which the gate then evaluates from scratch; such a pull request changes a
+  gate input and never gets the gate's approval.
 - `ai-merge-gate.yml` runs on `issue_comment` and on `workflow_run` after the events workflow.
-  GitHub always takes both of these workflows from the default branch. Its `resolve` job maps the
-  event to a pull request number: for a branch's events, the branch's open pull request into
-  `main`, else its most recently updated one, so that a closed or retargeted pull request loses
-  the gate's approval and `merge-eligible`. Its `evaluate` job checks out the gate script, risk
-  policy, classifier skill and closure spec from the default branch, reads the pull request, its
-  comments and its reviews through the API, calls the classifier when row 6 applies, and writes
-  check runs, labels, the classifier comment and its review with the job's `GITHUB_TOKEN`. One
-  evaluation per pull request runs at a time.
+  GitHub always takes both of these workflows from the default branch. Its `resolve` job takes the
+  pull request number from the comment event or from the events workflow's run name, so a closed
+  or retargeted pull request is itself evaluated and loses the gate's approval and
+  `merge-eligible`, whatever other pull requests its branch heads. Its `evaluate` job checks out
+  the gate script, risk policy, classifier skill and closure spec from the default branch, reads
+  the pull request, its comments and its reviews through the API, calls the classifier when row 6
+  applies, and writes check runs, labels, the classifier comment and its review with the job's
+  `GITHUB_TOKEN`. One evaluation per pull request runs at a time.
 
 GitHub documents the default-branch behavior and the `created`, `edited` and `deleted` comment
 events in [Events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#issue_comment).
@@ -257,7 +259,7 @@ can receive secrets even after an unprivileged workflow; this gate consumes no a
 code from that run.
 
 The `evaluate` job's token has Actions read, Checks write, Contents read and Pull requests write;
-the `resolve` job's has Contents read and Pull requests read. Pull requests write covers
+the `resolve` job's has Contents read only. Pull requests write covers
 [creating and dismissing reviews](https://docs.github.com/en/rest/pulls/reviews),
 [labels](https://docs.github.com/en/rest/issues/labels) and
 [the classifier comment](https://docs.github.com/en/rest/issues/comments). Checks write covers
@@ -340,7 +342,9 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
   retries and re-runs. The gate's classifier comment ends with a ledger line counting attempts
   per head; a new attempt is written there before its first paid request, so a timeout, crash or
   cancelled run still counts. One evaluation per pull request runs at a time, so two
-  evaluations never admit attempts at once. When the attempts are spent, the head stays
+  evaluations never admit attempts at once. These counts hold only while the ledger stands:
+  writers, people with repository write access, can edit or delete the comment and so reset
+  them (see [Trust](#trust)). When the attempts are spent, the head stays
   unclassified: the gate does not approve it, so it needs a person's approval, and its risk label
   follows the path rule. A cached verdict costs no attempt.
 - **Time.** Each request is cancelled after 15 minutes and each question after 40. Cancelling
@@ -360,14 +364,16 @@ measured.
   $12.50/M + 20,000 × $50/M = $2.875, one attempt 5 × $2.875 = $14.375, and one pull request
   3 × $14.375 = $43.125. The gate's count leaves out OpenAI's framing, so this figure is an
   estimate, not a proven ceiling.
-- **The ceiling OpenAI's published limits give: $416.25 per pull request.** The model's context
+- **A bound on the cost of accepted requests: $416.25 per pull request.** The model's context
   window is 1,050,000 tokens, and under the default `truncation` setting, which the gate keeps,
   "if the input size will exceed the context window size for a model, the request will fail with
   a 400 error" ([Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)).
   A request that runs therefore carries at most 1,050,000 input tokens and generates at most
   20,000. At the long-context rates, $25/M for cache writes and $75/M for output, that is
   1,050,000 × $25/M + 20,000 × $75/M = $27.75 per request, $138.75 per attempt and $416.25 per
-  pull request.
+  pull request. This bound holds under two assumptions: OpenAI does not bill a request it
+  rejects for exceeding the context window, which its documentation does not say, and the
+  attempt ledger above stands, which writers can reset.
 
 The limits above are enforced by the gate's code. As a second cap, give the key its own OpenAI
 project and set a monthly hard spend limit on that project. OpenAI's
@@ -561,11 +567,6 @@ if retiring them. Keep the separate Pika App and local review skill.
   can briefly leave the old head's labels, and labels stay as they were while an evaluation runs.
   Closing a pull request removes only `merge-eligible`. Label permissions, availability and API
   failures can prevent a label update; the evaluation then fails and approves nothing.
-- A branch's events reach the gate as the branch, not the pull request. When a branch heads
-  several pull requests, the gate evaluates its open one into `main`, else its most recently
-  updated one. If another pull request from the branch changes in the seconds after one closes or
-  is retargeted, or a new one into `main` opens, the closed or retargeted one keeps
-  `merge-eligible` and the gate's approval until its next event, such as a comment.
 - Withdrawing an authorization while the classifier runs stops the approval, not classifier work
   already under way.
 - A verdict covers the diff from the head's merge base with `main`. A later change to `main` does
