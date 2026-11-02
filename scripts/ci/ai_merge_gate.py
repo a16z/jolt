@@ -70,10 +70,11 @@ REVIEW_FIELDS = "state commit { oid } fullDatabaseId"
 # spec instruct the model.
 GATE_INPUTS = (".github/workflows/", "scripts/ci/", ".claude/skills/verifier-classifier/",
                "specs/verifier-closure-lints.md", RISK_POLICY)
-# Classifier spend bounds. .github/ai-merge-gate.md derives the worst-case price from them, so a
-# change here changes that section. A request's input is bounded by its JSON bytes (no token covers
-# less than one byte) plus the input and output tokens the API reported for the responses it
-# continues. 272,000 input tokens is where gpt-6-astra's long-context price starts.
+# Classifier spend bounds. .github/ai-merge-gate.md derives its price figures from them, so a change
+# here changes that section. The gate counts a request's input as its JSON bytes (no text token
+# covers less than one byte) plus the input and output tokens the API reported for the responses it
+# continues; OpenAI's own framing of the request is not counted. 272,000 input tokens is where
+# gpt-6-astra's long-context price starts.
 MAX_OUTPUT_TOKENS = 20_000
 MAX_CALL_INPUT_TOKENS = 150_000
 MAX_TOOL_ROUNDS = 4
@@ -635,8 +636,8 @@ class Gate:
             self.records.append(Record(CLASSIFIER, "skipped", "Verifier classifier: attempts spent",
                                        f"This head has used {self.ledger.get(head, 0)} of {MAX_HEAD_ATTEMPTS} "
                                        f"paid classifier attempts and the pull request {used} of "
-                                       f"{MAX_PR_ATTEMPTS}. The head stays unclassified: risk-4 unless only "
-                                       "level-1 paths change.", None))
+                                       f"{MAX_PR_ATTEMPTS}. The head stays unclassified, so only a person can "
+                                       "approve it; its risk label follows the path rule.", None))
             return
 
         def admit() -> None:
@@ -645,7 +646,7 @@ class Gate:
             self.comment(number, head, "Verifier classifier: running",
                          f"Paid attempt {self.ledger[head]} of {MAX_HEAD_ATTEMPTS} for this head and "
                          f"{used + 1} of {MAX_PR_ATTEMPTS} for this pull request. The verdict replaces "
-                         "this text; without one, the attempt failed and the head keeps its path-based risk.")
+                         "this text; without one, the attempt failed and the head has no classifier result.")
 
         skill = (ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text()
         closure = (ROOT / "specs/verifier-closure-lints.md").read_text()
@@ -765,7 +766,10 @@ class Gate:
                            "head from a maintainer with write access, other than the PR author. The gate "
                            "never approves risk-4 itself.", human=True)
         attested_by = self.attester(pull)
-        approve = attested_by is not None and authorized and not pull["draft"] and not protected
+        # The path rule's risk only labels: an unclassified head, such as one whose attempts are
+        # spent, may change a build input under scripts/, so only a person can approve it.
+        classified = self.recorded(head, CLASSIFIER) is not None
+        approve = attested_by is not None and classified and authorized and not pull["draft"] and not protected
         if approvers:
             return Outcome("success", "Approved by " + ", ".join(approvers),
                            "A writer other than the author approved the pull request, and GitHub has not "
@@ -775,6 +779,11 @@ class Gate:
             return Outcome("success", "Review attested by " + attested_by,
                            f"An authorized comment attests a clean review of the current head `{head}`, so "
                            "the gate approves it.", approve=True)
+        if not classified:
+            return Outcome("failure", "Human approval required: the head has no classifier result",
+                           "The classifier's paid attempts for this head or pull request are spent, so the "
+                           "gate does not approve it. A writer can approve; at risk-4 the policy asks for a "
+                           "current-head maintainer approval.", human=True)
         return Outcome("failure", "Needs an approval or a current-head review attestation",
                        "A writer other than the author can approve. Otherwise the Pika App bot or a "
                        "maintainer posts a PR comment with this standalone line, and the gate approves: "
@@ -790,32 +799,38 @@ class Gate:
                 | ({NO_REVIEWER} if policy.human and unassigned(pull) else set()))
 
     def evaluate(self, number: int) -> None:
-        pull = self.github.get(f"/repos/{self.repo}/pulls/{number}")
-        if pull["state"] != "open" or pull["base"]["ref"] != self.default_branch:
-            log(f"PR #{number} is not an open pull request into {self.default_branch}")
-            return
-        head = pull["head"]["sha"]
-        check = self.check(head, GATE, None, "Evaluating", "The gate is evaluating this head.")
+        pull = check = None
         try:
-            outcome = self.judge(number, pull)
+            pull = self.github.get(f"/repos/{self.repo}/pulls/{number}")
+            if pull["state"] == "open" and pull["base"]["ref"] == self.default_branch:
+                head = pull["head"]["sha"]
+                check = self.check(head, GATE, None, "Evaluating", "The gate is evaluating this head.")
+                outcome = self.judge(number, pull)
+                self.complete(check, outcome)
+                log(f"PR #{number} at {head}: {outcome.conclusion}: {outcome.title}")
+                return
         except Exception as error:
+            # No approval or merge-eligible may outlive a failed evaluation, whichever step failed.
+            # Each cleanup step runs even if an earlier one fails; the original error is reported.
             failed = Outcome("failure", "Gate error: human approval required", f"The gate could not decide: {error}")
-            try:
-                # An approval the gate gave earlier must not outlive a failed evaluation.
-                self.reviews = self.github.discussion(number, "reviews", REVIEW_FIELDS)
-                self.reconcile(number, head, failed)
-            except Exception as withdraw_error:
-                log(f"Could not withdraw the gate's approval: {withdraw_error}")
-            self.complete(check, failed)
-            self.publish(number, head)
-            try:
-                self.label(number, head, {"risk-4"} | ({NO_REVIEWER} if unassigned(pull) else set()),
-                           MANAGED_LABELS - {NEEDS_MAINTAINER})
-            except Exception as label_error:
-                log(f"Could not label the failed evaluation: {label_error}")
+            steps = [("withdraw the gate's approval and merge-eligible", lambda: self.withdraw(number))]
+            if pull is not None:
+                head = pull["head"]["sha"]
+                steps += [("label the failed evaluation", lambda: self.label(
+                              number, head, {"risk-4"} | ({NO_REVIEWER} if unassigned(pull) else set()),
+                              MANAGED_LABELS - {NEEDS_MAINTAINER})),
+                          ("publish the classifier result", lambda: self.publish(number, head))]
+            if check is not None:
+                steps.append(("report the failure", lambda: self.complete(check, failed)))
+            for action, step in steps:
+                try:
+                    step()
+                except Exception as step_error:
+                    log(f"Could not {action}: {step_error}")
             raise
-        self.complete(check, outcome)
-        log(f"PR #{number} at {head}: {outcome.conclusion}: {outcome.title}")
+        log(f"PR #{number} is not an open pull request into {self.default_branch}")
+        # A merged pull request cannot reopen; its approval records what let it merge.
+        self.withdraw(number, merged=pull["merged_at"] is not None)
 
     def judge(self, number: int, pull: dict) -> Outcome:
         """Decide the policy, publish the classifier result and the labels, then approve the head or
@@ -838,7 +853,7 @@ class Gate:
         other undismissed approvals in `self.reviews`, then approve `head` once. GitHub dismisses stale
         approvals when a push arrives, which misses an approval of the old head submitted just after
         it, so the head is read again; if it moved, the approval is withdrawn and False returned."""
-        standing = [review for review in self.reviews if review["state"] == "APPROVED" and self.ours(review, APPROVAL)]
+        standing = self.standing()
         for review in standing:
             if not (policy.approve and review["commit"]["oid"] == head):
                 self.dismiss(number, review["fullDatabaseId"])
@@ -851,6 +866,21 @@ class Gate:
             self.dismiss(number, created["id"])
             return False
         return True
+
+    def standing(self) -> list[dict]:
+        """The gate's undismissed approvals among `self.reviews`."""
+        return [review for review in self.reviews if review["state"] == "APPROVED" and self.ours(review, APPROVAL)]
+
+    def withdraw(self, number: int, merged: bool = False) -> None:
+        """Remove merge-eligible and, unless the pull request merged, dismiss each standing approval
+        of the gate's as the reviews stand now. The dismissals run even if the label write fails."""
+        try:
+            self.github.call("DELETE", f"/repos/{self.repo}/issues/{number}/labels/{MERGE_ELIGIBLE}", missing_ok=True)
+        finally:
+            if not merged:
+                self.reviews = self.github.discussion(number, "reviews", REVIEW_FIELDS)
+                for review in self.standing():
+                    self.dismiss(number, review["fullDatabaseId"])
 
     def dismiss(self, number: int, review_id) -> None:
         path = f"/repos/{self.repo}/pulls/{number}/reviews/{review_id}"
@@ -961,9 +991,14 @@ def resolve(github: GitHub, event_name: str, event: dict, default_branch: str) -
         return None
     run = event["workflow_run"]
     head = f"{run['head_repository']['owner']['login']}:{run['head_branch']}"
-    query = urllib.parse.urlencode({"state": "open", "head": head, "per_page": 100})
+    # Closed and retargeted pull requests count too, so that the gate withdraws from them. A branch
+    # can head several: its open one into the default branch comes first, else the most recently
+    # updated one, which is normally the one the event changed.
+    query = urllib.parse.urlencode({"state": "all", "head": head, "sort": "updated", "direction": "desc",
+                                    "per_page": 100})
     pulls = github.get(f"/repos/{github.repo}/pulls?{query}")
-    return next((pull["number"] for pull in pulls if pull["base"]["ref"] == default_branch), None)
+    current = [pull for pull in pulls if pull["state"] == "open" and pull["base"]["ref"] == default_branch]
+    return next((pull["number"] for pull in current + pulls), None)
 
 
 def main(argv: list[str]) -> int:

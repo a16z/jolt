@@ -125,7 +125,7 @@ class FakeApis:
                  records=(), heads=(HEAD,), diff=PLAIN_DIFF, files=("crates/jolt-prover/src/lib.rs",),
                  counts=(1, 1, 1), verdict="SAFE", risk=2, risks=None, answer_text=None,
                  served_model="gpt-6-astra-2026-09-30", trees=None, tool_calls=(),
-                 reviewers=(), teams=(), assignees=()) -> None:
+                 reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None) -> None:
         # The pull request's file list, which follows its branch; the commits' trees do not move.
         self.files = [entry if isinstance(entry, dict) else {"filename": entry} for entry in files]
         self.changed_paths = {entry["filename"] for entry in self.files} | {
@@ -133,6 +133,9 @@ class FakeApis:
         self.author, self.comments, self.reviews = author, list(comments), list(reviews)
         self.labels, self.draft, self.heads, self.diff, self.counts = list(labels), draft, list(heads), diff, counts
         self.reviewers, self.teams, self.assignees = list(reviewers), list(teams), list(assignees)
+        self.state, self.base, self.merged_at = state, base, merged_at
+        # The pull requests from branch forker:fix, most recently updated first.
+        self.branch_pulls = [9, 7]
         self.verdict, self.answer_text = verdict, answer_text
         self.risk, self.risks = risk, risks
         self.served_model, self.tool_calls = served_model, tool_calls
@@ -171,8 +174,8 @@ class FakeApis:
             if self.pr_reads == 2 and self.during_recheck:
                 self.during_recheck(self)
             head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
-            return self.ok({"number": 7, "state": "open", "draft": self.draft, "base": {"ref": "main"},
-                            "head": {"sha": head}, "user": {"login": self.author},
+            return self.ok({"number": 7, "state": self.state, "merged_at": self.merged_at, "draft": self.draft,
+                            "base": {"ref": self.base}, "head": {"sha": head}, "user": {"login": self.author},
                             "labels": [{"name": name} for name in self.labels],
                             "requested_reviewers": [{"login": login} for login in self.reviewers],
                             "requested_teams": [{"slug": slug} for slug in self.teams],
@@ -258,12 +261,17 @@ class FakeApis:
             return self.ok([{"name": name} for name in self.labels])
         if method == "DELETE" and path.startswith(f"/repos/{REPO}/issues/7/labels/"):
             name = path.rsplit("/", 1)[1]
+            if name not in self.labels:
+                return 404, b'{"message": "Label does not exist"}'
             self.label_writes.append((method, name))
             self.labels.remove(name)
             return self.ok([{"name": name} for name in self.labels])
         if (method, path) == ("GET", f"/repos/{REPO}/pulls"):
-            pulls = [{"number": 9, "base": {"ref": "release"}}, {"number": 7, "base": {"ref": "main"}}]
-            return self.ok(pulls if query["head"] == ["forker:fix"] else [])
+            assert (query.get("sort"), query.get("direction")) == (["updated"], ["desc"]), query
+            pulls = {7: {"number": 7, "state": self.state, "base": {"ref": self.base}},
+                     9: {"number": 9, "state": "open", "base": {"ref": "release"}}}
+            listed = [pulls[number] for number in self.branch_pulls if query["state"] in (["all"], [pulls[number]["state"]])]
+            return self.ok(listed if query["head"] == ["forker:fix"] else [])
         raise AssertionError(f"unexpected request {method} {url}")
 
     def openai(self, method, path, data, size):
@@ -596,6 +604,33 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(apis.review_writes, [("DISMISS", HEAD)])
                 self.assertEqual(apis.model_requests, [])
 
+    def test_a_failed_check_run_write_still_withdraws_the_gates_approval(self) -> None:
+        class ChecksApiFails(FakeApis):
+            def __init__(self, failing, **kwargs):
+                super().__init__(**kwargs)
+                self.failing = failing
+
+            def __call__(self, method, url, headers, body):
+                if method == self.failing and urlsplit(url).path.startswith(f"/repos/{REPO}/check-runs"):
+                    self.requests.append((method, url))
+                    return 503, b'{"message": "Service Unavailable"}'
+                return super().__call__(method, url, headers, body)
+
+        for case, failing, comments, reviews, writes in [
+            # The attestation was deleted, and the in-progress check cannot be created.
+            ("check creation", "POST", [], [gate_approval()], [("DISMISS", HEAD)]),
+            # The gate approves the head, and its decision cannot be written to the check.
+            ("check completion", "PATCH", [comment("core-a", attestation())], [], [("APPROVE", HEAD), ("DISMISS", HEAD)]),
+        ]:
+            with self.subTest(case=case):
+                apis = ChecksApiFails(failing, comments=comments, reviews=reviews, records=[record(GATE.CLASSIFIER)],
+                                      labels=["risk-2", "merge-eligible", "keep"])
+                with self.assertRaisesRegex(GATE.GateError, f"GitHub {failing} /repos/{REPO}/check-runs.*HTTP 503"):
+                    evaluate(apis)
+                self.assertEqual((apis.review_writes, apis.approved()), (writes, []))
+                self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned", "keep"})
+                self.assertEqual(apis.model_requests, [])
+
     def test_same_head_changes_withdraw_only_the_gates_own_approval(self) -> None:
         def delete_attestation(apis):
             apis.comments.pop(1)
@@ -925,6 +960,23 @@ class AiMergeGateTests(unittest.TestCase):
         with self.assertRaisesRegex(GATE.GateError, "malformed attempt ledger"):
             evaluate(FakeApis(comments=[corrupt, attested]))
 
+    def test_spent_classifier_attempts_never_earn_the_gates_approval(self) -> None:
+        # The path rule rates scripts/** risk-1, yet crates/jolt-field/build.rs runs this script:
+        # without a classifier result for the head, only a person can approve it.
+        for case, reviews, expected, labels in [
+            ("attested", [], ("failure", "Human approval required: the head has no classifier result"),
+             {"risk-1", "no-reviewer-assigned"}),
+            ("attested and approved by a writer", [review("maintainer", "APPROVED")],
+             ("success", "Approved by maintainer"), {"risk-1", "merge-eligible"}),
+        ]:
+            with self.subTest(case=case):
+                apis = evaluate(FakeApis(files=["scripts/fp64_certified_matrix.py"], reviews=reviews,
+                                         comments=[ledger({HEAD: 2}), comment("core-a", attestation())]))
+                self.assertEqual(apis.gate(), expected)
+                self.assertEqual(set(apis.labels), labels)
+                self.assertEqual(apis.record(GATE.CLASSIFIER), ["skipped"])
+                self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
+
     def test_a_continuation_over_the_input_bound_withholds_the_tool_answers(self) -> None:
         unchanged = {"crates/big.rs": "x" * 20_000}
         apis = FakeApis(trees={BASE: {**TREES[BASE], **unchanged}, HEAD: {**TREES[HEAD], **unchanged}},
@@ -1044,6 +1096,43 @@ class AiMergeGateTests(unittest.TestCase):
         pr_comment = {"issue": {"number": 7, "pull_request": {"url": "..."}},
                       "comment": {"user": {"type": "User"}}}
         self.assertEqual(GATE.resolve(github, "issue_comment", pr_comment, "main"), 7)
+
+    def test_closing_or_retargeting_withdraws_the_gates_approval_and_merge_eligible(self) -> None:
+        def route_branch_event(apis):
+            """Resolve an events-workflow run for the pull request's branch, then evaluate."""
+            with tempfile.TemporaryDirectory() as directory:
+                event_path, output_path = Path(directory) / "event.json", Path(directory) / "output"
+                event_path.write_text(json.dumps({"workflow_run": {
+                    "head_repository": {"owner": {"login": "forker"}}, "head_branch": "fix"}}))
+                env = dict(ENV, GITHUB_EVENT_PATH=str(event_path), GITHUB_EVENT_NAME="workflow_run",
+                           GITHUB_OUTPUT=str(output_path))
+                self.assertEqual(run_main(apis, "resolve", env=env), 0)
+                self.assertEqual(output_path.read_text(), "pr=7\n")
+            self.assertEqual(run_main(apis, "evaluate", "7"), 0)
+
+        for case, change, writes in [
+            ("closed", {"state": "closed"}, [("DISMISS", HEAD)]),
+            ("retargeted", {"base": "release"}, [("DISMISS", HEAD)]),
+            # A merged pull request cannot reopen; its approval records what let it merge.
+            ("merged", {"state": "closed", "merged_at": "2026-11-01T12:00:00Z"}, []),
+        ]:
+            with self.subTest(case=case):
+                apis = FakeApis(records=[record(GATE.CLASSIFIER)], comments=[comment("core-a", attestation())],
+                                reviews=[gate_approval(), review("maintainer", "APPROVED")],
+                                labels=["risk-2", "merge-eligible", "keep"], **change)
+                # The event changed pull request 7 last; branch forker:fix also heads PR 9 into release.
+                apis.branch_pulls = [7, 9]
+                route_branch_event(apis)
+                self.assertEqual(apis.review_writes, writes)
+                self.assertEqual(set(apis.labels), {"risk-2", "keep"})
+                self.assertEqual(apis.reviews[1]["state"], "APPROVED")
+                self.assertEqual((apis.model_requests, apis.created), ([], []))
+                if case != "merged":
+                    # Reopening it, or targeting main again, evaluates it as before.
+                    apis.state, apis.base = "open", "main"
+                    route_branch_event(apis)
+                    self.assertEqual(apis.review_writes, writes + [("APPROVE", HEAD)])
+                    self.assertEqual(set(apis.labels), {"risk-2", "merge-eligible", "keep"})
 
 
 if __name__ == "__main__":

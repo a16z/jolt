@@ -3,11 +3,12 @@
 Once installed, `main` requires one approving review, with stale approvals dismissed on push,
 plus its required CI checks. The gate is a workflow that supplies that approval for pull
 requests on the agent path: it approves the exact current head as `github-actions[bot]` when
-all of the following hold, and withdraws its approval when any stops holding.
+all of the following hold, and withdraws its approval when any stops holding, unless the pull
+request has merged.
 
 - A maintainer wrote the pull request, or a maintainer posted `AI gate: AUTHORIZED <head>`.
 - The Pika App bot or a maintainer attests a clean review of that head in a PR comment.
-- The verifier classifier puts the head at risk-1, risk-2 or risk-3.
+- A verifier classifier result for that head puts it at risk-1, risk-2 or risk-3.
 - The pull request changes none of the gate's own inputs.
 - No maintainer or writer has a standing change request.
 - The pull request is open, targets `main` and is not a draft.
@@ -71,9 +72,11 @@ for the gate's approval: verifier impact is reported separately and is no longer
 
 Without a cached or new classification, a change wholly within level-1 paths receives risk-1;
 other changes receive risk-4 until they can be classified. This gives unauthorized and draft
-pull requests a conservative label without running a model. A current-head maintainer approval
-already satisfies the highest level, so the gate starts no model work for it and keeps an
-existing classification or this fallback.
+pull requests a conservative label without running a model. This path rule only labels: the gate
+approves only a head that has a classifier result, because a level-1 path such as a script under
+`scripts/` can still be a build input. A current-head maintainer approval already satisfies the
+highest level, so the gate starts no model work for it and keeps an existing classification or
+this fallback.
 
 ## Labels the gate manages
 
@@ -85,8 +88,9 @@ Each evaluation sets exactly these labels and leaves every other label alone:
   maintainer's authorization, so it stays even when a writer's approval satisfies the policy.
 - `merge-eligible`: the gate's review policy is satisfied for the current head, as the table
   below decides, and the pull request is open and not a draft. It does not show that CI passed,
-  that GitHub would allow the merge, or that auto-merge is enabled.
-- `no-reviewer-assigned`: the policy waits for a person (table rows 3, 5 and 8, or a gate
+  that GitHub would allow the merge, or that auto-merge is enabled. Closing or merging the pull
+  request, or retargeting it away from `main`, removes it.
+- `no-reviewer-assigned`: the policy waits for a person (table rows 3, 5, 8 and 11, or a gate
   error), and the pull request has no requested reviewer, no requested team and no assignee.
 
 Requesting a reviewer or team, assigning someone, or satisfying the requirement removes
@@ -106,7 +110,7 @@ that is still standing.
 
 | # | Condition | Policy | Gate's approval | Paid model work |
 |---|---|---|---|---|
-| 1 | The pull request is closed, or its base is not `main` | Not evaluated | Unchanged | None |
+| 1 | The pull request is closed, or its base is not `main` | Not evaluated; `merge-eligible` removed | Withdrawn, unless the pull request merged | None |
 | 2 | A maintainer or writer has requested changes, on any commit, and has not since approved or had that review dismissed | Fail | Withdrawn | None |
 | 3 | No writer approved, the author is not a maintainer, and no maintainer posted `AI gate: AUTHORIZED <head>` | Fail: human approval required | Withdrawn | None |
 | 4 | No writer approved and the pull request is a draft | Fail | Withdrawn | None |
@@ -114,9 +118,10 @@ that is still standing.
 | 6 | Maintainer-authorized, ready, no gate-input changes, no current-head maintainer approval, and no cached classifier result | Run the classifier within its attempt limits, then continue | — | Classifier |
 | 7 | Risk-4 with an undismissed current-head approval by a maintainer with write access, other than the author | Pass | Withdrawn | None |
 | 8 | Risk-4 without that approval | Fail: current-head maintainer approval required | Withdrawn | None |
-| 9 | Risk-1 through risk-3, and a writer other than the author approved without a later dismissal or change request | Pass | Given if the next row's attestation, maintainer authorization, readiness and gate-input conditions also hold; otherwise withdrawn | None |
-| 10 | Risk-1 through risk-3, and the Pika App bot or a maintainer posted the exact current-head attestation below | Pass | Given | None |
-| 11 | Otherwise | Fail: needs an approval or a current-head review attestation | Withdrawn | None |
+| 9 | Risk-1 through risk-3, and a writer other than the author approved without a later dismissal or change request | Pass | Given if the next row's classifier, attestation, maintainer authorization, readiness and gate-input conditions also hold; otherwise withdrawn | None |
+| 10 | A classifier result for the head puts it at risk-1 through risk-3, and the Pika App bot or a maintainer posted the exact current-head attestation below | Pass | Given | None |
+| 11 | Risk-1 by the path rule alone: the head has no classifier result because its attempts are spent | Fail: human approval required | Withdrawn | None |
+| 12 | Otherwise | Fail: needs an approval or a current-head review attestation | Withdrawn | None |
 
 Rows 3 through 5 apply only without a writer's approval, so reaching row 10 means the author
 or a sign-off authorized the head, the pull request is ready and it changes no gate input.
@@ -139,7 +144,9 @@ review, or an approval another workflow submitted with the same token.
 
 Each evaluation withdraws the gate's standing approvals that the current state no longer
 supports: a deleted or edited attestation or sign-off, a new change request, a reclassification,
-a changed maintainer list or risk policy, and any approval that names an earlier head. GitHub
+a changed maintainer list or risk policy, a head left without a classifier result, any approval
+that names an earlier head, and closing the pull request or retargeting it away from `main`. A
+merged pull request keeps the approval that let it merge, since it cannot reopen. GitHub
 dismisses stale approvals itself when a push changes the diff; a push that leaves the diff
 unchanged keeps the approval, which the gate's evaluation of the new head then dismisses.
 
@@ -152,8 +159,11 @@ approval, the gate reads the head once more. GitHub dismisses stale approvals wh
 arrives, which misses an approval of the old head submitted just after it, so when the head
 moved the gate dismisses the approval it just submitted.
 
-An evaluation that fails withdraws the gate's standing approvals before reporting the error,
-when GitHub is reachable. Reviews, dismissals, labels and comments made with `GITHUB_TOKEN`
+An evaluation that fails at any step after the script starts, a failed write of its own check
+run included, removes `merge-eligible` and dismisses the gate's standing approvals before it
+reports the error. It attempts each of these writes even if another fails. If GitHub refuses
+them too, the approval stays until a later evaluation withdraws it, and the failed run shows the
+error. Reviews, dismissals, labels and comments made with `GITHUB_TOKEN`
 start no workflow run ([GitHub's token documentation](https://docs.github.com/en/actions/concepts/security/github_token)),
 so the gate's own writes never trigger another evaluation, and each evaluation finishes its own
 reconciliation.
@@ -216,10 +226,10 @@ current-head maintainer approval at risk-4.
 
 **Re-running the gate.** Creating, editing or deleting a personal-account or Pika-bot PR comment
 re-runs the gate, including an edit that removes the line. Comments from other bots are ignored.
-Pushes, ready and draft changes, edits, review requests, assignments and reviews re-run it
-through the events workflow. You can also re-run the `AI merge gate` workflow run in the Actions
-tab. The Re-run button on the gate's own check runs does nothing, because no server receives
-that request.
+Pushes, closing and reopening, ready and draft changes, edits (a new base branch included),
+review requests, assignments and reviews re-run it through the events workflow. You can also
+re-run the `AI merge gate` workflow run in the Actions tab. The Re-run button on the gate's own
+check runs does nothing, because no server receives that request.
 
 ## How the gate is built
 
@@ -232,11 +242,13 @@ The gate never runs code from a pull request. Two workflows divide the work:
   pull request changes a gate input and never gets the gate's approval.
 - `ai-merge-gate.yml` runs on `issue_comment` and on `workflow_run` after the events workflow.
   GitHub always takes both of these workflows from the default branch. Its `resolve` job maps the
-  event to a pull request number. Its `evaluate` job checks out the gate script, risk policy,
-  classifier skill and closure spec from the default branch, reads the pull request, its comments
-  and its reviews through the API, calls the classifier when row 6 applies, and writes check runs,
-  labels, the classifier comment and its review with the job's `GITHUB_TOKEN`. One evaluation per
-  pull request runs at a time.
+  event to a pull request number: for a branch's events, the branch's open pull request into
+  `main`, else its most recently updated one, so that a closed or retargeted pull request loses
+  the gate's approval and `merge-eligible`. Its `evaluate` job checks out the gate script, risk
+  policy, classifier skill and closure spec from the default branch, reads the pull request, its
+  comments and its reviews through the API, calls the classifier when row 6 applies, and writes
+  check runs, labels, the classifier comment and its review with the job's `GITHUB_TOKEN`. One
+  evaluation per pull request runs at a time.
 
 GitHub documents the default-branch behavior and the `created`, `edited` and `deleted` comment
 events in [Events that trigger workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#issue_comment).
@@ -319,8 +331,9 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
   input and output tokens the API reported for the response it continues: OpenAI bills "all
   previous input tokens for responses in the chain" as input
   ([conversation state](https://developers.openai.com/api/docs/guides/conversation-state)).
-  The API's own message framing, a few tokens per message, is not counted. A first request over
-  the bound fails the evaluation before any paid call and counts no attempt.
+  OpenAI's own framing of the request, such as its message and tool wrappers, is not counted, so
+  the count is the gate's estimate, not OpenAI's. A first request over the bound fails the
+  evaluation before any paid call and counts no attempt.
 - **Calls per attempt.** An attempt is one question with at most 4 tool turns, so at most 5
   paid requests.
 - **Attempts.** At most 2 attempts per head and 3 per pull request, across all its heads,
@@ -328,8 +341,8 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
   per head; a new attempt is written there before its first paid request, so a timeout, crash or
   cancelled run still counts. One evaluation per pull request runs at a time, so two
   evaluations never admit attempts at once. When the attempts are spent, the head stays
-  unclassified: risk-4, which needs a person's approval, unless only level-1 paths change. A
-  cached verdict costs no attempt.
+  unclassified: the gate does not approve it, so it needs a person's approval, and its risk label
+  follows the path rule. A cached verdict costs no attempt.
 - **Time.** Each request is cancelled after 15 minutes and each question after 40. Cancelling
   ends the wait, not necessarily the billing: the tokens a response generated before the
   cancellation, at most its output limit, can still be charged.
@@ -338,12 +351,23 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
 
 [OpenAI's price list for gpt-6-astra](https://developers.openai.com/api/docs/models/gpt-6-astra)
 charges, per million tokens, $10 for input, $1 for cached input, $12.50 for cache writes and $50
-for output, with 2x input and 1.5x output rates for prompts over 272,000 input tokens. The input
-bound keeps every request below that threshold. Charging every input token at the cache-write
-rate, the highest standard input rate, one request costs at most 150,000 × $12.50/M + 20,000 ×
-$50/M = $2.875, one attempt at most 5 × $2.875 = $14.375, and one pull request at most
-3 × $14.375 = $43.125 at list price. This is a bound, not a measurement: actual use has not
-been measured.
+for output. Prompts over 272,000 input tokens "are priced at 2x input and cache rates and 1.5x
+output for the full request". Two figures follow, both at list price; actual use has not been
+measured.
+
+- **The gate's nominal figure: $43.125 per pull request.** Charging each counted input token at
+  the cache-write rate, the highest standard input rate, one request costs at most 150,000 ×
+  $12.50/M + 20,000 × $50/M = $2.875, one attempt 5 × $2.875 = $14.375, and one pull request
+  3 × $14.375 = $43.125. The gate's count leaves out OpenAI's framing, so this figure is an
+  estimate, not a proven ceiling.
+- **The ceiling OpenAI's published limits give: $416.25 per pull request.** The model's context
+  window is 1,050,000 tokens, and under the default `truncation` setting, which the gate keeps,
+  "if the input size will exceed the context window size for a model, the request will fail with
+  a 400 error" ([Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)).
+  A request that runs therefore carries at most 1,050,000 input tokens and generates at most
+  20,000. At the long-context rates, $25/M for cache writes and $75/M for output, that is
+  1,050,000 × $25/M + 20,000 × $75/M = $27.75 per request, $138.75 per attempt and $416.25 per
+  pull request.
 
 The limits above are enforced by the gate's code. As a second cap, give the key its own OpenAI
 project and set a monthly hard spend limit on that project. OpenAI's
@@ -477,6 +501,8 @@ On a test pull request, confirm each of these before relying on the gate:
 - deleting the attestation makes the gate dismiss its approval;
 - a push dismisses the approval, and the gate approves the new head only after a new
   attestation;
+- closing the pull request without merging makes the gate dismiss its approval and remove
+  `merge-eligible`;
 - a risk-4 head gets no approval from the gate.
 
 If the gate cannot dismiss its approval, it cannot withdraw it: turn the gate off as below.
@@ -532,9 +558,14 @@ if retiring them. Keep the separate Pika App and local review skill.
 - Whether max-effort classifications fit in 20,000 output tokens has not been measured. If they
   often do not, attempts fail and the gate falls back to human review until the limit is raised.
 - GitHub has no head-conditional label transaction. A push between a label API read and write
-  can briefly leave the old head's labels, and labels stay as they were while an evaluation runs
-  or after a pull request closes. Label permissions, availability and API failures can prevent a
-  label update; the evaluation then fails and approves nothing.
+  can briefly leave the old head's labels, and labels stay as they were while an evaluation runs.
+  Closing a pull request removes only `merge-eligible`. Label permissions, availability and API
+  failures can prevent a label update; the evaluation then fails and approves nothing.
+- A branch's events reach the gate as the branch, not the pull request. When a branch heads
+  several pull requests, the gate evaluates its open one into `main`, else its most recently
+  updated one. If another pull request from the branch changes in the seconds after one closes or
+  is retargeted, or a new one into `main` opens, the closed or retargeted one keeps
+  `merge-eligible` and the gate's approval until its next event, such as a comment.
 - Withdrawing an authorization while the classifier runs stops the approval, not classifier work
   already under way.
 - A verdict covers the diff from the head's merge base with `main`. A later change to `main` does
