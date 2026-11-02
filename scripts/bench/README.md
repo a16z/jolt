@@ -90,6 +90,24 @@ equality alone says nothing about their result. The secp256k1 one-core RSS
 deviation was 4.9399%, outside its 2% margin; its cause is unresolved. RSS was
 not an execution/timing falsifier, and no RSS equivalence is claimed.
 
+### Hosted build replay
+
+[Run 41384450297](https://github.com/a16z/jolt/actions/runs/41384450297) replayed
+the same `e37e6f24`/`535840a9` native inputs on one standard `ubuntu-24.04` runner.
+Whole-command preparation took 2943.57 s with empty build state and 26.29 s on
+the second pass, with source and Cargo state retained but completed bundles
+removed. Both passes called Cargo; the second compiled no native prover units.
+These intervals exclude checkout and artifact upload. Upload took 36 s and 34 s
+respectively, using the job API's one-second timestamps.
+
+The cold prover and guest hashes match the original artifact. The second pass
+checks retained-output identity, not an independent rebuild. This is an
+unchanged-input preparation floor, not a code-changing PR or cross-job cache
+measurement. No cross-job cache is configured. The earlier 2438.71 s preparation
+used an AMD EPYC runner; this replay used an Intel Xeon runner with the same
+toolchain, image and build inputs. One cold run per host does not isolate a
+hardware speed difference. The temporary replay job was removed after capture.
+
 Main trace ceilings are `2^18`, `2^20`, and `2^22` at 1, 8, and 24 cores.
 Nightly uses twice and four times each main operation count and raises the trace
 ceiling by one and two bits respectively. These are ceilings, not invented row
