@@ -139,17 +139,22 @@ and export the count derived from the actual selected catalog row. Corrupted
 setup advice and altered public output are rejected. The runner refuses to
 replace an existing result directory.
 
-The completed optimization run reduced complete-guest verification from
-12,684,355,371 to **952,939,555 cycles** (92.49%, or 13.31x fewer cycles), moving
-its padded trace from `2^34` to `2^30`. That measured build spent 783,219,339
-cycles in Akita verification, 117,842,123 in the remaining Jolt verification,
-and 51,878,093 in transport, output and cleanup. A fresh replay from the
-published source measured **952,932,363 cycles**: 783,372,767 in Akita,
-117,692,939 in other Jolt verification and 51,866,657 in transport, output
-and cleanup. Native verification medians after shared preparation were
-88.594 ms in Check and 40.350 ms in Defer (two warmups and eight measurements
-per mode). The runner records fresh counts in `cycles.json`; source and
-compiler changes can affect exact counts.
+The current replay verifies a saved proof for a `2^30`-cycle execution in
+**962,155,421 complete-guest cycles**, padded to `2^30`: 792,594,087 in Akita,
+117,689,399 in other Jolt verification, and 51,871,935 in transport, output
+and cleanup. Relative to the original 12,684,355,371-cycle complete-stack
+measurement, this is 92.41% fewer cycles (13.18x), with the padded verifier
+trace falling from `2^34` to `2^30`. These are complete-stack measurements,
+not isolated gains for an individual change.
+
+The field backend uses the shared signed-sum implementation. An isolated
+comparison with the former `Fp128` override removed measured native medians
+of 45.80 ms Check and 27.51 ms Defer, versus 60.54 ms and 29.53 ms with the
+override. Native results summarize three rounds, each with one resource
+preparation, two warmups and eight measured verifications per mode.
+The override saved 1.11% of guest cycles; both versions stayed below one
+billion cycles and produced byte-identical output. The runner records fresh
+counts in `cycles.json`; source and compiler changes can affect exact counts.
 The Akita pin includes the complete `codex/recursive-verifier-optimizations`
 stack, so no local source patches are required.
 
