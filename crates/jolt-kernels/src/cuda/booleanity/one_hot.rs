@@ -10,7 +10,7 @@ use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
-pub const COLLAPSE_AFTER_ROUNDS: usize = 5;
+pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
 pub const PACKED_BITS: usize = 32;
 
