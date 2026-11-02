@@ -366,25 +366,6 @@ __device__ __noinline__ void jac2_add(const u64 *p, const u64 *q, u64 *out) {
     fq2_copy(z3, out + 2 * FQ2_LIMBS);
 }
 
-__device__ __noinline__ void jac2_scale(const u64 *point, const u64 *scalar,
-                                        unsigned int scalar_bits, u64 *out) {
-    u64 acc[G2_LIMBS], tmp[G2_LIMBS];
-    jac2_set_zero(acc);
-    if (jac2_is_zero(point)) {
-        jac2_copy(acc, out);
-        return;
-    }
-    for (int bit = (int)scalar_bits - 1; bit >= 0; bit--) {
-        jac2_double(acc, tmp);
-        if (((scalar[bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
-            jac2_add(tmp, point, acc);
-        } else {
-            jac2_copy(tmp, acc);
-        }
-    }
-    jac2_copy(acc, out);
-}
-
 __device__ __forceinline__ void g2_psi_power(const u64 *base, const u64 *coefficients,
                                             unsigned int power, u64 *out) {
     u64 scaled[2 * LIMBS], negated[LIMBS];
@@ -451,19 +432,45 @@ extern "C" __global__ void msm_g2_axpy_glv_kernel(
 }
 
 extern "C" __global__ void msm_g2_fixed_base_kernel(u64 *buf,
-                                                   const u64 *__restrict__ scalars,
-                                                   unsigned int base_offset,
-                                                   unsigned int out_offset, unsigned int count,
-                                                   unsigned int scalar_bits) {
+                                                   const u64 *__restrict__ mapped,
+                                                   const u64 *__restrict__ coefficients,
+                                                   const unsigned char *__restrict__ signs,
+                                                   unsigned int out_offset, unsigned int count) {
     unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= count) return;
 
-    const u64 *base = buf + (unsigned long long)base_offset * G2_LIMBS;
     u64 *out = buf + ((unsigned long long)out_offset + i) * G2_LIMBS;
+    if (jac2_is_zero(mapped)) {
+        jac2_set_zero(out);
+        return;
+    }
 
-    u64 scaled[G2_LIMBS];
-    jac2_scale(base, scalars + (unsigned long long)i * LIMBS, scalar_bits, scaled);
-    jac2_copy(scaled, out);
+    u64 bases[4][G2_LIMBS], coeffs[4][LIMBS];
+    int max_bits = 0;
+    for (unsigned int j = 0; j < 4; j++) {
+        unsigned long long slot = (unsigned long long)j * count + i;
+        jac2_copy(mapped + j * G2_LIMBS, bases[j]);
+        if (signs[slot] != 0) g2_negate_y(bases[j]);
+        load4(coefficients + slot * LIMBS, coeffs[j]);
+        for (int limb = 0; limb < LIMBS; limb++) {
+            if (coeffs[j][limb] != 0)
+                max_bits = max(max_bits, limb * 64 + 64 - __clzll(coeffs[j][limb]));
+        }
+    }
+
+    u64 acc[G2_LIMBS], tmp[G2_LIMBS];
+    jac2_set_zero(acc);
+    for (int bit = max_bits - 1; bit >= 0; bit--) {
+        jac2_double(acc, tmp);
+        jac2_copy(tmp, acc);
+        for (unsigned int j = 0; j < 4; j++) {
+            if (((coeffs[j][bit >> 6] >> (bit & 63)) & 1ULL) != 0ULL) {
+                jac2_add(acc, bases[j], tmp);
+                jac2_copy(tmp, acc);
+            }
+        }
+    }
+    jac2_copy(acc, out);
 }
 
 extern "C" __global__ void msm_fq_add_kernel(const u64 *__restrict__ left,

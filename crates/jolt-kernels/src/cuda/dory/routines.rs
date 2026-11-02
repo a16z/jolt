@@ -616,7 +616,7 @@ mod tests {
             return;
         }
         for (index, len) in G2_SHAPES.into_iter().enumerate() {
-            let base = points_g2(1, 4_100 + index as u64)[0];
+            let base = points_g2(2, 4_100 + index as u64)[1];
             let weights = scalars(len, 4_300 + index as u64);
 
             let expected = JoltG2Routines::fixed_base_vector_scalar_mul(&base, &weights);

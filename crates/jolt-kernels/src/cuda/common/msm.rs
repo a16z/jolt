@@ -14,8 +14,8 @@
 //! a warp cooperate on large segments; the index high bit encodes negation.
 //! Four-dimensional G2 decomposition sums power-of-two table entries with a
 //! signed 128-bit accumulator per component. Magnitudes stay on device in
-//! component-major order; sign bytes return to the host. CUDA uses `1` for
-//! negative components; the optimized CPU API uses `true` for positive ones.
+//! component-major order; bucket planning downloads the sign bytes, which use
+//! `1` for negative components.
 //! G2 Frobenius expansion emits the original span followed by its first three
 //! endomorphism images in the same component order. CUDA derives coefficient
 //! pairs from Arkworks' twist constants once; the CPU uses fixed coefficients.
@@ -38,8 +38,9 @@
 //! Resident pointwise updates compute `scalar * a + b` within one device buffer.
 //! G1 multiply-add uses the same two-dimensional GLV decomposition and
 //! interleaved multiplication as optimized, decomposing the shared scalar once
-//! on the host. G2 multiply-add uses a four-dimensional Frobenius split;
-//! G2 fixed-base scaling uses full-width scalar loops where optimized uses GLV.
+//! on the host. G2 multiply-add and fixed-base scaling use the same
+//! four-dimensional Frobenius split as optimized. Fixed-base scaling splits
+//! scalars on the device and shares the four base images across all outputs.
 //! Multiply-add outputs may coincide exactly with an input span or be disjoint
 //! from both. Fixed-base outputs must avoid the base; the wrappers check these
 //! bounds and aliasing conditions before launch.
@@ -1084,27 +1085,28 @@ impl CudaKernelContext {
             });
         }
 
-        let device_scalars = self.canonical_scalars(&self.upload(scalars)?)?;
-        let base = Self::count_of(base_offset)?;
+        let (coefficients, signs) = {
+            let device_scalars = self.canonical_scalars(&self.upload(scalars)?)?;
+            self.glv_decompose_4d(&device_scalars, count)?
+        };
+        let bases = self.g2_frobenius_span(buffer, base_offset, 1)?;
         let out = Self::count_of(out_offset)?;
         let points = Self::count_of(count)?;
-        let bits = Self::count_of(FR_SCALAR_BITS)?;
 
         let mut builder = self.stream().launch_builder(self.msm_g2_fixed_base());
         let _ = builder.arg(buffer);
-        let _ = builder.arg(&device_scalars);
-        let _ = builder.arg(&base);
+        let _ = builder.arg(&bases);
+        let _ = builder.arg(&coefficients);
+        let _ = builder.arg(&signs);
         let _ = builder.arg(&out);
         let _ = builder.arg(&points);
-        let _ = builder.arg(&bits);
-        // SAFETY: thread `i < points` reads the `6 * FQ_LIMBS` limbs of the
-        // single base point at `base_offset` and the `FQ_LIMBS` limbs of
-        // `scalars[i]`, both checked above to lie inside their buffers, and
-        // writes only point `out_offset + i`, whose span is checked and proven
-        // disjoint from the base. `buf` is passed once, un-`__restrict__`ed,
-        // because base and output live in one allocation. Bit indices stay
-        // below `FR_SCALAR_BITS = 254`, so `bit >> 6 <= 3` is inside a scalar.
-        // Threads with `i >= points` return first.
+        // SAFETY: thread `i < points` reads four 24-limb base images and the
+        // four component-major coefficients/signs at `j * points + i`.
+        // The helpers allocate these buffers for exactly one base and `count`
+        // scalars. Each coefficient occupies four limbs; the kernel bounds its
+        // bit loop by their highest set bit. Each thread writes only point
+        // `out_offset + i`, within the checked output span. All input buffers
+        // are distinct allocations. Threads with `i >= points` return first.
         let _ = unsafe { builder.launch(Self::launch_config(points)) }?;
         Ok(())
     }
@@ -2107,7 +2109,8 @@ impl CudaKernelContext {
         let (split, signs) = {
             let uploaded = self.upload(scalars)?;
             let canonical = self.canonical_scalars(&uploaded)?;
-            self.glv_decompose_4d(&canonical, count)?
+            let (split, signs) = self.glv_decompose_4d(&canonical, count)?;
+            (split, self.download_u8(&signs)?)
         };
         let mut lanes = Vec::with_capacity(signs.len() * windows);
         for _ in 0..windows {
@@ -2173,10 +2176,11 @@ impl CudaKernelContext {
         &self,
         scalars: &CudaSlice<u64>,
         count: usize,
-    ) -> Result<(CudaSlice<u64>, Vec<u8>), CudaError> {
+    ) -> Result<(CudaSlice<u64>, CudaSlice<u8>), CudaError> {
         let mut out = self.alloc_u64(4 * count.max(1) * FQ_LIMBS)?;
+        let mut signs = self.upload_u8_slice(&vec![0u8; 4 * count])?;
         if count == 0 {
-            return Ok((out, Vec::new()));
+            return Ok((out, signs));
         }
         if scalars.len() < count * FQ_LIMBS {
             return Err(CudaError::LengthMismatch {
@@ -2187,7 +2191,6 @@ impl CudaKernelContext {
         let (magnitudes, table_signs) = glv_4d_table();
         let device_table = self.upload_u64_slice(magnitudes)?;
         let device_table_signs = self.upload_u8_slice(table_signs)?;
-        let mut signs = self.upload_u8_slice(&vec![0u8; 4 * count])?;
         let count_arg = Self::count_of(count)?;
         let mut builder = self.stream().launch_builder(self.msm_glv_decompose_4d());
         let _ = builder.arg(scalars);
@@ -2204,8 +2207,7 @@ impl CudaKernelContext {
         // and a `4 * count` u8 sign array, so writes are four disjoint slots per
         // thread in each and in bounds. Threads with `i >= count` return first.
         let _ = unsafe { builder.launch(Self::launch_config(count_arg)) }?;
-        let hosted = self.download_u8(&signs)?;
-        Ok((out, hosted))
+        Ok((out, signs))
     }
 
     fn g2_frobenius_span(
@@ -4785,6 +4787,7 @@ mod tests {
                 .glv_decompose_4d(&canonical, count)
                 .expect("glv decompose 4d");
             let raw = context.download_u64(&split).expect("download split");
+            let signs = context.download_u8(&signs).expect("download signs");
 
             assert_eq!(signs.len(), 4 * count, "sign count at {count}");
             for index in 0..count {
