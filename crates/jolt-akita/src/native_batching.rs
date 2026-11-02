@@ -779,6 +779,7 @@ mod tests {
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::configs::AkitaChunkProfile;
+    use crate::prepared::PreparedBytes;
 
     fn commitment(
         backend_flavor: AkitaBackendFlavor,
@@ -815,9 +816,10 @@ mod tests {
             one_hot_k: AKITA_ONE_HOT_K16,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
                 profile: AkitaChunkProfile::default(),
-                one_hot: Vec::new(),
+                one_hot: PreparedBytes::Owned(Vec::new()),
             }
             .into(),
+            prepared: None,
             backend_cache: Default::default(),
         };
         let mut serialized = serde_json::to_value(setup).unwrap();
@@ -857,10 +859,11 @@ mod tests {
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
                 dense_profile: AkitaChunkProfile::new(8, 2),
                 profile: AkitaChunkProfile::default(),
-                dense: Vec::new(),
-                one_hot: Vec::new(),
+                dense: PreparedBytes::Owned(Vec::new()),
+                one_hot: PreparedBytes::Owned(Vec::new()),
             }
             .into(),
+            prepared: None,
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);

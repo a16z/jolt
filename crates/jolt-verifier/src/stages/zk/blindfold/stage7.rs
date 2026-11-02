@@ -46,12 +46,19 @@ where
             })
         });
 
+    let gamma = input.stage7.challenges.hamming_weight_claim_reduction.gamma;
     values.public(
         VerifierPublicId::Challenge(JoltChallengeId::from(
             HammingWeightClaimReductionChallenge::Gamma,
         )),
-        input.stage7.challenges.hamming_weight_claim_reduction.gamma,
+        gamma,
     )?;
+    for exponent in 2..hamming_weight::gamma_power_bound(hamming_dimensions) {
+        values.public(
+            JoltDerivedId::from(HammingWeightClaimReductionPublic::GammaPow(exponent)),
+            hamming_weight::gamma_pow(gamma, exponent),
+        )?;
+    }
     let hamming_point = input
         .stage7
         .batch_consistency
