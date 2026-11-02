@@ -5,8 +5,8 @@
 //! one packed `u32` address and evaluates the product against split equality
 //! tables on each device.
 //!
-//! The device lookup tables remain lazy for five binds before dense gathering;
-//! optimized's usual lazy-RA path collapses after four. Construction reports a
+//! The device lookup tables collapse after four binds, matching optimized's
+//! usual lazy-RA schedule. Construction reports a
 //! capability error if the chunks exceed the packed address or message-lane
 //! capacity. Remaining window factors are gathered onto GPU 0.
 //! Optimized may collapse earlier when dense storage is cheaper and omits the

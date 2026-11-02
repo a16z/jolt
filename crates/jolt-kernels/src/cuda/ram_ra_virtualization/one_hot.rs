@@ -10,7 +10,7 @@ use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::split_eq::DeviceSplitEq;
 
-pub const COLLAPSE_AFTER_ROUNDS: usize = 5;
+pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
 pub const MAX_LANES: usize = 8;
 
@@ -627,7 +627,7 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(6))]
         #[test]
         fn device_packed_ram_ra_matches_cpu_round_for_round(
-            log_t in (COLLAPSE_AFTER_ROUNDS + 1)..9usize,
+            log_t in 1usize..9,
             chunk_bits in prop::sample::select(vec![4usize, 8]),
             polys in 1usize..5,
             cold_every in 2usize..5,
@@ -697,7 +697,7 @@ mod tests {
                     .collect::<Vec<Fr>>(),
                 "final claims diverged"
             );
-            prop_assert!(got.is_collapsed(), "the family never collapsed to dense arrays");
+            prop_assert_eq!(got.is_collapsed(), log_t > COLLAPSE_AFTER_ROUNDS);
         }
     }
 }
