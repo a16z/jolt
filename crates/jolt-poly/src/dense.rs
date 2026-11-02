@@ -40,23 +40,8 @@ pub struct Polynomial<T> {
 /// Binds adjacent evaluation pairs in place, with `boundary` supplying the
 /// missing high entry of an odd-length prefix. The implicit suffix itself
 /// is the caller's responsibility. Returns whether backing storage shrank.
-///
-/// Each dyadic wave writes below its source window, so parallel writes never
-/// overwrite an unread entry. No second field buffer is allocated.
 pub fn bind_prefix_in_place<F: JoltField>(values: &mut Vec<F>, scalar: F, boundary: F) -> bool {
-    let len = values.len();
-    if len == 0 {
-        return false;
-    }
-    let lo = values[0];
-    let hi = values.get(1).copied().unwrap_or(boundary);
-    values[0] = scalar.mul_add(hi - lo, lo);
-    let mut start = 2;
-    while start < len {
-        let count = (len - start).min(start);
-        let (head, tail) = values.split_at_mut(start);
-        let dst = &mut head[start / 2..start / 2 + count.div_ceil(2)];
-        let src = &tail[..count];
+    bind_prefix_waves(values, scalar, &[boundary], |dst, src| {
         let write = |(k, out): (usize, &mut F)| {
             let lo = src[2 * k];
             *out = scalar.mul_add(src[2 * k + 1] - lo, lo);
@@ -64,21 +49,96 @@ pub fn bind_prefix_in_place<F: JoltField>(values: &mut Vec<F>, scalar: F, bounda
         #[cfg(feature = "parallel")]
         {
             use rayon::prelude::*;
-            dst[..count / 2]
-                .par_iter_mut()
+            dst.par_iter_mut()
                 .enumerate()
-                .with_min_len(if F::NUM_BYTES <= 16 { 1 << 14 } else { 1 << 10 })
+                .with_min_len(min_parallel_binds::<F>())
                 .for_each(write);
         }
         #[cfg(not(feature = "parallel"))]
-        dst[..count / 2].iter_mut().enumerate().for_each(write);
+        dst.iter_mut().enumerate().for_each(write);
+    })
+}
+
+/// Row-major [`bind_prefix_in_place`]: `values` holds whole rows of
+/// `boundary.len()` columns, adjacent rows bind column-wise, and `boundary`
+/// supplies the missing high row of an odd-length prefix.
+pub fn bind_prefix_rows_in_place<F: JoltField>(
+    values: &mut Vec<F>,
+    scalar: F,
+    boundary: &[F],
+) -> bool {
+    let columns = boundary.len();
+    bind_prefix_waves(values, scalar, boundary, |dst, src| {
+        let write = |(out, pair): (&mut [F], &[F])| {
+            let (lo, hi) = pair.split_at(columns);
+            bind_row(scalar, out, lo, hi);
+        };
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            dst.par_chunks_exact_mut(columns)
+                .zip(src.par_chunks_exact(2 * columns))
+                .with_min_len(min_parallel_binds::<F>().div_ceil(columns))
+                .for_each(write);
+        }
+        #[cfg(not(feature = "parallel"))]
+        dst.chunks_exact_mut(columns)
+            .zip(src.chunks_exact(2 * columns))
+            .for_each(write);
+    })
+}
+
+#[cfg(feature = "parallel")]
+fn min_parallel_binds<F: JoltField>() -> usize {
+    if F::NUM_BYTES <= 16 {
+        1 << 14
+    } else {
+        1 << 10
+    }
+}
+
+#[inline]
+fn bind_row<F: JoltField>(scalar: F, out: &mut [F], lo: &[F], hi: &[F]) {
+    for ((out, &lo), &hi) in out.iter_mut().zip(lo).zip(hi) {
+        *out = scalar.mul_add(hi - lo, lo);
+    }
+}
+
+/// The in-place dyadic wave schedule over rows of `boundary.len()` values.
+/// `bind_wave(dst, src)` binds the complete row pairs of `src` into `dst`.
+///
+/// Each wave writes below its source window, so parallel writes never
+/// overwrite an unread entry. No second field buffer is allocated.
+fn bind_prefix_waves<F: JoltField>(
+    values: &mut Vec<F>,
+    scalar: F,
+    boundary: &[F],
+    bind_wave: impl Fn(&mut [F], &[F]),
+) -> bool {
+    let columns = boundary.len();
+    let rows = values.len().checked_div(columns).unwrap_or(0);
+    if rows == 0 {
+        return false;
+    }
+    let (first, rest) = values.split_at_mut(columns);
+    let hi = rest.get(..columns).unwrap_or(boundary);
+    for (lo, &hi) in first.iter_mut().zip(hi) {
+        *lo = scalar.mul_add(hi - *lo, *lo);
+    }
+    let mut start = 2;
+    while start < rows {
+        let count = (rows - start).min(start);
+        let (head, tail) = values.split_at_mut(start * columns);
+        let dst = &mut head[start / 2 * columns..(start / 2 + count.div_ceil(2)) * columns];
+        let (complete, odd) = dst.split_at_mut(count / 2 * columns);
+        let src = &tail[..count * columns];
+        bind_wave(complete, &src[..count / 2 * 2 * columns]);
         if count % 2 != 0 {
-            let lo = src[count - 1];
-            dst[count / 2] = scalar.mul_add(boundary - lo, lo);
+            bind_row(scalar, odd, &src[(count - 1) * columns..], boundary);
         }
         start *= 2;
     }
-    values.truncate(len.div_ceil(2));
+    values.truncate(rows.div_ceil(2) * columns);
     let shrink = values.capacity() >= 8 * values.len().max(1);
     if shrink {
         values.shrink_to_fit();
@@ -904,6 +964,36 @@ mod tests {
         assert_eq!(lo_to_hi.len(), 1);
         assert_eq!(lo_to_hi.evaluations()[0], poly.evaluate(&point));
     }
+    #[test]
+    fn prefix_rows_binding_matches_each_column() {
+        let columns = 3;
+        for live in [0usize, 1, 2, 3, 7, 9, 4095, 4097] {
+            let tail: Vec<Fr> = (0..columns).map(|c| Fr::from_u64(97 + c as u64)).collect();
+            let mut rows: Vec<_> = (0..live * columns)
+                .map(|i| Fr::from_u64(13 * i as u64 + 5))
+                .collect();
+            let len = live.max(2).next_power_of_two();
+            let mut full: Vec<_> = (0..columns)
+                .map(|c| {
+                    let mut column: Vec<_> = (0..live).map(|r| rows[r * columns + c]).collect();
+                    column.resize(len, tail[c]);
+                    Polynomial::new(column)
+                })
+                .collect();
+            for round in 0..len.ilog2() {
+                let challenge = Fr::from_u64(u64::from(round) + 19);
+                let _ = bind_prefix_rows_in_place(&mut rows, challenge, &tail);
+                for (c, full) in full.iter_mut().enumerate() {
+                    full.bind_with_order(challenge, BindingOrder::LowToHigh);
+                    let live = rows.len() / columns;
+                    let column: Vec<_> = (0..live).map(|r| rows[r * columns + c]).collect();
+                    assert_eq!(&full.evals()[..live], column.as_slice());
+                    assert!(full.evals()[live..].iter().all(|value| *value == tail[c]));
+                }
+            }
+        }
+    }
+
     #[test]
     fn prefix_in_place_binding_preserves_constant_extension() {
         for live in [0usize, 1, 2, 3, 7, 8, 9, 15, 16, 17, 4095, 4096, 4097] {

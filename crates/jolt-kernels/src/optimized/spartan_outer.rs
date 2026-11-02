@@ -106,8 +106,8 @@ use super::prefix_product::PrefixColumn;
 #[cfg(feature = "field-inline")]
 use super::support::map_reduce_chunks;
 use super::support::{
-    pin_derived_term_if_derived, prefix_cycle_weights, try_par_sum_vecs, BundleAccess, BundleStore,
-    GruenRoundMessage, RoundChallenges,
+    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+    PrefixCycleWeights, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
@@ -1290,32 +1290,31 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    fn cycle_weights(&self) -> Vec<F> {
+    fn cycle_weights(&self) -> PrefixCycleWeights<F> {
         let reversed: Vec<F> = self.challenges.as_slice()[1..]
             .iter()
             .rev()
             .copied()
             .collect();
         let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
-        prefix_cycle_weights(&reversed, self.prefix_cycles)
+        PrefixCycleWeights::new(&reversed, self.prefix_cycles)
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
-    fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
-        let cycles = weights.len();
+    fn claimed_inputs(&self, weights: &PrefixCycleWeights<F>) -> Result<Vec<F>, WitnessError> {
         let access = self.rows.access();
 
-        let block_size = 1usize << 12;
-        let blocks = cycles.div_ceil(block_size);
+        let blocks = weights.blocks();
         let block = |index: usize| -> Result<Vec<F>, WitnessError> {
-            let start = index * block_size;
-            let end = (start + block_size).min(cycles);
+            let block = weights.block(index);
             let mut accumulator = ClaimAccumulator::<F>::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
+            for (t, &weight) in (block.start..).zip(block.inner) {
                 let row = access.row(t)?;
                 accumulator.add_row(weight, &row);
             }
-            Ok(accumulator.finish())
+            let mut values = accumulator.finish();
+            block.scale(&mut values);
+            Ok(values)
         };
         let claimed = {
             let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
@@ -1329,14 +1328,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order the
     /// composed remainder relation folds).
     #[cfg(feature = "field-inline")]
-    fn field_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
+    fn field_claimed_inputs(&self, weights: &PrefixCycleWeights<F>) -> Vec<F> {
         map_reduce_chunks(
             self.field_rows.len(),
             1 << 12,
             |range| {
                 let mut values = [F::zero(); FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT];
                 for (cycle, row) in &self.field_rows[range] {
-                    let weight = weights[*cycle];
+                    let weight = weights.evaluate(*cycle);
                     for (value, column) in values.iter_mut().zip(row.columns()) {
                         *value += weight * column;
                     }

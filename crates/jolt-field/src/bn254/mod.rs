@@ -236,6 +236,7 @@ macro_rules! wrap_bn254 {
         }
 
         impl WithAccumulator for $ty {
+            type SumAccumulator = Self::Accumulator;
             type Accumulator = $accum;
             type SmallScalarAccumulator = $small_accum;
             type SignedProductAccumulator = $signed_accum;
