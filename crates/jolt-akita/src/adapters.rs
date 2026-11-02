@@ -13,13 +13,15 @@ use std::{cell::Cell, num::NonZeroUsize};
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
 use akita_pcs::{
-    AkitaCommitmentScheme, AkitaDeserialize, AkitaProverSetup as BackendProverSetup,
+    AkitaCommitmentScheme, AkitaDeserialize, AkitaError, AkitaProverSetup as BackendProverSetup,
     AkitaSerialize, AkitaVerifier, CommitmentHandle, CpuBackend, DensePoly, OneHotPoly,
 };
+use akita_prover::backend::SetupBatchBackend;
 use akita_schedules::ValidatedScheduleCatalog;
+use akita_types::setup_claims::{SetupBatchMemory, SetupPolynomialId, SetupQuery};
 use akita_types::{
-    AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
-    CommittedGroup as AkitaBackendCommittedGroup,
+    derive_public_matrix_prefix, AkitaExpandedSetup, AkitaVerifierSetup as BackendVerifierSetup,
+    Commitment as AkitaBackendRingCommitment, CommittedGroup as AkitaBackendCommittedGroup,
 };
 use jolt_field::{CanonicalBytes, Zero};
 use jolt_openings::{OpeningsError, VerifierOpeningClaim};
@@ -371,6 +373,64 @@ pub struct AkitaProverSetup {
 }
 
 impl AkitaProverSetup {
+    /// Provision a power-of-two public prefix before making commitments.
+    /// Reuse prepared state when it already covers the requested domain.
+    pub fn with_setup_domain(mut self, field_len: usize) -> Result<Self, OpeningsError> {
+        if !field_len.is_power_of_two() {
+            return Err(invalid_batch("setup domain must be a power of two"));
+        }
+        let (prover, _) = self.one_hot_backend()?;
+        if prover.expanded.descriptor().num_field_elements >= field_len {
+            return Ok(self);
+        }
+        let mut prover = prover.clone();
+        let mut descriptor = prover.expanded.descriptor().clone();
+        descriptor.num_field_elements = field_len;
+        let matrix = derive_public_matrix_prefix(field_len, &descriptor.setup_seed);
+        prover.expanded = Arc::new(
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(descriptor, matrix),
+        );
+        let public = one_hot_setup_verifier(&self.verifier, &prover)?;
+        let backend = AkitaBackend::new(Arc::clone(&prover.expanded)).map_err(akita_error)?;
+        // Other flavors and decoded catalogs remain valid. Detach only this
+        // setup's one-hot cache; clones keep their original prepared verifier.
+        self.verifier.backend_cache.one_hot = Default::default();
+        self.one_hot_cpu_backend = Some(Arc::new(backend));
+        self.one_hot_backend_prover_setup = Some(Arc::new(prover));
+        self.verifier.prime_backend_cache(None, Some(public))?;
+        Ok(self)
+    }
+
+    pub fn required_setup_domain_len(&self) -> Result<usize, OpeningsError> {
+        self.one_hot_backend()?
+            .0
+            .expanded
+            .descriptor()
+            .num_field_elements
+            .checked_next_power_of_two()
+            .ok_or_else(|| invalid_batch("setup domain overflows"))
+    }
+
+    pub fn with_inherited_setup(mut self, claims: InheritedSetupClaims) -> Self {
+        self.inherited_setup = Some(Arc::new(claims));
+        self
+    }
+
+    /// Host-side advice generation. Its answers remain unauthenticated until
+    /// the outer opening discharges the guest's exported obligations.
+    pub fn prepare_setup_answer(
+        &self,
+        polynomial: &SetupPolynomialId,
+        query: &SetupQuery<AkitaField>,
+    ) -> Result<AkitaField, AkitaError> {
+        let (_, backend) = self
+            .one_hot_backend()
+            .map_err(|e| AkitaError::InvalidInput(e.to_string()))?;
+        backend
+            .prepare_setup_query(polynomial, query, 2, SetupBatchMemory::Regenerate)
+            .map(|(value, _)| value)
+    }
+
     pub fn max_num_vars(&self) -> usize {
         self.verifier.max_num_vars
     }
@@ -503,6 +563,49 @@ impl AkitaVerifierScheduleArtifacts {
 }
 
 impl AkitaVerifierSetup {
+    pub fn setup_offloads(
+        &self,
+        proof: &AkitaBatchProof,
+    ) -> Result<Vec<(u32, usize)>, OpeningsError> {
+        let scheme = self.one_hot_scheme()?;
+        with_one_hot_family!(scheme scheme, |scheme| {
+            scheme.schedules().resolve_selection(proof.selection()).and_then(|row| {
+                row.schedule()
+                    .recursive_folds
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(level, fold)| {
+                        fold.params
+                            .setup_prefix()
+                            .and_then(|prefix| prefix.slot_id())
+                            .map(|id| {
+                                Ok((
+                                    u32::try_from(level).map_err(|_| AkitaError::InvalidProof)?,
+                                    id.n_prefix()?,
+                                ))
+                            })
+                    })
+                    .collect()
+            })
+        })
+        .map_err(akita_error)
+    }
+
+    pub fn materialized_setup_field_len(&self) -> Result<usize, OpeningsError> {
+        let verifier = self.one_hot_verifier()?;
+        Ok(
+            with_one_hot_family!(verifier verifier, |verifier| verifier.setup().expanded().descriptor().num_field_elements),
+        )
+    }
+
+    pub fn setup_polynomial(&self, field_len: usize) -> Result<SetupPolynomialId, OpeningsError> {
+        let verifier = self.one_hot_verifier()?;
+        with_one_hot_family!(verifier verifier, |verifier| {
+            SetupPolynomialId::new::<AkitaField, AkitaField>(verifier.setup().expanded(), field_len)
+        })
+        .map_err(akita_error)
+    }
+
     pub fn max_num_vars(&self) -> usize {
         self.max_num_vars
     }
@@ -1411,3 +1514,6 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod setup_tests;

@@ -196,6 +196,11 @@ claims. Defer without an accumulator is rejected.
 Jolt passes this backend-owned context directly to `PCS::verify_batch`.
 There is no replaceable opening-verification callback. The context is runtime
 state and is never serialized with verifier preprocessing or proof bytes.
+Setup-domain provisioning uses the same prover setup and verifier types as
+ordinary verification. Covered domains reuse their prepared state. Enlarging
+a domain before commitment retains the existing seed and prefix commitments,
+rebuilds only the one-hot backend, and preserves the dense backend and caches.
+
 Other PCS implementations declare `type VerificationContext<'a> = ()` when
 no per-verification state is needed. Manual native group-batch calls now pass
 a mutable context as their final argument; the separate homomorphic batch API
