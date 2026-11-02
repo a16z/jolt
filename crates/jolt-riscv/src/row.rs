@@ -83,6 +83,40 @@ pub struct JoltInstructionRow {
 }
 
 impl JoltInstructionRow {
+    /// The row fields its decoded flags depend on.
+    ///
+    /// [`jolt_instruction!`](crate::jolt_instruction) derives every
+    /// instruction's circuit and instruction flags from its kind plus the
+    /// virtual-sequence state, `is_compressed`, and `is_first_in_sequence`, and
+    /// the kind alone fixes its instruction type. Rows with equal classes
+    /// therefore decode to the same flags, whatever their address and operands.
+    ///
+    /// WARNING: the verifier's folded read-RAF evaluation reads each class's
+    /// flags from one row, so a flag that depended on an excluded field would
+    /// break soundness. A field added to the row fails to compile here until
+    /// it is keyed or excluded; only `flag_class_determines_read_raf_flag_terms`
+    /// guards a flag starting to read the address or operands.
+    pub fn flag_class(&self) -> u32 {
+        // Names every field without `..`, so a new row field must be decided here.
+        let Self {
+            instruction_kind,
+            virtual_sequence_remaining,
+            is_compressed,
+            is_first_in_sequence,
+            address: _,
+            operands: _,
+        } = self;
+        let sequence = match virtual_sequence_remaining {
+            None => 0,
+            Some(0) => 1,
+            Some(_) => 2,
+        };
+        (u32::from(instruction_kind.tag().0) << 4)
+            | (sequence << 2)
+            | (u32::from(*is_compressed) << 1)
+            | u32::from(*is_first_in_sequence)
+    }
+
     /// Logical operands belonging to the field register file, including an
     /// accumulator's implicit read and bridge destinations encoded in `rs2`.
     pub fn field_operands(&self) -> NormalizedOperands {

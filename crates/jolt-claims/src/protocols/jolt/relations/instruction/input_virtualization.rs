@@ -37,6 +37,10 @@ pub struct InstructionInputOutputClaims<C> {
     pub right_operand_is_imm: C,
     #[opening(Imm)]
     pub imm: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRdWriteValue))]
+    pub right_operand_is_rd_write_value: C,
+    #[opening(RdWriteValue)]
+    pub rd_write_value: C,
 }
 
 /// Consumed instruction-input openings: the left/right virtualized instruction
@@ -80,7 +84,10 @@ impl InputVirtualization {
                     )) * v(JoltVirtualPolynomial::Rs2Value)
                         + v(JoltVirtualPolynomial::InstructionFlags(
                             InstructionFlags::RightOperandIsImm,
-                        )) * v(JoltVirtualPolynomial::Imm),
+                        )) * v(JoltVirtualPolynomial::Imm)
+                        + v(JoltVirtualPolynomial::InstructionFlags(
+                            InstructionFlags::RightOperandIsRdWriteValue,
+                        )) * v(JoltVirtualPolynomial::RdWriteValue),
                     output_weight: InstructionInputPublic::EqProduct.into(),
                     offset: false,
                 },

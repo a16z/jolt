@@ -2,7 +2,7 @@ use jolt_claims::protocols::jolt::{geometry::spartan::SpartanOuterDimensions, Jo
 use jolt_crypto::VectorCommitment;
 use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::Transcript;
+use jolt_transcript::FieldTranscript;
 
 use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
 use super::outputs::{
@@ -11,7 +11,11 @@ use super::outputs::{
 };
 use crate::{
     proof::JoltProof,
-    stages::{uniskip, zk::committed},
+    stages::{
+        pow::{check_pow, PowSite},
+        uniskip,
+        zk::committed,
+    },
     verifier::CheckedInputs,
     VerifierError,
 };
@@ -25,12 +29,14 @@ pub fn verify<PCS, VC, T, ZkProof>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    T: Transcript<Challenge = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
-    let tau = uniskip::draw_spartan_outer_tau(transcript, log_t);
+    let pow_nonces = &proof.stages.pow_nonces;
+    check_pow(PowSite::Stage1Tau, pow_nonces, transcript)?;
+    let tau = uniskip::draw_spartan_outer_tau(transcript, log_t)?;
 
     if !checked.zk {
         let claims = &proof.clear_claims()?.stage1;
@@ -59,6 +65,7 @@ where
         let sumchecks = Stage1BatchSumchecks {
             outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
         };
+        check_pow(PowSite::Stage1, pow_nonces, transcript)?;
         let batch_challenges = sumchecks.draw_challenges(transcript)?;
         let input_points = sumchecks.empty_input_points();
 
@@ -91,6 +98,9 @@ where
     }
 
     {
+        // The committed path grinds no stage-1 nonce (ZK runs over BN254 only,
+        // where no site needs one), so the slot must stay empty.
+        pow_nonces.require_absent(PowSite::Stage1)?;
         let uniskip = uniskip::verify_zk(
             checked,
             &proof.stages.stage1_uni_skip_first_round_proof,

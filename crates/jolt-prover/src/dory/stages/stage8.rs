@@ -44,7 +44,7 @@ use jolt_openings::{
     VerifierOpeningClaim, ZkOpeningScheme,
 };
 use jolt_poly::Point;
-use jolt_transcript::Transcript;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::proof::JoltCommitments;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
@@ -90,7 +90,7 @@ where
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic + ZkOpeningScheme<Blind = F>,
     PCS::Output: HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    T: Transcript<Challenge = F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let log_t = checked.trace_length.ilog2() as usize;
     let precommitted = &checked.precommitted;

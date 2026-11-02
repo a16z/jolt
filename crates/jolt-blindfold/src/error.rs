@@ -3,6 +3,7 @@ use jolt_crypto::VectorOpeningError;
 use jolt_field::JoltField;
 use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::{SumcheckError, SumcheckR1csError};
+use jolt_transcript::VerificationError as TranscriptVerificationError;
 use thiserror::Error as ThisError;
 
 #[derive(Clone, Debug, ThisError, PartialEq, Eq)]
@@ -136,6 +137,10 @@ pub enum ProverError<F: JoltField> {
     MultilinearLengthMismatch { expected: usize, actual: usize },
     #[error("{name} must have at least one sumcheck round")]
     DegenerateSumcheck { name: &'static str },
+    /// The transcript's challenges would need proof of work, which
+    /// BlindFold proofs do not carry.
+    #[error("BlindFold challenges need proof of work, which BlindFold proofs omit")]
+    NeedsProofOfWork,
     #[error("witness assignment: {0}")]
     Domain(#[from] SumcheckError<F>),
     #[error("stage {stage_index} witness {name} mismatch: expected {expected}, got {actual}")]
@@ -151,6 +156,16 @@ pub enum ProverError<F: JoltField> {
     WitnessVariableReassigned { index: usize },
     #[error("product constraint {constraint} references unassigned operands")]
     UnsolvableProduct { constraint: usize },
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: JoltField> From<TranscriptVerificationError> for ProverError<F> {
+    fn from(_: TranscriptVerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }
 
 #[derive(Debug, ThisError)]
@@ -181,6 +196,10 @@ pub enum VerificationError<F: JoltField> {
     InvalidPowerOfTwo { name: &'static str, value: usize },
     #[error("{name} must have at least one sumcheck round")]
     DegenerateSumcheck { name: &'static str },
+    /// The transcript's challenges would need proof of work, which
+    /// BlindFold proofs do not carry.
+    #[error("BlindFold challenges need proof of work, which BlindFold proofs omit")]
+    NeedsProofOfWork,
     #[error("folded eval commitment {index} does not match opened value and blinding")]
     EvalCommitmentMismatch { index: usize },
     #[error("folded eval witness {kind} {index} does not match opened witness coordinate")]
@@ -191,4 +210,14 @@ pub enum VerificationError<F: JoltField> {
     OuterFinalClaimMismatch { expected: F, actual: F },
     #[error("inner final claim mismatch: expected {expected}, got {actual}")]
     InnerFinalClaimMismatch { expected: F, actual: F },
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: JoltField> From<TranscriptVerificationError> for VerificationError<F> {
+    fn from(_: TranscriptVerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

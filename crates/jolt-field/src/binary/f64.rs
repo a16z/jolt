@@ -87,6 +87,8 @@ impl CanonicalBytes for F64 {
 
 impl CanonicalEncoding for F64 {
     const MODULUS_BITS: u32 = 65;
+    /// The canonical encoding: a bijection onto the field.
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [0, 1, 0, 0];
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut word = [0; 8];
@@ -115,13 +117,10 @@ impl CanonicalEncoding for F64 {
     fn num_bits(&self) -> u32 {
         u64::BITS - self.0.leading_zeros()
     }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl WithAccumulator for F64 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = F64Accumulator;
     type SmallScalarAccumulator = F64Accumulator;
     type SignedProductAccumulator = F64Accumulator;

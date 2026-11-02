@@ -11,6 +11,9 @@ use jolt_field::WithCommitAccumulator;
 const NO_SELECTED_ROW: u8 = 0;
 const MAX_WIDE_ACCUMULATIONS: usize = AkitaField::MAX_COMMIT_ACCUMULATIONS;
 const TASKS_PER_RAYON_WORKER: usize = 4;
+/// Commit tasks run for seconds each; a coarse split idles most workers through
+/// the last wave.
+const COMMIT_TASKS_PER_RAYON_WORKER: usize = 16;
 const ROTATED_CHALLENGE_TABLE_BUDGET: usize = 1 << 28;
 const DECOMPOSE_POSITION_WORKING_SET_TARGET: usize = 1 << 21;
 const K256_ROW_BATCH: usize = 1 << 13;
@@ -21,6 +24,7 @@ mod decomposition;
 mod digit_windows;
 mod kernels;
 mod ntt_commit;
+mod one_hot_ntt;
 mod source;
 mod traversal;
 

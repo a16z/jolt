@@ -6,6 +6,7 @@ use jolt_claims::protocols::field_inline::FieldInlineRelationId;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_field::{Fr, JoltField};
+use jolt_verifier::stages::pow::PowSite;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims;
 #[cfg(feature = "field-inline")]
@@ -1385,6 +1386,22 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::UnsupportedInstruction { .. }
         | VerifierError::InvalidFieldInlineBytecode { .. }
         | VerifierError::PreprocessingDigestFailed { .. } => Some(VerifierPhase::Preamble),
+        // The difficulty depends only on the challenge set, so the first site
+        // reports it.
+        VerifierError::PowDifficulty => Some(VerifierPhase::Stage1),
+        VerifierError::ProofOfWorkRejected { site } => Some(match site {
+            PowSite::Stage1Tau | PowSite::Stage1 => VerifierPhase::Stage1,
+            PowSite::Stage2TauHigh | PowSite::Stage2 => VerifierPhase::Stage2,
+            PowSite::Stage3 => VerifierPhase::Stage3,
+            PowSite::Stage4 => VerifierPhase::Stage4,
+            PowSite::Stage5 => VerifierPhase::Stage5,
+            PowSite::Stage6a | PowSite::Stage6b => VerifierPhase::Stage6,
+            PowSite::Stage7 => VerifierPhase::Stage7,
+            PowSite::Stage8 => VerifierPhase::Stage8Openings,
+        }),
+        // A refused draw or unread NARG bytes are observed wherever the
+        // transcript stops; neither names a phase.
+        VerifierError::TranscriptRejected | VerifierError::NargNotConsumed => None,
         VerifierError::MissingProofPayload { field } => match *field {
             "commitments.field_inline" | "field_inc_commitment" | "fused_inc_commitment" => {
                 Some(VerifierPhase::Preamble)
@@ -1587,6 +1604,8 @@ fn expand_manifest_path(target: TamperTarget) -> Vec<&'static str> {
             "claims.stage3.instruction_input.rs2_value",
             "claims.stage3.instruction_input.right_operand_is_imm",
             "claims.stage3.instruction_input.imm",
+            "claims.stage3.instruction_input.right_operand_is_rd_write_value",
+            "claims.stage3.instruction_input.rd_write_value",
         ],
         "claims.stage3.registers_claim_reduction.*" => vec![
             "claims.stage3.registers_claim_reduction.rd_write_value",
@@ -1711,6 +1730,8 @@ pub fn clear_claims<F: JoltField>(fill_optionals: bool) -> ClearProofClaims<F> {
                 rs2_value: zero,
                 right_operand_is_imm: zero,
                 imm: zero,
+                right_operand_is_rd_write_value: zero,
+                rd_write_value: zero,
             },
             registers_claim_reduction: stage3::outputs::RegistersClaimReductionOutputClaims {
                 rd_write_value: zero,

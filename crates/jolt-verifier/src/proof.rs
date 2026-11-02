@@ -10,10 +10,11 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::JoltProtocolConfig,
     stages::{
-        stage1::outputs::Stage1OutputClaims, stage2::outputs::Stage2OutputClaims,
-        stage3::outputs::Stage3OutputClaims, stage4::outputs::Stage4OutputClaims,
-        stage5::outputs::Stage5OutputClaims, stage6a::outputs::Stage6aOutputClaims,
-        stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims,
+        pow::StagePowNonces, stage1::outputs::Stage1OutputClaims,
+        stage2::outputs::Stage2OutputClaims, stage3::outputs::Stage3OutputClaims,
+        stage4::outputs::Stage4OutputClaims, stage5::outputs::Stage5OutputClaims,
+        stage6a::outputs::Stage6aOutputClaims, stage6b::outputs::Stage6bOutputClaims,
+        stage7::outputs::Stage7OutputClaims,
     },
     VerifierError,
 };
@@ -68,6 +69,11 @@ pub struct JoltProof<
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
+    /// The spongefish NARG string: the prover messages the verifier reads
+    /// from its transcript. Every message of the current protocol is a field
+    /// of this struct absorbed as a public message, so the prover leaves it
+    /// empty; the verifier still requires it to be read to its end.
+    pub narg: Vec<u8>,
 }
 
 impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
@@ -111,6 +117,7 @@ where
             rw_config,
             one_hot_config,
             trace_polynomial_order,
+            narg: Vec::new(),
         }
     }
 
@@ -161,6 +168,7 @@ where
             rw_config: self.rw_config,
             one_hot_config: self.one_hot_config,
             trace_polynomial_order: self.trace_polynomial_order,
+            narg: self.narg,
         }
     }
 }
@@ -320,4 +328,8 @@ where
     pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
     pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    /// Nonces of the challenge bursts outside the sumcheck rounds. A slot is
+    /// filled only where the site is visited and the challenge set needs proof
+    /// of work, so a BN254 proof carries none.
+    pub pow_nonces: StagePowNonces,
 }

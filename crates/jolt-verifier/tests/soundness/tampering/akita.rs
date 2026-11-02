@@ -31,7 +31,8 @@ use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeR
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_field::{JoltField, Ring};
-use jolt_prover::akita::preprocessing::{AkitaTranscript, AkitaVc};
+use jolt_prover::akita::preprocessing::AkitaVc;
+use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::preprocessing::{CommittedProgramPreprocessing, ProgramPreprocessing};
 use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 use jolt_verifier::stages::{
@@ -284,9 +285,11 @@ fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn Fn
         rs2_value,
         right_operand_is_imm,
         imm,
+        right_operand_is_rd_write_value,
+        rd_write_value: ii_rd_write_value,
     } = instruction_input;
     let RegistersClaimReductionOutputClaims {
-        rd_write_value,
+        rd_write_value: rcr_rd_write_value,
         rs1_value: rcr_rs1_value,
         rs2_value: rcr_rs2_value,
     } = registers_claim_reduction;
@@ -304,7 +307,9 @@ fn visit_stage3<F: JoltField>(claims: &mut Stage3OutputClaims<F>, f: &mut dyn Fn
         rs2_value,
         right_operand_is_imm,
         imm,
-        rd_write_value,
+        right_operand_is_rd_write_value,
+        ii_rd_write_value,
+        rcr_rd_write_value,
         rcr_rs1_value,
         rcr_rs2_value,
     ] {
@@ -644,7 +649,7 @@ fn every_commitment_wire_rejects_perturbation() {
     }
     if let Some(trusted) = &advice.trusted_advice_commitment {
         sweep_commitment(trusted, 6, |commitment| {
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &advice.preprocessing,
                 &advice.public_io,
                 &advice.proof,
@@ -665,7 +670,7 @@ fn every_commitment_wire_rejects_perturbation() {
                     panic!("committed fixture must carry committed preprocessing");
                 };
                 replace(program, commitment);
-                jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+                jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                     &preprocessing,
                     &committed.public_io,
                     &committed.proof,
@@ -713,7 +718,7 @@ fn akita_proof_shape_tampers_reject() {
         AkitaField,
         AkitaScheme,
         AkitaVc,
-        AkitaTranscript,
+        VerifierState<'_, Keccak>,
     >(
         &preprocessing,
         &committed.public_io,
@@ -733,7 +738,7 @@ fn akita_proof_shape_tampers_reject() {
         AkitaField,
         AkitaScheme,
         AkitaVc,
-        AkitaTranscript,
+        VerifierState<'_, Keccak>,
     >(
         &preprocessing,
         &committed.public_io,
@@ -747,7 +752,7 @@ fn akita_proof_shape_tampers_reject() {
 #[test]
 fn akita_advice_commitment_presence_rejects() {
     let advice = akita_advice_case();
-    let result = jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AkitaTranscript>(
+    let result = jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
         &advice.preprocessing,
         &advice.public_io,
         &advice.proof,

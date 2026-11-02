@@ -7,11 +7,12 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::proof::ClearProofClaims;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
 use crate::boundary::finish_stage;
 use crate::dory::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
@@ -57,14 +58,14 @@ pub fn prove<F, PCS, VC, T>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField + AppendToTranscript,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output, Blind = F>,
-    PCS::Output: AppendToTranscript + HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F> + ProverInit,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
     let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
@@ -191,6 +192,20 @@ where
         stage6a_sumcheck_proof: stage6a.sumcheck_proof,
         stage6b_sumcheck_proof: stage6b.sumcheck_proof,
         stage7_sumcheck_proof: stage7.sumcheck_proof,
+        // The homomorphic opening draws no selector point, so stage 8 has no
+        // nonce.
+        pow_nonces: StagePowNonces::from_iter([
+            (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+            (PowSite::Stage1, stage1.pow_nonce),
+            (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+            (PowSite::Stage2, stage2.pow_nonce),
+            (PowSite::Stage3, stage3.pow_nonce),
+            (PowSite::Stage4, stage4.pow_nonce),
+            (PowSite::Stage5, stage5.pow_nonce),
+            (PowSite::Stage6a, stage6a.pow_nonce),
+            (PowSite::Stage6b, stage6b.pow_nonce),
+            (PowSite::Stage7, stage7.pow_nonce),
+        ]),
     };
 
     #[cfg(not(feature = "zk"))]
@@ -216,6 +231,7 @@ where
             rw_config: config.rw_config,
             one_hot_config: config.one_hot_config,
             trace_polynomial_order: config.trace_polynomial_order,
+            narg: transcript.narg_string().to_vec(),
         })
     }
     #[cfg(feature = "zk")]
@@ -239,6 +255,7 @@ where
             rw_config: config.rw_config,
             one_hot_config: config.one_hot_config,
             trace_polynomial_order: config.trace_polynomial_order,
+            narg: transcript.narg_string().to_vec(),
         };
         let witnesses = ZkStageWitnesses {
             stage1_uniskip: stage1.uniskip_witness,
@@ -263,7 +280,7 @@ where
             &shell,
             &witnesses,
             &final_opening,
-            transcript.state(),
+            &transcript,
         )?;
 
         Ok(shell.with_claims(JoltProofClaims::Zk { blindfold_proof }))

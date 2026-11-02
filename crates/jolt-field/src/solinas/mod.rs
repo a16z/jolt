@@ -153,7 +153,11 @@ pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// subgroup `3^7 = 2187`). The default protocol prime. Here `p ≡ 1 (mod 8)`,
 /// so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor `FpExt8` over it is
 /// a field: use it at extension degree 1.
-pub type Prime128OffsetA7F7 = Fp128<{ pm(128, 0xFFFF_A7F7) }>;
+pub type Prime128OffsetA7F7 = Fp128<FIELD_INLINE_FP128_MODULUS>;
+
+/// The modulus of [`Prime128OffsetA7F7`], the Fp128 field the field-inline
+/// unit computes in under `field-inline-guest-fp128`.
+pub(crate) const FIELD_INLINE_FP128_MODULUS: u128 = pm(128, 0xFFFF_A7F7);
 
 /// Builds the balanced signed-digit table for `1 <= log_basis <= 6`.
 pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {
@@ -171,13 +175,55 @@ pub fn balanced_digit_lut<F: Ring>(log_basis: u32) -> [F; 64] {
 
 /// Horner reduction of arbitrary-length little-endian bytes modulo the field
 /// order (the >16-byte path of
-/// [`from_bytes_le_reduced`](crate::CanonicalEncoding::from_bytes_le_reduced)).
+/// [`from_bytes_le_reduced`](crate::CanonicalEncoding::from_bytes_le_reduced)),
+/// sixteen bytes at a time: one multiplication per `u128` word rather than
+/// one per byte.
 #[inline(always)]
 pub(crate) fn reduce_le_bytes_mod_order<F: Ring>(bytes: &[u8]) -> F {
-    let base = F::from_u64(256);
-    bytes.iter().rev().fold(F::zero(), |acc, &byte| {
-        acc * base + F::from_u64(byte as u64)
-    })
+    let half = F::from_u128(1 << 64);
+    let base = half * half;
+    let word = |chunk: &[u8]| {
+        F::from_u128(
+            chunk
+                .iter()
+                .rev()
+                .fold(0u128, |acc, &byte| (acc << 8) | u128::from(byte)),
+        )
+    };
+    let mut chunks = bytes.chunks(16).rev();
+    let top = chunks.next().map_or_else(F::zero, word);
+    chunks.fold(top, |acc, chunk| acc * base + word(chunk))
+}
+
+#[cfg(test)]
+mod reduction_tests {
+    use num_bigint::BigUint;
+
+    use super::{reduce_le_bytes_mod_order, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use crate::PseudoMersenne;
+
+    fn check<F: PseudoMersenne>() {
+        let modulus = (BigUint::from(1u8) << F::MODULUS_BITS) - BigUint::from(F::OFFSET);
+        for len in 0..=100usize {
+            let mixed: Vec<u8> = (0..len).map(|i| (i * 151 + 7) as u8).collect();
+            for bytes in [mixed, vec![u8::MAX; len]] {
+                assert_eq!(
+                    BigUint::from_bytes_le(
+                        &reduce_le_bytes_mod_order::<F>(&bytes).to_bytes_le_vec()
+                    ),
+                    BigUint::from_bytes_le(&bytes) % &modulus,
+                    "length {len}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn word_fold_matches_big_integer_reduction() {
+        check::<Prime32Offset99>();
+        check::<Prime64Offset59>();
+        check::<Prime128OffsetA7F7>();
+    }
 }
 
 #[cfg(test)]

@@ -1,7 +1,16 @@
 use jolt_field::JoltField;
 use jolt_poly::EvaluationClaim;
-use jolt_transcript::{AppendToTranscript, Label, LabelWithCount, Transcript};
+use jolt_transcript::Encoding;
 
+/// A hiding evaluation claim: a point and a commitment to the value there.
+///
+/// # Security
+/// The [`Encoding`] absorbs the point's coordinates and then the hiding
+/// commitment, with no count. Claims whose points differ in length can then
+/// absorb as the same bytes, so the encoding binds a claim only when the
+/// point's length is already fixed. A caller that absorbs a claim built from
+/// proof data must first check `point.len()` against the length its protocol
+/// fixes from bound data, or absorb that length as a `u64` word itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ZkEvaluationClaim<'a, F, C> {
     pub point: &'a [F],
@@ -17,21 +26,18 @@ impl<'a, F, C> ZkEvaluationClaim<'a, F, C> {
     }
 }
 
-impl<F, C> AppendToTranscript for ZkEvaluationClaim<'_, F, C>
+impl<F, C> Encoding for ZkEvaluationClaim<'_, F, C>
 where
     F: JoltField,
-    C: AppendToTranscript,
+    C: Encoding,
 {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(
-            b"zk_opening_point",
-            self.point.len() as u64,
-        ));
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Vec::new();
         for coordinate in self.point {
-            coordinate.append_to_transcript(transcript);
+            out.extend_from_slice(coordinate.encode().as_ref());
         }
-        transcript.append(&Label(b"zk_eval_commitment"));
-        self.hiding_commitment.append_to_transcript(transcript);
+        out.extend_from_slice(self.hiding_commitment.encode().as_ref());
+        out
     }
 }
 
@@ -43,14 +49,15 @@ pub struct VerifierOpeningClaim<F: JoltField, C> {
 
 pub(crate) struct VerifierRlcClaims<'a, F: JoltField, C>(pub &'a [VerifierOpeningClaim<F, C>]);
 
-impl<F, C> AppendToTranscript for VerifierRlcClaims<'_, F, C>
+impl<F, C> Encoding for VerifierRlcClaims<'_, F, C>
 where
     F: JoltField,
 {
-    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
-        transcript.append(&LabelWithCount(b"rlc_claims", self.0.len() as u64));
+    fn encode(&self) -> impl AsRef<[u8]> {
+        let mut out = Vec::new();
         for claim in self.0 {
-            claim.evaluation.value.append_to_transcript(transcript);
+            out.extend_from_slice(claim.evaluation.value.encode().as_ref());
         }
+        out
     }
 }

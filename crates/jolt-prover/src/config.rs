@@ -185,19 +185,20 @@ pub(crate) fn read_write_config(log_T: usize, ram_log_K: usize) -> JoltReadWrite
     }
 }
 
-/// Akita uses 4-bit committed chunks at every trace length. Other PCS modes
-/// use 4-bit chunks below `log_T = 25` and 8-bit chunks above it. Virtual-RA
-/// chunks remain 16 bits below that threshold and 32 bits at or above it.
+/// Akita uses 4-bit committed chunks and 16-bit virtual-RA chunks at every
+/// trace length. Keeping four committed selectors per virtual selector lowers
+/// the instruction RA virtualization degree. Other PCS modes use 4/16-bit
+/// chunks below `log_T = 25` and 8/32-bit chunks at or above it.
 #[expect(non_snake_case)]
 pub(crate) fn one_hot_config(log_T: usize) -> JoltOneHotConfig {
-    if log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+    if cfg!(feature = "akita") || log_T < ONEHOT_CHUNK_THRESHOLD_LOG_T {
         JoltOneHotConfig {
             log_k_chunk: 4,
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 8) as u8,
         }
     } else {
         JoltOneHotConfig {
-            log_k_chunk: if cfg!(feature = "akita") { 4 } else { 8 },
+            log_k_chunk: 8,
             lookups_ra_virtual_log_k_chunk: (LOOKUP_ADDRESS_BITS / 4) as u8,
         }
     }
@@ -368,17 +369,15 @@ mod dimension_tests {
         assert_eq!(derive((1 << 24) - 1, None, 0).one_hot_config.log_k_chunk, 4);
     }
 
-    /// Pins both widths across the `log_T = 25` threshold: every mode uses
-    /// 4/16 below it; at or above it Akita uses 4/32 and the others 8/32.
+    /// Akita keeps 4/16-bit chunks across the `log_T = 25` threshold;
+    /// other PCS modes switch from 4/16 to 8/32.
     #[test]
     fn one_hot_defaults_across_chunk_threshold() {
-        for log_t in [24, 25, 26] {
+        for log_t in [12, 24, 25, 26, 27, 28, 29] {
             let config = one_hot_config(log_t);
             let widths = (config.log_k_chunk, config.lookups_ra_virtual_log_k_chunk);
-            let expected = if log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
+            let expected = if cfg!(feature = "akita") || log_t < ONEHOT_CHUNK_THRESHOLD_LOG_T {
                 (4, 16)
-            } else if cfg!(feature = "akita") {
-                (4, 32)
             } else {
                 (8, 32)
             };

@@ -495,10 +495,9 @@ impl AstBundle {
         match &self.nodes[node_id] {
             Node::Atom(_) => vec![],
             Node::Neg(e) | Node::Inv(e) => edge_to_node_id(*e).into_iter().collect(),
-            Node::ByteReverse(e)
-            | Node::Truncate128Reverse(e)
-            | Node::Truncate128(e)
-            | Node::AppendU64Transform(e) => edge_to_node_id(*e).into_iter().collect(),
+            Node::ByteReverse(e) | Node::AppendU64Transform(e) => {
+                edge_to_node_id(*e).into_iter().collect()
+            }
             Node::Add(l, r) | Node::Mul(l, r) | Node::Sub(l, r) | Node::Div(l, r) => {
                 [edge_to_node_id(*l), edge_to_node_id(*r)]
                     .into_iter()

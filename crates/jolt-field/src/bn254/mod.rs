@@ -1,18 +1,47 @@
 //! BN254 backend: `#[repr(transparent)]` newtypes over arkworks decoupling
 //! the public API from the arkworks types.
 //!
-//! Byte formats are frozen: serde and transcript encodings are the 32-byte
-//! little-endian canonical form (identical to jolt-field), and challenge
-//! derivation reproduces the legacy 125-bit shifted / big-endian-scalar
-//! conventions exactly.
+//! Serde and transcript encodings are the 32-byte little-endian canonical
+//! form (identical to jolt-field).
 
 mod mont;
 
 pub use mont::{FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 
 use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
-use ark_ff::{BigInteger, PrimeField, UniformRand};
+use ark_bn254::{Fq as ArkFq, Fr as ArkFr};
+use ark_ff::{BigInt, BigInteger, PrimeField, UniformRand};
 use rand_core::RngCore;
+#[cfg(any(
+    test,
+    all(feature = "field-inline-guest-bn254", target_arch = "riscv64")
+))]
+use {ark_ff::Fp, core::marker::PhantomData};
+
+/// Bytes per chunk of [`reduce_le_bytes`]: 248 bits, below both 254-bit moduli.
+const CHUNK_BYTES: usize = 31;
+
+/// Reduces little-endian bytes modulo the order of a 254-bit BN254 field.
+///
+/// Horner's rule over 31-byte chunks, each below the modulus and so converted
+/// directly. It returns what arkworks' `from_le_bytes_mod_order` returns, but
+/// that folds in one byte at a time past the first 31 bytes, at two Montgomery
+/// multiplications per byte; a 52-byte challenge costs about 42 of them there
+/// and 3 here.
+fn reduce_le_bytes<F: PrimeField<BigInt = BigInt<4>>>(bytes: &[u8]) -> F {
+    // 2^248, one chunk.
+    let shift = F::from(BigInt([0, 0, 0, 1 << 56]));
+    let chunk_to_field = |chunk: &[u8]| {
+        let mut limbs = [0u64; 4];
+        for (i, &byte) in chunk.iter().enumerate() {
+            limbs[i / 8] |= u64::from(byte) << (8 * (i % 8));
+        }
+        F::from(BigInt(limbs))
+    };
+    let mut chunks = bytes.chunks(CHUNK_BYTES).rev();
+    let top = chunks.next().map_or_else(F::zero, chunk_to_field);
+    chunks.fold(top, |acc, chunk| acc * shift + chunk_to_field(chunk))
+}
 
 macro_rules! from_primitives {
     ($ty:ident: $via:ident[$($prim:ty),*]) => {
@@ -26,7 +55,7 @@ macro_rules! from_primitives {
 }
 
 macro_rules! wrap_bn254 {
-    ($(#[$doc:meta])* $ty:ident, $inner:ty, accumulators($accum:ty, $small_accum:ty, $signed_accum:ty), challenge($low:ident, $high:ident): $challenge:expr) => {
+    ($(#[$doc:meta])* $ty:ident, $inner:ty, accumulators($accum:ty, $small_accum:ty, $signed_accum:ty)) => {
         $(#[$doc])*
         #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
         #[repr(transparent)]
@@ -70,10 +99,10 @@ macro_rules! wrap_bn254 {
         }
 
         $crate::impl_ring_ops!(impl[] $ty {
-            add(a, b): $ty(a.0 + b.0),
-            sub(a, b): $ty(a.0 - b.0),
-            mul(a, b): $ty(a.0 * b.0),
-            neg(a): $ty(-a.0),
+            add(a, b): <$ty as $crate::bn254::InlineArith>::add(a, b),
+            sub(a, b): <$ty as $crate::bn254::InlineArith>::sub(a, b),
+            mul(a, b): <$ty as $crate::bn254::InlineArith>::mul(a, b),
+            neg(a): <$ty as $crate::bn254::InlineArith>::neg(a),
             zero: $ty(<$inner as ::num_traits::Zero>::zero()),
             one: $ty(<$inner as ::num_traits::One>::one()),
         });
@@ -97,7 +126,7 @@ macro_rules! wrap_bn254 {
         impl Field for $ty {
             #[inline]
             fn inverse(&self) -> Option<Self> {
-                <$inner as ark_ff::Field>::inverse(&self.0).map($ty)
+                <$ty as $crate::bn254::InlineArith>::inverse(*self)
             }
 
             #[inline]
@@ -121,10 +150,11 @@ macro_rules! wrap_bn254 {
 
         impl CanonicalEncoding for $ty {
             const MODULUS_BITS: u32 = 254;
+            const CHALLENGE_SET_LIMBS: [u64; 4] = <$inner as PrimeField>::MODULUS.0;
 
             #[inline]
             fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
-                $ty(<$inner>::from_le_bytes_mod_order(bytes))
+                $ty(reduce_le_bytes(bytes))
             }
 
             #[inline]
@@ -157,35 +187,6 @@ macro_rules! wrap_bn254 {
             #[inline]
             fn num_bits(&self) -> u32 {
                 self.0.into_bigint().num_bits()
-            }
-
-            /// Legacy convention: a 125-bit masked challenge placed in the two
-            /// HIGH limbs of a 4-limb integer. The limb interpretation is
-            /// per-type (`$challenge`) and byte-frozen — Fr routes through the
-            /// fork's raw `from_bigint_unchecked`, Fq through checked
-            /// `from_bigint`; the two do NOT produce the same field value.
-            #[inline]
-            fn from_challenge_bytes(bytes: &[u8]) -> Self {
-                let mut buf = [0u8; 16];
-                let len = bytes.len().min(buf.len());
-                buf[..len].copy_from_slice(&bytes[..len]);
-                let value = u128::from_le_bytes(buf);
-                let $low = value as u64;
-                // Top 3 bits of the high limb are zeroed so the value < p.
-                let $high = ((value >> 64) as u64) & (u64::MAX >> 3);
-                let Some(inner) = $challenge else {
-                    unreachable!("masked 125-bit shifted challenge fits in BN254")
-                };
-                $ty(inner)
-            }
-
-            /// Legacy convention: digest bytes are interpreted as a big-endian
-            /// integer before reduction.
-            #[inline]
-            fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-                let mut buf = bytes.to_vec();
-                buf.reverse();
-                Self::from_bytes_le_reduced(&buf)
             }
         }
 
@@ -235,6 +236,7 @@ macro_rules! wrap_bn254 {
         }
 
         impl WithAccumulator for $ty {
+            type SumAccumulator = Self::Accumulator;
             type Accumulator = $accum;
             type SmallScalarAccumulator = $small_accum;
             type SignedProductAccumulator = $signed_accum;
@@ -245,17 +247,15 @@ macro_rules! wrap_bn254 {
 wrap_bn254!(
     /// BN254 scalar field element (`#[repr(transparent)]` over `ark_bn254::Fr`).
     Fr,
-    ark_bn254::Fr,
-    accumulators(WideAccumulator, FrSmallScalarAccumulator, FrSignedProductAccumulator),
-    challenge(low, high): ark_bn254::Fr::from_bigint_unchecked(ark_ff::BigInt::new([0, 0, low, high]))
+    ArkFr,
+    accumulators(WideAccumulator, FrSmallScalarAccumulator, FrSignedProductAccumulator)
 );
 
 wrap_bn254!(
     /// BN254 base field element (`#[repr(transparent)]` over `ark_bn254::Fq`).
     Fq,
-    ark_bn254::Fq,
-    accumulators(NaiveAccumulator<Fq>, NaiveAccumulator<Fq>, NaiveAccumulator<Fq>),
-    challenge(low, high): ark_bn254::Fq::from_bigint(ark_ff::BigInt::new([0, 0, low, high]))
+    ArkFq,
+    accumulators(NaiveAccumulator<Fq>, NaiveAccumulator<Fq>, NaiveAccumulator<Fq>)
 );
 
 impl Fr {
@@ -360,5 +360,127 @@ impl Ring for Fq {
     #[inline]
     fn square(&self) -> Self {
         Fq(ark_ff::Field::square(&self.0))
+    }
+}
+
+/// The ring-op bodies behind the `impl_field!` arithmetic: native arkworks
+/// for `Fq` always, and for `Fr` unless the `field-inline-guest-bn254`
+/// feature routes it through the field-inline path (`crate::field_inline`).
+pub trait InlineArith: Sized {
+    fn add(a: Self, b: Self) -> Self;
+    fn sub(a: Self, b: Self) -> Self;
+    fn mul(a: Self, b: Self) -> Self;
+    fn neg(a: Self) -> Self;
+    fn inverse(a: Self) -> Option<Self>;
+}
+
+impl InlineArith for Fq {
+    #[inline(always)]
+    fn add(a: Self, b: Self) -> Self {
+        Fq(a.0 + b.0)
+    }
+    #[inline(always)]
+    fn sub(a: Self, b: Self) -> Self {
+        Fq(a.0 - b.0)
+    }
+    #[inline(always)]
+    fn mul(a: Self, b: Self) -> Self {
+        Fq(a.0 * b.0)
+    }
+    #[inline(always)]
+    fn neg(a: Self) -> Self {
+        Fq(-a.0)
+    }
+    #[inline(always)]
+    fn inverse(a: Self) -> Option<Self> {
+        <ArkFq as ark_ff::Field>::inverse(&a.0).map(Fq)
+    }
+}
+
+#[cfg(not(all(feature = "field-inline-guest-bn254", target_arch = "riscv64")))]
+impl InlineArith for Fr {
+    #[inline(always)]
+    fn add(a: Self, b: Self) -> Self {
+        Fr(a.0 + b.0)
+    }
+    #[inline(always)]
+    fn sub(a: Self, b: Self) -> Self {
+        Fr(a.0 - b.0)
+    }
+    #[inline(always)]
+    fn mul(a: Self, b: Self) -> Self {
+        Fr(a.0 * b.0)
+    }
+    #[inline(always)]
+    fn neg(a: Self) -> Self {
+        Fr(-a.0)
+    }
+    #[inline(always)]
+    fn inverse(a: Self) -> Option<Self> {
+        <ArkFr as ark_ff::Field>::inverse(&a.0).map(Fr)
+    }
+}
+
+/// The guest field path: raw Montgomery limbs in, checked Montgomery limbs out
+/// (see `crate::field_inline` for the representation argument).
+#[cfg(any(
+    test,
+    all(feature = "field-inline-guest-bn254", target_arch = "riscv64")
+))]
+impl Fr {
+    #[inline(always)]
+    fn from_inline_limbs(limbs: [u64; 4]) -> Self {
+        let raw = BigInt(limbs);
+        // Montgomery storage is also canonical: allowing f + p breaks limb operations.
+        assert!(raw < ArkFr::MODULUS, "noncanonical field-inline result");
+        Fr(Fp(raw, PhantomData))
+    }
+}
+
+#[cfg(all(feature = "field-inline-guest-bn254", target_arch = "riscv64"))]
+impl InlineArith for Fr {
+    fn add(a: Self, b: Self) -> Self {
+        Fr::from_inline_limbs(crate::field_inline::add(&a.inner_limbs(), &b.inner_limbs()))
+    }
+    fn sub(a: Self, b: Self) -> Self {
+        Fr::from_inline_limbs(crate::field_inline::sub(&a.inner_limbs(), &b.inner_limbs()))
+    }
+    fn mul(a: Self, b: Self) -> Self {
+        Fr::from_inline_limbs(crate::field_inline::mul(
+            &a.inner_limbs(),
+            &b.inner_limbs(),
+            true,
+        ))
+    }
+    fn neg(a: Self) -> Self {
+        Fr::from_inline_limbs(crate::field_inline::neg(&a.inner_limbs()))
+    }
+    fn inverse(a: Self) -> Option<Self> {
+        if a.inner_limbs() == [0; 4] {
+            return None;
+        }
+        Some(Fr::from_inline_limbs(crate::field_inline::inv(
+            &a.inner_limbs(),
+            true,
+        )))
+    }
+}
+
+#[cfg(test)]
+mod inline_readout_tests {
+    use super::*;
+
+    #[test]
+    fn inline_readout_accepts_canonical_boundaries() {
+        assert_eq!(Fr::from_inline_limbs([0; 4]).inner_limbs(), [0; 4]);
+        let mut largest = ArkFr::MODULUS.0;
+        largest[0] -= 1;
+        assert_eq!(Fr::from_inline_limbs(largest).inner_limbs(), largest);
+    }
+
+    #[test]
+    #[should_panic(expected = "noncanonical field-inline result")]
+    fn inline_readout_rejects_modulus_as_zero() {
+        let _ = Fr::from_inline_limbs(ArkFr::MODULUS.0);
     }
 }

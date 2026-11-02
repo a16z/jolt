@@ -14,7 +14,7 @@ use jolt_dory::{DoryProverSetup, DoryScheme, DoryVerifierSetup};
 use jolt_field::{CanonicalEncoding, Fr};
 use jolt_openings::{CommitmentScheme, ZkOpeningScheme};
 use jolt_poly::Polynomial;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 use libfuzzer_sys::fuzz_target;
 
 const SCALAR_BYTES: usize = 32;
@@ -50,24 +50,24 @@ fuzz_target!(|data: &[u8]| {
     // ZK completeness.
     let (zk_commitment, zk_hint) =
         DoryScheme::commit_zk(poly.evaluations(), prover_setup).expect("commit_zk");
-    let mut pt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+    let mut pt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     let (zk_proof, _y_com, _blind) =
         DoryScheme::open_zk(&poly, &point, eval, prover_setup, zk_hint, &mut pt).expect("open_zk");
-    let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+    let mut vt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     DoryScheme::verify_zk(&zk_commitment, &point, &zk_proof, verifier_setup, &mut vt)
         .expect("honest ZK opening must verify in ZK mode");
 
     // Transparent completeness.
     let (commitment, hint) = DoryScheme::commit(poly.evaluations(), prover_setup).expect("commit");
-    let mut pt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+    let mut pt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     let proof =
         DoryScheme::open(&poly, &point, eval, prover_setup, Some(hint), &mut pt).expect("open");
-    let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+    let mut vt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     DoryScheme::verify(&commitment, &point, eval, &proof, verifier_setup, &mut vt)
         .expect("honest transparent opening must verify");
 
     // Mode confusion must be rejected in both directions.
-    let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+    let mut vt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     assert!(
         DoryScheme::verify(
             &zk_commitment,
@@ -80,7 +80,7 @@ fuzz_target!(|data: &[u8]| {
         .is_err(),
         "transparent verifier accepted a ZK proof"
     );
-    let mut vt = Blake2bTranscript::new(TRANSCRIPT_LABEL);
+    let mut vt = prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     assert!(
         DoryScheme::verify_zk(&commitment, &point, &proof, verifier_setup, &mut vt).is_err(),
         "ZK verifier accepted a transparent proof"

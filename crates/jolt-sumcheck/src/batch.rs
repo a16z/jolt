@@ -163,7 +163,13 @@ impl<F: Field> BatchPrelude<F> {
 }
 
 pub(crate) enum PaddingRule<F> {
-    ConstantExtension { two_inv: F },
+    ConstantExtension {
+        #[cfg_attr(
+            not(feature = "prover"),
+            expect(dead_code, reason = "only the prover halves inactive rounds")
+        )]
+        two_inv: F,
+    },
     ZeroExtension,
 }
 

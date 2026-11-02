@@ -8,9 +8,10 @@ use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
-use jolt_transcript::{AppendToTranscript, Transcript};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
@@ -37,14 +38,14 @@ pub fn prove<F, PCS, VC, T>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField + CanonicalBytes + AppendToTranscript,
+    F: JoltField + CanonicalBytes + Encoding,
     PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
-    PCS::Output: Clone + PartialEq + AppendToTranscript + GroupCommitmentMetadata,
+    PCS::Output: Clone + PartialEq + Encoding + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Clone + AppendToTranscript,
-    T: Transcript<Challenge = F>,
+    VC::Output: Clone + Encoding,
+    T: FieldTranscript<F> + ProverInit,
 {
     // The Akita path is transparent-only (`akita` and `zk` are mutually
     // exclusive), so the mode context carries nothing; the shared stage
@@ -144,7 +145,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage7", log_t, backend.session(), &stage7.clear_output);
-    let joint_opening_proof = prove_stage8::<F, PCS, VC, T>(
+    let (joint_opening_proof, stage8_pow_nonce) = prove_stage8::<F, PCS, VC, T>(
         &checked,
         config,
         preprocessing,
@@ -167,6 +168,20 @@ where
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 
+    let pow_nonces = StagePowNonces::from_iter([
+        (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+        (PowSite::Stage1, stage1.pow_nonce),
+        (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+        (PowSite::Stage2, stage2.pow_nonce),
+        (PowSite::Stage3, stage3.pow_nonce),
+        (PowSite::Stage4, stage4.pow_nonce),
+        (PowSite::Stage5, stage5.pow_nonce),
+        (PowSite::Stage6a, stage6a.pow_nonce),
+        (PowSite::Stage6b, stage6b.pow_nonce),
+        (PowSite::Stage7, stage7.pow_nonce),
+        (PowSite::Stage8, stage8_pow_nonce),
+    ]);
+
     Ok(JoltProof {
         protocol: JoltProtocolConfig::for_zk(false),
         commitments: stage0.commitment,
@@ -182,6 +197,7 @@ where
             stage6a_sumcheck_proof: stage6a.sumcheck_proof,
             stage6b_sumcheck_proof: stage6b.sumcheck_proof,
             stage7_sumcheck_proof: stage7.sumcheck_proof,
+            pow_nonces,
         },
         joint_opening_proof,
         untrusted_advice_commitment: stage0
@@ -204,5 +220,6 @@ where
         rw_config: config.rw_config,
         one_hot_config: config.one_hot_config,
         trace_polynomial_order: config.trace_polynomial_order,
+        narg: transcript.narg_string().to_vec(),
     })
 }

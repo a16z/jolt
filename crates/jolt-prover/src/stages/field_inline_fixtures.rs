@@ -414,6 +414,7 @@ pub(crate) fn test_checked_inputs() -> CheckedInputs {
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
+        untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
         vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
         precommitted: PrecommittedSchedule {
@@ -484,7 +485,7 @@ pub(crate) mod twins {
     use jolt_claims::NoChallenges;
     use jolt_field::Ring;
     use jolt_program::preprocess::PublicIoMemory;
-    use jolt_transcript::{AppendToTranscript, LegacyBlake2bTranscript as Blake2bTranscript};
+    use jolt_transcript::{Encoding, Keccak, ProverState};
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::stages::stage1::outer_remainder::{
@@ -554,11 +555,11 @@ pub(crate) mod twins {
 
     /// Stage 1's twin (already round-tripped by stage 1's own tests):
     /// positions the transcript at the stage-2 boundary.
-    pub(crate) fn replay_stage1<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
+    pub(crate) fn replay_stage1<C: Clone + Encoding>(
+        transcript: &mut ProverState<Keccak>,
         stage1: &Stage1ProverOutput<Fr, C>,
     ) {
-        let tau = draw_spartan_outer_tau(transcript, LOG_T);
+        let tau = draw_spartan_outer_tau(transcript, LOG_T).unwrap();
         let uniskip_challenge = uniskip::verify_clear(
             &stage1.uniskip_proof,
             &UniskipParams::spartan_outer(),
@@ -597,8 +598,8 @@ pub(crate) mod twins {
 
     /// Stage 2's twin (already round-tripped by stage 2's own tests):
     /// positions the transcript at the stage-3 boundary.
-    pub(crate) fn replay_stage2<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
+    pub(crate) fn replay_stage2<C: Clone + Encoding>(
+        transcript: &mut ProverState<Keccak>,
         config: &ProverConfig,
         public_io: &JoltDevice,
         stage1: &Stage1ProverOutput<Fr, C>,
@@ -612,7 +613,7 @@ pub(crate) mod twins {
         let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap();
         let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
 
-        let tau_high: Fr = draw_spartan_product_tau_high(transcript);
+        let tau_high: Fr = draw_spartan_product_tau_high(transcript).unwrap();
         let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
         let uniskip_inputs = product_uniskip_input_values_from_stage1(&stage1.clear_output);
         let uniskip_input_claim = uniskip_relation
@@ -683,8 +684,8 @@ pub(crate) mod twins {
 
     /// Stage 3's twin (`stage3::verify`'s clear body — the stage has no field-inline
     /// member): positions the transcript at the stage-4 boundary.
-    pub(crate) fn replay_stage3<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
+    pub(crate) fn replay_stage3<C: Clone + Encoding>(
+        transcript: &mut ProverState<Keccak>,
         stage1: &Stage1ProverOutput<Fr, C>,
         stage2: &Stage2ProverOutput<Fr, C>,
         stage3: &Stage3ProverOutput<Fr, C>,
@@ -727,8 +728,8 @@ pub(crate) mod twins {
     /// stage-5 boundary. The fixtures carry no advice and no committed
     /// program image, so the attached-claims step degenerates to the public
     /// initial-RAM evaluation alone.
-    pub(crate) fn replay_stage4<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
+    pub(crate) fn replay_stage4<C: Clone + Encoding>(
+        transcript: &mut ProverState<Keccak>,
         config: &ProverConfig,
         checked: &CheckedInputs,
         preprocessing: &FixturePreprocessing,
@@ -791,8 +792,8 @@ pub(crate) mod twins {
 
     /// Stage 5's twin (`stage5::verify`'s clear body): positions the
     /// transcript at the stage-6a boundary.
-    pub(crate) fn replay_stage5<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
+    pub(crate) fn replay_stage5<C: Clone + Encoding>(
+        transcript: &mut ProverState<Keccak>,
         config: &ProverConfig,
         checked: &CheckedInputs,
         preprocessing: &FixturePreprocessing,
@@ -843,8 +844,8 @@ pub(crate) mod twins {
     /// Stage 6a's twin (`stage6a::verify`'s clear body): positions the
     /// transcript at the stage-6b boundary.
     #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
-    pub(crate) fn replay_stage6a<C: Clone + AppendToTranscript>(
-        transcript: &mut Blake2bTranscript,
+    pub(crate) fn replay_stage6a<C: Clone + Encoding>(
+        transcript: &mut ProverState<Keccak>,
         config: &ProverConfig,
         checked: &CheckedInputs,
         preprocessing: &FixturePreprocessing,
@@ -942,7 +943,7 @@ pub(crate) mod proving {
     use crate::{JoltBackend, ProofMode};
     use jolt_field::Fr;
     use jolt_kernels::KernelContext;
-    use jolt_transcript::LegacyBlake2bTranscript as Blake2bTranscript;
+    use jolt_transcript::{Keccak, ProverState};
     type Commitment = Bn254G1;
     type Stages3 = (
         Stage1ProverOutput<Fr, Commitment>,
@@ -960,19 +961,19 @@ pub(crate) mod proving {
         pub(crate) public_io: &'a JoltDevice,
         pub(crate) checked: &'a CheckedInputs,
         pub(crate) preprocessing: &'a JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
-        pub(crate) transcript: &'a mut Blake2bTranscript,
+        pub(crate) transcript: &'a mut ProverState<Keccak>,
     }
 
     impl FixtureProver<'_, '_> {
         pub(crate) fn through_stage3(&mut self) -> Stages3 {
-            let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
                 LOG_T,
                 self.transcript,
             )
             .unwrap();
-            let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
                 self.config,
@@ -981,7 +982,7 @@ pub(crate) mod proving {
                 self.transcript,
             )
             .unwrap();
-            let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
                 self.config,
@@ -994,7 +995,7 @@ pub(crate) mod proving {
         }
         pub(crate) fn through_stage4(&mut self) -> Stages4 {
             let (stage1, stage2, stage3) = self.through_stage3();
-            let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
                 self.checked,
@@ -1009,7 +1010,7 @@ pub(crate) mod proving {
         }
         pub(crate) fn through_stage5(&mut self) -> Stages5 {
             let ((stage1, stage2, stage3), stage4) = self.through_stage4();
-            let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
                 self.checked,
@@ -1024,7 +1025,7 @@ pub(crate) mod proving {
         }
         pub(crate) fn through_stage6a(&mut self) -> Stages6a {
             let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
-            let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, Blake2bTranscript>(
+            let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
                 self.mode,
                 self.checked,

@@ -9,7 +9,7 @@ mod support;
 
 use jolt_blindfold::{prove, BlindFoldProof, BlindFoldWitness, ProverError, VerificationError};
 use jolt_crypto::Bn254G1;
-use jolt_transcript::{Blake2bTranscript, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
@@ -18,7 +18,10 @@ fn prove_real(
     instance: &ProtocolBackedInstance,
     rng: &mut ChaCha20Rng,
 ) -> Result<BlindFoldProof<F, Bn254G1>, ProverError<F>> {
-    let mut transcript = Blake2bTranscript::<F>::new(PROTOCOL_BACKED_TRANSCRIPT_LABEL);
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     prove::<F, VC, _, _>(
         &instance.setup,
@@ -38,7 +41,10 @@ fn verify_real(
     instance: &ProtocolBackedInstance,
     proof: &BlindFoldProof<F, Bn254G1>,
 ) -> Result<(), VerificationError<F>> {
-    let mut transcript = Blake2bTranscript::<F>::new(PROTOCOL_BACKED_TRANSCRIPT_LABEL);
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
     append_protocol_transcript_prefix(&instance.protocol, &mut transcript);
     instance
         .protocol
@@ -51,6 +57,45 @@ fn real_prover_roundtrip_verifies() {
     let instance = build_protocol_backed_instance(&mut rng);
     let proof = prove_real(&instance, &mut rng).expect("real prover succeeds on a valid witness");
     verify_real(&instance, &proof).expect("real prover's proof verifies");
+}
+
+/// The verifier absorbs exactly what the prover absorbed: after BlindFold
+/// both transcripts draw the same next challenge, so a protocol composed
+/// after it stays in step.
+#[test]
+fn prover_and_verifier_transcripts_agree_after_blindfold() {
+    let mut rng = ChaCha20Rng::from_seed([103; 32]);
+    let instance = build_protocol_backed_instance(&mut rng);
+    let mut prover = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
+    append_protocol_transcript_prefix(&instance.protocol, &mut prover);
+    let proof = prove::<F, VC, _, _>(
+        &instance.setup,
+        &instance.protocol,
+        &mut prover,
+        BlindFoldWitness {
+            rows: &instance.rows,
+            blindings: &instance.blindings,
+            eval_outputs: &instance.eval_outputs,
+            eval_blindings: &instance.eval_blindings,
+        },
+        &mut rng,
+    )
+    .expect("real prover succeeds on a valid witness");
+    let mut verifier = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(PROTOCOL_BACKED_TRANSCRIPT_LABEL),
+        b"",
+    );
+    append_protocol_transcript_prefix(&instance.protocol, &mut verifier);
+    instance
+        .protocol
+        .verify::<VC, _>(&proof, &instance.setup, &mut verifier)
+        .expect("real prover's proof verifies");
+    let prover_next: F = prover.challenge().expect("prover draws");
+    let verifier_next: F = verifier.challenge().expect("verifier draws");
+    assert_eq!(prover_next, verifier_next);
 }
 
 #[test]

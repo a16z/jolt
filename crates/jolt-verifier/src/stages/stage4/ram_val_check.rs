@@ -29,7 +29,6 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::SymbolicSumcheck;
 use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
-use jolt_transcript::{LabelWithCount, Transcript};
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
@@ -176,20 +175,6 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
         let mut openings = self.symbolic().expected_output_openings::<F>();
         openings.extend(self.contribution_openings.iter().copied());
         openings
-    }
-
-    /// Reproduces the stage-4 inline RAM value-check gamma draw: the
-    /// `b"ram_val_check_gamma"` domain separator (an empty labeled append) followed
-    /// by `ram_val_check_gamma = challenge_scalar()`. The separator's empty append
-    /// is part of the soundness-critical byte stream, so it is replayed here too.
-    fn draw_challenges<T: Transcript<Challenge = F>>(
-        &self,
-        transcript: &mut T,
-    ) -> Result<RamValCheckChallenges<F>, VerifierError> {
-        append_ram_val_check_gamma_domain_separator(transcript);
-        Ok(RamValCheckChallenges {
-            gamma: transcript.challenge_scalar(),
-        })
     }
 
     fn derive_opening_points(
@@ -548,63 +533,32 @@ fn ram_val_check_advice_block<F: JoltField>(
     })
 }
 
-/// Absorb the Fiat-Shamir domain separator for the RAM value-check gamma: an empty
-/// message labeled `b"ram_val_check_gamma"`. The prover appends this empty labeled
-/// chunk before sampling the gamma, so [`RamValCheck::draw_challenges`] must
-/// reproduce it byte-for-byte (label chunk + empty payload) or every challenge from
-/// here on diverges.
-fn append_ram_val_check_gamma_domain_separator<T: Transcript>(transcript: &mut T) {
-    transcript.append(&LabelWithCount(b"ram_val_check_gamma", 0));
-    transcript.append_bytes(&[]);
-}
-
 #[cfg(test)]
-#[expect(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    reason = "test code indexes its own fixed-size fixtures"
-)]
+#[expect(clippy::unwrap_used, reason = "test code unwraps its own fixtures")]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, TranscriptEvent};
     use jolt_field::Fr;
+    use jolt_transcript::FieldTranscript;
 
-    // Overrides the default to prepend the `b"ram_val_check_gamma"` domain separator
-    // (an empty labeled append) before the gamma squeeze; the append is part of the
-    // soundness-critical byte stream, so it must appear in `draw_challenges` too.
+    // The RAM value-check gamma is one draw with no absorb before it, so it
+    // continues the squeeze run of the gammas drawn before it in stage 4.
     #[test]
-    fn draw_challenges_appends_domain_separator_then_draws_gamma() {
+    fn draw_challenges_draws_gamma_with_no_absorb() {
         let relation = RamValCheck::<Fr>::new(
             TraceDimensions::new(4),
             3,
             RamValCheckInit::from(Fr::from(0u64)),
         );
 
-        let (inline_events, inline_gamma) = record(|t| {
-            append_ram_val_check_gamma_domain_separator(t);
-            t.challenge_scalar()
-        });
+        let (inline_events, inline_gamma) = record(|t| t.challenge().unwrap());
         let (draw_events, challenges) = record(|t| relation.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        assert!(draw_events.len() >= 2);
-        let (separator, last) = draw_events.split_at(draw_events.len() - 1);
-        assert_eq!(last, [DrawEvent::Squeeze(1)]);
-        assert!(separator
-            .iter()
-            .all(|event| matches!(event, DrawEvent::Append(_))));
-        assert_eq!(challenges.gamma, inline_gamma);
-    }
-
-    #[test]
-    fn ram_val_check_gamma_domain_separator_matches_core_empty_bytes_append() {
-        let (events, ()) = record(append_ram_val_check_gamma_domain_separator);
-
-        let mut packed = vec![0; 32];
-        packed[..b"ram_val_check_gamma".len()].copy_from_slice(b"ram_val_check_gamma");
         assert_eq!(
-            events,
-            [DrawEvent::Append(packed), DrawEvent::Append(Vec::new())]
+            draw_events,
+            [TranscriptEvent::Challenges(vec![inline_gamma])]
         );
+        assert_eq!(challenges.gamma, inline_gamma);
     }
 }

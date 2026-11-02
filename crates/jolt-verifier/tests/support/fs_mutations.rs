@@ -15,7 +15,7 @@ use jolt_sumcheck::{CenteredIntegerDomain, ClearProof, SumcheckProof};
 use jolt_verifier::{fs_audit::FsScope, JoltProof, JoltProofClaims};
 use num_traits::One;
 
-use super::fs_transcript::{ChallengeKind, ChallengeTape};
+use super::fs_transcript::ChallengeTape;
 
 /// Changes two Dory commitments in the kernel of the frozen final-opening RLC.
 #[cfg(not(feature = "akita"))]
@@ -27,14 +27,13 @@ pub fn cancel_dory_final_opening_commitments<PCS, VC, ZkProof>(
     PCS::Output: HomomorphicCommitment<PCS::Field>,
     VC: VectorCommitment<Field = PCS::Field>,
 {
+    // The final-opening RLC base is stage 8's first draw.
     let gamma_base = tape
         .records
         .iter()
-        .find(|record| {
-            record.id.scope == FsScope::Stage8
-                && matches!(record.id.kind, ChallengeKind::PowersBase { len } if len >= 2)
-        })
+        .find(|record| record.id.scope == FsScope::Stage8)
         .expect("stage-8 final-opening batching challenge is missing");
+    assert_eq!(gamma_base.id.len, 1);
     let gamma_0 = PCS::Field::one();
     let gamma_1 = gamma_base.values[0];
     let direction = proof
@@ -68,24 +67,20 @@ pub fn equivocate_stage1_clear<PCS, VC, ZkProof>(
         .iter()
         .filter(|record| record.id.scope == FsScope::Stage1);
 
+    // Stage 1 draws the `tau` vector, the uni-skip challenge, the batching
+    // coefficient, then the remainder round challenges, one record each.
     let tau = stage1.next().expect("stage 1 tau challenge is missing");
-    assert!(matches!(
-        tau.id.kind,
-        ChallengeKind::VectorElement { index: 0, .. }
-    ));
-
-    let uniskip_challenge = stage1
-        .find(|record| record.id.kind == ChallengeKind::Challenge)
-        .expect("stage 1 uni-skip challenge is missing")
-        .values[0];
-    let batching_coefficient = stage1
-        .find(|record| record.id.kind == ChallengeKind::Scalar)
-        .expect("stage 1 batching coefficient is missing")
-        .values[0];
-    let remainder_challenge = stage1
-        .find(|record| record.id.kind == ChallengeKind::Challenge)
-        .expect("stage 1 remainder challenge is missing")
-        .values[0];
+    assert!(tau.id.len > 1, "stage 1 opens with the tau vector");
+    let mut single = |name: &str| {
+        let record = stage1
+            .next()
+            .unwrap_or_else(|| panic!("stage 1 {name} is missing"));
+        assert_eq!(record.id.len, 1, "stage 1 {name} is one challenge");
+        record.values[0]
+    };
+    let uniskip_challenge = single("uni-skip challenge");
+    let batching_coefficient = single("batching coefficient");
+    let remainder_challenge = single("remainder challenge");
 
     let JoltProofClaims::Clear(claims) = &mut proof.claims else {
         panic!("stage-1 clear equivocation requires a clear proof");

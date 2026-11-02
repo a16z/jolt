@@ -1,5 +1,5 @@
 /// Generates a `#[repr(transparent)]` wrapper over an arkworks projective curve type,
-/// with all operator impls, serde, `AppendToTranscript`, `JoltGroup`, compile-time
+/// with all operator impls, serde, `Encoding`, `JoltGroup`, compile-time
 /// size assertions, and a safe `into_inner` accessor.
 ///
 /// Paths are fully qualified so the macro does not inject `use` items into the caller's
@@ -161,14 +161,15 @@ macro_rules! impl_jolt_group_wrapper {
             }
         }
 
-        impl ::jolt_transcript::AppendToTranscript for $wrapper {
-            fn append_to_transcript<T: ::jolt_transcript::Transcript>(&self, transcript: &mut T) {
+        /// The compressed serialization: fixed-width.
+        impl ::jolt_transcript::Encoding for $wrapper {
+            fn encode(&self) -> impl AsRef<[u8]> {
                 use ::ark_serialize::CanonicalSerialize;
                 let mut buf = Vec::with_capacity(self.0.compressed_size());
                 self.0
                     .serialize_compressed(&mut buf)
                     .expect(concat!(stringify!($wrapper), " serialization cannot fail"));
-                transcript.append_bytes(&buf);
+                buf
             }
         }
 

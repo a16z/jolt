@@ -1,8 +1,10 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_riscv::JoltInstructionKind;
+use jolt_transcript::VerificationError;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
+use crate::stages::pow::PowSite;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[derive(Debug, thiserror::Error)]
@@ -132,4 +134,26 @@ pub enum VerifierError {
 
     #[error("program preprocessing digest failed: {reason}")]
     PreprocessingDigestFailed { reason: String },
+
+    #[error("no proof-of-work difficulty reaches the security target for the stage-level loss")]
+    PowDifficulty,
+
+    #[error("proof-of-work nonce at {site:?} is missing, unexpected, or fails the check")]
+    ProofOfWorkRejected { site: PowSite },
+
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+
+    /// The proof's NARG string has unread bytes, or a transcript check
+    /// failed earlier.
+    #[error("the transcript did not end cleanly")]
+    NargNotConsumed,
+}
+
+impl From<VerificationError> for VerifierError {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

@@ -166,7 +166,7 @@ impl<F: JoltField, C> Stage5Output<F, C> {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use crate::stages::relations::draw_recording::{record, DrawEvent};
+    use crate::stages::relations::draw_recording::{record, squeeze};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -175,7 +175,7 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
     use jolt_field::{Fr, Ring};
-    use jolt_transcript::Transcript;
+    use jolt_transcript::FieldTranscript;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -239,14 +239,11 @@ mod tests {
     fn draw_challenges_matches_inline_draw_sequence() {
         let sumchecks = sumchecks();
         let (inline_events, inline_gammas) =
-            record(|t| (0..2).map(|_| t.challenge_scalar()).collect::<Vec<Fr>>());
+            record(|t| (0..2).map(|_| t.challenge().unwrap()).collect::<Vec<Fr>>());
         let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
         assert_eq!(draw_events, inline_events);
-        assert_eq!(
-            draw_events,
-            vec![DrawEvent::Squeeze(1), DrawEvent::Squeeze(2)]
-        );
+        assert_eq!(draw_events, vec![squeeze(1), squeeze(2)]);
         assert_eq!(
             vec![
                 challenges.instruction_read_raf.gamma,

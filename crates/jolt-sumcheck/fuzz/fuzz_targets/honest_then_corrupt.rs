@@ -8,14 +8,17 @@
 //! claimed sum, one round coefficient, the round count, or the degree bound.
 //! Every corruption breaks a check the verifier performs deterministically —
 //! a wrong claimed sum or coefficient breaks that round's `s(0) + s(1)`
-//! comparison, and shape corruptions break the count/degree checks. As a
+//! comparison (or its stale proof-of-work nonce), and shape corruptions break
+//! the count/degree checks. As a
 //! belt-and-braces discharge, an accept of a false statement only counts as
 //! sound if the returned claim matches the true product evaluation.
 
 use jolt_field::{CanonicalEncoding, Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{AppendToTranscript, Blake2bTranscript, Transcript};
+use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckClaim, SumcheckVerifier};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript, Transcript,
+};
 use libfuzzer_sys::fuzz_target;
 use num_traits::Zero;
 
@@ -60,12 +63,17 @@ fuzz_target!(|data: &[u8]| {
     let true_sum: Fr = evals_a.iter().zip(&evals_b).map(|(&a, &b)| a * b).sum();
 
     // Honest degree-2 prover, binding the low variable each round and
-    // mirroring the verifier's transcript exactly.
+    // mirroring the verifier's transcript exactly, proof of work included.
+    let bits = round_pow_bits::<Fr, ProverState<Blake2b512>>(2).expect("difficulty for degree 2");
     let two_inverse = Fr::from_u64(2).inverse().expect("2 is invertible");
     let mut a = evals_a.clone();
     let mut b = evals_b.clone();
-    let mut transcript = Blake2bTranscript::new(b"jolt-sumcheck-corrupt-fuzz");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-corrupt-fuzz"),
+        b"",
+    );
     let mut rounds: Vec<UnivariatePoly<Fr>> = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::with_capacity(num_vars);
     for _ in 0..num_vars {
         let half = a.len() / 2;
         let mut s0 = Fr::zero();
@@ -84,9 +92,10 @@ fuzz_target!(|data: &[u8]| {
         let poly = UnivariatePoly::new(vec![c0, c1, c2]);
 
         for coefficient in poly.coefficients() {
-            coefficient.append_to_transcript(&mut transcript);
+            transcript.append(coefficient);
         }
-        let r: Fr = transcript.challenge();
+        pow_nonces.extend(transcript.public_grind(bits).expect("proof-of-work search"));
+        let r: Fr = transcript.challenge().unwrap();
         for j in 0..half {
             a[j] = a[2 * j] + r * (a[2 * j + 1] - a[2 * j]);
             b[j] = b[2 * j] + r * (b[2 * j + 1] - b[2 * j]);
@@ -132,10 +141,14 @@ fuzz_target!(|data: &[u8]| {
     }
 
     let claim = SumcheckClaim::new(num_vars, 2, claimed_sum);
-    let mut verifier_transcript = Blake2bTranscript::new(b"jolt-sumcheck-corrupt-fuzz");
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"jolt-sumcheck-corrupt-fuzz"),
+        b"",
+    );
     let result = SumcheckVerifier::verify::<Fr, _, UnivariatePoly<Fr>, _>(
         &claim,
         &rounds,
+        &pow_nonces,
         BooleanHypercube,
         &mut verifier_transcript,
     );
