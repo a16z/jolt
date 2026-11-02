@@ -84,6 +84,7 @@ def synthetic_run(data):
         "head_branch": "candidate" if data["tier"] == "pr" else "main",
         "head_sha": data["revisions"]["head"], "event": data["provenance"]["event"],
         "status": "completed", "conclusion": "success", "run_started_at": data["started_at"],
+        "pull_requests": [{"number": data["provenance"]["pr_number"]}] if data["provenance"]["pr_number"] else [],
     }
 
 
@@ -228,6 +229,25 @@ class BenchmarkHistoryTests(unittest.TestCase):
         for event in ("pull_request", "workflow_run"):
             with self.subTest(event=event), self.assertRaises(ValueError):
                 collected_fixture(data, run=dict(original, event=event))
+
+    def test_pr_plan_number_must_be_a_pull_request_of_the_producer_run(self):
+        data = synthetic_pr_result()
+        record, raw = collected_fixture(data, run=dict(synthetic_run(data), pull_requests=[{"number": 8}]))
+        self.assertEqual((record["publication_status"], record["reason"]),
+                         ("rejected", "PR plan number is not a pull request of the producer run"))
+        self.assertIsNone(raw)
+
+    def test_skipped_producer_runs_are_refused_but_failed_and_cancelled_runs_are_archived(self):
+        data = synthetic_pr_result()
+        with self.assertRaisesRegex(ValueError, "Refusing"):
+            collected_fixture(data, run=dict(synthetic_run(data), conclusion="skipped"), missing=True)
+        for attempt, conclusion in ((1, "failure"), (2, "cancelled")):
+            changed = copy.deepcopy(data)
+            changed["provenance"]["run_attempt"] = attempt
+            record, raw = collected_fixture(changed, run=dict(synthetic_run(changed), conclusion=conclusion))
+            history.append_site(self.site, [(record, raw)])
+        self.assertEqual({(entry["source"]["conclusion"], entry["tier"]) for entry in self.index()["runs"]},
+                         {("failure", "pr"), ("cancelled", "pr")})
 
     def test_append_is_immutable_idempotent_and_preserves_legacy(self):
         legacy = self.site / "dev/bench/data.js"

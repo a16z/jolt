@@ -254,9 +254,9 @@ def validate_source(run, run_id, attempt):
         or run["path"] != WORKFLOW_FILE or run["name"] != WORKFLOW
         or run["event"] not in {"push", "schedule", "workflow_dispatch", "pull_request_target"}
         or (run["event"] != "pull_request_target" and run["head_branch"] != "main")
-        or run["status"] != "completed" or not revision(run["head_sha"])
+        or run["status"] != "completed" or run["conclusion"] == "skipped" or not revision(run["head_sha"])
     ):
-        raise ValueError("Refusing a foreign, untrusted, unfinished, or mismatched producer run")
+        raise ValueError("Refusing a foreign, untrusted, unfinished, skipped, or mismatched producer run")
 
 
 def validate_provenance(data, run, measured_revision, plan=None):
@@ -345,6 +345,9 @@ def pr_plan(run, artifacts):
             or str(provenance["run_attempt"]) != str(run["run_attempt"])
             or type(provenance["pr_number"]) is not int or provenance["pr_number"] <= 0):
         raise ValueError("PR plan is not from the trusted producer attempt")
+    # GitHub lists only open PRs whose head matches the run; a PR closed before collection is rejected.
+    if provenance["pr_number"] not in [pr["number"] for pr in run.get("pull_requests") or ()]:
+        raise ValueError("PR plan number is not a pull request of the producer run")
     item = plan["runs"][0]
     admission = plan["admission"]
     if (item["submitted_head"] != run["head_sha"] or not revision(item["base"])

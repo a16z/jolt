@@ -3,9 +3,9 @@
 The dashboard lives at `dev/prover-history/` on the existing `gh-pages` branch.
 It appends each result and its raw JSON without changing `dev/bench/` or other
 site files. Main, nightly and opted-in PR comparisons have separate views.
-These drafts are not live until merged. Benchmark execution still requires the
-restricted runner and producer setup in `scripts/bench/README.md`; publication
-needs neither a new repository variable nor a Pages-source change.
+Benchmark execution requires the restricted runner and producer setup in
+`scripts/bench/README.md`; publication needs neither a new repository variable
+nor a Pages-source change.
 
 ## Read one benchmark point
 
@@ -18,7 +18,7 @@ needs neither a new repository variable nor a Pages-source change.
 
 The PR label persists across pushes. The trusted producer checks the actual label
 applier, current label and merge parents; a write-only collaborator or fork is
-not admitted. The target rechecks the label and revisions after queue/lock waits.
+not admitted. The target rechecks the label and PR head after queue/lock waits.
 The dashboard shows the PR link, submitted head, base and measured merge, source
 run/attempt, admission event, and raw result. Select a PR, workload/input/core
 count, base or head leg, host/build configuration, and metric. PR legs do not enter
@@ -49,17 +49,21 @@ artifact-only timings do not predict changed-source PR compilation time.
 ## Trusted collection and append-only publication
 
 `prover-history.yml` reacts to completed **End-to-end prover benchmarks** runs,
-including failures, or a manual dispatch on `main`. Its executable collector and
-UI assets are checked out from `main`, never from the source PR or an artifact.
+including failed and cancelled ones, or a manual dispatch on `main`. It ignores
+skipped runs, which are PR pushes and label events that were never admitted, and
+the collector refuses them. Its executable collector and UI assets are checked
+out from `main`, never from the source PR or an artifact.
 The workflow can only publish the configured legacy site: `gh-pages` at `/`.
 It does not edit that setting or a deployment environment.
 
 The collector verifies repository, producer workflow/name/path, event, attempt,
 artifact ID/name and source revisions. Main/nightly sources must be main-branch
 push, schedule or dispatch runs. PR sources must be trusted `pull_request_target`
-runs and carry a matching `jolt-e2e-plan-RUN_ID-ATTEMPT` artifact. The plan binds
-label admission, base/head/merge/harness, native build inputs and merge parents;
-GitHub's run head is the submitted PR head, not the trusted harness revision.
+runs and carry a matching `jolt-e2e-plan-RUN_ID-ATTEMPT` artifact whose PR number
+is in the run's `pull_requests`. GitHub lists only open PRs there, so a run whose
+PR closed before collection is rejected. The plan binds label admission,
+base/head/merge/harness, native build inputs and merge parents; GitHub's run
+head is the submitted PR head, not the trusted harness revision.
 Current PR state can change after a valid run; that does not rewrite its history.
 Only JSON is read. Downloaded scripts, HTML and binaries are never executed.
 
@@ -99,7 +103,6 @@ token. The workflow also needs `contents: write` for the branch and `actions: re
 for producer artifacts. It uses no personal token, OIDC deployment, new enable
 variable or Pages-source switch. The request's acceptance is not proof the later
 Pages build completed: check that build and both URLs after the first merged run.
-This draft has not called the build endpoint or published the site.
 [Pages build API](https://docs.github.com/en/rest/pages/pages#request-a-github-pages-build),
 [GITHUB_TOKEN type](https://docs.github.com/en/actions/concepts/security/github_token)
 

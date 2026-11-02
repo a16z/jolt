@@ -44,6 +44,7 @@ jobs:
     if: >-
       github.repository == 'a16z/jolt' &&
       ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion != 'skipped' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&
         (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.event == 'pull_request_target') &&
         contains(fromJSON('["push","schedule","workflow_dispatch","pull_request_target"]'), github.event.workflow_run.event) &&
