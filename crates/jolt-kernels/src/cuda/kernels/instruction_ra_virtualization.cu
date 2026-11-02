@@ -67,23 +67,50 @@ __device__ __forceinline__ void irv_sparse_coeff(const u64 *__restrict__ packed,
     }
 }
 
+template <unsigned int SLOTS>
+__device__ __forceinline__ void irv_gather_row(
+    const u64 *__restrict__ packed, const u64 *__restrict__ tables,
+    u64 *const *__restrict__ out, unsigned int addresses, unsigned int chunk_bits,
+    unsigned int committed, unsigned int j) {
+    u64 low[SLOTS], high[SLOTS];
+#pragma unroll
+    for (unsigned int s = 0; s < SLOTS; s++) {
+        unsigned long long cycle = (unsigned long long)j * SLOTS + s;
+        low[s] = packed[2 * cycle];
+        high[s] = packed[2 * cycle + 1];
+    }
+    unsigned int mask = (1u << chunk_bits) - 1u;
+    for (unsigned int p = 0; p < committed; p++) {
+        unsigned int shift = chunk_bits * (committed - 1 - p);
+        const u64 *poly_tables = tables + (unsigned long long)p * SLOTS * addresses * LIMBS;
+        u64 value[LIMBS] = {0, 0, 0, 0};
+#pragma unroll
+        for (unsigned int s = 0; s < SLOTS; s++) {
+            u64 word = shift < 64 ? low[s] : high[s];
+            unsigned int a = (unsigned int)((word >> (shift & 63)) & mask);
+            u64 entry[LIMBS], sum[LIMBS];
+            load4(poly_tables + ((unsigned long long)s * addresses + a) * LIMBS, entry);
+            fr_add(value, entry, sum);
+            for (int l = 0; l < LIMBS; l++) value[l] = sum[l];
+        }
+        store4(out[p] + (unsigned long long)j * LIMBS, value);
+    }
+}
+
 extern "C" __global__ void irv_gather_kernel(const u64 *__restrict__ packed,
                                              const u64 *__restrict__ tables,
                                              u64 *const *__restrict__ out, unsigned int addresses,
                                              unsigned int slots, unsigned int chunk_bits,
                                              unsigned int committed, unsigned int len) {
-    unsigned int p = blockIdx.y;
     unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
     if (j >= len) return;
-
-    unsigned int shift = chunk_bits * (committed - 1 - p);
-    unsigned int mask = (1u << chunk_bits) - 1u;
-    const u64 *poly_tables = tables + (unsigned long long)p * slots * addresses * LIMBS;
-
-    u64 value[LIMBS];
-    irv_sparse_coeff(packed, poly_tables, addresses, slots, shift, mask,
-                     (unsigned long long)j * slots, value);
-    store4(out[p] + (unsigned long long)j * LIMBS, value);
+    switch (slots) {
+        case 1: irv_gather_row<1>(packed, tables, out, addresses, chunk_bits, committed, j); break;
+        case 2: irv_gather_row<2>(packed, tables, out, addresses, chunk_bits, committed, j); break;
+        case 4: irv_gather_row<4>(packed, tables, out, addresses, chunk_bits, committed, j); break;
+        case 8: irv_gather_row<8>(packed, tables, out, addresses, chunk_bits, committed, j); break;
+        case 16: irv_gather_row<16>(packed, tables, out, addresses, chunk_bits, committed, j); break;
+    }
 }
 
 extern "C" __global__ void irv_gather_bind_kernel(

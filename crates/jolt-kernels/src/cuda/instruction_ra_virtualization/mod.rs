@@ -15,8 +15,11 @@
 //! For four-chunk virtual RAs with small alphabets, optimized also precomputes
 //! selector-pair products for the first round; CUDA evaluates those products
 //! per cycle.
-//! CUDA gathers dense values by selector column, while optimized can decode
-//! all instruction chunks from each packed row together.
+//! Ordinary materialization decodes all chunks from each packed row together.
+//! CUDA retains this row-wise fill above optimized's CPU cache budget: in a
+//! two-L4 SHA2 proof with 2^26 padded cycles, it takes about 8 ms per gather
+//! versus 53 ms by selector column, with unchanged live device allocations.
+//! Fused gather-and-bind remains column-wise, as in optimized.
 //!
 //! CUDA includes q(0) in each reduction, avoiding an extra launch when the
 //! equality factor vanishes at zero. Optimized normally recovers q(0) from

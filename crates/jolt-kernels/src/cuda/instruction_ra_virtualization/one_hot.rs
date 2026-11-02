@@ -203,7 +203,8 @@ impl DevicePackedRa {
                 let _ = builder.arg(limb);
             }
         }
-        // SAFETY: thread `(p = blockIdx.y < polys, j < len)` reads
+        // SAFETY: thread `j < len` visits each `p < polys` for a plain gather;
+        // a fused bind instead assigns `p = blockIdx.y < polys`. Each reads
         // `packed[2 * (k * slots + s) + word]` for `s < slots`, where k is j
         // or the pair (2*j, 2*j+1) when binding, and word selects one of the
         // two packed words. Every cycle index is below `cycles`, so inside
@@ -213,10 +214,15 @@ impl DevicePackedRa {
         // (poly, index) pair, and each `out[p]` is a distinct fresh allocation of
         // `len` elements whose device address is `pointers[p]`. `bind` requires
         // at least two remaining values before requesting pair gathering;
-        // its challenge is passed by value.
+        // its challenge is passed by value. The adaptive fourth-bind cap
+        // bounds a sparse state's slots to the kernel's cases 1, 2, 4, 8, 16.
         let _ = unsafe {
             builder.launch(LaunchConfig {
-                grid_dim: (count.div_ceil(BLOCK).max(1), committed, 1),
+                grid_dim: (
+                    count.div_ceil(BLOCK).max(1),
+                    if bind.is_some() { committed } else { 1 },
+                    1,
+                ),
                 block_dim: (BLOCK, 1, 1),
                 shared_mem_bytes: 0,
             })
@@ -652,6 +658,7 @@ mod tests {
             (10, 4, 4, 3),
             (10, 1, 4, 4),
             (10, 2, 4, 4),
+            (13, 4, 32, 4),
         ] {
             let cycles = 1usize << log_t;
             let addresses = 1usize << chunk_bits;
