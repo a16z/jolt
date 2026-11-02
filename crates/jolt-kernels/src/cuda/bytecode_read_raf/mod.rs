@@ -4,9 +4,9 @@
 //! the cycle phase fuses the relation's linear terms into one coefficient
 //! column and multiplies it by the committed RA chunks.
 //!
-//! CUDA retains the packed PC and per-chunk lookup tables for five binds
-//! before gathering dense RA values, rather than optimized's usual four-bind
-//! collapse. Window-local cycle rounds are reduced on the host and the short
+//! CUDA retains the packed PC and per-chunk lookup tables through four binds
+//! before gathering dense RA values, matching optimized's usual cutoff.
+//! Window-local cycle rounds are reduced on the host and the short
 //! tail runs on GPU 0. Field-inline bytecode checking is dispatched to optimized
 //! by the backend registry.
 //! Optimized may collapse earlier when dense storage is cheaper. It keeps

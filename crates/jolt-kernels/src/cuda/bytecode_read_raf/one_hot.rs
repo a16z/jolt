@@ -10,7 +10,7 @@ use crate::cuda::common::error::CudaError;
 
 use super::coefficient::DeviceCoefficient;
 
-pub const COLLAPSE_AFTER_ROUNDS: usize = 5;
+pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
 pub const MAX_LANES: usize = 8;
 
