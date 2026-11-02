@@ -4,13 +4,14 @@ use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, JoltField};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
-use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::device::{
+    fr_into, fr_limbs, require_fr, require_fr_slice, DeviceFrVec, LIMBS,
+};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
+use crate::cuda::common::ra_poly::RaMaterialization;
 
 use super::coefficient::DeviceCoefficient;
-
-pub const COLLAPSE_AFTER_ROUNDS: usize = 4;
 
 pub const MAX_LANES: usize = 8;
 
@@ -142,7 +143,7 @@ impl DeviceBytecodeRa {
         }
         match &self.dense {
             Some(dense) => dense.to_host(),
-            None => self.gather(context)?.to_host(),
+            None => self.gather(context, None)?.to_host(),
         }
     }
 
@@ -180,12 +181,16 @@ impl DeviceBytecodeRa {
     pub fn coefficients(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
         match &self.dense {
             Some(dense) => dense.try_clone(),
-            None => self.gather(context),
+            None => self.gather(context, None),
         }
     }
 
-    fn gather(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
-        let len = self.len();
+    fn gather(
+        &self,
+        context: &CudaKernelContext,
+        bind: Option<Fr>,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let len = self.len() >> usize::from(bind.is_some());
         let mut out = context.alloc(self.polys * len)?;
         if len == 0 {
             return Ok(out);
@@ -196,7 +201,11 @@ impl DeviceBytecodeRa {
         let bits = CudaKernelContext::count_of(self.chunk_bits)?;
         let polys = CudaKernelContext::count_of(self.polys)?;
         let count = CudaKernelContext::count_of(len)?;
-        let mut builder = context.stream().launch_builder(context.brr_gather());
+        let mut builder = context.stream().launch_builder(if bind.is_some() {
+            context.brr_gather_bind()
+        } else {
+            context.brr_gather()
+        });
         let _ = builder.arg(self.pc.as_ref());
         let _ = builder.arg(self.tables.limbs());
         let _ = builder.arg(&addresses);
@@ -205,14 +214,22 @@ impl DeviceBytecodeRa {
         let _ = builder.arg(&polys);
         let _ = builder.arg(out.limbs_mut());
         let _ = builder.arg(&count);
+        let challenge = bind.map(fr_limbs);
+        if let Some(challenge) = &challenge {
+            for limb in challenge {
+                let _ = builder.arg(limb);
+            }
+        }
         // SAFETY: thread `(p = blockIdx.y < polys, j < len)` reads
-        // `pc[j * slots + s]` for `s < slots` — every cycle index is below
-        // `len * slots == cycles`, so inside `pc` — and, only for a cycle whose
+        // `pc[k * slots + s]` for `s < slots`, where k is j or the pair
+        // (2*j, 2*j+1) when binding. Every cycle index is below `cycles`,
+        // so inside `pc`, and, only for a cycle whose
         // packed word is not the cold sentinel,
         // `tables[p * slots * addresses + s * addresses + a]` with `a` masked below
         // `addresses`, inside `tables`'s `polys * slots * addresses`. It writes only
         // `out[p * len + j]`, one slot per (poly, cycle) pair, inside `out`'s
-        // `polys * len`.
+        // fresh `polys * len` allocation. `bind` checks for at least two remaining
+        // values before pair gathering; the challenge is passed by value.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (count.div_ceil(BLOCK).max(1), polys, 1),
@@ -270,10 +287,19 @@ impl DeviceBytecodeRa {
                 got: self.len(),
             });
         }
-        self.split_tables(context, challenge)?;
+        if RaMaterialization::Adaptive.before_bind(self.slots() * self.addresses, self.len()) {
+            self.dense = Some(self.gather(context, Some(challenge))?);
+        } else {
+            self.split_tables(context, challenge)?;
+        }
         self.rounds_bound += 1;
-        if self.rounds_bound >= COLLAPSE_AFTER_ROUNDS && self.len() > 1 {
-            self.dense = Some(self.gather(context)?);
+        if self.dense.is_none()
+            && self.rounds_bound >= RaMaterialization::Adaptive.round()
+            && self.len() > 1
+        {
+            self.dense = Some(self.gather(context, None)?);
+        }
+        if self.dense.is_some() {
             self.tables = context.alloc(0)?;
             self.pc = Arc::new(context.alloc_u32(0)?);
         }
@@ -292,7 +318,7 @@ impl DeviceBytecodeRa {
         }
         let values = match &self.dense {
             Some(dense) => dense.to_host()?,
-            None => self.gather(context)?.to_host()?,
+            None => self.gather(context, None)?.to_host()?,
         };
         values
             .into_iter()
@@ -611,7 +637,7 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use proptest::prelude::*;
 
-    use super::{DeviceBytecodeRa, COLLAPSE_AFTER_ROUNDS};
+    use super::DeviceBytecodeRa;
     use crate::cuda::bytecode_read_raf::coefficient::DeviceCoefficient;
     use crate::cuda::common::context::shared_context;
     use crate::cuda::common::pack::COLD;
@@ -761,11 +787,82 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn adaptive_materialization_matches_dense_binding() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for (log_t, chunk_bits, polys, materialize_at) in [
+            (1, 4, 1, 1),
+            (8, 2, 7, 3),
+            (8, 4, 7, 2),
+            (8, 8, 4, 1),
+            (10, 4, 4, 3),
+            (10, 1, 7, 4),
+            (10, 2, 7, 4),
+        ] {
+            let cycles = 1usize << log_t;
+            let mut pc = column(7, cycles + 1, 1u32 << (chunk_bits * polys - 1), 3);
+            pc[0] = 0;
+            pc[1] = COLD;
+            pc[cycles] = 1;
+            let chunk_points: Vec<Vec<_>> = (0..polys)
+                .map(|p| {
+                    (0..chunk_bits)
+                        .map(|i| fr(19 + (p * chunk_bits + i) as u64))
+                        .collect()
+                })
+                .collect();
+            for transition_challenge in [Fr::from(0u64), Fr::from(1u64), -Fr::from(1u64), fr(31)] {
+                let mut got = DeviceBytecodeRa::new(
+                    context,
+                    Arc::new(context.upload_u32_slice(&pc).expect("upload pc")),
+                    cycles,
+                    chunk_bits,
+                    &chunk_points,
+                )
+                .expect("device bytecode family");
+                let mut expected = expected_tables(&pc[..cycles], chunk_bits, &chunk_points);
+                for round in 1..=log_t {
+                    let challenge = if round == materialize_at {
+                        transition_challenge
+                    } else {
+                        fr(101 + round as u64)
+                    };
+                    got.bind(context, challenge).expect("device bind");
+                    for poly in &mut expected {
+                        poly.bind_with_order(challenge, BindingOrder::LowToHigh);
+                    }
+                    assert_eq!(got.is_collapsed(), round >= materialize_at);
+                    let coefficients = got
+                        .coefficients(context)
+                        .expect("device coefficients")
+                        .to_host()
+                        .expect("download coefficients");
+                    for (actual, expected) in coefficients.chunks_exact(got.len()).zip(&expected) {
+                        assert_eq!(
+                            actual,
+                            expected.evals(),
+                            "log_t={log_t}, chunk_bits={chunk_bits}, round={round}",
+                        );
+                    }
+                }
+                assert_eq!(
+                    got.final_claims::<Fr>(context).expect("final claims"),
+                    expected
+                        .iter()
+                        .map(|poly| poly.evals()[0])
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(6))]
         #[test]
         fn device_bytecode_ra_matches_cpu_round_for_round(
-            log_t in (COLLAPSE_AFTER_ROUNDS + 1)..9usize,
+            log_t in 5usize..9,
             chunk_bits in prop::sample::select(vec![4usize, 8]),
             polys in 1usize..5,
             cold_every in 2usize..5,

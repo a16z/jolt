@@ -4,15 +4,17 @@
 //! the cycle phase fuses the relation's linear terms into one coefficient
 //! column and multiplies it by the committed RA chunks.
 //!
-//! CUDA retains the packed PC and per-chunk lookup tables through four binds
-//! before gathering dense RA values, matching optimized's usual cutoff.
+//! As in optimized, per-chunk lookup tables materialize by the fourth bind,
+//! or earlier when their expansion would cost at least as much as dense storage.
+//! CUDA applies that comparison per resident window; optimized uses the whole
+//! source. The storage-triggered path gathers and binds without expanding tables.
 //! Window-local cycle rounds are reduced on the host and the short
 //! tail runs on GPU 0. Field-inline bytecode checking is dispatched to optimized
 //! by the backend registry.
-//! Optimized may collapse earlier when dense storage is cheaper. It keeps
-//! constant padding implicit in the RA factors and represents the coefficient
-//! suffix as a linear combination of equality polynomials; CUDA materializes
-//! and binds the full coefficient column and scans padding in its pushforwards.
+//! Optimized keeps constant padding implicit in the RA factors and represents
+//! the coefficient suffix as a linear combination of equality polynomials;
+//! CUDA materializes and binds the full coefficient column and scans padding
+//! in its pushforwards.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;

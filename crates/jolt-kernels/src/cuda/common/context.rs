@@ -132,6 +132,8 @@ pub struct CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     brr_gather: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
+    brr_gather_bind: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     brr_message_sparse: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
     brr_message_dense: CudaFunction,
@@ -368,6 +370,8 @@ impl CudaKernelContext {
             brr_coefficient: module.load_function("brr_coefficient_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             brr_gather: module.load_function("brr_gather_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            brr_gather_bind: module.load_function("brr_gather_bind_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             brr_message_sparse: module.load_function("brr_message_sparse_kernel")?,
             #[cfg(not(feature = "field-inline"))]
@@ -795,6 +799,11 @@ impl CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn brr_gather(&self) -> &CudaFunction {
         &self.brr_gather
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn brr_gather_bind(&self) -> &CudaFunction {
+        &self.brr_gather_bind
     }
 
     #[cfg(not(feature = "field-inline"))]
