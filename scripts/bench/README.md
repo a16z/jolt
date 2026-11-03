@@ -36,10 +36,13 @@ used; no protocol parameter is adjusted for the benchmark.
 | BTreeMap | 128 / 512 / 2048 | Insertion count; guest-owned deterministic keys |
 | secp256k1 ECDSA batch | 1 / 4 / 16 | One valid signature/public-key vector, verified repeatedly |
 
-`examples/secp256k1-batch/guest` calls the real `ecdsa_verify` precompile. Its
-signature vector comes from `examples/secp256k1-ecdsa-verify/src/main.rs`; it does
-not replace ECDSA with a synthetic loop. Input bytes and guest ELF hashes are
-recorded for each build. `seed: null` means the input generator uses no PRNG.
+The `verify_batch` function in `examples/secp256k1-ecdsa-verify/guest` calls the
+real `ecdsa_verify` precompile. The profiling harness enables `batch-bench` and
+selects `verify_batch` through `JOLT_FUNC_NAME`; builds without that feature keep
+the existing single-signature program. The signature vector comes from
+`examples/secp256k1-ecdsa-verify/src/main.rs`; each operation verifies it once.
+Input bytes and guest ELF hashes are recorded for each build. `seed: null` means
+the input generator uses no PRNG.
 
 | Tier | Cases | Warmups / measured repetitions per leg |
 |---|---|---:|

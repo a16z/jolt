@@ -138,7 +138,7 @@ pub enum Workload {
 }
 
 impl Workload {
-    /// The canonical name, also the guest crate prefix (`{name}-guest`).
+    /// The canonical workload name.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Fibonacci => "fibonacci",
@@ -148,6 +148,18 @@ impl Workload {
             Self::Secp256k1Batch => "secp256k1-batch",
             #[cfg(feature = "field-inline")]
             Self::FieldOps => "field-ops",
+        }
+    }
+
+    fn program(self) -> Program {
+        match self {
+            Self::Secp256k1Batch => {
+                let mut program = Program::new("secp256k1-ecdsa-verify-guest");
+                program.add_guest_feature("batch-bench");
+                program.set_func("verify_batch");
+                program
+            }
+            _ => Program::new(&format!("{}-guest", self.as_str())),
         }
     }
 
@@ -742,7 +754,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         |path| fs::read(path).expect("read fixed guest input"),
     );
 
-    let mut program = Program::new(&format!("{bench_name}-guest"));
+    let mut program = workload.program();
     if let Some(path) = &args.guest_elf {
         program.elf = Some(GuestElf::read(path.clone()).expect("read prebuilt guest ELF"));
     }

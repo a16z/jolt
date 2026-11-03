@@ -6207,14 +6207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "secp256k1-batch-guest"
-version = "0.1.0"
-dependencies = [
- "jolt-inlines-secp256k1",
- "jolt-sdk",
-]
-
-[[package]]
 name = "secp256k1-ecdsa-verify"
 version = "0.1.0"
 dependencies = [

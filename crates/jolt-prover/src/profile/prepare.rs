@@ -2,7 +2,6 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::Args;
-use jolt_host::Program;
 
 use super::Workload;
 
@@ -24,7 +23,7 @@ pub struct PrepareArgs {
 pub fn prepare(args: &PrepareArgs) {
     assert!(args.operations.iter().all(|&count| count > 0));
     fs::create_dir_all(&args.out).expect("create prepared guest directory");
-    let mut program = Program::new(&format!("{}-guest", args.name.as_str()));
+    let mut program = args.name.program();
     #[cfg(feature = "field-inline")]
     if args.name.uses_field_inline() {
         program.enable_field_inline();

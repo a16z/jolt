@@ -28,7 +28,7 @@ METRICS = ('e2e_s', 'prove_s', 'setup_s', 'verify_s', 'verify_single_s',
 HARNESS_PATHS = ('crates/jolt-prover/src/profile.rs',
                  'crates/jolt-prover/src/profile',
                  'crates/jolt-prover/src/bin/jolt_prover.rs',
-                 'examples/secp256k1-batch/guest')
+                 'examples/secp256k1-ecdsa-verify/guest')
 LINUX_FEATURE_NAMES = {
     'bmi1': 'bmi1', 'cmpxchg16b': 'cx16', 'lzcnt': 'abm', 'sha': 'sha_ni',
     'sse3': 'pni', 'sse4.1': 'sse4_1', 'sse4.2': 'sse4_2',
@@ -241,7 +241,7 @@ def logged(argv, cwd, env, log):
 def add_manifest_items(source):
     path = source / 'Cargo.toml'
     text = path.read_text()
-    guest = 'examples/secp256k1-batch/guest'
+    guest = 'examples/secp256k1-ecdsa-verify/guest'
     if guest not in tomllib.loads(text)['workspace']['members']:
         text = re.sub(r'(\[workspace\]\s*members\s*=\s*\[)',
                       lambda m: m[1] + f'\n  "{guest}",', text, count=1)
