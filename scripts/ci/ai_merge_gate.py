@@ -537,17 +537,17 @@ class Outcome:
     conclusion: str
     title: str
     summary: str
-    # The policy failed on a row that waits for a person: it drives the no-reviewer-assigned label.
+    # A row that waits for a person drives the no-reviewer-assigned label.
     human: bool = False
     # The gate approves the head. Only a success on the attested agent path sets it.
     approve: bool = False
 
 
-UNSETTLED = Outcome("failure", "The pull request changed while the gate ran",
+UNSETTLED = Outcome("neutral", "The pull request changed while the gate ran",
                     "Comments or reviews changed while the gate ran, and the current state needs a model "
                     "result this run did not get. The next pull request comment, review or push runs the "
                     "gate again.")
-SUPERSEDED = Outcome("failure", "Superseded while the gate ran",
+SUPERSEDED = Outcome("neutral", "Superseded while the gate ran",
                      "The pull request changed before the gate's labels and approval were confirmed; its "
                      "next evaluation decides the current head.")
 
@@ -840,22 +840,22 @@ class Gate:
         self.reviews = self.github.discussion(number, "reviews", REVIEW_FIELDS)
         blocking, approvers, current = self.approvals(pull)
         if blocking:
-            return Outcome("failure", "Changes requested by " + ", ".join(blocking),
+            return Outcome("neutral", "Changes requested by " + ", ".join(blocking),
                            "A maintainer or writer requested changes; the gate does not approve until they "
                            "approve or their review is dismissed.")
         authorized = self.authorized(pull)
         protected = sorted(path for path in changed if path.startswith(GATE_INPUTS))
         if not approvers:
             if not authorized:
-                return Outcome("failure", "Human approval required",
+                return Outcome("neutral", "Human approval required",
                                f"@{author} is not a maintainer, so no agent check runs. A writer can approve "
                                "instead; at risk-4 the policy asks for a current-head maintainer approval.",
                                human=True)
             if pull["draft"]:
-                return Outcome("failure", "Draft: agent checks start when the PR is ready for review",
+                return Outcome("neutral", "Draft: agent checks start when the PR is ready for review",
                                "Mark the pull request ready for review, or get a human approval.")
             if protected:
-                return Outcome("failure", "Human approval required: the change edits the gate's inputs",
+                return Outcome("neutral", "Human approval required: the change edits the gate's inputs",
                                "Once merged, these files act on every later pull request, so a writer "
                                "must approve them: " + ", ".join(f"`{path}`" for path in protected), human=True)
         # `self.records` holds this run's classification or its refusal: one paid attempt per run.
@@ -869,7 +869,7 @@ class Gate:
             if current:
                 return Outcome("success", "Risk 4 approved by " + ", ".join(current),
                                f"A maintainer other than the author approved the current head `{head}`.")
-            return Outcome("failure", "Risk 4: current-head maintainer approval required",
+            return Outcome("neutral", "Risk 4: current-head maintainer approval required",
                            "Protocol or unclassified changes need an undismissed approval of the current "
                            "head from a maintainer with write access, other than the PR author. The gate "
                            "never approves risk-4 itself.", human=True)
@@ -888,11 +888,11 @@ class Gate:
                            f"An authorized comment attests a clean review of the current head `{head}`, so "
                            "the gate approves it.", approve=True)
         if not classified:
-            return Outcome("failure", "Human approval required: the head has no classifier result",
+            return Outcome("neutral", "Human approval required: the head has no classifier result",
                            "The classifier's paid attempts for this head or pull request are spent, so the "
                            "gate does not approve it. A writer can approve; at risk-4 the policy asks for a "
                            "current-head maintainer approval.", human=True)
-        return Outcome("failure", "Needs an approval or a current-head review attestation",
+        return Outcome("neutral", "Needs an approval or a current-head review attestation",
                        "A writer other than the author can approve. Otherwise the Pika App bot or a "
                        "maintainer posts a PR comment with this standalone line, and the gate approves: "
                        f"This pull request #{number} has been reviewed at commit {head} using skill <skill name> "
@@ -903,8 +903,7 @@ class Gate:
     def labels(self, pull: dict, policy: Outcome) -> set[str]:
         """The managed labels for a policy result. needs-maintainer-review reports a missing maintainer
         authorization of the agent path even when a human approval satisfies the policy."""
-        return ({f"risk-{self.risk_level(pull)}"}
-                | ({NEEDS_MAINTAINER} if not self.authorized(pull) else set())
+        return (({f"risk-{self.risk_level(pull)}"} if self.authorized(pull) else {NEEDS_MAINTAINER})
                 | ({MERGE_ELIGIBLE} if policy.conclusion == "success" and not pull["draft"] else set())
                 | ({NO_REVIEWER} if policy.human and unassigned(pull) else set()))
 
@@ -926,9 +925,15 @@ class Gate:
             steps = [("withdraw the gate's approval and merge-eligible", lambda: self.withdraw(number))]
             if pull is not None:
                 head = pull["head"]["sha"]
+                labels = {"risk-4"}
+                managed = MANAGED_LABELS - {NEEDS_MAINTAINER}
+                try:
+                    if not self.authorized(pull):
+                        labels, managed = {NEEDS_MAINTAINER}, MANAGED_LABELS
+                except Exception as auth_error:
+                    log(f"Could not determine author authorization: {auth_error}")
                 steps += [("label the failed evaluation", lambda: self.label(
-                              number, head, {"risk-4"} | ({NO_REVIEWER} if unassigned(pull) else set()),
-                              MANAGED_LABELS - {NEEDS_MAINTAINER})),
+                              number, head, labels | ({NO_REVIEWER} if unassigned(pull) else set()), managed)),
                           ("publish the classifier result", lambda: self.publish(number, head))]
             if check is not None:
                 steps.append(("report the failure", lambda: self.complete(check, failed)))
