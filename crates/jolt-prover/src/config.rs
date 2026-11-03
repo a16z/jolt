@@ -89,9 +89,13 @@ impl ProverConfig {
             .ok_or(ProverError::Unsupported {
                 reason: "program image extent overflows the RAM domain",
             })?;
+        // The RAM table holds word indices `0..ram_k`, so it must reach one past
+        // the highest touched index; rounding `touched` itself to a power of two
+        // leaves that word out when `touched` is already a power of two.
         let ram_k = touched
-            .max(image_end)
-            .checked_next_power_of_two()
+            .checked_add(1)
+            .map(|words| words.max(image_end))
+            .and_then(u64::checked_next_power_of_two)
             .and_then(|domain| usize::try_from(domain).ok())
             .ok_or(ProverError::Unsupported {
                 reason: "RAM domain does not fit the host address space",
@@ -362,6 +366,9 @@ mod dimension_tests {
         assert_eq!(touched.ram_K, 1024);
         let image = derive(7, None, 1024);
         assert_eq!(image.ram_K, 2048);
+        // A highest touched index that is itself a power of two needs the next one.
+        let power_of_two = derive(7, Some(lowest + 8 * 1024), 3);
+        assert_eq!(power_of_two.ram_K, 2048);
         assert_eq!(
             derive((1 << 25) - 1, None, 0).one_hot_config.log_k_chunk,
             if cfg!(feature = "akita") { 4 } else { 8 }
