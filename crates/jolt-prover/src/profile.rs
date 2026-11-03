@@ -21,7 +21,7 @@
 //! verifier latency under explicit host-parallel and single-threaded
 //! pools are measured separately. With a prebuilt ELF and fixed input file,
 //! `--result-json` also reports the interval through proof serialization,
-//! including both tracing passes, program preprocessing, and PCS setup.
+//! including tracing, program preprocessing, and PCS setup.
 //! Compilation stays outside that end-to-end interval.
 
 #![expect(
@@ -658,6 +658,7 @@ struct ProvenRun {
     verifier_single_threaded: VerificationRun,
     proof_size: usize,
     padded_trace_rows: usize,
+    public_output: Vec<u8>,
 }
 
 struct VerificationRun {
@@ -798,6 +799,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
             "verify_s": run.verifier_parallel.seconds(),
             "verify_single_s": run.verifier_single_threaded.seconds(),
             "proof_bytes": proof_size,
+            "public_output": &run.public_output,
             "trace_rows": trace_length,
             "padded_trace_rows": run.padded_trace_rows,
         });
@@ -986,6 +988,7 @@ fn prove_workload(
         verifier_single_threaded,
         proof_size,
         padded_trace_rows: config.trace_length,
+        public_output: public_io.outputs,
     }
 }
 
@@ -1119,6 +1122,7 @@ fn prove_workload(
         verifier_single_threaded,
         proof_size,
         padded_trace_rows: config.trace_length,
+        public_output: public_io.outputs,
     }
 }
 
