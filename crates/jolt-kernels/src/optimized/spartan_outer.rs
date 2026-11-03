@@ -469,11 +469,9 @@ impl<'a, F> FieldInlineRowCursor<'a, F> {
 }
 
 impl SpartanOuterRow {
-    /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
-    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
-    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
-    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
-    fn group_values(&self) -> RowGroupValues {
+    /// Evaluate A guards without constructing the integer B values.
+    #[inline(always)]
+    fn guard_values(&self) -> ([i64; DOMAIN], [i64; SECOND_GROUP_LEN]) {
         let flag = |value: bool| i64::from(value);
         let load = flag(self.load.0);
         let store = flag(self.store.0);
@@ -509,6 +507,37 @@ impl SpartanOuterRow {
             1 - should_branch - jump,
         ];
 
+        let mut first = [0; DOMAIN];
+        let mut second = [0; SECOND_GROUP_LEN];
+        first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_a_first);
+        second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_a_second);
+        #[cfg(feature = "field-inline")]
+        {
+            first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
+                flag(self.field_add.0),
+                flag(self.field_sub.0),
+                flag(self.field_mul.0),
+                flag(self.field_inv.0),
+                flag(self.field_load_accumulate_from_memory.0),
+            ]);
+            second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
+                flag(self.field_assert_eq.0),
+                flag(self.field_load_accumulate_from_register.0),
+                flag(self.field_assert_zero.0),
+                flag(self.field_load_imm.0),
+                flag(self.field_advice_limb.0),
+            ]);
+        }
+        (first, second)
+    }
+
+    /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
+    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
+    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
+    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
+    fn group_values(&self) -> RowGroupValues {
+        let flag = |value: bool| i64::from(value);
+        let (a_first, a_second) = self.guard_values();
         let word = |value: u64| i128::from(value);
         let diff = |a: u64, b: u64| word(a) - word(b);
         let rv64_b_first = [
@@ -563,14 +592,12 @@ impl SpartanOuterRow {
         ];
 
         let mut values = RowGroupValues {
-            a_first: [0; DOMAIN],
-            a_second: [0; SECOND_GROUP_LEN],
+            a_first,
+            a_second,
             b_first: [0; DOMAIN],
             b_second_lo: [0; SECOND_GROUP_LEN],
             b_second_hi: [0; SECOND_GROUP_LEN],
         };
-        values.a_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_a_first);
-        values.a_second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_a_second);
         values.b_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_b_first);
         values.b_second_lo[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second_lo);
         values.b_second_hi[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second_hi);
@@ -579,20 +606,6 @@ impl SpartanOuterRow {
         // Nonzero field magnitudes are supplied by `field_group_values` below.
         #[cfg(feature = "field-inline")]
         {
-            values.a_first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
-                flag(self.field_add.0),
-                flag(self.field_sub.0),
-                flag(self.field_mul.0),
-                flag(self.field_inv.0),
-                flag(self.field_load_accumulate_from_memory.0),
-            ]);
-            values.a_second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
-                flag(self.field_assert_eq.0),
-                flag(self.field_load_accumulate_from_register.0),
-                flag(self.field_assert_zero.0),
-                flag(self.field_load_imm.0),
-                flag(self.field_advice_limb.0),
-            ]);
             let rd_write_value = word(self.rd_write_value.0);
             values.b_first[RV64_FIRST_GROUP_LEN + 3] = -1;
             values.b_first[RV64_FIRST_GROUP_LEN + 4] = -rd_write_value;
@@ -1203,18 +1216,18 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                     let bz = values.fold_b(lagrange);
                     (values, bz)
                 };
+                #[cfg(feature = "field-inline")]
+                let (a_first, a_second) = (values.a_first, values.a_second);
                 #[cfg(not(feature = "field-inline"))]
-                let values = row.group_values();
-                #[cfg(not(feature = "field-inline"))]
-                let [bz_zero, bz_one] = b_folds
-                    .as_ref()
-                    .map_or_else(|| values.fold_b(lagrange), |folds| folds.fold(&row));
-                let [az_zero, az_one] = guard_endpoints.add(
-                    &values.a_first,
-                    &values.a_second,
-                    [bz_zero, bz_one],
-                    e_in[x_in],
-                );
+                let (a_first, a_second, [bz_zero, bz_one]) = if let Some(folds) = &b_folds {
+                    let (a_first, a_second) = row.guard_values();
+                    (a_first, a_second, folds.fold(&row))
+                } else {
+                    let values = row.group_values();
+                    (values.a_first, values.a_second, values.fold_b(lagrange))
+                };
+                let [az_zero, az_one] =
+                    guard_endpoints.add(&a_first, &a_second, [bz_zero, bz_one], e_in[x_in]);
                 az_chunk[2 * x_in] = az_zero;
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;
