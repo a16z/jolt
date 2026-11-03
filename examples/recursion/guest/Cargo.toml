@@ -19,10 +19,7 @@ akita = [
   "dep:jolt-transcript",
 ]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
-hash-inlines = [
-  "jolt_sdk/blake2-inline",
-  "jolt-transcript?/blake2-inline",
-]
+hash-inlines = ["jolt_sdk/blake2-inline", "jolt-transcript?/blake2-inline"]
 
 [package.metadata.cargo-machete]
 # The jolt-transcript edge selects BLAKE2b and its guest inline implementation.
