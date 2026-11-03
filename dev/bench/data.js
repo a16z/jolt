@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793663869081,
+  "lastUpdate": 1793737266596,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -222178,6 +222178,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 782360,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f0f04b09f0cd05e7b41e61844822dad974a1a097",
+          "message": "ci: add AI merge gate with risk labels and review attestations (#2203)\n\n* ci: add AI merge gate for verifier-safe core pull requests\n\nAdd one required check, ai-merge-gate, published by a dedicated GitHub App.\nIt passes on a writer's approval of the head, or, for a pull request written\nor authorized by a core team member, when a CI classifier (GPT-6 Astra at\nreasoning effort max) finds the change cannot change which proofs the verifier\naccepts and an Astra Max review of the exact head found no issues.\n\nThe gate runs only default-branch code on issue_comment and workflow_run, reads\npull request bytes through the API as data, keeps its secrets in a\ndefault-branch-only environment, and records paid verdicts as App check runs.\nEvery piece of evidence names the head, so a push voids it.\n\nRewrite ci-code-review as one review pass and add the verifier-classifier skill.\n.github/ai-merge-gate.md holds the decision table and the admin setup; no\nrepository setting is changed here.\n\n* ci: ground the AI merge gate in pinned source and fresh review state\n\n- Give the classifier and the CI review the changed files in full and two\n  read-only tools (read_file, search) over the pinned merge base and head,\n  served from GitHub's archive of each commit and checked against its tree;\n  oversized input fails closed, oversized answers return errors, and the last\n  turn withholds the tools.\n- Keep the gate check in progress while evaluating and re-read the pull\n  request, comments, reviews, membership and permissions before publishing a\n  pass, reusing the paid model results.\n- Fail any pull request that changes the events workflow, even when approved;\n  it is maintained with the off switch on.\n- Protect all of .github/workflows/ and scripts/ci/ (the gate's import path)\n  instead of a per-file list and a blanket .github/ rule.\n- Follow GitHub's review state for human approvals instead of requiring an\n  approval of the head commit.\n- Reject a non-array findings value; document a local review command Codex\n  accepts; add Contents read to the App and its token.\n\n* ci: bind the AI merge gate's path guards to the evaluated commits\n\nThe pull request's file list follows its branch: a push and a revert during\nan evaluation let it describe another commit with the same file count, and a\nhead that deleted the events workflow passed on a persisting approval.\n\nDerive the changed paths, both names of a rename included, from the complete\ntree listings of the pinned merge base and head, and use that one set for the\nevent-source row, the gate-input row and the changed files sent to the model.\nA truncated listing fails closed; the diff count check stays.\n\nDocument the second review's accepted limits: the size bounds do not cap peak\nmemory, and a withdrawn authorization does not stop an already-requested CI\nreview before the final re-read fails the gate.\n\n* ci: require head attestations and classify PR risk\n\n* fix(ci): reject publishing-app review attestations\n\n* ci: word the review attestation line in passive voice\n\nThe attestation check now accepts only:\n\nThis pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.\n\nThe old first-person line no longer passes. The PR number, current-head SHA, nonempty skill,\nmodel and effort fields, exact standalone-line match and attestation authority are unchanged.\nThe regex, the failure guidance, the test formatter and the three documented examples move together.\n\n* docs(ci): let the review skill run the deepest review it can\n\nThe ci-code-review skill no longer prescribes a review method: the checklist, finding scores,\nfalse-positive list, tone rules and complexity lens are gone. It asks for the deepest review\npossible, encourages parallel subagents, points to CLAUDE.md for Jolt's invariants and rules,\nand keeps the soundness and untrusted-input notes, the authority and sandbox limits, the\nattestation rules and the post-one-review routine.\n\nThe local command switches from `codex exec review` to plain `codex exec`. In Codex CLI 0.162.0\nthe review subcommand runs the built-in review mode, which disables the multi_agent feature\n(subagent tools) and supplies its own rubric (codex-rs/core/src/tasks/review.rs).\n\n* ci: let the gate approve attested heads instead of publishing required checks\n\nMerging into main now rests on GitHub's own approval rule. The gate approves\nthe exact current head as github-actions[bot] when a maintainer wrote or\nauthorized the pull request, the Pika App bot or a maintainer attested a\nreview of that head, the classifier put it at risk-1 through risk-3, it\nchanges no gate input and no maintainer or writer has a standing change\nrequest. It never approves risk-4, dismisses only its own approvals when a\ncondition stops holding or an evaluation fails, and re-reads the head after\napproving.\n\n- Manage risk-1..4, needs-maintainer-review, merge-eligible and\n  no-reviewer-assigned labels; drop needs-human-review.\n- Bound the classifier: 20,000 output tokens and 150,000 counted input\n  tokens per request, 4 tool turns, 2 attempts per head and 3 per pull\n  request counted in the classifier comment before paying, 15 minutes per\n  request, standard service tier.\n- Use the workflow's GITHUB_TOKEN instead of a publishing App, the\n  AI_MERGE_GATE_MAINTAINERS variable instead of a team, and the repository\n  secret OPENAI_API_KEY; trust cached classifier results only from the\n  gate's own default-branch runs.\n- Remove the attestation-only job and check, and route review requests and\n  assignments to the gate.\n\n* fix(ci): approve only classified heads and withdraw on every gate exit\n\nThe gate no longer approves a head without a classifier result: the\npath rule's risk-1 for scripts and docs only labels, since a script can\nbe a build input. A head whose classifier attempts are spent now needs\na person's approval.\n\nAny failure after the gate script starts, including a failed write of\nits own check run, removes merge-eligible and dismisses the gate's\napproval before the original error is reported, each step attempted\nindependently.\n\nClosing a pull request, or retargeting it away from main, now reaches\nthe gate through the events workflow and a resolver that also finds\nclosed and retargeted pull requests; the gate removes merge-eligible\nand dismisses its approval, except on a merged pull request, which\nkeeps the approval that let it merge.\n\nThe guide now gives two price figures: the nominal $43.125 per pull\nrequest from the gate's own count, which omits OpenAI's framing, and\nthe $416.25 ceiling that OpenAI's published context window and\nlong-context prices give.\n\n* fix(ci): route each gate event to its own pull request\n\nThe events workflow's run name now carries its pull request number,\nwhich the resolver reads from the workflow_run payload's display_title.\nA closed or retargeted pull request is therefore evaluated itself and\nloses the gate's approval and merge-eligible, even when its branch also\nheads another pull request into main or a more recently updated one.\nThe resolver no longer reads the API, so its job keeps only Contents\nread.\n\nThe guide now states that the $416.25 figure bounds the cost of\naccepted requests only, assuming OpenAI does not bill requests it\nrejects for exceeding the context window and that writers leave the\nattempt ledger intact.\n\n* ci: classify with GPT-6.1 Sol and accept only listed review models\n\n- The classifier calls gpt-6.1-sol at reasoning effort xhigh. Every turn\n  sends the same instructions, tools and a per-pull-request\n  prompt_cache_key (repo#number), and the job log records each\n  response's input, cache-read, cache-write and output token counts,\n  naming any count a response leaves out.\n- Review attestations must name GPT-6 Astra or Claude Opus 5.5 at max or\n  xhigh effort; other models, efforts, aliases and case variants no\n  longer count.\n- CLAUDE.md (and AGENTS.md through its symlink) describes the merge\n  paths and when a reviewer posts the attestation line.\n- The gate guide recomputes the spend figures at gpt-6.1-sol prices\n  ($8.625 nominal, $83.25 accepted-request bound per pull request) and\n  records two local runs on pull request #2231 that read 52% and 76% of\n  their input tokens from OpenAI's prompt cache.\n\n* fix(ci): bind merge-gate routing and cached verdicts to trusted inputs\n\n* fix(ci): bind every event run to its exact pull request source\n\n* ci: enforce maintainer authorship and deterministic gate risks\n\n* ci: distinguish cfg attributes from conditional attributes\n\n* ci: enforce effective risk limits and Rust line boundaries\n\n* ci: isolate dependency bumps from review escalation",
+          "timestamp": "2026-11-03T10:55:17-08:00",
+          "tree_id": "8cf07d4d70eaf8603a393ec6f38821d238de49e2",
+          "url": "https://github.com/a16z/jolt/commit/f0f04b09f0cd05e7b41e61844822dad974a1a097"
+        },
+        "date": 1793737252065,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.2182,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 783156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.6643,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 425476,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 428528,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 425020,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8211,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 424688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871968,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8889,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.7253,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 425848,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 5.8457,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131112,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9582,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 782156,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6392,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 425084,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4636,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428220,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.2271,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.996,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 428240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 35.7578,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 702372,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.2189,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 604200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 72.5919,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 642304,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.8063,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 425856,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1017,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 428140,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 18.9484,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 781756,
             "unit": "KB",
             "extra": ""
           }
