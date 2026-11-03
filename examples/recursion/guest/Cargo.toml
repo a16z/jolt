@@ -71,10 +71,9 @@ challenge-word-decode = ["akita", "jolt-akita/challenge-word-decode"]
 challenge-embed-fused = ["akita", "jolt-akita/challenge-embed-fused"]
 compressed-poly-horner = ["dep:jolt-poly", "jolt-poly/compressed-poly-horner"]
 [package.metadata.cargo-machete]
-# The jolt-field edge selects the guest's field-inline arithmetic; generated
-# embedded_bytecode.rs imports jolt-riscv types when the host prepares an
-# embedded guest.
-ignored = ["jolt-field", "jolt-riscv"]
+# jolt-poly and jolt-transcript forward features to the verifier dependencies.
+# Generated embedded_bytecode.rs imports jolt-riscv when the host embeds a guest.
+ignored = ["jolt-poly", "jolt-riscv", "jolt-transcript"]
 
 [dependencies]
 jolt-poly = { path = "../../../crates/jolt-poly", default-features = false, optional = true }
