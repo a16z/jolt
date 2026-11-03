@@ -288,8 +288,7 @@ class _Item:
 
 
 def _starts_cfg_attr(code: str) -> bool:
-    code = code.lstrip()
-    return code.startswith("#[cfg") or code.startswith("#![cfg")
+    return re.match(r"^#!?\[\s*cfg\s*\(", code.lstrip()) is not None
 
 
 def _cfg_arg(attr: str) -> str | None:
@@ -327,7 +326,7 @@ def _call_args(expr: str, name: str) -> str | None:
         elif ch == ")":
             depth -= 1
             if depth == 0:
-                return rest[:offset]
+                return rest[:offset] if not rest[offset + 1:].strip() else None
     return None
 
 

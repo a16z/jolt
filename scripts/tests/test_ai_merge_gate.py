@@ -378,6 +378,12 @@ class AiMergeGateTests(unittest.TestCase):
              "#[cfg(test)]\nfn check() {} fn verify() { accept(); }\n", 4),
             ("#[cfg(test)]\nconst TEST: bool = true; fn verify() { reject(); }\n",
              "#[cfg(test)]\nconst TEST: bool = true; fn verify() { accept(); }\n", 4),
+            ("#[cfg_attr(all(test), inline)]\nfn verify() { reject(); }\n",
+             "#[cfg_attr(all(test), inline)]\nfn verify() { accept(); }\n", 4),
+            ('#[cfg_attr(all(test, feature = "x"), derive(Debug))]\nstruct Proof { value: u8 }\n',
+             '#[cfg_attr(all(test, feature = "x"), derive(Debug))]\nstruct Proof { value: bool }\n', 4),
+            ("#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { reject(); }\n",
+             "#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { accept(); }\n", 4),
         ]:
             with self.subTest(old=old, new=new):
                 apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
