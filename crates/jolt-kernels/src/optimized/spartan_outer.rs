@@ -114,7 +114,11 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[cfg(not(feature = "field-inline"))]
+mod b_folds;
 mod guard_groups;
+#[cfg(not(feature = "field-inline"))]
+use b_folds::PreparedBFolds;
 use guard_groups::{GuardEndpointGroup, GuardEndpoints, GuardGroups, GUARD_ENDPOINT_ENTRIES};
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
@@ -1157,6 +1161,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .map(|&variable| outer_opening(variable))
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
+        #[cfg(not(feature = "field-inline"))]
+        let b_folds = PreparedBFolds::new(&derived);
 
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
@@ -1200,7 +1206,9 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 #[cfg(not(feature = "field-inline"))]
                 let values = row.group_values();
                 #[cfg(not(feature = "field-inline"))]
-                let [bz_zero, bz_one] = values.fold_b(lagrange);
+                let [bz_zero, bz_one] = b_folds
+                    .as_ref()
+                    .map_or_else(|| values.fold_b(lagrange), |folds| folds.fold(&row));
                 let [az_zero, az_one] = guard_endpoints.add(
                     &values.a_first,
                     &values.a_second,
@@ -1655,7 +1663,7 @@ mod tests {
     use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
     use crate::ReferenceBackend;
 
-    fn variable_field_value(row: &SpartanOuterRow, index: usize) -> Fr {
+    fn variable_field_value<F: JoltField>(row: &SpartanOuterRow, index: usize) -> F {
         match index {
             0 => row.left_instruction_input.to_field(),
             1 => row.right_instruction_input.to_field(),
@@ -2330,6 +2338,53 @@ mod tests {
         #[cfg(feature = "field-inline")]
         crate::optimized::field_registers_testing::structured_field_register_fixture(12)
             .with_plane(4, |backend| sample_case(backend, 4));
+    }
+
+    #[test]
+    #[cfg(not(feature = "field-inline"))]
+    fn prepared_b_folds_match_canonical_matrix() {
+        #[cfg(feature = "akita")]
+        use jolt_field::Prime128OffsetA7F7;
+        fn check<F: JoltField>() {
+            let mut rows = synthetic_rows(8, 0xB0_1D);
+            for negative in [false, true] {
+                let mut row = rows[0];
+                row.right_lookup_operand.0 = u128::MAX;
+                row.right_instruction_input.0 = if negative { i128::MIN } else { i128::MAX };
+                row.imm.0 = row.right_instruction_input.0;
+                row.product.0 = S128::new([u64::MAX; 2], !negative);
+                row.ram_address.0 = u64::MAX;
+                row.ram_read_value.0 = u64::MAX;
+                row.ram_write_value.0 = u64::MAX;
+                rows.push(row);
+            }
+            let large = F::from_u128(u128::MAX) * F::from_u128(u128::MAX - 0x1234_5678);
+            for challenge in [F::zero(), F::one(), F::from_u64(19), -F::one(), large] {
+                let derived = OuterRemainderKernel::<F>::derived_weights(challenge).unwrap();
+                let folds = PreparedBFolds::new(&derived).expect("RV64 matrix supported");
+                for row in &rows {
+                    let expected = std::array::from_fn(|stream| {
+                        derived.bz_constant[stream]
+                            + derived.bz_weights[stream]
+                                .iter()
+                                .enumerate()
+                                .map(|(index, &weight)| {
+                                    weight * variable_field_value::<F>(row, index)
+                                })
+                                .sum::<F>()
+                    });
+                    assert_eq!(folds.fold(row), expected);
+                }
+                // A future matrix can use the existing general path rather
+                // than silently dropping an unsupported first-group column.
+                let mut changed = derived;
+                changed.bz_weights[0][1] = F::one();
+                assert!(PreparedBFolds::new(&changed).is_none());
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 
     /// The integer extension of each base-window basis vector is exactly the
