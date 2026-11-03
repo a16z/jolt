@@ -2,6 +2,7 @@
 """Use the checked-out SDK in a generated CI project, including on forks."""
 import argparse
 import os
+import shutil
 import tomllib
 from pathlib import Path
 
@@ -28,3 +29,8 @@ for name, dependency in patches.items():
     relative = Path(os.path.relpath(checkout / dependency["path"], project)).as_posix()
     content += f'{name} = {{ path = "{relative}" }}\n'
 manifest.write_text(content)
+
+# Cargo still queries an unlocked Git source even when a matching patch exists.
+# Seed the generated workspace with the checkout's resolved patch identities
+# before its first build, so Akita's Jolt dependencies stay on the local paths.
+shutil.copyfile(checkout / "Cargo.lock", project / "Cargo.lock")
