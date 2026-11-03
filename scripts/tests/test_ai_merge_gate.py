@@ -456,6 +456,16 @@ class AiMergeGateTests(unittest.TestCase):
                     self.assertIn(f"risk-{expected}", apis.labels)
                     self.assertEqual(apis.approved(), [HEAD])
                     self.assertEqual(apis.model_requests, [])
+        prover = "crates/jolt-prover/src/big.rs"
+        for verdict in ("UNCERTAIN", "AFFECTS"):
+            with self.subTest(mixed_bump_verdict=verdict):
+                old = {"Cargo.lock": lock, prover: "old();\n" * 200}
+                new = {"Cargo.lock": lock.replace('name = "runtime-dep"\nversion = "1.0.0"',
+                                                  'name = "runtime-dep"\nversion = "2.0.0"'),
+                       prover: "new();\n" * 200}
+                apis = evaluate(changed_contents(old, new, verdict=verdict, risk=2))
+                self.assertIn("risk-4", apis.labels)
+                self.assertEqual(apis.approved(), [])
 
     def test_other_manifest_edits_keep_the_shared_code_floor(self) -> None:
         path = "Cargo.toml"

@@ -776,7 +776,8 @@ class Gate:
                             for path, level in risks.items()
                             if level == 3 and path not in bumps and not path.endswith("Cargo.lock"))
         minimal = changed_lines <= self.policy["risk-3"]["max_changed_lines"]
-        if answer["verdict"] != "SAFE" and (risk < 3 or not minimal):
+        if answer["verdict"] != "SAFE" and (
+                max(level for path, level in risks.items() if path not in bumps) < 3 or not minimal):
             risk = 4
         conclusion = "success" if answer["verdict"] == "SAFE" else "neutral"
         self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: {answer['verdict']}",

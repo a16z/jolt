@@ -100,7 +100,7 @@ pull requests need no model call; in mixed changes, the classifier cannot escala
 Every changed path must appear exactly once in a model result, including removed files and
 both names of a rename. The pull request takes the highest effective level. An incomplete or
 invalid result fails the evaluation and receives risk-4 when GitHub is reachable. `UNCERTAIN`
-or `AFFECTS` below risk-3 becomes risk-4. The classifier still asks about verifier acceptance;
+or `AFFECTS` with no non-bump path at risk-3 or above becomes risk-4. The classifier still asks about verifier acceptance;
 this does not add a witness-confidentiality check for prover-only code.
 
 Without a cached or new classification, a change wholly within level-1 paths receives risk-1;
@@ -661,6 +661,8 @@ if retiring them. Keep the separate Pika App and local review skill.
   dependency-only files and lockfiles. An unreadable file in that count fails closed without
   admitting a paid attempt and requires a person. Lower-floor paths are counted only if the
   classifier raises them to effective risk-3; binary docs and fixtures keep their prior treatment.
+  An unreadable lower-floor file rated 3 fails closed after the paid call, even for `SAFE`;
+  it can consume up to two paid attempts per head.
 - The size limits bound what the model receives and what the gate keeps, not the evaluation's
   peak memory: the gate downloads a commit's whole archive before checking its files, and builds
   a search's matches before refusing more than 200 of them. A very large tree can exhaust the
