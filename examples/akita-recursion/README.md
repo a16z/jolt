@@ -5,8 +5,8 @@ power-of-two padded trace. A RISC-V recursion guest verifies both direct Akita
 proofs and publishes every deferred setup query and answer in its public output.
 The harness measures execution without proving the outer execution.
 
-Akita is pinned to `4bdb8ff3ff03397c5cfbf8f5221cf105cda21e74` on
-`codex/recursive-verifier-optimizations` in the workspace manifest and lockfile.
+Akita is pinned to `e1f722d5633af4575f0cb6aa57d93d69c9c66024` from
+remote `main` in the workspace manifest and lockfile.
 Regenerate inputs when that pin changes.
 The experiment generates one exact direct scalar catalog for the inner trace shape
 and adapts the grouped opening through Jolt's normal preprocessing. The supplied
@@ -83,8 +83,8 @@ terminal transforms. Keep the material directory with the report to reproduce
 the guest build.
 
 The `before` baseline uses the same two direct inner proofs and checks setup in
-every fold. Comparing against Akita main with setup-offloaded inner proofs requires
-a separate checkout pinned to main and freshly generated offloaded proofs.
+every fold. Compare setup-offloaded inner proofs by generating a fresh pair with
+`--offload` using the same pinned checkout.
 Compare per-proof `innerN_jolt` or `innerN_akita` scopes when discussing verifier
 costs, and the complete guest totals when discussing the outer trace.
 
@@ -114,6 +114,12 @@ until that discharge. This trace harness does not claim to perform that outer pr
 
 ## Replay the saved accumulated outer proof
 
+This fixture and the measurements below are archived under Akita
+`4bdb8ff3ff03397c5cfbf8f5221cf105cda21e74`. Akita's current `main` changes the
+terminal proof encoding, so the unchanged fixture requires its original Jolt
+checkout, `88c38e0e4ae0d671e3fb8e08abf138da4c5e5520`. Generate fresh proofs for
+experiments with the current pin.
+
 The saved fixture verifies two distinct committed SHA2-chain inner executions
 with padded traces of `2^26`. Its outer execution is 955,732,363 cycles, padded
 to `2^30`, with setup offloading, W8R4/K16 and eight active witness units.
@@ -139,7 +145,7 @@ and export the count derived from the actual selected catalog row. Corrupted
 setup advice and altered public output are rejected. The runner refuses to
 replace an existing result directory.
 
-The current replay verifies a saved proof for a `2^30`-cycle execution in
+The archived replay verifies a saved proof for a `2^30`-cycle execution in
 **962,012,241 complete-guest cycles**, padded to `2^30`: 792,449,500 in Akita,
 117,690,729 in other Jolt verification, and 51,872,012 in transport, output
 and cleanup. Relative to the original 12,684,355,371-cycle complete-stack
@@ -155,8 +161,8 @@ preparation, two warmups and eight measured verifications per mode.
 The override saved 1.11% of guest cycles; both versions stayed below one
 billion cycles and produced byte-identical output. The runner records fresh
 counts in `cycles.json`; source and compiler changes can affect exact counts.
-The Akita pin includes the complete `codex/recursive-verifier-optimizations`
-stack, so no local source patches are required.
+The verifier optimizations are included in Akita remote `main`, so no local
+source patches are required for this example.
 
 To generate a separate pair of committed CPU inner proofs, select direct
 setup checking by default or add `--offload`:

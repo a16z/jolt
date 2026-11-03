@@ -9,8 +9,15 @@ use std::fmt::{Debug, Formatter, Result as FormatResult};
 use crate::adapters::{akita_error, invalid_batch};
 use crate::AkitaField;
 use akita_types::setup_claims::SetupBatchStatement;
-pub use akita_verifier::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
+pub use akita_verifier::{SetupClaimAccumulator, SetupClaimAdvice};
 use jolt_openings::OpeningsError;
+
+/// Setup verification mode carried by Jolt's owned verification context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SetupMode {
+    Check,
+    Defer,
+}
 
 /// Runtime setup-verification policy and obligations for a native batch.
 ///

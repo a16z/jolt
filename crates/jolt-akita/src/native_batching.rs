@@ -15,11 +15,12 @@
 //! statement shape, bridges Jolt's Fiat-Shamir transcript into Akita's
 //! session, and embeds the backend argument bytes wholesale.
 
+use crate::deferred::SetupMode;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
-use akita_verifier::{SetupClaimAccumulator, SetupMode};
+use akita_verifier::{SetupClaimAccumulator, SetupPolicy};
 use jolt_openings::{
     BatchOpeningScheme, CommitmentGroupRole, GroupOpeningClaim, GroupOpeningWithHint,
     OpeningsError, TaggedGroupOpeningClaim, VerifierOpeningClaim,
@@ -222,12 +223,9 @@ where
 
 fn prove_one_hot_opening<'a>(
     setup: &'a AkitaProverSetup,
-    mut opening: AkitaOpening<'a>,
+    opening: AkitaOpening<'a>,
     session: &[u8],
 ) -> Result<Vec<u8>, OpeningsError> {
-    if let Some(inherited) = &setup.inherited_setup {
-        opening = opening.with_setup_batch(inherited.level, &inherited.statement);
-    }
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let scheme = setup.verifier.one_hot_scheme()?;
@@ -255,15 +253,24 @@ fn verify_one_hot_statement(
 ) -> Result<(), OpeningsError> {
     let verifier = setup.one_hot_verifier()?;
     let verified = if let Some(accumulator) = accumulator {
+        let policy = match mode {
+            SetupMode::Check => SetupPolicy::Check(Some(accumulator)),
+            SetupMode::Defer => SetupPolicy::Defer(accumulator),
+        };
         with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
             &proof.backend_proof, session, statement, BasisMode::Lagrange,
-            Some(accumulator), mode,
+            policy,
         ))
     } else {
+        if mode == SetupMode::Defer {
+            return Err(invalid_batch(
+                "deferred setup verification requires an accumulator",
+            ));
+        }
         with_backend_pool(|| {
             with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify(
                 &proof.backend_proof, session, statement, BasisMode::Lagrange,
-                None, mode,
+                SetupPolicy::Check(None),
             ))
         })
     };
@@ -359,7 +366,11 @@ impl AkitaNativeBatching {
                 claims,
                 handles,
                 scheme.schedules(),
-            )
+            ).and_then(|opening| {
+                if let Some(inherited) = &setup.inherited_setup {
+                    opening.with_setup_batch(inherited.level, &inherited.statement, scheme.schedules())
+                } else { Ok(opening) }
+            })
         })
         .map_err(akita_error)?;
         let selection = opening.selection();
@@ -616,7 +627,11 @@ fn prove_one_hot(
             evaluations,
             backend_commitment,
             backend_hint,
-        )
+        ).and_then(|opening| {
+            if let Some(inherited) = &setup.inherited_setup {
+                opening.with_setup_batch(inherited.level, &inherited.statement, scheme.schedules())
+            } else { Ok(opening) }
+        })
     })
     .map_err(akita_error)?;
     let selection = opening.selection();
@@ -773,8 +788,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         &session,
                         batch_statement,
                         BasisMode::Lagrange,
-                        None,
-                        SetupMode::Check,
+                        SetupPolicy::Check(None),
                     )
                 })
                 .map_err(|_| OpeningsError::VerificationFailed)

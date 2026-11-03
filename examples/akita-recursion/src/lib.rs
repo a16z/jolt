@@ -49,9 +49,15 @@ impl ProofPair {
             .pcs_setup
             .setup_polynomial(self.setup_field_len)
             .map_err(|e| e.to_string())?;
+        let accumulator = SetupClaimAccumulator::new(polynomial.clone());
+        let accumulator = if mode == SetupMode::Defer {
+            accumulator.with_advice(advice)
+        } else {
+            accumulator
+        };
         let mut context = AkitaVerificationContext {
             mode,
-            accumulator: Some(SetupClaimAccumulator::new(polynomial.clone()).with_advice(advice)),
+            accumulator: Some(accumulator),
             ..Default::default()
         };
         observe(ReplayEvent::PrepareEnd);

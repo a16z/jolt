@@ -7,11 +7,12 @@ use crate::support::{
     single_statement,
 };
 use akita_params::PolynomialGroupLayout;
-use jolt_akita::deferred::SetupMode;
+use akita_types::setup_claims::{SetupPolynomialId, SetupQuery};
+use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
-    AkitaChunkProfile, AkitaCommitment, AkitaNativeBatching, AkitaProverHint,
-    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerificationContext,
-    GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
+    AkitaChunkProfile, AkitaCommitment, AkitaError, AkitaField, AkitaNativeBatching,
+    AkitaProverHint, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AkitaVerificationContext, GroupedScheduleParams, TraceOneHotRows, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{
     BatchOpeningScheme, CommitmentScheme, EvaluationClaim, GroupOpeningClaim, OpeningsError,
@@ -22,6 +23,17 @@ use jolt_transcript::{prover_transcript, Blake2b512};
 
 struct TraceRows {
     indices: Vec<[u8; 2]>,
+}
+
+struct SetupAnswers<'a> {
+    setup: &'a AkitaProverSetup,
+    polynomial: SetupPolynomialId,
+}
+
+impl SetupClaimAdvice<AkitaField> for SetupAnswers<'_> {
+    fn answer(&mut self, query: &SetupQuery<AkitaField>) -> Result<AkitaField, AkitaError> {
+        self.setup.prepare_setup_answer(&self.polynomial, query)
+    }
 }
 
 impl TraceOneHotRows for TraceRows {
@@ -115,6 +127,44 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         prover_state.verifier_message::<[u8; 32]>(),
         verifier_transcript.verifier_message::<[u8; 32]>()
     );
+
+    let fields = prover_setup
+        .required_setup_domain_len()
+        .expect("setup length");
+    let advice_setup = prover_setup
+        .clone()
+        .with_setup_domain(fields)
+        .expect("advice setup");
+    let polynomial = verifier_setup
+        .setup_polynomial(fields)
+        .expect("setup polynomial");
+    let mut answers = SetupAnswers {
+        setup: &advice_setup,
+        polynomial: polynomial.clone(),
+    };
+    let mut deferred = AkitaVerificationContext {
+        mode: SetupMode::Defer,
+        accumulator: Some(SetupClaimAccumulator::new(polynomial).with_advice(&mut answers)),
+        ..Default::default()
+    };
+    let mut deferred_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-streamed-tamper"),
+        b"",
+    );
+    AkitaScheme::verify_batch(
+        &verifier_setup,
+        &[],
+        &statement,
+        &proof,
+        &mut deferred_transcript,
+        &mut deferred,
+    )
+    .expect("deferred verification must retain the direct setup obligations");
+    assert!(!deferred
+        .accumulator
+        .expect("deferred accumulator")
+        .into_pending()
+        .is_empty());
 
     // Defer must never silently accept a valid proof without retaining its obligations.
     let mut deferred = AkitaVerificationContext {

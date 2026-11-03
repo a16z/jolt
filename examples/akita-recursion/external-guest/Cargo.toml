@@ -27,7 +27,7 @@ jolt-transcript = { workspace = true, features = [
 akita-challenges = { workspace = true, features = [
   "keccak-inline",
 ], optional = true }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "4bdb8ff3ff03397c5cfbf8f5221cf105cda21e74", default-features = false, features = [
+akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e1f722d5633af4575f0cb6aa57d93d69c9c66024", default-features = false, features = [
   "blake2-inline",
 ], optional = true }
 [lib]

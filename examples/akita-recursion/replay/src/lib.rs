@@ -47,9 +47,15 @@ impl ExternalInput {
         }
         observe(Event::PrepareStart);
         let statement = self.inherited()?;
+        let accumulator = SetupClaimAccumulator::from_batch(0, statement);
+        let accumulator = if mode == SetupMode::Defer {
+            accumulator.with_advice(advice)
+        } else {
+            accumulator
+        };
         let mut context = AkitaVerificationContext {
             mode,
-            accumulator: Some(SetupClaimAccumulator::from_batch(0, statement).with_advice(advice)),
+            accumulator: Some(accumulator),
             cycle_marker: Some("outer_akita"),
         };
         observe(Event::PrepareEnd);
