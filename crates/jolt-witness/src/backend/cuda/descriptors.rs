@@ -167,7 +167,7 @@ pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
             index: 1,
         },
         JoltInstruction::Ld(_) => KindDescriptor {
-            input: 3,
+            input: 13,
             operand: 1,
             output: 0,
             index: 0,
@@ -558,9 +558,15 @@ pub(crate) fn descriptor(kind: JoltInstructionKind) -> Option<KindDescriptor> {
         | JoltInstruction::FieldAssertEq(_)
         | JoltInstruction::FieldAssertZero(_)
         | JoltInstruction::FieldLoadImm(_)
-        | JoltInstruction::FieldLoadAccumulateFromRegister(_)
-        | JoltInstruction::FieldLoadAccumulateFromMemory(_) => KindDescriptor {
+        | JoltInstruction::FieldLoadAccumulateFromRegister(_) => KindDescriptor {
             input: 3,
+            operand: 1,
+            output: 0,
+            index: 0,
+        },
+        #[cfg(feature = "field-inline")]
+        JoltInstruction::FieldLoadAccumulateFromMemory(_) => KindDescriptor {
+            input: 13,
             operand: 1,
             output: 0,
             index: 0,

@@ -22,12 +22,12 @@ typedef __int128_t i128;
 #define VARIANTS 12
 #define FLAG_BIT_JUMP 5
 #define FLAG_BIT_BRANCH 18
-#define FLAG_BIT_NOOP_ROW 21
-#define FLAG_BIT_NEXT_IS_NOOP 22
-#define FLAG_BIT_RAM_HAMMING 23
-#define FLAG_BIT_SHOULD_BRANCH 24
-#define FLAG_BIT_SHOULD_JUMP 25
-#define FLAG_BIT_PRODUCT_NEGATIVE 26
+#define FLAG_BIT_NOOP_ROW 22
+#define FLAG_BIT_NEXT_IS_NOOP 23
+#define FLAG_BIT_RAM_HAMMING 24
+#define FLAG_BIT_SHOULD_BRANCH 25
+#define FLAG_BIT_SHOULD_JUMP 26
+#define FLAG_BIT_PRODUCT_NEGATIVE 27
 
 __device__ __forceinline__ u64 rev8w(u64 v) {
   u32 lo = __byte_perm((u32)v, 0, 0x0123);
@@ -37,7 +37,7 @@ __device__ __forceinline__ u64 rev8w(u64 v) {
 
 __device__ __forceinline__ u64 tz64(u64 v) { return v == 0ull ? 64ull : (u64)__ffsll((long long)v) - 1ull; }
 
-__device__ __forceinline__ void inputs_of(u32 mode, u64 rs1, u64 rs2, i128 imm, u64 address,
+__device__ __forceinline__ void inputs_of(u32 mode, u64 rs1, u64 rs2, u64 rd_post, i128 imm, u64 address,
                                           u64 *x, i128 *y) {
   switch (mode) {
     case 0:  *x = 0ull;     *y = imm; break;
@@ -52,6 +52,7 @@ __device__ __forceinline__ void inputs_of(u32 mode, u64 rs1, u64 rs2, i128 imm, 
     case 9:  *x = rs1;      *y = (i128)(u64)imm; break;
     case 10: *x = rs1;      *y = imm; break;
     case 12: *x = rs1;      *y = (i128)rs2 + imm; break;
+    case 13: *x = 0ull;     *y = (i128)rd_post; break;
     default: *x = rs1;      *y = 0; break;
   }
 }
@@ -243,7 +244,7 @@ extern "C" __global__ void lookup_index_limbs_kernel(
 
   u64 x;
   i128 y;
-  inputs_of(kind_input[kind], rs1, rs2, imm, address[index], &x, &y);
+  inputs_of(kind_input[kind], rs1, rs2, rd_post, imm, address[index], &x, &y);
   u64 left;
   u128 right;
   operands_of(kind_operand[kind], x, y, rs1, rd_post, &left, &right);
@@ -355,7 +356,7 @@ extern "C" __global__ void atom_columns_kernel(
 
     u64 x;
     i128 y;
-    inputs_of(kind_input[kind], rs1, words[X_RS2], imm, row_address, &x, &y);
+    inputs_of(kind_input[kind], rs1, words[X_RS2], rd_post, imm, row_address, &x, &y);
     u64 left;
     u128 right;
     operands_of(kind_operand[kind], x, y, rs1, rd_post, &left, &right);

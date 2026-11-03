@@ -78,6 +78,8 @@ struct AtomProbe {
     left_is_rs1: InstructionFlag,
     #[opening(InstructionFlags(InstructionFlags::RightOperandIsRs2Value))]
     right_is_rs2: InstructionFlag,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRdWriteValue))]
+    right_is_rd_write_value: InstructionFlag,
     #[opening(InstructionFlags(InstructionFlags::Branch))]
     branch: InstructionFlag,
     #[opening(InstructionFlags(InstructionFlags::IsNoop))]
@@ -139,6 +141,7 @@ impl AtomProbe {
             InstructionFlags::RightOperandIsImm => self.right_is_imm.0,
             InstructionFlags::LeftOperandIsRs1Value => self.left_is_rs1.0,
             InstructionFlags::RightOperandIsRs2Value => self.right_is_rs2.0,
+            InstructionFlags::RightOperandIsRdWriteValue => self.right_is_rd_write_value.0,
             InstructionFlags::Branch => self.branch.0,
             InstructionFlags::IsNoop => self.is_noop.0,
         }

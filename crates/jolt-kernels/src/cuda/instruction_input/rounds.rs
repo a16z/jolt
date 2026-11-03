@@ -3,8 +3,9 @@ use jolt_poly::{BindingOrder, UnivariatePoly};
 
 use super::columns::ShardedInstructionColumns;
 use super::witness::{
-    COLUMNS, IMM_COLUMN, LEFT_IS_PC_COLUMN, LEFT_IS_RS1_COLUMN, RIGHT_IS_IMM_COLUMN,
-    RIGHT_IS_RS2_COLUMN, RS1_VALUE_COLUMN, RS2_VALUE_COLUMN, UNEXPANDED_PC_COLUMN,
+    COLUMNS, IMM_COLUMN, LEFT_IS_PC_COLUMN, LEFT_IS_RS1_COLUMN, RD_WRITE_VALUE_COLUMN,
+    RIGHT_IS_IMM_COLUMN, RIGHT_IS_RD_WRITE_VALUE_COLUMN, RIGHT_IS_RS2_COLUMN, RS1_VALUE_COLUMN,
+    RS2_VALUE_COLUMN, UNEXPANDED_PC_COLUMN,
 };
 use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::device::{require_fr, require_fr_slice, DeviceFrVec};
@@ -121,6 +122,7 @@ fn leaves<F: JoltField>(gamma: F, with_eq: bool) -> Result<SumOfProducts<F>, Cud
     for (coefficient, flag, value) in [
         (one, RIGHT_IS_RS2_COLUMN, RS2_VALUE_COLUMN),
         (one, RIGHT_IS_IMM_COLUMN, IMM_COLUMN),
+        (one, RIGHT_IS_RD_WRITE_VALUE_COLUMN, RD_WRITE_VALUE_COLUMN),
         (gamma, LEFT_IS_RS1_COLUMN, RS1_VALUE_COLUMN),
         (gamma, LEFT_IS_PC_COLUMN, UNEXPANDED_PC_COLUMN),
     ] {

@@ -1,8 +1,8 @@
 //! CUDA instruction-input checking.
 //!
-//! Like optimized, round zero reads eight native columns: four flag bits,
+//! Like optimized, round zero reads ten native columns: five flag bits,
 //! register values, the signed immediate, and the unexpanded PC. CUDA's first
-//! bind produces eight half-sized field tables; optimized keeps the flags as
+//! bind produces ten half-sized field tables; optimized keeps the flags as
 //! packed Boolean patterns through four binds and materializes only operands.
 //! CUDA retains padding rows, while optimized folds their constant contribution
 //! through a summed equality weight. CUDA describes the batched relation
@@ -141,7 +141,7 @@ impl<F: JoltField> SumcheckKernel<F> for InstructionInputKernel<F> {
             .ok_or(SumcheckKernelError::InvariantViolation {
                 reason: "CUDA instruction input-virtualization never read back its bound columns",
             })?;
-        let &[left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm] =
+        let &[left_operand_is_rs1, rs1_value, left_operand_is_pc, unexpanded_pc, right_operand_is_rs2, rs2_value, right_operand_is_imm, imm, right_operand_is_rd_write_value, rd_write_value] =
             finals.as_slice()
         else {
             return Err(SumcheckKernelError::InvariantViolation {
@@ -157,6 +157,8 @@ impl<F: JoltField> SumcheckKernel<F> for InstructionInputKernel<F> {
             rs2_value,
             right_operand_is_imm,
             imm,
+            right_operand_is_rd_write_value,
+            rd_write_value,
         })
     }
 }
@@ -235,8 +237,8 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for CudaBackend {
 )]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::instruction::{
-        imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
-        rs1_value, rs2_value, unexpanded_pc,
+        imm, left_operand_is_pc, left_operand_is_rs1, rd_write_value, right_operand_is_imm,
+        right_operand_is_rd_write_value, right_operand_is_rs2, rs1_value, rs2_value, unexpanded_pc,
     };
     use jolt_claims::protocols::jolt::relations::instruction::{
         InstructionInputChallenges, InstructionInputInputClaims,
@@ -269,17 +271,24 @@ mod tests {
         }
     }
 
-    fn flag_ids() -> [JoltOpeningId; 4] {
+    fn flag_ids() -> [JoltOpeningId; 5] {
         [
             left_operand_is_rs1(),
             left_operand_is_pc(),
             right_operand_is_rs2(),
             right_operand_is_imm(),
+            right_operand_is_rd_write_value(),
         ]
     }
 
-    fn value_ids() -> [JoltOpeningId; 4] {
-        [rs1_value(), unexpanded_pc(), rs2_value(), imm()]
+    fn value_ids() -> [JoltOpeningId; 5] {
+        [
+            rs1_value(),
+            unexpanded_pc(),
+            rs2_value(),
+            imm(),
+            rd_write_value(),
+        ]
     }
 
     #[test]

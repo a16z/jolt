@@ -1,11 +1,13 @@
 #[cfg(test)]
 use jolt_riscv::InstructionFlags as InstructionFlagKind;
 #[cfg(test)]
-use jolt_witness::witnesses::{Imm, InstructionFlag, Rs1Value, Rs2Value, UnexpandedPc};
+use jolt_witness::witnesses::{
+    Imm, InstructionFlag, RdWriteValue, Rs1Value, Rs2Value, UnexpandedPc,
+};
 #[cfg(test)]
 use jolt_witness::WitnessBundle;
 
-pub const COLUMNS: usize = 8;
+pub const COLUMNS: usize = 10;
 
 pub const LEFT_IS_RS1_COLUMN: usize = 0;
 pub const RS1_VALUE_COLUMN: usize = 1;
@@ -15,6 +17,8 @@ pub const RIGHT_IS_RS2_COLUMN: usize = 4;
 pub const RS2_VALUE_COLUMN: usize = 5;
 pub const RIGHT_IS_IMM_COLUMN: usize = 6;
 pub const IMM_COLUMN: usize = 7;
+pub const RIGHT_IS_RD_WRITE_VALUE_COLUMN: usize = 8;
+pub const RD_WRITE_VALUE_COLUMN: usize = 9;
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, WitnessBundle)]
@@ -35,4 +39,8 @@ pub struct InstructionInputWitness {
     pub right_operand_is_imm: InstructionFlag,
     #[opening(Imm)]
     pub imm: Imm,
+    #[opening(InstructionFlags(InstructionFlagKind::RightOperandIsRdWriteValue))]
+    pub right_operand_is_rd_write_value: InstructionFlag,
+    #[opening(RdWriteValue)]
+    pub rd_write_value: RdWriteValue,
 }

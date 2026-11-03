@@ -122,19 +122,19 @@ pub const FLAG_BIT_CIRCUIT_BASE: u32 = 0;
 
 pub const FLAG_BIT_INSTRUCTION_BASE: u32 = 14;
 
-pub const FLAG_BIT_RAF: u32 = 20;
+pub const FLAG_BIT_RAF: u32 = 21;
 
-pub const FLAG_BIT_NOOP_ROW: u32 = 21;
+pub const FLAG_BIT_NOOP_ROW: u32 = 22;
 
-pub const FLAG_BIT_NEXT_IS_NOOP: u32 = 22;
+pub const FLAG_BIT_NEXT_IS_NOOP: u32 = 23;
 
-pub const FLAG_BIT_RAM_HAMMING: u32 = 23;
+pub const FLAG_BIT_RAM_HAMMING: u32 = 24;
 
-pub const FLAG_BIT_SHOULD_BRANCH: u32 = 24;
+pub const FLAG_BIT_SHOULD_BRANCH: u32 = 25;
 
-pub const FLAG_BIT_SHOULD_JUMP: u32 = 25;
+pub const FLAG_BIT_SHOULD_JUMP: u32 = 26;
 
-pub const FLAG_BIT_PRODUCT_NEGATIVE: u32 = 26;
+pub const FLAG_BIT_PRODUCT_NEGATIVE: u32 = 27;
 
 pub const REGISTER_ADDRESS_ABSENT: u32 = u32::MAX;
 

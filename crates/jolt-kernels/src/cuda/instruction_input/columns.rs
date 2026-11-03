@@ -5,8 +5,8 @@ use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::JoltField;
 use jolt_riscv::InstructionFlags as InstructionFlagKind;
 use jolt_witness::backend::cuda::{
-    instruction_flag_bit, DeviceTrace, EXTRA_IMM_HI, EXTRA_IMM_LO, EXTRA_RS1, EXTRA_RS2,
-    EXTRA_WORDS,
+    instruction_flag_bit, DeviceTrace, EXTRA_IMM_HI, EXTRA_IMM_LO, EXTRA_RD_POST, EXTRA_RS1,
+    EXTRA_RS2, EXTRA_WORDS,
 };
 
 pub(crate) struct ColumnShard<F: JoltField> {
@@ -197,8 +197,9 @@ const fn absent() -> CudaError {
 }
 
 use super::witness::{
-    COLUMNS, IMM_COLUMN, LEFT_IS_PC_COLUMN, LEFT_IS_RS1_COLUMN, RIGHT_IS_IMM_COLUMN,
-    RIGHT_IS_RS2_COLUMN, RS1_VALUE_COLUMN, RS2_VALUE_COLUMN, UNEXPANDED_PC_COLUMN,
+    COLUMNS, IMM_COLUMN, LEFT_IS_PC_COLUMN, LEFT_IS_RS1_COLUMN, RD_WRITE_VALUE_COLUMN,
+    RIGHT_IS_IMM_COLUMN, RIGHT_IS_RD_WRITE_VALUE_COLUMN, RIGHT_IS_RS2_COLUMN, RS1_VALUE_COLUMN,
+    RS2_VALUE_COLUMN, UNEXPANDED_PC_COLUMN,
 };
 use crate::cuda::common::context::context_for;
 use crate::cuda::common::context::CudaKernelContext;
@@ -212,17 +213,18 @@ use jolt_field::Fr;
 
 const IMM_WORDS_ARE_ADJACENT: () = assert!(EXTRA_IMM_HI == EXTRA_IMM_LO + 1);
 
-const FLAG_KINDS: [InstructionFlagKind; 4] = [
+const FLAG_KINDS: [InstructionFlagKind; 5] = [
     InstructionFlagKind::LeftOperandIsRs1Value,
     InstructionFlagKind::LeftOperandIsPC,
     InstructionFlagKind::RightOperandIsRs2Value,
     InstructionFlagKind::RightOperandIsImm,
+    InstructionFlagKind::RightOperandIsRdWriteValue,
 ];
 
 pub struct NativeInstructionColumns {
     trace: Arc<DeviceTrace>,
     flags: CudaSlice<u64>,
-    bits: [u32; 4],
+    bits: [u32; FLAG_KINDS.len()],
     entries: usize,
 }
 
@@ -252,8 +254,10 @@ impl NativeInstructionColumns {
             LEFT_IS_PC_COLUMN => self.flag(1),
             RIGHT_IS_RS2_COLUMN => self.flag(2),
             RIGHT_IS_IMM_COLUMN => self.flag(3),
+            RIGHT_IS_RD_WRITE_VALUE_COLUMN => self.flag(4),
             RS1_VALUE_COLUMN => Some(self.extra(EXTRA_RS1, NarrowKind::U64)),
             RS2_VALUE_COLUMN => Some(self.extra(EXTRA_RS2, NarrowKind::U64)),
+            RD_WRITE_VALUE_COLUMN => Some(self.extra(EXTRA_RD_POST, NarrowKind::U64)),
             IMM_COLUMN => Some(self.extra(EXTRA_IMM_LO, NarrowKind::TwosI128)),
             UNEXPANDED_PC_COLUMN => Some(FoldColumn::Narrow(NarrowColumn::packed(
                 self.trace.unexpanded_pc(),
@@ -298,7 +302,7 @@ impl DeviceInstructionColumns {
         let missing = || CudaError::InvariantViolation {
             reason: "an instruction-input flag has no canonical device bit",
         };
-        let mut bits = [0u32; 4];
+        let mut bits = [0u32; FLAG_KINDS.len()];
         for (slot, kind) in FLAG_KINDS.into_iter().enumerate() {
             *bits.get_mut(slot).ok_or_else(missing)? =
                 instruction_flag_bit(kind).ok_or_else(missing)?;
@@ -439,8 +443,8 @@ impl DeviceInstructionColumns {
 )]
 mod tests {
     use jolt_claims::protocols::jolt::geometry::instruction::{
-        imm, left_operand_is_pc, left_operand_is_rs1, right_operand_is_imm, right_operand_is_rs2,
-        rs1_value, rs2_value, unexpanded_pc,
+        imm, left_operand_is_pc, left_operand_is_rs1, rd_write_value, right_operand_is_imm,
+        right_operand_is_rd_write_value, right_operand_is_rs2, rs1_value, rs2_value, unexpanded_pc,
     };
     use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltOpeningId};
     use jolt_field::Fr;
@@ -475,6 +479,8 @@ mod tests {
             rs2_value(),
             right_operand_is_imm(),
             imm(),
+            right_operand_is_rd_write_value(),
+            rd_write_value(),
         ]
     }
 

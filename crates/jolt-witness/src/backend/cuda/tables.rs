@@ -36,13 +36,14 @@ pub const PACK_CIRCUIT_ORDER: [CircuitFlags; 14] = [
     CircuitFlags::IsLastInSequence,
 ];
 
-pub const PACK_INSTRUCTION_ORDER: [InstructionFlags; 6] = [
+pub const PACK_INSTRUCTION_ORDER: [InstructionFlags; 7] = [
     InstructionFlags::LeftOperandIsPC,
     InstructionFlags::RightOperandIsImm,
     InstructionFlags::LeftOperandIsRs1Value,
     InstructionFlags::RightOperandIsRs2Value,
     InstructionFlags::Branch,
     InstructionFlags::IsNoop,
+    InstructionFlags::RightOperandIsRdWriteValue,
 ];
 
 pub const TABLE_INDEX_ABSENT: u32 = u32::MAX;
