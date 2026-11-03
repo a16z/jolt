@@ -2603,7 +2603,7 @@ mod tests {
     fn packed_chunk_pairs_match_dense_binding() {
         fn check<F: JoltField>() {
             for (bits, chunks) in [(4, 32), (16, 8), (7, 18)] {
-                let rows = fixture_rows(5, 0x314159);
+                let rows = fixture_rows(5, 0x0031_4159);
                 let mut packed = pack(&rows);
                 packed.truncate(23);
                 let source =
