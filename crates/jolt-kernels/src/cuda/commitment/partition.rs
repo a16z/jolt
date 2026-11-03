@@ -4,6 +4,8 @@
 //! rows by address before finalization. Optimized streams the column's rows
 //! through its PCS consumer in their final order. CUDA assigns complete columns
 //! by row count and groups ready columns of equal height for finalization.
+//! The caller prepares trace windows sequentially while device workers commit
+//! each ready window. Preparation never shares the row source across threads.
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
@@ -183,8 +185,13 @@ fn column_rows(plan: &ColumnPlan<'_>, blocks: &[usize]) -> Vec<usize> {
 
 pub(super) type PipelineResult<PCS, W> = (Vec<FinishedColumn<PCS>>, Vec<W>);
 
-pub(super) type Tier1Producer<'a, F, W> = Box<
-    dyn FnOnce(&'static CudaKernelContext, usize, &Sender<Tier1Part>) -> Result<W, KernelError<F>>
+pub(super) type Tier1Producer<'a, F, W, I = ()> = Box<
+    dyn FnOnce(
+            &'static CudaKernelContext,
+            usize,
+            I,
+            &Sender<Tier1Part>,
+        ) -> Result<W, KernelError<F>>
         + Send
         + 'a,
 >;
@@ -302,17 +309,19 @@ where
     Ok(finished)
 }
 
-pub(super) fn pipeline_columns<F, PCS, W, C>(
+pub(super) fn pipeline_columns<F, PCS, W, C, I>(
     setup: &PCS::ProverSetup,
     plan: &ColumnPlan<'_>,
     blocks: &[usize],
     context_of: &C,
-    producers: Vec<Tier1Producer<'_, F, W>>,
+    producers: Vec<Tier1Producer<'_, F, W, I>>,
+    mut prepare: impl FnMut(usize) -> Result<I, KernelError<F>>,
 ) -> Result<PipelineResult<PCS, W>, KernelError<F>>
 where
     F: JoltField,
     PCS: DeviceTier1Commitment,
     W: Send,
+    I: Send,
     C: Fn(usize) -> Option<&'static CudaKernelContext> + Sync,
 {
     if blocks.len() != producers.len() {
@@ -367,7 +376,10 @@ where
         let coordinator = scope
             .spawn(move || coordinate::<F>(parts_rx, plan, blocks, &owner, senders, &stitching));
         let mut tasks: Vec<WindowTask<'_, F, PCS, W>> = Vec::with_capacity(producers.len());
+        let mut inputs = Vec::with_capacity(producers.len());
         for (ordinal, producer) in producers.into_iter().enumerate() {
+            let (input_tx, input_rx) = mpsc::sync_channel(1);
+            inputs.push(input_tx);
             let context = contexts.get(ordinal).copied();
             let stitched = receivers.get_mut(ordinal).and_then(Option::take);
             let sender = parts.get_mut(ordinal).and_then(Option::take);
@@ -382,13 +394,18 @@ where
                 let stitched = stitched.ok_or_else(absent)?;
                 let sender = sender.ok_or_else(absent)?;
                 let selection = selection.ok_or_else(absent)?;
+                let input = input_rx
+                    .recv()
+                    .map_err(|_| KernelError::InvariantViolation {
+                        reason: "trace preparation ended before a commit window was ready",
+                    })?;
                 let _device = enter_device(context.ordinal());
                 let window = tracing::info_span!(
                     parent: &parent,
                     "cuda_commit_tier1_window",
                     device = context.ordinal()
                 )
-                .in_scope(|| producer(context, ordinal, &sender))?;
+                .in_scope(|| producer(context, ordinal, input, &sender))?;
                 drop(sender);
                 let finished = consume_tier2::<F, PCS>(
                     context,
@@ -401,8 +418,33 @@ where
                 Ok((finished, window))
             }));
         }
-        let outcome = tracing::info_span!("cuda_commit_tier1_fanout", windows = tasks.len())
-            .in_scope(|| fan_out_bound(tasks));
+        // Owning the senders here closes every unfinished window on error or
+        // unwind, so the workers and stitcher can always finish before return.
+        let prepare = move || {
+            inputs
+                .into_iter()
+                .enumerate()
+                .try_for_each(|(ordinal, tx)| {
+                    let input = prepare(ordinal)?;
+                    tx.send(input).map_err(|_| KernelError::InvariantViolation {
+                        reason: "a commit worker stopped before receiving its trace window",
+                    })
+                })
+        };
+        let parallel = tasks.len() > 1;
+        let fanout = tracing::info_span!("cuda_commit_tier1_fanout", windows = tasks.len());
+        let commit = move || fanout.in_scope(|| fan_out_bound(tasks));
+        let outcome = if parallel {
+            let workers = scope.spawn(commit);
+            let prepared = prepare();
+            match workers.join() {
+                Ok(committed) => prepared.and(committed),
+                Err(payload) => std::panic::resume_unwind(payload),
+            }
+        } else {
+            let prepared = prepare();
+            prepared.and_then(|()| commit())
+        };
         match coordinator.join() {
             Ok(stitch) => {
                 let done = outcome?;
@@ -440,9 +482,9 @@ pub(super) fn split_columns<F, PCS>(
     setup: &PCS::ProverSetup,
     bases: &DeviceG1Bases,
     plan: &ColumnPlan<'_>,
-    traces: &[Arc<DeviceTrace>],
     host_bases: &[AffineLimbs],
     windows: &[CycleWindow],
+    prepare: impl FnMut(usize) -> Result<Arc<DeviceTrace>, KernelError<F>>,
 ) -> Result<PipelineResult<PCS, WindowHotColumns>, KernelError<F>>
 where
     F: JoltField,
@@ -452,13 +494,10 @@ where
         .iter()
         .map(|window| window.len / plan.row_width)
         .collect();
-    let mut producers: Vec<Tier1Producer<'_, F, WindowHotColumns>> =
+    let mut producers: Vec<Tier1Producer<'_, F, WindowHotColumns, Arc<DeviceTrace>>> =
         Vec::with_capacity(windows.len());
-    for (ordinal, window) in windows.iter().enumerate() {
-        let trace = traces.get(ordinal).ok_or(KernelError::InvariantViolation {
-            reason: "commitment partition has no uploaded trace",
-        })?;
-        producers.push(Box::new(move |context, ordinal, sink| {
+    for window in windows {
+        producers.push(Box::new(move |context, ordinal, trace, sink| {
             let built = tracing::info_span!(
                 "cuda_commit_park_hot",
                 device = ordinal,
@@ -466,7 +505,7 @@ where
             )
             .in_scope(|| {
                 hot_columns_from_trace::<F>(
-                    trace,
+                    &trace,
                     plan.kinds,
                     plan.one_hot_k,
                     &CycleWindow {
@@ -482,7 +521,7 @@ where
                 device = ordinal,
                 cycles = window.len
             )
-            .in_scope(|| dense_columns_from_trace::<F>(context, trace, plan.kinds, window.len))?;
+            .in_scope(|| dense_columns_from_trace::<F>(context, &trace, plan.kinds, window.len))?;
             let uploaded = (ordinal > 0)
                 .then(|| context.upload_g1_bases(host_bases))
                 .transpose()?;
@@ -511,7 +550,14 @@ where
             Ok(built)
         }));
     }
-    pipeline_columns::<F, PCS, WindowHotColumns, _>(setup, plan, &blocks, &context_for, producers)
+    pipeline_columns::<F, PCS, WindowHotColumns, _, _>(
+        setup,
+        plan,
+        &blocks,
+        &context_for,
+        producers,
+        prepare,
+    )
 }
 
 #[cfg(test)]
@@ -703,8 +749,10 @@ mod tests {
     #[cfg(not(feature = "zk"))]
     #[test]
     fn pipelined_columns_match_reference_dory_under_skewed_arrival() {
+        use std::cell::Cell;
         use std::sync::mpsc::Sender;
         use std::sync::Barrier;
+        use std::time::Duration;
 
         use jolt_dory::DoryScheme;
         use jolt_openings::StreamingCommitment;
@@ -826,13 +874,16 @@ mod tests {
                 let parts: Vec<Vec<Option<Vec<JacobianLimbs>>>> =
                     windows.iter().map(collect).collect();
                 let gate = barrier.then(|| Arc::new(Barrier::new(devices)));
+                let (started_tx, started_rx) = std::sync::mpsc::channel();
                 let producers: Vec<Tier1Producer<'_, Fr, ()>> = parts
                     .into_iter()
                     .map(|part| {
                         let gate = gate.clone();
+                        let started = started_tx.clone();
                         let producer: Tier1Producer<'_, Fr, ()> =
-                            Box::new(move |_context, window, tx: &Sender<Tier1Part>| {
+                            Box::new(move |_context, window, (), tx: &Sender<Tier1Part>| {
                                 if window == 0 {
+                                    started.send(()).expect("signal first window");
                                     if let Some(gate) = &gate {
                                         let _ = gate.wait();
                                     }
@@ -868,14 +919,28 @@ mod tests {
                     })
                     .collect();
 
-                let (got, _) = pipeline_columns::<Fr, CudaDoryScheme, (), _>(
+                let prepared = Cell::new(0);
+                let caller = std::thread::current().id();
+                let (got, _) = pipeline_columns::<Fr, CudaDoryScheme, (), _, _>(
                     &setup,
                     &plan,
                     &blocks,
                     &|_| shared_context(),
                     producers,
+                    |ordinal| {
+                        assert_eq!(std::thread::current().id(), caller);
+                        assert_eq!(ordinal, prepared.get());
+                        prepared.set(ordinal + 1);
+                        if ordinal == 1 {
+                            started_rx
+                                .recv_timeout(Duration::from_secs(30))
+                                .expect("first window starts before preparing the second");
+                        }
+                        Ok(())
+                    },
                 )
                 .expect("pipelined columns");
+                assert_eq!(prepared.get(), devices);
 
                 assert_eq!(
                     got.len(),
@@ -897,6 +962,72 @@ mod tests {
                      commitment and its opening hint must depend only on its stitched rows, \
                      never on which device finished it or when",
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn preparation_failure_drains_commit_workers() {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
+
+        use super::{pipeline_columns, Tier1Producer};
+        use crate::cuda::dory::CudaDoryScheme;
+        use crate::KernelError;
+
+        if shared_context().is_none() {
+            return;
+        }
+        let setup = CudaDoryScheme::setup_prover(4);
+        let plan = ColumnPlan {
+            kinds: &[ColumnKind::RamInc],
+            one_hot_k: 1,
+            row_width: 1,
+        };
+        for devices in [1, 2, 4] {
+            for panic in [false, true] {
+                let blocks = vec![1; devices];
+                let producers: Vec<Tier1Producer<'_, Fr, ()>> = (0..devices)
+                    .map(|_| {
+                        let producer: Tier1Producer<'_, Fr, ()> = Box::new(|_, window, (), tx| {
+                            tx.send(Tier1Part {
+                                window,
+                                index: 0,
+                                rows: vec![JacobianLimbs::IDENTITY],
+                            })
+                            .expect("send prepared rows");
+                            Ok(())
+                        });
+                        producer
+                    })
+                    .collect();
+                let outcome = catch_unwind(AssertUnwindSafe(|| {
+                    pipeline_columns::<Fr, CudaDoryScheme, (), _, _>(
+                        &setup,
+                        &plan,
+                        &blocks,
+                        &|_| shared_context(),
+                        producers,
+                        |ordinal| {
+                            if ordinal == devices - 1 {
+                                assert!(!panic, "injected preparation panic");
+                                return Err(KernelError::InvariantViolation {
+                                    reason: "injected preparation failure",
+                                });
+                            }
+                            Ok(())
+                        },
+                    )
+                }));
+                if panic {
+                    assert!(outcome.is_err());
+                } else {
+                    assert!(matches!(
+                        outcome.expect("preparation returns an error"),
+                        Err(KernelError::InvariantViolation {
+                            reason: "injected preparation failure"
+                        })
+                    ));
+                }
             }
         }
     }

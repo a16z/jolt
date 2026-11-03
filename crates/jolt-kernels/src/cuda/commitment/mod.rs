@@ -5,6 +5,8 @@
 //! Commitment-aligned windows can share their uploaded trace and hot columns
 //! with later sumcheck and opening kernels. Every device acquires its window
 //! through the shared session cache so matching prewarmed atoms remain available.
+//! With multiple windows, row-source visits stay on the caller while each
+//! device starts committing as soon as its window is resident.
 //!
 //! `DeviceTier1Commitment` separates these row computations from PCS
 //! finalization. `DoryScheme` pipelines GPU rows into CPU tier-two commitments;
@@ -85,6 +87,7 @@ pub type FinishedColumn<PCS> = (
 /// finalization; implementations may batch selected columns instead.
 pub trait DeviceTier1Commitment: CommitmentScheme + ModeStreamingCommitment {
     /// Enables partitioned commitment work with batched tier-two finalization.
+    /// Finalization must not depend on caller-thread state.
     const BATCHES_TIER2: bool = false;
 
     fn tier1_bases(setup: &Self::ProverSetup, count: usize) -> Result<Vec<AffineLimbs>, CudaError>;
@@ -358,7 +361,7 @@ fn tier1_order(hot: &RetainedHotColumns) -> impl Iterator<Item = usize> + '_ {
 
 struct ResidentBases {
     count: usize,
-    bases: DeviceG1Bases,
+    bases: Arc<DeviceG1Bases>,
 }
 
 #[cfg(feature = "allocative")]
@@ -370,12 +373,12 @@ impl Allocative for ResidentBases {
     }
 }
 
-fn device_bases<'a, F, PCS>(
-    session: &'a mut ProofSession,
+fn device_bases<F, PCS>(
+    session: &mut ProofSession,
     context: &'static CudaKernelContext,
     setup: &PCS::ProverSetup,
     count: usize,
-) -> Result<&'a DeviceG1Bases, KernelError<F>>
+) -> Result<Arc<DeviceG1Bases>, KernelError<F>>
 where
     F: JoltField,
     PCS: DeviceTier1Commitment,
@@ -386,11 +389,14 @@ where
     if stale {
         let bases = PCS::tier1_bases(setup, count)?;
         let bases = context.upload_g1_bases(&bases)?;
-        session.park(ResidentBases { count, bases });
+        session.park(ResidentBases {
+            count,
+            bases: Arc::new(bases),
+        });
     }
     session
         .state::<ResidentBases>()
-        .map(|resident| &resident.bases)
+        .map(|resident| Arc::clone(&resident.bases))
         .ok_or(KernelError::InvariantViolation {
             reason: "the resident tier-1 base table was just parked",
         })
@@ -436,12 +442,27 @@ impl CudaBackend {
             let one_hot_k = 1usize << grid.log_k_chunk;
             if PCS::BATCHES_TIER2 {
                 let windows = committed_windows(cycles, row_width);
-                let _ = tracing::info_span!("cuda_commit_bases", bases = row_width)
+                let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
                     .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
-                let traces = windows
-                    .iter()
-                    .enumerate()
-                    .map(|(ordinal, window)| {
+                let plan = ColumnPlan {
+                    kinds: &kinds,
+                    one_hot_k,
+                    row_width,
+                };
+                let host_bases = PCS::tier1_bases(setup, row_width)?;
+                let (columns, hots) = partition::split_columns::<F, PCS>(
+                    setup,
+                    &bases,
+                    &plan,
+                    &host_bases,
+                    &windows,
+                    |ordinal| {
+                        let window =
+                            windows
+                                .get(ordinal)
+                                .ok_or(KernelError::InvariantViolation {
+                                    reason: "missing commitment window",
+                                })?;
                         let device = super::common::context::context_for(ordinal).ok_or(
                             KernelError::InvariantViolation {
                                 reason: "missing commitment device",
@@ -455,22 +476,7 @@ impl CudaBackend {
                             cycles,
                             &window.residency(cycles),
                         )
-                    })
-                    .collect::<Result<Vec<_>, KernelError<F>>>()?;
-                let bases = device_bases::<F, PCS>(session, context, setup, row_width)?;
-                let plan = ColumnPlan {
-                    kinds: &kinds,
-                    one_hot_k,
-                    row_width,
-                };
-                let host_bases = PCS::tier1_bases(setup, row_width)?;
-                let (columns, hots) = partition::split_columns::<F, PCS>(
-                    setup,
-                    bases,
-                    &plan,
-                    &traces,
-                    &host_bases,
-                    &windows,
+                    },
                 )?;
                 for (ordinal, (window, built)) in windows.iter().zip(hots).enumerate() {
                     let _ = park_hot_columns(session, source, ordinal, ids, window, built);
@@ -544,7 +550,7 @@ impl CudaBackend {
                         Some(column) => {
                             tracing::info_span!("cuda_commit_tier1_one_hot").in_scope(|| {
                                 context.one_hot_rows_device(
-                                    bases,
+                                    &bases,
                                     &column.slice(0..cycles),
                                     cycles,
                                     one_hot_k,
@@ -559,7 +565,7 @@ impl CudaBackend {
                                              dense id",
                                 },
                             )?;
-                            context.msm_rows_signed(bases, column, row_width)
+                            context.msm_rows_signed(&bases, column, row_width)
                         }),
                     };
                     match rows {
@@ -603,7 +609,7 @@ impl CudaBackend {
                     }
                 }
                 let rows = tracing::info_span!("cuda_commit_tier1_dense")
-                    .in_scope(|| device_rows::<F>(context, bases, &table, row_width))?;
+                    .in_scope(|| device_rows::<F>(context, &bases, &table, row_width))?;
                 tracing::info_span!("cuda_commit_tier2")
                     .in_scope(|| finish::<F, PCS>(setup, &rows, id))
             })
@@ -666,7 +672,7 @@ where
         let bases = tracing::info_span!("cuda_commit_bases", bases = row_width)
             .in_scope(|| device_bases::<F, PCS>(session, context, setup, row_width))?;
         let values = witness.oracle_table(JoltPolynomialId::Committed(id))?;
-        let rows = device_rows::<F>(context, bases, &values, row_width)?;
+        let rows = device_rows::<F>(context, &bases, &values, row_width)?;
         finish::<F, PCS>(setup, &rows, id)
     }
 }
