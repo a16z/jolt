@@ -16,6 +16,7 @@ use jolt_akita::{AkitaScheme, TrustedBytes};
 use jolt_claims::immutable_recipes::record::Session;
 use jolt_field::Ring;
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
+use jolt_sdk::VerifierTranscript;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -104,12 +105,9 @@ fn generate(stream: &[u8]) -> Result<String, String> {
         .map_err(|error| format!("prepared payloads did not attach: {error:?}"))?;
     let session = Session::begin().map_err(|error| error.to_string())?;
     for (proof, public_io) in &records {
-        jolt_sdk::jolt_verifier::verify::<
-            AkitaField,
-            AkitaScheme,
-            AkitaVc,
-            jolt_sdk::VerifierTranscript<'_>,
-        >(&attached, public_io, proof, None)
+        jolt_sdk::jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierTranscript<'_>>(
+            &attached, public_io, proof, None,
+        )
         .map_err(|error| format!("native verification rejected a proof: {error:?}"))?;
     }
     let mut capture = session.finish().map_err(|error| error.to_string())?;
