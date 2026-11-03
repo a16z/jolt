@@ -56,36 +56,53 @@ const SOURCE_CHUNK: usize = 1 << 14;
 #[cfg(any(feature = "parallel", test))]
 const PACK_CHUNK: usize = 1 << 8;
 
-impl PackedTrace {
-    pub fn from_source(source: &dyn RowSource, range: Range<usize>) -> Result<Self, WitnessError> {
-        let len =
-            range
-                .end
-                .checked_sub(range.start)
-                .ok_or_else(|| WitnessError::InvalidDimensions {
-                    label: JOLT_VM_LABEL,
-                    reason: "reversed CUDA trace window".to_owned(),
-                })?;
-        let mut packed = Self::with_capacity(len);
-        let mut offset = 0;
-        source.visit_chunks(range, SOURCE_CHUNK, &mut |rows, _, _| {
-            let end = offset + rows.len();
-            if end > len {
-                return Err(WitnessError::InvalidDimensions {
-                    label: JOLT_VM_LABEL,
-                    reason: "row source exceeded the CUDA trace window".to_owned(),
-                });
-            }
-            packed.fill_window(rows, 0, offset..end);
-            offset = end;
-            Ok(())
-        })?;
-        if offset != len {
+pub(super) fn source_window_len(range: &Range<usize>) -> Result<usize, WitnessError> {
+    range
+        .end
+        .checked_sub(range.start)
+        .ok_or_else(|| WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: "reversed CUDA trace window".to_owned(),
+        })
+}
+
+pub(super) fn visit_source(
+    source: &dyn RowSource,
+    range: Range<usize>,
+    chunk_size: usize,
+    mut visit: impl FnMut(&[TraceRow], Range<usize>) -> Result<(), WitnessError>,
+) -> Result<(), WitnessError> {
+    let len = source_window_len(&range)?;
+    let mut offset = 0;
+    source.visit_chunks(range, chunk_size, &mut |rows, _, _| {
+        if rows.len() > chunk_size || rows.len() > len - offset {
             return Err(WitnessError::InvalidDimensions {
                 label: JOLT_VM_LABEL,
-                reason: format!("CUDA trace window expected {len} rows, received {offset}"),
+                reason: "row source exceeded the CUDA trace window or chunk bound".to_owned(),
             });
         }
+        let end = offset + rows.len();
+        visit(rows, offset..end)?;
+        offset = end;
+        Ok(())
+    })?;
+    if offset != len {
+        return Err(WitnessError::InvalidDimensions {
+            label: JOLT_VM_LABEL,
+            reason: format!("CUDA trace window expected {len} rows, received {offset}"),
+        });
+    }
+    Ok(())
+}
+
+impl PackedTrace {
+    pub fn from_source(source: &dyn RowSource, range: Range<usize>) -> Result<Self, WitnessError> {
+        let len = source_window_len(&range)?;
+        let mut packed = Self::with_capacity(len);
+        visit_source(source, range, SOURCE_CHUNK, |rows, destination| {
+            packed.fill_window(rows, 0, destination);
+            Ok(())
+        })?;
         packed.cycles = len;
         Ok(packed)
     }
@@ -108,49 +125,14 @@ impl PackedTrace {
     }
 
     fn fill_window(&mut self, rows: &[TraceRow], base: usize, destination: Range<usize>) {
-        let padding = TraceRow::default();
-        let is_noop = &mut self.is_noop[destination.clone()];
-        let address = &mut self.address[destination.clone()];
-        let virtual_sequence = &mut self.virtual_sequence[destination.clone()];
-        let ram_address = &mut self.ram_address[destination.clone()];
-        let extras =
-            &mut self.extras[destination.start * EXTRA_WORDS..destination.end * EXTRA_WORDS];
-
-        #[cfg(feature = "parallel")]
-        {
-            use rayon::prelude::*;
-            is_noop
-                .par_chunks_mut(PACK_CHUNK)
-                .zip(address.par_chunks_mut(PACK_CHUNK))
-                .zip(virtual_sequence.par_chunks_mut(PACK_CHUNK))
-                .zip(ram_address.par_chunks_mut(PACK_CHUNK))
-                .zip(extras.par_chunks_mut(PACK_CHUNK * EXTRA_WORDS))
-                .enumerate()
-                .for_each(
-                    |(chunk, ((((is_noop, address), virtual_sequence), ram_address), extras))| {
-                        fill(
-                            base + chunk * PACK_CHUNK,
-                            rows,
-                            &padding,
-                            is_noop,
-                            address,
-                            virtual_sequence,
-                            ram_address,
-                            extras,
-                        );
-                    },
-                );
-        }
-        #[cfg(not(feature = "parallel"))]
-        fill(
-            base,
+        fill_rows(
             rows,
-            &padding,
-            is_noop,
-            address,
-            virtual_sequence,
-            ram_address,
-            extras,
+            base,
+            &mut self.is_noop[destination.clone()],
+            &mut self.address[destination.clone()],
+            &mut self.virtual_sequence[destination.clone()],
+            &mut self.ram_address[destination.clone()],
+            &mut self.extras[destination.start * EXTRA_WORDS..destination.end * EXTRA_WORDS],
         );
     }
 
@@ -173,6 +155,54 @@ impl PackedTrace {
         }
         Ok(())
     }
+}
+
+pub(super) fn fill_rows(
+    rows: &[TraceRow],
+    base: usize,
+    is_noop: &mut [u8],
+    address: &mut [u64],
+    virtual_sequence: &mut [u32],
+    ram_address: &mut [u64],
+    extras: &mut [u64],
+) {
+    let padding = TraceRow::default();
+    #[cfg(feature = "parallel")]
+    {
+        use rayon::prelude::*;
+        is_noop
+            .par_chunks_mut(PACK_CHUNK)
+            .zip(address.par_chunks_mut(PACK_CHUNK))
+            .zip(virtual_sequence.par_chunks_mut(PACK_CHUNK))
+            .zip(ram_address.par_chunks_mut(PACK_CHUNK))
+            .zip(extras.par_chunks_mut(PACK_CHUNK * EXTRA_WORDS))
+            .enumerate()
+            .for_each(
+                |(chunk, ((((is_noop, address), virtual_sequence), ram_address), extras))| {
+                    fill(
+                        base + chunk * PACK_CHUNK,
+                        rows,
+                        &padding,
+                        is_noop,
+                        address,
+                        virtual_sequence,
+                        ram_address,
+                        extras,
+                    );
+                },
+            );
+    }
+    #[cfg(not(feature = "parallel"))]
+    fill(
+        base,
+        rows,
+        &padding,
+        is_noop,
+        address,
+        virtual_sequence,
+        ram_address,
+        extras,
+    );
 }
 
 #[expect(
@@ -525,6 +555,37 @@ mod tests {
     fn pack_rejects_a_trace_longer_than_the_domain() {
         let rows = vec![TraceRow::default(); 4];
         assert!(PackedTrace::pack(&rows, 2).is_err());
+    }
+
+    #[test]
+    fn source_visit_rejects_invalid_chunk_and_window_lengths() {
+        struct Source<'a> {
+            rows: &'a [TraceRow],
+            env: WitnessEnv<'a>,
+        }
+        impl RowSource for Source<'_> {
+            fn visit_chunks(
+                &self,
+                _range: Range<usize>,
+                _chunk_size: usize,
+                visitor: &mut ChunkVisitor<'_>,
+            ) -> Result<(), WitnessError> {
+                visitor(self.rows, None, &self.env)
+            }
+        }
+        with_sample_backend(|backend| {
+            let rows = [TraceRow::default(); 3];
+            let source = Source {
+                rows: &rows,
+                env: WitnessEnv::new(backend.program_preprocessing()),
+            };
+            for (range, chunk_size) in [(0..3, 2), (0..2, 3), (0..4, 3)] {
+                assert!(matches!(
+                    visit_source(&source, range, chunk_size, |_, _| Ok(())),
+                    Err(WitnessError::InvalidDimensions { .. }),
+                ));
+            }
+        });
     }
 
     #[test]

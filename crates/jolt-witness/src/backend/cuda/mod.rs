@@ -32,6 +32,7 @@ use tables::TABLE_INDEX_ABSENT as TablesTableIndexAbsent;
 mod descriptors;
 mod device;
 mod packed;
+mod staging;
 mod tables;
 #[cfg(test)]
 mod tests;

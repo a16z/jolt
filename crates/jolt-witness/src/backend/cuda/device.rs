@@ -4,6 +4,8 @@
 //! cached per device. Each `DeviceTrace` owns its packed window and instruction
 //! tables; it does not cache witness rows globally. Mapping kernels report
 //! unrepresentable indices through a device rejection flag checked on the host.
+//! Large row-source windows alternate two pinned staging buffers, overlapping
+//! packing with uploads without allocating a host copy of the entire window.
 
 use super::packed::EXTRA_KIND_BITS;
 use core::fmt::Display;
@@ -12,13 +14,19 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use cudarc::driver::{CudaFunction, CudaSlice, CudaStream, LaunchConfig, PushKernelArg};
+use cudarc::driver::{
+    CudaFunction, CudaSlice, CudaStream, CudaViewMut, DeviceRepr, LaunchConfig, PinnedHostSlice,
+    PushKernelArg, ValidAsZeroBits,
+};
 use cudarc::nvrtc::{compile_ptx_with_opts, CompileOptions, Ptx};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_riscv::JoltTraceRow as TraceRow;
 
-use super::packed::{PackedTrace, EXTRA_WORDS as PACKED_EXTRA_WORDS};
-use super::tables::kind_tables;
+use super::packed::{
+    source_window_len, visit_source, PackedTrace, EXTRA_WORDS as PACKED_EXTRA_WORDS,
+};
+use super::staging::{PinnedTrace, MIN_PINNED_CYCLES, STAGING_CYCLES};
+use super::tables::{kind_tables, KindTables};
 use super::{
     DeviceAtomColumns, DeviceBytecodeColumns, DeviceExecutionColumns, DeviceMemoryColumns,
     DeviceTraceColumn, HotSource, NarrowColumn,
@@ -124,6 +132,57 @@ struct DeviceRows {
     extras: CudaSlice<u64>,
 }
 
+fn copy_pinned<T: DeviceRepr + ValidAsZeroBits>(
+    stream: &Arc<CudaStream>,
+    source: &PinnedHostSlice<T>,
+    destination: &mut CudaViewMut<'_, T>,
+) -> Result<(), DriverError> {
+    if source.len() == destination.len() {
+        stream.memcpy_htod(source, destination)
+    } else {
+        // cudarc's plain-slice copy waits before releasing the borrow. This
+        // handles short source chunks without uploading unused buffer entries.
+        stream.memcpy_htod(&source.as_slice()?[..destination.len()], destination)
+    }
+}
+
+impl DeviceRows {
+    fn upload_pinned(
+        &mut self,
+        stream: &Arc<CudaStream>,
+        staging: &PinnedTrace,
+        range: Range<usize>,
+    ) -> Result<(), DriverError> {
+        copy_pinned(
+            stream,
+            &staging.is_noop,
+            &mut self.is_noop.slice_mut(range.clone()),
+        )?;
+        copy_pinned(
+            stream,
+            &staging.address,
+            &mut self.address.slice_mut(range.clone()),
+        )?;
+        copy_pinned(
+            stream,
+            &staging.virtual_sequence,
+            &mut self.virtual_sequence.slice_mut(range.clone()),
+        )?;
+        copy_pinned(
+            stream,
+            &staging.ram_address,
+            &mut self.ram_address.slice_mut(range.clone()),
+        )?;
+        copy_pinned(
+            stream,
+            &staging.extras,
+            &mut self
+                .extras
+                .slice_mut(range.start * PACKED_EXTRA_WORDS..range.end * PACKED_EXTRA_WORDS),
+        )
+    }
+}
+
 struct DeviceKindTables {
     input: CudaSlice<u8>,
     operand: CudaSlice<u8>,
@@ -188,11 +247,42 @@ impl DeviceTrace {
         range: Range<usize>,
         preprocessing: &JoltProgramPreprocessing,
     ) -> Result<Self, WitnessError> {
-        Self::upload_packed(
-            stream,
-            PackedTrace::from_source(source, range)?,
-            preprocessing,
-        )
+        let cycles = source_window_len(&range)?;
+        if cycles < MIN_PINNED_CYCLES {
+            return Self::upload_packed(
+                stream,
+                PackedTrace::from_source(source, range)?,
+                preprocessing,
+            );
+        }
+
+        let tables = kind_tables()?;
+        let mut trace = Self::allocate(Arc::clone(&stream), cycles, preprocessing, &tables)?;
+        let mut staging = [
+            PinnedTrace::new(stream.context()).map_err(device_error)?,
+            PinnedTrace::new(stream.context()).map_err(device_error)?,
+        ];
+        let mut next = 0;
+        visit_source(source, range, STAGING_CYCLES, |rows, destination| {
+            if rows.is_empty() {
+                return Ok(());
+            }
+            let buffer = &mut staging[next];
+            buffer.pack(rows).map_err(device_error)?;
+            tables.require_supported(
+                buffer.extras.as_slice().map_err(device_error)?[..rows.len() * PACKED_EXTRA_WORDS]
+                    .chunks_exact(PACKED_EXTRA_WORDS)
+                    .map(|row| row[EXTRA_KIND_BITS] as u16),
+            )?;
+            trace
+                .rows
+                .upload_pinned(&stream, buffer, destination)
+                .map_err(device_error)?;
+            next ^= 1;
+            Ok(())
+        })?;
+        stream.synchronize().map_err(device_error)?;
+        Ok(trace)
     }
 
     fn upload_packed(
@@ -201,7 +291,6 @@ impl DeviceTrace {
         preprocessing: &JoltProgramPreprocessing,
     ) -> Result<Self, WitnessError> {
         let cycles = staging.cycles;
-        let functions = extract_functions(&stream)?;
         let tables = kind_tables()?;
         tables.require_supported(
             staging
@@ -210,16 +299,8 @@ impl DeviceTrace {
                 .map(|row| row[EXTRA_KIND_BITS] as u16),
         )?;
 
-        let alloc_u8 = |len: usize| stream.alloc_zeros::<u8>(len).map_err(device_error);
-        let alloc_u32 = |len: usize| stream.alloc_zeros::<u32>(len).map_err(device_error);
-        let alloc_u64 = |len: usize| stream.alloc_zeros::<u64>(len).map_err(device_error);
-        let mut device = DeviceRows {
-            is_noop: alloc_u8(cycles)?,
-            address: alloc_u64(cycles)?,
-            virtual_sequence: alloc_u32(cycles)?,
-            ram_address: alloc_u64(cycles)?,
-            extras: alloc_u64(cycles * PACKED_EXTRA_WORDS)?,
-        };
+        let mut trace = Self::allocate(Arc::clone(&stream), cycles, preprocessing, &tables)?;
+        let device = &mut trace.rows;
 
         stream
             .memcpy_htod(&staging.is_noop, &mut device.is_noop.slice_mut(..))
@@ -241,6 +322,25 @@ impl DeviceTrace {
             .map_err(device_error)?;
         drop(staging);
 
+        Ok(trace)
+    }
+
+    fn allocate(
+        stream: Arc<CudaStream>,
+        cycles: usize,
+        preprocessing: &JoltProgramPreprocessing,
+        tables: &KindTables,
+    ) -> Result<Self, WitnessError> {
+        let functions = extract_functions(&stream)?;
+        let device = DeviceRows {
+            is_noop: stream.alloc_zeros(cycles).map_err(device_error)?,
+            address: stream.alloc_zeros(cycles).map_err(device_error)?,
+            virtual_sequence: stream.alloc_zeros(cycles).map_err(device_error)?,
+            ram_address: stream.alloc_zeros(cycles).map_err(device_error)?,
+            extras: stream
+                .alloc_zeros(cycles * PACKED_EXTRA_WORDS)
+                .map_err(device_error)?,
+        };
         let kinds = DeviceKindTables {
             input: stream.clone_htod(&tables.input).map_err(device_error)?,
             operand: stream.clone_htod(&tables.operand).map_err(device_error)?,
@@ -906,9 +1006,131 @@ impl DeviceTrace {
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test setup and device failures fail loudly"
+)]
 mod tests {
+    use super::*;
+    use crate::backend::ProgramSource;
+    use crate::testing::with_sample_backend;
+    use crate::witnesses::WitnessEnv;
+    use crate::ChunkVisitor;
+    use cudarc::driver::CudaContext;
+    use jolt_riscv::{
+        JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RamAccess, RegisterRead,
+        RegisterState, RegisterWrite,
+    };
+
+    use super::super::packed::{
+        EXTRA_BYTECODE_PC, EXTRA_RD_POST, EXTRA_RS1, NO_SEQUENCE, RAM_NO_ACCESS,
+    };
+
     #[test]
     fn cuda_source_compiles_without_device() -> Result<(), String> {
         super::extract_ptx().map(|_| ()).map_err(Clone::clone)
+    }
+
+    #[test]
+    fn source_upload_preserves_rows_across_staging_reuse() {
+        struct Source<'a> {
+            rows: &'a [TraceRow],
+            env: WitnessEnv<'a>,
+            chunk_size: usize,
+        }
+
+        impl RowSource for Source<'_> {
+            fn visit_chunks(
+                &self,
+                range: Range<usize>,
+                chunk_size: usize,
+                visitor: &mut ChunkVisitor<'_>,
+            ) -> Result<(), WitnessError> {
+                let mut end = range.start;
+                for chunk in self.rows[range].chunks(chunk_size.min(self.chunk_size)) {
+                    end += chunk.len();
+                    visitor(chunk, self.rows.get(end), &self.env)?;
+                }
+                Ok(())
+            }
+        }
+
+        with_sample_backend(|backend| {
+            let stream = CudaContext::new(0).unwrap().default_stream();
+            let rows: Vec<_> = (0..MIN_PINNED_CYCLES + 41)
+                .map(|index| {
+                    if index % 17 == 0 {
+                        return TraceRow::default();
+                    }
+                    TraceRow::new(
+                        JoltInstructionRow {
+                            instruction_kind: JoltInstructionKind::ADDI,
+                            address: 0x8000_0000 + 4 * index,
+                            operands: NormalizedOperands {
+                                rd: Some(1),
+                                rs1: Some(2),
+                                imm: index as i128,
+                                ..Default::default()
+                            },
+                            virtual_sequence_remaining: Some((index % 31) as u16),
+                            ..Default::default()
+                        },
+                        RegisterState {
+                            rs1: Some(RegisterRead {
+                                register: 2,
+                                value: index as u64,
+                            }),
+                            rd: Some(RegisterWrite {
+                                register: 1,
+                                pre_value: index as u64 + 1,
+                                post_value: 2 * index as u64,
+                            }),
+                            ..Default::default()
+                        },
+                        RamAccess::NoOp,
+                        index as u32 + 1,
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let range = 17..rows.len() - 5;
+            // Full chunks exercise asynchronous copies and reuse of the first
+            // buffer; shorter chunks exercise the RowSource chunk-size contract.
+            for chunk_size in [STAGING_CYCLES, STAGING_CYCLES - 17] {
+                let source = Source {
+                    rows: &rows,
+                    env: WitnessEnv::new(backend.program_preprocessing()),
+                    chunk_size,
+                };
+                let trace = DeviceTrace::upload_source(
+                    Arc::clone(&stream),
+                    &source,
+                    range.clone(),
+                    backend.program_preprocessing(),
+                )
+                .unwrap();
+                assert_eq!(trace.cycles, range.len());
+                let is_noop = stream.clone_dtoh(&trace.rows.is_noop).unwrap();
+                let address = stream.clone_dtoh(&trace.rows.address).unwrap();
+                let virtual_sequence = stream.clone_dtoh(&trace.rows.virtual_sequence).unwrap();
+                let ram_address = stream.clone_dtoh(&trace.rows.ram_address).unwrap();
+                let extras = stream.clone_dtoh(&trace.rows.extras).unwrap();
+                for (index, row) in rows[range.clone()].iter().enumerate() {
+                    assert_eq!(is_noop[index], u8::from(row.is_noop()));
+                    assert_eq!(address[index], row.unexpanded_pc());
+                    assert_eq!(
+                        virtual_sequence[index],
+                        row.virtual_sequence_remaining()
+                            .map_or(NO_SEQUENCE, u32::from),
+                    );
+                    assert_eq!(ram_address[index], RAM_NO_ACCESS);
+                    let words =
+                        &extras[index * PACKED_EXTRA_WORDS..(index + 1) * PACKED_EXTRA_WORDS];
+                    assert_eq!(words[EXTRA_BYTECODE_PC], row.pc());
+                    assert_eq!(words[EXTRA_RS1], row.rs1_value());
+                    assert_eq!(words[EXTRA_RD_POST], row.rd_write_value());
+                }
+            }
+        });
     }
 }
