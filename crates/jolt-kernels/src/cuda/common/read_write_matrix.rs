@@ -6,9 +6,13 @@
 //! until their index capacity requires direct field coefficients.
 //!
 //! Device count/scan passes allocate disjoint segments for sparse row merges.
+//! Round messages retain these segments for the following bind, which consumes
+//! them before changing row indices.
 //! Address-first conversion sorts row/address indices on the host, then uses
 //! that permutation to reorder values and coefficients on the device. Both
 //! representations avoid the full address-by-cycle matrix.
+
+use std::sync::OnceLock;
 
 use cudarc::driver::{CudaSlice, LaunchConfig, PushKernelArg};
 use jolt_field::{Fr, JoltField, Ring};
@@ -56,6 +60,14 @@ struct Segments {
     even_end: CudaSlice<u32>,
     end: CudaSlice<u32>,
     pair: CudaSlice<u32>,
+}
+
+impl Segments {
+    #[cfg(feature = "allocative")]
+    fn device_bytes(&self) -> usize {
+        (self.start.len() + self.even_end.len() + self.end.len() + self.pair.len())
+            * size_of::<u32>()
+    }
 }
 
 pub(crate) enum DeviceCoeffs {
@@ -131,6 +143,7 @@ impl DeviceCoeffLut {
 }
 
 pub struct DeviceReadWriteMatrix {
+    segments: OnceLock<Segments>,
     rows: CudaSlice<u32>,
     cols: CudaSlice<u32>,
     val_coeff: DeviceFrVec,
@@ -160,6 +173,7 @@ impl DeviceReadWriteMatrix {
                 .map(|lut| lut.values.device_bytes())
                 .sum::<usize>()
             + self.wa_scale.device_bytes()
+            + self.segments.get().map_or(0, Segments::device_bytes)
     }
 
     #[cfg(test)]
@@ -211,6 +225,7 @@ impl DeviceReadWriteMatrix {
             coeffs.extend_from_slice(&entry.coeffs[..coeff_width]);
         }
         Ok(Self {
+            segments: OnceLock::new(),
             rows: context.upload_u32_slice(&rows)?,
             cols: context.upload_u32_slice(&cols)?,
             val_coeff: context.upload(&val_coeff)?,
@@ -261,6 +276,7 @@ impl DeviceReadWriteMatrix {
             coeff_index.extend_from_slice(&entry.coeff_index);
         }
         Ok(Self {
+            segments: OnceLock::new(),
             rows: context.upload_u32_slice(&rows)?,
             cols: context.upload_u32_slice(&cols)?,
             val_coeff: context.upload(&val_coeff)?,
@@ -405,6 +421,7 @@ impl DeviceReadWriteMatrix {
             DeviceCoeffs::Indexed { index, luts } => (context.alloc(1)?, index, luts, true),
         };
         Ok(Self {
+            segments: OnceLock::new(),
             rows,
             cols,
             val_coeff,
@@ -451,7 +468,15 @@ impl DeviceReadWriteMatrix {
         Ok(out)
     }
 
-    fn segments(&self, context: &CudaKernelContext) -> Result<(usize, Segments), CudaError> {
+    fn segments(&self, context: &CudaKernelContext) -> Result<&Segments, CudaError> {
+        if let Some(segments) = self.segments.get() {
+            return Ok(segments);
+        }
+        let segments = self.build_segments(context)?;
+        Ok(self.segments.get_or_init(|| segments))
+    }
+
+    fn build_segments(&self, context: &CudaKernelContext) -> Result<Segments, CudaError> {
         let entries = CudaKernelContext::count_of(self.entries)?;
         let mut flags = context.alloc_u32(self.entries)?;
         let mut builder = context.stream().launch_builder(context.rwm_segment_flags());
@@ -492,7 +517,7 @@ impl DeviceReadWriteMatrix {
         // uncontended and every slot is written.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(entries)) }?;
         context.stream().synchronize()?;
-        Ok((segment_count, seg))
+        Ok(seg)
     }
 
     pub fn to_address_major(
@@ -586,8 +611,8 @@ impl DeviceReadWriteMatrix {
         if self.entries == 0 {
             return Ok([F::zero(); 3]);
         }
-        let (segment_count, seg) = self.segments(context)?;
-        let segments = CudaKernelContext::count_of(segment_count)?;
+        let seg = self.segments(context)?;
+        let segments = CudaKernelContext::count_of(seg.start.len())?;
 
         let e_in_len = CudaKernelContext::count_of(eq.e_in_len())?;
         let num_x_in_bits = eq.e_in_len().max(1).ilog2();
@@ -670,7 +695,11 @@ impl DeviceReadWriteMatrix {
         if self.indexed && self.luts.iter().any(DeviceCoeffLut::saturated) {
             self.deref_coeffs(context)?;
         }
-        let (segment_count, seg) = self.segments(context)?;
+        let seg = match self.segments.take() {
+            Some(segments) => segments,
+            None => self.build_segments(context)?,
+        };
+        let segment_count = seg.start.len();
         let segments = CudaKernelContext::count_of(segment_count)?;
 
         let mut counts = context.alloc_u32(segment_count)?;
@@ -1040,6 +1069,61 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn boolean_binds_select_rows_with_or_without_round_messages() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let entries: Vec<_> = (0..8)
+            .map(|row| MatrixEntry {
+                row,
+                col: 0,
+                val_coeff: fr(u64::from(row) + 11),
+                prev_val: 0,
+                next_val: 0,
+                coeffs: [fr(u64::from(row) + 1), fr(u64::from(row) + 2)],
+            })
+            .collect();
+        let mut matrix =
+            DeviceReadWriteMatrix::new(context, &entries, MAX_COEFFS, None).expect("matrix");
+        let mut inc = context.upload(&[Fr::from_u64(0); 8]).expect("increments");
+        let mut eq =
+            DeviceSplitEq::new(context, &[fr(31), fr(37), fr(41)], BindingOrder::LowToHigh)
+                .expect("split-eq");
+        let mut selected = 0;
+        for (round, bit) in [1u32, 0, 1].into_iter().enumerate() {
+            if round != 1 {
+                let first: [Fr; 3] = matrix
+                    .quadratic_coeffs(context, &inc, &eq)
+                    .expect("message");
+                assert_eq!(
+                    matrix
+                        .quadratic_coeffs(context, &inc, &eq)
+                        .expect("repeat message"),
+                    first,
+                );
+            }
+            let challenge = Fr::from_u64(u64::from(bit));
+            matrix.bind(context, challenge).expect("bind");
+            inc = context
+                .bind(&inc, challenge, BindingOrder::LowToHigh)
+                .expect("bind increments");
+            eq.bind(challenge);
+
+            selected |= bit << round;
+            let mask = (1 << (round + 1)) - 1;
+            let expected: Vec<_> = entries
+                .iter()
+                .filter(|entry| entry.row & mask == selected)
+                .map(|entry| MatrixEntry {
+                    row: entry.row >> (round + 1),
+                    ..*entry
+                })
+                .collect();
+            assert_eq!(matrix.to_host(context).expect("bound rows"), expected);
+        }
     }
 
     #[test]
