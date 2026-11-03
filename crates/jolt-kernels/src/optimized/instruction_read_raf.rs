@@ -337,6 +337,31 @@ impl LookupIndexChunks {
         self.rows[cycle].lookup_index()
     }
 
+    // At width four, the eight 16-bit selector tables occupy 32 MiB for
+    // 128-bit fields. Read ahead one pair to overlap table access with the
+    // current pair's arithmetic. The helper does not change table values.
+    #[cfg(target_arch = "aarch64")]
+    #[inline(never)]
+    fn prefetch_pairs<F: JoltField>(&self, tables: &[Vec<F>], row: usize) {
+        for branch in 0..4 {
+            let mut lo = self.packed_index(8 * row + branch);
+            let mut hi = self.packed_index(8 * row + 4 + branch);
+            for table in tables.iter().rev() {
+                let a = std::ptr::from_ref(&table[branch * 65536 + (lo as usize & 65535)]);
+                let b = std::ptr::from_ref(&table[branch * 65536 + (hi as usize & 65535)]);
+                // SAFETY: both addresses reference initialized live table entries.
+                // These hints do not mutate memory, flags, or stack.
+                unsafe {
+                    std::arch::asm!("prfm pldl1keep, [{a}]", "prfm pldl1keep, [{b}]",
+                        a = in(reg) a, b = in(reg) b,
+                        options(readonly, nostack, preserves_flags));
+                }
+                lo >>= 16;
+                hi >>= 16;
+            }
+        }
+    }
+
     pub(crate) fn new(
         rows: Arc<ConstantSuffix<InstructionCycleRow>>,
         chunks: usize,
@@ -434,6 +459,14 @@ impl ChunkIndexSource for LookupIndexChunks {
         row: usize,
         out: &mut [(F, F)],
     ) {
+        #[cfg(target_arch = "aarch64")]
+        if self.chunk_bits == 16
+            && width == 4
+            && std::mem::size_of::<F>() == 16
+            && row + 1 < self.cycles() / 8
+        {
+            self.prefetch_pairs(tables, row + 1);
+        }
         let mask = (1u128 << self.chunk_bits) - 1;
         let stride = 1usize << self.chunk_bits;
         for branch in 0..width {
@@ -2147,6 +2180,55 @@ mod tests {
         assert!(row.raf_flag());
         #[cfg(feature = "akita")]
         assert_eq!(row.fused_inc::<Fr>(), -Fr::from_u64(123));
+    }
+
+    #[test]
+    #[cfg(feature = "akita")]
+    fn wide_lookup_pairs_cover_final_pair_and_constant_suffix() {
+        use super::super::{constant_suffix::ConstantSuffix, lazy_ra::ChunkIndexSource};
+
+        type F = Prime128OffsetA7F7;
+        let tables: Vec<Vec<F>> = (0..8)
+            .map(|column| {
+                (0..4 * 65536)
+                    .map(|index| F::from_u64((column * 4 * 65536 + index + 1) as u64))
+                    .collect()
+            })
+            .collect();
+        // The first pair reads ahead; the final pair must not read past the
+        // logical trace. Include a compressed suffix beginning within a pair.
+        for prefix in [0, 7, 15, 16] {
+            let witnesses: Vec<_> = fixture_rows(4, 314159)
+                .into_iter()
+                .enumerate()
+                .map(|(i, mut row)| {
+                    if i >= prefix {
+                        row.lookup_index = LookupIndex(u128::MAX);
+                        row.table_index = TableIndex(None);
+                        row.raf_flag = InstructionRafFlag(false);
+                    }
+                    row
+                })
+                .collect();
+            let source =
+                LookupIndexChunks::new(Arc::new(ConstantSuffix::new(pack(&witnesses), 16)), 8, 16);
+            for row in 0..2 {
+                let mut actual = vec![(F::from_u64(0), F::from_u64(0)); 8];
+                source.gather_pairs(&tables, 4, row, &mut actual);
+                for (column, table) in tables.iter().enumerate() {
+                    let sum = |half: usize| {
+                        (0..4)
+                            .map(|branch| {
+                                let cycle = row * 8 + half * 4 + branch;
+                                let digit = source.index(column, cycle).unwrap();
+                                table[branch * 65536 + digit]
+                            })
+                            .sum::<F>()
+                    };
+                    assert_eq!(actual[column], (sum(0), sum(1)));
+                }
+            }
+        }
     }
 
     #[test]
