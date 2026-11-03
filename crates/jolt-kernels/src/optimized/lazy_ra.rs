@@ -156,12 +156,22 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     ) where
         Self: Sized,
     {
-        for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
-            *out = (
-                gather(table, width, self, i, 2 * row),
-                gather(table, width, self, i, 2 * row + 1),
-            );
-        }
+        gather_pairs(self, tables, width, row, out);
+    }
+}
+
+pub(super) fn gather_pairs<F: JoltField, S: ChunkIndexSource>(
+    source: &S,
+    tables: &[Vec<F>],
+    width: usize,
+    row: usize,
+    out: &mut [(F, F)],
+) {
+    for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
+        *out = (
+            gather(table, width, source, i, 2 * row),
+            gather(table, width, source, i, 2 * row + 1),
+        );
     }
 }
 
