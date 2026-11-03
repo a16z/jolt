@@ -65,7 +65,7 @@ pub(super) fn commit_columns<const D: usize>(
             segment_rings
         );
         // Blocks wholly past the constant suffix hold no work.
-        let schedule = trace_block_task_schedule::<D>(
+        let mut schedule = trace_block_task_schedule::<D>(
             source.one_hot_k,
             plan.num_positions_per_block,
             prefix_rings.div_ceil(plan.num_positions_per_block),
@@ -75,6 +75,9 @@ pub(super) fn commit_columns<const D: usize>(
         let ntt_commit = a_rows
             .first()
             .and_then(|row| PreparedNttCommit::new(source, plan, row));
+        if ntt_commit.is_some() {
+            schedule = PreparedNttCommit::<D>::align_task_schedule(schedule);
+        }
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate",
             num_blocks,

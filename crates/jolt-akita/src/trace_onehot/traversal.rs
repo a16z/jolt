@@ -429,12 +429,24 @@ pub(super) struct TraceBlockTaskSchedule {
 }
 
 impl TraceBlockTaskSchedule {
+    pub(super) fn with_minimum_ring_alignment(mut self, minimum: usize) -> Self {
+        self.ring_alignment *= minimum.div_ceil(self.ring_alignment).max(1);
+        self.parts = self
+            .parts
+            .min(self.num_positions.div_ceil(self.ring_alignment));
+        self
+    }
+
     pub(super) fn part_range(&self, part: usize) -> (usize, usize) {
         debug_assert!(part < self.parts);
-        let aligned_positions = self.num_positions / self.ring_alignment;
+        let aligned_positions = self.num_positions.div_ceil(self.ring_alignment);
         (
-            part * aligned_positions / self.parts * self.ring_alignment,
-            (part + 1) * aligned_positions / self.parts * self.ring_alignment,
+            (part * aligned_positions / self.parts)
+                .saturating_mul(self.ring_alignment)
+                .min(self.num_positions),
+            ((part + 1) * aligned_positions / self.parts)
+                .saturating_mul(self.ring_alignment)
+                .min(self.num_positions),
         )
     }
 }
