@@ -1,33 +1,42 @@
 //! Fold B's constraint coefficients once, before applying them to each native row.
 use super::{DerivedWeights, SpartanOuterRow};
-use jolt_claims::protocols::composed::r1cs::{rv64, spartan_outer_opening_columns};
+use jolt_claims::protocols::composed::r1cs::{
+    rv64::{
+        V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC, V_FLAG_IS_COMPRESSED, V_IMM, V_LEFT_INSTRUCTION_INPUT,
+        V_LEFT_LOOKUP_OPERAND, V_LOOKUP_OUTPUT, V_NEXT_PC, V_NEXT_UNEXPANDED_PC, V_PC, V_PRODUCT,
+        V_RAM_ADDRESS, V_RAM_READ_VALUE, V_RAM_WRITE_VALUE, V_RD_WRITE_VALUE,
+        V_RIGHT_INSTRUCTION_INPUT, V_RIGHT_LOOKUP_OPERAND, V_RS1_VALUE, V_RS2_VALUE,
+        V_UNEXPANDED_PC,
+    },
+    spartan_outer_opening_columns,
+};
 use jolt_field::{signed::S256, Accumulator as _, JoltField, WithAccumulator};
 
 const FIRST_COLUMNS: [usize; 11] = [
-    rv64::V_RAM_ADDRESS,
-    rv64::V_RAM_READ_VALUE,
-    rv64::V_RAM_WRITE_VALUE,
-    rv64::V_RD_WRITE_VALUE,
-    rv64::V_RS2_VALUE,
-    rv64::V_LEFT_LOOKUP_OPERAND,
-    rv64::V_LEFT_INSTRUCTION_INPUT,
-    rv64::V_LOOKUP_OUTPUT,
-    rv64::V_NEXT_UNEXPANDED_PC,
-    rv64::V_NEXT_PC,
-    rv64::V_PC,
+    V_RAM_ADDRESS,
+    V_RAM_READ_VALUE,
+    V_RAM_WRITE_VALUE,
+    V_RD_WRITE_VALUE,
+    V_RS2_VALUE,
+    V_LEFT_LOOKUP_OPERAND,
+    V_LEFT_INSTRUCTION_INPUT,
+    V_LOOKUP_OUTPUT,
+    V_NEXT_UNEXPANDED_PC,
+    V_NEXT_PC,
+    V_PC,
 ];
 const SECOND_COLUMNS: [usize; 11] = [
-    rv64::V_RAM_ADDRESS,
-    rv64::V_RS1_VALUE,
-    rv64::V_LOOKUP_OUTPUT,
-    rv64::V_RIGHT_LOOKUP_OPERAND,
-    rv64::V_LEFT_INSTRUCTION_INPUT,
-    rv64::V_RIGHT_INSTRUCTION_INPUT,
-    rv64::V_PRODUCT,
-    rv64::V_RD_WRITE_VALUE,
-    rv64::V_UNEXPANDED_PC,
-    rv64::V_NEXT_UNEXPANDED_PC,
-    rv64::V_IMM,
+    V_RAM_ADDRESS,
+    V_RS1_VALUE,
+    V_LOOKUP_OUTPUT,
+    V_RIGHT_LOOKUP_OPERAND,
+    V_LEFT_INSTRUCTION_INPUT,
+    V_RIGHT_INSTRUCTION_INPUT,
+    V_PRODUCT,
+    V_RD_WRITE_VALUE,
+    V_UNEXPANDED_PC,
+    V_NEXT_UNEXPANDED_PC,
+    V_IMM,
 ];
 
 pub(super) struct PreparedBFolds<F: JoltField> {
@@ -52,8 +61,8 @@ impl<F: JoltField> PreparedBFolds<F> {
         for (stream, selected) in [&FIRST_COLUMNS, &SECOND_COLUMNS].into_iter().enumerate() {
             for (&column, &weight) in columns.iter().zip(&derived.bz_weights[stream]) {
                 let supported = selected.contains(&column)
-                    || column == rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC
-                    || (stream == 1 && column == rv64::V_FLAG_IS_COMPRESSED);
+                    || column == V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC
+                    || (stream == 1 && column == V_FLAG_IS_COMPRESSED);
                 if !supported && weight != F::zero() {
                     return None;
                 }
@@ -73,9 +82,9 @@ impl<F: JoltField> PreparedBFolds<F> {
         for (slot, &column) in second.iter_mut().zip(&SECOND_COLUMNS) {
             *slot = weight(1, column)?;
         }
-        let first_d = weight(0, rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
-        let second_d = weight(1, rv64::V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
-        let second_c = weight(1, rv64::V_FLAG_IS_COMPRESSED)?;
+        let first_d = weight(0, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
+        let second_d = weight(1, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
+        let second_c = weight(1, V_FLAG_IS_COMPRESSED)?;
         Some(Self {
             first,
             negative: second.map(|value| -value),
