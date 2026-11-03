@@ -5,6 +5,11 @@
 //! vector work; a mirror allocation failure leaves the opening using fewer
 //! devices. Dropping the arena guard releases the per-opening buffers.
 //!
+//! Once MSMs become small, their family retires secondary copies for the rest
+//! of the opening, avoiding repeated broadcasts and mirrored vector updates. The
+//! retirement cutoff is below the MSM split threshold so larger pairing
+//! batches can still use the mirrors.
+//!
 //! Dory's group traits cannot return storage errors. Handle failures therefore
 //! poison this arena. `CudaDoryScheme::open` checks that flag after proving,
 //! before resolving the final proof's handles.
@@ -318,6 +323,8 @@ pub(super) fn g2_msm(
 
 const MSM_SPLIT_LEN: usize = 1 << 13;
 
+const MIRROR_RETIRE_LEN: usize = 1 << 12;
+
 fn base_chunks(count: usize, devices: usize, floor: usize) -> Vec<Range<usize>> {
     let devices = if devices < 2 || count < floor {
         1
@@ -351,6 +358,11 @@ fn msm(
             return Err(CudaError::InvariantViolation {
                 reason: "a resident MSM targeted the frozen setup prefix",
             });
+        }
+        if count < MIRROR_RETIRE_LEN {
+            // `reduce` and vector updates leave the primary copy complete.
+            // Removed mirrors are never recreated, even for later larger calls.
+            arena.buffers.truncate(1);
         }
         let chunks = base_chunks(count, arena.buffers.len(), MSM_SPLIT_LEN);
         let split = chunks.len() > 1;
@@ -583,7 +595,7 @@ mod tests {
     use std::ops::Range;
 
     use ark_bn254::Bn254;
-    use ark_ec::pairing::Pairing;
+    use ark_ec::pairing::{MillerLoopOutput, Pairing};
 
     use dory::backends::arkworks::{ArkG1, ArkG2};
     use jolt_dory::{JoltG1Routines, JoltG2Routines};
@@ -593,7 +605,7 @@ mod tests {
     use super::super::routines::{CudaG1Routines, CudaG2Routines};
     use super::{
         base_chunks, lane_chunks, mirrors, multi_miller_batch, open, poisoned, read_from, Family,
-        MILLER_SPLIT_PAIRS, MSM_SPLIT_LEN,
+        G1_WORDS, MILLER_SPLIT_PAIRS, MIRROR_RETIRE_LEN, MSM_SPLIT_LEN,
     };
     use super::{freeze, g1_limbs, g1_point, g2_limbs, g2_point, gather, read, reserve, write};
     use crate::cuda::common::context::{device_count, shared_context};
@@ -947,6 +959,98 @@ mod tests {
                 "lane {lane} of a {lanes}-lane x {count}-pair split batch diverged from arkworks",
             );
         }
+    }
+
+    #[test]
+    fn retired_arenas_preserve_later_group_operations() {
+        if shared_context().is_none() || device_count() < 2 {
+            return;
+        }
+        let len = MSM_SPLIT_LEN.max(MIRROR_RETIRE_LEN) + 1;
+        let guard = open(4 * len + 64, 4 * len + 64).expect("open arena");
+        let g1 = G1Projective::generator();
+        let g2 = G2Projective::generator();
+        let bases = store_all(&vec![g1; len]);
+        let bases_g2 = store_all_g2(&vec![g2; len]);
+        let weights = scalars(len, 1_927);
+        let sum: Fr = weights.iter().map(|weight| weight.0).sum();
+
+        assert_eq!(CudaG1Routines::msm(&bases, &weights).load(), g1 * sum);
+        assert_eq!(CudaG2Routines::msm(&bases_g2, &weights).load(), g2 * sum);
+        assert_eq!(mirrors(Family::G1), device_count());
+        assert_eq!(mirrors(Family::G2), device_count());
+
+        assert_eq!(
+            CudaG1Routines::msm(&bases[..1], &weights[..1]).load(),
+            g1 * weights[0].0
+        );
+        assert_eq!(mirrors(Family::G1), 1);
+        assert_eq!(mirrors(Family::G2), device_count());
+        let g1_offset = span(&bases).expect("G1 bases");
+        let g2_offset = span_g2(&bases_g2).expect("G2 bases");
+        let pair_count = MILLER_SPLIT_PAIRS / 2;
+        let paired = multi_miller_batch(
+            &[(g1_offset, g2_offset), (g1_offset + 1, g2_offset + 1)],
+            pair_count,
+        )
+        .expect("pair across asymmetric arena counts");
+        assert_eq!(paired.len(), 2 * FQ12_LIMBS);
+        let expected_pairing = Bn254::pairing(g1 * Fr::from(pair_count as u64), g2);
+        for lane in paired.chunks_exact(FQ12_LIMBS) {
+            assert_eq!(
+                Bn254::final_exponentiation(MillerLoopOutput(fq12(lane)))
+                    .expect("final exponentiation"),
+                expected_pairing
+            );
+        }
+
+        assert_eq!(
+            CudaG2Routines::msm(&bases_g2[..1], &weights[..1]).load(),
+            g2 * weights[0].0
+        );
+        assert_eq!(mirrors(Family::G2), 1);
+        let mut vs = store_all(&vec![g1; len]);
+        let mut vs_g2 = store_all_g2(&vec![g2; len]);
+        CudaG1Routines::fixed_scalar_mul_bases_then_add(&bases, &mut vs, &weights[0]);
+        CudaG2Routines::fixed_scalar_mul_bases_then_add(&bases_g2, &mut vs_g2, &weights[1]);
+        let updated_g1 = g1 * (Fr::from(1u64) + weights[0].0);
+        let updated_g2 = g2 * (Fr::from(1u64) + weights[1].0);
+        assert_eq!(CudaG1Routines::msm(&vs, &weights).load(), updated_g1 * sum);
+        assert_eq!(
+            CudaG2Routines::msm(&vs_g2, &weights).load(),
+            updated_g2 * sum
+        );
+
+        let fixed = CudaG2Routines::fixed_base_vector_scalar_mul(&bases_g2[0], &weights[..3]);
+        assert_eq!(fixed.len(), 3);
+        for (point, weight) in fixed.iter().zip(&weights) {
+            assert_eq!(point.load(), g2 * weight.0);
+        }
+        let gathered = gather(
+            Family::G1,
+            &[
+                u32::try_from(span(&vs).expect("updated G1 span") + len - 1)
+                    .expect("updated G1 offset fits u32"),
+                u32::try_from(g1_offset).expect("G1 offset fits u32"),
+            ],
+        )
+        .expect("gather after retirement");
+        let copied = read(Family::G1, gathered, 2).expect("read gathered points");
+        assert_eq!(
+            copied
+                .chunks_exact(G1_WORDS)
+                .map(g1_point)
+                .collect::<Vec<_>>(),
+            vec![updated_g1, g1]
+        );
+        assert_eq!(mirrors(Family::G1), 1);
+        assert_eq!(mirrors(Family::G2), 1);
+        assert!(!poisoned());
+
+        drop(guard);
+        let _fresh = open(1, 1).expect("new opening");
+        assert_eq!(mirrors(Family::G1), device_count());
+        assert_eq!(mirrors(Family::G2), device_count());
     }
 
     #[test]
