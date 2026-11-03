@@ -292,7 +292,7 @@ where
     if rest.is_empty() {
         return Ok(vec![first()?]);
     }
-    std::thread::scope(|scope| {
+    thread::scope(|scope| {
         let handles: Vec<_> = rest
             .into_iter()
             .enumerate()
