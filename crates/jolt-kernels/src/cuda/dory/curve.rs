@@ -1,9 +1,9 @@
 //! Dory curve and transcript adapters for resident group handles.
 //!
-//! Contiguous multi-pairing inputs become deferred device requests; individual
-//! pairings and other input layouts use the CPU curve. Transcript operations
-//! delegate to `JoltToDoryTranscript`, resolving handles through their ordinary
-//! group serialization and propagating refused challenges through `finish`.
+//! Multi-pairing inputs become deferred device requests, gathering
+//! noncontiguous handles on device. Individual pairings use the CPU curve.
+//! Transcript operations delegate to `JoltToDoryTranscript`, resolving handles
+//! through group serialization and propagating refused challenges through `finish`.
 //! The returned transparent proof is converted back to the shared host proof
 //! type before the arena closes.
 
@@ -28,7 +28,9 @@ use jolt_openings::OpeningsError;
 use jolt_transcript::FieldTranscript;
 
 use super::gt::DeviceGT;
-use super::handle::{load_all, load_all_g2, span, span_g2, DeviceG1, DeviceG2};
+use super::handle::{
+    contiguous_span, contiguous_span_g2, load_all, load_all_g2, DeviceG1, DeviceG2,
+};
 use crate::cuda::common::msm::FQ_LIMBS;
 
 #[derive(Clone)]
@@ -66,9 +68,8 @@ fn deferred_multi_pair(ps: &[DeviceG1], qs: &[DeviceG2]) -> Option<DeviceGT> {
     if ps.len() != qs.len() || ps.is_empty() {
         return None;
     }
-    let (Some(g1_offset), Some(g2_offset)) = (span(ps), span_g2(qs)) else {
-        return None;
-    };
+    let g1_offset = contiguous_span(ps).ok()?;
+    let g2_offset = contiguous_span_g2(qs).ok()?;
     Some(DeviceGT::enqueue(g1_offset, g2_offset, ps.len()))
 }
 
@@ -322,7 +323,7 @@ mod tests {
         if shared_context().is_none() {
             return;
         }
-        let guard = arena::open(8, 8).expect("arena");
+        let guard = arena::open(128, 128).expect("arena");
         gt::reset();
         let (ps, qs) = points(8);
         let hp = store_all(&ps);
@@ -336,7 +337,7 @@ mod tests {
         ] {
             let p_handles = p_indices.map(|i| hp[i]);
             let q_handles = q_indices.map(|i| hq[i]);
-            assert!(deferred_multi_pair(&p_handles, &q_handles).is_none());
+            assert!(deferred_multi_pair(&p_handles, &q_handles).is_some());
             let expected = ArkGT(Bn254::multi_pairing(
                 p_indices.map(|i| ps[i]),
                 q_indices.map(|i| qs[i]),
@@ -347,12 +348,12 @@ mod tests {
         }
         assert_eq!(load_all(&hp), ps);
         assert_eq!(load_all_g2(&hq), qs);
-        drop(guard);
         for (value, expected) in results {
             assert_eq!(value.value(), expected);
         }
         assert!(!arena::poisoned());
         gt::reset();
+        drop(guard);
     }
 
     #[test]

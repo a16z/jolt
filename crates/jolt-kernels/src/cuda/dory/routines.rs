@@ -1,7 +1,8 @@
 //! Dory vector arithmetic over resident point spans.
 //!
-//! MSMs and vector multiply-adds use CUDA when their handles form contiguous
-//! arena spans. A declined operation delegates to `jolt-dory`'s host routines
+//! MSMs and vector multiply-adds gather noncontiguous inputs on device; mutable
+//! vectors retain the resulting contiguous storage for later rounds.
+//! A declined operation delegates to `jolt-dory`'s host routines
 //! and writes the result back into the arena. G1 fixed-base vectors and
 //! field-vector folds remain on the CPU, as do scalar group operations
 //! implemented by the handles. G2 fixed-base vectors use a device kernel.
@@ -13,7 +14,8 @@ use jolt_field::Fr;
 
 use super::arena::{self, Family};
 use super::handle::{
-    load_all, load_all_g2, rehome, rehome_g2, span, span_g2, store_all, store_all_g2, DeviceG1,
+    contiguous_span, contiguous_span_g2, load_all, load_all_g2, make_contiguous,
+    make_contiguous_g2, rehome, rehome_g2, span, span_g2, store_all, store_all_g2, DeviceG1,
     DeviceG2,
 };
 use crate::cuda::common::error::CudaError;
@@ -44,11 +46,11 @@ fn resident_axpy(
     if out.is_empty() {
         return Ok(());
     }
-    let (Some(a_offset), Some(b_offset), Some(out_offset)) = (span(a), span(b), span(out)) else {
-        return Err(CudaError::InvariantViolation {
-            reason: "a resident G1 axpy needs three contiguous handle spans",
-        });
-    };
+    let a_offset = contiguous_span(a)?;
+    let b_offset = contiguous_span(b)?;
+    let out_offset = span(out).ok_or(CudaError::InvariantViolation {
+        reason: "a resident G1 axpy needs a contiguous output span",
+    })?;
     arena::axpy(
         Family::G1,
         ResidentAxpy {
@@ -71,12 +73,11 @@ fn resident_axpy_g2(
     if out.is_empty() {
         return Ok(());
     }
-    let (Some(a_offset), Some(b_offset), Some(out_offset)) = (span_g2(a), span_g2(b), span_g2(out))
-    else {
-        return Err(CudaError::InvariantViolation {
-            reason: "a resident G2 axpy needs three contiguous handle spans",
-        });
-    };
+    let a_offset = contiguous_span_g2(a)?;
+    let b_offset = contiguous_span_g2(b)?;
+    let out_offset = span_g2(out).ok_or(CudaError::InvariantViolation {
+        reason: "a resident G2 axpy needs a contiguous output span",
+    })?;
     arena::axpy(
         Family::G2,
         ResidentAxpy {
@@ -113,9 +114,10 @@ fn resident_msm(bases: &[DeviceG1], scalars: &[ArkFr]) -> Result<DeviceG1, CudaE
     }
     let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
     let out = store_all(&[G1Projective::default()]);
-    let (Some(base_offset), Some(out_offset)) = (span(bases), span(&out)) else {
+    let base_offset = contiguous_span(bases)?;
+    let Some(out_offset) = span(&out) else {
         return Err(CudaError::InvariantViolation {
-            reason: "a resident G1 MSM needs a contiguous base span and one output slot",
+            reason: "a resident G1 MSM needs an output slot",
         });
     };
     arena::g1_msm(base_offset, out_offset, bases.len(), &weights)?;
@@ -148,7 +150,7 @@ impl DoryRoutines<DeviceG1> for CudaG1Routines {
 
     #[tracing::instrument(skip_all, name = "cuda_g1r_bases_then_add", fields(len = bases.len()))]
     fn fixed_scalar_mul_bases_then_add(bases: &[DeviceG1], vs: &mut [DeviceG1], scalar: &ArkFr) {
-        match resident_axpy(bases, vs, vs, scalar) {
+        match make_contiguous(vs).and_then(|()| resident_axpy(bases, vs, vs, scalar)) {
             Ok(()) => (),
             Err(error) => {
                 tracing::warn!(
@@ -169,7 +171,7 @@ impl DoryRoutines<DeviceG1> for CudaG1Routines {
 
     #[tracing::instrument(skip_all, name = "cuda_g1r_vs_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_vs_then_add(vs: &mut [DeviceG1], addends: &[DeviceG1], scalar: &ArkFr) {
-        match resident_axpy(vs, addends, vs, scalar) {
+        match make_contiguous(vs).and_then(|()| resident_axpy(vs, addends, vs, scalar)) {
             Ok(()) => (),
             Err(error) => {
                 tracing::warn!(
@@ -227,9 +229,10 @@ fn resident_msm_g2(bases: &[DeviceG2], scalars: &[ArkFr]) -> Result<DeviceG2, Cu
     }
     let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
     let out = store_all_g2(&[G2Projective::default()]);
-    let (Some(base_offset), Some(out_offset)) = (span_g2(bases), span_g2(&out)) else {
+    let base_offset = contiguous_span_g2(bases)?;
+    let Some(out_offset) = span_g2(&out) else {
         return Err(CudaError::InvariantViolation {
-            reason: "a resident G2 MSM needs a contiguous base span and one output slot",
+            reason: "a resident G2 MSM needs an output slot",
         });
     };
     arena::g2_msm(base_offset, out_offset, bases.len(), &weights)?;
@@ -272,7 +275,7 @@ impl DoryRoutines<DeviceG2> for CudaG2Routines {
 
     #[tracing::instrument(skip_all, name = "cuda_g2r_bases_then_add", fields(len = bases.len()))]
     fn fixed_scalar_mul_bases_then_add(bases: &[DeviceG2], vs: &mut [DeviceG2], scalar: &ArkFr) {
-        match resident_axpy_g2(bases, vs, vs, scalar) {
+        match make_contiguous_g2(vs).and_then(|()| resident_axpy_g2(bases, vs, vs, scalar)) {
             Ok(()) => (),
             Err(error) => {
                 tracing::warn!(
@@ -293,7 +296,7 @@ impl DoryRoutines<DeviceG2> for CudaG2Routines {
 
     #[tracing::instrument(skip_all, name = "cuda_g2r_vs_then_add", fields(len = vs.len()))]
     fn fixed_scalar_mul_vs_then_add(vs: &mut [DeviceG2], addends: &[DeviceG2], scalar: &ArkFr) {
-        match resident_axpy_g2(vs, addends, vs, scalar) {
+        match make_contiguous_g2(vs).and_then(|()| resident_axpy_g2(vs, addends, vs, scalar)) {
             Ok(()) => (),
             Err(error) => {
                 tracing::warn!(
@@ -375,6 +378,66 @@ mod tests {
     fn affine(points: &[ArkG1]) -> Vec<G1Affine> {
         points.iter().map(|point| point.0.into()).collect()
     }
+
+    macro_rules! padded_routines_test {
+        ($test:ident, $points:ident, $upload:ident, $download:ident, $msm:ident, $cpu:ty, $gpu:ty) => {
+            #[test]
+            fn $test() {
+                if shared_context().is_none() {
+                    return;
+                }
+                let _guard = arena::open(512, 512).expect("open arena");
+                let source = $points(17, 5_100);
+                let original = $upload(&source);
+                let mut handles = original.clone();
+                handles.resize(32, original[0]);
+                let mut expected = source.clone();
+                expected.resize(32, source[0]);
+                let weights = scalars(32, 5_200);
+                let product = super::$msm(&handles, &weights).expect("resident padded MSM");
+                assert_eq!(
+                    $download(&[product]),
+                    vec![<$cpu>::msm(&expected, &weights)]
+                );
+
+                let bases = $points(32, 5_300);
+                let resident_bases = $upload(&bases);
+                let scalar = weight(5_400);
+                <$cpu>::fixed_scalar_mul_bases_then_add(&bases, &mut expected, &scalar);
+                <$gpu>::fixed_scalar_mul_bases_then_add(&resident_bases, &mut handles, &scalar);
+                assert_eq!($download(&handles), expected);
+
+                let mut addends = original.clone();
+                addends.resize(32, original[0]);
+                let mut expected_addends = source.clone();
+                expected_addends.resize(32, source[0]);
+                <$cpu>::fixed_scalar_mul_vs_then_add(&mut expected, &expected_addends, &scalar);
+                <$gpu>::fixed_scalar_mul_vs_then_add(&mut handles, &addends, &scalar);
+                assert_eq!($download(&handles), expected);
+                assert_eq!($download(&original), source);
+                assert!(!arena::poisoned());
+            }
+        };
+    }
+
+    padded_routines_test!(
+        padded_g1_routines_match_reference,
+        points,
+        resident,
+        hosted,
+        resident_msm,
+        JoltG1Routines,
+        CudaG1Routines
+    );
+    padded_routines_test!(
+        padded_g2_routines_match_reference,
+        points_g2,
+        resident_g2,
+        hosted_g2,
+        resident_msm_g2,
+        JoltG2Routines,
+        CudaG2Routines
+    );
 
     #[test]
     fn g1_msm_matches_reference_dory() {

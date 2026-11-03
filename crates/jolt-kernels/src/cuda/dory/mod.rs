@@ -247,6 +247,8 @@ impl CommitmentScheme for CudaDoryScheme {
         };
 
         let bases = 1usize << sigma;
+        // Rectangular G1 openings use n setup points, n/2 rows and n + n/2 + n
+        // points for the first MSM, pairing and mutable-vector gathers.
         let capacity = 4 * bases.max(row_commitments.len()) + ARENA_SLACK;
         let _arena = arena::open(capacity, capacity).map_err(|error| {
             OpeningsError::ProveFailed(format!("the Dory arena did not open: {error:?}"))
@@ -547,23 +549,15 @@ mod tests {
         point: &[Fr],
         eval: Fr,
         setup: &DoryProverSetup,
-        hint: DoryHint,
+        hint: Option<DoryHint>,
     ) -> (DoryProof, DoryProof) {
         let mut transcript = prover_transcript::<Keccak>(&SESSION, b"");
-        let got = CudaDoryScheme::open(
-            poly,
-            point,
-            eval,
-            setup,
-            Some(hint.clone()),
-            &mut transcript,
-        )
-        .expect("cuda open");
+        let got = CudaDoryScheme::open(poly, point, eval, setup, hint.clone(), &mut transcript)
+            .expect("cuda open");
 
         let mut oracle_transcript = prover_transcript::<Keccak>(&SESSION, b"");
-        let expected =
-            DoryScheme::open(poly, point, eval, setup, Some(hint), &mut oracle_transcript)
-                .expect("dory open");
+        let expected = DoryScheme::open(poly, point, eval, setup, hint, &mut oracle_transcript)
+            .expect("dory open");
         let next: Fr = transcript.challenge().expect("CUDA transcript challenge");
         let expected_next: Fr = oracle_transcript
             .challenge()
@@ -669,7 +663,7 @@ mod tests {
         assert_eq!(hint, expected_hint);
         assert_eq!(hint.row_commitments().len(), opening_rows(NUM_VARS));
 
-        let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+        let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, Some(hint));
         assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
 
         let mut verify_transcript = verifier_transcript::<Keccak>(&SESSION, b"", &[]);
@@ -703,26 +697,28 @@ mod tests {
 
             let (commitment, hint) =
                 CudaDoryScheme::commit(poly.evaluations(), &prover_setup).expect("cuda commit");
-            let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
-            assert_eq!(
-                proof, expected,
-                "the proof diverged at {num_vars} variables"
-            );
+            for hint in [Some(hint), None] {
+                let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+                assert_eq!(
+                    proof, expected,
+                    "the proof diverged at {num_vars} variables"
+                );
 
-            let mut verify_transcript = verifier_transcript::<Keccak>(&SESSION, b"", &[]);
-            let accepted = DoryScheme::verify(
-                &commitment,
-                &point,
-                eval,
-                &proof,
-                &verifier_setup,
-                &mut verify_transcript,
-            );
-            assert!(
-                accepted.is_ok(),
-                "the verifier rejected a {num_vars}-variable CudaDoryScheme proof: {accepted:?}"
-            );
-            verify_transcript.check_eof().expect("no unread proof data");
+                let mut verify_transcript = verifier_transcript::<Keccak>(&SESSION, b"", &[]);
+                let accepted = DoryScheme::verify(
+                    &commitment,
+                    &point,
+                    eval,
+                    &proof,
+                    &verifier_setup,
+                    &mut verify_transcript,
+                );
+                assert!(
+                    accepted.is_ok(),
+                    "the verifier rejected a {num_vars}-variable CudaDoryScheme proof: {accepted:?}"
+                );
+                verify_transcript.check_eof().expect("no unread proof data");
+            }
         }
     }
 
@@ -747,7 +743,7 @@ mod tests {
             DoryScheme::commit(poly.evaluations(), &prover_setup).expect("dory commit");
         assert_eq!(commitment, expected_commitment, "the commitment diverged");
 
-        let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+        let (proof, expected) = open_pair(&poly, &point, eval, &prover_setup, Some(hint));
         assert_eq!(proof, expected, "the proof diverged from DoryScheme's");
 
         let mut verify_transcript = verifier_transcript::<Keccak>(&SESSION, b"", &[]);
@@ -784,7 +780,7 @@ mod tests {
         let (hint_rows, _) = hint.into_parts();
         let hint = DoryHint::from_parts(hint_rows, Fr::from_u64(0));
 
-        let (got, expected) = open_pair(&poly, &point, eval, &prover_setup, hint);
+        let (got, expected) = open_pair(&poly, &point, eval, &prover_setup, Some(hint));
         assert_eq!(
             got, expected,
             "the proof diverged from DoryScheme's over {rows} rows at {PROVE_SCALE_VARS} variables",

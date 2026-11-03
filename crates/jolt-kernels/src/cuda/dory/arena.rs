@@ -16,7 +16,7 @@ use std::ops::Range;
 
 use ark_bn254::{Fq, Fq2, G1Projective, G2Projective};
 use ark_ff::BigInt;
-use cudarc::driver::CudaSlice;
+use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::Fr;
 
 use crate::cuda::common::context::{context_for, device_count, CudaKernelContext};
@@ -96,6 +96,19 @@ impl Arena {
         }
         Ok(())
     }
+
+    fn reserve(&mut self, count: usize) -> Result<usize, CudaError> {
+        let end = self.used.saturating_add(count);
+        if end > self.capacity {
+            return Err(CudaError::LengthMismatch {
+                expected: self.capacity,
+                got: end,
+            });
+        }
+        let offset = self.used;
+        self.used = end;
+        Ok(offset)
+    }
 }
 
 thread_local! {
@@ -154,16 +167,40 @@ pub(super) fn open(g1_capacity: usize, g2_capacity: usize) -> Result<ArenaGuard,
 }
 
 pub(super) fn reserve(family: Family, count: usize) -> Result<usize, CudaError> {
+    with_arena(family, |arena| arena.reserve(count)).ok_or_else(closed)?
+}
+
+/// Copy already-reserved points into a fresh contiguous span in every mirror.
+pub(super) fn gather(family: Family, offsets: &[u32]) -> Result<usize, CudaError> {
     with_arena(family, |arena| {
-        if arena.used + count > arena.capacity {
-            return Err(CudaError::LengthMismatch {
-                expected: arena.capacity,
-                got: arena.used + count,
+        if offsets.iter().any(|&offset| offset as usize >= arena.used) {
+            return Err(CudaError::InvariantViolation {
+                reason: "a Dory gather referenced an unreserved point",
             });
         }
-        let offset = arena.used;
-        arena.used += count;
-        Ok(offset)
+        let width = CudaKernelContext::count_of(arena.words)?;
+        let words = CudaKernelContext::count_of(offsets.len().saturating_mul(arena.words))?;
+        let first = arena.reserve(offsets.len())?;
+        if offsets.is_empty() {
+            return Ok(first);
+        }
+        for (ordinal, buffer) in arena.buffers.iter_mut().enumerate() {
+            let context = device(ordinal)?;
+            let order = context.upload_u32_slice(offsets)?;
+            let (source, mut tail) = buffer.split_at_mut(first * arena.words);
+            let source = source.as_view();
+            let mut out = tail.slice_mut(..words as usize);
+            let mut builder = context.stream().launch_builder(context.rwm_permute_words());
+            let _ = builder.arg(&source);
+            let _ = builder.arg(&order);
+            let _ = builder.arg(&width);
+            let _ = builder.arg(&words);
+            let _ = builder.arg(&mut out);
+            // SAFETY: checked source offsets precede the fresh reservation.
+            // The views are disjoint and each thread copies one output word.
+            let _ = unsafe { builder.launch(CudaKernelContext::launch_config(words)) }?;
+        }
+        Ok(first)
     })
     .ok_or_else(closed)?
 }
@@ -558,10 +595,53 @@ mod tests {
         base_chunks, lane_chunks, mirrors, multi_miller_batch, open, poisoned, read_from, Family,
         MILLER_SPLIT_PAIRS, MSM_SPLIT_LEN,
     };
-    use super::{freeze, g1_limbs, g1_point, g2_limbs, g2_point, read, reserve, write};
+    use super::{freeze, g1_limbs, g1_point, g2_limbs, g2_point, gather, read, reserve, write};
     use crate::cuda::common::context::{device_count, shared_context};
     use crate::cuda::common::error::CudaError;
     use crate::cuda::common::pairing::FQ12_LIMBS;
+
+    #[test]
+    fn gather_checks_bounds_and_preserves_every_mirror() {
+        if shared_context().is_none() {
+            return;
+        }
+        let _guard = open(4, 4).expect("open arena");
+        let g1 = G1Projective::generator();
+        let g2 = G2Projective::generator();
+        for (family, a, b) in [
+            (
+                Family::G1,
+                g1_limbs(&g1).to_vec(),
+                g1_limbs(&(g1 + g1)).to_vec(),
+            ),
+            (
+                Family::G2,
+                g2_limbs(&g2).to_vec(),
+                g2_limbs(&(g2 + g2)).to_vec(),
+            ),
+        ] {
+            let source = [a.as_slice(), b.as_slice()].concat();
+            let expected = [b.as_slice(), a.as_slice()].concat();
+            assert_eq!(reserve(family, 2).expect("reserve source"), 0);
+            write(family, 0, &source).expect("write source");
+            assert!(matches!(
+                gather(family, &[2]),
+                Err(CudaError::InvariantViolation { .. })
+            ));
+            assert_eq!(gather(family, &[1, 0]).expect("gather reversed points"), 2);
+            assert!(matches!(
+                gather(family, &[0]),
+                Err(CudaError::LengthMismatch { .. })
+            ));
+            assert_eq!(gather(family, &[]).expect("empty gather"), 4);
+            assert_eq!(mirrors(family), device_count());
+            for ordinal in 0..mirrors(family) {
+                assert_eq!(read_from(family, ordinal, 0, 2).expect("source"), source);
+                assert_eq!(read_from(family, ordinal, 2, 2).expect("gather"), expected);
+            }
+        }
+        assert!(!poisoned());
+    }
 
     #[test]
     fn reservations_frozen_prefixes_and_mirrors_preserve_point_storage() {

@@ -1,8 +1,9 @@
 //! Copyable G1/G2 offsets into the current Dory arena.
 //!
 //! Unlike the CPU backend's group values, these handles do not own points.
-//! Batch routines recognize contiguous handle spans and operate on device
-//! storage. Individual group operators load points, use Arkworks arithmetic,
+//! Batch routines gather noncontiguous handle spans on device, including
+//! repeated identity handles from Dory's rectangular padding. Individual group
+//! operators load points, use Arkworks arithmetic,
 //! and store their results; serialization also resolves handles to host values.
 //! Handle validity is limited to the current thread's arena lifetime.
 
@@ -211,7 +212,7 @@ const _: () = assert!(G1_WORDS == 12);
 const _: () = assert!(G2_WORDS == 24);
 
 macro_rules! device_handle_bulk {
-    ($span:ident, $load_all:ident, $store_all:ident, $store_frozen:ident, $store_all_with:ident, $rehome:ident, $name:ident, $family:expr, $words:expr, $projective:ty, $limbs:path, $point:path) => {
+    ($span:ident, $contiguous_span:ident, $make_contiguous:ident, $load_all:ident, $store_all:ident, $store_frozen:ident, $store_all_with:ident, $rehome:ident, $name:ident, $family:expr, $words:expr, $projective:ty, $limbs:path, $point:path) => {
         pub(super) fn $span(handles: &[$name]) -> Option<usize> {
             let first = handles.first()?.offset as usize;
             handles
@@ -219,6 +220,34 @@ macro_rules! device_handle_bulk {
                 .enumerate()
                 .all(|(index, handle)| handle.offset as usize == first + index)
                 .then_some(first)
+        }
+
+        pub(super) fn $contiguous_span(handles: &[$name]) -> Result<usize, CudaError> {
+            if handles.is_empty() {
+                return Ok(0);
+            }
+            if let Some(first) = $span(handles) {
+                return Ok(first);
+            }
+            let offsets: Vec<_> = handles.iter().map(|handle| handle.offset).collect();
+            arena::gather($family, &offsets)
+        }
+
+        pub(super) fn $make_contiguous(handles: &mut [$name]) -> Result<(), CudaError> {
+            if handles.is_empty() || $span(handles).is_some() {
+                return Ok(());
+            }
+            let first = $contiguous_span(handles)?;
+            let _ = first
+                .checked_add(handles.len() - 1)
+                .and_then(|last| u32::try_from(last).ok())
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a Dory arena offset exceeded the handle's 32-bit width",
+                })?;
+            for (index, handle) in handles.iter_mut().enumerate() {
+                handle.offset = (first + index) as u32;
+            }
+            Ok(())
         }
 
         pub(super) fn $load_all(handles: &[$name]) -> Vec<$projective> {
@@ -303,6 +332,8 @@ macro_rules! device_handle_bulk {
 
 device_handle_bulk!(
     span,
+    contiguous_span,
+    make_contiguous,
     load_all,
     store_all,
     store_frozen,
@@ -318,6 +349,8 @@ device_handle_bulk!(
 
 device_handle_bulk!(
     span_g2,
+    contiguous_span_g2,
+    make_contiguous_g2,
     load_all_g2,
     store_all_g2,
     store_frozen_g2,
@@ -350,7 +383,7 @@ mod tests {
     }
 
     macro_rules! bulk_and_serialization_test {
-        ($test:ident, $point:ty, $handle:ty, $ark:ident, $span:ident, $load:ident, $store:ident, $freeze:ident, $rehome:ident) => {
+        ($test:ident, $point:ty, $handle:ty, $ark:ident, $span:ident, $make_contiguous:ident, $load:ident, $store:ident, $freeze:ident, $rehome:ident) => {
             #[test]
             fn $test() {
                 if shared_context().is_none() {
@@ -371,11 +404,26 @@ mod tests {
                         $load(&live),
                         points.iter().rev().copied().collect::<Vec<_>>()
                     );
+                    $make_contiguous(&mut live).expect("gather reversed handles");
+                    assert_eq!(
+                        $load(&live),
+                        points.iter().rev().copied().collect::<Vec<_>>()
+                    );
                     if let Some(first) = live.first() {
                         let replacement = <$point>::rand(&mut rng);
                         first.overwrite(&replacement);
                         assert_eq!(first.load(), replacement);
                         assert_eq!(*first, <$handle>::store(&replacement));
+                    }
+                    if let Some(&first) = frozen.first() {
+                        let mut copies = vec![first; 37];
+                        $make_contiguous(&mut copies).expect("gather repeated handles");
+                        assert_eq!($load(&copies), vec![points[0]; 37]);
+                        let replacement = <$point>::rand(&mut rng);
+                        copies[0].overwrite(&replacement);
+                        assert_eq!(copies[0].load(), replacement);
+                        assert_eq!($load(&copies[1..]), vec![points[0]; 36]);
+                        assert_eq!($load(&frozen), points);
                     }
 
                     let fresh: Vec<_> = (0..count).map(|_| <$point>::rand(&mut rng)).collect();
@@ -423,6 +471,7 @@ mod tests {
         DeviceG1,
         ArkG1,
         span,
+        make_contiguous,
         load_all,
         store_all,
         store_frozen,
@@ -434,6 +483,7 @@ mod tests {
         DeviceG2,
         ArkG2,
         span_g2,
+        make_contiguous_g2,
         load_all_g2,
         store_all_g2,
         store_frozen_g2,
