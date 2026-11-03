@@ -694,7 +694,6 @@ fn collect_guest_proofs(
             None,
             None,
             None,
-            None,
         )
         .expect("prover should produce verifier-native proof");
         let prove_time = now.elapsed().as_secs_f64();
@@ -1142,7 +1141,6 @@ fn run_recursion_proof(
                     &input_bytes,
                     &[],
                     &[],
-                    None,
                     None,
                     None,
                     None,

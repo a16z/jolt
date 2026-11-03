@@ -76,9 +76,7 @@ pub use jolt_openings::CommitmentScheme;
 #[cfg(feature = "host")]
 pub use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "host")]
-pub use jolt_prover::{
-    CommittedProgramProverData, JoltSharedPreprocessing, MemoryBudget, PreprocessingError,
-};
+pub use jolt_prover::{CommittedProgramProverData, JoltSharedPreprocessing, PreprocessingError};
 #[cfg(feature = "host")]
 pub type JoltProverPreprocessing = GenericJoltProverPreprocessing<PCS, VerifierVC>;
 #[cfg(feature = "host")]
@@ -262,9 +260,6 @@ pub fn compute_advice_tape(
     Ok(trace.advice_tape)
 }
 
-/// `memory_budget`, when set, is checked with
-/// [`MemoryBudget::check_known_eager`] after tracing and before the witness
-/// is built; passing it does not mean the proof fits in the budget.
 #[cfg(all(feature = "host", not(feature = "akita")))]
 #[expect(
     clippy::too_many_arguments,
@@ -279,7 +274,6 @@ pub fn prove_program(
     trusted_advice_commitment: Option<DoryCommitment>,
     trusted_advice_hint: Option<DoryHint>,
     advice_tape: Option<Vec<u8>>,
-    memory_budget: Option<MemoryBudget>,
 ) -> Result<(RV64IMACProof, JoltDevice), Box<dyn StdError + Send + Sync>> {
     let program = Arc::new(source.build_jolt_program()?);
     let program_preprocessing = preprocessing.program_arc().ok_or_else(|| {
@@ -314,9 +308,6 @@ pub fn prove_program(
         preprocessing.verifier.program.program_image_len_words(),
         preprocessing.verifier.program.max_padded_trace_length(),
     )?;
-    if let Some(budget) = memory_budget {
-        budget.check_known_eager::<F>(&config, &trace.trace)?;
-    }
     let witness_config = JoltVmWitnessConfig::new(
         config.trace_length.ilog2() as usize,
         config.ram_K,

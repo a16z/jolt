@@ -120,9 +120,8 @@ impl MemoryBudget {
     /// `trace`; the check does not validate it. A reservation within
     /// `usize::MAX` above the budget fails with
     /// [`ProverError::MemoryBudgetExceeded`]; one past `usize::MAX` fails
-    /// every budget with [`ProverError::MemoryReservationOverflow`]. The SDK
-    /// and profile callers run it after tracing and before building the
-    /// witness.
+    /// every budget with [`ProverError::MemoryReservationOverflow`]. The profile
+    /// callers run it after tracing and before building the witness.
     ///
     /// The reservation is the trace buffers at their reserved capacity
     /// ([`TraceData::heap_bytes`]) plus the largest stage-1–5 envelope over
