@@ -65,8 +65,6 @@ impl<F: JoltField> PreparedBFolds<F> {
                 .position(|&candidate| candidate == column)
                 .map(|index| derived.bz_weights[stream][index])
         };
-        // Use deferred products on both Fr and Fp128. Fr's general accumulator
-        // reduces each scalar product, whereas this accumulator reduces the sum.
         let mut first = [F::zero(); 11];
         let mut second = [F::zero(); 11];
         for (slot, &column) in first.iter_mut().zip(&FIRST_COLUMNS) {
@@ -107,6 +105,8 @@ impl<F: JoltField> PreparedBFolds<F> {
             row.next_pc.0,
             row.pc.0,
         ];
+        // Defer the u64 scalar products on both Fr and Fp128. Fr's general
+        // accumulator would reduce each product separately.
         let mut first = <F as WithAccumulator>::SignedProductAccumulator::default();
         first.add(self.first_constant[d]);
         for (&w, &v) in self.first.iter().zip(&first_values) {
