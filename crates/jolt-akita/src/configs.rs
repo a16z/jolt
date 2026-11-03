@@ -12,7 +12,7 @@ use akita_params::ChunkedWitnessCfg;
 
 use std::fmt::{Display, Formatter, Result as FormatResult};
 
-use crate::AKITA_ONE_HOT_K16;
+use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
 
 macro_rules! delegate_preset {
     (
@@ -89,7 +89,9 @@ delegate_preset!(
     /// Direct-planning policy used to generate the below-cutover K=256 rows.
     JoltOneHotK256Direct,
     OneHot,
-    <OneHot as CommitmentConfig>::committed_source_class(),
+    CommittedSourceClass::UnitOneHot {
+        source_chunk_size: AKITA_ONE_HOT_K256,
+    },
     "jolt-fp128-onehot-k256-direct-planner"
 );
 
