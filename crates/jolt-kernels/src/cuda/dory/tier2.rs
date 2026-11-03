@@ -5,8 +5,7 @@
 //! Results carry their original column indices because batching can reorder
 //! columns; the caller restores commitment order.
 
-use ark_bn254::Bn254;
-use ark_ec::pairing::{MillerLoopOutput, Pairing};
+use ark_ec::pairing::MillerLoopOutput;
 use jolt_crypto::Bn254GT;
 use jolt_dory::{DoryCommitment, DoryProverSetup};
 
@@ -17,8 +16,7 @@ use crate::cuda::common::msm::{JacobianLimbs, FQ_LIMBS};
 use crate::cuda::common::pairing::FQ12_LIMBS;
 
 fn exponentiate(words: &[u64]) -> Option<Bn254GT> {
-    <Bn254 as Pairing>::final_exponentiation(MillerLoopOutput(curve::fq12(words)))
-        .map(|output| Bn254GT::from(output.0))
+    Bn254GT::from_miller_loop(MillerLoopOutput(curve::fq12(words)))
 }
 
 fn lane_words(limbs: &[u64], lane: usize) -> Option<&[u64]> {

@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
-use ark_bn254::{Fq12, Fr};
+use ark_bn254::{Bn254, Fq12, Fr};
+use ark_ec::pairing::{MillerLoopOutput, Pairing};
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field as ArkField, PrimeField};
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
 use jolt_field::JoltField;
@@ -31,6 +32,15 @@ use super::field_to_fr;
 #[derive(Clone, Copy, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct Bn254GT(pub(crate) Fq12);
+
+impl Bn254GT {
+    /// Applies final exponentiation to a Miller-loop result, placing it in GT.
+    ///
+    /// Returns `None` for zero, which is outside the multiplicative group.
+    pub fn from_miller_loop(output: MillerLoopOutput<Bn254>) -> Option<Self> {
+        Bn254::final_exponentiation(output).map(|output| Self(output.0))
+    }
+}
 
 impl Debug for Bn254GT {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
