@@ -1,9 +1,9 @@
 //! A materialized prefix with an implicit linear combination of equality
 //! polynomials beyond it. Low-bit-first binding preserves that representation.
 
-use super::support::{bind_prefix_pairs, map_indices};
+use super::support::map_indices;
 use jolt_field::JoltField;
-use jolt_poly::{eq_index_msb, EqPolynomial, TensorEqTable};
+use jolt_poly::{bind_prefix_in_place, eq_index_msb, EqPolynomial, TensorEqTable};
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct EqPrefix<F: JoltField> {
@@ -24,9 +24,15 @@ impl<F: JoltField> EqPrefix<F> {
             .iter()
             .map(|(point, weight)| TensorEqTable::new_with_scaling(point, *weight))
             .collect();
-        let values = map_indices(prefix_len, |index| {
-            tables.iter().map(|table| table.evaluate_index(index)).sum()
-        });
+        let values = if tables.len() < 2 {
+            map_indices(prefix_len, |index| {
+                tables.iter().map(|table| table.evaluate_index(index)).sum()
+            })
+        } else {
+            map_indices(prefix_len, |index| {
+                TensorEqTable::sum_at_index(&tables, index)
+            })
+        };
         Self {
             values,
             terms,
@@ -71,7 +77,7 @@ impl<F: JoltField> EqPrefix<F> {
         } else {
             F::zero()
         };
-        bind_prefix_pairs(&mut self.values, challenge, boundary);
+        let _ = bind_prefix_in_place(&mut self.values, challenge, boundary);
         for (point, weight) in &mut self.terms {
             let r = point[self.num_vars - 1];
             *weight *= (F::one() - r) * (F::one() - challenge) + r * challenge;
@@ -108,25 +114,26 @@ impl<F: JoltField> EqPrefix<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_field::{Fr, Ring, Zero};
+    use jolt_field::Fr;
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
     use jolt_poly::{BindingOrder, Polynomial};
 
-    #[test]
-    fn structured_suffix_binding_and_round_sums_match_dense_multilinears() {
+    fn check<F: JoltField>(term_count: usize) {
         for bits in [6, 12] {
             let len = 1 << bits;
-            let terms: Vec<_> = (0..3)
+            let terms: Vec<_> = (0..term_count)
                 .map(|term| {
                     let point: Vec<_> = (0..bits)
-                        .map(|bit| Fr::from_u64((term * 7 + bit) as u64))
+                        .map(|bit| F::from_u64((term * 7 + bit) as u64))
                         .collect();
-                    (point, Fr::from_u64(11 + term as u64))
+                    (point, F::from_u64(11 + term as u64))
                 })
                 .collect();
-            let full: Vec<Fr> = terms
+            let full: Vec<F> = terms
                 .iter()
                 .map(|(point, weight)| EqPolynomial::evals(point, Some(*weight)))
-                .fold(vec![Fr::zero(); len], |mut sum, term| {
+                .fold(vec![F::zero(); len], |mut sum, term| {
                     for (a, b) in sum.iter_mut().zip(term) {
                         *a += b;
                     }
@@ -136,8 +143,8 @@ mod tests {
                 let mut actual = EqPrefix::new(bits, prefix, terms.clone());
                 let mut expected_values = full.clone();
                 if prefix > 0 {
-                    actual.add_to_first(Fr::from_u64(19));
-                    expected_values[0] += Fr::from_u64(19);
+                    actual.add_to_first(F::from_u64(19));
+                    expected_values[0] += F::from_u64(19);
                 }
                 let mut expected = Polynomial::new(expected_values);
                 for round in 0..bits {
@@ -149,10 +156,10 @@ mod tests {
                         );
                     }
                     let start = actual.prefix_len().div_ceil(2);
-                    let lo: Fr = (start..half).map(|row| expected.evals()[2 * row]).sum();
-                    let hi: Fr = (start..half).map(|row| expected.evals()[2 * row + 1]).sum();
+                    let lo: F = (start..half).map(|row| expected.evals()[2 * row]).sum();
+                    let hi: F = (start..half).map(|row| expected.evals()[2 * row + 1]).sum();
                     assert_eq!(actual.suffix_pair_sums(start), (lo, hi));
-                    let challenge = Fr::from_u64([0, 1, 23, 41, 17, 99][round % 6]);
+                    let challenge = F::from_u64([0, 1, 23, 41, 17, 99][round % 6]);
                     actual.bind(challenge);
                     expected.bind_with_order(challenge, BindingOrder::LowToHigh);
                 }
@@ -163,6 +170,14 @@ mod tests {
                     .unwrap_or_else(|| actual.implicit_value(0));
                 assert_eq!(final_value, expected.evals()[0]);
             }
+        }
+    }
+    #[test]
+    fn structured_suffix_binding_and_round_sums_match_dense_multilinears() {
+        for terms in [0, 1, 3, 9] {
+            check::<Fr>(terms);
+            #[cfg(feature = "akita")]
+            check::<Prime128OffsetA7F7>(terms);
         }
     }
 }

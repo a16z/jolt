@@ -530,11 +530,12 @@ Verified shape of the blast radius:
 - **Two hard budgets** (the legacy prover's `MAX_SUFFIXES` and `LC` term caps went away with
   it): the optimized instruction read-RAF kernel packs the table index into 6 bits
   (`PACKED_TABLE_BITS`, `jolt-kernels/src/optimized/instruction_read_raf.rs`), so
-  `LookupTableKind::COUNT ≤ 63` (55 after Tier 1). The committed bytecode width is 462 of 512
-  lanes after Tier 1 (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` —
-  `3·128 + 2 + 14 + 6 + 55 + 1`; 472 with field-inline); every new lookup table and every new
-  circuit flag consumes a lane, and crossing 512 doubles the committed width. Tier 2 adds tables
-  and possibly flags, so economize the table family (parameterize widths where the MLE allows).
+  `LookupTableKind::COUNT ≤ 63` (55 after Tier 1). The committed bytecode width is 463 of 512
+  lanes (`jolt-claims/src/protocols/jolt/geometry/claim_reductions/bytecode.rs` —
+  `3·128 + 2 + 14 + 7 + 55 + 1`; 473 with field-inline); every new lookup table, circuit flag,
+  and instruction flag consumes a lane, and crossing 512 doubles the committed width. Tier 2
+  adds tables and possibly flags, so economize the table family (parameterize widths where the
+  MLE allows).
 - New virtual instructions touch the known ring: `jolt-riscv` kind macros, tracer exec impls,
   `zkvm/instruction/` + the lookup-tables **hand-maintained mirror** (append-only enum — the
   discriminant is read by unsafe pointer cast), `jolt-program` expansion, and the z3-verifier's

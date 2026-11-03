@@ -144,8 +144,23 @@ impl_field_inline_no_lookup!(
     FieldAssertZero,
     FieldLoadAccumulateFromRegister,
     FieldLoadImm,
-    FieldLoadAccumulateFromMemory,
 );
+
+#[cfg(feature = "field-inline")]
+impl_lookup_table!(FieldLoadAccumulateFromMemory, None);
+
+#[cfg(feature = "field-inline")]
+impl<const XLEN: usize, C: JoltCycle> LookupQuery<XLEN> for FieldLoadAccumulateFromMemory<C> {
+    #[inline]
+    fn to_instruction_inputs(&self) -> (u64, i128) {
+        (0, self.0.rd_vals().map_or(0, |(_, post)| post) as i128)
+    }
+
+    #[inline]
+    fn to_lookup_output(&self) -> u64 {
+        0
+    }
+}
 
 /// Lookup-query adapter for dynamic final Jolt instruction rows.
 ///
@@ -392,13 +407,21 @@ mod tests {
             /// `LookupOutput` from `Rs1Value + Imm` to form `RamAddress`.
             ///
             /// A `Load`/`Store` row may therefore look up nothing (output 0) or an
-            /// `AddressOffset` table, and an `AddressOffset` row's lookup index must
-            /// be exactly `Rs1Value + Imm`: `AddOperands` with the `rs1` and
-            /// immediate operands only. It must also not write or assert its lookup
-            /// output, which is an offset rather than a result.
+            /// `AddressOffset` table. A table-free load must carry its `RdWriteValue`
+            /// as its only bytecode-selected right instruction input; row 10 copies
+            /// that to the interleaved right lookup operand, whose read-RAF
+            /// decomposition proves it is a `u64` (an extra `Rs2Value` or `Imm` term
+            /// would move the bound onto the sum). An `AddressOffset` row's lookup
+            /// index must be exactly `Rs1Value + Imm`: `AddOperands` with the `rs1`
+            /// and immediate operands only. It must also not write or assert its
+            /// lookup output, which is an offset rather than a result. An
+            /// `AddressOffset` load therefore leaves its RAM word unchecked; its
+            /// sequence must read the loaded doubleword only as an interleaved operand
+            /// (jolt-program's `LaneWindow`), which this per-row registry cannot check.
             #[test]
             fn memory_rows_look_up_only_address_offsets() {
                 let mut floor_rows = 0;
+                let mut direct_loads = 0;
                 $(
                     $(#[$meta])*
                     {
@@ -408,6 +431,7 @@ mod tests {
                         let operands = Flags::instruction_flags(&instruction);
                         let table = InstructionLookupTable::<64>::lookup_table(&instruction);
                         let memory = circuit[CircuitFlags::Load] || circuit[CircuitFlags::Store];
+                        let direct_load = operands[InstructionFlags::RightOperandIsRdWriteValue];
                         let address_offset = matches!(
                             table,
                             Some(
@@ -421,6 +445,24 @@ mod tests {
                             "{}: memory row looks up {table:?}",
                             $canonical_name,
                         );
+                        assert!(
+                            !circuit[CircuitFlags::Load] || direct_load || address_offset,
+                            "{}: load must range-check its RAM read or use an audited floor-address lookup",
+                            $canonical_name,
+                        );
+                        if direct_load {
+                            direct_loads += 1;
+                            assert!(
+                                circuit[CircuitFlags::Load]
+                                    && !circuit[CircuitFlags::Store]
+                                    && table.is_none()
+                                    && circuit.is_interleaved_operands()
+                                    && !operands[InstructionFlags::RightOperandIsRs2Value]
+                                    && !operands[InstructionFlags::RightOperandIsImm],
+                                "{}: RightOperandIsRdWriteValue must select a table-free interleaved load row whose only right operand is RdWriteValue",
+                                $canonical_name,
+                            );
+                        }
                         if address_offset {
                             floor_rows += 1;
                             assert!(
@@ -431,7 +473,8 @@ mod tests {
                                     && operands[InstructionFlags::LeftOperandIsRs1Value]
                                     && !operands[InstructionFlags::LeftOperandIsPC]
                                     && operands[InstructionFlags::RightOperandIsImm]
-                                    && !operands[InstructionFlags::RightOperandIsRs2Value],
+                                    && !operands[InstructionFlags::RightOperandIsRs2Value]
+                                    && !operands[InstructionFlags::RightOperandIsRdWriteValue],
                                 "{}: AddressOffset row must look up exactly Rs1Value + Imm",
                                 $canonical_name,
                             );
@@ -439,6 +482,14 @@ mod tests {
                     }
                 )*
                 assert_eq!(floor_rows, 6, "expected the six floor-addressed rows");
+                #[cfg(not(feature = "field-inline"))]
+                assert_eq!(direct_loads, 1, "expected native LD");
+                #[cfg(feature = "field-inline")]
+                assert_eq!(
+                    direct_loads,
+                    2,
+                    "expected native LD and FieldLoadAccumulateFromMemory",
+                );
             }
         };
     }
@@ -468,5 +519,60 @@ mod tests {
             LookupQuery::<64>::to_lookup_index(&query),
             (1_u128 << 64) + 9
         );
+    }
+
+    #[test]
+    fn ld_right_operand_carries_rd_write_value() {
+        const LOADED: u64 = 0xdead_beef_cafe_f00d;
+
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::LD,
+            ..Default::default()
+        };
+        let cycle = TestCycle {
+            instruction,
+            rs1: None,
+            rs2: None,
+            rd: Some((0, LOADED)),
+        };
+        let query = JoltLookupQuery::new(JoltInstructionKind::LD, cycle);
+
+        assert_eq!(
+            LookupQuery::<64>::to_instruction_inputs(&query),
+            (0, LOADED as i128)
+        );
+        assert_eq!(
+            LookupQuery::<64>::to_lookup_operands(&query),
+            (0, LOADED as u128)
+        );
+        assert_eq!(LookupQuery::<64>::to_lookup_output(&query), 0);
+    }
+
+    #[cfg(feature = "field-inline")]
+    #[test]
+    fn field_memory_load_right_operand_carries_rd_write_value() {
+        const LOADED: u64 = 0x1234_5678_9abc_def0;
+
+        let instruction = JoltInstructionRow {
+            instruction_kind: JoltInstructionKind::FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
+            ..Default::default()
+        };
+        let cycle = TestCycle {
+            instruction,
+            rs1: None,
+            rs2: None,
+            rd: Some((0, LOADED)),
+        };
+        let query = JoltLookupQuery::new(instruction.instruction_kind, cycle);
+
+        assert_eq!(
+            LookupQuery::<64>::to_instruction_inputs(&query),
+            (0, LOADED as i128)
+        );
+        assert_eq!(
+            LookupQuery::<64>::to_lookup_operands(&query),
+            (0, LOADED as u128)
+        );
+        assert_eq!(LookupQuery::<64>::to_lookup_output(&query), 0);
     }
 }

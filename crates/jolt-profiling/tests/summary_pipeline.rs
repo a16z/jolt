@@ -1,12 +1,12 @@
 #![cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 #![expect(clippy::unwrap_used)]
 
-use jolt_profiling::stage_memory::StageMemoryRow;
+use jolt_profiling::span_boundary::{BoundarySamples, SpanInstructions, StageBoundaryRow};
 use jolt_profiling::summary::{
     build_summary, convert_counter_events, parse_folded, summary_path, ProfileSummary,
     SummaryContext, SUMMARY_SCHEMA_JSON,
 };
-use jolt_profiling::taxonomy;
+use jolt_profiling::taxonomy::{self, ROOT_SPAN};
 use jolt_profiling::PeakMemory;
 use serde_json::Value;
 
@@ -25,12 +25,37 @@ fn fixture_context() -> SummaryContext {
     }
 }
 
-fn fixture_stage_rows() -> Vec<StageMemoryRow> {
-    vec![StageMemoryRow {
-        stage: "prove_stage0",
-        rss_open_bytes: GIB as u64,
-        rss_close_bytes: 2 * GIB as u64,
-    }]
+fn fixture_samples() -> BoundarySamples {
+    let sampled = |instances, instructions| SpanInstructions {
+        instances,
+        instructions,
+    };
+    BoundarySamples {
+        stage_rows: vec![
+            StageBoundaryRow {
+                stage: "prove_stage0",
+                rss_open_bytes: GIB as u64,
+                rss_close_bytes: 2 * GIB as u64,
+                instructions: Some(7_000_000),
+            },
+            StageBoundaryRow {
+                stage: ROOT_SPAN,
+                rss_open_bytes: GIB as u64,
+                rss_close_bytes: 3 * GIB as u64,
+                instructions: Some(20_000_000),
+            },
+        ],
+        // `EqPolynomial::evals` ran on a pool thread, so it was never
+        // sampled.
+        span_instructions: [
+            (ROOT_SPAN, sampled(1, Some(20_000_000))),
+            ("prove_batch", sampled(1, Some(500_000))),
+            ("sumcheck_round", sampled(1, Some(200_000))),
+            ("commit_witness", sampled(1, None)),
+        ]
+        .into_iter()
+        .collect(),
+    }
 }
 
 fn fixture_peak() -> PeakMemory {
@@ -44,7 +69,7 @@ fn fixture_summary(events: &[Value]) -> ProfileSummary {
     build_summary(
         events,
         &fixture_context(),
-        &fixture_stage_rows(),
+        &fixture_samples(),
         fixture_peak(),
         1_700_000_000,
         Some("abc1234".to_string()),
@@ -119,11 +144,12 @@ fn aggregation_computes_totals_self_and_dark_time() {
     assert_eq!(span("EqPolynomial::evals").self_ns, 100_000);
 
     let root = summary.root.as_ref().unwrap();
-    assert_eq!(root.label, taxonomy::ROOT_SPAN);
+    assert_eq!(root.label, ROOT_SPAN);
     assert_eq!(root.wall_time_ns, 2_500_000);
     assert_eq!(root.dark_time_ns, 600_000);
     assert!((root.dark_time_fraction - 0.24).abs() < 1e-9);
     assert_eq!(root.peak_memory_gib, Some(3.0));
+    assert_eq!(root.instructions, Some(20_000_000));
 }
 
 #[test]
@@ -138,6 +164,7 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage0.rss_close_gib, Some(2.0));
     assert_eq!(stage0.rss_delta_gib, Some(1.0));
     assert_eq!(stage0.peak_memory_gib, Some(1.0));
+    assert_eq!(stage0.instructions, Some(7_000_000));
 
     let stage1 = &summary.stages[1];
     assert_eq!(stage1.label, "prove_stage1");
@@ -145,6 +172,7 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage1.rss_open_gib, None);
     assert_eq!(stage1.rss_delta_gib, None);
     assert_eq!(stage1.peak_memory_gib, Some(3.0));
+    assert_eq!(stage1.instructions, None);
 
     assert_eq!(summary.peak_rss_gib, Some(4.0));
     assert_eq!(summary.peak_footprint_gib, Some(6.0));
@@ -154,6 +182,25 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert!((memory.mean - 2.0).abs() < 1e-9);
     let cpu = summary.counters.get("cpu_percent").unwrap();
     assert_eq!(cpu.samples, 1);
+}
+
+/// A label's instruction total is reported only when every trace instance
+/// was sampled with a count; partial or unavailable samples are `null`,
+/// never an undercount.
+#[test]
+fn span_instructions_require_every_instance_sampled() {
+    let summary = fixture_summary(&fixture_events());
+    let instructions = |label: &str| summary.spans.get(label).unwrap().instructions;
+    assert_eq!(instructions(ROOT_SPAN), Some(20_000_000));
+    assert_eq!(instructions("prove_batch"), Some(500_000));
+    assert_eq!(
+        instructions("sumcheck_round"),
+        None,
+        "1 of 2 instances sampled"
+    );
+    assert_eq!(instructions("commit_witness"), None, "counter unavailable");
+    assert_eq!(instructions("EqPolynomial::evals"), None, "pool thread");
+    assert_eq!(instructions("prove_stage1"), None, "never sampled");
 }
 
 #[test]
@@ -180,7 +227,7 @@ fn fixture_labels_conform_to_taxonomy() {
                 "unknown stage label {name}"
             );
         }
-        if name == taxonomy::ROOT_SPAN && event.get("ph").and_then(Value::as_str) == Some("B") {
+        if name == ROOT_SPAN && event.get("ph").and_then(Value::as_str) == Some("B") {
             assert!(
                 event
                     .get("args")
@@ -192,7 +239,7 @@ fn fixture_labels_conform_to_taxonomy() {
     }
     for mode in [taxonomy::ProverMode::Clear, taxonomy::ProverMode::Zk] {
         let always = taxonomy::always_present_spans(mode);
-        assert!(always.contains(&taxonomy::ROOT_SPAN));
+        assert!(always.contains(&ROOT_SPAN));
         assert!(always.contains(&"prove_batch"));
         assert!(!always
             .iter()
@@ -208,35 +255,43 @@ fn fixture_labels_conform_to_taxonomy() {
         .all(|l| zk.contains(l) && !clear.contains(l)));
 }
 
-/// Repeated stage labels pair with their rows by occurrence index (both are
-/// recorded in span-close order), never all with the first matching row.
+/// Repeated stage and root labels pair with their rows by occurrence index
+/// (both are recorded in span-exit order), never all with the first
+/// matching row; the summary's root is the longest instance.
 #[test]
-fn repeated_stage_labels_pair_rows_by_occurrence() {
+fn repeated_labels_pair_rows_by_occurrence() {
     let events: Vec<Value> = serde_json::from_str(
         r#"[
+        {"ph":"B","name":"jolt_prover::prove","ts":0.0,"pid":1,"tid":1},
         {"ph":"B","name":"prove_stage0","ts":100.0,"pid":1,"tid":1},
         {"ph":"E","name":"prove_stage0","ts":200.0,"pid":1,"tid":1},
+        {"ph":"E","name":"jolt_prover::prove","ts":250.0,"pid":1,"tid":1},
+        {"ph":"B","name":"jolt_prover::prove","ts":250.0,"pid":1,"tid":1},
         {"ph":"B","name":"prove_stage0","ts":300.0,"pid":1,"tid":1},
-        {"ph":"E","name":"prove_stage0","ts":700.0,"pid":1,"tid":1}
+        {"ph":"E","name":"prove_stage0","ts":700.0,"pid":1,"tid":1},
+        {"ph":"E","name":"jolt_prover::prove","ts":800.0,"pid":1,"tid":1}
     ]"#,
     )
     .unwrap();
-    let rows = vec![
-        StageMemoryRow {
-            stage: "prove_stage0",
-            rss_open_bytes: GIB as u64,
-            rss_close_bytes: 2 * GIB as u64,
-        },
-        StageMemoryRow {
-            stage: "prove_stage0",
-            rss_open_bytes: 3 * GIB as u64,
-            rss_close_bytes: 5 * GIB as u64,
-        },
-    ];
+    let row = |stage, rss_open_gib: u64, rss_close_gib: u64, instructions| StageBoundaryRow {
+        stage,
+        rss_open_bytes: rss_open_gib * GIB as u64,
+        rss_close_bytes: rss_close_gib * GIB as u64,
+        instructions: Some(instructions),
+    };
+    let samples = BoundarySamples {
+        stage_rows: vec![
+            row("prove_stage0", 1, 2, 10),
+            row(ROOT_SPAN, 1, 2, 30),
+            row("prove_stage0", 3, 5, 40),
+            row(ROOT_SPAN, 2, 5, 60),
+        ],
+        span_instructions: Default::default(),
+    };
     let summary = build_summary(
         &events,
         &fixture_context(),
-        &rows,
+        &samples,
         PeakMemory::default(),
         0,
         None,
@@ -247,9 +302,14 @@ fn repeated_stage_labels_pair_rows_by_occurrence() {
     assert_eq!(summary.stages[0].wall_time_ns, 100_000);
     assert_eq!(summary.stages[0].rss_open_gib, Some(1.0));
     assert_eq!(summary.stages[0].rss_close_gib, Some(2.0));
+    assert_eq!(summary.stages[0].instructions, Some(10));
     assert_eq!(summary.stages[1].wall_time_ns, 400_000);
     assert_eq!(summary.stages[1].rss_open_gib, Some(3.0));
     assert_eq!(summary.stages[1].rss_delta_gib, Some(2.0));
+    assert_eq!(summary.stages[1].instructions, Some(40));
+    let root = summary.root.unwrap();
+    assert_eq!(root.wall_time_ns, 550_000);
+    assert_eq!(root.instructions, Some(60));
 }
 
 #[test]

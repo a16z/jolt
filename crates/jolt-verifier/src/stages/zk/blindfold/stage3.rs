@@ -126,6 +126,8 @@ where
             rs2_value: zero,
             right_operand_is_imm: zero,
             imm: zero,
+            right_operand_is_rd_write_value: zero,
+            rd_write_value: zero,
         }
         .canonical_order()
         .into_iter()
