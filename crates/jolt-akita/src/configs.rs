@@ -194,7 +194,7 @@ mod tests {
     fn unit_one_hot_chunk_size(class: CommittedSourceClass) -> Option<usize> {
         match class {
             CommittedSourceClass::UnitOneHot { source_chunk_size } => Some(source_chunk_size),
-            _ => None,
+            CommittedSourceClass::BalancedSignedDigit => None,
         }
     }
 
