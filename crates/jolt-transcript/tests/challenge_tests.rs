@@ -9,7 +9,9 @@ use jolt_transcript::{
     protocol_tag, prover_transcript, verifier_transcript, BytesMsg, ChallengeCodec,
     FieldTranscript, ProverTranscript, Transcript, MAX_CHALLENGE_BYTES,
 };
-use spongefish::{instantiations::Keccak, Encoding};
+use spongefish::instantiations::Keccak;
+#[cfg(feature = "solinas")]
+use spongefish::Encoding;
 use std::fmt::{Debug, Write};
 
 #[cfg(feature = "solinas")]
@@ -462,6 +464,7 @@ fn keccak_rate_boundary_known_answers() {
 
 /// `append_values` against one absorb per value: the challenge after each is
 /// the same exactly when every value's encoding is a whole number of words.
+#[cfg(all(feature = "solinas", feature = "bn254"))]
 fn append_values_matches_per_value_absorbs<M: Encoding>(values: &[M]) {
     let width = values[0].encode().as_ref().len();
     assert_eq!(width % 8, 0, "{width}-byte encoding");
