@@ -2374,7 +2374,7 @@ mod tests {
             let large = F::from_u128(u128::MAX) * F::from_u128(u128::MAX - 0x1234_5678);
             for challenge in [F::zero(), F::one(), F::from_u64(19), -F::one(), large] {
                 let derived = OuterRemainderKernel::<F>::derived_weights(challenge).unwrap();
-                let folds = PreparedBFolds::new(&derived).expect("RV64 matrix supported");
+                let folds = PreparedBFolds::new(&derived).unwrap();
                 for row in &rows {
                     let expected = std::array::from_fn(|stream| {
                         derived.bz_constant[stream]
