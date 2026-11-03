@@ -9,7 +9,7 @@ request has merged.
 - A maintainer wrote the pull request.
 - The Pika App bot or a maintainer attests a clean review of that head in a PR comment.
 - A verifier classifier result for that head puts it at risk-1, risk-2 or risk-3.
-- The pull request changes none of the gate's own inputs.
+- The pull request changes none of the protected inputs listed in the decision table below.
 - No maintainer or writer has a standing change request.
 - The pull request is open, targets `main` and is not a draft.
 
@@ -152,7 +152,7 @@ that is still standing.
 | 2 | A maintainer or writer has requested changes, on any commit, and has not since approved or had that review dismissed | `neutral`: changes requested | Withdrawn | None |
 | 3 | No writer approved and the author is not a maintainer | `neutral`: human approval required | Withdrawn | None |
 | 4 | No writer approved and the pull request is a draft | `neutral`: draft | Withdrawn | None |
-| 5 | No writer approved and the pull request changes a gate input: `.github/workflows/`, `scripts/ci/`, the classifier skill, closure spec or risk policy | `neutral`: human approval required | Withdrawn | None |
+| 5 | No writer approved and the pull request changes a protected input: `.github/workflows/ai-merge-gate.yml`, `.github/workflows/ai-merge-gate-events.yml`, `.claude/skills/verifier-classifier/`, `specs/verifier-closure-lints.md` or `.github/ai-merge-gate-risk.json` | `neutral`: human approval required | Withdrawn | None |
 | 6 | Maintainer-authored, ready, no gate-input changes, no current-head maintainer approval, and no cached classification | Classify dependency-only bumps deterministically; otherwise run the classifier within its attempt limits, then continue | — | Classifier unless bump-only |
 | 7 | Risk-4 with an undismissed current-head approval by a maintainer with write access, other than the author | `success` | Withdrawn | None |
 | 8 | Risk-4 without that approval | `neutral`: current-head maintainer approval required | Withdrawn | None |
@@ -345,15 +345,24 @@ answers would take the next request over the input bound, the gate withholds the
 model must answer from what it has read; the classifier skill tells it to answer `UNCERTAIN`
 when that is not enough.
 
-Row 5 keeps the gate from approving changes to itself. Any workflow merged into the default
-branch can use the gate's secret and token. Python looks up the gate's imports in `scripts/ci`
-first, so any file merged there, such as a `json.py` that shadows the standard library or a
-`__pycache__` entry, would run with the gate's credentials. The classifier skill, risk policy
-and closure spec are the model's instructions. The gate also protects the review skill, its
-comment/test-policy skills, `CLAUDE.md`, the `AGENTS.md` link, `CONTRIBUTING.md` and this guide:
-these define the review procedure and approval policy. Other files under `.github/`, such as
-issue templates, go to the classifier like any other change. A qualifying human approval still
-satisfies the policy; the gate does not add its own approval of protected-input changes.
+Row 5 keeps the classifier skill, closure spec, risk policy and the two AI gate workflows
+human-reviewed. The paid classifier runs in `ai-merge-gate.yml`; `ai-merge-gate-events.yml`
+signals pull request and review events to it. Changes to `scripts/ci/`, other workflows,
+`CLAUDE.md`, the `AGENTS.md` link, `CONTRIBUTING.md`, this guide and the
+ci-code-review/comment-policy/test-policy skills go to the classifier like any other change
+on an eligible maintainer-authored pull request. Their existing risk globs still apply. A
+qualifying human approval still satisfies the policy; the gate does not add its own approval
+of protected-input changes.
+
+Both credentialed gate jobs check out the default branch, not the pull request head. The gate
+reads the proposed files through GitHub's API into memory as data; it does not execute the
+pull request's `scripts/ci/` code with the gate's credentials before merge. After merge, changed
+scripts become default-branch code and can run with those credentials on later evaluations.
+The separate `diff-classifier.yml` workflow is a deterministic diff summary, not the AI gate's
+verifier classifier. It already checks out the pull request head and runs that revision's
+`scripts/ci/diff_classifier.py` with its own workflow token, whose declared permissions are
+Contents read and Pull requests write. It does not receive the AI gate's OpenAI key. That
+workflow remains outside row 5; this change does not alter its checkout or permissions.
 
 The gate stores each classifier verdict and risk level as a check run on the head, whose
 external ID names the workflow run that created it. Later evaluations reuse a verdict instead of

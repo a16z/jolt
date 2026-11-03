@@ -544,7 +544,7 @@ class AiMergeGateTests(unittest.TestCase):
             ({}, {"risk-2"}, 1),
             ({"author": "outsider", "files": ["docs/guide.md"]},
              {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
-            ({"files": ["scripts/ci/helper.py"]}, {"risk-1", "no-reviewer-assigned"}, 0),
+            ({"files": [".claude/skills/verifier-classifier/SKILL.md"]}, {"risk-1", "no-reviewer-assigned"}, 0),
             ({"author": "outsider"}, {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
             ({"draft": True}, {"risk-4"}, 0),
         ]:
@@ -1223,8 +1223,9 @@ class AiMergeGateTests(unittest.TestCase):
         b_files = [{"filename": "CONTRIBUTING.md", "status": "modified"}]
         attested = [comment("core-a", attestation())]
         for case, apis, expected in [
-            ("gate import added on A", BranchMovesToBAndBack(
-                [{"filename": "scripts/ci/json.py", "status": "added"}], b_files, comments=attested),
+            ("classifier instruction added on A", BranchMovesToBAndBack(
+                [{"filename": ".claude/skills/verifier-classifier/new.md", "status": "added"}],
+                b_files, comments=attested),
              ("neutral", "Human approval required: the change edits the gate's inputs")),
             ("prover file changed on A", BranchMovesToBAndBack(
                 ["crates/jolt-prover/src/lib.rs"], b_files, comments=attested),
@@ -1245,23 +1246,24 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_changes_to_gate_inputs_never_get_the_gates_approval(self) -> None:
         attested = [comment("core-a", attestation())]
-        renamed = {"filename": "docs/ci.yml", "previous_filename": ".github/workflows/ci.yml", "status": "renamed"}
-        for case, files in [("workflow renamed away", [renamed]),
-                            ("events workflow removed", [{"filename": ".github/workflows/ai-merge-gate-events.yml",
-                                                          "status": "removed"}]),
-                            ("gate script", ["scripts/ci/ai_merge_gate.py"]),
-                            ("module the gate's imports would find", [{"filename": "scripts/ci/json.py",
-                                                                       "status": "added"}]),
+        renamed = {"filename": "docs/classifier.md", "previous_filename": ".claude/skills/verifier-classifier/SKILL.md",
+                   "status": "renamed"}
+        for case, files in [("classifier skill renamed away", [renamed]),
+                            ("closure spec removed", [{"filename": "specs/verifier-closure-lints.md",
+                                                       "status": "removed"}]),
+                            ("closure spec", ["specs/verifier-closure-lints.md"]),
+                            ("risk policy", [GATE.RISK_POLICY]),
+                            ("classifier workflow", [GATE.WORKFLOW]),
+                            ("events workflow", [".github/workflows/ai-merge-gate-events.yml"]),
                             ("classifier skill", [".claude/skills/verifier-classifier/SKILL.md"])]:
             with self.subTest(case=case):
                 apis = evaluate(FakeApis(comments=attested, files=files, counts=(len(files), 1, 1)))
                 self.assertEqual(apis.gate(), ("neutral", "Human approval required: the change edits the gate's inputs"))
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
         # A writer's approval satisfies the policy; the gate still does not add its own.
-        approved = evaluate(FakeApis(comments=attested, files=["scripts/ci/ai_merge_gate.py"],
+        approved = evaluate(FakeApis(comments=attested, files=[".claude/skills/verifier-classifier/SKILL.md"],
                                      reviews=[review("maintainer", "APPROVED")]))
         self.assertEqual((approved.gate(), approved.review_writes), (("success", "Approved by maintainer"), []))
-        # Other files under .github/ feed nothing the gate runs, so the classifier judges them.
         path = ".github/ISSUE_TEMPLATE/bug_report.md"
         old, new = "Describe the bug\n", "Describe the bug and how to reproduce it\n"
         template = evaluate(FakeApis(comments=attested, files=[path], diff=unified_diff(path, old, new),
@@ -1269,17 +1271,17 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(template.gate(), ("success", "Review attested by core-a"))
         self.assertEqual((len(template.model_requests), template.approved()), (1, [HEAD]))
 
-    def test_review_instruction_changes_require_human_approval(self) -> None:
-        for path in (".claude/skills/ci-code-review/SKILL.md", ".claude/skills/comment-policy/SKILL.md",
+    def test_unprotected_gate_and_review_files_use_the_classifier(self) -> None:
+        for path in ("scripts/ci/ai_merge_gate.py", "scripts/ci/json.py", ".github/workflows/other.yml",
+                     ".github/workflows/diff-classifier.yml",
+                     ".claude/skills/ci-code-review/SKILL.md", ".claude/skills/comment-policy/SKILL.md",
                      ".claude/skills/test-policy/SKILL.md", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md",
                      ".github/ai-merge-gate.md"):
-            for approved in (False, True):
-                with self.subTest(path=path, approved=approved):
-                    apis = evaluate(FakeApis(files=[path], risk=1, records=[record(GATE.CLASSIFIER)],
-                                             comments=[comment("core-a", attestation())],
-                                             reviews=[review("maintainer", "APPROVED")] if approved else []))
-                    self.assertEqual(apis.gate()[0], "success" if approved else "neutral")
-                    self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
+            with self.subTest(path=path):
+                apis = evaluate(changed_contents({path: "old\n"}, {path: "new\n"}, risk=1))
+                self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
+                self.assertEqual(set(apis.labels), {"risk-1", "merge-eligible"})
+                self.assertEqual((len(apis.model_requests), apis.approved()), (1, [HEAD]))
 
     def test_trusted_input_changes_invalidate_verdict_without_resetting_attempts(self) -> None:
         paths = ("scripts/ci/ai_merge_gate.py", "scripts/ci/diff_classifier.py",

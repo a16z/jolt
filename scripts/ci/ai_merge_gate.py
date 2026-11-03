@@ -69,15 +69,9 @@ LEDGER = re.compile(r"<!-- ai-merge-gate/attempts (\{.*\}) -->")
 # The run-name of .github/workflows/ai-merge-gate-events.yml, which GitHub reports as display_title.
 RUN_NAME = re.compile(r"AI merge gate events for PR #([1-9][0-9]*)")
 REVIEW_FIELDS = "state commit { oid } fullDatabaseId"
-# Merged changes here act on every later evaluation, so the gate never approves them. Any
-# workflow on the default branch can use the gate's secret and token. Python resolves the
-# gate's imports from scripts/ci first, so any module there, a json.py or a __pycache__ entry
-# included, can run with the gate's credentials. The classifier skill, risk policy and closure
-# spec instruct the model; the other protected guides define the external review procedure.
-GATE_INPUTS = (".github/workflows/", "scripts/ci/", ".claude/skills/verifier-classifier/",
-               ".claude/skills/ci-code-review/", ".claude/skills/comment-policy/",
-               ".claude/skills/test-policy/", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md",
-               ".github/ai-merge-gate.md", "specs/verifier-closure-lints.md", RISK_POLICY)
+# The classifier's instructions, policy and workflow entry points require human approval.
+GATE_INPUTS = (WORKFLOW, ".github/workflows/ai-merge-gate-events.yml",
+               ".claude/skills/verifier-classifier/", "specs/verifier-closure-lints.md", RISK_POLICY)
 CLASSIFIER_INPUTS = ("scripts/ci/ai_merge_gate.py", "scripts/ci/diff_classifier.py", WORKFLOW,
                      ".claude/skills/verifier-classifier/SKILL.md", "specs/verifier-closure-lints.md",
                      RISK_POLICY)
