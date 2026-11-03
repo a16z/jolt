@@ -143,8 +143,7 @@ def plan(args):
         harness = plan['harness']
         if git_file(harness, plan['config']['path']) != args.config.read_bytes():
             raise ValueError('suite configuration differs from the committed harness')
-        paths = bench.capture(['git', 'ls-tree', '-r', '--name-only', harness, '--', *bench.HARNESS_PATHS]).splitlines()
-        harness_files = {path: hashlib.sha256(git_file(harness, path)).hexdigest() for path in paths}
+        harness_files = bench.harness_files(harness)
         for item in plan['runs']:
             for revision in (item['base'], item['head']):
                 if not revision:
@@ -167,6 +166,8 @@ def plan(args):
                                         'sha256': hashlib.sha256(git_file(revision, path)).hexdigest()}
                                        for path in schedules if Path(path).suffix == '.aks'],
                 }
+                if tier == 'pr':
+                    plan.setdefault('own_harness_files', {})[revision] = bench.harness_files(revision)
         plan['enabled'] = True
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         plan['reason'] = str(error)
@@ -218,7 +219,8 @@ awk '$1 == "oom_kill" { print "kernel", $0 }' /proc/vmstat
                 bench.capture(['git', 'fetch', '--no-tags', 'origin', revision], env=env)
                 options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier=None,
                     out=out / revision, revision=revision, harness_revision=plan['harness'],
-                    target_cpu=plan['target_cpu'], profile='release', workload=[], case=[])
+                    target_cpu=plan['target_cpu'], profile='release', workload=[], case=[],
+                    allow_harness_fallback=plan['tier'] == 'pr')
                 manifest = bench.build(options)
                 if manifest['status'] != 'complete':
                     raise ValueError(f'build preparation failed for {revision}: {manifest["reason"]}')
@@ -255,7 +257,13 @@ def verified_bundles(args, plan, revisions):
         if entry['path'] != f'{revision}/manifest.json':
             raise ValueError('unexpected build manifest path')
         path, manifest = bench.load_bundle(bench.checked_file(index_path, entry))
-        for key, value in plan['expected_builds'][revision].items():
+        expected = dict(plan['expected_builds'][revision])
+        native = manifest['native_harness_revision']
+        if native != expected['harness_revision']:
+            if (plan['tier'] != 'pr' or native != revision or not manifest.get('harness_fallback_reason')):
+                raise ValueError('build uses an unplanned native harness')
+            expected['harness_files'] = plan['own_harness_files'][revision]
+        for key, value in expected.items():
             if manifest.get(key) != value:
                 raise ValueError(f'build differs from the planned input: {key}')
         entries = [manifest['runner'], *manifest['akita_schedules'],

@@ -208,7 +208,7 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
             manifests = {}
             for leg, executable in [('base', binary), ('head', failure)]:
                 manifest = {'schema_version': 1, 'revision': ('a' if leg == 'base' else 'b') * 40,
-                            'harness_revision': 'c' * 40, 'status': 'complete',
+                            'harness_revision': 'c' * 40, 'native_harness_revision': 'c' * 40, 'status': 'complete',
                             'toolchain': 'fixture', 'cargo_version': 'fixture', 'target_cpu': 'x86-64',
                             'profile': 'release', 'profile_config': {}, 'guest_builder_profile': 'ci',
                             'rustflags': '-C target-cpu=x86-64',
@@ -413,6 +413,58 @@ class BuildCacheTests(unittest.TestCase):
         self.assertEqual(self.git('show', 'HEAD:new-source', cwd=source),
                          'new commit after the independent clone')
 
+    def test_pr_build_failure_retries_with_the_legs_own_harness(self):
+        preferred = self.revision
+        profile = 'crates/jolt-prover/src/profile.rs'
+        (self.workspace / profile).write_text('fn candidate_api() {}\n')
+        self.git('add', profile)
+        self.commit()
+        candidate = self.git('rev-parse', 'HEAD')
+        logged = bench.logged
+        attempted = []
+
+        def incompatible(argv, cwd, env, log):
+            if argv[:2] == ['cargo', 'build']:
+                code = (cwd / profile).read_text()
+                attempted.append(code)
+                if code == 'fn fixture() {}\n':
+                    raise RuntimeError('shared harness does not compile against candidate API (see build.log)')
+            return logged(argv, cwd, env, log)
+
+        with patch.object(bench, 'logged', side_effect=incompatible):
+            manifest, _ = self.build('fallback', revision=candidate, harness_revision=preferred,
+                                     allow_harness_fallback=True)
+        self.assertEqual(attempted[0], 'fn fixture() {}\n')
+        self.assertTrue(all(code == 'fn candidate_api() {}\n' for code in attempted[1:]))
+        self.assertEqual(manifest['native_harness_revision'], candidate)
+        self.assertIn('does not compile', manifest['harness_fallback_reason'])
+        self.assertIn('measure job log', manifest['harness_fallback_reason'])
+        self.assertIn('+fn candidate_api()', manifest['harness_diff']['text'])
+        self.assertTrue((self.root / 'fallback-shared-harness-attempt/build.log').is_file())
+
+    def test_pr_file_set_mismatch_keeps_the_legs_complete_own_harness(self):
+        preferred = self.revision
+        extra = self.workspace / 'crates/jolt-prover/src/profile/new_api.rs'
+        extra.parent.mkdir(parents=True)
+        extra.write_text('fn new_api() {}\n')
+        declared = self.workspace / 'native-harness/extra.rs'
+        declared.parent.mkdir()
+        declared.write_text('fn extra() {}\n')
+        collector = self.workspace / 'scripts/bench/run.py'
+        collector.write_text(collector.read_text().replace(
+            'HARNESS_PATHS = (', "HARNESS_PATHS = ('native-harness',", 1) +
+            '\nraise RuntimeError("candidate collector must not execute")\n')
+        self.git('add', str(extra.relative_to(self.workspace)), 'native-harness', 'scripts/bench/run.py')
+        self.commit()
+        candidate = self.git('rev-parse', 'HEAD')
+        manifest, _ = self.build('different-files', revision=candidate, harness_revision=preferred,
+                                 allow_harness_fallback=True)
+        self.assertEqual(manifest['native_harness_revision'], candidate)
+        self.assertIn('file set', manifest['harness_fallback_reason'])
+        self.assertIn('crates/jolt-prover/src/profile/new_api.rs', manifest['harness_files'])
+        self.assertIn('native-harness/extra.rs', manifest['harness_files'])
+        self.assertEqual(len(self.compiles), 3)
+
     def test_reuse_keeps_construction_provenance_and_records_fresh_preparation(self):
         original, built = self.build('original', tier='main')
         cached = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
@@ -586,7 +638,7 @@ class BuildCacheTests(unittest.TestCase):
     def test_cache_rejects_changed_identity_incomplete_or_corrupt_content(self):
         original, _ = self.build('original')
         cached = next((bench.cache_root() / 'bundles').glob('*/*/manifest.json'))
-        for key in ('guest_builder_profile', 'profile_config'):
+        for key in ('guest_builder_profile', 'profile_config', 'native_harness_revision'):
             missing_profile = dict(original)
             missing_profile.pop(key)
             bench.write_json(cached, missing_profile)

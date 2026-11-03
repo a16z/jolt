@@ -2,6 +2,7 @@
 """Reproducible CPU proof builds and fresh-process measurements (schema 1)."""
 
 import argparse
+import ast
 import contextlib
 import datetime as dt
 import fcntl
@@ -29,6 +30,7 @@ HARNESS_PATHS = ('crates/jolt-prover/src/profile.rs',
                  'crates/jolt-prover/src/profile',
                  'crates/jolt-prover/src/bin/jolt_prover.rs',
                  'examples/secp256k1-ecdsa-verify/guest')
+MAX_HARNESS_DIFF = 12000
 LINUX_FEATURE_NAMES = {
     'bmi1': 'bmi1', 'cmpxchg16b': 'cx16', 'lzcnt': 'abm', 'sha': 'sha_ni',
     'sse3': 'pni', 'sse4.1': 'sse4_1', 'sse4.2': 'sse4_2',
@@ -239,13 +241,6 @@ def logged(argv, cwd, env, log):
 
 
 def add_manifest_items(source):
-    path = source / 'Cargo.toml'
-    text = path.read_text()
-    guest = 'examples/secp256k1-ecdsa-verify/guest'
-    if guest not in tomllib.loads(text)['workspace']['members']:
-        text = re.sub(r'(\[workspace\]\s*members\s*=\s*\[)',
-                      lambda m: m[1] + f'\n  "{guest}",', text, count=1)
-        path.write_text(text)
     path = source / 'crates/jolt-prover/Cargo.toml'
     text = path.read_text()
     original = text
@@ -286,7 +281,34 @@ def build_inputs(config, tier=None, workloads=(), cases=()):
     return inputs, pcs
 
 
+def harness_files(revision):
+    # Read the declared file set without executing the other revision's collector.
+    source = capture(['git', 'show', f'{revision}:scripts/bench/run.py'])
+    declaration = next((node.value for node in ast.parse(source).body
+                        if isinstance(node, ast.Assign) and any(
+                            isinstance(target, ast.Name) and target.id == 'HARNESS_PATHS'
+                            for target in node.targets)), None)
+    prefixes = ast.literal_eval(declaration)
+    paths = capture(['git', 'ls-tree', '-r', '--name-only', revision, '--', *prefixes]).splitlines()
+    return {path: hashlib.sha256(subprocess.check_output(
+        ['git', 'show', f'{revision}:{path}'], cwd=ROOT)).hexdigest() for path in paths}
+
+
 def build(args):
+    revision, preferred = git_revision(args.revision), git_revision(args.harness_revision)
+    fallback = getattr(args, 'allow_harness_fallback', False) and revision != preferred
+    if fallback and harness_files(preferred).keys() != harness_files(revision).keys():
+        return build_attempt(args, revision, 'native harness file set differs from the shared harness')
+    manifest = build_attempt(args, preferred)
+    if fallback and manifest['status'] == 'failed':
+        out = Path(args.out).resolve()
+        out.rename(out.with_name(out.name + '-shared-harness-attempt'))
+        return build_attempt(args, revision, manifest['reason'].replace(
+            '(see build.log)', '(see the measure job log)'))
+    return manifest
+
+
+def build_attempt(args, native_harness, fallback_reason=None):
     started, begin = utc_now(), time.perf_counter()
     out = Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=True)
@@ -303,7 +325,14 @@ def build(args):
     toolchain = capture(['rustc', '--version', '--verbose'])
     source = cache_root() / 'builds' / args.target_cpu / args.profile / 'source'
     existed = (source / 'target').exists()
+    paths = harness_files(native_harness)
+    diff = ''
+    if native_harness != harness:
+        diff = capture(['git', 'diff', '--no-ext-diff', '--no-color', harness, native_harness,
+                        '--', *sorted(paths.keys() | harness_files(harness).keys())])
     manifest = {'schema_version': 1, 'revision': revision, 'harness_revision': harness,
+                'native_harness_revision': native_harness, 'harness_fallback_reason': fallback_reason,
+                'harness_diff': {'text': diff[:MAX_HARNESS_DIFF], 'truncated': len(diff) > MAX_HARNESS_DIFF},
                 'toolchain': toolchain, 'target_cpu': args.target_cpu, 'profile': args.profile,
                 'guest_builder_profile': 'ci', 'guest_builder_rustflags': '', 'profile_config': profile_config,
                 'rustflags': f'-C target-cpu={args.target_cpu}', 'host': host_snapshot(),
@@ -326,9 +355,7 @@ def build(args):
         with (out / 'build.log').open('w') as log:
             effective_inputs = [source / name for name in
                                 ('Cargo.toml', 'Cargo.lock', 'crates/jolt-prover/Cargo.toml')]
-            for prefix in HARNESS_PATHS:
-                path = source / prefix
-                effective_inputs.extend([path] if path.is_file() else path.rglob('*'))
+            effective_inputs.extend(source / path for path in paths)
             prior_inputs = {path: (path.read_bytes(), path.stat().st_mtime_ns)
                             for path in effective_inputs if path.is_file()}
             if not source.exists():
@@ -339,14 +366,14 @@ def build(args):
             logged(['git', 'fetch', '--no-tags', str(ROOT), revision], source, env, log)
             logged(['git', 'checkout', '--force', '--detach', revision], source, env, log)
             logged(['git', 'clean', '-ffdx', '-e', '/target/'], source, env, log)
-            paths = capture(['git', 'ls-tree', '-r', '--name-only', harness, '--', *HARNESS_PATHS]).splitlines()
             for path in paths:
                 destination = source / path
                 destination.parent.mkdir(parents=True, exist_ok=True)
-                contents = subprocess.check_output(['git', 'show', f'{harness}:{path}'], cwd=ROOT)
+                contents = subprocess.check_output(['git', 'show', f'{native_harness}:{path}'], cwd=ROOT)
                 if not destination.exists() or destination.read_bytes() != contents:
                     destination.write_bytes(contents)
-            add_manifest_items(source)
+            if native_harness == harness:
+                add_manifest_items(source)
             original_lock = subprocess.check_output(['git', 'show', f'{revision}:Cargo.lock'], cwd=ROOT)
             manifest['source_cargo_lock_sha256'] = hashlib.sha256(original_lock).hexdigest()
             pinned = {(p['name'], p['version'], p.get('source'), p.get('checksum'))
@@ -372,14 +399,12 @@ def build(args):
                 if path.is_file() and path.read_bytes() == contents:
                     os.utime(path, ns=(path.stat().st_atime_ns, mtime_ns))
             manifest['cargo_lock_sha256'] = sha256(source / 'Cargo.lock')
-            manifest['harness_files'] = {str(p.relative_to(source)): sha256(p)
-                for prefix in HARNESS_PATHS for p in ([source / prefix] if (source / prefix).is_file()
-                                                     else sorted((source / prefix).rglob('*'))) if p.is_file()}
+            manifest['harness_files'] = {path: sha256(source / path) for path in paths}
             manifest['suite_config_sha256'] = sha256(args.config)
             manifest['runner'] = {'path': 'scripts/bench/run.py',
                                   'sha256': hashlib.sha256(runner_source).hexdigest()}
             identity = {key: manifest[key] for key in (
-                'revision', 'harness_revision', 'toolchain', 'cargo_version', 'target_cpu',
+                'revision', 'harness_revision', 'native_harness_revision', 'toolchain', 'cargo_version', 'target_cpu',
                 'target_triple', 'target_features', 'profile', 'profile_config', 'guest_builder_profile',
                 'guest_builder_rustflags', 'native_tools', 'rustup_components',
                 'rustflags', 'source_cargo_lock_sha256',
@@ -502,7 +527,7 @@ def load_bundle(path):
     if not re.fullmatch(r'[0-9a-f]{40}', manifest.get('revision', '')):
         raise ValueError('build revision must be a full Git commit')
     if manifest.get('status') == 'complete':
-        required = {'harness_revision', 'toolchain', 'cargo_version', 'target_cpu', 'target_triple',
+        required = {'harness_revision', 'native_harness_revision', 'toolchain', 'cargo_version', 'target_cpu', 'target_triple',
                     'target_features', 'profile', 'profile_config', 'guest_builder_profile', 'rustflags', 'source_cargo_lock_sha256',
                     'cargo_lock_sha256', 'harness_files', 'binaries', 'guests', 'runner',
                     'akita_schedules', 'suite_config_sha256', 'host', 'started_at',
@@ -602,13 +627,13 @@ def result_envelope(args, config, host, bundles):
         raise ValueError('both legs must use the same benchmark-only harness revision')
     if paired:
         base, head = bundles['base'][1], bundles['head'][1]
-        for field in ('harness_files', 'rustflags', 'target_cpu', 'profile', 'profile_config'):
+        for field in ('rustflags', 'target_cpu', 'profile', 'profile_config'):
             if base.get(field) != head.get(field):
                 raise ValueError(f'paired builds differ in {field}')
     if args.kind == 'null' and (not paired or revisions['base'] != revisions['head']):
         raise ValueError('null comparisons require the same source revision on both legs')
     if args.kind == 'null':
-        for field in ('binaries', 'guests', 'akita_schedules'):
+        for field in ('harness_files', 'binaries', 'guests', 'akita_schedules'):
             if bundles['base'][1].get(field) != bundles['head'][1].get(field):
                 raise ValueError(f'null comparison has different {field}')
     tier = config['tiers'][args.tier]
@@ -861,6 +886,23 @@ def render_comment(result, out):
              '|---|---:|---:|---:|---|---:|---:|---|']
     repetitions = result['suite']['repetitions']
     builds = {build['leg']: build for build in result['builds']}
+    harness_notes = []
+    differing_harnesses = ('base' in builds and
+                          builds['base'].get('harness_files') != builds['head'].get('harness_files'))
+    if differing_harnesses:
+        lines[4:4] = ['**The base and head used differing harness code. '
+                      'Timing and memory changes include those harness differences.**', '']
+        for leg, build in builds.items():
+            diff = build.get('harness_diff', {})
+            if not diff.get('text'):
+                continue
+            code = '\n'.join(text(line) for line in diff['text'][:MAX_HARNESS_DIFF].splitlines())
+            harness_notes.extend(['', f"### {leg.title()} harness diff against the collector's harness", '',
+                          f"Native harness: `{text(build.get('native_harness_revision'))}`. "
+                          f"Fallback reason: {text(str(build.get('harness_fallback_reason'))[:1000])}.", '',
+                          '<pre>' + code[:MAX_HARNESS_DIFF] + '</pre>',
+                          'Harness diff truncated to 12000 characters.' if diff.get('truncated') or
+                          len(diff['text']) > MAX_HARNESS_DIFF or len(code) > MAX_HARNESS_DIFF else '', ''])
     identities = ['| Workload / PCS / physical cores | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
                   '|---|---|---|---|']
     for case in result['cases']:
@@ -932,7 +974,11 @@ def render_comment(result, out):
     total = result['wall_time']['total_s']
     total_label = f'{total:.3f}' if total is not None else 'not measured'
     lines += ['', f"Base: `{revisions['base']}`. Submitted head: `{revisions['head']}`. "
-              f"Measured merge: `{revisions['merge']}`. Shared harness: `{revisions['harness']}`.", '',
+              f"Measured merge: `{revisions['merge']}`. "
+              f"{'Collector harness' if differing_harnesses else 'Shared harness'}: `{revisions['harness']}`.", '',
+              'Native harnesses: ' + '; '.join(
+                  f"{leg} `{text(build.get('native_harness_revision', build.get('harness_revision')))}`"
+                  for leg, build in builds.items()) + '.', '',
               f"Prover profiles: base `{text(builds.get('base', {}).get('profile') or 'unavailable')}`; "
               f"head `{text(builds.get('head', {}).get('profile') or 'unavailable')}`.", '',
               f"Warmups per leg: {result['suite']['warmups']}; measured repetitions per leg: "
@@ -948,6 +994,7 @@ def render_comment(result, out):
               'Noise references are observed informational context, not statistical significance, pass/fail decisions or a CI gate. '
               'Raw measurements, proof bytes, verification times, row counts, hashes, compiler flags, '
               'and host settings are in benchmark-results.json.', '']
+    lines.extend(harness_notes)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text('\n'.join(lines))
 

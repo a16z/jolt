@@ -118,9 +118,8 @@ fn trace_name(workload: Workload, scale: u32, backend: BackendKind) -> String {
     )
 }
 
-/// The scalable workloads the harness supports, with the default scales
-/// pinned in `specs/prover-telemetry.md` (`jolt-eval` owns the normative
-/// measurement-scale table and always passes `--scale` explicitly).
+/// Profiling workloads. The secp256k1 batch uses explicit operation counts
+/// from `scripts/bench/suites.json`, not the telemetry specification's scales.
 #[derive(Debug, Copy, Clone, ValueEnum)]
 pub enum Workload {
     Fibonacci,

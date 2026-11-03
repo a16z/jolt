@@ -260,12 +260,21 @@ SDK (`Cargo.toml` and `jolt-sdk/src/host_utils.rs`); omitting the Dory benchmark
 executable does not eliminate Dory dependency compilation. No CLI dependency,
 prover optimization or guest optimization is changed by the builder-profile split.
 
-The harness revision must be committed, and `run.py` must be that revision's
-file. Both source revisions receive the same benchmark-only profile harness and
-direct guest dependencies. Existing locked package identities may not change.
-Build manifests distinguish source revision, harness revision, original lockfile,
-effective lockfile, and all overlaid files. A same-source null run uses identical
-bundles, not differently instrumented main-vs-main binaries.
+The collector revision must be committed, and `run.py` must be that revision's
+file. Admitted PR builds prefer main's native profiling harness. When its declared
+file set differs from a leg's own harness, or its build attempt fails, that leg
+uses its own native harness instead. The failed attempt's directory is not
+uploaded; its compiler output is available in the measure job's log. The collector
+and suite configuration still come from main; the PR's collector code is never
+executed.
+
+Build manifests record the collector revision as `harness_revision`, the actual
+native code as `native_harness_revision`, its file hashes, and any fallback reason
+and diff against the collector's native harness. Results record the native
+revision per leg. When the legs use differing harness code, the comment says so
+and includes escaped diff excerpts, each capped at 12000 characters after
+escaping. Existing locked package identities may not change. A same-source null
+run uses identical binaries, guests and native harness code.
 
 Git checkout and cleanup can rewrite identical harness files and patched manifests.
 After overlay and lock resolution, the builder preserves their prior modification

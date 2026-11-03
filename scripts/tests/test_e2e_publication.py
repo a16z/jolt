@@ -31,7 +31,8 @@ def fixture():
                 'provenance': {'workflow': publication.bench.WORKFLOW, 'workflow_file': publication.bench.WORKFLOW_FILE,
                                'run_id': '123', 'run_attempt': '1', 'event': 'pull_request_target',
                                'ref': 'refs/heads/main', 'pr_number': 7}}
-    builds = [{'leg': leg, 'revision': revision, 'harness_revision': 'd' * 40, 'status': 'complete',
+    builds = [{'leg': leg, 'revision': revision, 'harness_revision': 'd' * 40,
+               'native_harness_revision': 'd' * 40, 'status': 'complete',
                'harness_files': {'profile.rs': '0' * 64}, 'rustflags': '-C target-cpu=znver4',
                'target_cpu': 'znver4', 'profile': 'release', 'profile_config': {}, 'guest_builder_profile': 'ci',
                'guests': {'fibonacci': {'inputs': {'1': {'sha256': '1' * 64}}}}}
@@ -65,6 +66,27 @@ def fixture():
 
 
 class E2ePublicationTests(unittest.TestCase):
+    def test_differing_harnesses_are_validated_labelled_and_rendered_as_a_bounded_escaped_diff(self):
+        result, expected, config = fixture()
+        head = result['builds'][1]
+        head.update(native_harness_revision=head['revision'], harness_fallback_reason='build failed',
+                    harness_files={'profile.rs': '9' * 64},
+                    harness_diff={'text': '+</pre><script>alert(1)</script>\n' + '&' * 20000,
+                                  'truncated': True})
+        expected['manifest_digests'][head['revision']] = publication.ci.manifest_digest(
+            {key: value for key, value in head.items() if key != 'leg'})
+        publication.validate(result, expected, config)
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / 'comment.md'
+            publication.bench.render_comment(result, output)
+            rendered = output.read_text()
+            self.assertIn('differing harness code', rendered)
+            self.assertIn('Head harness diff', rendered)
+            self.assertIn('&lt;script&gt;', rendered)
+            self.assertNotIn('<script>', rendered)
+            self.assertLessEqual(len(rendered.split('<pre>', 1)[1].split('</pre>', 1)[0]), 12000)
+            self.assertIn('truncated', rendered)
+
     def test_complete_verified_matrix_renders_but_raw_artifact_scripts_are_not_read(self):
         result, expected, _ = fixture()
         config = publication.bench.DEFAULT_CONFIG.read_bytes()

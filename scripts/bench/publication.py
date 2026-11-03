@@ -71,7 +71,11 @@ def validate(result, expected, config_bytes):
         build = builds[leg]
         if build['revision'] != revision or build['harness_revision'] != expected['revisions']['harness']:
             raise ValueError('build manifest is not for the measured revisions')
-    for key in ('harness_files', 'rustflags', 'target_cpu', 'profile', 'profile_config'):
+        native = build['native_harness_revision']
+        if native not in (build['harness_revision'], revision) or (
+                native != build['harness_revision'] and not build.get('harness_fallback_reason')):
+            raise ValueError('build uses an unplanned native harness')
+    for key in ('rustflags', 'target_cpu', 'profile', 'profile_config'):
         if builds['base'][key] != builds['head'][key]:
             raise ValueError(f'paired build mismatch: {key}')
     for build in builds.values():

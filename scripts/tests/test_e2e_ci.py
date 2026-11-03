@@ -292,6 +292,7 @@ class E2eCiTests(unittest.TestCase):
                         self.assertEqual(options.profile, 'release')
                         self.assertEqual(options.target_cpu, 'znver4')
                         self.assertEqual(options.harness_revision, 'c' * 40)
+                        self.assertEqual(options.allow_harness_fallback, tier == 'pr')
                         built.append(options.revision)
                         manifest = {'status': 'complete', 'revision': options.revision}
                         ci.bench.write_json(options.out / 'manifest.json', manifest)
@@ -353,7 +354,8 @@ class E2eCiTests(unittest.TestCase):
                     'input': {'parameters': {'operations': 1}, 'seed': None}}]}}}
             ci.bench.write_json(config_path, config)
             script = Path(ci.bench.__file__)
-            common = {'schema_version': 1, 'harness_revision': 'c' * 40, 'status': 'complete',
+            common = {'schema_version': 1, 'harness_revision': 'c' * 40,
+                'native_harness_revision': 'c' * 40, 'status': 'complete',
                 'toolchain': 'fixture', 'cargo_version': 'fixture', 'profile': 'release',
                 'profile_config': {'lto': 'fat'}, 'guest_builder_profile': 'ci', 'guest_builder_rustflags': '',
                 'target_cpu': 'znver4', 'target_triple': 'x86_64-unknown-linux-gnu',
@@ -421,6 +423,8 @@ Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
                         'ACTIONS_RUNTIME_TOKEN': 'owned fixture'}):
                 manifest_path = root / 'bundles' / ('b' * 40) / 'manifest.json'
                 for key, value in [('revision', 'e' * 40), ('harness_revision', 'e' * 40),
+                        ('native_harness_revision', 'e' * 40),
+                        ('harness_files', {'unplanned.rs': 'f' * 64}),
                         ('profile', 'ci'), ('target_cpu', 'native'), ('source_cargo_lock_sha256', 'f' * 64),
                         ('guests', {})]:
                     changed = copy.deepcopy(original['b' * 40])
@@ -454,6 +458,19 @@ Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
                 host = {'architecture': 'x86_64', 'cpu_flags': [],
                         'topology': [{'cpu': cpu, 'core': 0, 'socket': 0, 'online': True}]}
                 with patch.object(ci.bench, 'host_snapshot', return_value=host):
+                    self.assertEqual(ci.execute(args), 0)
+                    fallback = copy.deepcopy(original['b' * 40])
+                    fallback.update(native_harness_revision='b' * 40, harness_fallback_reason='file set differs',
+                                    harness_files={'new.rs': 'f' * 64},
+                                    harness_diff={'text': '+fn new_api() {}', 'truncated': False})
+                    plan['own_harness_files'] = {'b' * 40: fallback['harness_files']}
+                    ci.bench.write_json(plan_path, plan)
+                    ci.bench.write_json(manifest_path, fallback)
+                    index['plan_sha256'] = ci.bench.sha256(plan_path)
+                    index['builds']['b' * 40]['sha256'] = ci.bench.sha256(manifest_path)
+                    ci.bench.write_json(index_path, index)
+                    args.index_sha256 = ci.bench.sha256(index_path)
+                    args.out = root / 'fallback-result'
                     self.assertEqual(ci.execute(args), 0)
             result = json.loads((args.out / 'benchmark-results.json').read_text())
             self.assertEqual(result['status'], 'complete')
