@@ -14,15 +14,18 @@
 //! a warp cooperate on large segments; the index high bit encodes negation.
 //! Four-dimensional G2 decomposition sums power-of-two table entries with a
 //! signed 128-bit accumulator per component. Magnitudes stay on device in
-//! component-major order; bucket planning downloads the sign bytes, which use
-//! `1` for negative components.
+//! component-major order; sign bytes use `1` for negative components and are
+//! replicated on device for each window batch.
 //! G2 Frobenius expansion emits the original span followed by its first three
 //! endomorphism images in the same component order. CUDA derives coefficient
 //! pairs from Arkworks' twist constants once; the CPU uses fixed coefficients.
 //! Resident G2 MSMs bucket the four signed components on device, reduce weighted
 //! buckets in chunks, and fold the windows into an output slot in the device
-//! buffer. Shapes exceeding the batch budget or segment-width estimate are
-//! declined; G1 MSMs can instead accumulate windows sequentially.
+//! buffer. Windows are capped at 14 bits: 15-bit windows made segment reduction
+//! slower for 131072-point MSMs on L4s.
+//! Window scratch targets 64 MiB per batch, with at least one window;
+//! only the reduced window points survive between batches. Segment widths are
+//! handled by the adaptive device reducer.
 //!
 //! G1 doubling and addition keep Jacobian coordinates; mixed addition consumes
 //! affine addends with all-zero device coordinates representing infinity.
@@ -303,6 +306,8 @@ const FR_SCALAR_BITS: usize = 254;
 const MAX_BASE_INDEX: usize = 0x7fff_ffff;
 
 const MAX_WINDOW_BITS: usize = 16;
+
+const MAX_G2_WINDOW_BITS: usize = 14;
 
 const SMALL_SEGMENT_LIMIT: usize = 64;
 
@@ -1980,15 +1985,12 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    fn g2_reduce_and_fold(
+    fn g2_reduce_windows(
         &self,
         bucket_points: &CudaSlice<u64>,
-        rows: usize,
+        lanes: usize,
         buckets: usize,
-        windows: usize,
-        window_bits: usize,
     ) -> Result<CudaSlice<u64>, CudaError> {
-        let lanes = windows * rows;
         let chunks = Self::reduce_chunks(lanes, buckets);
         let lanes_arg = Self::count_of(lanes)?;
         let buckets_arg = Self::count_of(buckets)?;
@@ -2049,23 +2051,7 @@ impl CudaKernelContext {
             }?;
         }
 
-        let rows_arg = Self::count_of(rows)?;
-        let windows_arg = Self::count_of(windows)?;
-        let window_bits_arg = Self::count_of(window_bits)?;
-        let mut accumulator = self.alloc_u64(rows * G2_POINT_WORDS)?;
-        let mut builder = self.stream().launch_builder(self.msm_g2_window_fold());
-        let _ = builder.arg(&window_points);
-        let _ = builder.arg(&rows_arg);
-        let _ = builder.arg(&windows_arg);
-        let _ = builder.arg(&window_bits_arg);
-        let _ = builder.arg(&mut accumulator);
-        // SAFETY: thread `row < rows` reads only `window_points[window * rows +
-        // row]` for each `window < windows` (one G2 point each of a
-        // `windows * rows` point buffer) and writes only `out[row]` of a `rows`
-        // point buffer distinct from the input. Threads with `row >= rows` return
-        // before any access.
-        let _ = unsafe { builder.launch(Self::launch_config(rows_arg)) }?;
-        Ok(accumulator)
+        Ok(window_points)
     }
 
     pub(crate) fn g2_msm_in_place(
@@ -2088,88 +2074,111 @@ impl CudaKernelContext {
             return self.write_u64_range(buffer, out_offset * G2_POINT_WORDS, &zero);
         }
         Self::resident_span_end(base_offset, count, G2_POINT_WORDS, buffer)?;
-        if 4 * count > MAX_BASE_INDEX {
+        if count > MAX_BASE_INDEX / 4 {
             return Err(CudaError::InvariantViolation {
                 reason: "a G2 MSM row is wider than the signed-index encoding allows",
             });
         }
 
         let terms = 4 * count;
-        let window_bits = window_bits(terms);
+        let window_bits = window_bits(terms).min(MAX_G2_WINDOW_BITS);
         let buckets = 1usize << window_bits;
         let windows = GLV4_SCALAR_BITS.div_ceil(window_bits);
-        let segments = windows * buckets;
-        if !Self::batched_windows_g2(buckets, windows, terms) {
-            return Err(CudaError::NotImplemented {
-                kernel: "msm_g2_unbatched_windows",
-            });
-        }
+        let batch_len = Self::g2_window_batch_len(buckets, windows, terms);
 
         let mapped = self.g2_frobenius_span(buffer, base_offset, count)?;
         let (split, signs) = {
             let uploaded = self.upload(scalars)?;
             let canonical = self.canonical_scalars(&uploaded)?;
-            let (split, signs) = self.glv_decompose_4d(&canonical, count)?;
-            (split, self.download_u8(&signs)?)
+            self.glv_decompose_4d(&canonical, count)?
         };
-        let mut lanes = Vec::with_capacity(signs.len() * windows);
-        for _ in 0..windows {
-            lanes.extend_from_slice(&signs);
-        }
-        let device_signs = self.upload_u8_slice(&lanes)?;
-        let shifts: Vec<usize> = (0..windows).map(|window| window * window_bits).collect();
-        let index = self.bucket_index_pass(IndexPlan {
-            scalars: &split,
-            scalar_limbs: FQ_LIMBS,
-            signs: &device_signs,
-            row_len: terms,
-            buckets,
-            segments,
-            lane: terms,
-            shifts: &shifts,
-        })?;
-        if index.widest > SMALL_SEGMENT_LIMIT {
-            return Err(CudaError::NotImplemented {
-                kernel: "msm_g2_wide_segments",
-            });
+        let bases = mapped.slice(..terms * G2_POINT_WORDS);
+        let mut window_points = self.alloc_u64(windows * G2_POINT_WORDS)?;
+        for first in (0..windows).step_by(batch_len) {
+            let end = (first + batch_len).min(windows);
+            let shifts: Vec<usize> = (first..end).map(|window| window * window_bits).collect();
+            let device_signs = self.replicate_u8(&signs, shifts.len())?;
+            let points = self.g2_pippenger_pass(
+                &bases,
+                IndexPlan {
+                    scalars: &split,
+                    scalar_limbs: FQ_LIMBS,
+                    signs: &device_signs,
+                    row_len: terms,
+                    buckets,
+                    segments: shifts.len() * buckets,
+                    lane: terms,
+                    shifts: &shifts,
+                },
+            )?;
+            let mut target = window_points.slice_mut(first * G2_POINT_WORDS..end * G2_POINT_WORDS);
+            self.stream().memcpy_dtod(&points, &mut target)?;
         }
 
-        let bases = mapped.slice(0..terms * G2_POINT_WORDS);
-        let segments_arg = Self::count_of(segments)?;
-        let mut bucket_points = self.alloc_u64(segments * G2_POINT_WORDS)?;
-        let mut builder = self
-            .stream()
-            .launch_builder(self.msm_g2_segment_sum_small());
-        let _ = builder.arg(&bases);
-        let _ = builder.arg(&index.indices);
-        let _ = builder.arg(&index.offsets);
-        let _ = builder.arg(&index.counts);
-        let _ = builder.arg(&segments_arg);
-        let _ = builder.arg(&mut bucket_points);
-        // SAFETY: the scatter partitions `indices` into the ranges described by
-        // `offsets`/`counts`; masked indices are below `terms`, the mapped base
-        // count. Each segment has one writer: its own thread, or lane 0 of its
-        // warp after a cooperative reduction. BLOCK is a multiple of 32, and
-        // padded threads participate in every warp collective without accessing
-        // input metadata or writing output. The output is a fresh allocation.
-        let _ = unsafe { builder.launch(Self::launch_config(segments_arg)) }?;
-
-        let accumulator =
-            self.g2_reduce_and_fold(&bucket_points, 1, buckets, windows, window_bits)?;
-        let source = accumulator.slice(0..G2_POINT_WORDS);
+        let rows_arg = 1u32;
+        let windows_arg = Self::count_of(windows)?;
+        let window_bits_arg = Self::count_of(window_bits)?;
+        let mut accumulator = self.alloc_u64(G2_POINT_WORDS)?;
+        let mut builder = self.stream().launch_builder(self.msm_g2_window_fold());
+        let _ = builder.arg(&window_points);
+        let _ = builder.arg(&rows_arg);
+        let _ = builder.arg(&windows_arg);
+        let _ = builder.arg(&window_bits_arg);
+        let _ = builder.arg(&mut accumulator);
+        // SAFETY: the sole row reads the windows written by disjoint batches
+        // and writes one point into the distinct accumulator allocation.
+        let _ = unsafe { builder.launch(Self::launch_config(rows_arg)) }?;
+        let source = accumulator.slice(..G2_POINT_WORDS);
         let mut target =
             buffer.slice_mut(out_offset * G2_POINT_WORDS..(out_offset + 1) * G2_POINT_WORDS);
         self.stream().memcpy_dtod(&source, &mut target)?;
         Ok(())
     }
 
-    fn batched_windows_g2(buckets: usize, windows: usize, len: usize) -> bool {
-        let segments = windows.saturating_mul(buckets);
-        let bucket_bytes = segments.saturating_mul(G2_POINT_WORDS * size_of::<u64>());
-        let index_bytes = windows
-            .saturating_mul(len)
-            .saturating_mul(2 * size_of::<u32>());
-        bucket_bytes.saturating_add(index_bytes) <= BATCHED_WINDOW_BYTES
+    fn g2_pippenger_pass(
+        &self,
+        bases: &CudaView<'_, u64>,
+        plan: IndexPlan<'_>,
+    ) -> Result<CudaSlice<u64>, CudaError> {
+        let segments = plan.segments;
+        let buckets = plan.buckets;
+        let windows = plan.shifts.len();
+        let index = self.bucket_index_pass(plan)?;
+        let segments_arg = Self::count_of(segments)?;
+        let mut bucket_points = self.alloc_u64(segments * G2_POINT_WORDS)?;
+        let mut builder = self
+            .stream()
+            .launch_builder(self.msm_g2_segment_sum_small());
+        let _ = builder.arg(bases);
+        let _ = builder.arg(&index.indices);
+        let _ = builder.arg(&index.offsets);
+        let _ = builder.arg(&index.counts);
+        let _ = builder.arg(&segments_arg);
+        let _ = builder.arg(&mut bucket_points);
+        // SAFETY: the scatter partitions `indices` into the ranges described by
+        // `offsets`/`counts`; masked indices are below the plan's row length,
+        // matching the mapped base count. Each segment has one writer: its own
+        // thread, or lane 0 of its warp after a cooperative reduction. BLOCK is
+        // a multiple of 32, and padded threads participate in every warp
+        // collective without accessing input metadata or writing output.
+        // The output is a fresh allocation.
+        let _ = unsafe { builder.launch(Self::launch_config(segments_arg)) }?;
+
+        self.g2_reduce_windows(&bucket_points, windows, buckets)
+    }
+
+    fn g2_window_batch_len(buckets: usize, windows: usize, len: usize) -> usize {
+        // Include index metadata, scan scratch, replicated signs and partials;
+        // the mapped bases and scalar components persist across batches.
+        let bucket_bytes =
+            buckets.saturating_mul(G2_POINT_WORDS * size_of::<u64>() + 4 * size_of::<u32>());
+        let index_bytes = len.saturating_mul(2 * size_of::<u32>() + size_of::<u8>());
+        let output_bytes =
+            (Self::reduce_chunks(1, buckets) + 1) * G2_POINT_WORDS * size_of::<u64>();
+        let window_bytes = bucket_bytes
+            .saturating_add(index_bytes)
+            .saturating_add(output_bytes);
+        (BATCHED_WINDOW_BYTES / window_bytes).clamp(1, windows)
     }
 
     fn glv_decompose_4d(
@@ -3480,11 +3489,13 @@ mod tests {
     use ark_ec::{AdditiveGroup, AffineRepr, CurveGroup, PrimeGroup, VariableBaseMSM};
     use ark_ff::BigInt;
     use ark_ff::BigInteger;
-    use ark_ff::{Field, PrimeField, Zero};
+    use ark_ff::{Field, PrimeField, UniformRand, Zero};
     use jolt_crypto::ec::bn254::batch_addition::batch_g1_additions_multi_affine;
     use jolt_field::{Fr, Ring};
     use proptest::collection::vec;
     use proptest::prelude::*;
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
 
     use super::testing::{
         affine, affine_limbs, arb_fq, arb_fr, ark_fr, fq_from_limbs, fq_limbs, jacobian_limbs,
@@ -4971,6 +4982,63 @@ mod tests {
                 expected.into_affine(),
                 "resident g2 msm diverged at count {count}"
             );
+        }
+    }
+
+    #[test]
+    fn resident_g2_msm_handles_wide_and_streamed_windows() {
+        let Some(context) = device() else { return };
+        let mut rng = ChaCha20Rng::seed_from_u64(11_327);
+        let mut bases = g2_span(17, 37);
+        bases[0] = G2Projective::zero();
+        for (count, fixed) in [
+            (32_769usize, Some(ArkFr::zero())),
+            (32_769, Some(ArkFr::from(1u64))),
+            (262_144, None),
+        ] {
+            let mut coefficients = vec![ArkFr::zero(); bases.len()];
+            let scalars: Vec<Fr> = (0..count)
+                .map(|index| {
+                    let scalar = fixed.unwrap_or_else(|| {
+                        if index.is_multiple_of(17) {
+                            ArkFr::zero()
+                        } else {
+                            ArkFr::rand(&mut rng)
+                        }
+                    });
+                    coefficients[index % bases.len()] += scalar;
+                    Fr::from(scalar)
+                })
+                .collect();
+            let expected: G2Projective = bases
+                .iter()
+                .zip(coefficients)
+                .map(|(point, scalar)| *point * scalar)
+                .sum();
+
+            let base_offset = 2;
+            let mut points = vec![G2Projective::generator(); base_offset];
+            points.extend((0..count).map(|index| bases[index % bases.len()]));
+            points.extend_from_slice(&bases[1..3]);
+            let original = flat_g2(&points);
+            let out_offset = if fixed.is_some() {
+                base_offset + count
+            } else {
+                base_offset + count / 2
+            };
+            let mut buffer = context.upload_raw_u64(&original).expect("upload arena");
+            context
+                .g2_msm_in_place(&mut buffer, base_offset, out_offset, count, &scalars)
+                .expect("resident G2 MSM across former capability limits");
+            let got = context.download_u64(&buffer).expect("download arena");
+            let start = out_offset * 24;
+            let end = start + 24;
+            assert_eq!(
+                g2_from_limbs(&got[start..end]).into_affine(),
+                expected.into_affine()
+            );
+            assert_eq!(&got[..start], &original[..start]);
+            assert_eq!(&got[end..], &original[end..]);
         }
     }
 
