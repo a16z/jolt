@@ -23,6 +23,7 @@ use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_transcript::{ProverChannel, VerifierChannel};
 use akita_types::{GroupBatchStatement, OpeningClaims, PendingEof, PolynomialGroupClaims};
+use akita_verifier::SetupPolicy;
 use jolt_field::CanonicalBytes;
 use jolt_openings::{
     BatchOpeningScheme, GroupOpeningClaim, GroupOpeningWithHint, OpeningsError,
@@ -234,6 +235,7 @@ fn verify_one_hot_statement(
             session,
             statement,
             BasisMode::Lagrange,
+            SetupPolicy::Check(None),
         ))
     });
     verified.map_err(|_| OpeningsError::VerificationFailed)
@@ -406,6 +408,7 @@ impl AkitaNativeBatching {
                 transcript,
                 statement,
                 BasisMode::Lagrange,
+                SetupPolicy::Check(None),
             ))
         })
         .map_err(|_| OpeningsError::VerificationFailed)
@@ -726,6 +729,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         &session,
                         batch_statement,
                         BasisMode::Lagrange,
+                        SetupPolicy::Check(None),
                     )
                 })
                 .map_err(|_| OpeningsError::VerificationFailed)
@@ -752,6 +756,7 @@ mod tests {
 
     use crate::adapters::AkitaVerifierScheduleArtifacts;
     use crate::configs::AkitaChunkProfile;
+    use crate::prepared::PreparedBytes;
     use crate::AkitaScheduleArtifacts;
 
     fn commitment(
@@ -789,9 +794,10 @@ mod tests {
             one_hot_k: AKITA_ONE_HOT_K16,
             schedule_artifacts: AkitaVerifierScheduleArtifacts::OneHot {
                 profile: AkitaChunkProfile::default(),
-                one_hot: Vec::new(),
+                one_hot: PreparedBytes::Owned(Vec::new()),
             }
             .into(),
+            prepared: None,
             backend_cache: Default::default(),
         };
         let mut serialized = serde_json::to_value(setup).unwrap();
@@ -829,10 +835,11 @@ mod tests {
             schedule_artifacts: AkitaVerifierScheduleArtifacts::Both {
                 dense_profile: AkitaChunkProfile::new(8, 2),
                 profile: AkitaChunkProfile::default(),
-                dense: Vec::new(),
-                one_hot: Vec::new(),
+                dense: PreparedBytes::Owned(Vec::new()),
+                one_hot: PreparedBytes::Owned(Vec::new()),
             }
             .into(),
+            prepared: None,
             backend_cache: Default::default(),
         };
         let dense = || commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);
@@ -873,14 +880,17 @@ mod tests {
                     .dense_catalog()
                     .unwrap()
                     .to_artifact_bytes()
-                    .unwrap(),
+                    .unwrap()
+                    .into(),
                 one_hot: artifacts
                     .one_hot_catalog(AKITA_ONE_HOT_K256)
                     .unwrap()
                     .to_artifact_bytes()
-                    .unwrap(),
+                    .unwrap()
+                    .into(),
             }
             .into(),
+            prepared: None,
             backend_cache: Default::default(),
         };
         let dense = commitment(AkitaBackendFlavor::Dense, 14, [7; 32], 0);

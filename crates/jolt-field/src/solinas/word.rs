@@ -359,6 +359,7 @@ macro_rules! define_solinas_prime {
         $crate::impl_serde_bytes!(impl[const P: $word] $name<P>, (<$word>::BITS / 8) as usize);
 
         impl<const P: $word> WithAccumulator for $name<P> {
+            type SumAccumulator = Self::Accumulator;
             type Accumulator = NaiveAccumulator<Self>;
             type SmallScalarAccumulator = NaiveAccumulator<Self>;
             type SignedProductAccumulator = NaiveAccumulator<Self>;

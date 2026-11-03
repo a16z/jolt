@@ -26,6 +26,7 @@
 //! Single-hart guests only: state is plain statics, no locking.
 
 use core::alloc::Layout;
+use core::mem::MaybeUninit;
 use core::ptr;
 
 const MIN_SHIFT: u32 = 3;
@@ -180,13 +181,33 @@ pub fn realloc(ptr_in: *mut u8, old_layout: Layout, new_size: usize) -> *mut u8 
 
     let new_ptr = alloc(new_layout);
     if !new_ptr.is_null() {
-        let copy = old_layout.size().min(new_size);
-        unsafe {
-            ptr::copy_nonoverlapping(ptr_in, new_ptr, copy);
-        }
+        let words = old_layout.size().min(new_size).div_ceil(WORD_BYTES);
+        // SAFETY: the blocks are distinct live blocks of this arena, each
+        // aligned to its class size and spanning at least `words` words (a
+        // class size is a power of two of at least 8 covering its layout).
+        unsafe { copy_words(ptr_in, new_ptr, words) };
         dealloc(ptr_in, old_layout);
     }
     new_ptr
+}
+
+const WORD_BYTES: usize = 8;
+
+/// Copies `words` 8-byte words between word-aligned blocks.
+///
+/// A guest lowers a variable-length `copy_nonoverlapping` to a libc `memcpy`
+/// call that moves 4-byte words with multi-row `lw`/`sw` sequences. Copying
+/// `MaybeUninit` words keeps the rounded-up tail well defined, and the
+/// volatile reads keep LLVM from turning the loop back into that call.
+///
+/// # Safety
+/// `src` and `dst` are 8-byte aligned, valid for `words` words, and disjoint.
+unsafe fn copy_words(src: *const u8, dst: *mut u8, words: usize) {
+    let src = src.cast::<MaybeUninit<u64>>();
+    let dst = dst.cast::<MaybeUninit<u64>>();
+    for i in 0..words {
+        dst.add(i).write(src.add(i).read_volatile());
+    }
 }
 
 #[cfg(test)]
