@@ -14,6 +14,7 @@ merge base and head. Nothing here checks out, writes, builds or runs that conten
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import io
 import json
@@ -22,6 +23,7 @@ import re
 import sys
 import tarfile
 import time
+import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -29,7 +31,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-from diff_classifier import parse_diff
+from diff_classifier import analyze_rust, parse_diff
 
 ROOT = Path(__file__).resolve().parents[2]
 GITHUB_API = "https://api.github.com"
@@ -55,7 +57,6 @@ MANAGED_LABELS = frozenset(RISK_LABELS | {NEEDS_MAINTAINER, MERGE_ELIGIBLE, NO_R
 # REST users/0xandoroid-ai-agent[bot] and GraphQL node lookup agree on this identity.
 PIKA_BOT_ID = "BOT_kgDOFAtqNQ"
 LOGIN = re.compile(r"[A-Za-z0-9-]{1,39}")
-SIGN_OFF = re.compile(r"AI gate: AUTHORIZED ([0-9a-f]{40})")
 ATTESTATION = re.compile(
     r"This pull request #([1-9][0-9]*) has been reviewed at commit ([0-9a-f]{40}) "
     r"using skill (.+?) and model (.+?) with (.+?) reasoning effort, and no issues were found\."
@@ -308,6 +309,64 @@ class Source:
                 entries.add(first + slash)
         return "\n".join(sorted(entries)) or f"error: no file or directory {path!r} at the {revision}"
 
+    def code_changes(self, path: str) -> int:
+        """Added plus removed runtime-code lines, comparing both revisions after excluding
+        cfg(test)-only Rust code and whole Rust comment/blank lines. Other formats count every
+        non-blank line rather than treating comment-looking data as comments. Full projections also
+        catches unchanged lines exposed by removing a cfg or a block-comment delimiter."""
+        revisions = []
+        for revision in ("base", "head"):
+            text = self.tree(revision).get(path, "")
+            if text is None:
+                raise GateError(f"cannot count code changes in unreadable file {path}")
+            lines = text.splitlines()
+            if path.endswith(".rs"):
+                regions = analyze_rust(text, cfg_test_only=True)
+                runtime_lines = regions.code_lines - regions.test_lines
+                lines = [line for number, line in enumerate(lines, 1)
+                         if number in runtime_lines]
+            else:
+                lines = [line for line in lines if line.strip()]
+            revisions.append(lines)
+        return sum(i2 - i1 + j2 - j1 for tag, i1, i2, j1, j2 in
+                   difflib.SequenceMatcher(None, *revisions, autojunk=False).get_opcodes() if tag != "equal")
+
+    def dependency_bumps(self, paths: set[str], roots: list[str]) -> dict[str, int]:
+        """Version/pin-only manifests and lock entries, ranked by the union of both lock graphs.
+        Package-name matching deliberately includes all versions and dev/build edges."""
+        try:
+            locks = [tomllib.loads(self.tree(revision)["Cargo.lock"]) for revision in ("base", "head")]
+        except (KeyError, TypeError, tomllib.TOMLDecodeError):
+            return {}
+        edges: dict[str, set[str]] = {}
+        for lock in locks:
+            for package in lock.get("package", []):
+                edges.setdefault(package["name"], set()).update(dep.split()[0] for dep in package.get("dependencies", []))
+        closure, pending = set(roots), list(roots)
+        while pending:
+            for name in edges.get(pending.pop(), set()) - closure:
+                closure.add(name)
+                pending.append(name)
+        risks = {}
+        for path in paths:
+            if Path(path).name not in ("Cargo.toml", "Cargo.lock"):
+                continue
+            try:
+                before, after = [tomllib.loads(self.tree(revision)[path]) for revision in ("base", "head")]
+            except (KeyError, TypeError, tomllib.TOMLDecodeError):
+                continue
+            if path.endswith("Cargo.lock"):
+                old_packages, new_packages = before.pop("package", []), after.pop("package", [])
+                names = {p["name"] for p in old_packages + new_packages
+                         if p not in old_packages or p not in new_packages}
+            else:
+                old_pins, new_pins = strip_dependency_pins(before), strip_dependency_pins(after)
+                names = {name for name in old_pins.keys() | new_pins.keys()
+                         if old_pins.get(name) != new_pins.get(name)}
+            if before == after and names:
+                risks[path] = 3 if names & closure else 2
+        return risks
+
     def search(self, revision: str, text: str, prefix: str) -> str:
         if not text:
             return "error: the search text is empty"
@@ -497,18 +556,21 @@ def unassigned(pull: dict) -> bool:
     return not (pull["requested_reviewers"] or pull["requested_teams"] or pull["assignees"])
 
 
-def signed_lines(comments: list[dict], reviews: list[dict]) -> list[tuple[str, str]]:
-    """(login, sha) for each standalone authorization a person wrote and nobody edited."""
-    bodies = [node for node in comments + reviews
-              if (node.get("author") or {}).get("__typename") == "User"
-              and node.get("lastEditedAt") is None
-              and node.get("state") not in ("DISMISSED", "PENDING")]
-    lines = []
-    for node in bodies:
-        for line in node["body"].splitlines():
-            if match := SIGN_OFF.fullmatch(line.strip()):
-                lines.append((node["author"]["login"], match.group(1)))
-    return lines
+def strip_dependency_pins(manifest: dict) -> dict[str, set[str]]:
+    """Remove dependency version/rev/tag fields in place, returning the original specs by
+    package name. Everything else, including dependency membership and features, stays."""
+    owners = [manifest, manifest.get("workspace", {}), *manifest.get("target", {}).values()]
+    tables = [owner.get(kind, {}) for owner in owners
+              for kind in ("dependencies", "dev-dependencies", "build-dependencies")]
+    tables += list(manifest.get("patch", {}).values()) + [manifest.get("replace", {})]
+    pins: dict[str, set[str]] = {}
+    for table in tables:
+        for alias, spec in table.items():
+            spec = {"version": spec} if isinstance(spec, str) else spec
+            name = spec.get("package", alias)
+            pins.setdefault(name, set()).add(json.dumps(spec, sort_keys=True))
+            table[alias] = {key: value for key, value in spec.items() if key not in ("version", "rev", "tag")}
+    return pins
 
 
 class Gate:
@@ -526,6 +588,7 @@ class Gate:
         self.posted = 0
         self.source: Source | None = None
         self.input: str | None = None
+        self.policy = json.loads((ROOT / RISK_POLICY).read_text())
 
     def is_maintainer(self, login: str) -> bool:
         if not self.maintainers:
@@ -535,7 +598,7 @@ class Gate:
                 raise GateError("repository variable AI_MERGE_GATE_MAINTAINERS must list GitHub logins "
                                 "separated by commas")
             self.maintainers = frozenset(entry.lower() for entry in logins)
-        return login.lower() in self.maintainers
+        return login.lower() in self.maintainers and self.can_write(login)
 
     def can_write(self, login: str) -> bool:
         if login not in self.writers:
@@ -545,9 +608,8 @@ class Gate:
         return self.writers[login]
 
     def from_gate(self, check_run: dict) -> bool:
-        """Whether a check run's external ID names a run of the gate's own workflow. GitHub runs
-        that file for these events only from the default branch, and a job a pull request adds
-        cannot choose its check run's external ID."""
+        """Whether the claimed external ID names a gate workflow run. This trusts the writer:
+        any workflow with Checks write can forge external_id and completed_at with GITHUB_TOKEN."""
         run_id = str(check_run.get("external_id") or "")
         if run_id not in self.gate_runs:
             run = self.github.get(f"/repos/{self.repo}/actions/runs/{run_id}", missing_ok=True) \
@@ -558,8 +620,8 @@ class Gate:
         return self.gate_runs[run_id]
 
     def recorded(self, head: str, name: str) -> Record | None:
-        """A classification for this head with risk metadata, from this run or a check run the
-        gate's own workflow published."""
+        """A classification for this head with matching inputs, from this run or a check run
+        claiming a gate workflow run. Checks-write workflows can forge that claim."""
         if mine := [record for record in self.records if record.name == name and record.risk is not None]:
             return mine[-1]
         query = urllib.parse.urlencode({"check_name": name, "filter": "all", "per_page": 100})
@@ -585,8 +647,7 @@ class Gate:
         return Record(name, run["conclusion"], output["title"], output["summary"], risk)
 
     def path_risks(self, pull: dict) -> dict[str, int]:
-        policy = json.loads((ROOT / RISK_POLICY).read_text())
-        return {path: max((int(label[-1]) for label, rule in policy.items()
+        return {path: max((int(label[-1]) for label, rule in self.policy.items()
                            if any(fnmatchcase(path, pattern) for pattern in rule["paths"])), default=0)
                 for path in self.pinned(pull).changed()}
 
@@ -659,6 +720,15 @@ class Gate:
         the refusal. Either result is published with this run's records."""
         number, head = pull["number"], pull["head"]["sha"]
         self.ledger = self.attempts()
+        paths = self.path_risks(pull)
+        source = self.pinned(pull)
+        bumps = source.dependency_bumps(set(paths), self.policy["risk-3"]["dependency_roots"])
+        if bumps.keys() == paths.keys() and bumps:
+            risk = max(bumps.values())
+            self.records.append(Record(CLASSIFIER, "success", "Dependency bumps: deterministic risk",
+                                       "Only dependency versions/pins or lock entries changed.\n\n" +
+                                       "\n".join(f"- `{path}`: risk-{level}" for path, level in sorted(bumps.items())), risk))
+            return
         used = sum(self.ledger.values())
         if self.ledger.get(head, 0) >= MAX_HEAD_ATTEMPTS or used >= MAX_PR_ATTEMPTS:
             self.records.append(Record(CLASSIFIER, "skipped", "Verifier classifier: attempts spent",
@@ -681,27 +751,38 @@ class Gate:
         policy = (ROOT / RISK_POLICY).read_text()
         material = self.material(pull)
         answer = self.model.ask(f"{skill}\n\n## Trusted risk policy: {RISK_POLICY}\n\n{policy}"
+                                f"\n\nDeterministic dependency-bump risks: {json.dumps(bumps, sort_keys=True)}. "
+                                "These paths cannot raise the verdict or risk; judge other changes independently."
                                 f"\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
                                 material, "verifier_classification", CLASSIFICATION_SCHEMA, self.source.call, admit,
                                 f"{self.repo}#{number}")
-        paths = self.path_risks(pull)
+        code = {path: source.code_changes(path) for path, floor in paths.items()
+                if floor >= 3 and path not in bumps and not path.endswith("Cargo.lock")}
+        changed_lines = sum(count for path, count in code.items() if paths[path] == 3)
+        minimal = changed_lines <= self.policy["risk-3"]["max_changed_lines"]
         risks = {}
         for item in answer["risks"]:
             if not isinstance(item, dict) or item.get("path") not in paths or item["path"] in risks \
                     or type(item.get("level")) is not int or item["level"] not in range(1, 5) \
                     or not isinstance(item.get("reasoning"), str) or not item["reasoning"].strip():
                 raise GateError("the classifier returned invalid or duplicate per-path risk evidence")
-            # The classifier can identify test-only hunks inside a production source file.
-            # Production changes retain the configured path floors.
-            risks[item["path"]] = 1 if item["level"] == 1 else max(item["level"], paths[item["path"]])
+            path, level = item["path"], item["level"]
+            floor = paths[path]
+            if path in code and code[path] == 0:
+                floor = 1
+            risks[path] = bumps.get(path, 1 if level == 1 and floor < 3 else max(level, floor))
         if set(risks) != set(paths) or not risks:
             raise GateError("the classifier did not account for every changed path")
         risk = max(risks.values())
-        if answer["verdict"] == "UNCERTAIN" or (answer["verdict"] == "AFFECTS" and risk < 3):
-            risk = 4
+        if answer["verdict"] != "SAFE":
+            if risk < 3 or not minimal or (answer["verdict"] == "UNCERTAIN" and not any(
+                    floor == 3 and path not in bumps for path, floor in paths.items())):
+                risk = 4
         conclusion = "success" if answer["verdict"] == "SAFE" else "neutral"
         self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: {answer['verdict']}",
-                                   f"{answer['reasoning']}\n\nRisk: risk-{risk}\n\n" +
+                                   f"{answer['reasoning']}\n\nRisk: risk-{risk}\n\n"
+                                   f"Risk-3 runtime-code lines added + removed: {changed_lines}; "
+                                   f"minimal: at most {self.policy['risk-3']['max_changed_lines']}.\n\n" +
                                    "\n".join(f"- `{item['path']}`: risk-{risks[item['path']]} — {item['reasoning']}"
                                              for item in answer["risks"]) +
                                    f"\n\n_{answer['served_by']}_", risk))
@@ -747,10 +828,7 @@ class Gate:
         return blocking, approvers, current
 
     def authorized(self, pull: dict) -> bool:
-        """Whether a maintainer wrote the pull request or signed off its current head."""
-        head = pull["head"]["sha"]
-        return self.is_maintainer(pull["user"]["login"]) or any(
-            sha == head and self.is_maintainer(login) for login, sha in signed_lines(self.comments, self.reviews))
+        return self.is_maintainer(pull["user"]["login"])
 
     def decide(self, pull: dict, pay: bool = True) -> Outcome:
         """The table's result for `pull`, including whether the gate approves its head. With `pay`
@@ -769,8 +847,7 @@ class Gate:
         if not approvers:
             if not authorized:
                 return Outcome("failure", "Human approval required",
-                               f"@{author} is not a maintainer and no maintainer has posted "
-                               f"`AI gate: AUTHORIZED {head}`, so no agent check runs. A writer can approve "
+                               f"@{author} is not a maintainer, so no agent check runs. A writer can approve "
                                "instead; at risk-4 the policy asks for a current-head maintainer approval.",
                                human=True)
             if pull["draft"]:

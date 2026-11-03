@@ -16,7 +16,7 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 
 A pull request into `main` merges with an approving review from a person with write access, or with the AI merge gate's approval of its current head. [`.github/ai-merge-gate.md`](.github/ai-merge-gate.md) is the full policy. The gate approves a head only when all of these hold:
 
-- a maintainer wrote the pull request, or posted `AI gate: AUTHORIZED <head SHA>` for that exact head;
+- a maintainer (listed in the gate's maintainer variable and currently holding write access) wrote the pull request;
 - the pull request is ready for review, changes none of the gate's inputs, and has no standing change request from a maintainer or writer;
 - the gate's classifier rated the head `risk-1`, `risk-2` or `risk-3`;
 - the Pika App bot or a maintainer posted a PR comment attesting a clean review of that head.

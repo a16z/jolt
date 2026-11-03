@@ -119,6 +119,15 @@ def unified_diff(path, old, new):
         old.splitlines(keepends=True), new.splitlines(keepends=True), f"a/{path}", f"b/{path}"))
 
 
+def changed_contents(base, head, **kwargs):
+    paths = sorted(path for path in base.keys() | head.keys() if base.get(path) != head.get(path))
+    diff = "".join(unified_diff(path, base.get(path, ""), head.get(path, "")) for path in paths)
+    parsed = GATE.parse_diff(diff)
+    return FakeApis(files=paths, trees={BASE: base, HEAD: head}, diff=diff,
+                    counts=(len(paths), sum(len(f.added) for f in parsed), sum(len(f.removed) for f in parsed)),
+                    comments=[comment("core-a", attestation())], **kwargs)
+
+
 class FakeApis:
     """GitHub and OpenAI as the gate reaches them: canned state in, every request recorded."""
 
@@ -332,6 +341,96 @@ class AiMergeGateTests(unittest.TestCase):
         [run] = [run for run in apis.created if run["name"] == GATE.GATE]
         self.assertEqual((run["head_sha"], run["status"], run["conclusion"]), (HEAD, "completed", conclusion))
 
+    def test_listed_maintainers_need_current_write_access_to_author_or_attest(self) -> None:
+        apis = FakeApis(comments=[comment("core-b", attestation())])
+        apis.writers.discard("core-b")
+        evaluate(apis)
+        self.assertEqual(apis.approved(), [])
+        apis = FakeApis(comments=[comment("core-b", attestation())])
+        apis.writers.discard("core-a")
+        evaluate(apis)
+        self.assertEqual((apis.model_requests, apis.approved()), ([], []))
+        self.assertIn("needs-maintainer-review", apis.labels)
+
+    def test_verifier_floor_exempts_only_comments_blanks_and_cfg_test_code(self) -> None:
+        path = "crates/jolt-verifier/src/config.rs"
+        for old, new, expected in [
+            ("fn verify() { reject(); }\n", "fn verify() { accept(); }\n", 4),
+            ("#[cfg(test)]\nmod tests { fn check() { reject(); } }\n",
+             "#[cfg(test)]\nmod tests { fn check() { accept(); } }\n", 1),
+            ('#[cfg(any(test, feature = "prover-fixtures"))]\nfn check() { reject(); }\n',
+             '#[cfg(any(test, feature = "prover-fixtures"))]\nfn check() { accept(); }\n', 4),
+            ("#[cfg(test)]\nfn check() { reject(); }\n", "fn check() { reject(); }\n", 4),
+            ("// old\n/// old\n//! old\n/* old\n * old\n */\nfn verify() {}\n",
+             "// new\n/// new\n//! new\n/* new\n * new\n */\n\nfn verify() {}\n", 1),
+            ("/*\nfn verify() {}\n*/\n", "fn verify() {}\n", 4),
+            ('const TEXT: &str = r#"\n// old\n"#;\n', 'const TEXT: &str = r#"\n// new\n"#;\n', 4),
+            ("#[cfg(test)] fn check() {}\nfn verify() { reject(); }\n",
+             "#[cfg(test)] fn check() {}\nfn verify() { accept(); }\n", 4),
+            ("mod tests {\n#![cfg(test)]\nfn check() {}\n}\nfn verify() { reject(); }\n",
+             "mod tests {\n#![cfg(test)]\nfn check() {}\n}\nfn verify() { accept(); }\n", 4),
+            ("#![cfg(test)]\nfn check() { reject(); }\n", "#![cfg(test)]\nfn check() { accept(); }\n", 1),
+            ("production! {\n#[cfg(test)]\nfn input() { reject(); }\n}\n",
+             "production! {\n#[cfg(test)]\nfn input() { accept(); }\n}\n", 4),
+            ('#[cfg(test)]\n#[doc = "test"] fn check() {}\nfn verify() { reject(); }\n',
+             '#[cfg(test)]\n#[doc = "test"] fn check() {}\nfn verify() { accept(); }\n', 4),
+            ("#[cfg(test)]\nfn check() {} fn verify() { reject(); }\n",
+             "#[cfg(test)]\nfn check() {} fn verify() { accept(); }\n", 4),
+            ("#[cfg(test)]\nconst TEST: bool = true; fn verify() { reject(); }\n",
+             "#[cfg(test)]\nconst TEST: bool = true; fn verify() { accept(); }\n", 4),
+        ]:
+            with self.subTest(old=old, new=new):
+                apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
+                self.assertIn(f"risk-{expected}", apis.labels)
+                self.assertEqual(apis.approved(), [HEAD] if expected == 1 else [])
+
+    def test_affecting_or_uncertain_shared_changes_must_be_minimal_in_aggregate(self) -> None:
+        for verdict in ("AFFECTS", "UNCERTAIN"):
+            for file_count, lines, expected in [(1, 10, 3), (1, 11, 4), (2, 6, 4)]:
+                with self.subTest(verdict=verdict, file_count=file_count, lines=lines):
+                    base = {f"crates/jolt-field/src/part{i}.rs": "old();\n" * lines for i in range(file_count)}
+                    head = {path: "new();\n" * lines for path in base}
+                    apis = evaluate(changed_contents(base, head, verdict=verdict, risk=3))
+                    self.assertIn(f"risk-{expected}", apis.labels)
+                    self.assertEqual(apis.approved(), [HEAD] if expected == 3 else [])
+
+    def test_dependency_bumps_follow_both_lockfile_closures_without_a_classifier(self) -> None:
+        lock = ('version = 4\n\n[[package]]\nname = "jolt-verifier"\nversion = "0.1.0"\n'
+                'dependencies = ["middle"]\n\n[[package]]\nname = "middle"\nversion = "1.0.0"\n'
+                'dependencies = ["runtime-dep 1.0.0"]\n\n[[package]]\nname = "runtime-dep"\n'
+                'version = "1.0.0"\n\n[[package]]\nname = "outside"\nversion = "1.0.0"\n')
+        for dependency, expected in [("runtime-dep", 3), ("outside", 2)]:
+            for manifest in (None, "version", "rev", "tag"):
+                with self.subTest(dependency=dependency, manifest=manifest):
+                    old = {"Cargo.lock": lock}
+                    new = {"Cargo.lock": lock.replace(f'name = "{dependency}"\nversion = "1.0.0"',
+                                                     f'name = "{dependency}"\nversion = "2.0.0"')}
+                    if manifest:
+                        section = "workspace.dependencies" if manifest == "version" else "patch.crates-io"
+                        git = '' if manifest == "version" else ', git = "https://example.invalid/fork"'
+                        old["Cargo.toml"] = (f'[{section}]\nalias = {{ package = "{dependency}"{git}, '
+                                             f'{manifest} = "1" }}\n')
+                        new["Cargo.toml"] = old["Cargo.toml"].replace(f'{manifest} = "1"', f'{manifest} = "2"')
+                    apis = evaluate(changed_contents(old, new, verdict="UNCERTAIN", risk=4))
+                    self.assertIn(f"risk-{expected}", apis.labels)
+                    self.assertEqual(apis.approved(), [HEAD])
+                    self.assertEqual(apis.model_requests, [])
+
+    def test_other_manifest_edits_keep_the_shared_code_floor(self) -> None:
+        path = "Cargo.toml"
+        lock = 'version = 4\n[[package]]\nname = "jolt-verifier"\nversion = "0.1.0"\n'
+        for old, new in [
+            ('[dependencies]\nfoo = "1"\n', '[dependencies]\nfoo = "1"\nbar = "2"\n'),
+            ('[dependencies]\nfoo = { version = "1", features = ["a"] }\n',
+             '[dependencies]\nfoo = { version = "2", features = ["b"] }\n'),
+            ('[workspace]\nresolver = "2"\n', '[workspace]\nresolver = "3"\n'),
+        ]:
+            with self.subTest(new=new):
+                apis = evaluate(changed_contents({path: old, "Cargo.lock": lock},
+                                                 {path: new, "Cargo.lock": lock}, risk=1))
+                self.assertIn("risk-3", apis.labels)
+                self.assertEqual(len(apis.model_requests), 1)
+
     def test_risk_four_requires_a_current_head_maintainer_approval_and_never_gets_the_gates(self) -> None:
         for reviews, expected in [
             ([], "failure"),
@@ -369,7 +468,7 @@ class AiMergeGateTests(unittest.TestCase):
             ({"crates/jolt-kernels/src/lib.rs": 2}, 2),
             ({"Cargo.lock": 2}, 3),
             ({"crates/jolt-prover/src/stages/stage3.rs": 2}, 4),
-            ({"crates/jolt-verifier/src/config.rs": 1}, 1),
+            ({"crates/jolt-verifier/src/config.rs": 1}, 4),
             ({"README.md": 1, "crates/jolt-prover/src/stages/stage3.rs": 2}, 4),
             ({"new/shared.rs": 3}, 3),
         ]:
@@ -406,8 +505,6 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_labels_follow_authorization_reviewers_and_merge_eligibility(self) -> None:
         outsider = {"author": "outsider"}
-        authorized = [comment("core-a", f"AI gate: AUTHORIZED {HEAD}"),
-                      comment(PIKA_LOGIN, attestation(), kind="Bot", actor_id=PIKA_ID)]
         for case, kwargs, wanted in [
             ("no reviewer", outsider, {"risk-4", "needs-maintainer-review", "no-reviewer-assigned"}),
             ("requested reviewer", dict(outsider, reviewers=["core-b"]), {"risk-4", "needs-maintainer-review"}),
@@ -417,7 +514,7 @@ class AiMergeGateTests(unittest.TestCase):
             # agent path still lacks a maintainer's authorization.
             ("approved, unauthorized", dict(outsider, files=["docs/guide.md"], reviews=[review("maintainer", "APPROVED")]),
              {"risk-1", "needs-maintainer-review", "merge-eligible"}),
-            ("authorized and attested", dict(outsider, comments=authorized), {"risk-2", "merge-eligible"}),
+            ("maintainer and attested", {"comments": [comment("core-a", attestation())]}, {"risk-2", "merge-eligible"}),
             ("draft, approved and attested", {"draft": True, "records": [record(GATE.CLASSIFIER)],
                                               "reviews": [review("maintainer", "APPROVED")],
                                               "comments": [comment("core-a", attestation())]}, {"risk-2"}),
@@ -428,7 +525,7 @@ class AiMergeGateTests(unittest.TestCase):
                 stale = ["merge-eligible", "needs-maintainer-review", "no-reviewer-assigned", "risk-2", "keep"]
                 apis = evaluate(FakeApis(labels=stale, **kwargs))
                 self.assertEqual(set(apis.labels), wanted | {"keep"})
-                self.assertEqual(apis.approved(), [HEAD] if case == "authorized and attested" else [])
+                self.assertEqual(apis.approved(), [HEAD] if case == "maintainer and attested" else [])
                 if case == "draft, approved and attested":
                     self.assertEqual(apis.gate(), ("success", "Approved by maintainer"))
 
@@ -647,13 +744,13 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_same_head_changes_withdraw_only_the_gates_own_approval(self) -> None:
         def delete_attestation(apis):
-            apis.comments.pop(1)
-
-        def delete_authorization(apis):
             apis.comments.pop(0)
 
+        def revoke_author_write_access(apis):
+            apis.writers.discard("core-a")
+
         def edit_attestation_away(apis):
-            apis.comments[1].update(body="Review withdrawn.", lastEditedAt="2026-10-31T20:00:00Z")
+            apis.comments[0].update(body="Review withdrawn.", lastEditedAt="2026-10-31T20:00:00Z")
 
         def request_changes(apis):
             apis.reviews.append(review("core-b", "CHANGES_REQUESTED"))
@@ -669,16 +766,15 @@ class AiMergeGateTests(unittest.TestCase):
             (lambda apis: None, []),
             (delete_attestation, [("DISMISS", HEAD)]),
             (edit_attestation_away, [("DISMISS", HEAD)]),
-            (delete_authorization, [("DISMISS", HEAD)]),
+            (revoke_author_write_access, [("DISMISS", HEAD)]),
             (request_changes, [("DISMISS", HEAD)]),
-            (maintainer_without_write_access_requests_changes, [("DISMISS", HEAD)]),
+            (maintainer_without_write_access_requests_changes, []),
             # GitHub keeps an approval through a push that leaves the diff unchanged.
             (approval_names_an_earlier_head, [("DISMISS", OLD), ("APPROVE", HEAD)]),
         ]:
             with self.subTest(change=change.__name__):
                 pika_review = review(PIKA_LOGIN, "COMMENTED", kind="Bot", body="No issues found.")
-                apis = FakeApis(author="outsider", records=[record(GATE.CLASSIFIER)], comments=[
-                    comment("core-a", f"AI gate: AUTHORIZED {HEAD}"),
+                apis = FakeApis(records=[record(GATE.CLASSIFIER)], comments=[
                     comment(PIKA_LOGIN, attestation(), kind="Bot", actor_id=PIKA_ID),
                 ], reviews=[gate_approval(), review("maintainer", "APPROVED"), pika_review])
                 change(apis)
@@ -725,12 +821,8 @@ class AiMergeGateTests(unittest.TestCase):
                         self.assertEqual(apis.created, [])
                     self.assertEqual(apis.model_requests, [])
 
-    def test_no_agent_work_without_maintainer_authorization_or_while_draft(self) -> None:
+    def test_no_agent_work_for_other_authors_or_while_draft(self) -> None:
         outsider = FakeApis(author="outsider", comments=[
-            comment("drive-by", f"AI gate: AUTHORIZED {HEAD}"),
-            comment("core-a", f"> AI gate: AUTHORIZED {HEAD}"),
-            comment("core-a", f"AI gate: AUTHORIZED {OLD}"),
-            comment("core-b", f"Fine by me: AI gate: AUTHORIZED {HEAD}"),
             comment("outsider", attestation()),
         ])
         draft = FakeApis(author="core-a", draft=True, comments=[comment("core-a", attestation())])
@@ -743,14 +835,13 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertFalse([url for _, url in apis.requests
                                   if any(part in url for part in ("api.openai.com", f"/compare/{BASE}...", "/tarball/"))])
 
-    def test_maintainer_sign_off_admits_pika_attestation_and_pr_content_stays_data(self) -> None:
+    def test_maintainer_pr_content_stays_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             sentinel = Path(directory) / "executed"
             diff = DIFF.format(sentinel=sentinel)
             changed = f"fn helper() {{}}\n// $(touch {sentinel}) `touch {sentinel}`\n"
-            apis = evaluate(FakeApis(author="outsider", diff=diff, trees={**TREES, HEAD: {
+            apis = evaluate(FakeApis(diff=diff, trees={**TREES, HEAD: {
                 "crates/jolt-prover/src/lib.rs": changed}}, comments=[
-                comment("core-a", f"Read it.\r\nAI gate: AUTHORIZED {HEAD}\r\n"),
                 comment(PIKA_LOGIN, attestation(), kind="Bot", actor_id=PIKA_ID),
             ]))
             self.assertFalse(sentinel.exists())
@@ -824,12 +915,10 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(dropped.gate(), ("failure", "Gate error: human approval required"))
 
     def test_a_pass_rests_on_state_read_after_the_model_work(self) -> None:
-        authorized = [comment("core-a", f"AI gate: AUTHORIZED {HEAD}"),
-                      comment(PIKA_LOGIN, attestation(), kind="Bot", actor_id=PIKA_ID)]
         attested = [comment("core-a", attestation())]
 
         def revoke(apis):
-            apis.comments.remove(authorized[0])
+            apis.writers.discard("core-a")
 
         def request_changes(apis):
             apis.reviews.append(review("maintainer", "CHANGES_REQUESTED"))
@@ -840,7 +929,7 @@ class AiMergeGateTests(unittest.TestCase):
 
         earlier_pass = [record(GATE.GATE)]
         for case, apis, change, expected in [
-            ("maintainer authorization deleted", FakeApis(author="outsider", comments=authorized, records=earlier_pass),
+            ("author write access revoked", FakeApis(comments=attested, records=earlier_pass),
              revoke, ("failure", "Human approval required")),
             ("writer requested changes", FakeApis(comments=attested, records=earlier_pass),
              request_changes, ("failure", "Changes requested by maintainer")),

@@ -4,15 +4,17 @@
     "paths": [".github/**", ".claude/**", "scripts/**", "book/**", "docs/**", "specs/**", "*.md", "**/*.md", "tests/**", "**/tests/**", "benches/**", "**/benches/**"]
   },
   "risk-2": {
-    "description": "Only prover or other non-verifier production code changed, with no protocol change or verifier-reaching dependency change.",
+    "description": "Only prover or other non-verifier production code changed, or dependency version/pin-only changes outside the verifier dependency closure.",
     "paths": ["crates/jolt-prover/src/**", "crates/jolt-kernels/src/**", "crates/jolt-witness/src/**", "crates/jolt-profiling/src/**", "crates/jolt-metal/src/**", "tracer/src/**", "crates/jolt-tracer-x86/src/**"]
   },
   "risk-3": {
-    "description": "A small, scoped dependency or shared-code change may reach the verifier, but is directly reviewable and changes no protocol, verifier logic or commitment parameters. Broad or uncertain changes are risk-4.",
+    "description": "Dependency version/pin-only changes in the verifier dependency closure, or shared-code changes. AFFECTS/UNCERTAIN on risk-3-floor paths stays risk-3 only with at most max_changed_lines added plus removed runtime-code lines across those paths, excluding lockfiles and deterministic dependency bumps; non-Rust files conservatively count every non-blank line. Larger changes are risk-4.",
+    "max_changed_lines": 20,
+    "dependency_roots": ["common", "jolt-akita", "jolt-blindfold", "jolt-claims", "jolt-claims-derive", "jolt-crypto", "jolt-dory", "jolt-field", "jolt-hyperkzg", "jolt-lookup-tables", "jolt-openings", "jolt-poly", "jolt-program", "jolt-r1cs", "jolt-riscv", "jolt-spartan-verifier", "jolt-sumcheck", "jolt-transcript", "jolt-verifier", "jolt-verifier-derive"],
     "paths": ["Cargo.toml", "Cargo.lock", "**/Cargo.toml", "**/Cargo.lock", ".cargo/**", "rust-toolchain*", "**/build.rs", "common/src/**", "jolt-sdk/**", "crates/jolt-field/src/**", "crates/jolt-poly/src/**", "crates/jolt-program/src/**", "crates/jolt-host/src/**", "crates/jolt-r1cs/src/**", "crates/jolt-riscv/src/**", "crates/jolt-lookup-tables/src/**", "crates/jolt-crypto/src/**", "crates/jolt-utils/src/**"]
   },
   "risk-4": {
-    "description": "Protocol changes, sumcheck order or symbolic relations, transcript or Fiat-Shamir changes, verifier logic, PCS or commitment parameters, or any unclassified or uncertain change. Requires a current-head maintainer approval.",
+    "description": "Every runtime-code change on a risk-4-floor path, even if the classifier returns level 1. Only cfg(test)-exclusive code and comment/blank-only changes may go below the floor. Also non-minimal AFFECTS/UNCERTAIN risk-3-floor changes, protocol changes or otherwise unclassified changes. Requires a current-head maintainer approval.",
     "paths": ["crates/jolt-claims/src/**", "crates/jolt-claims-derive/src/**", "crates/jolt-verifier/src/**", "crates/jolt-verifier-derive/src/**", "crates/jolt-spartan-verifier/src/**", "crates/jolt-sumcheck/src/**", "crates/jolt-transcript/src/**", "crates/jolt-openings/src/**", "crates/jolt-dory/src/**", "crates/jolt-hyperkzg/src/**", "crates/jolt-akita/src/**", "crates/jolt-blindfold/src/**", "crates/jolt-prover/src/stages/**", "crates/jolt-prover/src/blindfold.rs", "crates/jolt-prover/src/recorder.rs"]
   }
 }
