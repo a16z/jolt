@@ -14,11 +14,7 @@ terminal-contraction = [
   "jolt-field/terminal-contraction",
 ]
 segment-setup = ["jolt-akita?/segment-setup"]
-immutable-recipes = [
-  "akita",
-  "field-inline-fp128",
-  "jolt_sdk/immutable-recipes",
-]
+immutable-recipes = ["akita", "field-inline-fp128", "jolt_sdk/immutable-recipes"]
 ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 word-memory = ["jolt_sdk/word-memory"]
