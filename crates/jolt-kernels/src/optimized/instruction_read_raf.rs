@@ -350,6 +350,38 @@ impl LookupIndexChunks {
             chunk_bits,
         }
     }
+
+    #[inline]
+    fn gather_chunk_pairs<F: JoltField, const BITS: usize>(
+        &self,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [(F, F)],
+    ) {
+        let bits = if BITS == 0 { self.chunk_bits } else { BITS };
+        let mask = (1u128 << bits) - 1;
+        let stride = 1usize << bits;
+        for branch in 0..width {
+            let mut lo = self.rows[2 * row * width + branch].lookup_index();
+            let mut hi = self.rows[(2 * row + 1) * width + branch].lookup_index();
+            let base = branch * stride;
+            for (out, table) in out.iter_mut().zip(tables).rev() {
+                let pair = (
+                    table[base + (lo & mask) as usize],
+                    table[base + (hi & mask) as usize],
+                );
+                if branch == 0 {
+                    *out = pair;
+                } else {
+                    out.0 += pair.0;
+                    out.1 += pair.1;
+                }
+                lo >>= bits;
+                hi >>= bits;
+            }
+        }
+    }
 }
 
 impl ChunkIndexSource for LookupIndexChunks {
@@ -434,26 +466,10 @@ impl ChunkIndexSource for LookupIndexChunks {
         row: usize,
         out: &mut [(F, F)],
     ) {
-        let mask = (1u128 << self.chunk_bits) - 1;
-        let stride = 1usize << self.chunk_bits;
-        for branch in 0..width {
-            let mut lo = self.rows[2 * row * width + branch].lookup_index();
-            let mut hi = self.rows[(2 * row + 1) * width + branch].lookup_index();
-            let base = branch * stride;
-            for (out, table) in out.iter_mut().zip(tables).rev() {
-                let pair = (
-                    table[base + (lo & mask) as usize],
-                    table[base + (hi & mask) as usize],
-                );
-                if branch == 0 {
-                    *out = pair;
-                } else {
-                    out.0 += pair.0;
-                    out.1 += pair.1;
-                }
-                lo >>= self.chunk_bits;
-                hi >>= self.chunk_bits;
-            }
+        match self.chunk_bits {
+            4 => self.gather_chunk_pairs::<F, 4>(tables, width, row, out),
+            16 => self.gather_chunk_pairs::<F, 16>(tables, width, row, out),
+            _ => self.gather_chunk_pairs::<F, 0>(tables, width, row, out),
         }
     }
 }
@@ -2056,8 +2072,8 @@ mod tests {
     use crate::SumcheckKernel;
 
     use super::{
-        InstructionCycleRow, LookupIndexChunks, OptimizedInstructionReadRafKernel, RepeatCache,
-        ScanBlock, SCAN_BLOCK,
+        ChunkIndexSource, ConstantSuffix, InstructionCycleRow, LookupIndexChunks,
+        OptimizedInstructionReadRafKernel, RepeatCache, ScanBlock, SCAN_BLOCK,
     };
 
     fn pack(rows: &[InstructionReadRafWitness]) -> Vec<InstructionCycleRow> {
@@ -2581,6 +2597,80 @@ mod tests {
             #[cfg(feature = "akita")]
             check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, prefix, None);
         }
+    }
+
+    #[test]
+    fn packed_chunk_pairs_match_dense_binding() {
+        fn check<F: JoltField>() {
+            for (bits, chunks) in [(4, 32), (16, 8), (7, 18)] {
+                let rows = fixture_rows(5, 0x314159);
+                let mut packed = pack(&rows);
+                packed.truncate(23);
+                let source =
+                    LookupIndexChunks::new(Arc::new(ConstantSuffix::new(packed, 32)), chunks, bits);
+                let base_value = |column: usize, index: usize| {
+                    F::from_u64((index as u64) ^ ((column as u64 + 1) * 0x10001))
+                };
+                let challenges: Vec<F> = (0..2).map(challenge).collect();
+                for width in [1usize, 2, 4] {
+                    let bound = width.ilog2() as usize;
+                    let weights: Vec<F> = (0..width)
+                        .map(|branch| {
+                            challenges[..bound].iter().enumerate().fold(
+                                F::one(),
+                                |weight, (bit, &r)| {
+                                    weight
+                                        * if branch & (1 << bit) == 0 {
+                                            F::one() - r
+                                        } else {
+                                            r
+                                        }
+                                },
+                            )
+                        })
+                        .collect();
+                    let tables: Vec<Vec<F>> = (0..chunks)
+                        .map(|column| {
+                            weights
+                                .iter()
+                                .flat_map(|&weight| {
+                                    (0..1usize << bits)
+                                        .map(move |index| weight * base_value(column, index))
+                                })
+                                .collect()
+                        })
+                        .collect();
+                    let mut pairs = vec![(F::zero(), F::zero()); chunks];
+                    for row in 0..32 / (2 * width) {
+                        source.gather_pairs(&tables, width, row, &mut pairs);
+                        for (column, &(lo, hi)) in pairs.iter().enumerate() {
+                            for (side, actual) in [lo, hi].into_iter().enumerate() {
+                                let mut values: Vec<F> = (0..width)
+                                    .map(|branch| {
+                                        let original = ((2 * row + side) * width + branch).min(22);
+                                        let key = rows[original].lookup_index.0;
+                                        let index = ((key >> ((chunks - 1 - column) * bits))
+                                            & ((1u128 << bits) - 1))
+                                            as usize;
+                                        base_value(column, index)
+                                    })
+                                    .collect();
+                                for &r in &challenges[..bound] {
+                                    values = values
+                                        .chunks_exact(2)
+                                        .map(|pair| pair[0] + r * (pair[1] - pair[0]))
+                                        .collect();
+                                }
+                                assert_eq!(actual, values[0], "bits={bits} width={width} row={row} column={column} side={side}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 
     #[test]
