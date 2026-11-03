@@ -7,14 +7,21 @@ edition = "2021"
 # The recursion host enables both recovery features through its default list
 # and forwards them here with `akita`. Keep guest selection explicit so host
 # --no-default-features overrides retain the off and single-feature paths.
-recursion-sparse-term-cache = ["akita", "jolt-akita/recursion-sparse-term-cache"]
+recursion-sparse-term-cache = [
+  "akita",
+  "jolt-akita/recursion-sparse-term-cache",
+]
 recursion-wide-row-batch = ["akita", "jolt-akita/recursion-wide-row-batch"]
 terminal-contraction = [
   "jolt-akita?/terminal-contraction",
   "jolt-field/terminal-contraction",
 ]
 segment-setup = ["jolt-akita?/segment-setup"]
-immutable-recipes = ["akita", "field-inline-fp128", "jolt_sdk/immutable-recipes"]
+immutable-recipes = [
+  "akita",
+  "field-inline-fp128",
+  "jolt_sdk/immutable-recipes",
+]
 ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 word-memory = ["jolt_sdk/word-memory"]
