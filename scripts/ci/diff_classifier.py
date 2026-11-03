@@ -500,7 +500,7 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
     scope_depth = 0
     ambiguous_test = False
 
-    lines = content.splitlines()
+    lines = content.split("\n")
     for lineno, raw_line in enumerate(lines, start=1):
         stripped = raw_line.strip()
 

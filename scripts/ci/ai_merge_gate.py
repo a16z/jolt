@@ -313,13 +313,13 @@ class Source:
         """Added plus removed runtime-code lines, comparing both revisions after excluding
         cfg(test)-only Rust code and whole Rust comment/blank lines. Other formats count every
         non-blank line rather than treating comment-looking data as comments. Full projections also
-        catches unchanged lines exposed by removing a cfg or a block-comment delimiter."""
+        catch unchanged lines exposed by removing a cfg or a block-comment delimiter."""
         revisions = []
         for revision in ("base", "head"):
             text = self.tree(revision).get(path, "")
             if text is None:
                 raise GateError(f"cannot count code changes in unreadable file {path}")
-            lines = text.splitlines()
+            lines = text.split("\n")
             if path.endswith(".rs"):
                 regions = analyze_rust(text, cfg_test_only=True)
                 runtime_lines = regions.code_lines - regions.test_lines
@@ -737,6 +737,8 @@ class Gate:
                                        f"{MAX_PR_ATTEMPTS}. The head stays unclassified, so only a person can "
                                        "approve it; its risk label follows the path rule.", None))
             return
+        code = {path: source.code_changes(path) for path, floor in paths.items()
+                if floor >= 3 and path not in bumps and not path.endswith("Cargo.lock")}
 
         def admit() -> None:
             # Counted durably before the first paid request, so a timeout or crash still counts.
@@ -756,10 +758,6 @@ class Gate:
                                 f"\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
                                 material, "verifier_classification", CLASSIFICATION_SCHEMA, self.source.call, admit,
                                 f"{self.repo}#{number}")
-        code = {path: source.code_changes(path) for path, floor in paths.items()
-                if floor >= 3 and path not in bumps and not path.endswith("Cargo.lock")}
-        changed_lines = sum(count for path, count in code.items() if paths[path] == 3)
-        minimal = changed_lines <= self.policy["risk-3"]["max_changed_lines"]
         risks = {}
         for item in answer["risks"]:
             if not isinstance(item, dict) or item.get("path") not in paths or item["path"] in risks \
@@ -774,10 +772,12 @@ class Gate:
         if set(risks) != set(paths) or not risks:
             raise GateError("the classifier did not account for every changed path")
         risk = max(risks.values())
-        if answer["verdict"] != "SAFE":
-            if risk < 3 or not minimal or (answer["verdict"] == "UNCERTAIN" and not any(
-                    floor == 3 and path not in bumps for path, floor in paths.items())):
-                risk = 4
+        changed_lines = sum(code[path] if path in code else source.code_changes(path)
+                            for path, level in risks.items()
+                            if level == 3 and path not in bumps and not path.endswith("Cargo.lock"))
+        minimal = changed_lines <= self.policy["risk-3"]["max_changed_lines"]
+        if answer["verdict"] != "SAFE" and (risk < 3 or not minimal):
+            risk = 4
         conclusion = "success" if answer["verdict"] == "SAFE" else "neutral"
         self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: {answer['verdict']}",
                                    f"{answer['reasoning']}\n\nRisk: risk-{risk}\n\n"
@@ -818,7 +818,7 @@ class Gate:
             if login and review["state"] in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
                 latest[login] = review
         blocking = sorted(login for login, review in latest.items() if review["state"] == "CHANGES_REQUESTED"
-                          and (self.is_maintainer(login) or self.can_write(login)))
+                          and self.can_write(login))
         # Risk-1 through risk-3 retain GitHub's approval freshness; risk-4 also checks commit.oid.
         approvers = sorted(login for login, review in latest.items()
                            if review["state"] == "APPROVED" and review["author"]["__typename"] == "User"

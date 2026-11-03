@@ -87,15 +87,16 @@ def record(name, sha=HEAD, conclusion="success", **run):
 
 def git_tree(files):
     """GitHub's recursive tree listing and tarball for a commit holding `files`."""
-    entries = [{"path": path, "type": "blob", "mode": "100644", "size": len(text.encode()),
-                "sha": hashlib.sha1(b"blob %d\0" % len(text.encode()) + text.encode()).hexdigest()}
-               for path, text in files.items()]
+    contents = {path: text if isinstance(text, bytes) else text.encode() for path, text in files.items()}
+    entries = [{"path": path, "type": "blob", "mode": "100644", "size": len(data),
+                "sha": hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()}
+               for path, data in contents.items()]
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as tar:
-        for path, text in files.items():
+        for path, data in contents.items():
             info = tarfile.TarInfo(f"a16z-jolt-0000000/{path}")
-            info.size = len(text.encode())
-            tar.addfile(info, io.BytesIO(text.encode()))
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
     return {"truncated": False, "tree": entries}, buffer.getvalue()
 
 
@@ -384,21 +385,55 @@ class AiMergeGateTests(unittest.TestCase):
              '#[cfg_attr(all(test, feature = "x"), derive(Debug))]\nstruct Proof { value: bool }\n', 4),
             ("#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { reject(); }\n",
              "#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { accept(); }\n", 4),
+            *[(f"// note{separator}/*\nfn verify() -> bool {{ false }}\n// */\n",
+               f"// note{separator}/*\nfn verify() -> bool {{ true }}\n// */\n", 4)
+              for separator in ("\x0c", "\r", "\u2028")],
         ]:
             with self.subTest(old=old, new=new):
                 apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
                 self.assertIn(f"risk-{expected}", apis.labels)
                 self.assertEqual(apis.approved(), [HEAD] if expected == 1 else [])
 
-    def test_affecting_or_uncertain_shared_changes_must_be_minimal_in_aggregate(self) -> None:
+    def test_affecting_or_uncertain_risk_three_changes_must_be_minimal_in_aggregate(self) -> None:
         for verdict in ("AFFECTS", "UNCERTAIN"):
-            for file_count, lines, expected in [(1, 10, 3), (1, 11, 4), (2, 6, 4)]:
-                with self.subTest(verdict=verdict, file_count=file_count, lines=lines):
-                    base = {f"crates/jolt-field/src/part{i}.rs": "old();\n" * lines for i in range(file_count)}
-                    head = {path: "new();\n" * lines for path in base}
-                    apis = evaluate(changed_contents(base, head, verdict=verdict, risk=3))
-                    self.assertIn(f"risk-{expected}", apis.labels)
-                    self.assertEqual(apis.approved(), [HEAD] if expected == 3 else [])
+            for crate in ("jolt-field", "jolt-prover"):
+                for file_count, lines, expected in [(1, 10, 3), (1, 11, 4), (2, 6, 4), (1, 200, 4)]:
+                    with self.subTest(verdict=verdict, crate=crate, file_count=file_count, lines=lines):
+                        base = {f"crates/{crate}/src/part{i}.rs": "old();\n" * lines for i in range(file_count)}
+                        head = {path: "new();\n" * lines for path in base}
+                        apis = evaluate(changed_contents(base, head, verdict=verdict, risk=3))
+                        self.assertIn(f"risk-{expected}", apis.labels)
+                        self.assertEqual(apis.approved(), [HEAD] if expected == 3 else [])
+        prover, field = "crates/jolt-prover/src/big.rs", "crates/jolt-field/src/lib.rs"
+        apis = evaluate(changed_contents({prover: "old();\n" * 200, field: "// old\nfn helper() {}\n"},
+                                         {prover: "new();\n" * 200, field: "// new\nfn helper() {}\n"},
+                                         verdict="UNCERTAIN", risk=3))
+        self.assertIn("risk-4", apis.labels)
+        self.assertEqual(apis.approved(), [])
+
+    def test_unreadable_inputs_fail_early_only_on_floor_paths(self) -> None:
+        for crate in ("jolt-field", "jolt-verifier"):
+            path = f"crates/{crate}/src/data.bin"
+            for data in (b"\xff", b"x" * (GATE.MAX_FILE_BYTES + 1)):
+                with self.subTest(crate=crate, bytes=len(data)):
+                    apis = FakeApis(files=[path], trees={BASE: {path: "old"}, HEAD: {path: data}})
+                    with self.assertRaises(GATE.GateError):
+                        evaluate(apis)
+                    self.assertEqual(apis.model_requests, [])
+                    self.assertEqual(apis.posted, [], "no paid attempt is admitted")
+        for binary, text, level in [
+            ("book/image.png", "book/chapter.md", 1),
+            ("crates/jolt-verifier/fuzz/fixtures/input.bin", "crates/jolt-prover/src/lib.rs", 2),
+        ]:
+            with self.subTest(binary=binary):
+                diff = (f"diff --git a/{binary} b/{binary}\nBinary files a/{binary} and b/{binary} differ\n"
+                        + unified_diff(text, "old\n", "new\n"))
+                apis = evaluate(FakeApis(files=[binary, text], diff=diff, counts=(2, 1, 1),
+                                         trees={BASE: {binary: b"\xff", text: "old\n"},
+                                                HEAD: {binary: b"\xfe", text: "new\n"}},
+                                         risk=level, comments=[comment("core-a", attestation())]))
+                self.assertIn(f"risk-{level}", apis.labels)
+                self.assertEqual(apis.approved(), [HEAD])
 
     def test_dependency_bumps_follow_both_lockfile_closures_without_a_classifier(self) -> None:
         lock = ('version = 4\n\n[[package]]\nname = "jolt-verifier"\nversion = "0.1.0"\n'

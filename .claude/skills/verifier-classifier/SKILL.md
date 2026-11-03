@@ -48,7 +48,7 @@ SAFE needs an argument for every changed file; one hunk you cannot account for m
 verdict UNCERTAIN. Judge verifier impact separately from review risk: a buggy test is still
 SAFE. Dependency-only bumps receive deterministic risk levels from the gate, not a semantic
 assessment of dependency code you cannot read. For other changes, unknown dependency effects
-are UNCERTAIN. Minimal UNCERTAIN changes on risk-3-floor paths can remain eligible below.
+are UNCERTAIN. Minimal UNCERTAIN changes at effective risk-3 can remain eligible below.
 
 ## Review risk uses the trusted policy
 
@@ -65,9 +65,10 @@ Missing paths or duplicate entries invalidate the classification.
 - **risk-2:** prover or other non-verifier code, or dependency-only bumps outside the verifier
   dependency closure. Follow callers before ruling out verifier preprocessing or generated code.
 - **risk-3:** dependency-only bumps in the verifier dependency closure, or shared-code changes
-  under the minimality rule. For AFFECTS or UNCERTAIN on risk-3-floor paths, the gate allows at
+  under the minimality rule. For AFFECTS or UNCERTAIN at effective risk-3, the gate allows at
   most `risk-3.max_changed_lines` added plus removed non-test, non-comment, non-blank lines across
-  all those paths, excluding lockfile lines and deterministic dependency-only files. Non-Rust
+  all paths whose effective level is 3, including lower-floor paths raised by your rating,
+  excluding lockfile lines and deterministic dependency-only files. Non-Rust
   files conservatively count every non-blank line so comment-looking data is not exempted. The current
   threshold is 20 lines, Pika's choice. Larger AFFECTS/UNCERTAIN changes become risk-4.
 - **risk-4:** protocol changes, sumcheck order, symbolic sumcheck expressions, transcript or

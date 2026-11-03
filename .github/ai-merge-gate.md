@@ -64,7 +64,7 @@ the following levels and path globs; the classifier supplies semantic evidence f
 | `risk-4` | Runtime-code changes on level-4 paths; non-minimal affecting or uncertain shared-code changes; protocol changes or otherwise unclassified changes | A current-head maintainer approval |
 
 On level-4 paths, every non-test, non-comment code change stays risk-4, even when the classifier
-returns level 1. The gate compares both complete source files after excluding whole comments,
+returns level 1, subject to the accepted scanner limits below. The gate compares both complete source files after excluding whole comments,
 blank lines and syntactically recognized top-level Rust items compiled only under `cfg(test)`
 (or a file-inner `#![cfg(test)]`). Nested cfg-like tokens are not treated as test code, since
 they can be macro input rather than Rust attributes. This also
@@ -74,9 +74,11 @@ comment/blank-only change may go below the floor. `cfg(all(test, ...))` implies 
 attributes alone do not qualify for this exception. Inline comment edits on lines containing
 code are conservatively counted as code changes.
 
-On level-3 paths, `AFFECTS` or `UNCERTAIN` can stay risk-3 only if the change is minimal. Pika's
+For paths at effective risk-3, `AFFECTS` or `UNCERTAIN` can stay risk-3 only if the change is minimal.
+The effective level includes the classifier's rating, path floor and deterministic exceptions;
+this count includes lower-floor paths that the classifier raises to level 3. Pika's
 chosen threshold is at most **20 added plus removed non-test, non-comment, non-blank lines**
-across all level-3 paths, configured by `risk-3.max_changed_lines` in the risk JSON. For example,
+across all effective level-3 paths, configured by `risk-3.max_changed_lines` in the risk JSON. For example,
 replacing ten code lines counts as twenty changed lines. For non-Rust files, the count
 conservatively includes every non-blank line: comment-looking lines can instead be string or
 data contents. This is Pika's conservative adjustment to the proposed code-line count.
@@ -97,9 +99,9 @@ pull requests need no model call; in mixed changes, the classifier cannot escala
 
 Every changed path must appear exactly once in a model result, including removed files and
 both names of a rename. The pull request takes the highest effective level. An incomplete or
-invalid result fails the evaluation and receives risk-4 when GitHub is reachable. Outside the
-minimal shared-code exception, `UNCERTAIN` becomes risk-4; `AFFECTS` below risk-3 also becomes
-risk-4. Prover-only paths otherwise keep their existing behavior.
+invalid result fails the evaluation and receives risk-4 when GitHub is reachable. `UNCERTAIN`
+or `AFFECTS` below risk-3 becomes risk-4. The classifier still asks about verifier acceptance;
+this does not add a witness-confidentiality check for prover-only code.
 
 Without a cached or new classification, a change wholly within level-1 paths receives risk-1;
 other changes receive risk-4 until they can be classified. This gives unauthorized and draft
@@ -625,6 +627,14 @@ if retiring them. Keep the separate Pika App and local review skill.
 
 ## Limits
 
+- Crafted `#[cfg(test)]` attributes inside multiline generic lists can make the source scanner
+  misread the rest of a runtime function as test code. The scanner is not a Rust parser.
+- Submodule gitlinks on floor paths count zero code lines. None exist on those paths today.
+- Out-of-line test edits in `crates/jolt-akita/src/verifier_resources/tests.rs` and
+  `crates/jolt-akita/src/trace_onehot/tests.rs` still receive risk-4; the test-only exception
+  does not meet the intended behavior for these files.
+- The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
+  Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.
 - Event delivery delays withdrawal. The gate cannot withdraw its approval after a dismissed
   review, an edited or deleted comment or a new change request until an evaluation reads that
   state. Comments reach the gate directly. Reviews and pull request changes reach it through the
@@ -647,9 +657,10 @@ if retiring them. Keep the separate Pika App and local review skill.
   state. GitHub also refuses to merge a pull request while another open pull request
   whose head branch points to the same commit has pending or rejected reviews.
 - The model reads the source but does not build or run it, and it reads only text files up to
-  1,000,000 bytes. A change it cannot read, such as a binary file in a verifier crate, should
-  make the classifier answer `UNCERTAIN`. Unreadable level-3/4 files cannot receive a code-line
-  exemption: the deterministic count fails closed and requires a person.
+  1,000,000 bytes. Before a paid call, the gate counts code changes on floor-3/4 paths except
+  dependency-only files and lockfiles. An unreadable file in that count fails closed without
+  admitting a paid attempt and requires a person. Lower-floor paths are counted only if the
+  classifier raises them to effective risk-3; binary docs and fixtures keep their prior treatment.
 - The size limits bound what the model receives and what the gate keeps, not the evaluation's
   peak memory: the gate downloads a commit's whole archive before checking its files, and builds
   a search's matches before refusing more than 200 of them. A very large tree can exhaust the
