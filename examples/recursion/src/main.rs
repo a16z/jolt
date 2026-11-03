@@ -183,7 +183,7 @@ enum Commands {
     #[cfg(feature = "field-inline")]
     CheckFieldKernels,
 
-    /// Write a parseable proof stream with one bit of its first Akita opening proof flipped.
+    /// Write a parseable proof stream with an altered Akita schedule-row digest.
     #[cfg(feature = "akita")]
     TamperOpening {
         #[arg(long)]
@@ -192,24 +192,6 @@ enum Commands {
         workdir: PathBuf,
         #[arg(long)]
         output: PathBuf,
-    },
-    /// L2 lever: write a proof stream whose first inner Akita proof has its
-    /// terminal quotient or terminal response altered (rejection cases).
-    #[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
-    TamperL2 {
-        #[arg(long)]
-        example: String,
-        #[arg(long)]
-        workdir: PathBuf,
-        #[arg(long)]
-        output: PathBuf,
-        /// quotient-flip, quotient-noncanonical, quotient-extra,
-        /// quotient-short or response-flip
-        #[arg(long)]
-        mode: String,
-        /// Bytes of the quotient at the end of the Akita proof body
-        #[arg(long)]
-        quotient_bytes: usize,
     },
     /// Generate proofs for guest programs
     Generate {
@@ -987,20 +969,14 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("akita");
     #[cfg(feature = "ntt-inline")]
     program.add_guest_feature("ntt-inline");
-    #[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
-    program.add_guest_feature("l2-terminal-quotient");
     program.add_guest_feature("fast-alloc");
     #[cfg(all(feature = "akita", feature = "word-memory"))]
     program.add_guest_feature("word-memory");
     program.add_guest_feature("hash-inlines");
-    #[cfg(all(feature = "akita", feature = "l3-compression-weights"))]
-    program.add_guest_feature("l3-compression-weights");
     #[cfg(all(feature = "akita", feature = "word-decode"))]
     program.add_guest_feature("word-decode");
     #[cfg(feature = "ont-static-base")]
     program.add_guest_feature("ont-static-base");
-    #[cfg(feature = "segment-setup")]
-    program.add_guest_feature("segment-setup");
     #[cfg(feature = "terminal-contraction")]
     program.add_guest_feature("terminal-contraction");
     #[cfg(feature = "tensor-no-carry")]
@@ -1017,36 +993,10 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("weighted-dot-horner-triplet");
     #[cfg(feature = "compressed-poly-horner")]
     program.add_guest_feature("compressed-poly-horner");
-    #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
-    program.add_guest_feature("prevalidated-catalog");
-    #[cfg(all(feature = "akita", feature = "lazy-scan-errors"))]
-    program.add_guest_feature("lazy-scan-errors");
-    #[cfg(all(feature = "akita", feature = "digest-nozero"))]
-    program.add_guest_feature("digest-nozero");
-    #[cfg(all(feature = "akita", feature = "golomb-word"))]
-    program.add_guest_feature("golomb-word");
     #[cfg(all(feature = "akita", feature = "bytecode-fold"))]
     program.add_guest_feature("bytecode-fold");
     #[cfg(all(feature = "akita", feature = "fill-ingress"))]
     program.add_guest_feature("fill-ingress");
-    #[cfg(all(feature = "akita", feature = "setup-lane-streams"))]
-    program.add_guest_feature("setup-lane-streams");
-    #[cfg(all(feature = "akita", feature = "carry-graph"))]
-    program.add_guest_feature("carry-graph");
-    #[cfg(all(feature = "akita", feature = "mle-leaf-tiles"))]
-    program.add_guest_feature("mle-leaf-tiles");
-    #[cfg(all(feature = "akita", feature = "signed-byte-sum"))]
-    program.add_guest_feature("signed-byte-sum");
-    #[cfg(all(feature = "akita", feature = "setup-weight-tiles"))]
-    program.add_guest_feature("setup-weight-tiles");
-    #[cfg(all(feature = "akita", feature = "challenge-word-decode"))]
-    program.add_guest_feature("challenge-word-decode");
-    #[cfg(all(feature = "akita", feature = "recursion-sparse-term-cache"))]
-    program.add_guest_feature("recursion-sparse-term-cache");
-    #[cfg(all(feature = "akita", feature = "recursion-wide-row-batch"))]
-    program.add_guest_feature("recursion-wide-row-batch");
-    #[cfg(all(feature = "akita", feature = "challenge-embed-fused"))]
-    program.add_guest_feature("challenge-embed-fused");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
 }
@@ -1137,11 +1087,11 @@ fn tamper_proof(
                     let config = bincode::config::standard();
                     let encoded =
                         bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
-                    let ((selection, mut body), consumed): (([u8; 32], Vec<u8>), _) =
+                    let ((mut selection, body), consumed): (([u8; 32], Vec<u8>), _) =
                         bincode::serde::decode_from_slice(&encoded, config).unwrap();
                     assert_eq!(consumed, encoded.len());
-                    let middle = body.len() / 2;
-                    *body.get_mut(middle).expect("opening proof body") ^= 1;
+                    // The v8 verifier resolves this digest in its trusted schedule catalog.
+                    *selection.first_mut().expect("schedule-row digest") ^= 1;
                     let encoded = bincode::serde::encode_to_vec((selection, body), config).unwrap();
                     proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config)
                         .unwrap()
@@ -1155,101 +1105,6 @@ fn tamper_proof(
     assert_eq!(offset, bytes.len(), "trailing proof stream bytes");
     // A successful typed decode is distinct from the guest's verification result.
     assert_eq!(check_data_integrity(&tampered).proof_count, output_count);
-    std::fs::create_dir(output).expect("fresh tampered proof directory");
-    save_proof_data(guest, &tampered, output);
-}
-
-/// Bincode's standard varint length prefix.
-#[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
-fn push_varint_len(out: &mut Vec<u8>, len: usize) {
-    let len = len as u64;
-    if len < 251 {
-        out.push(len as u8);
-    } else if len <= u64::from(u16::MAX) {
-        out.push(251);
-        out.extend_from_slice(&(len as u16).to_le_bytes());
-    } else if len <= u64::from(u32::MAX) {
-        out.push(252);
-        out.extend_from_slice(&(len as u32).to_le_bytes());
-    } else {
-        out.push(253);
-        out.extend_from_slice(&len.to_le_bytes());
-    }
-}
-
-/// L2 rejection fixtures. The quotient is the last message of the Akita
-/// proof body (after the terminal `z` payload), `quotient_bytes` long.
-#[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
-fn tamper_l2(
-    guest: GuestProgram,
-    workdir: &Path,
-    output: &Path,
-    mode: &str,
-    quotient_bytes: usize,
-) {
-    // p = 2^128 - 2^32 + 22537, little endian: a noncanonical encoding of 0.
-    const MODULUS_LE: [u8; 16] = [
-        9, 88, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-    ];
-    const ATOM: usize = 16;
-    let bytes = load_proof_data(guest, workdir);
-    let mut offset = 0;
-    let _: GuestVerifierPreprocessing = read_record(&bytes, &mut offset).unwrap();
-    let payloads: u32 = read_record(&bytes, &mut offset).unwrap();
-    for _ in 0..payloads {
-        let _ = read_raw(&bytes, &mut offset).unwrap();
-    }
-    let count: u32 = read_record(&bytes, &mut offset).unwrap();
-    assert!(count > 0, "tamper fixture requires a proof");
-    let mut tampered = bytes[..offset].to_vec();
-    for index in 0..count {
-        let mut proof: GuestProof = read_record(&bytes, &mut offset).unwrap();
-        let device: JoltDevice = read_record(&bytes, &mut offset).unwrap();
-        if index == 0 {
-            let config = bincode::config::standard();
-            let encoded =
-                bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
-            let body_len = proof.joint_opening_proof.backend_proof_body_size();
-            let header_len = encoded.len() - body_len;
-            let mut length_prefix = Vec::new();
-            push_varint_len(&mut length_prefix, body_len);
-            assert!(
-                encoded[..header_len].ends_with(&length_prefix),
-                "Akita batch proof layout is not selection, length, body"
-            );
-            let selection_len = header_len - length_prefix.len();
-            let mut body = encoded[header_len..].to_vec();
-            assert!(
-                quotient_bytes > 0
-                    && quotient_bytes.is_multiple_of(ATOM)
-                    && body.len() > quotient_bytes,
-                "quotient length"
-            );
-            let start = body.len() - quotient_bytes;
-            info!("L2 tamper: body {body_len} bytes, quotient at {start}..{body_len}");
-            match mode {
-                "quotient-flip" => body[start] ^= 1,
-                "quotient-noncanonical" => {
-                    let last = body.len() - ATOM;
-                    body[last..].copy_from_slice(&MODULUS_LE);
-                }
-                "quotient-extra" => body.extend_from_slice(&[0u8; ATOM]),
-                "quotient-short" => body.truncate(body.len() - ATOM),
-                "response-flip" => body[start - 1] ^= 1,
-                other => panic!("unknown tamper-l2 mode {other}"),
-            }
-            let mut rebuilt = encoded[..selection_len].to_vec();
-            push_varint_len(&mut rebuilt, body.len());
-            rebuilt.extend_from_slice(&body);
-            proof.joint_opening_proof = bincode::serde::decode_from_slice(&rebuilt, config)
-                .unwrap()
-                .0;
-        }
-        push_record(&mut tampered, &proof);
-        push_record(&mut tampered, &device);
-    }
-    assert_eq!(offset, bytes.len(), "trailing proof stream bytes");
-    assert_eq!(check_data_integrity(&tampered).proof_count, count);
     std::fs::create_dir(output).expect("fresh tampered proof directory");
     save_proof_data(guest, &tampered, output);
 }
@@ -1294,8 +1149,6 @@ sha256sum "$(command -v "${JOLT_PATH:-jolt}")"
 sha256sum "$2"
 env | grep -E '^(ZEROOS_GUEST_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]*|RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_[A-Z0-9_]*|RECURSION_GUEST_CODEGEN|JOLT_FUNC_NAME)=' | sort || true
 if [ -n "${JOLT_IMMUTABLE_RECIPES_RS:-}" ]; then echo immutable-recipes-tables; sha256sum < "$JOLT_IMMUTABLE_RECIPES_RS"; else echo immutable-recipes-tables-none; fi
-if [ -n "${JOLT_PREVALIDATED_CATALOG_RS:-}" ]; then echo prevalidated-catalog; sha256sum < "$JOLT_PREVALIDATED_CATALOG_RS"; else echo prevalidated-catalog-none; fi
-if [ -n "${JOLT_CARRY_GRAPH_RS:-}" ]; then echo carry-graph; sha256sum < "$JOLT_CARRY_GRAPH_RS"; else echo carry-graph-none; fi
 echo "$3"
 } | sha256sum | cut -c1-64
 "#;
@@ -1581,17 +1434,6 @@ fn verify_proofs(
     #[cfg(feature = "immutable-recipes")]
     let recipe_tables =
         immutable_recipe_tables::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
-    // Prevalidated catalog: the embedded setup's one-hot catalog view, loaded
-    // canonically here and recorded for the guest (setup section only).
-    #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
-    let prevalidated_catalog = prevalidated_catalog::prepare(
-        &all_groups_data[..layout.setup_len],
-        "/tmp/jolt-guest-targets",
-    );
-    // Carry graph: Akita's fixed carry-state graphs for the proofs' padded
-    // trace size, or no graph (recurrence path) for any other size.
-    #[cfg(all(feature = "akita", feature = "carry-graph"))]
-    let carry_graph = carry_graph_source::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
     run_recursion_proof(
         guest,
         run_config,
@@ -1601,10 +1443,6 @@ fn verify_proofs(
     );
     #[cfg(feature = "immutable-recipes")]
     immutable_recipe_tables::release(recipe_tables);
-    #[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
-    prevalidated_catalog::release(prevalidated_catalog);
-    #[cfg(all(feature = "akita", feature = "carry-graph"))]
-    carry_graph_source::release(carry_graph);
 }
 
 fn main() {
@@ -1647,17 +1485,6 @@ fn main() {
         }) => {
             let guest = GuestProgram::from_str(example).expect("supported guest example");
             tamper_proof(guest, workdir, output, TamperTarget::Opening, 0);
-        }
-        #[cfg(all(feature = "akita", feature = "l2-terminal-quotient"))]
-        Some(Commands::TamperL2 {
-            example,
-            workdir,
-            output,
-            mode,
-            quotient_bytes,
-        }) => {
-            let guest = GuestProgram::from_str(example).expect("supported guest example");
-            tamper_l2(guest, workdir, output, mode, *quotient_bytes);
         }
         Some(Commands::Generate {
             example,
@@ -1751,14 +1578,10 @@ fn main() {
     }
 }
 
-#[cfg(all(feature = "akita", feature = "carry-graph"))]
-mod carry_graph_source;
 #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
 mod immutable_recipe_generation;
 #[cfg(feature = "immutable-recipes")]
 mod immutable_recipe_tables;
-#[cfg(all(feature = "akita", feature = "prevalidated-catalog"))]
-mod prevalidated_catalog;
 
 #[cfg(not(feature = "immutable-recipes"))]
 macro_rules! immutable_recursion_program {

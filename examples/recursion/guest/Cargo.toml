@@ -4,19 +4,10 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-# The recursion host enables both recovery features through its default list
-# and forwards them here with `akita`. Keep guest selection explicit so host
-# --no-default-features overrides retain the off and single-feature paths.
-recursion-sparse-term-cache = [
-  "akita",
-  "jolt-akita/recursion-sparse-term-cache",
-]
-recursion-wide-row-batch = ["akita", "jolt-akita/recursion-wide-row-batch"]
 terminal-contraction = [
   "jolt-akita?/terminal-contraction",
   "jolt-field/terminal-contraction",
 ]
-segment-setup = ["jolt-akita?/segment-setup"]
 immutable-recipes = [
   "akita",
   "field-inline-fp128",
@@ -27,8 +18,6 @@ guest = []
 word-memory = ["jolt_sdk/word-memory"]
 kernel-tests = ["field-inline"]
 field-inline = ["jolt_sdk/field-inline"]
-# The field the field-inline unit computes in: BN254 `Fr` under Dory, the
-# Fp128 protocol prime under Akita. The host selects the one its tracer uses.
 field-inline-bn254 = ["field-inline", "jolt-field/field-inline-guest-bn254"]
 field-inline-fp128 = ["field-inline", "jolt-field/field-inline-guest-fp128"]
 akita = [
@@ -38,21 +27,15 @@ akita = [
   "dep:jolt-transcript",
 ]
 fast-alloc = ["jolt_sdk/guest-size-class-alloc"]
-# L2 terminal quotient certificate (see the host feature).
-l2-terminal-quotient = ["akita", "jolt-akita/l2-terminal-quotient"]
 hash-inlines = [
   "jolt_sdk/blake2-inline",
   "jolt-transcript?/blake2-inline",
   "jolt-akita?/blake2-inline",
-  "jolt-akita?/keccak-inline",
 ]
-# L3 recursion experiment: factorized compression-weight evaluation.
-l3-compression-weights = ["akita", "jolt-akita/l3-compression-weights"]
 
 word-decode = ["akita", "jolt-akita/word-decode"]
 ont-static-base = ["akita", "jolt-akita/ont-static-base"]
 tensor-no-carry = ["akita", "jolt-akita/tensor-no-carry"]
-# Row pointers (default off): weighted-dot row pointers held in registers.
 rowptr-registers = ["jolt-field/field-inline-rowptr"]
 weighted-dot-horner = ["jolt-field/field-inline-horner"]
 weighted-dot-horner-triplet = [
@@ -61,22 +44,10 @@ weighted-dot-horner-triplet = [
 ]
 tensor-eq-runs = ["akita", "jolt-akita/tensor-eq-runs"]
 setup-sop-structured = ["akita", "jolt-akita/setup-sop-structured"]
-prevalidated-catalog = ["akita", "jolt-akita/prevalidated-catalog"]
-lazy-scan-errors = ["akita", "jolt-akita/lazy-scan-errors"]
-digest-nozero = ["prevalidated-catalog", "jolt-akita/digest-nozero"]
-golomb-word = ["akita", "jolt-akita/golomb-word"]
 bytecode-fold = ["akita", "jolt-akita/bytecode-fold"]
 fill-ingress = ["akita", "jolt-akita/fill-ingress"]
-setup-lane-streams = ["akita", "jolt-akita/setup-lane-streams"]
-carry-graph = ["akita", "jolt-akita/carry-graph"]
-mle-leaf-tiles = ["akita", "jolt-akita/mle-leaf-tiles"]
-signed-byte-sum = ["akita", "jolt-akita/signed-byte-sum"]
-setup-weight-tiles = ["akita", "jolt-akita/setup-weight-tiles"]
-challenge-word-decode = ["akita", "jolt-akita/challenge-word-decode"]
-# These levers are selected by the host recursion defaults and forwarded
-# explicitly; the guest needs no separate default list.
-challenge-embed-fused = ["akita", "jolt-akita/challenge-embed-fused"]
 compressed-poly-horner = ["dep:jolt-poly", "jolt-poly/compressed-poly-horner"]
+
 [package.metadata.cargo-machete]
 # jolt-poly and jolt-transcript forward features to the verifier dependencies.
 # Generated embedded_bytecode.rs imports jolt-riscv when the host embeds a guest.
