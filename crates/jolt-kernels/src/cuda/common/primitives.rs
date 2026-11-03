@@ -16,7 +16,7 @@ pub(crate) fn reduce_lanes(
     if width <= 1 {
         return Ok(partials);
     }
-    let mut totals = context.alloc(lanes as usize)?;
+    let mut totals = context.alloc_fr_unset(lanes as usize)?;
     let mut builder = context.stream().launch_builder(context.lane_sum_total());
     let _ = builder.arg(partials.limbs());
     let _ = builder.arg(totals.limbs_mut());
@@ -52,7 +52,7 @@ impl CudaKernelContext {
             });
         }
         let len = left.len();
-        let mut output = self.alloc(len)?;
+        let mut output = self.alloc_fr_unset(len)?;
         if len == 0 {
             return Ok(output);
         }
@@ -79,7 +79,7 @@ impl CudaKernelContext {
         scalar: Fr,
     ) -> Result<DeviceFrVec, CudaError> {
         let len = values.len();
-        let mut output = self.alloc(len)?;
+        let mut output = self.alloc_fr_unset(len)?;
         if len == 0 {
             return Ok(output);
         }
@@ -132,7 +132,7 @@ impl CudaKernelContext {
             });
         }
         let len = accumulator.len();
-        let mut output = self.alloc(len)?;
+        let mut output = self.alloc_fr_unset(len)?;
         if len == 0 {
             return Ok(output);
         }
@@ -167,7 +167,7 @@ impl CudaKernelContext {
             });
         }
         let half = len / 2;
-        let mut output = self.alloc(half)?;
+        let mut output = self.alloc_fr_unset(half)?;
         let limbs = crate::cuda::common::device::fr_limbs(challenge);
         let count = Self::count_of(half)?;
         let kernel = match order {
@@ -207,7 +207,7 @@ impl CudaKernelContext {
             });
         }
         let half = values.len() / 2;
-        let mut output = self.alloc(half)?;
+        let mut output = self.alloc_fr_unset(half)?;
         let limbs = crate::cuda::common::device::fr_limbs(challenge);
         let count = Self::count_of(half)?;
         let mut builder = self.stream().launch_builder(&self.bind_low_to_high);
@@ -237,7 +237,7 @@ impl CudaKernelContext {
         loop {
             let count = Self::count_of(current.len())?;
             let blocks = count.div_ceil(BLOCK_SIZE);
-            let mut partials = self.alloc(blocks as usize)?;
+            let mut partials = self.alloc_fr_unset(blocks as usize)?;
             let mut builder = self.stream().launch_builder(&self.sum_reduce);
             let _ = builder.arg(current.limbs());
             let _ = builder.arg(partials.limbs_mut());
@@ -268,7 +268,7 @@ impl CudaKernelContext {
         let mut table = self.upload(&[Fr::from_u64(1)])?;
         for &coordinate in point {
             let prev_len = table.len();
-            let mut doubled = self.alloc(prev_len * 2)?;
+            let mut doubled = self.alloc_fr_unset(prev_len * 2)?;
             let coordinate = crate::cuda::common::device::fr_limbs(coordinate);
             let count = Self::count_of(prev_len)?;
             let mut builder = self.stream().launch_builder(&self.eq_double);
@@ -364,7 +364,7 @@ impl CudaKernelContext {
         input: &CudaSlice<u64>,
         len: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let mut output = self.alloc(len)?;
+        let mut output = self.alloc_fr_unset(len)?;
         if len == 0 {
             return Ok(output);
         }
@@ -396,7 +396,7 @@ impl CudaKernelContext {
         value: &CudaSlice<u64>,
         len: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let mut output = self.alloc(len)?;
+        let mut output = self.alloc_fr_unset(len)?;
         if len == 0 {
             return Ok(output);
         }
@@ -425,7 +425,7 @@ impl CudaKernelContext {
         value: &CudaSlice<u64>,
         len: usize,
     ) -> Result<DeviceFrVec, CudaError> {
-        let mut output = self.alloc(len)?;
+        let mut output = self.alloc_fr_unset(len)?;
         if len == 0 {
             return Ok(output);
         }
@@ -450,7 +450,7 @@ impl CudaKernelContext {
     }
 
     pub fn i128_to_montgomery(&self, values: &[i128]) -> Result<DeviceFrVec, CudaError> {
-        let mut output = self.alloc(values.len())?;
+        let mut output = self.alloc_fr_unset(values.len())?;
         if values.is_empty() {
             return Ok(output);
         }
@@ -480,7 +480,7 @@ impl CudaKernelContext {
     }
 
     pub fn u128_to_montgomery(&self, values: &[u128]) -> Result<DeviceFrVec, CudaError> {
-        let mut output = self.alloc(values.len())?;
+        let mut output = self.alloc_fr_unset(values.len())?;
         if values.is_empty() {
             return Ok(output);
         }

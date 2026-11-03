@@ -539,6 +539,19 @@ impl CudaKernelContext {
         Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
     }
 
+    /// Allocates field output that must be fully written before any read.
+    pub(crate) fn alloc_fr_unset(&self, len: usize) -> Result<DeviceFrVec, CudaError> {
+        let max_len = usize::MAX / (LIMBS * size_of::<u64>());
+        if len > max_len {
+            return Err(CudaError::LengthMismatch {
+                expected: max_len,
+                got: len,
+            });
+        }
+        let buffer = self.alloc_u64_unset(len * LIMBS)?;
+        Ok(DeviceFrVec::from_parts(self.stream.clone(), buffer, len))
+    }
+
     pub(crate) const fn stream(&self) -> &Arc<CudaStream> {
         &self.stream
     }
