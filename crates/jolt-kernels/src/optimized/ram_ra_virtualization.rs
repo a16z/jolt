@@ -629,6 +629,21 @@ mod tests {
     }
 
     #[test]
+    fn parity_cold_groups_through_all_lazy_widths() {
+        let mut ops = vec![RamOp::None; 49];
+        ops[0] = RamOp::Read { word: 0 };
+        ops[48] = RamOp::Read { word: 0 };
+        run_parity(
+            FixtureShape {
+                log_t: 11,
+                ram_k: 256,
+            },
+            ops,
+            467,
+        );
+    }
+
+    #[test]
     fn parity_odd_degree_with_one_sided_accesses() {
         run_parity(
             FixtureShape {
