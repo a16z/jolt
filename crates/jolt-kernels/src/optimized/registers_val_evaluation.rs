@@ -57,18 +57,20 @@ use crate::{
 /// lazy-fold shape at the field-register address width.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) enum WaState<F: JoltField> {
-    Indices {
-        rd: Vec<Option<u8>>,
-        eq_address: Vec<F>,
-    },
+    Indices { rd: Vec<u8>, eq_address: Vec<F> },
     Bound(Vec<F>),
 }
 
 impl<F: JoltField> WaState<F> {
-    pub(crate) fn new(mut rd: Vec<Option<u8>>, eq_address: Vec<F>) -> Self {
-        let prefix = rd.iter().rposition(Option::is_some).map_or(0, |i| i + 1);
+    /// Fold zero-or-(register + 1) indices against an unshifted address equality table.
+    pub(crate) fn new(mut rd: Vec<u8>, mut eq_address: Vec<F>) -> Self {
+        let prefix = rd
+            .iter()
+            .rposition(|&index| index != 0)
+            .map_or(0, |i| i + 1);
         rd.truncate(prefix);
         rd.shrink_to_fit();
+        eq_address.insert(0, F::zero());
         Self::Indices { rd, eq_address }
     }
 
@@ -83,12 +85,7 @@ impl<F: JoltField> WaState<F> {
     pub(crate) fn pair(&self, y: usize) -> (F, F) {
         match self {
             Self::Indices { rd, eq_address } => {
-                let value = |j: usize| {
-                    rd.get(j)
-                        .copied()
-                        .flatten()
-                        .map_or(F::zero(), |k| eq_address[k as usize])
-                };
+                let value = |j: usize| eq_address[usize::from(rd.get(j).copied().unwrap_or(0))];
                 (value(2 * y), value(2 * y + 1))
             }
             Self::Bound(values) => (
@@ -101,12 +98,7 @@ impl<F: JoltField> WaState<F> {
     pub(crate) fn bind(&mut self, r: F) {
         match self {
             Self::Indices { rd, eq_address } => {
-                let value = |j: usize| {
-                    rd.get(j)
-                        .copied()
-                        .flatten()
-                        .map_or(F::zero(), |k| eq_address[k as usize])
-                };
+                let value = |j: usize| eq_address[usize::from(rd.get(j).copied().unwrap_or(0))];
                 let half = rd.len().div_ceil(2);
                 let bind_pair = |y: usize| {
                     let lo = value(2 * y);
@@ -192,7 +184,7 @@ impl<F: JoltField> PrepareKernel<F, RegistersValEvaluation<F>> for OptimizedRegi
             }) if rows == cycles => indices,
             _ => collect_rows::<RegisterCycleRow>(witness, cycles)?
                 .iter()
-                .map(|row| row.rd.map(|(k, ..)| k))
+                .map(|row| row.rd.map_or(0, |(k, ..)| k + 1))
                 .collect(),
         };
 
@@ -440,13 +432,15 @@ mod tests {
                 IndexSource::Parked => {
                     let rows: Vec<RegisterCycleRow> = collect_bundles(backend, 1 << log_t).unwrap();
                     session.park(SharedRdIndices::new(
-                        rows.iter().map(|row| row.rd.map(|(k, ..)| k)).collect(),
+                        rows.iter()
+                            .map(|row| row.rd.map_or(0, |(k, ..)| k + 1))
+                            .collect(),
                         1 << log_t,
                     ));
                 }
                 IndexSource::StaleParked => {
                     session.park(SharedRdIndices::new(
-                        vec![None; (1 << log_t) + 1],
+                        vec![0; (1 << log_t) + 1],
                         (1 << log_t) + 1,
                     ));
                 }

@@ -124,7 +124,7 @@ impl<F: JoltField> AddressFirstKernel<F> {
                 if let Some(rd) = row.rd {
                     values[usize::from(rd)] += row.inc;
                 }
-                row.rd
+                row.rd.map_or(0, |register| register + 1)
             })
             .collect();
         session.park(SharedRdIndices::new(rd_indices, cycles));

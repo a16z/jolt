@@ -107,7 +107,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
                 reason: "field-inline write slot outside the cycle domain",
             });
         }
-        let mut rd: Vec<Option<u8>> = vec![None; prefix];
+        let mut rd: Vec<u8> = vec![0; prefix];
         for (cycle, register) in writes {
             let slot = rd
                 .get_mut(cycle as usize)
@@ -119,7 +119,7 @@ impl<F: JoltField> PrepareKernel<F, FieldRegistersValEvaluation<F>>
                     reason: "field register index is out of bounds",
                 });
             }
-            *slot = Some(register);
+            *slot = register + 1;
         }
 
         Ok(Box::new(FieldValEvaluationKernel {

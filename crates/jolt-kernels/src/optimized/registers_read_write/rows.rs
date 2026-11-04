@@ -69,19 +69,20 @@ impl WitnessBundle for RegisterCycleRow {
     }
 }
 
-/// Per-cycle `rd` indices shared with stage 5.
+/// Per-cycle write indices shared with stage 5: zero is absent, `k + 1` selects `k`.
+/// `RegisterCycleRow::from_row` checks that `k` is below 128.
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedRdIndices {
-    pub(crate) indices: Vec<Option<u8>>,
+    pub(crate) indices: Vec<u8>,
     pub(crate) cycles: usize,
 }
 
 impl SharedRdIndices {
-    pub(crate) fn new(mut indices: Vec<Option<u8>>, cycles: usize) -> Self {
+    pub(crate) fn new(mut indices: Vec<u8>, cycles: usize) -> Self {
         assert!(indices.len() <= cycles);
         let prefix = indices
             .iter()
-            .rposition(Option::is_some)
+            .rposition(|&index| index != 0)
             .map_or(0, |i| i + 1);
         indices.truncate(prefix);
         indices.shrink_to_fit();
@@ -107,7 +108,7 @@ pub(super) struct CollectRegisterEntries {
     pub(super) entries: Vec<SeedEntry>,
     pub(super) rs1_indices: Vec<u8>,
     pub(super) rs2_indices: Vec<u8>,
-    pub(super) rd_indices: Vec<Option<u8>>,
+    pub(super) rd_indices: Vec<u8>,
     pub(super) rd_inc: Vec<i128>,
 }
 
@@ -123,7 +124,7 @@ impl StreamConsumer for CollectRegisterEntries {
                 .push(cycle.rs1.map_or(ABSENT_REGISTER, |(k, _)| k));
             self.rs2_indices
                 .push(cycle.rs2.map_or(ABSENT_REGISTER, |(k, _)| k));
-            self.rd_indices.push(cycle.rd.map(|(k, ..)| k));
+            self.rd_indices.push(cycle.rd.map_or(0, |(k, ..)| k + 1));
             self.rd_inc.push(raw_rd_inc(cycle));
         }
     }
@@ -178,7 +179,7 @@ impl CollectRegisterEntries {
         const CHUNK: usize = 1 << 14;
         let mut rs1_indices: Vec<u8> = Vec::with_capacity(cycles);
         let mut rs2_indices: Vec<u8> = Vec::with_capacity(cycles);
-        let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+        let mut rd_indices: Vec<u8> = Vec::with_capacity(cycles);
         let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
         let chunk_count = cycles.div_ceil(CHUNK);
@@ -202,7 +203,7 @@ impl CollectRegisterEntries {
                                 rs1[offset].write(cycle.rs1.map_or(ABSENT_REGISTER, |(k, _)| k));
                             let _ =
                                 rs2[offset].write(cycle.rs2.map_or(ABSENT_REGISTER, |(k, _)| k));
-                            let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
+                            let _ = rd[offset].write(cycle.rd.map_or(0, |(k, ..)| k + 1));
                             let _ = inc[offset].write(raw_rd_inc(&cycle));
                         }
                         Err(failure) => {
