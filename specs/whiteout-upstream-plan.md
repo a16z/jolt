@@ -35,7 +35,7 @@ ZK over Akita stays unselectable until the last PR in each repo:
 | Transcript, jolt: J8 #2111 (Akita opening inside Jolt's sponge), J4 #2113 (Poseidon) | open, on J7 | J15 (Akita inside Jolt's argument string) | J7 |
 | Transcript, Akita: #253 (v8, on `main`) → #255 → #260 → #254 (v9) | all open | RP2 (A1–A4), W2's #255 port (§2.5 of the Akita spec, D10) | #253 pins jolt to unmerged J6 (`9470792dc`); it re-pins after J6/J7 land |
 | jolt #2000 / akita #185 (NARG) | **closed, superseded** | — | integration branches still sit on them → T0 |
-| Shared primitives: spec PR jolt #2003 | closed (Aerie leak); branch `spec/shared-primitives` @ RP0–RP5 text | RP0 gate: LZ agreement that Whiteout's building blocks live in `jolt-crypto`/`jolt-zk` | **akita#120 has zero comments**, so no recorded LZ agreement. Needs an ask (§5) |
+| Shared primitives: spec PR jolt #2003 | closed (Aerie leak); branch `spec/shared-primitives` @ RP0–RP5 text | RP0 gate: LZ agreement that Whiteout's building blocks live in `jolt-crypto`/`jolt-zk` | **Resolved by owner ruling (2026-11-04):** assume Akita adopts the jolt crates and deletes its copies (A1/A2). akita#120 still has no comments; that is no longer a blocker. |
 | Recursion: akita #279 (re-land #189/#190 on jolt `main`) | open, review requested from RadNi, mtbadakhshan | jolt #1911 | LZ review |
 | Recursion: jolt #1911 (+6.5k/−1.5k) | open, review required | nothing in Whiteout. It conflicts with J1 (it touches `jolt-field` and `jolt-akita`) | akita #279 |
 | jolt #2163 (field/inline prereqs) | merged 2026-10-28 | — | not yet on `whiteout/dev`; U3 brings it in |
