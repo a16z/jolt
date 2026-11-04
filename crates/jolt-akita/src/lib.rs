@@ -49,9 +49,9 @@ mod verifier_setup;
 #[cfg(feature = "zk")]
 mod whiteout;
 
-pub use akita_pcs::{AkitaError, TrustedBytes};
 #[cfg(feature = "zk")]
 pub use akita_pcs::HidingRandomness;
+pub use akita_pcs::{AkitaError, TrustedBytes};
 
 #[cfg(feature = "profiling")]
 #[doc(hidden)]

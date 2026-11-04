@@ -6,8 +6,8 @@ use akita_pcs::HidingRandomness;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
 use akita_transcript::TranscriptSponge;
 use akita_types::PendingEof;
-use jolt_crypto::Commitment;
 use jolt_algebra::CanonicalBytes;
+use jolt_crypto::Commitment;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupBatchOpening,
     GroupOpeningClaim, GroupOpeningWithHint, OpeningsError, TaggedGroupOpeningClaim,

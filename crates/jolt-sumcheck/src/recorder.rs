@@ -16,11 +16,11 @@
 //! Without the `prover` feature only that head remains: `absorb_round`,
 //! `finish` and the committed recorder belong to the prover.
 
-#[cfg(all(feature = "committed", feature = "prover"))]
-use jolt_crypto::VectorCommitment;
 use jolt_algebra::Field;
 #[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_algebra::JoltField;
+#[cfg(all(feature = "committed", feature = "prover"))]
+use jolt_crypto::VectorCommitment;
 use jolt_poly::CompressedPoly;
 #[cfg(feature = "prover")]
 use jolt_poly::UnivariatePoly;

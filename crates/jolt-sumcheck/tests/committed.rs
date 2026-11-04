@@ -1,7 +1,7 @@
 #![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
-use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_algebra::{Fr, Ring};
+use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup};
 use jolt_sumcheck::round_proof::RoundMessage;
 use jolt_sumcheck::{CommittedRound, CommittedRoundWitness, SumcheckStatement, SumcheckVerifier};
 use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript};

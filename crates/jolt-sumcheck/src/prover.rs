@@ -17,11 +17,11 @@
 //! — coefficients in the clear), so it is not a batch member and does not go
 //! through the recorder.
 
-#[cfg(feature = "committed")]
-use jolt_crypto::VectorCommitment;
 use jolt_algebra::Field;
 #[cfg(feature = "committed")]
 use jolt_algebra::JoltField;
+#[cfg(feature = "committed")]
+use jolt_crypto::VectorCommitment;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
 use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel, ProverTranscript};
 #[cfg(feature = "committed")]

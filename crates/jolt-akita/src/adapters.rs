@@ -1412,7 +1412,6 @@ pub(crate) fn prove_failed(error: impl ToString) -> OpeningsError {
     OpeningsError::ProveFailed(error.to_string())
 }
 
-
 #[cfg(test)]
 mod tests {
     #![expect(

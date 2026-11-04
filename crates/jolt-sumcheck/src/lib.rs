@@ -119,8 +119,8 @@ pub mod prover;
 pub mod r1cs;
 pub mod recorder;
 pub mod round_proof;
-pub mod single;
 pub mod schedule;
+pub mod single;
 pub mod verifier;
 
 #[cfg(all(test, feature = "committed", feature = "prover"))]
@@ -154,8 +154,8 @@ pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, Sumchec
 pub use prover::prove_uniskip_committed;
 #[cfg(feature = "prover")]
 pub use prover::{
-    check_uniskip_round, prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
-    ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
+    check_uniskip_round, prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds,
+    ProvedBatch, ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
 };
 #[cfg(feature = "r1cs")]
 pub use r1cs::{
@@ -169,10 +169,10 @@ pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
 pub use round_proof::{
     append_compressed_round, compressed_wire, padded_coefficients, ClearRound, RoundMessage,
 };
+pub use schedule::{DegreeSchedule, MemberDegrees};
 #[cfg(feature = "prover")]
 pub use single::prove_single;
 pub use single::{
     verify_single, SingleFormat, SingleInstance, SingleReduction, SingleSumcheckProof,
 };
-pub use schedule::{DegreeSchedule, MemberDegrees};
 pub use verifier::SumcheckVerifier;

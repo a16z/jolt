@@ -1,6 +1,6 @@
+use jolt_algebra::{Field, JoltField};
 #[cfg(feature = "committed")]
 use jolt_crypto::VectorCommitment;
-use jolt_algebra::{Field, JoltField};
 #[cfg(all(feature = "committed", feature = "prover"))]
 use jolt_poly::UnivariatePoly;
 #[cfg(all(feature = "committed", feature = "prover"))]

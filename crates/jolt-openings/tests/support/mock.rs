@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
-use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_algebra::JoltField;
+use jolt_crypto::{Commitment, HomomorphicCommitment};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, Polynomial};
 use jolt_transcript::{Encoding, FieldTranscript};

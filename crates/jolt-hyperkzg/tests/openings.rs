@@ -4,8 +4,8 @@
     reason = "test fixtures fail loudly"
 )]
 
-use jolt_crypto::{Bn254, Bn254G1, JoltGroup};
 use jolt_algebra::{Fr, One, Ring, Zero};
+use jolt_crypto::{Bn254, Bn254G1, JoltGroup};
 use jolt_hyperkzg::{
     HyperKZGError, HyperKZGProof, HyperKZGProverSetup, HyperKZGScheme, HyperKZGSetupParams,
     HyperKZGVerifierSetup,
