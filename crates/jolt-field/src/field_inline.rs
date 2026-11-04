@@ -98,7 +98,6 @@ mod emit {
             }
         };
     }
-    #[cfg(feature = "terminal-contraction")]
     include!("field_inline/terminal_emit.rs");
     /// Accumulate one word into a destination previously cleared by `clear`.
     #[inline(always)]
@@ -316,7 +315,6 @@ mod emit {
 
 mod guest {
     use super::*;
-    #[cfg(feature = "terminal-contraction")]
     include!("field_inline/terminal_guest.rs");
     static READY: AtomicBool = AtomicBool::new(false);
 
@@ -501,7 +499,7 @@ mod guest {
         // field-inline word costs as much as the word itself, so the inner
         // loop is unrolled per block width and indexes without bounds checks.
         macro_rules! accumulate_block {
-            ($($row:ident => $k:literal),+) => {{ $( #[cfg(feature = "field-inline-rowptr")] let $row: &[[u64; N]] = *$row; )+ // row pointers: see the note at the end of this file
+            ($($row:ident => $k:literal),+) => {{ $( let $row: &[[u64; N]] = *$row; )+ // row pointers: see the note at the end of this file
                 for j in 0..len {
                     // SAFETY: `j < len`, and every row has `len` elements
                     // (asserted above).
@@ -657,26 +655,22 @@ pub use guest::{
     sum_of_products, weighted_dot_rows,
 };
 
-// Row pointers (`field-inline-rowptr`, default off; recursion guest feature `rowptr-registers`):
+// Keep weighted-dot row pointers in registers.
 // `weighted_dot_rows` copies the block's row slices into locals before its
 // element loop. The match bindings `r0..r4` point into `block_rows`, and every
 // field-inline `asm!` block may write memory, so without the copy each term
 // reloads its row base pointer from memory; locals stay in registers across
-// the asm. The statement sits on the macro's arm line and this note sits at the
-// end of the file, so the feature-off build keeps every source line number.
+// the asm.
 
-#[cfg(feature = "terminal-contraction")]
 pub use guest::signed_i16_dot;
-#[cfg(feature = "field-inline-horner")]
 pub(crate) mod horner;
 
-// `fill-ingress` (default off): `out(i, src[i] * scale)` with
+// `out(i, src[i] * scale)` with
 // `scale` loaded into `REG_B` once. Each element is loaded into `REG_A`,
 // multiplied into `REG_OUT` and read out canonically (the caller range checks
 // the limbs). Only the operand, output and readout scratch registers are
 // written; no caller code but `out` (integer work on the readout) runs while
 // the scale is resident. Canonical limbs.
-#[cfg(feature = "fill-ingress")]
 pub(crate) mod scale {
     use super::guest::{load, read_out};
     use super::{emit, REG_A, REG_B, REG_OUT};

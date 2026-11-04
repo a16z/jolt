@@ -19,7 +19,6 @@ immutable-recipes = [
   "dep:hex",
 ]
 immutable-recipes-record = ["immutable-recipes", "dep:serde_json"]
-guest-codegen = []
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default: default workspace builds must not unify field-inline into the
 # verifier stack. The recursion flow needs it.
