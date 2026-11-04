@@ -23,7 +23,6 @@ hash-inlines = [
   "jolt_sdk/blake2-inline",
   "jolt-transcript?/blake2-inline",
   "jolt-akita?/blake2-inline",
-  "jolt-akita?/keccak-inline",
 ]
 
 [package.metadata.cargo-machete]

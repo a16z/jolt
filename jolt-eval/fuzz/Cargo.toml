@@ -53,6 +53,15 @@ ignored = ["libfuzzer-sys"]
 libfuzzer-sys = "0.4"
 jolt-eval = { path = ".." }
 
+# Match the root dependency identity for Akita v8 codecs and channels.
+[patch."https://github.com/a16z/jolt"]
+jolt-field = { path = "../../crates/jolt-field" }
+jolt-transcript = { path = "../../crates/jolt-transcript" }
+jolt-poly = { path = "../../crates/jolt-poly" }
+jolt-inlines-blake2 = { path = "../../jolt-inlines/blake2" }
+jolt-inlines-ntt = { path = "../../jolt-inlines/ntt" }
+jolt-inlines-keccak256 = { path = "../../jolt-inlines/keccak256" }
+
 [[bin]]
 name = "field_mul_scalar"
 path = "fuzz_targets/field_mul_scalar.rs"

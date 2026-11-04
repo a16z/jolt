@@ -1099,3 +1099,15 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[patch.unused]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"
