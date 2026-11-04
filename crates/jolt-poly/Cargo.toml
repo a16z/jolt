@@ -38,6 +38,8 @@ harness = false
 ignored = ["rand"]
 
 [features]
+# Evaluate compressed univariate polynomials with Horner's rule (default off).
+compressed-poly-horner = []
 default = ["parallel"]
 binary = ["jolt-field/binary"]
 parallel = ["rayon"]

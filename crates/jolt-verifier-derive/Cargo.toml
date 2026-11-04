@@ -16,3 +16,12 @@ workspace = true
 syn = { workspace = true }
 quote = { workspace = true }
 proc-macro2 = { workspace = true }
+
+[dev-dependencies]
+syn = { workspace = true, features = ["visit-mut"] }
+
+[features]
+# Recipe expansion walks method bodies with syn's VisitMut. The syn feature is
+# enabled only with this feature (and for this crate's own tests), so builds
+# without immutable recipes keep the unchanged dependency graph.
+immutable-recipes = ["syn/visit-mut"]

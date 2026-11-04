@@ -112,7 +112,7 @@ impl SymbolicSumcheck for RamValCheck {
     type Challenges<F> = RamValCheckChallenges<F>;
     type Inputs<C> = RamValCheckInputClaims<C>;
     type Outputs<C> = RamValCheckOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(13, JOLT, Jolt; shape);
     fn new(shape: RamValCheckShape) -> Self {
         Self { shape }
     }
@@ -147,3 +147,12 @@ impl SymbolicSumcheck for RamValCheck {
             * opening(ram_ra_val_check())
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(RamValCheckShape {
+    dimensions,
+    contributions
+});
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(RamValContribution { selector, opening });

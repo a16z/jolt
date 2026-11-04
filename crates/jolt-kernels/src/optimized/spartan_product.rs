@@ -6,10 +6,9 @@
 //! geometry: a 3-node uni-skip window over three factor lanes, a remainder
 //! over the plain cycle domain, and eight per-cycle witness columns.
 //!
-//! Unlike the outer uni-skip, the in-domain `t1` nodes do not vanish (they
-//! are the three stage-1 product claims), so all `2·3 − 1` node values are
-//! computed; the extension coefficients at in-domain nodes are the 0/1
-//! Lagrange selectors, so one integer pipeline serves every node.
+//! The base-domain `t1` values are the upstream Spartan product claims.
+//! Only extension nodes are computed from the witness; the supplied claims
+//! fill the base nodes when the first-round polynomial is assembled.
 
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::composed::ComposedOpeningId;
@@ -28,10 +27,10 @@ use jolt_claims::protocols::field_inline::geometry::product::{
 use jolt_claims::protocols::jolt::geometry::spartan::{
     branch_flag_product, jump_flag_product, left_instruction_input_product, lookup_output_product,
     next_is_noop_product, right_instruction_input_product, virtual_instruction_product,
-    write_lookup_output_to_rd_product,
+    write_lookup_output_to_rd_product, SpartanProductDimensions,
 };
 use jolt_claims::protocols::jolt::{JoltDerivedId, SpartanProductVirtualizationPublic};
-use jolt_claims::{InputClaims as _, OutputClaims as _};
+use jolt_claims::{InputClaims as _, NoChallenges, OutputClaims as _};
 use jolt_field::signed::{S128, S192, S256};
 use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
 use jolt_poly::lagrange::{
@@ -72,8 +71,10 @@ use crate::{
 
 const DOMAIN: usize = SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
+const EXTENSION_SIZE: usize = DOMAIN - 1;
 const DOMAIN_START: i64 = -((DOMAIN as i64 - 1) / 2);
 const EXTENDED_START: i64 = -((EXTENDED_SIZE as i64 - 1) / 2);
+const BASE_START: usize = (DOMAIN_START - EXTENDED_START) as usize;
 
 /// The per-cycle product-virtualization witness: the three left/right factor
 /// lanes plus the two wire passengers, as native small scalars.
@@ -97,9 +98,13 @@ pub struct SpartanProductRow {
     pub virtual_instruction: OpFlag,
 }
 
-fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
-    let mut out = [[0i64; DOMAIN]; EXTENDED_SIZE];
-    for (position, coefficients) in out.iter_mut().enumerate() {
+fn extension_positions() -> impl Iterator<Item = usize> {
+    (0..BASE_START).chain(BASE_START + DOMAIN..EXTENDED_SIZE)
+}
+
+fn extension_coefficients() -> [[i64; DOMAIN]; EXTENSION_SIZE] {
+    let mut out = [[0i64; DOMAIN]; EXTENSION_SIZE];
+    for (position, coefficients) in extension_positions().zip(out.iter_mut()) {
         let node = EXTENDED_START + position as i64;
         for (i, coefficient) in coefficients.iter_mut().enumerate() {
             let mut numerator: i128 = 1;
@@ -118,19 +123,19 @@ fn extension_coefficients() -> [[i64; DOMAIN]; EXTENDED_SIZE] {
     out
 }
 
-/// `left(node) · right(node)` for one cycle at every extended node, as exact integers:
+/// `left(node) · right(node)` outside the base domain, as exact integers:
 /// `|left| < 2^74` (two u64 lanes and a flag, times composed coefficients ≤ 2^7),
 /// `|right| < 2^137` (the i128 lane), product `< 2^211` — inside `S256`. For cycles
 /// without field-inline activity: the field-inline lanes' factors are all zero there,
 /// so the three rv64 coefficient slots below are the whole composed sum; active
-/// field-inline cycles route through [`field_extended_products`]. `coefficients` is
+/// field-inline cycles route through [`field_extension_products`]. `coefficients` is
 /// [`extension_coefficients`], hoisted out of the per-cycle loop (its integer Lagrange
 /// build is not free at `2^23` calls).
-fn extended_products(
+fn extension_products(
     row: &SpartanProductRow,
-    coefficients: &[[i64; DOMAIN]; EXTENDED_SIZE],
-) -> [S256; EXTENDED_SIZE] {
-    let mut out = [S256::zero(); EXTENDED_SIZE];
+    coefficients: &[[i64; DOMAIN]; EXTENSION_SIZE],
+) -> [S256; EXTENSION_SIZE] {
+    let mut out = [S256::zero(); EXTENSION_SIZE];
     let left_lanes = [
         i128::from(row.left_instruction_input.0),
         i128::from(row.lookup_output.0),
@@ -153,16 +158,16 @@ fn extended_products(
     }
     out
 }
-/// The field twin of [`extended_products`] for active field-inline cycles: the composed
+/// The field twin of [`extension_products`] for active field-inline cycles: the composed
 /// left/right factor forms with the field-inline lane contributions from the pinned
 /// jolt-claims composed-lane helper (the same fold the verifier's composed checks
 /// perform).
 #[cfg(feature = "field-inline")]
-fn field_extended_products<F: JoltField>(
+fn field_extension_products<F: JoltField>(
     row: &SpartanProductRow,
     field_row: &FieldInlineSpartanRow<F>,
-    coefficients: &[[F; DOMAIN]; EXTENDED_SIZE],
-) -> [F; EXTENDED_SIZE] {
+    coefficients: &[[F; DOMAIN]; EXTENSION_SIZE],
+) -> [F; EXTENSION_SIZE] {
     let factors = FieldProductLaneFactors {
         rs1_value: field_row.rs1_value,
         rs2_value: field_row.rs2_value,
@@ -178,7 +183,7 @@ fn field_extended_products<F: JoltField>(
         F::from_bool(row.branch_flag.0),
         F::one() - F::from_bool(row.next_is_noop.0),
     ];
-    let mut out = [F::zero(); EXTENDED_SIZE];
+    let mut out = [F::zero(); EXTENSION_SIZE];
     for (slot, weights) in out.iter_mut().zip(coefficients) {
         let mut left = F::zero();
         let mut right = F::zero();
@@ -198,7 +203,7 @@ fn field_extended_products<F: JoltField>(
 }
 
 #[cfg(feature = "field-inline")]
-fn extension_coefficient_fields<F: JoltField>() -> [[F; DOMAIN]; EXTENDED_SIZE] {
+fn extension_coefficient_fields<F: JoltField>() -> [[F; DOMAIN]; EXTENSION_SIZE] {
     extension_coefficients().map(|coefficients| coefficients.map(F::from_i64))
 }
 
@@ -211,10 +216,10 @@ struct SpartanProductCarry<F: JoltField> {
     #[cfg(feature = "field-inline")]
     #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     field_rows: Vec<(usize, FieldInlineSpartanRow<F>)>,
-    t1_values: Vec<F>,
+    extension_values: Vec<F>,
 }
 
-fn extended_t1_values<F: JoltField>(
+fn extension_t1_values<F: JoltField>(
     rows: &BundleAccess<'_, SpartanProductRow>,
     prefix_cycles: usize,
     tau_low: &[F],
@@ -231,9 +236,9 @@ fn extended_t1_values<F: JoltField>(
 
     let block = |x_out: usize| -> Result<Vec<F>, WitnessError> {
         let mut accumulators: Vec<<F as WithAccumulator>::SignedProductAccumulator> =
-            vec![Default::default(); EXTENDED_SIZE];
+            vec![Default::default(); EXTENSION_SIZE];
         #[cfg(feature = "field-inline")]
-        let mut field_sums = vec![F::zero(); EXTENDED_SIZE];
+        let mut field_sums = vec![F::zero(); EXTENSION_SIZE];
         #[cfg(feature = "field-inline")]
         let mut field_cursor = FieldInlineRowCursor::seek(field_rows, x_out * in_len);
         for (x_in, &e) in e_in
@@ -245,13 +250,13 @@ fn extended_t1_values<F: JoltField>(
             let row = rows.row(t)?;
             #[cfg(feature = "field-inline")]
             if let Some(field_row) = field_cursor.advance(t) {
-                let products = field_extended_products(&row, field_row, &field_coefficients);
+                let products = field_extension_products(&row, field_row, &field_coefficients);
                 for (sum, product) in field_sums.iter_mut().zip(&products) {
                     *sum += e * *product;
                 }
                 continue;
             }
-            let products = extended_products(&row, &coefficients);
+            let products = extension_products(&row, &coefficients);
             for (accumulator, product) in accumulators.iter_mut().zip(&products) {
                 accumulator.fmadd_s256(e, product);
             }
@@ -268,10 +273,10 @@ fn extended_t1_values<F: JoltField>(
             .map(|accumulator| e_out[x_out] * accumulator.reduce())
             .collect())
     };
-    let mut values = try_par_sum_vecs(prefix_cycles.div_ceil(in_len), EXTENDED_SIZE, block)?;
+    let mut values = try_par_sum_vecs(prefix_cycles.div_ceil(in_len), EXTENSION_SIZE, block)?;
     if prefix_cycles < 1usize << tau_low.len() {
         let mass = EqPolynomial::suffix_sum(tau_low, prefix_cycles);
-        let products = extended_products(&rows.row(prefix_cycles)?, &coefficients);
+        let products = extension_products(&rows.row(prefix_cycles)?, &coefficients);
         for (value, product) in values.iter_mut().zip(products) {
             let mut accumulator = <F as WithAccumulator>::SignedProductAccumulator::default();
             accumulator.fmadd_s256(mass, &product);
@@ -327,7 +332,7 @@ impl OptimizedProductUniskip {
         if let Some((cycle, _)) = field_rows.last() {
             prefix_cycles = prefix_cycles.max(cycle.saturating_add(1)).min(1 << log_t);
         }
-        let t1_values = extended_t1_values(
+        let extension_values = extension_t1_values(
             &rows.access(),
             prefix_cycles,
             tau_low,
@@ -341,7 +346,7 @@ impl OptimizedProductUniskip {
             rows,
             #[cfg(feature = "field-inline")]
             field_rows,
-            t1_values,
+            extension_values,
         });
         Ok(())
     }
@@ -385,7 +390,7 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
         &self,
         session: &mut ProofSession,
         late_tau: &[F],
-        _inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
+        inputs: &SumcheckInputClaims<F, ProductUniskip<F>>,
     ) -> Result<UnivariatePoly<F>, KernelError<F>> {
         let &[tau_high] = late_tau else {
             return Err(KernelError::InvariantViolation {
@@ -402,7 +407,28 @@ impl<F: JoltField> UniskipKernel<F, ProductRemainder<F>, SumcheckInputClaims<F, 
                 })?;
         let kernel_values = centered_lagrange_evals::<F>(DOMAIN, tau_high)?;
         let kernel_coefficients = interpolate_to_coeffs(DOMAIN_START, &kernel_values);
-        let t1_coefficients = interpolate_to_coeffs(EXTENDED_START, &carry.t1_values);
+        let mut t1_values = vec![F::zero(); EXTENDED_SIZE];
+        for (position, value) in extension_positions().zip(&carry.extension_values) {
+            t1_values[position] = *value;
+        }
+        // At a base node, the relation's Lagrange input claim selects the
+        // corresponding stage-1 Spartan-outer product opening; the shared
+        // relation keeps the composed lane order, including field-inline.
+        // Those openings sit at `product_tau_low`'s point by construction in
+        // stage 2, so the uni-skip round sum no longer cross-checks them
+        // against the witness: the stage driver's final-claim self-check and
+        // the verifier do.
+        for (lane, value) in t1_values
+            .iter_mut()
+            .skip(BASE_START)
+            .take(DOMAIN)
+            .enumerate()
+        {
+            let node = F::from_i64(DOMAIN_START + lane as i64);
+            let relation = ProductUniskip::new(SpartanProductDimensions::new(carry.log_t), node);
+            *value = relation.input_claim(inputs, &NoChallenges::default())?;
+        }
+        let t1_coefficients = interpolate_to_coeffs(EXTENDED_START, &t1_values);
         Ok(UnivariatePoly::new(poly_mul(
             &kernel_coefficients,
             &t1_coefficients,
@@ -1471,7 +1497,7 @@ mod tests {
 
     #[test]
     fn extension_coefficients_match_field_lagrange() {
-        for (position, coefficients) in extension_coefficients().iter().enumerate() {
+        for (position, coefficients) in extension_positions().zip(extension_coefficients().iter()) {
             let node = EXTENDED_START + position as i64;
             let expected = centered_lagrange_evals::<Fr>(DOMAIN, Fr::from_i64(node)).unwrap();
             for (i, &coefficient) in coefficients.iter().enumerate() {

@@ -306,7 +306,7 @@ impl AkitaScheme {
             let (auxiliary_group, _) = hint.backend.as_ref().ok_or_else(|| {
                 invalid_batch("Akita auxiliary group is missing backend opening data")
             })?;
-            profiles.push(auxiliary_group.profile);
+            profiles.push(*auxiliary_group.profile());
         }
         PrecommittedGroupProfiles::from_profiles(profiles).map_err(akita_error)
     }

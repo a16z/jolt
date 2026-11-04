@@ -1,8 +1,8 @@
 //! [`digest`] trait adapter over the inline Blake2b.
 //!
 //! `Digest`-generic consumers (Fiat-Shamir transcripts) get the same bytes as
-//! the `blake2` crate's `Blake2b<OutSize>`, computed with one inline compress
-//! per 128-byte block on a guest and in software on a host.
+//! the `blake2` crate's `Blake2b<OutSize>`. Blocks use the inline on a guest
+//! and software on a host; known Spongefish prefixes reuse constant states.
 
 use core::marker::PhantomData;
 
@@ -108,6 +108,37 @@ mod tests {
                     Blake2b512::digest(&data).as_slice(),
                     "U64 len {len} split {split}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn spongefish_prefixes_preserve_digest_parameters_and_streaming() {
+        for tag in 0..=3 {
+            for suffix_len in [0, 1, 64, 128, 129, 257] {
+                let mut data = vec![0; 128];
+                data[127] = tag;
+                data.extend(input(suffix_len));
+                // Every changed prefix byte must still affect the digest.
+                for changed_byte in 0..=128 {
+                    if changed_byte < 128 {
+                        data[changed_byte] ^= 0x80;
+                    }
+                    for split in [0, 63, 127, 128, data.len()] {
+                        let mut ours = Blake2b::<U64>::new();
+                        ours.update(&data[..split]);
+                        ours.update(&data[split..]);
+                        assert_eq!(ours.finalize(), Blake2b512::digest(&data));
+
+                        let mut short = Blake2b::<U32>::new();
+                        short.update(&data[..split]);
+                        short.update(&data[split..]);
+                        assert_eq!(short.finalize(), ReferenceBlake2b::<U32>::digest(&data));
+                    }
+                    if changed_byte < 128 {
+                        data[changed_byte] ^= 0x80;
+                    }
+                }
             }
         }
     }

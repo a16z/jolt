@@ -390,9 +390,9 @@ dependencies = [
 
 [[package]]
 name = "dory-pcs"
-version = "0.4.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "065945e9fff3c7dac5d6f72f8260eac82ad577e7c7009b6290847d1252d14d78"
+checksum = "7b5d5f7616b5c004760187ebfd126cabe14ec311b7b57f6ae6c9dac71284eb7f"
 dependencies = [
  "ark-bn254",
  "ark-ec",
@@ -1167,3 +1167,15 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[patch.unused]]
+name = "jolt-inlines-blake2"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-inlines-keccak256"
+version = "0.1.0"
+
+[[patch.unused]]
+name = "jolt-inlines-ntt"
+version = "0.1.0"

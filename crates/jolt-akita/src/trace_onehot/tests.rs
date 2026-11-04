@@ -240,6 +240,51 @@ fn digit_windows_match_shift_accumulation() {
 }
 
 #[test]
+fn digit_windows_multi_slot_batches_match_signed_convolution() {
+    const D: usize = 64;
+    let sources: Vec<_> = (0..6)
+        .map(|slot| {
+            CyclotomicRing::<AkitaField, D>::from_coefficients(std::array::from_fn(|j| {
+                let value = AkitaField::from_u128(u128::MAX / ((j + slot + 2) as u128));
+                if (j + slot) % 2 == 0 {
+                    value
+                } else {
+                    -value
+                }
+            }))
+        })
+        .collect();
+    let windows: Vec<_> = sources
+        .iter()
+        .map(|source| {
+            let mut window = DigitWindows::new();
+            window.load(source);
+            window
+        })
+        .collect();
+    for count in [0, 1, 63, 64, 65, 191] {
+        let mut shifts = vec![Vec::new(); sources.len()];
+        for i in 0..count {
+            shifts[[0, 2, 5][i % 3]].push((i * 17) % D);
+        }
+        let mut actual = [std::array::from_fn(|j| {
+            Fp128x8i32::from(sources[0].coeffs[j])
+        })];
+        let mut expected: AkitaWideRing<D> = AkitaWideRing::from_ring(&sources[0]);
+        for (source, shifts) in sources.iter().zip(&shifts) {
+            let wide: AkitaWideRing<D> = AkitaWideRing::from_ring(source);
+            for &shift in shifts {
+                wide.shift_accumulate_into(&mut expected, shift);
+            }
+        }
+        DigitWindows::accumulate_slots(&windows, &mut actual[0], &shifts);
+        let mut reduced = [CyclotomicRing::zero()];
+        flush_digit_accumulators(&mut actual, &mut reduced);
+        assert_eq!(reduced[0], expected.reduce::<AkitaField>());
+    }
+}
+
+#[test]
 fn digit_windows_stay_exact_at_accumulation_budget() {
     const D: usize = 64;
     let source = CyclotomicRing::<AkitaField, D>::from_coefficients(std::array::from_fn(|index| {

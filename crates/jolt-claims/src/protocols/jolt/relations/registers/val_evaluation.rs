@@ -50,3 +50,8 @@ twist::instantiate_val_evaluation! {
     rd_wa = rd_wa_val_evaluation(),
     lt_cycle = RegistersValEvaluationPublic::LtCycle,
 }
+
+macro_rules! immutable_twist_recipe {
+    (ValEvaluation) => { crate::immutable_symbolic_recipe!(16, JOLT, Jolt; shape); };
+}
+pub(crate) use immutable_twist_recipe;

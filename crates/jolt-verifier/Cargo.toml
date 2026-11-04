@@ -19,6 +19,14 @@ blake2-inline = ["jolt-claims/blake2-inline"]
 allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = []
 fs-audit = []
+immutable-recipes = [
+  "jolt-claims/immutable-recipes",
+  "jolt-verifier-derive/immutable-recipes",
+]
+immutable-recipes-record = [
+  "immutable-recipes",
+  "jolt-claims/immutable-recipes-record",
+]
 fuzzing = []
 field-inline = [
   "common/field-inline",

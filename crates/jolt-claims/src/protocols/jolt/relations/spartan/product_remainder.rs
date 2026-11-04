@@ -90,7 +90,7 @@ impl SymbolicSumcheck for ProductRemainder {
     type Challenges<F> = crate::NoChallenges<F>;
     type Inputs<C> = ProductRemainderInputClaims<C>;
     type Outputs<C> = ProductRemainderOutputClaims<C>;
-
+    crate::immutable_key_delegate!(3; shape);
     fn new(shape: SpartanProductDimensions) -> Self {
         Self { shape }
     }
