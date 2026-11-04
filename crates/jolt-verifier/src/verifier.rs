@@ -270,10 +270,10 @@ fn advice_presence(checked: &CheckedInputs) -> u64 {
 /// commitments. Every consumer of the staged verification — [`verify`] on
 /// both builds, the ZK prover's replay and the zk audit harness — starts here,
 /// so there is exactly one absorption order.
-pub fn validate_and_seed_transcript<PCS, VC, T, ZkProof>(
+pub fn validate_and_seed_transcript<PCS, VC, T, ZkProof, O>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     trusted_advice_commitment: Option<&PCS::Output>,
     new_transcript: impl FnOnce(&JoltStatement<'_>) -> T,
 ) -> Result<(CheckedInputs, T), VerifierError>
@@ -326,10 +326,10 @@ pub struct CheckedInputs {
     pub precommitted: PrecommittedSchedule,
 }
 
-pub fn validate_inputs<PCS, VC, ZkProof>(
+pub fn validate_inputs<PCS, VC, ZkProof, O>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     trusted_advice_commitment_present: bool,
 ) -> Result<CheckedInputs, VerifierError>
 where
@@ -532,8 +532,8 @@ where
     Ok(got)
 }
 
-pub fn validate_proof_consistency<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn validate_proof_consistency<PCS, VC, ZkProof, O>(
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     zk: bool,
 ) -> Result<(), VerifierError>
 where
@@ -640,9 +640,9 @@ where
 /// the canonical commitment-object order: `OneHotTrace`, untrusted advice, trusted
 /// advice, and direct program objects.
 #[jolt_verifier_derive::fs_scope(Commitments)]
-pub(crate) fn absorb_commitments<PCS, VC, ZkProof, T>(
+pub(crate) fn absorb_commitments<PCS, VC, ZkProof, O, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
 ) where

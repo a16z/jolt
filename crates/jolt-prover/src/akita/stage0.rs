@@ -9,6 +9,7 @@ use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomi
 use jolt_crypto::VectorCommitment;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_verifier::config::SELECTED_ZK_CONFIG;
 use jolt_verifier::{
     absorb_akita_commitments, validate_inputs_from_parts, CheckedInputs, JoltStatement,
     ProofTranscriptConfig, JOLT_SESSION,
@@ -110,7 +111,7 @@ where
         config.one_hot_config,
         trusted_advice.is_some(),
         untrusted_advice_present,
-        false,
+        SELECTED_ZK_CONFIG,
     )?;
 
     let mut transcript = T::init(

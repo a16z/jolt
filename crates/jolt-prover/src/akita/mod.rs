@@ -5,13 +5,10 @@ pub mod preprocessing;
 mod prover;
 mod setup;
 pub use setup::one_hot_trace_setup_shape;
-mod spine;
 mod stage0;
 // Whiteout's stage 8 is the masked Akita opening (`whiteout`).
 #[cfg(not(feature = "zk"))]
 mod stage8;
-#[cfg(not(feature = "zk"))]
-mod trace_group;
 #[cfg(feature = "zk")]
 mod whiteout;
 pub mod witness;

@@ -526,6 +526,17 @@ pub struct WhiteoutOpeningPlan<C> {
 
 #[cfg(all(feature = "akita", feature = "zk"))]
 impl<C> WhiteoutOpeningPlan<C> {
+    /// Whether stage 8 draws packing selectors, so a proof of work precedes
+    /// them ([`PowSite::Stage8`]), as on the clear Akita path.
+    pub fn has_selectors(&self) -> bool {
+        has_selectors(self.objects.iter().filter_map(|object| match object {
+            WhiteoutObject::Packed { plan, .. } => Some(plan),
+            #[cfg(feature = "field-inline")]
+            WhiteoutObject::FieldInc { .. } => None,
+            WhiteoutObject::FusedInc { .. } => None,
+        }))
+    }
+
     /// The masked opening's groups: the objects, then the trace group.
     pub fn shape(&self) -> MaskedOpeningShape {
         MaskedOpeningShape {

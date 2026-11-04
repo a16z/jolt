@@ -36,6 +36,7 @@ use crate::num;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::proof::JoltProof;
 use crate::stages::build_formula_dimensions;
+use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
 use crate::stages::stage8::akita::{
     masked_group_claims, whiteout_opening_plan, WhiteoutOpeningPlan,
 };
@@ -142,10 +143,14 @@ where
     })
 }
 
-/// Stage 8's masked claims over `residual`, from the stage outputs.
+/// Stage 8's masked claims over `residual`, from the stage outputs: the
+/// proof of work before the packing selectors when there are any (as on the
+/// clear Akita path), then each group's claims as affine forms.
+#[expect(clippy::too_many_arguments, reason = "the stage outputs and the frame")]
 fn stage8_claims<F, C, T>(
     checked: &CheckedInputs,
     proof_one_hot: jolt_claims::protocols::jolt::JoltOneHotConfig,
+    pow_nonces: &StagePowNonces,
     trace_commitment: &C,
     plan: &WhiteoutOpeningPlan<C>,
     stages: &StageOutputs<F>,
@@ -157,6 +162,11 @@ where
     C: Clone,
     T: FieldTranscript<F>,
 {
+    if plan.has_selectors() {
+        check_pow(PowSite::Stage8, pow_nonces, transcript)?;
+    } else {
+        pow_nonces.require_absent(PowSite::Stage8)?;
+    }
     masked_group_claims(
         plan,
         proof_one_hot,
@@ -237,6 +247,7 @@ where
     let claims = stage8_claims(
         checked,
         proof.one_hot_config,
+        &proof.stages.pow_nonces,
         &proof.commitments,
         &frame.plan,
         &stages,
@@ -327,6 +338,7 @@ where
     let claims = stage8_claims(
         checked,
         proof.one_hot_config,
+        &proof.stages.pow_nonces,
         &proof.commitments,
         &frame.plan,
         &stages,
@@ -421,7 +433,7 @@ where
 pub fn verify<'a, F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
-    proof: &'a JoltProof<PCS, VC, ()>,
+    proof: &'a JoltProof<PCS, VC, (), ()>,
     trusted_advice_commitment: Option<&PCS::Output>,
 ) -> Result<(), VerifierError>
 where
@@ -467,7 +479,7 @@ where
 /// [`VerifierError`] if any step rejects.
 pub fn verify_transcript<'a, F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ()>,
+    proof: &JoltProof<PCS, VC, (), ()>,
     checked: &CheckedInputs,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
