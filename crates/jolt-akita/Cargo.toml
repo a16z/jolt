@@ -9,7 +9,6 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
-terminal-contraction = ["jolt-field/terminal-contraction"]
 default = ["parallel"]
 parallel = ["akita-pcs/parallel"]
 blake2-inline = ["jolt-transcript/blake2-inline"]
@@ -17,22 +16,15 @@ ntt-inline = ["akita-pcs/ntt-inline"]
 field-inline = []
 profiling = ["parallel"]
 
-word-decode = ["jolt-field/word-decode"]
-ont-static-base = ["akita-challenges/ont-static-base"]
-tensor-no-carry = ["akita-algebra/tensor-no-carry"]
-tensor-eq-runs = ["akita-algebra/tensor-eq-runs"]
-setup-sop-structured = ["akita-pcs/setup-sop-structured"]
-bytecode-fold = ["jolt-claims/bytecode-fold"]
-fill-ingress = ["jolt-field/fill-ingress"]
-
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
-akita-algebra.workspace = true
+akita-algebra = { workspace = true, features = ["tensor-no-carry", "tensor-eq-runs"] }
 akita-config.workspace = true
 akita-error.workspace = true
 akita-pcs = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
+  "setup-sop-structured",
 ] }
 akita-challenges.workspace = true
 akita-planner.workspace = true

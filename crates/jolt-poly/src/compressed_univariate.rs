@@ -72,32 +72,13 @@ impl<F: Field> CompressedPoly<F> {
     /// Evaluates the polynomial at `point` using the hint `h = f(0) + f(1)`.
     ///
     /// Recovers the linear term and evaluates in O(d) multiplications, using
-    /// Horner's rule when `compressed-poly-horner` is enabled.
+    /// Horner's rule.
     ///
     /// # Panics
     /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
     #[inline]
     pub fn evaluate_with_hint(&self, hint: F, point: F) -> F {
         self.eval_from_hint(&hint, &point)
-    }
-
-    /// Like [`evaluate_with_hint`](Self::evaluate_with_hint) but takes hint and
-    /// point by reference, avoiding a copy at call sites that already hold references.
-    ///
-    /// # Panics
-    /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
-    #[cfg(not(feature = "compressed-poly-horner"))]
-    #[inline]
-    pub fn eval_from_hint(&self, hint: &F, point: &F) -> F {
-        let linear_term = self.recover_linear_term(*hint);
-
-        let mut x_pow = *point;
-        let mut sum = self.coeffs_except_linear_term[0] + *point * linear_term;
-        for &c in &self.coeffs_except_linear_term[1..] {
-            x_pow *= *point;
-            sum += c * x_pow;
-        }
-        sum
     }
 
     /// Recovers the full polynomial given the hint `h = f(0) + f(1)`.
@@ -115,7 +96,6 @@ impl<F: Field> CompressedPoly<F> {
     }
 }
 
-#[cfg(feature = "compressed-poly-horner")]
 #[path = "compressed_horner.rs"]
 mod compressed_horner;
 
