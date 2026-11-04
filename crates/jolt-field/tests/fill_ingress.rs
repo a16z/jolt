@@ -1,4 +1,4 @@
-#![cfg(all(feature = "fill-ingress", feature = "solinas"))]
+#![cfg(feature = "solinas")]
 
 use jolt_field::{Field, Prime128OffsetA7F7 as F, Ring};
 

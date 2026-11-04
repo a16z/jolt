@@ -48,7 +48,7 @@ use super::{emit, r_word, FUNCT3_ADD, FUNCT3_MUL, REG_A, REG_B, REG_SUM};
     load(REG_A, alpha);
     for (block_rows, block_weights) in rows.chunks(5).zip(weights.chunks(5)) {
         match block_rows {
-            [r0, r1, r2, r3, r4] => { #[cfg(feature = "field-inline-horner-triplet")] if N == 2 && width == 64 { triplet_block([r0, r1, r2, r3, r4]); } else { block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3, r4 => 4); } #[cfg(not(feature = "field-inline-horner-triplet"))] block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3, r4 => 4); },
+            [r0, r1, r2, r3, r4] => { if N == 2 && width == 64 { triplet_block([r0, r1, r2, r3, r4]); } else { block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3, r4 => 4); } },
             [r0, r1, r2, r3] => block!(r0 => 0, r1 => 1, r2 => 2, r3 => 3),
             [r0, r1, r2] => block!(r0 => 0, r1 => 1, r2 => 2),
             [r0, r1] => block!(r0 => 0, r1 => 1),
@@ -64,13 +64,11 @@ use super::{emit, r_word, FUNCT3_ADD, FUNCT3_MUL, REG_A, REG_B, REG_SUM};
     read_out(REG_SUM)
 }
 
-#[cfg(feature = "field-inline-horner-triplet")]
 use jolt_riscv::field_inline_load_accumulate_from_memory_funct7;
 
 /// The caller has checked five rows of 64 two-limb elements. REG_A holds
 /// alpha; registers 9..=13 belong to these row accumulators. The existing
 /// memory instruction's offsets cover three coefficients from one base.
-#[cfg(feature = "field-inline-horner-triplet")]
 #[inline(always)]
 fn triplet_block<const N: usize>(rows: [&[[u64; N]]; 5]) {
     let [r0, r1, r2, r3, r4] = rows;
