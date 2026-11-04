@@ -203,7 +203,10 @@ mod tests {
     use proc_macro2::TokenStream;
 
     #[test]
-    #[expect(clippy::expect_used, reason = "tests should fail loudly on parse errors")]
+    #[expect(
+        clippy::expect_used,
+        reason = "tests should fail loudly on parse errors"
+    )]
     fn changed_canonical_collection_seams_are_rejected() {
         let canonical = r#"
             fn collect_guest_proofs() {
