@@ -15,10 +15,11 @@
 //! with round zero. Remainder rounds use split-eq reductions over cycle windows,
 //! then gather the remaining factors onto GPU 0. Original input columns remain
 //! available for the final witness claims.
-//! Like optimized, the remainder retains a nonconstant prefix, accounts for its
-//! two stream tails analytically, and binds them to one constant tail after
-//! round zero. The shared row-boundary check preserves terminal lookahead.
-//! CUDA's original input columns and uni-skip still process explicit padding.
+//! Like optimized, gathered inputs, uni-skip, remainder rounds, and final claims
+//! retain a nonconstant prefix and account for the constant suffix analytically.
+//! The remainder binds its two stream tails to one tail after round zero.
+//! The shared row-boundary check and one gathered lookahead row preserve next-row
+//! values, including at device boundaries.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -70,7 +71,6 @@ pub struct SpartanOuterState<F: JoltField> {
     matrices: ConstraintMatrices<F>,
     tau: Vec<F>,
     log_t: usize,
-    prefix_cycles: usize,
     extended: Vec<F>,
 }
 
@@ -102,11 +102,11 @@ fn uniskip_extended<F: JoltField>(
         reason: "a Spartan outer uni-skip window names an absent device",
     })?;
     if shards <= 1 {
-        let (whole, _) = inputs.first().ok_or(KernelError::InvariantViolation {
+        let (whole, window) = inputs.first().ok_or(KernelError::InvariantViolation {
             reason: "the Spartan outer uni-skip reduce has no window",
         })?;
-        return Ok(uniskip::extended_evals(
-            context, whole, matrices, tau, log_t,
+        return Ok(uniskip::extended_evals_window(
+            context, whole, matrices, tau, log_t, 0, 1, window.len,
         )?);
     }
 
@@ -194,10 +194,13 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             let pc_words =
                 device_trace_columns::<F>(device, session, witness, cycles, window, [0, 1, 0], 0)?
                     .pc;
-            let resident = window.residency(cycles).len;
+            let retained = prefix_cycles
+                .saturating_sub(window.start)
+                .saturating_add(1)
+                .min(window.len);
             inputs.push((
                 DeviceR1csInputs::from_device(
-                    device, &trace, &atoms, &operands, &product, &pc_words, resident,
+                    device, &trace, &atoms, &operands, &product, &pc_words, retained,
                 )?,
                 CycleWindow {
                     start: window.start,
@@ -213,7 +216,6 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             matrices,
             tau: tau.to_vec(),
             log_t,
-            prefix_cycles,
             extended,
         });
         Ok(())
@@ -266,7 +268,6 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for CudaBackend {
             &state.matrices,
             &state.tau,
             state.log_t,
-            state.prefix_cycles,
             inputs.relation.uniskip_challenge(),
         )?;
         Ok(Box::new(SpartanOuterRemainderKernel::new(
@@ -481,13 +482,7 @@ mod tests {
                 )
                 .expect("windowed product column");
                 DeviceR1csInputs::from_device(
-                    context,
-                    &trace,
-                    &atoms,
-                    &operands,
-                    &product,
-                    &pc_words,
-                    resident.len,
+                    context, &trace, &atoms, &operands, &product, &pc_words, window.len,
                 )
                 .expect("windowed r1cs inputs")
             };

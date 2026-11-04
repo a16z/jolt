@@ -5,6 +5,7 @@ use cudarc::driver::LaunchArgs;
 use cudarc::driver::{CudaSlice, PushKernelArg};
 use jolt_field::Fr;
 use jolt_field::JoltField;
+use jolt_poly::EqPolynomial;
 use jolt_riscv::CircuitFlags;
 use jolt_witness::backend::cuda::{
     circuit_flag_bit, DeviceTrace, FLAG_BIT_PRODUCT_NEGATIVE, FLAG_BIT_SHOULD_BRANCH,
@@ -21,6 +22,7 @@ use super::witness::{
     VIRTUAL_INSTRUCTION_BIT, WIDE,
 };
 use crate::cuda::common::context::CudaKernelContext;
+use crate::cuda::common::devices::CycleWindow;
 use crate::cuda::common::error::CudaError;
 
 const GATHER_BITS: usize = 16;
@@ -84,20 +86,23 @@ impl DeviceR1csInputs {
         pc_words: &CudaSlice<u32>,
         cycles: usize,
     ) -> Result<Self, CudaError> {
-        if cycles == 0 || trace.cycles() < cycles || pc_words.len() < cycles {
+        let resident = cycles.saturating_add(1).min(trace.cycles());
+        if cycles == 0 || trace.cycles() < cycles || pc_words.len() < resident {
             return Err(CudaError::InvariantViolation {
                 reason: "the device R1CS sources do not cover the requested cycles",
             });
         }
 
-        let mut narrow = context.alloc_u64(cycles * NARROW)?;
-        let mut wide = context.alloc_u64(cycles * WIDE * 2)?;
-        let mut raw = context.alloc_u32(cycles)?;
+        // Gather one lookahead row when it exists: the last retained row still
+        // needs its real successor's PC and flags before its tail is repeated.
+        let mut narrow = context.alloc_u64(resident * NARROW)?;
+        let mut wide = context.alloc_u64(resident * WIDE * 2)?;
+        let mut raw = context.alloc_u32(resident)?;
         let sources = context.upload_u32_slice(&Self::gather_bit_sources()?)?;
         let mut unmapped = context.upload_u64_slice(&[u64::MAX])?;
         let product_sign = FLAG_BIT_PRODUCT_NEGATIVE;
 
-        let count = CudaKernelContext::count_of(cycles)?;
+        let count = CudaKernelContext::count_of(resident)?;
         let mut builder = context.stream().launch_builder(context.so_gather());
         let _ = builder.arg(trace.extras());
         let _ = builder.arg(trace.unexpanded_pc());
@@ -118,11 +123,11 @@ impl DeviceR1csInputs {
         let _ = builder.arg(&mut raw);
         let _ = builder.arg(&mut unmapped);
         let _ = builder.arg(&count);
-        // SAFETY: thread `t < cycles` writes the `NARROW` u64s at
+        // SAFETY: thread `t < resident` writes the `NARROW` u64s at
         // `t * NARROW`, the `WIDE * 2` u64s at `t * WIDE * 2`, and `raw[t]` —
-        // all inside allocations sized for `cycles` rows. It reads index `t` of
+        // all inside allocations sized for `resident` rows. It reads index `t` of
         // each source column and the `EXTRA_WORDS` consecutive words at
-        // `t * EXTRA_WORDS`, all of which cover at least `cycles` rows by the
+        // `t * EXTRA_WORDS`, all of which cover at least `resident` rows by the
         // check above, plus the 16 in-range entries of `sources`. `unmapped` is
         // written only by `atomicMin`. Every buffer is a distinct allocation.
         let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
@@ -165,9 +170,10 @@ impl DeviceR1csInputs {
         cycles: usize,
     ) -> Result<Self, CudaError> {
         let layout = context.upload_u32_slice(&LAYOUT)?;
-        let mut flags = context.alloc_u32(cycles)?;
+        let resident = raw.len();
+        let mut flags = context.alloc_u32(resident)?;
 
-        let count = CudaKernelContext::count_of(cycles)?;
+        let count = CudaKernelContext::count_of(resident)?;
         let pc = CudaKernelContext::count_of(PC_SLOT)?;
         let unexpanded_pc = CudaKernelContext::count_of(UNEXPANDED_PC_SLOT)?;
         let next_pc = CudaKernelContext::count_of(NEXT_PC_SLOT)?;
@@ -185,9 +191,9 @@ impl DeviceR1csInputs {
         let _ = builder.arg(&NEXT_IS_VIRTUAL_BIT);
         let _ = builder.arg(&NEXT_IS_FIRST_IN_SEQUENCE_BIT);
         let _ = builder.arg(&count);
-        // SAFETY: thread `t < cycles` reads `raw[t]` and, when `t + 1 < cycles`,
-        // `raw[t + 1]` — both inside `raw`'s `cycles` entries — plus the two source
-        // slots of row `t + 1`, inside `narrow`'s `cycles * NARROW` u64s. It writes
+        // SAFETY: thread `t < resident` reads `raw[t]` and, when `t + 1 < resident`,
+        // `raw[t + 1]` — both inside `raw`'s entries — plus the two source
+        // slots of row `t + 1`, inside `narrow`'s `resident * NARROW` u64s. It writes
         // `flags[t]` (a fresh allocation, one slot per thread) and slots
         // `NEXT_PC_SLOT` / `NEXT_UNEXPANDED_PC_SLOT` of row `t`. Those two write
         // slots are disjoint from the two read slots (`PC_SLOT`,
@@ -204,8 +210,23 @@ impl DeviceR1csInputs {
         })
     }
 
+    /// Stored rows excluding lookahead; the final row represents any omitted suffix.
     pub const fn cycles(&self) -> usize {
         self.cycles
+    }
+
+    pub fn tail_weight<F: JoltField>(
+        &self,
+        point: &[F],
+        window: &CycleWindow,
+    ) -> Result<F, CudaError> {
+        if window.len == 0 || window.end() > 1usize << point.len() {
+            return Err(CudaError::InvariantViolation {
+                reason: "the Spartan outer input window lies outside its equality domain",
+            });
+        }
+        let tail = window.start + self.cycles.min(window.len) - 1;
+        Ok(EqPolynomial::suffix_sum(point, tail) - EqPolynomial::suffix_sum(point, window.end()))
     }
 
     pub const fn narrow(&self) -> &CudaSlice<u64> {
@@ -383,29 +404,35 @@ mod tests {
                     &whole_domain(cycles),
                 )
                 .expect("product column");
-                let got = DeviceR1csInputs::from_device(
-                    context, &trace, &atoms, &operands, &product, &pc_words, cycles,
-                )
-                .expect("device-gathered inputs");
-
-                assert_eq!(got.cycles(), expected.cycles());
-                assert_eq!(
-                    context.download_u64(got.narrow()).expect("narrow"),
-                    context.download_u64(expected.narrow()).expect("narrow"),
-                    "the narrow slots diverge",
-                );
-                assert_eq!(
-                    context.download_u64(got.wide()).expect("wide"),
-                    context.download_u64(expected.wide()).expect("wide"),
-                    "the wide limbs diverge",
-                );
-                let got_flags = context.download_u32(got.flags()).expect("flags");
+                let expected_narrow = context.download_u64(expected.narrow()).expect("narrow");
+                let expected_wide = context.download_u64(expected.wide()).expect("wide");
                 let expected_flags = context.download_u32(expected.flags()).expect("flags");
                 assert!(
                     expected_flags.iter().any(|&mask| mask != expected_flags[0]),
                     "every cycle has the same mask, so a kernel ignoring the row would pass",
                 );
-                assert_eq!(got_flags, expected_flags, "the flag masks diverge");
+                for retained in [1, cycles / 2, cycles - 1, cycles] {
+                    let got = DeviceR1csInputs::from_device(
+                        context, &trace, &atoms, &operands, &product, &pc_words, retained,
+                    )
+                    .expect("device-gathered inputs");
+                    assert_eq!(got.cycles(), retained);
+                    assert_eq!(
+                        context.download_u64(got.narrow()).expect("narrow")[..retained * NARROW],
+                        expected_narrow[..retained * NARROW],
+                        "the narrow slots diverge with {retained} retained rows",
+                    );
+                    assert_eq!(
+                        context.download_u64(got.wide()).expect("wide")[..retained * WIDE * 2],
+                        expected_wide[..retained * WIDE * 2],
+                        "the wide limbs diverge with {retained} retained rows",
+                    );
+                    assert_eq!(
+                        context.download_u32(got.flags()).expect("flags")[..retained],
+                        expected_flags[..retained],
+                        "the flag masks diverge with {retained} retained rows",
+                    );
+                }
             },
         );
     }

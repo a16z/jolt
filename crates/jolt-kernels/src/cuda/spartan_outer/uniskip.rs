@@ -9,6 +9,8 @@ use jolt_r1cs::constraint::ConstraintMatrices;
 use super::columns::{DeviceR1csInputs, LinearForms};
 use super::guards::{GuardForms, NODES, SHARED_BYTES};
 use crate::cuda::common::context::{CudaKernelContext, BLOCK};
+use crate::cuda::common::device::require_fr;
+use crate::cuda::common::devices::CycleWindow;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 use crate::cuda::common::split_eq::split_eq_tables_window;
@@ -63,6 +65,7 @@ pub fn push_forms<F: JoltField>(
     Ok(())
 }
 
+#[cfg(test)]
 pub fn extended_evals<F: JoltField>(
     context: &CudaKernelContext,
     inputs: &DeviceR1csInputs,
@@ -87,12 +90,6 @@ pub fn extended_evals_window<F: JoltField>(
     shards: usize,
     cycles: usize,
 ) -> Result<Vec<F>, CudaError> {
-    if cycles > inputs.cycles() {
-        return Err(CudaError::LengthMismatch {
-            expected: inputs.cycles(),
-            got: cycles,
-        });
-    }
     let nodes = extended_nodes();
     let device_forms = GuardForms::new(matrices)?.upload(context)?;
 
@@ -103,8 +100,21 @@ pub fn extended_evals_window<F: JoltField>(
             reason: "the Spartan outer equality tables do not cover its cycle window",
         });
     }
+    let mass = inputs.tail_weight(
+        &tau[..log_t],
+        &CycleWindow {
+            start: shard * (e_in.len() * e_out.len() / 2),
+            len: cycles,
+        },
+    )?;
+    let stream = tau[log_t];
+    let tail_weights = context.upload(&[
+        require_fr(mass * (F::one() - stream))?,
+        require_fr(mass * stream)?,
+    ])?;
+    let retained = inputs.cycles().min(cycles);
     let group_cycles = (e_in.len() / 2).min(BLOCK as usize * STRIP);
-    let blocks = u32::try_from(cycles.div_ceil(group_cycles)).map_err(|_| {
+    let blocks = u32::try_from((retained - 1).div_ceil(group_cycles) + 1).map_err(|_| {
         CudaError::InvariantViolation {
             reason: "the Spartan outer uni-skip launch exceeds a u32 block count",
         }
@@ -114,7 +124,7 @@ pub fn extended_evals_window<F: JoltField>(
     })?;
     let mut partials = context.alloc(lanes as usize * blocks as usize)?;
 
-    let count = CudaKernelContext::count_of(cycles)?;
+    let count = CudaKernelContext::count_of(retained)?;
     let tile = CudaKernelContext::count_of(group_cycles)?;
     let bits = CudaKernelContext::count_of(in_bits)?;
     let mut builder = context.stream().launch_builder(context.so_uniskip());
@@ -127,9 +137,12 @@ pub fn extended_evals_window<F: JoltField>(
     let _ = builder.arg(&bits);
     let _ = builder.arg(&count);
     let _ = builder.arg(&tile);
+    let _ = builder.arg(tail_weights.limbs());
     let _ = builder.arg(partials.limbs_mut());
     // SAFETY: each block stays inside one inner equality-table tile and guards
-    // every input read by `t < cycles`. GuardForms validates the native layout,
+    // every input read by `t < retained`. A separate last block evaluates the
+    // representative with full suffix weights, without dividing by an outer
+    // factor that may be zero. GuardForms validates the native layout,
     // integer bounds, and ten-node domain. Its offsets cover all 40 forms.
     // The two stream blocks each write NODES lanes within the partials buffer.
     // SHARED_BYTES covers the 32 keys, grouped and overflow accumulators, and

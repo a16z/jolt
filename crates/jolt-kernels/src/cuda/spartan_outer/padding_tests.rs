@@ -6,6 +6,9 @@
 use std::sync::Arc;
 
 use common::jolt_device::MemoryLayout;
+use jolt_claims::protocols::composed::r1cs::{
+    spartan_outer_constraints, spartan_outer_row_weights,
+};
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{NoChallenges, OutputClaims};
@@ -24,7 +27,10 @@ use jolt_verifier::stages::stage1::outer_remainder::{
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 use super::super::columns::DeviceR1csInputs;
-use super::super::witness::{Packed, NARROW, WIDE};
+use super::super::uniskip::{extended_evals_window, extended_nodes, node_field, EXTENDED_SIZE};
+use super::super::witness::{
+    Packed, KIND_FLAG, KIND_NARROW, LAYOUT, NARROW, SIGN_BIT_BASE, VARIABLES, WIDE,
+};
 use super::super::CudaBackend;
 use super::{DeviceRemainder, RemainderShard, SpartanOuterRemainderKernel};
 use crate::cuda::common::context::{context_for, device_count, shared_context};
@@ -164,6 +170,115 @@ fn periodic_stream_tails_match_dense_polynomials() {
                 let (az, bz) = got.state.collapsed.as_ref().unwrap();
                 assert_eq!(az.first().unwrap(), factors[0].evals()[0]);
                 assert_eq!(bz.first().unwrap(), factors[1].evals()[0]);
+            }
+        }
+    }
+}
+
+#[test]
+fn compact_input_reductions_match_dense_field_matrices() {
+    let Some(context) = shared_context() else {
+        return;
+    };
+    const LOG_T: usize = 6;
+    const CYCLES: usize = 1 << LOG_T;
+    let matrices = spartan_outer_constraints::<Fr>();
+    let nodes = extended_nodes();
+    let columns: Vec<_> = (0..=VARIABLES).collect();
+    let forms: Vec<_> = nodes
+        .iter()
+        .flat_map(|&(_, node)| {
+            let matrices = &matrices;
+            [Fr::from(0), Fr::from(1)].map(|stream| {
+                let weights = spartan_outer_row_weights(node_field::<Fr>(node), stream).unwrap();
+                matrices.weighted_columns(&weights, &columns).unwrap()
+            })
+        })
+        .collect();
+    for shards in [1, 2] {
+        let width = CYCLES / shards;
+        for prefix in [0usize, 1, 15, 16, 17, 31, 32, 33, 63, 64] {
+            for case in 0..3 {
+                let tau: Vec<_> = (0..LOG_T + 2)
+                    .map(|i| match case {
+                        1 => Fr::from((i % 2) as u64),
+                        2 => Fr::from(((i + 1) % 2) as u64),
+                        _ => fr(i as u64 + 37),
+                    })
+                    .collect();
+                let eq = EqPolynomial::<Fr>::evals(&tau[..LOG_T], None);
+                let stream_eq = EqPolynomial::<Fr>::evals(&tau[..=LOG_T], None);
+                for shard in 0..shards {
+                    let start = shard * width;
+                    let retained = (prefix.saturating_sub(start) + 1).min(width);
+                    let word = |i: usize| [0, u64::MAX, 1, 1 << 63, 7][i % 5];
+                    let inputs = DeviceR1csInputs::new(
+                        context,
+                        &Packed {
+                            narrow: (0..retained * NARROW).map(word).collect(),
+                            wide: (0..retained * WIDE * 2).map(|i| word(i + 1)).collect(),
+                            flags: (0..retained)
+                                .map(|i| 0xa955 | ((i as u32 % 8) << SIGN_BIT_BASE))
+                                .collect(),
+                        },
+                    )
+                    .unwrap();
+                    let narrow = context.download_u64(inputs.narrow()).unwrap();
+                    let wide = context.download_u64(inputs.wide()).unwrap();
+                    let flags = context.download_u32(inputs.flags()).unwrap();
+                    let mut claims = vec![Fr::zero(); VARIABLES];
+                    let mut extended = vec![Fr::zero(); EXTENDED_SIZE];
+                    for t in 0..width {
+                        let row = t.min(retained - 1);
+                        let mut z = vec![Fr::from(1)];
+                        z.extend(LAYOUT.map(|layout| {
+                            let slot = (layout & 255) as usize;
+                            match layout >> 8 {
+                                KIND_NARROW => Fr::from(narrow[row * NARROW + slot]),
+                                KIND_FLAG => Fr::from(u64::from((flags[row] >> slot) & 1)),
+                                _ => {
+                                    let lo = wide[row * WIDE * 2 + 2 * slot];
+                                    let hi = wide[row * WIDE * 2 + 2 * slot + 1];
+                                    let value = Fr::from(u128::from(lo) | (u128::from(hi) << 64));
+                                    if (flags[row] >> (SIGN_BIT_BASE + slot as u32)) & 1 != 0 {
+                                        -value
+                                    } else {
+                                        value
+                                    }
+                                }
+                            }
+                        }));
+                        for (claim, value) in claims.iter_mut().zip(&z[1..]) {
+                            *claim += eq[start + t] * *value;
+                        }
+                        for (i, form) in forms.iter().enumerate() {
+                            let a: Fr = form.a.iter().zip(&z).map(|(c, v)| *c * *v).sum();
+                            let b: Fr = form.b.iter().zip(&z).map(|(c, v)| *c * *v).sum();
+                            extended[nodes[i / 2].0] += stream_eq[2 * (start + t) + i % 2] * a * b;
+                        }
+                    }
+                    assert_eq!(
+                        DeviceRemainder::window_claims(
+                            context,
+                            &inputs,
+                            width,
+                            &tau[..LOG_T],
+                            shard,
+                            shards,
+                        )
+                        .unwrap(),
+                        claims,
+                        "claims: shards={shards} prefix={prefix} case={case} shard={shard}",
+                    );
+                    assert_eq!(
+                        extended_evals_window(
+                            context, &inputs, &matrices, &tau, LOG_T, shard, shards, width,
+                        )
+                        .unwrap(),
+                        extended,
+                        "uni-skip: shards={shards} prefix={prefix} case={case} shard={shard}",
+                    );
+                }
             }
         }
     }

@@ -58,7 +58,6 @@ impl<F: JoltField> DeviceRemainder<F> {
         matrices: &ConstraintMatrices<F>,
         tau: &[F],
         log_t: usize,
-        prefix_cycles: usize,
         uniskip_challenge: F,
     ) -> Result<Self, CudaError> {
         let count = windows.len();
@@ -86,16 +85,13 @@ impl<F: JoltField> DeviceRemainder<F> {
         let mut shards = Vec::with_capacity(count);
         for (ordinal, (inputs, window)) in windows.into_iter().enumerate() {
             let device = context_for(ordinal).ok_or(absent())?;
-            if inputs.cycles() < window.len {
+            let retained = inputs.cycles();
+            if retained > window.len {
                 return Err(CudaError::LengthMismatch {
                     expected: window.len,
-                    got: inputs.cycles(),
+                    got: retained,
                 });
             }
-            let retained = prefix_cycles
-                .saturating_sub(window.start)
-                .saturating_add(1)
-                .min(window.len);
             let (az, bz) = Self::factors(device, &forms, &inputs, retained)?;
             shards.push(RemainderShard {
                 ordinal,
@@ -357,7 +353,15 @@ impl<F: JoltField> DeviceRemainder<F> {
     ) -> Result<Vec<F>, CudaError> {
         let (e_in, e_out, in_bits) =
             split_eq_tables_window(context, cycle_challenges, shard, shards)?;
-        let threads = cycles.div_ceil(CLAIM_STRIP);
+        let tail_weight = fr_limbs(require_fr(inputs.tail_weight(
+            cycle_challenges,
+            &CycleWindow {
+                start: shard * cycles,
+                len: cycles,
+            },
+        )?)?);
+        let retained = inputs.cycles().min(cycles);
+        let threads = retained.div_ceil(CLAIM_STRIP);
         let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
             CudaError::InvariantViolation {
                 reason: "the Spartan outer claim launch exceeds a u32 block count",
@@ -371,7 +375,7 @@ impl<F: JoltField> DeviceRemainder<F> {
             let mut partials = context.alloc(lanes * blocks as usize)?;
             let first_arg = CudaKernelContext::count_of(first)?;
             let lanes_arg = CudaKernelContext::count_of(lanes)?;
-            let count = CudaKernelContext::count_of(cycles)?;
+            let count = CudaKernelContext::count_of(retained)?;
             let strip = CudaKernelContext::count_of(CLAIM_STRIP)?;
             let bits = CudaKernelContext::count_of(in_bits)?;
             let mut builder = context.stream().launch_builder(context.so_claims());
@@ -386,9 +390,13 @@ impl<F: JoltField> DeviceRemainder<F> {
             let _ = builder.arg(&lanes_arg);
             let _ = builder.arg(&count);
             let _ = builder.arg(&strip);
+            for limb in &tail_weight {
+                let _ = builder.arg(limb);
+            }
             let _ = builder.arg(partials.limbs_mut());
             // SAFETY: thread covers cycles `base .. base + CLAIM_STRIP` and breaks
-            // at `cycles`, so every row read is inside the three column buffers.
+            // at `retained`, so every row read is inside the three column buffers.
+            // The final stored row receives the whole omitted suffix's eq mass.
             // It reads `layout[first + lane]` for `lane < lanes`, and
             // `first + lanes <= VARIABLES` is the loop's own bound, so the read is
             // inside `layout`'s `VARIABLES` entries. The eq lookup is bounded by

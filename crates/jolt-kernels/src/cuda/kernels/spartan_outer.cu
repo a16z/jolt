@@ -411,7 +411,8 @@ extern "C" __global__ void so_uniskip_kernel(
     const unsigned int *__restrict__ flags, const unsigned int *__restrict__ offsets,
     const unsigned int *__restrict__ terms, const int *__restrict__ extension,
     const u64 *__restrict__ e_in, const u64 *__restrict__ e_out, unsigned int in_bits,
-    unsigned int cycles, unsigned int tile, u64 *__restrict__ partials) {
+    unsigned int cycles, unsigned int tile, const u64 *__restrict__ tail_weights,
+    u64 *__restrict__ partials) {
     extern __shared__ u64 scratch[];
     unsigned int *keys = (unsigned int *)scratch;
     u64 *groups = scratch + SO_GROUPS / 2;
@@ -424,10 +425,11 @@ extern "C" __global__ void so_uniskip_kernel(
     __syncthreads();
 
     unsigned int stream = blockIdx.y;
-    unsigned long long base = (unsigned long long)blockIdx.x * tile;
-    for (unsigned int step = threadIdx.x; step < tile; step += blockDim.x) {
+    bool tail = blockIdx.x + 1 == gridDim.x;
+    unsigned long long base = tail ? cycles - 1 : (unsigned long long)blockIdx.x * tile;
+    for (unsigned int step = threadIdx.x; step < (tail ? 1 : tile); step += blockDim.x) {
         unsigned long long t = base + step;
-        if (t >= cycles) continue;
+        if (!tail && t >= cycles - 1) continue;
         unsigned int mask = flags[t];
         unsigned int key = so_guard_key(mask, stream, offsets, terms);
         unsigned int initial = (key * 0x9e3779b9u) >> 27;
@@ -441,7 +443,8 @@ extern "C" __global__ void so_uniskip_kernel(
             }
         }
         u64 weight[LIMBS];
-        load4(e_in + (((t << 1) | stream) & ((1ull << in_bits) - 1)) * LIMBS, weight);
+        if (tail) load4(tail_weights + stream * LIMBS, weight);
+        else load4(e_in + (((t << 1) | stream) & ((1ull << in_bits) - 1)) * LIMBS, weight);
         if (group == SO_GROUPS) {
             so_ungrouped_row(narrow, wide, mask, t, key, stream, offsets, terms,
                              extension, weight, overflow);
@@ -481,8 +484,11 @@ extern "C" __global__ void so_uniskip_kernel(
             fr_add(sum, value, next);
             load4(next, sum);
         }
-        load4(e_out + ((base << 1) >> in_bits) * LIMBS, outer);
-        fr_mul(sum, outer, value);
+        if (tail) load4(sum, value);
+        else {
+            load4(e_out + ((base << 1) >> in_bits) * LIMBS, outer);
+            fr_mul(sum, outer, value);
+        }
         store4(partials + ((unsigned long long)(stream * SO_NODES + node) * gridDim.x
                           + blockIdx.x) * LIMBS, value);
     }
@@ -612,6 +618,7 @@ extern "C" __global__ void so_claims_kernel(
     const unsigned int *__restrict__ flags, const unsigned int *__restrict__ layout,
     const u64 *__restrict__ e_in, const u64 *__restrict__ e_out, unsigned int in_bits,
     unsigned int first, unsigned int lanes, unsigned int cycles, unsigned int strip,
+    u64 tail0, u64 tail1, u64 tail2, u64 tail3,
     u64 *__restrict__ partials) {
     extern __shared__ u64 scratch[];
     unsigned long long base =
@@ -629,7 +636,10 @@ extern "C" __global__ void so_claims_kernel(
         const u64 *row = narrow + t * SO_NARROW;
         const u64 *row_wide = wide + t * (SO_WIDE * 2);
         u64 weight[LIMBS];
-        so_split_eq(e_in, e_out, in_bits, t, weight);
+        if (t + 1 == cycles) {
+            weight[0] = tail0; weight[1] = tail1;
+            weight[2] = tail2; weight[3] = tail3;
+        } else so_split_eq(e_in, e_out, in_bits, t, weight);
 
         // NVCC 12.4 miscompiles this accumulator loop with a dynamic upper bound.
         for (unsigned int lane = 0; lane < SO_CLAIM_LANES; lane++) {
