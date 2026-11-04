@@ -755,12 +755,13 @@ class Gate:
                          "this text; without one, the attempt failed and the head has no classifier result.")
 
         skill = (ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text()
+        closure = (ROOT / "specs/verifier-closure-lints.md").read_text()
         policy = (ROOT / RISK_POLICY).read_text()
         material = self.material(pull)
         answer = self.model.ask(f"{skill}\n\n## Trusted risk policy: {RISK_POLICY}\n\n{policy}"
                                 f"\n\nDeterministic dependency-bump risks: {json.dumps(bumps, sort_keys=True)}. "
                                 "These paths cannot raise the verdict or risk; judge other changes independently."
-                                "\n\nRead specs/verifier-closure-lints.md through read_file if needed.",
+                                f"\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
                                 material, "verifier_classification", CLASSIFICATION_SCHEMA, self.source.call, admit,
                                 f"{self.repo}#{number}")
         if answer is None:

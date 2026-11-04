@@ -1020,6 +1020,7 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertTrue(request["text"]["format"]["strict"])
         self.assertEqual([tool["name"] for tool in request["tools"]], ["read_file", "search"])
         self.assertIn("# Verifier classifier", request["instructions"])
+        self.assertIn((GATE.ROOT / "specs/verifier-closure-lints.md").read_text(), request["instructions"])
         self.assertNotIn(diff, request["instructions"])
         self.assertIn(diff, request["input"])
         self.assertEqual([run["name"] for run in apis.created], [GATE.GATE, GATE.CLASSIFIER])
