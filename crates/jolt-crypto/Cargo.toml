@@ -32,9 +32,10 @@ bn254 = [
   "jolt-algebra/bn254",
 ]
 parallel = ["dep:rayon", "jolt-algebra/parallel", "jolt-poly/parallel"]
-# Lattice primitives: sparse ring challenges. Off by default so curve-only
-# builds, including the Dory verifier, do not compile them.
-lattice = ["dep:smallvec", "dep:thiserror", "jolt-algebra/solinas"]
+# Lattice primitives: sparse ring challenges and the Ajtai public-matrix
+# stream. Off by default so curve-only builds, including the Dory verifier,
+# do not compile them.
+lattice = ["dep:shake", "dep:smallvec", "dep:thiserror", "jolt-algebra/solinas"]
 # The D64 selective-L2 operator-norm table reads its base tables from
 # generated static data (the same entries) instead of building them.
 ont-static-base = ["lattice"]
@@ -46,6 +47,7 @@ jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 thiserror = { workspace = true, optional = true }
+shake = { workspace = true, optional = true }
 smallvec = { version = "1.15.2", features = [
   "const_generics",
 ], optional = true }
