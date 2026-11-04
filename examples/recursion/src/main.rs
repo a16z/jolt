@@ -970,33 +970,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     #[cfg(feature = "ntt-inline")]
     program.add_guest_feature("ntt-inline");
     program.add_guest_feature("fast-alloc");
-    #[cfg(all(feature = "akita", feature = "word-memory"))]
-    program.add_guest_feature("word-memory");
     program.add_guest_feature("hash-inlines");
-    #[cfg(all(feature = "akita", feature = "word-decode"))]
-    program.add_guest_feature("word-decode");
-    #[cfg(feature = "ont-static-base")]
-    program.add_guest_feature("ont-static-base");
-    #[cfg(feature = "terminal-contraction")]
-    program.add_guest_feature("terminal-contraction");
-    #[cfg(feature = "tensor-no-carry")]
-    program.add_guest_feature("tensor-no-carry");
-    #[cfg(feature = "rowptr-registers")]
-    program.add_guest_feature("rowptr-registers");
-    #[cfg(feature = "tensor-eq-runs")]
-    program.add_guest_feature("tensor-eq-runs");
-    #[cfg(feature = "setup-sop-structured")]
-    program.add_guest_feature("setup-sop-structured");
-    #[cfg(feature = "weighted-dot-horner")]
-    program.add_guest_feature("weighted-dot-horner");
-    #[cfg(feature = "weighted-dot-horner-triplet")]
-    program.add_guest_feature("weighted-dot-horner-triplet");
-    #[cfg(feature = "compressed-poly-horner")]
-    program.add_guest_feature("compressed-poly-horner");
-    #[cfg(all(feature = "akita", feature = "bytecode-fold"))]
-    program.add_guest_feature("bytecode-fold");
-    #[cfg(all(feature = "akita", feature = "fill-ingress"))]
-    program.add_guest_feature("fill-ingress");
     program.set_memory_config(memory_config);
     self::immutable_recursion_program!(program)
 }

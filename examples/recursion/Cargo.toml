@@ -8,7 +8,6 @@ name = "recursion"
 path = "src/main.rs"
 
 [features]
-terminal-contraction = ["jolt-akita?/terminal-contraction"]
 immutable-recipes = [
   "akita",
   "field-inline",
@@ -20,7 +19,6 @@ immutable-recipes = [
   "dep:hex",
 ]
 immutable-recipes-record = ["immutable-recipes", "dep:serde_json"]
-word-memory = []
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 field-inline = ["jolt-sdk/field-inline"]
 akita = [
@@ -30,33 +28,6 @@ akita = [
   "dep:jolt-witness",
   "dep:tracer",
 ]
-default = [
-  "word-decode",
-  "word-memory",
-  "guest-codegen",
-  "tensor-no-carry",
-  "rowptr-registers",
-  "tensor-eq-runs",
-  "setup-sop-structured",
-  "weighted-dot-horner",
-  "terminal-contraction",
-  "weighted-dot-horner-triplet",
-  "bytecode-fold",
-  "fill-ingress",
-  "compressed-poly-horner",
-]
-guest-codegen = []
-word-decode = ["jolt-akita?/word-decode"]
-tensor-no-carry = ["jolt-akita?/tensor-no-carry"]
-tensor-eq-runs = ["jolt-akita?/tensor-eq-runs"]
-ont-static-base = ["akita", "jolt-akita/ont-static-base"]
-rowptr-registers = []
-setup-sop-structured = ["jolt-akita?/setup-sop-structured"]
-weighted-dot-horner = []
-weighted-dot-horner-triplet = ["weighted-dot-horner"]
-compressed-poly-horner = []
-bytecode-fold = ["jolt-akita?/bytecode-fold"]
-fill-ingress = ["jolt-akita?/fill-ingress"]
 
 [dependencies]
 jolt-claims = { path = "../../crates/jolt-claims", optional = true }
