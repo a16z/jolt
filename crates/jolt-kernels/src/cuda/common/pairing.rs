@@ -5,8 +5,11 @@
 //! amortize Fq12 squaring. Fixed groups of four raised stage-8 and whole-proof
 //! medians for SHA-2-chain at 2^24 on one and two L4s versus size-dependent groups.
 //! Shared-G2 segments reuse one coefficient table; other segments prepare their
-//! own. Tables above the 512 MiB budget use per-pair evaluation instead, while
-//! tiny batches use the cooperative warp path.
+//! own. Tables above the 512 MiB budget use per-pair evaluation instead.
+//! Tiling shared-G2 tables under this cap improved whole-proof throughput by
+//! less than 1% for SHA2-chain at 2^26 on two L4s, without reducing peak memory;
+//! tiling without cross-column G2 reuse also slowed opening rounds. Tiny
+//! batches use the cooperative warp path.
 
 use std::cell::RefCell;
 
