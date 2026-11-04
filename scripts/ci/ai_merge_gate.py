@@ -650,10 +650,7 @@ class Gate:
             return 4
         if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
             return record.risk
-        paths = self.path_risks(pull)
-        # Only wholly test/script/doc paths get a low label without semantic classification.
-        # Unknown code, drafts and unauthorized classifier work remain risk-4.
-        return 1 if paths and all(level == 1 for level in paths.values()) else 4
+        return 4
 
     def pinned(self, pull: dict) -> Source:
         """The evaluated head and its merge base with the base branch, fixed on first use. The path
@@ -735,7 +732,8 @@ class Gate:
                                        f"This head has used {self.ledger.get(head, 0)} of {MAX_HEAD_ATTEMPTS} "
                                        f"paid classifier attempts and the pull request {used} of "
                                        f"{MAX_PR_ATTEMPTS}. The head stays unclassified, so only a person can "
-                                       "approve it; its risk label follows the path rule.", None))
+                                       "approve it. No risk label is assigned; policy requires an independent "
+                                       "current-head maintainer approval.", None))
             return
         code = {path: source.code_changes(path) for path, floor in paths.items()
                 if floor >= 3 and path not in bumps and not path.endswith("Cargo.lock")}
@@ -850,16 +848,14 @@ class Gate:
         if not approvers:
             if not authorized:
                 return Outcome("neutral", "Human approval required",
-                               f"@{author} is not a maintainer, so no agent check runs. A writer can approve "
-                               "instead; at risk-4 the policy asks for a current-head maintainer approval.",
+                               f"@{author} is not a maintainer, so no classifier runs. Unclassified heads "
+                               "require an independent current-head maintainer approval.",
                                human=True)
-            if pull["draft"]:
-                return Outcome("neutral", "Draft: agent checks start when the PR is ready for review",
-                               "Mark the pull request ready for review, or get a human approval.")
             if protected:
                 return Outcome("neutral", "Human approval required: the change edits the gate's inputs",
-                               "Once merged, these files act on every later pull request, so a writer "
-                               "must approve them: " + ", ".join(f"`{path}`" for path in protected), human=True)
+                               "Once merged, these files act on every later pull request, so an independent "
+                               "maintainer must approve the current head: " + ", ".join(f"`{path}`" for path in protected),
+                               human=True)
         # `self.records` holds this run's classification or its refusal: one paid attempt per run.
         if authorized and not current and not pull["draft"] and not protected and not self.records \
                 and self.recorded(head, CLASSIFIER) is None:
@@ -876,8 +872,6 @@ class Gate:
                            "head from a maintainer with write access, other than the PR author. The gate "
                            "never approves risk-4 itself.", human=True)
         attested_by = self.attester(pull)
-        # The path rule's risk only labels: an unclassified head, such as one whose attempts are
-        # spent, may change a build input under scripts/, so only a person can approve it.
         classified = self.recorded(head, CLASSIFIER) is not None
         approve = attested_by is not None and classified and authorized and not pull["draft"] and not protected
         if approvers:
@@ -889,11 +883,6 @@ class Gate:
             return Outcome("success", "Review attested by " + attested_by,
                            f"An authorized comment attests a clean review of the current head `{head}`, so "
                            "the gate approves it.", approve=True)
-        if not classified:
-            return Outcome("neutral", "Human approval required: the head has no classifier result",
-                           "The classifier's paid attempts for this head or pull request are spent, so the "
-                           "gate does not approve it. A writer can approve; at risk-4 the policy asks for a "
-                           "current-head maintainer approval.", human=True)
         return Outcome("neutral", "Needs an approval or a current-head review attestation",
                        "A writer other than the author can approve. Otherwise the Pika App bot or a "
                        "maintainer posts a PR comment with this standalone line, and the gate approves: "
@@ -905,14 +894,28 @@ class Gate:
     def labels(self, pull: dict, policy: Outcome) -> set[str]:
         """The managed labels for a policy result. needs-maintainer-review reports a missing maintainer
         authorization of the agent path even when a human approval satisfies the policy."""
-        return (({f"risk-{self.risk_level(pull)}"} if self.authorized(pull) else {NEEDS_MAINTAINER})
-                | ({MERGE_ELIGIBLE} if policy.conclusion == "success" and not pull["draft"] else set())
-                | ({NO_REVIEWER} if policy.human and unassigned(pull) else set()))
+        if pull["draft"]:
+            return set()
+        labels = set()
+        if not self.authorized(pull):
+            labels.add(NEEDS_MAINTAINER)
+        elif not any(path.startswith(GATE_INPUTS) for path in self.pinned(pull).changed()):
+            if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
+                labels.add(f"risk-{record.risk}")
+        if policy.conclusion == "success":
+            labels.add(MERGE_ELIGIBLE)
+        if policy.human and unassigned(pull):
+            labels.add(NO_REVIEWER)
+        return labels
 
     def evaluate(self, number: int) -> None:
         pull = check = None
         try:
             pull = self.github.get(f"/repos/{self.repo}/pulls/{number}")
+            if pull["draft"]:
+                self.withdraw(number, labels={label["name"] for label in pull["labels"]} & MANAGED_LABELS)
+                log(f"PR #{number} is a draft; gate inactive")
+                return
             if pull["state"] == "open" and pull["base"]["ref"] == self.default_branch:
                 head = pull["head"]["sha"]
                 check = self.check(head, GATE, None, "Evaluating", "The gate is evaluating this head.")
@@ -924,16 +927,20 @@ class Gate:
             # No approval or merge-eligible may outlive a failed evaluation, whichever step failed.
             # Each cleanup step runs even if an earlier one fails; the original error is reported.
             failed = Outcome("failure", "Gate error: human approval required", f"The gate could not decide: {error}")
-            steps = [("withdraw the gate's approval and merge-eligible", lambda: self.withdraw(number))]
-            if pull is not None:
+            draft = pull is not None and pull["draft"]
+            cleanup = {label["name"] for label in pull["labels"]} & MANAGED_LABELS if draft else None
+            steps = [("withdraw the gate's approval and labels", lambda: self.withdraw(number, labels=cleanup))]
+            if pull is not None and not draft:
                 head = pull["head"]["sha"]
-                labels = {"risk-4"}
+                labels = set()
                 managed = MANAGED_LABELS - {NEEDS_MAINTAINER}
                 try:
                     if not self.authorized(pull):
                         labels, managed = {NEEDS_MAINTAINER}, MANAGED_LABELS
+                    else:
+                        labels = self.labels(pull, failed)
                 except Exception as auth_error:
-                    log(f"Could not determine author authorization: {auth_error}")
+                    log(f"Could not determine classifier labels: {auth_error}")
                 steps += [("label the failed evaluation", lambda: self.label(
                               number, head, labels | ({NO_REVIEWER} if unassigned(pull) else set()), managed)),
                           ("publish the classifier result", lambda: self.publish(number, head))]
@@ -988,11 +995,12 @@ class Gate:
         """The gate's undismissed approvals among `self.reviews`."""
         return [review for review in self.reviews if review["state"] == "APPROVED" and self.ours(review, APPROVAL)]
 
-    def withdraw(self, number: int, merged: bool = False) -> None:
-        """Remove merge-eligible and, unless the pull request merged, dismiss each standing approval
-        of the gate's as the reviews stand now. The dismissals run even if the label write fails."""
+    def withdraw(self, number: int, merged: bool = False, labels: set[str] | None = None) -> None:
+        """Remove the requested labels (merge-eligible by default) and, unless merged, dismiss each
+        standing gate approval. Dismissals run even if a label write fails."""
         try:
-            self.github.call("DELETE", f"/repos/{self.repo}/issues/{number}/labels/{MERGE_ELIGIBLE}", missing_ok=True)
+            for name in sorted({MERGE_ELIGIBLE} if labels is None else labels):
+                self.github.call("DELETE", f"/repos/{self.repo}/issues/{number}/labels/{name}", missing_ok=True)
         finally:
             if not merged:
                 self.reviews = self.github.discussion(number, "reviews", REVIEW_FIELDS)
@@ -1004,7 +1012,7 @@ class Gate:
         try:
             self.github.call("PUT", path + "/dismissals", {
                 "event": "DISMISS",
-                "message": "The AI merge gate withdraws its approval; its ai-merge-gate check explains why."})
+                "message": "The AI merge gate withdraws its approval because the pull request no longer meets its policy."})
         except GateError:
             # A push may have dismissed it as stale since the gate read it.
             if self.github.get(path)["state"] == "APPROVED":
@@ -1012,19 +1020,22 @@ class Gate:
 
     def publish(self, number: int, head: str) -> None:
         """Publish the classifier results of this run that are not yet published."""
+        if self.records[self.posted:] and self.github.get(f"/repos/{self.repo}/pulls/{number}")["draft"]:
+            return
         for record in self.records[self.posted:]:
             self.check(head, record.name, record.conclusion, record.title, record.body, record.risk)
             self.comment(number, head, record.title, record.body)
             self.posted += 1
 
     def moved(self, pull: dict, head: str) -> bool:
-        """Whether the pull request no longer has `head` open into the default branch. It then loses
-        merge-eligible, which only that head could earn."""
-        if pull["state"] == "open" and pull["base"]["ref"] == self.default_branch and pull["head"]["sha"] == head:
+        """Whether `head` is no longer ready and open into the default branch. Remove merge-eligible
+        from an inactive head, or all managed labels from a draft."""
+        if pull["state"] == "open" and not pull["draft"] and pull["base"]["ref"] == self.default_branch \
+                and pull["head"]["sha"] == head:
             return False
-        if any(label["name"] == MERGE_ELIGIBLE for label in pull["labels"]):
-            self.github.call("DELETE", f"/repos/{self.repo}/issues/{pull['number']}/labels/{MERGE_ELIGIBLE}",
-                             missing_ok=True)
+        managed = MANAGED_LABELS if pull["draft"] else {MERGE_ELIGIBLE}
+        for name in sorted({label["name"] for label in pull["labels"]} & managed):
+            self.github.call("DELETE", f"/repos/{self.repo}/issues/{pull['number']}/labels/{name}", missing_ok=True)
         return True
 
     def label(self, number: int, head: str, wanted: set[str], managed: frozenset[str] = MANAGED_LABELS) -> dict | None:

@@ -23,7 +23,7 @@ reasoning effort `xhigh`, through the Responses API, within the spend limits bel
 pull request's merge base and head through two read-only tools. Code review happens outside CI,
 and the attestation records it.
 
-The gate also manages labels on each pull request and publishes an `ai-merge-gate`
+For ready pull requests, the gate also manages labels and publishes an `ai-merge-gate`
 check run that explains its decision. Neither is required for merging. This pull request enables
 nothing: no setting, label, ruleset or secret changed.
 
@@ -121,22 +121,29 @@ when GitHub is reachable. `UNCERTAIN`
 or `AFFECTS` with no non-bump path at risk-3 or above becomes risk-4. The classifier still asks about verifier acceptance;
 this does not add a witness-confidentiality check for prover-only code.
 
-Changes to protected gate inputs are always risk-4, even with a lower classifier result.
-Otherwise, without a cached or new classification, a change wholly within level-1 paths has internal risk-1;
-other changes have internal risk-4 until they can be classified. Maintainer-authored drafts
-receive the corresponding label without running a model; non-maintainer pull requests receive
-no risk label. Internal risk still sets their approval threshold. This path rule cannot earn the
-gate's approval: the gate approves only a head that has a classifier result, because a level-1 path such as a script under
-`scripts/` can still be a build input. A current-head maintainer approval already satisfies the
-highest level, so the gate starts no model work for it and keeps an existing classification or
-this fallback.
+Drafts start no classifier work and receive no managed labels or new `ai-merge-gate` check. The evaluation
+entry point returns before creating a check; `ready_for_review` starts normal evaluation.
+Converting a pull request to draft withdraws the gate's approval and removes all managed labels.
+Existing checks cannot be deleted through GitHub's API, so completed checks remain unchanged.
+If an evaluation observes conversion, its already-created gate check ends
+neutral, and a draft state read suppresses publication of its classifier result. Work already
+requested before conversion can still finish; this does not cancel provider billing.
+
+On ready pull requests, risk labels come only from a valid current-head classifier result,
+including deterministic dependency-bump classification. There is no path-only fallback label.
+Gate-input changes receive no risk label because the classifier does not run on them, and known
+non-maintainer authors receive no risk label. Any head without a valid classification follows
+the risk-4 approval policy internally: an independent maintainer must approve the current head.
+Gate-input changes always follow that same policy, regardless of a lower cached result.
+A review attestation alone cannot approve an unclassified head. A current-head maintainer
+approval needs no model work and creates no risk label without a classification.
 
 ## Labels the gate manages
 
 Each evaluation sets exactly these labels and leaves every other label alone:
 
-- `risk-1` through `risk-4`: one risk label for a maintainer-authored pull request, as above.
-  Non-maintainer pull requests get none; the next evaluation removes any existing risk labels.
+- `risk-1` through `risk-4`: one risk label for a ready, maintainer-authored pull request with a
+  valid classification and no gate-input changes. Otherwise the next evaluation removes existing risk labels.
 - `needs-maintainer-review`: the author is not a maintainer. It stays even when a writer's
   approval satisfies the policy; the gate never approves non-maintainer pull requests. Without
   an approval, these pull requests get only this label and, when the existing rule below applies,
@@ -165,18 +172,17 @@ that is still standing.
 
 | # | Condition | Policy | Gate's approval | Paid model work |
 |---|---|---|---|---|
-| 1 | The pull request is closed, or its base is not `main` | Not evaluated; `merge-eligible` removed | Withdrawn, unless the pull request merged | None |
-| 2 | A maintainer or writer has requested changes, on any commit, and has not since approved or had that review dismissed | `neutral`: changes requested | Withdrawn | None |
-| 3 | No writer approved and the author is not a maintainer | `neutral`: human approval required | Withdrawn | None |
-| 4 | No writer approved and the pull request is a draft | `neutral`: draft | Withdrawn | None |
+| 1 | The pull request is a draft | Not evaluated; all managed labels removed; no new gate check | Withdrawn | None |
+| 2 | The pull request is closed, or its base is not `main` | Not evaluated; `merge-eligible` removed | Withdrawn, unless the pull request merged | None |
+| 3 | A maintainer or writer has requested changes, on any commit, and has not since approved or had that review dismissed | `neutral`: changes requested | Withdrawn | None |
+| 4 | No writer approved and the author is not a maintainer | `neutral`: human approval required | Withdrawn | None |
 | 5 | No writer approved and the pull request changes a protected input: `.github/workflows/ai-merge-gate.yml`, `.github/workflows/ai-merge-gate-events.yml`, `.claude/skills/verifier-classifier/`, `specs/verifier-closure-lints.md` or `.github/ai-merge-gate-risk.json` | `neutral`: human approval required | Withdrawn | None |
 | 6 | Maintainer-authored, ready, no gate-input changes, no current-head maintainer approval, and no cached classification | Classify dependency-only bumps deterministically; otherwise run the classifier within its attempt limits, then continue | — | Classifier unless bump-only |
-| 7 | Risk-4 with an undismissed current-head approval by a maintainer with write access, other than the author | `success` | Withdrawn | None |
-| 8 | Risk-4 without that approval | `neutral`: current-head maintainer approval required | Withdrawn | None |
+| 7 | Risk-4 or unclassified, with an undismissed current-head approval by a maintainer with write access, other than the author | `success` | Withdrawn | None |
+| 8 | Risk-4 or unclassified, without that approval | `neutral`: current-head maintainer approval required | Withdrawn | None |
 | 9 | Risk-1 through risk-3, and a writer other than the author approved without a later dismissal or change request | `success` | Given if the next row's classification, attestation, maintainer authorship, readiness and gate-input conditions also hold; otherwise withdrawn | None |
 | 10 | A classifier result for the head puts it at risk-1 through risk-3, and the Pika App bot or a maintainer posted the exact current-head attestation below | `success` | Given | None |
-| 11 | Risk-1 by the path rule alone: the head has no classifier result because its attempts are spent | `neutral`: human approval required | Withdrawn | None |
-| 12 | Otherwise | `neutral`: needs an approval or a current-head review attestation | Withdrawn | None |
+| 11 | Otherwise | `neutral`: needs an approval or a current-head review attestation | Withdrawn | None |
 
 A policy wait publishes a gray, non-failing `neutral` check with its reason in the title and
 summary. Only a satisfied policy publishes `success` and can earn `merge-eligible`; `neutral`
@@ -225,9 +231,11 @@ An evaluation that fails at any step after the script starts, a failed write of 
 run included, removes `merge-eligible` and dismisses the gate's standing approvals before it
 reports the error. It attempts each of these writes even if another fails. If GitHub refuses
 them too, the approval stays until a later evaluation withdraws it, and the failed run shows the
-error. Error cleanup also omits risk labels when the author is known not to be a maintainer.
-If author authorization cannot be determined, cleanup retains the risk-4 fallback and preserves
-any existing `needs-maintainer-review` label. Reviews, dismissals, labels and comments made
+error. Error cleanup never invents a risk rating: only an available valid classifier result can
+label a ready maintainer-authored head, and gate-input changes remain unlabelled.
+If author authorization cannot be determined, cleanup removes risk labels and preserves
+any existing `needs-maintainer-review` label. Draft cleanup creates no check or classifier result.
+Reviews, dismissals, labels and comments made
 with `GITHUB_TOKEN`
 start no workflow run ([GitHub's token documentation](https://docs.github.com/en/actions/concepts/security/github_token)),
 so the gate's own writes never trigger another evaluation, and each evaluation finishes its own
@@ -430,8 +438,8 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
   evaluations never admit attempts at once. These counts hold only while the ledger stands:
   writers, people with repository write access, can edit or delete the comment and so reset
   them (see [Trust](#trust)). When the attempts are spent, the head stays
-  unclassified: the gate does not approve it, so it needs a person's approval, and its risk label
-  follows the path rule. A cached verdict costs no attempt.
+  unclassified: the gate does not approve it or add a risk label; it needs an independent
+  current-head maintainer approval. A cached verdict costs no attempt.
 - **Time.** Each request is cancelled after 15 minutes and each question after 40. Cancelling
   ends the wait, not necessarily the billing: the tokens a response generated before the
   cancellation, at most its output limit, can still be charged.
