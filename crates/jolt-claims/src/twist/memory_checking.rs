@@ -159,7 +159,7 @@ macro_rules! instantiate_read_write_checking {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-
+            self::immutable_twist_recipe!($relation);
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }
@@ -233,7 +233,7 @@ macro_rules! instantiate_val_evaluation {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-
+            self::immutable_twist_recipe!($relation);
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }

@@ -26,11 +26,11 @@ pub fn pointwise_dot64(
     pinv: i32,
 ) {
     #[cfg(target_arch = "riscv64")]
-    if (acc.as_ptr() as usize).trailing_zeros() >= 3
+    if acc.as_ptr() as usize & 7 == 0
         && lhs
             .iter()
             .chain(&rhs)
-            .all(|row| (row.as_ptr() as usize).trailing_zeros() >= 3)
+            .all(|row| row.as_ptr() as usize & 7 == 0)
     {
         let mut params = [0u64; 2 * DOT_PRODUCTS + 1];
         for (slot, row) in params.iter_mut().zip(lhs.iter().chain(&rhs)) {

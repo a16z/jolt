@@ -620,3 +620,10 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(PrecommittedReductionDimensions {
+    cycle_phase_total_rounds,
+    address_phase_total_rounds,
+    has_address_phase
+});

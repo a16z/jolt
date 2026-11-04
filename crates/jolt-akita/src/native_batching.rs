@@ -19,6 +19,7 @@ use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
 use akita_types::{GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
+use akita_verifier::SetupPolicy;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentGroupRole, GroupOpeningClaim, GroupOpeningWithHint,
     OpeningsError, TaggedGroupOpeningClaim, VerifierOpeningClaim,
@@ -253,6 +254,7 @@ fn verify_one_hot_statement(
             session,
             statement,
             BasisMode::Lagrange,
+            SetupPolicy::Check(None),
         ))
     });
     verified.map_err(|_| OpeningsError::VerificationFailed)
@@ -753,6 +755,7 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                         &session,
                         batch_statement,
                         BasisMode::Lagrange,
+                        SetupPolicy::Check(None),
                     )
                 })
                 .map_err(|_| OpeningsError::VerificationFailed)

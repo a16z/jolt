@@ -93,9 +93,9 @@ pub type ChallengeIdOf<F, S> = <SymbolicOf<F, S> as SymbolicSumcheck>::Challenge
 /// its proof) and the verifier (after checking it).
 ///
 /// Each relation's consumed/produced claims are split into a *Values* form (the
-/// serialized wire form, the cell-generic claim struct at `F` — one value per
+/// serialized wire form, the cell-generic claim struct at `F` -- one value per
 /// opening) and a *Points* form (the derived opening points, the same struct at
-/// `Vec<F>` — one point per opening). Methods that need only points
+/// `Vec<F>` -- one point per opening). Methods that need only points
 /// ([`derive_opening_points`](Self::derive_opening_points),
 /// [`derive_output_term`](Self::derive_output_term)) take the Points forms and run
 /// in both modes; methods that read values ([`input_claim`](Self::input_claim),
@@ -114,7 +114,7 @@ where
     /// The relation's pure symbolic algebra: id types, sumcheck spec, and the
     /// input/output `Expr`s. The concrete instance holds its `Self::Symbolic` and
     /// sources its claim expressions and spec from it. The id family is the
-    /// symbolic relation's own — every id this trait exposes is a projection of
+    /// symbolic relation's own -- every id this trait exposes is a projection of
     /// it, so relations from any protocol family (jolt, field-inline) implement
     /// one trait.
     type Symbolic: SymbolicSumcheck;
@@ -144,9 +144,9 @@ where
     /// which has no fields, it draws nothing). A `challenge_powers(n)` draw
     /// reduces to this case: it performs exactly one squeeze and the relation keeps
     /// the degree-1 power, which equals that squeezed scalar. Only relations whose
-    /// draw is genuinely different — an extra transcript append (a domain
+    /// draw is genuinely different -- an extra transcript append (a domain
     /// separator), a value re-roll, or a powers draw whose kept value is not the
-    /// squeezed scalar — override this.
+    /// squeezed scalar -- override this.
     ///
     /// The bound is `SumcheckChallenges` — which every `Challenges` already
     /// implements — so the default needs no separate `Default` derive. It errors
@@ -178,7 +178,7 @@ where
     /// the generated drivers use this set three ways: the absorb skips the aliased
     /// ids, the shape/count arithmetic subtracts them (see
     /// [`wire_output_openings`](Self::wire_output_openings)), and the generated
-    /// `validate_aliases` — run by every `expected_final_claim` — enforces the
+    /// `validate_aliases` -- run by every `expected_final_claim` -- enforces the
     /// wire copies equal their sources. That equality check is load-bearing: the
     /// aliased cells are never Fiat-Shamir-absorbed and the batch fold pins only
     /// their random linear combination, so downstream consumers reading a copy
@@ -189,7 +189,7 @@ where
     ///
     /// Point equality is NOT checked at runtime: opening points are derived (not
     /// wire data), and an alias is only declarable when both relations bind the
-    /// same batch-point slice and derive it identically — a structural invariant.
+    /// same batch-point slice and derive it identically -- a structural invariant.
     /// The declaration invariants (each aliased id owned + `Expr`-referenced by
     /// the declaring relation, each source absorbed by another member binding an
     /// identical point slice) are pinned by hand-written tests in each declaring
@@ -200,7 +200,7 @@ where
     {
         Vec::new()
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_support)]
     /// The opening ids this instance absorbs into the transcript (and commits in
     /// ZK): the output-`Expr`-referenced set minus the aliased openings (absorbed
     /// once via their canonical source). The generated `output_claim_count` sums
@@ -285,7 +285,7 @@ where
     /// Resolve a `Derived` in this relation's **output** expression: from the input
     /// points, the produced openings' points (the bound point, post-binding), and the
     /// drawn challenges. The output claim is checked *after* binding, so the produced
-    /// openings' points exist — hence `output_points` is non-optional. Most `eq`/`lt`
+    /// openings' points exist -- hence `output_points` is non-optional. Most `eq`/`lt`
     /// deriveds live here (they evaluate at this sumcheck's bound point). Defaults to
     /// "no output deriveds"; overridden by relations that have them.
     fn derive_output_term(
@@ -297,7 +297,7 @@ where
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_input)]
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
     /// wired input opening values and the drawn `challenges`. Shared by prover and
     /// verifier; clear only. The challenge leg resolves through the drawn
@@ -323,7 +323,7 @@ where
             |id| self.derive_input_term(id, challenges),
         )
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_output_call)]
     /// The expected output claim, evaluated from the produced opening *values*, the
     /// produced opening *points* (for output deriveds), the input points, the drawn
     /// `challenges`, and the relation's derived public values. Shared by prover and
@@ -334,6 +334,20 @@ where
         output_values: &SumcheckOutputClaims<F, Self>,
         output_points: &SumcheckOutputPoints<F, Self>,
         challenges: &ConcreteSumcheckChallenges<F, Self>,
+    ) -> Result<F, VerifierError> {
+        self.evaluate_output_expression(output_values, challenges, |id| {
+            self.derive_output_term(id, input_points, output_points, challenges)
+        })
+    }
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_output)]
+    /// Evaluate the canonical output expression with a per-call derived-value
+    /// resolver. Relations can share public computations across terms without
+    /// restating the expression or changing opening and challenge resolution.
+    fn evaluate_output_expression(
+        &self,
+        output_values: &SumcheckOutputClaims<F, Self>,
+        challenges: &ConcreteSumcheckChallenges<F, Self>,
+        derived: impl FnMut(&DerivedIdOf<F, Self>) -> Result<F, VerifierError>,
     ) -> Result<F, VerifierError> {
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
@@ -346,7 +360,7 @@ where
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
-            |id| self.derive_output_term(id, input_points, output_points, challenges),
+            derived,
         )
     }
 }
@@ -432,7 +446,7 @@ where
 /// Enforce one member's declared cross-relation opening aliases: each aliased
 /// wire cell (resolved from the DECLARING member's claims) must equal its
 /// canonical source opening, resolved across the batch by `resolve_source`
-/// (the generated batch-wide resolver). Load-bearing — aliased cells are never
+/// (the generated batch-wide resolver). Load-bearing -- aliased cells are never
 /// Fiat-Shamir absorbed and the batch fold pins only their random linear
 /// combination, so downstream consumers reading a copy rely on this equality.
 /// Called by the generated `validate_aliases` per member.
@@ -469,7 +483,7 @@ where
     }
     Ok(())
 }
-
+#[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_wire_call)]
 /// Assert one member's wire claims match its expected output shape: the
 /// provided `canonical_order` id-set, minus the member's aliased openings
 /// (absorbed via their canonical source; their value equality is enforced
@@ -516,7 +530,7 @@ where
     Ok(())
 }
 
-/// Project a composite-family derived id onto one relation's own public enum —
+/// Project a composite-family derived id onto one relation's own public enum --
 /// the typed destructure every `derive_output_term` starts with, driven by the
 /// id family's generated `TryFrom` inverses of its `From` embeddings. A foreign
 /// relation's id is the same `MissingStageClaimDerived` miss the hand-written
@@ -1212,7 +1226,7 @@ mod sumcheck_batch_derive_tests {
     // NO `draw_challenges` on the source struct (a stage whose member challenges
     // have stage-level provenance hand-assembles its aggregate; the generated draw
     // would squeeze at the wrong transcript position if it existed). The inherent
-    // `draw_challenges` below — with a deliberately incompatible signature — would
+    // `draw_challenges` below -- with a deliberately incompatible signature -- would
     // collide with a generated one, so this module compiling at all proves the
     // opt-out suppressed it.
     #[derive(SumcheckBatch)]

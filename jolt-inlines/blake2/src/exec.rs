@@ -1,9 +1,13 @@
 use crate::{IV, SIGMA};
 
-pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 18]) {
+pub const fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 18]) {
     let mut v = [0u64; 16];
-    v[0..8].copy_from_slice(state);
-    v[8..16].copy_from_slice(&IV);
+    let mut i = 0;
+    while i < 8 {
+        v[i] = state[i];
+        v[i + 8] = IV[i];
+        i += 1;
+    }
 
     v[12] ^= message_words[16];
 
@@ -11,7 +15,9 @@ pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 1
         v[14] = !v[14];
     }
 
-    for s in SIGMA {
+    let mut round = 0;
+    while round < SIGMA.len() {
+        let s = SIGMA[round];
         g(
             &mut v,
             0,
@@ -85,14 +91,17 @@ pub fn execute_blake2b_compression(state: &mut [u64; 8], message_words: &[u64; 1
             message_words[s[14]],
             message_words[s[15]],
         );
+        round += 1;
     }
 
-    for i in 0..8 {
+    let mut i = 0;
+    while i < 8 {
         state[i] ^= v[i] ^ v[i + 8];
+        i += 1;
     }
 }
 
-fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) {
+const fn g(v: &mut [u64; 16], a: usize, b: usize, c: usize, d: usize, x: u64, y: u64) {
     v[a] = v[a].wrapping_add(v[b]).wrapping_add(x);
     v[d] = (v[d] ^ v[a]).rotate_right(32);
     v[c] = v[c].wrapping_add(v[d]);

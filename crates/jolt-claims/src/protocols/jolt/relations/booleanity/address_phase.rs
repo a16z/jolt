@@ -99,7 +99,7 @@ impl SymbolicSumcheck for BooleanityAddressPhase {
     type Challenges<F> = BooleanityAddressPhaseChallenges<F>;
     type Inputs<C> = BooleanityAddressPhaseInputClaims<C>;
     type Outputs<C> = BooleanityAddressPhaseOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(19, JOLT, Jolt; shape);
     fn new(shape: BooleanityDimensions) -> Self {
         Self { shape }
     }
