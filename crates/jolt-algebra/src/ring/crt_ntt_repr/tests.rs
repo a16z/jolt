@@ -9,6 +9,7 @@ use crate::ntt::tables::{
     q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q128_RAW_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES,
     Q64_NUM_PRIMES, Q64_PRIMES,
 };
+use crate::ntt::NttKernelPlan;
 use crate::CyclotomicRing;
 use std::thread::Builder;
 
@@ -262,7 +263,6 @@ fn check_digit_lut_conversions<W: PrimeWidth, const K: usize, const D: usize>(
     params: &CrtNttParamSet<W, K, D>,
 ) {
     use crate::ntt::butterfly::forward_ntt_cyclic;
-    use crate::ntt::NttKernelPlan;
 
     for bound in [8_u64, 128] {
         let lut = DigitMontLut::new_with_digit_bound(params, bound);
@@ -318,6 +318,35 @@ fn digit_lut_conversions_match_scalar_references() {
     all_sizes(synthetic_i16_primes());
     all_sizes([I16_TAIL_PRIME]);
 }
+/// The scalar digit fill (forced by the scalar plan, so it also runs where the
+/// host has NEON or AVX2) maps every i8 digit `d` to `d * R mod p`.
+#[test]
+fn scalar_digit_fill_is_digit_times_montgomery_radix() {
+    fn check<W: PrimeWidth, const K: usize>(primes: [NttPrime<W>; K]) {
+        const D: usize = 256;
+        let mut params = CrtNttParamSet::<W, K, D>::new(primes);
+        params.kernel_plan = NttKernelPlan::SCALAR;
+        let lut = DigitMontLut::new_with_digit_bound(&params, 128);
+        let digits: [i8; D] = std::array::from_fn(|i| i as u8 as i8);
+        for (k, prime) in primes.iter().enumerate() {
+            let mut limb = [MontCoeff::from_raw(W::default()); D];
+            lut.fill_limb(k, &digits, &params, &mut limb);
+            let p = i128::from(prime.p.to_i64());
+            for (&digit, mont) in digits.iter().zip(&limb) {
+                assert_eq!(
+                    i128::from(mont.raw().to_i64()).rem_euclid(p),
+                    (i128::from(digit) << W::R_LOG).rem_euclid(p),
+                    "p={p}, digit={digit}"
+                );
+            }
+        }
+    }
+    check(Q32_PRIMES);
+    check(q128_primes());
+    check(synthetic_i16_primes());
+    check([I16_TAIL_PRIME]);
+}
+
 /// Deterministic centered values in `[-bound, bound]`, including both ends.
 fn centered_probe(seed: usize, bound: i128) -> i128 {
     match seed % 5 {
