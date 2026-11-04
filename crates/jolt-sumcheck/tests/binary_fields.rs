@@ -8,9 +8,9 @@ use jolt_field::{Field, Fr, JoltField, One, Ring, F128, F64};
 use jolt_poly::{CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, round_pow_bits, BatchMember, BatchPrelude, BooleanHypercube,
-    CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, EvaluationClaim, ProveRounds,
-    ProvedBatch, RoundMessage, SequentialRounds, SumcheckClaim, SumcheckDomain, SumcheckDomainSpec,
-    SumcheckError, SumcheckProof, SumcheckRecorder, SumcheckVerifier,
+    CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, DegreeSchedule, EvaluationClaim,
+    ProveRounds, ProvedBatch, RoundMessage, SequentialRounds, SumcheckClaim, SumcheckDomain,
+    SumcheckDomainSpec, SumcheckError, SumcheckProof, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{
     prover_transcript, Blake2b512, ChallengeCodec, Encoding, FieldTranscript, ProverState,
@@ -198,7 +198,9 @@ impl<F: JoltField + Encoding> BatchFixture<F> {
                 offset,
             })
             .collect();
-        let prelude = BatchPrelude::try_new(members, max_num_vars, max_degree).unwrap();
+        let prelude =
+            BatchPrelude::try_new(members, DegreeSchedule::uniform(max_num_vars, max_degree))
+                .unwrap();
         let expected_sum: F = prelude
             .members
             .iter()
@@ -242,9 +244,8 @@ impl<F: JoltField + Encoding> BatchFixture<F> {
         self.replay_head(&mut transcript);
         let reduced = self
             .proof
-            .verify_compressed_boolean(
-                self.prelude.max_num_vars,
-                self.prelude.max_degree,
+            .verify_compressed_scheduled(
+                &self.prelude.degrees,
                 self.prelude.claimed_sum,
                 &mut transcript,
             )
@@ -463,7 +464,11 @@ fn rejection<F: BinaryField>() {
     let mut transcript = F::hash_transcript();
     fixture.replay_head(&mut transcript);
     let reduced = altered
-        .verify_compressed_boolean(4, 2, fixture.prelude.claimed_sum, &mut transcript)
+        .verify_compressed_scheduled(
+            &DegreeSchedule::uniform(4, 2),
+            fixture.prelude.claimed_sum,
+            &mut transcript,
+        )
         .unwrap();
     let expected: F = fixture
         .prelude
@@ -494,7 +499,11 @@ fn rejection<F: BinaryField>() {
     let mut untouched = F::hash_transcript();
     fixture.replay_head(&mut untouched);
     assert!(matches!(
-        missing_round.verify_compressed_boolean(4, 2, fixture.prelude.claimed_sum, &mut transcript),
+        missing_round.verify_compressed_scheduled(
+            &DegreeSchedule::uniform(4, 2),
+            fixture.prelude.claimed_sum,
+            &mut transcript
+        ),
         Err(SumcheckError::WrongNumberOfRounds {
             expected: 4,
             got: 3
@@ -550,7 +559,8 @@ fn output_scale_errors<F: BinaryField>() {
         rounds: 2,
         offset: 1,
     };
-    let prelude = BatchPrelude::try_new(vec![member.clone()], 4, 1).unwrap();
+    let prelude =
+        BatchPrelude::try_new(vec![member.clone()], DegreeSchedule::uniform(4, 1)).unwrap();
     assert!(matches!(
         prelude.member_output_scale(1, &[F::sample(7); 4]),
         Err(SumcheckError::RoundMemberIndexOutOfRange {
@@ -572,19 +582,22 @@ fn output_scale_errors<F: BinaryField>() {
         Err(SumcheckError::BatchMemberWindowOutOfRange { member: 0, .. })
     ));
     invalid = prelude.clone();
-    invalid.max_num_vars = 1;
+    invalid.degrees = DegreeSchedule::uniform(1, 2);
     assert!(matches!(
         invalid.member_output_scale(0, &[F::sample(7)]),
         Err(SumcheckError::BatchMemberRoundsOutOfRange { member: 0, .. })
     ));
     invalid = prelude.clone();
-    invalid.max_degree = 0;
+    invalid.degrees = DegreeSchedule::uniform(4, 0);
     assert!(matches!(
         invalid.member_output_scale(0, &[F::sample(7); 4]),
-        Err(SumcheckError::ZeroBatchDegree { max_num_vars: 4 })
+        Err(SumcheckError::ZeroBatchDegree {
+            max_num_vars: 4,
+            round: 0
+        })
     ));
     invalid = prelude;
-    invalid.max_num_vars = 258;
+    invalid.degrees = DegreeSchedule::uniform(258, 2);
     assert!(matches!(
         invalid.member_output_scale(0, &[F::sample(7); 258]),
         Err(SumcheckError::BatchPaddingExponentOutOfRange {
@@ -593,7 +606,7 @@ fn output_scale_errors<F: BinaryField>() {
         })
     ));
     assert!(matches!(
-        BatchPrelude::try_new(vec![member], 258, 1),
+        BatchPrelude::try_new(vec![member], DegreeSchedule::uniform(258, 1)),
         Err(SumcheckError::BatchPaddingExponentOutOfRange {
             member: 0,
             exponent: 256
@@ -702,7 +715,7 @@ fn odd_characteristic_output_scales_are_one() {
             offset,
         })
         .collect();
-    let prelude = BatchPrelude::try_new(members, 4, 1).unwrap();
+    let prelude = BatchPrelude::try_new(members, DegreeSchedule::uniform(4, 1)).unwrap();
     for member in 0..2 {
         assert_eq!(
             prelude

@@ -11,6 +11,7 @@ use crate::error::SumcheckError;
 use crate::pow::RoundNonces;
 use crate::proof::CompressedSumcheckProof;
 use crate::round_proof::{append_compressed_round, ClearRound, RoundMessage};
+use crate::schedule::DegreeSchedule;
 
 pub struct SumcheckVerifier;
 
@@ -99,23 +100,53 @@ impl SumcheckVerifier {
         F: Field + Encoding,
         T: FieldTranscript<F>,
     {
-        if proof.round_polynomials.len() != claim.num_vars {
+        Self::verify_compressed_scheduled(
+            claim.claimed_sum,
+            &DegreeSchedule::uniform(claim.num_vars, claim.degree),
+            proof,
+            domain,
+            transcript,
+        )
+    }
+
+    /// [`verify_compressed`](Self::verify_compressed) with each round bounded
+    /// by its own degree in `degrees`: round `j`'s polynomial must have degree
+    /// at most `degrees.degrees()[j]`, and its proof of work is priced at that
+    /// degree.
+    #[tracing::instrument(skip_all, name = "SumcheckVerifier::verify_compressed_scheduled")]
+    pub fn verify_compressed_scheduled<F, T>(
+        claimed_sum: F,
+        degrees: &DegreeSchedule,
+        proof: &CompressedSumcheckProof<F>,
+        domain: BooleanHypercube,
+        transcript: &mut T,
+    ) -> Result<EvaluationClaim<F>, SumcheckError<F>>
+    where
+        F: Field + Encoding,
+        T: FieldTranscript<F>,
+    {
+        if proof.round_polynomials.len() != degrees.num_rounds() {
             return Err(SumcheckError::WrongNumberOfRounds {
-                expected: claim.num_vars,
+                expected: degrees.num_rounds(),
                 got: proof.round_polynomials.len(),
             });
         }
-        let pow = RoundNonces::new::<F, T>(claim.degree, claim.num_vars, &proof.pow_nonces)?;
+        let pow = RoundNonces::scheduled::<F, T>(degrees.degrees(), &proof.pow_nonces)?;
         let BooleanHypercube = domain;
 
-        let mut running_sum = claim.claimed_sum;
-        let mut challenges = Vec::with_capacity(claim.num_vars);
+        let mut running_sum = claimed_sum;
+        let mut challenges = Vec::with_capacity(degrees.num_rounds());
 
-        for (round, round_proof) in proof.round_polynomials.iter().enumerate() {
-            if round_proof.degree() > claim.degree {
+        for (round, (round_proof, &degree)) in proof
+            .round_polynomials
+            .iter()
+            .zip(degrees.degrees())
+            .enumerate()
+        {
+            if round_proof.degree() > degree {
                 return Err(SumcheckError::DegreeBoundExceeded {
                     got: round_proof.degree(),
-                    max: claim.degree,
+                    max: degree,
                 });
             }
             let coeffs = round_proof.coeffs_except_linear_term();
