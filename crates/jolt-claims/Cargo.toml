@@ -19,7 +19,6 @@ field-inline = ["jolt-lookup-tables/field-inline"]
 test-utils = []
 # Bytecode fold (default off): direct flag-class index in the
 # stage 6b bytecode read-RAF fold. Same values.
-bytecode-fold = []
 
 [dependencies]
 allocative = { workspace = true, optional = true }
