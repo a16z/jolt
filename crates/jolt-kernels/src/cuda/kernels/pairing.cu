@@ -95,6 +95,10 @@ __device__ void fq6_mul_by_nonresidue(const u64 *a, u64 *out) {
     fq2_copy(c0, out);
 }
 
+// Preserve the Fq6/Fq12 call boundaries. Inlining them together with msm.cu's
+// point/Fq2 helpers triggers an invalid coefficient read with NVCC 13.1.115
+// (sm_89), exercised by the partial eight-pair groups in
+// common::pairing::tests::miller_products_distribute_over_repeated_pairs.
 __device__ __noinline__ void fq6_mul(const u64 *lhs, const u64 *rhs, u64 *out) {
     const u64 *d = lhs;
     const u64 *e = lhs + FQ2_LIMBS;
