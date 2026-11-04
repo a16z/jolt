@@ -350,10 +350,12 @@ gate's approval and the model's input all use that set. The gate does not use th
 request's file list, which follows the branch: a push and a revert during an evaluation could make
 it describe another commit with the same number of files.
 
-The model's input is the pull request's diff from its merge base with `main`, followed by every
-changed file in full, with line numbers, as the head has it. The gate reads the diff only after
-rows 1 through 5 have passed. Two tools let the model read the rest of the repository:
-`read_file` returns a file with line numbers or lists a directory, and `search` returns the
+The model's first input is the complete pull request diff from its merge base with `main` and
+the changed paths. It does not inline complete files or the closure reference specification.
+The gate reads the diff only after rows 1 through 5 have passed. Two tools let the model read
+surrounding definitions, callers and reference files on demand:
+`read_file` returns a file with line numbers, optionally an inclusive `start_line`/`end_line`
+range, or lists a directory; `search` returns the
 lines that contain a literal string. Each reads either the merge base or the head. The gate
 answers them from GitHub's archive of each commit, which it holds in memory and checks against
 the commit's tree: every file must hash to its blob in that tree, so `export-ignore` or
@@ -429,6 +431,10 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
   OpenAI's own framing of the request, such as its message and tool wrappers, is not counted, so
   the count is the gate's estimate, not OpenAI's. A first request over the bound fails the
   evaluation before any paid call and counts no attempt.
+  This is a spend limit, not the model's documented 1,050,000-token context window. Keeping it
+  below the 272,000-token long-context threshold avoids the higher rates below rather than
+  increasing the budget to accommodate automatically inlined files. Large complete diffs can
+  still exceed it and fail closed; unchanged file contents no longer consume the first request.
 - **Calls per attempt.** An attempt is one question with at most 4 tool turns, so at most 5
   paid requests.
 - **Attempts.** At most 2 attempts per head and 3 per pull request, across all its heads,
