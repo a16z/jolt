@@ -147,3 +147,12 @@ impl SymbolicSumcheck for RamValCheck {
             * opening(ram_ra_val_check())
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(RamValCheckShape {
+    dimensions,
+    contributions
+});
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(RamValContribution { selector, opening });

@@ -879,3 +879,14 @@ mod tests {
         );
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(TraceDimensions { log_t });
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(ReadWriteDimensions {
+    log_t,
+    log_k,
+    phase1_num_rounds,
+    phase2_num_rounds
+});

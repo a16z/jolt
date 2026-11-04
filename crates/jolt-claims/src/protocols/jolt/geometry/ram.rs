@@ -274,3 +274,12 @@ mod tests {
         assert_eq!(large_dimensions.phase3_cycle_rounds(), usize::MAX);
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(RamRafEvaluationDimensions => (inner));
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(RamRaVirtualizationDimensions {
+    log_t,
+    committed_ra_polys
+});

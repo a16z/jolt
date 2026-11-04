@@ -1277,6 +1277,13 @@ mod tests {
     }
 }
 
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(BytecodeReadRafDimensions {
+    log_t,
+    log_k,
+    committed_ra_polys
+});
+
 #[cfg(all(test, feature = "bytecode-fold"))]
 mod direct_class_tests {
     use super::DirectFlagClasses;
