@@ -396,7 +396,7 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_affecting_or_uncertain_risk_three_changes_must_be_minimal_in_aggregate(self) -> None:
         for verdict in ("AFFECTS", "UNCERTAIN"):
-            for crate in ("jolt-field", "jolt-prover"):
+            for crate in ("jolt-field", "jolt-prover", "jolt-akita"):
                 for file_count, lines, expected in [(1, 10, 3), (1, 11, 4), (2, 6, 4), (1, 200, 4)]:
                     with self.subTest(verdict=verdict, crate=crate, file_count=file_count, lines=lines):
                         base = {f"crates/{crate}/src/part{i}.rs": "old();\n" * lines for i in range(file_count)}
@@ -410,6 +410,31 @@ class AiMergeGateTests(unittest.TestCase):
                                          verdict="UNCERTAIN", risk=3))
         self.assertIn("risk-4", apis.labels)
         self.assertEqual(apis.approved(), [])
+
+    def test_traced_prover_only_changes_override_path_defaults(self) -> None:
+        for path in (
+            "crates/jolt-akita/src/trace_onehot/decomposition.rs",
+            "crates/jolt-sumcheck/src/prover.rs",
+            "crates/jolt-prover/src/stages/stage3.rs",
+            "crates/jolt-field/src/lib.rs",
+            "crates/jolt-transcript/src/prover.rs",
+            "crates/jolt-verifier-derive/src/lib.rs",
+        ):
+            with self.subTest(path=path):
+                apis = evaluate(changed_contents({path: "old();\n" * 11},
+                                                 {path: "new();\n" * 11}, risk=2))
+                self.assertEqual(set(apis.labels), {"risk-2", "merge-eligible"})
+                self.assertEqual(apis.approved(), [HEAD])
+
+        prover = "crates/jolt-akita/src/trace_onehot/decomposition.rs"
+        shared = "crates/jolt-field/src/lib.rs"
+        apis = evaluate(changed_contents(
+            {prover: "old();\n" * 11, shared: "old();\n"},
+            {prover: "new();\n" * 11, shared: "new();\n"}, verdict="AFFECTS",
+            risks=[{"path": prover, "level": 2, "reasoning": "Only prover callers use this helper."},
+                   {"path": shared, "level": 3, "reasoning": "Bounded shared arithmetic change."}]))
+        self.assertEqual(set(apis.labels), {"risk-3", "merge-eligible"})
+        self.assertEqual(apis.approved(), [HEAD])
 
     def test_unreadable_inputs_fail_early_only_on_floor_paths(self) -> None:
         for crate in ("jolt-field", "jolt-verifier"):
@@ -517,10 +542,13 @@ class AiMergeGateTests(unittest.TestCase):
         for levels, expected in [
             ({"README.md": 1}, 1),
             ({"crates/jolt-kernels/src/lib.rs": 2}, 2),
-            ({"Cargo.lock": 2}, 3),
-            ({"crates/jolt-prover/src/stages/stage3.rs": 2}, 4),
+            ({"Cargo.lock": 2}, 2),
+            ({"Cargo.lock": 1}, 3),
+            ({"crates/jolt-prover/src/stages/stage3.rs": 2}, 2),
             ({"crates/jolt-verifier/src/config.rs": 1}, 4),
-            ({"README.md": 1, "crates/jolt-prover/src/stages/stage3.rs": 2}, 4),
+            ({"README.md": 1, "crates/jolt-prover/src/stages/stage3.rs": 2}, 2),
+            ({"crates/jolt-akita/src/native_batching.rs": 4}, 4),
+            ({"crates/jolt-akita/src/adapters.rs": 3}, 3),
             ({"new/shared.rs": 3}, 3),
         ]:
             with self.subTest(levels=levels):

@@ -762,7 +762,7 @@ class Gate:
             floor = paths[path]
             if path in code and code[path] == 0:
                 floor = 1
-            risks[path] = bumps.get(path, 1 if level == 1 and floor < 3 else max(level, floor))
+            risks[path] = bumps.get(path, max(level, floor) if level == 1 and floor >= 3 else level)
         if set(risks) != set(paths) or not risks:
             raise GateError("the classifier did not account for every changed path")
         risk = max(risks.values())

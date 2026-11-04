@@ -62,22 +62,35 @@ the following levels and path globs; the classifier supplies semantic evidence f
 | `risk-1` | Tests, scripts, CI or documentation only | An attestation or a writer's approval |
 | `risk-2` | Prover or other non-verifier code; dependency bumps outside the verifier dependency closure | An attestation or a writer's approval |
 | `risk-3` | Dependency bumps in the verifier dependency closure; scoped shared-code changes under the rule below | An attestation or a writer's approval |
-| `risk-4` | Runtime-code changes on level-4 paths; non-minimal affecting or uncertain shared-code changes; protocol changes or otherwise unclassified changes | A current-head maintainer approval |
+| `risk-4` | Verifier/preprocessing, proof encoding/format, transcript/Fiat–Shamir or protocol changes; non-minimal affecting or uncertain shared-code changes; otherwise unclassified changes | A current-head maintainer approval |
 
-On level-4 paths, every non-test, non-comment code change stays risk-4, even when the classifier
-returns level 1, subject to the accepted scanner limits below. The gate compares both complete source files after excluding whole comments,
+**Prover-only changes are risk-2 in any crate.** The classifier must trace the changed items
+through callers in both revisions, including shared helpers, trait implementations, generated
+code and feature gates, and cite why no changed behavior reaches verifier logic, verifier
+preprocessing, proof (de)serialization or format, transcript/Fiat–Shamir operations, sumcheck
+order/expressions or PCS/commitment parameters. The policy's path lists are hints, not production
+risk floors: per-path levels 2–4 come from semantic analysis. Traced prover-only code is level 2, even when
+another file makes the overall verdict `AFFECTS`; its size does not raise it to risk-3 or risk-4.
+The gate trusts the classifier's reachability evidence, not a second deterministic call-graph
+analysis. Direct changes to the acceptance surfaces above stay risk-4, including in prover code.
+Unresolved reachability is risk-4 unless the bounded shared-code exception below applies; that
+exception does not apply to direct verifier, transcript, protocol or wire-format edits.
+
+A level-1 answer still cannot waive level-3/4 runtime-code defaults, subject to the accepted
+scanner limits below. The gate compares both complete source files after excluding whole comments,
 blank lines and syntactically recognized top-level Rust items compiled only under `cfg(test)`
 (or a file-inner `#![cfg(test)]`). Nested cfg-like tokens are not treated as test code, since
 they can be macro input rather than Rust attributes. This also
 detects runtime code exposed by removing a cfg or block-comment delimiter. A test-only or
-comment/blank-only change may go below the floor. `cfg(all(test, ...))` implies test-only;
+comment/blank-only change may go below the default. `cfg(all(test, ...))` implies test-only;
 `cfg(any(test, feature = "prover-fixtures"))` does not. Standalone `#[test]` or custom test
 attributes alone do not qualify for this exception. Inline comment edits on lines containing
 code are conservatively counted as code changes.
 
 For paths at effective risk-3, `AFFECTS` or `UNCERTAIN` can stay risk-3 only if the change is minimal.
-The effective level includes the classifier's rating, path floor and deterministic exceptions;
-this count includes lower-floor paths that the classifier raises to level 3. Pika's
+The effective level is the classifier's rating, except for deterministic dependency bumps and
+the scanner guard on level-1 answers above. This count includes paths outside the risk-3 hints
+that the classifier rates 3. Pika's
 chosen threshold is at most **20 added plus removed non-test, non-comment, non-blank lines**
 across all effective level-3 paths, configured by `risk-3.max_changed_lines` in the risk JSON. For example,
 replacing ten code lines counts as twenty changed lines. For non-Rust files, the count
@@ -90,8 +103,9 @@ size escalation. The classifier can still raise any path's risk for semantic eff
 
 Dependency bumps are deterministic: a `Cargo.toml` edit must change only dependency versions,
 git revs or tags; a `Cargo.lock` edit must change only package entries. Adding a dependency,
-changing features or changing workspace settings is not a bump and retains the level-3 floor
-and minimality rule. Bumps get risk-3 if any changed package belongs to the verifier dependency
+changing features or changing workspace settings is not a bump and requires semantic classification;
+the level-3 hint and minimality rule apply unless the classifier establishes another level.
+Bumps get risk-3 if any changed package belongs to the verifier dependency
 closure, and risk-2 otherwise. The roots are the 20 runtime crates from the October 6 addendum
 in `specs/verifier-closure-lints.md`, stored in `risk-3.dependency_roots`. The gate follows every
 Cargo.lock dependency edge from those roots in **both** revisions. It matches package names
