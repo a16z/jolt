@@ -2,14 +2,17 @@
 //! one transcript and one backend session, and their wire outputs assemble
 //! into the Akita-envelope [`JoltProof`].
 
+use std::borrow::BorrowMut;
+
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_algebra::{CanonicalBytes, JoltField};
 use jolt_openings::{
-    CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
+    CommitmentScheme, GroupBatchOpening, GroupCommitmentMetadata, GroupSetupMetadata,
+    TransparentObjectSetup,
 };
-use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit, ProverState};
 use jolt_verifier::config::JoltProtocolConfig;
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
@@ -40,13 +43,16 @@ pub fn prove<F, PCS, VC, T>(
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
     F: JoltField + CanonicalBytes + Encoding,
-    PCS: CommitmentScheme<Field = F> + TraceOneHotCommitment + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F>
+        + GroupBatchOpening
+        + TraceOneHotCommitment
+        + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + Encoding + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
     VC::Output: Clone + Encoding,
-    T: FieldTranscript<F> + ProverInit,
+    T: FieldTranscript<F> + ProverInit + BorrowMut<ProverState<PCS::Sponge>>,
 {
     // The clear Akita prover: the Whiteout build proves through
     // `super::whiteout`, so the mode context here carries nothing.

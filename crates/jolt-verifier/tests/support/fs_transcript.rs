@@ -28,8 +28,8 @@ pub struct ChallengeRecord<F> {
     pub values: Vec<F>,
 }
 
-/// Challenges produced while verifying one fixture, and the proof-of-work
-/// check bytes squeezed between them.
+/// Challenges produced while verifying one fixture, the proof-of-work check
+/// bytes squeezed between them, and the messages the sponge absorbed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChallengeTape<F> {
     pub records: Vec<ChallengeRecord<F>>,
@@ -37,6 +37,12 @@ pub struct ChallengeTape<F> {
     /// but a replay must freeze them too: otherwise a mutated transcript
     /// fails the proof of work before reaching the binding under test.
     pub checks: Vec<Vec<u8>>,
+    /// The encoding of every message absorbed through the transcript, in
+    /// order. A replay absorbs these in place of the mutated messages, so the
+    /// sponge stays the honest one. A protocol that runs on the sponge
+    /// directly, such as Akita's embedded opening, then draws the honest
+    /// challenges too.
+    pub absorbs: Vec<Vec<u8>>,
 }
 
 impl<F: PartialEq> ChallengeTape<F> {
@@ -76,14 +82,17 @@ enum Session {
     Record {
         records: Vec<ErasedRecord>,
         checks: Vec<Vec<u8>>,
+        absorbs: Vec<Vec<u8>>,
         counters: BTreeMap<FsScope, usize>,
     },
     Replay {
         records: Vec<ErasedRecord>,
         checks: Vec<Vec<u8>>,
+        absorbs: Vec<Vec<u8>>,
         counters: BTreeMap<FsScope, usize>,
         cursor: usize,
         check_cursor: usize,
+        absorb_cursor: usize,
     },
 }
 
@@ -103,8 +112,8 @@ fn next_id(counters: &mut BTreeMap<FsScope, usize>, len: usize) -> ChallengeId {
     id
 }
 
-/// The [`Script`] of [`AuditTranscript`]: records every draw and check, or
-/// replaces them with the active replay tape. It keeps the real challenge set,
+/// The [`Script`] of [`AuditTranscript`]: records every draw, check and
+/// absorbed message, or replaces them with the active replay tape. It keeps the real challenge set,
 /// so proofs carry their real nonces.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AuditScript;
@@ -171,6 +180,24 @@ impl<F: Field + 'static> Script<F> for AuditScript {
             }
         });
     }
+
+    fn absorb_bytes(&mut self, bytes: &mut Vec<u8>) {
+        SESSION.with(|slot| match slot.borrow_mut().as_mut() {
+            None => {}
+            Some(Session::Record { absorbs, .. }) => absorbs.push(bytes.clone()),
+            Some(Session::Replay {
+                absorbs,
+                absorb_cursor,
+                ..
+            }) => {
+                let expected = absorbs
+                    .get(*absorb_cursor)
+                    .unwrap_or_else(|| panic!("absorb replay exhausted at {absorb_cursor}"));
+                bytes.clone_from(expected);
+                *absorb_cursor += 1;
+            }
+        });
+    }
 }
 
 /// The production verifier transcript with its draws and checks recorded or
@@ -195,13 +222,17 @@ where
     start(Session::Record {
         records: Vec::new(),
         checks: Vec::new(),
+        absorbs: Vec::new(),
         counters: BTreeMap::new(),
     });
     let result = verify();
-    let (records, checks) = SESSION.with(|slot| match slot.borrow_mut().take() {
+    let (records, checks, absorbs) = SESSION.with(|slot| match slot.borrow_mut().take() {
         Some(Session::Record {
-            records, checks, ..
-        }) => (records, checks),
+            records,
+            checks,
+            absorbs,
+            ..
+        }) => (records, checks, absorbs),
         Some(Session::Replay { .. }) => panic!("recording session changed to replay"),
         None => panic!("recording session disappeared"),
     });
@@ -216,7 +247,14 @@ where
                 .clone(),
         })
         .collect();
-    (result, ChallengeTape { records, checks })
+    (
+        result,
+        ChallengeTape {
+            records,
+            checks,
+            absorbs,
+        },
+    )
 }
 
 /// Result of verifying with a frozen challenge tape.
@@ -227,7 +265,7 @@ pub struct ReplayResult<R> {
 }
 
 /// Runs `verify` while returning the recorded values for every challenge
-/// draw and proof-of-work check.
+/// draw and proof-of-work check, and absorbing the recorded messages.
 pub fn replay_challenges<F, R>(
     tape: &ChallengeTape<F>,
     verify: impl FnOnce() -> R,
@@ -245,9 +283,11 @@ where
             })
             .collect(),
         checks: tape.checks.clone(),
+        absorbs: tape.absorbs.clone(),
         counters: BTreeMap::new(),
         cursor: 0,
         check_cursor: 0,
+        absorb_cursor: 0,
     });
     let output = verify();
     let (consumed, expected) = SESSION.with(|slot| match slot.borrow_mut().take() {

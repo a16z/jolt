@@ -4,7 +4,10 @@ use bounded::RecordLimits;
 
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheme, TrustedBytes};
+use jolt_akita::{
+    AkitaChunkProfile, AkitaField, AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript,
+    TrustedBytes,
+};
 use jolt_algebra::Ring;
 use jolt_inlines_blake2::Blake2b;
 use jolt_inlines_keccak256 as _;
@@ -21,13 +24,12 @@ use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProg
 use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-#[cfg(feature = "akita")]
-use jolt_sdk::ProofTranscript;
-use jolt_sdk::{
-    JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode, VerifierTranscript,
-};
+use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode};
 #[cfg(not(feature = "akita"))]
-use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof, VerifierField};
+use jolt_sdk::{
+    JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof, VerifierField,
+    VerifierTranscript,
+};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
@@ -549,7 +551,7 @@ fn collect_guest_proofs(
         #[cfg(feature = "field-inline")]
         let witness = witness.with_field_inline().expect("field witness");
         let now = Instant::now();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProofTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaProverTranscript>(
             JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
             &config,
@@ -606,7 +608,7 @@ fn collect_guest_proofs(
             AkitaField,
             AkitaScheme,
             AkitaVc,
-            VerifierTranscript<'_>,
+            AkitaVerifierTranscript<'_>,
         >(&attached, public_io, proof, None)
         .expect("verify proof against prepared guest setup");
         info!("  Verification result: true");

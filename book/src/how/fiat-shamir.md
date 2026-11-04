@@ -14,11 +14,9 @@ one of them:
 | Dory | BN254 scalar field | [Dory](./dory.md) | optional ([BlindFold](./blindfold.md)) |
 | Akita | 128-bit prime field | [Akita](./akita.md) | not supported |
 
-In both configurations, one transcript runs from the statement through
-stage 7. Dory's opening at stage 8, and BlindFold in ZK builds, continue on
-that same transcript. Akita's opening at stage 8 runs its own Fiat-Shamir
-session. That session's tag is extended with one challenge drawn from Jolt's
-transcript, which ties the opening to everything Jolt bound before it.
+In both configurations, one transcript runs from the statement through the
+stage-8 opening, and through BlindFold in ZK builds. Dory and Akita both run
+their openings on Jolt's transcript.
 
 The transcript lives in `crates/jolt-transcript`. It is built on the
 [spongefish](https://github.com/arkworks-rs/spongefish) 0.8 duplex-sponge
@@ -125,11 +123,13 @@ separates two kinds of message, which enter the sponge the same way:
 
 A Jolt proof is a serialized structure of commitments, sumcheck messages,
 claims, and opening proofs. The verifier absorbs each field it reads from
-that structure as a public message, so Jolt's NARG string is empty. The
-verifier still ends with `check_eof`, which rejects unread NARG bytes and any
-failure the transcript recorded, such as an exhausted rejection sampler.
-Without it, a valid proof with bytes appended to its NARG string would also
-verify.
+that structure as a public message. The exception is Akita's opening, which
+sends its messages as prover messages. So an Akita proof's NARG string holds
+the opening proof, and a Dory proof's NARG string is empty. The verifier ends
+with `check_eof` (for Akita, through `GroupBatchOpening::check_eof`), which
+rejects unread NARG bytes and any failure the transcript recorded, such as an
+exhausted rejection sampler. Without it, a valid proof with bytes appended to
+its NARG string would also verify.
 
 The transcript binds the values the verifier decoded from the proof
 structure, not the bytes it decoded them from. Rejecting non-canonical or
@@ -155,8 +155,8 @@ statistical distance $2^{-161}$ of uniform:
 Every challenge drawn on Jolt's transcript is full width, including the ones
 Dory's verifier multiplies into group elements. The Dory adapter
 (`crates/jolt-dory/src/transcript.rs`) ignores dory-pcs's challenge labels
-and draws each challenge with `challenge`. Akita's opening draws its own
-challenges in its own session.
+and draws each challenge with `challenge`. Akita's opening squeezes its own
+challenges from the same sponge, decoded by Akita's code.
 
 ## Proof of work
 

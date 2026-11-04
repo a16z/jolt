@@ -74,7 +74,9 @@ pub use schedule_artifacts::{AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 #[cfg(feature = "zk-prover")]
 pub use scheme::WhiteoutPads;
-pub use scheme::{AkitaScheme, TraceOneHotCommitment};
+pub use scheme::{
+    AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript, TraceOneHotCommitment,
+};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 #[cfg(feature = "zk-prover")]
 pub use whiteout::WhiteoutResidual;
