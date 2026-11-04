@@ -1,13 +1,13 @@
 #![cfg(all(not(target_arch = "wasm32"), feature = "summary"))]
 #![expect(clippy::unwrap_used)]
 
-use jolt_profiling::span_boundary::{BoundarySamples, SpanInstructions, StageBoundaryRow};
+use jolt_profiling::span_boundary::{BoundarySamples, SpanCounters, StageBoundaryRow};
 use jolt_profiling::summary::{
     build_summary, convert_counter_events, parse_folded, summary_path, ProfileSummary,
     SummaryContext, SUMMARY_SCHEMA_JSON,
 };
 use jolt_profiling::taxonomy::{self, ROOT_SPAN};
-use jolt_profiling::PeakMemory;
+use jolt_profiling::{CoreCounters, CounterSource, CounterValues, PeakMemory};
 use serde_json::Value;
 
 const FIXTURE: &str = include_str!("fixtures/simple_trace.json");
@@ -26,31 +26,73 @@ fn fixture_context() -> SummaryContext {
 }
 
 fn fixture_samples() -> BoundarySamples {
-    let sampled = |instances, instructions| SpanInstructions {
+    let sampled = |instances, counters| SpanCounters {
         instances,
-        instructions,
+        counters,
+    };
+    let root = CounterValues {
+        instructions: 20_000_000,
+        cycles: Some(10_000_000),
+        performance_cores: Some(CoreCounters {
+            instructions: 15_000_000,
+            cycles: 8_000_000,
+        }),
     };
     BoundarySamples {
+        counter_source: Some(CounterSource::MacosRusageV6),
         stage_rows: vec![
             StageBoundaryRow {
                 stage: "prove_stage0",
                 rss_open_bytes: GIB as u64,
                 rss_close_bytes: 2 * GIB as u64,
-                instructions: Some(7_000_000),
+                counters: Some(CounterValues {
+                    instructions: 7_000_000,
+                    cycles: Some(3_000_000),
+                    performance_cores: Some(CoreCounters {
+                        instructions: 6_000_000,
+                        cycles: 2_000_000,
+                    }),
+                }),
             },
             StageBoundaryRow {
                 stage: ROOT_SPAN,
                 rss_open_bytes: GIB as u64,
                 rss_close_bytes: 3 * GIB as u64,
-                instructions: Some(20_000_000),
+                counters: Some(root),
             },
         ],
         // `EqPolynomial::evals` ran on a pool thread, so it was never
         // sampled.
-        span_instructions: [
-            (ROOT_SPAN, sampled(1, Some(20_000_000))),
-            ("prove_batch", sampled(1, Some(500_000))),
-            ("sumcheck_round", sampled(1, Some(200_000))),
+        span_counters: [
+            (ROOT_SPAN, sampled(1, Some(root))),
+            (
+                "prove_batch",
+                sampled(
+                    1,
+                    Some(CounterValues {
+                        instructions: 500_000,
+                        cycles: Some(200_000),
+                        performance_cores: Some(CoreCounters {
+                            instructions: 0,
+                            cycles: 0,
+                        }),
+                    }),
+                ),
+            ),
+            (
+                "sumcheck_round",
+                sampled(
+                    1,
+                    Some(CounterValues {
+                        instructions: 200_000,
+                        cycles: Some(100_000),
+                        performance_cores: Some(CoreCounters {
+                            instructions: 100_000,
+                            cycles: 50_000,
+                        }),
+                    }),
+                ),
+            ),
             ("commit_witness", sampled(1, None)),
         ]
         .into_iter()
@@ -150,6 +192,30 @@ fn aggregation_computes_totals_self_and_dark_time() {
     assert!((root.dark_time_fraction - 0.24).abs() < 1e-9);
     assert_eq!(root.peak_memory_gib, Some(3.0));
     assert_eq!(root.instructions, Some(20_000_000));
+    assert_eq!(root.cycles, Some(10_000_000));
+    assert_eq!(
+        root.performance_cores,
+        Some(CoreCounters {
+            instructions: 15_000_000,
+            cycles: 8_000_000,
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(summary.hardware_counters).unwrap(),
+        serde_json::json!({
+            "source": "macos_rusage_v6",
+            "privilege_scope": "user_and_kernel",
+            "thread_scope": "all_process_threads"
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(CounterSource::MacosRusageV4.metadata()).unwrap(),
+        serde_json::json!({
+            "source": "macos_rusage_v4",
+            "privilege_scope": "user_and_kernel",
+            "thread_scope": "all_process_threads"
+        })
+    );
 }
 
 #[test]
@@ -165,6 +231,14 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage0.rss_delta_gib, Some(1.0));
     assert_eq!(stage0.peak_memory_gib, Some(1.0));
     assert_eq!(stage0.instructions, Some(7_000_000));
+    assert_eq!(stage0.cycles, Some(3_000_000));
+    assert_eq!(
+        stage0.performance_cores,
+        Some(CoreCounters {
+            instructions: 6_000_000,
+            cycles: 2_000_000,
+        })
+    );
 
     let stage1 = &summary.stages[1];
     assert_eq!(stage1.label, "prove_stage1");
@@ -173,6 +247,8 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage1.rss_delta_gib, None);
     assert_eq!(stage1.peak_memory_gib, Some(3.0));
     assert_eq!(stage1.instructions, None);
+    assert_eq!(stage1.cycles, None);
+    assert_eq!(stage1.performance_cores, None);
 
     assert_eq!(summary.peak_rss_gib, Some(4.0));
     assert_eq!(summary.peak_footprint_gib, Some(6.0));
@@ -184,23 +260,31 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(cpu.samples, 1);
 }
 
-/// A label's instruction total is reported only when every trace instance
-/// was sampled with a count; partial or unavailable samples are `null`,
-/// never an undercount.
 #[test]
-fn span_instructions_require_every_instance_sampled() {
+fn span_counters_require_every_instance_sampled() {
     let summary = fixture_summary(&fixture_events());
-    let instructions = |label: &str| summary.spans.get(label).unwrap().instructions;
-    assert_eq!(instructions(ROOT_SPAN), Some(20_000_000));
-    assert_eq!(instructions("prove_batch"), Some(500_000));
+    let span = |label: &str| summary.spans.get(label).unwrap();
+    assert_eq!(span(ROOT_SPAN).instructions, Some(20_000_000));
+    assert_eq!(span(ROOT_SPAN).cycles, Some(10_000_000));
+    assert_eq!(span("prove_batch").instructions, Some(500_000));
+    assert_eq!(span("prove_batch").cycles, Some(200_000));
     assert_eq!(
-        instructions("sumcheck_round"),
-        None,
-        "1 of 2 instances sampled"
+        span("prove_batch").performance_cores,
+        Some(CoreCounters {
+            instructions: 0,
+            cycles: 0,
+        })
     );
-    assert_eq!(instructions("commit_witness"), None, "counter unavailable");
-    assert_eq!(instructions("EqPolynomial::evals"), None, "pool thread");
-    assert_eq!(instructions("prove_stage1"), None, "never sampled");
+    for (label, reason) in [
+        ("sumcheck_round", "1 of 2 instances sampled"),
+        ("commit_witness", "counter unavailable"),
+        ("EqPolynomial::evals", "pool thread"),
+        ("prove_stage1", "never sampled"),
+    ] {
+        assert_eq!(span(label).instructions, None, "{reason}");
+        assert_eq!(span(label).cycles, None, "{reason}");
+        assert_eq!(span(label).performance_cores, None, "{reason}");
+    }
 }
 
 #[test]
@@ -277,7 +361,11 @@ fn repeated_labels_pair_rows_by_occurrence() {
         stage,
         rss_open_bytes: rss_open_gib * GIB as u64,
         rss_close_bytes: rss_close_gib * GIB as u64,
-        instructions: Some(instructions),
+        counters: Some(CounterValues {
+            instructions,
+            cycles: None,
+            performance_cores: None,
+        }),
     };
     let samples = BoundarySamples {
         stage_rows: vec![
@@ -286,7 +374,8 @@ fn repeated_labels_pair_rows_by_occurrence() {
             row("prove_stage0", 3, 5, 40),
             row(ROOT_SPAN, 2, 5, 60),
         ],
-        span_instructions: Default::default(),
+        span_counters: Default::default(),
+        counter_source: Some(CounterSource::LinuxPerfEvent),
     };
     let summary = build_summary(
         &events,
@@ -310,6 +399,16 @@ fn repeated_labels_pair_rows_by_occurrence() {
     let root = summary.root.unwrap();
     assert_eq!(root.wall_time_ns, 550_000);
     assert_eq!(root.instructions, Some(60));
+    assert_eq!(root.cycles, None);
+    assert_eq!(root.performance_cores, None);
+    assert_eq!(
+        serde_json::to_value(summary.hardware_counters).unwrap(),
+        serde_json::json!({
+            "source": "linux_perf_event",
+            "privilege_scope": "user",
+            "thread_scope": "opening_thread_and_descendants"
+        })
+    );
 }
 
 #[test]
@@ -358,8 +457,53 @@ fn summary_round_trips_through_strict_schema_structs() {
     let summary = fixture_summary(&fixture_events());
     let json = serde_json::to_string(&summary).unwrap();
     let reparsed: ProfileSummary = serde_json::from_str(&json).unwrap();
-    assert_eq!(reparsed.schema_version, summary.schema_version);
-    assert_eq!(reparsed.spans.len(), summary.spans.len());
+    assert_eq!(
+        serde_json::to_value(&reparsed).unwrap(),
+        serde_json::to_value(&summary).unwrap()
+    );
+}
+
+#[test]
+fn summary_deserializes_without_hardware_extensions() {
+    let summary: ProfileSummary = serde_json::from_str(
+        r#"{
+            "schema_version": 1,
+            "taxonomy_version": 1,
+            "run": {
+                "workload": "fibonacci", "scale_log2": 16, "backend": "reference",
+                "timestamp_unix_secs": 1700000000, "git_rev": null
+            },
+            "root": {
+                "label": "jolt_prover::prove", "wall_time_ns": 100,
+                "dark_time_ns": 0, "dark_time_fraction": 0.0,
+                "peak_memory_gib": null, "instructions": 12
+            },
+            "peak_rss_gib": null,
+            "spans": {
+                "prove_stage0": {
+                    "count": 1, "total_ns": 100, "self_ns": 100, "instructions": 12
+                }
+            },
+            "stages": [{
+                "label": "prove_stage0", "wall_time_ns": 100,
+                "rss_open_gib": null, "rss_close_gib": null, "rss_delta_gib": null,
+                "peak_memory_gib": null, "instructions": 12
+            }],
+            "counters": {}
+        }"#,
+    )
+    .unwrap();
+    assert!(summary.hardware_counters.is_none());
+    let root = summary.root.unwrap();
+    assert_eq!(root.instructions, Some(12));
+    assert_eq!(root.cycles, None);
+    assert_eq!(root.performance_cores, None);
+    assert_eq!(summary.spans["prove_stage0"].instructions, Some(12));
+    assert_eq!(summary.spans["prove_stage0"].cycles, None);
+    assert_eq!(summary.spans["prove_stage0"].performance_cores, None);
+    assert_eq!(summary.stages[0].instructions, Some(12));
+    assert_eq!(summary.stages[0].cycles, None);
+    assert_eq!(summary.stages[0].performance_cores, None);
 }
 
 #[test]

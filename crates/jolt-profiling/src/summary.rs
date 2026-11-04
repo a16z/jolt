@@ -34,11 +34,13 @@
 //!   the `getrusage` high-water mark, which sampling cannot miss, and
 //!   *headline peak footprint* the kernel's physical-footprint high-water
 //!   mark, which also counts pages macOS compressed out of RSS.
-//! - *Per-stage / root instructions* come from the same boundary rows: user-space
-//!   instructions retired by every counted thread between the span's enter and
-//!   exit, so like wallclock they are not additive across parallel spans.
+//! - *Per-stage / root hardware counters* come from the same boundary rows:
+//!   instructions and, where available, CPU cycles across all counted threads
+//!   between the span's enter and exit. Their scope is recorded in
+//!   [`ProfileSummary::hardware_counters`]; they are not additive across
+//!   parallel spans.
 //!   The root pairs with its row by exit order among root instances.
-//! - *Per-label instructions* sum the same per-instance deltas over a label's
+//! - *Per-label hardware counters* sum the same per-instance deltas over a label's
 //!   instances, and are reported only when the layer sampled exactly as many
 //!   instances as the trace holds — i.e. every instance ran on the
 //!   orchestrating thread. A label with any instance on a pool thread, where
@@ -51,6 +53,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::counters::{CoreCounters, CounterSource, HardwareCounterMetadata};
 use crate::memory::PeakMemory;
 use crate::span_boundary::BoundarySamples;
 use crate::taxonomy::{self, ROOT_SPAN};
@@ -95,6 +98,10 @@ pub struct ProfileSummary {
     pub schema_version: u32,
     pub taxonomy_version: u32,
     pub run: RunMetadata,
+    /// Hardware counter backend and accounting scope; `null` when unavailable
+    /// or absent from an older summary.
+    #[serde(default)]
+    pub hardware_counters: Option<HardwareCounterMetadata>,
     /// `null` if the trace contains no root span (see
     /// [`taxonomy::ROOT_SPAN`]).
     pub root: Option<RootSummary>,
@@ -146,11 +153,18 @@ pub struct RootSummary {
     pub dark_time_fraction: f64,
     /// Max `memory_gib` sample inside the root span's interval.
     pub peak_memory_gib: Option<f64>,
-    /// User-space instructions retired by the process while the root span
-    /// was open (all counted threads); `null` without a hardware counter or
-    /// when the kernel multiplexed it.
+    /// Instructions retired while the root span was open, with the scope in
+    /// `hardware_counters`; `null` when the interval could not be measured.
     #[serde(default)]
     pub instructions: Option<u64>,
+    /// CPU cycles over the same interval; `null` when unavailable. These
+    /// are summed over counted threads, not elapsed time or RISC-V cycles.
+    #[serde(default)]
+    pub cycles: Option<u64>,
+    /// The subset of instructions and cycles attributed to performance
+    /// cores; available with macOS rusage V6.
+    #[serde(default)]
+    pub performance_cores: Option<CoreCounters>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -164,12 +178,20 @@ pub struct SpanAggregate {
     /// Exclusive time: inclusive minus same-thread children, summed over all
     /// instances.
     pub self_ns: u64,
-    /// User-space instructions the process retired inside this label's
-    /// instances, summed (inclusive, like `total_ns`). `null` unless every
+    /// Instructions retired inside this label's instances, summed with the
+    /// scope in `hardware_counters` (inclusive, like `total_ns`). `null` unless every
     /// instance ran on the orchestrating thread with a usable hardware
     /// counter.
     #[serde(default)]
     pub instructions: Option<u64>,
+    /// CPU cycles summed over the same instances; `null` when unavailable
+    /// or any instance could not be measured.
+    #[serde(default)]
+    pub cycles: Option<u64>,
+    /// The subset of instructions and cycles attributed to performance
+    /// cores; available with macOS rusage V6 when every instance was measured.
+    #[serde(default)]
+    pub performance_cores: Option<CoreCounters>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -185,11 +207,18 @@ pub struct StageSummary {
     /// Max `memory_gib` sample inside the stage span's interval; `null` when
     /// the stage closed between monitor samples.
     pub peak_memory_gib: Option<f64>,
-    /// User-space instructions retired by the process while the stage span
-    /// was open, from `StageBoundaryRow`; `null` without a hardware counter
-    /// or when the kernel multiplexed it.
+    /// Instructions retired while the stage span was open, with the scope in
+    /// `hardware_counters`; `null` when the interval could not be measured.
     #[serde(default)]
     pub instructions: Option<u64>,
+    /// CPU cycles over the same interval; `null` when unavailable. These
+    /// are summed over counted threads, not elapsed time or RISC-V cycles.
+    #[serde(default)]
+    pub cycles: Option<u64>,
+    /// The subset of instructions and cycles attributed to performance
+    /// cores; available with macOS rusage V6.
+    #[serde(default)]
+    pub performance_cores: Option<CoreCounters>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -457,6 +486,8 @@ pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggreg
                     total_ns: 0,
                     self_ns: 0,
                     instructions: None,
+                    cycles: None,
+                    performance_cores: None,
                 });
                 entry.count += 1;
                 entry.total_ns += us_to_ns(dur_us);
@@ -542,11 +573,14 @@ pub fn build_summary(
 ) -> ProfileSummary {
     let mut aggregate = aggregate_events(events, ROOT_SPAN);
     for (label, span) in &mut aggregate.spans {
-        span.instructions = samples
-            .span_instructions
+        let counters = samples
+            .span_counters
             .get(label.as_str())
             .filter(|sampled| sampled.instances == span.count)
-            .and_then(|sampled| sampled.instructions);
+            .and_then(|sampled| sampled.counters);
+        span.instructions = counters.map(|values| values.instructions);
+        span.cycles = counters.and_then(|values| values.cycles);
+        span.performance_cores = counters.and_then(|values| values.performance_cores);
     }
     let memory_points = aggregate.counter_points.get(MEMORY_COUNTER);
 
@@ -581,6 +615,7 @@ pub fn build_summary(
             occurrence,
         } = root;
         let wall_ns = interval.duration_ns();
+        let counters = boundary_row(ROOT_SPAN, occurrence).and_then(|row| row.counters);
         RootSummary {
             label: ROOT_SPAN.to_string(),
             wall_time_ns: wall_ns,
@@ -591,7 +626,9 @@ pub fn build_summary(
                 dark_ns as f64 / wall_ns as f64
             },
             peak_memory_gib: peak_within(memory_points, interval),
-            instructions: boundary_row(ROOT_SPAN, occurrence).and_then(|row| row.instructions),
+            instructions: counters.map(|values| values.instructions),
+            cycles: counters.and_then(|values| values.cycles),
+            performance_cores: counters.and_then(|values| values.performance_cores),
         }
     });
 
@@ -626,13 +663,16 @@ pub fn build_summary(
             *occurrence += 1;
             let open = row.map(|r| r.rss_open_bytes as f64 / BYTES_PER_GIB);
             let close = row.map(|r| r.rss_close_bytes as f64 / BYTES_PER_GIB);
+            let counters = row.and_then(|row| row.counters);
             StageSummary {
                 wall_time_ns: interval.duration_ns(),
                 rss_open_gib: open,
                 rss_close_gib: close,
                 rss_delta_gib: close.zip(open).map(|(c, o)| c - o),
                 peak_memory_gib: peak_within(memory_points, interval),
-                instructions: row.and_then(|r| r.instructions),
+                instructions: counters.map(|values| values.instructions),
+                cycles: counters.and_then(|values| values.cycles),
+                performance_cores: counters.and_then(|values| values.performance_cores),
                 label,
             }
         })
@@ -666,6 +706,7 @@ pub fn build_summary(
             timestamp_unix_secs,
             git_rev,
         },
+        hardware_counters: samples.counter_source.map(CounterSource::metadata),
         root,
         peak_rss_gib: peak.rss_bytes.map(|bytes| bytes as f64 / BYTES_PER_GIB),
         peak_footprint_gib: peak
