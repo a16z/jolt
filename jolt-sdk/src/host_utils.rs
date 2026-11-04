@@ -18,8 +18,6 @@ use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryHint;
 #[cfg(any(feature = "host", feature = "guest-verifier"))]
 use jolt_dory::{DoryCommitment, DoryScheme};
-#[cfg(any(feature = "host", feature = "guest-verifier"))]
-use jolt_algebra::Fr;
 #[cfg(all(feature = "host", not(feature = "akita")))]
 use jolt_prover::dory::stages::stage0::TrustedAdviceCommitment;
 #[cfg(feature = "host")]

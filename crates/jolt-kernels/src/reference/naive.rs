@@ -742,9 +742,8 @@ mod tests {
         verifier_transcript.append(&verifier_input_claim);
         let verifier_coefficient: Fr = verifier_transcript.challenge().unwrap();
         let reduction = SumcheckProof::<Fr, Fr>::from(recorded.proof)
-            .verify_compressed_boolean(
-                ROUNDS,
-                verifier_relation.degree(),
+            .verify_compressed_scheduled(
+                &DegreeSchedule::uniform(ROUNDS, verifier_relation.degree()),
                 verifier_coefficient * verifier_input_claim,
                 &mut verifier_transcript,
             )
