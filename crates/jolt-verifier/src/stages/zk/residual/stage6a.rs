@@ -41,7 +41,7 @@ where
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
-        input.checked.one_hot_config.committed_chunk_bits(),
+        input.one_hot_config.committed_chunk_bits(),
     );
     let booleanity_address_claims = BooleanityAddressPhase::new(booleanity_dimensions);
     let booleanity_claims = BooleanityCyclePhase::new(booleanity_dimensions);

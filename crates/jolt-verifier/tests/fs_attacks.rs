@@ -13,13 +13,13 @@ use support::fs_mutations::equivocate_stage1_clear;
 use support::fs_transcript::{record_challenges, replay_challenges, AuditTranscript};
 
 #[cfg(not(feature = "akita"))]
-use jolt_crypto::{Bn254G1, Pedersen};
-#[cfg(not(feature = "akita"))]
-use jolt_dory::DoryScheme;
-#[cfg(not(feature = "akita"))]
 use jolt_algebra::Fr;
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
 use jolt_algebra::Ring;
+#[cfg(not(feature = "akita"))]
+use jolt_crypto::{Bn254G1, Pedersen};
+#[cfg(not(feature = "akita"))]
+use jolt_dory::DoryScheme;
 
 #[cfg(all(not(feature = "akita"), not(feature = "zk")))]
 #[test]

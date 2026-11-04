@@ -3,7 +3,7 @@ use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::MaskedSession;
 
 use super::{
     instruction_input::{instruction_input_input_values_from_upstream, InstructionInput},
@@ -43,11 +43,11 @@ pub fn stage3_input_values_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage3)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage1: &Stage1Output<PCS::Field>,
     stage2: &Stage2Output<PCS::Field>,
 ) -> Result<Stage3Output<PCS::Field>, VerifierError>
@@ -112,7 +112,7 @@ where
     {
         let batch = sumchecks.verify_masked(
             &sumchecks.empty_input_points(),
-            &mut masked_channel(pads, transcript)?,
+            &mut masked_channel(masked, transcript)?,
         )?;
 
         Ok(Stage3Output::Zk(Stage3ZkOutput {

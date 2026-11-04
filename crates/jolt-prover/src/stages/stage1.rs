@@ -84,11 +84,6 @@ where
             uniskip_challenge,
         ),
     };
-    // The committed path grinds no stage-1 nonce, matching the verifier's ZK
-    // branch (ZK runs over BN254 only, where no site needs one).
-    #[cfg(feature = "zk")]
-    let pow_nonce = None;
-    #[cfg(not(feature = "zk"))]
     let pow_nonce = grind_pow::<F, _>(PowSite::Stage1, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
     let input_points = sumchecks.empty_input_points();
@@ -108,7 +103,6 @@ where
         mode.recorder(),
         transcript,
     )?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());

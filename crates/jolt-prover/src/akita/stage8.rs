@@ -8,11 +8,11 @@ use jolt_verifier::stages::stage8::akita::fused_inc_claim;
 use std::borrow::BorrowMut;
 use std::collections::BTreeMap;
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
 use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_algebra::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupBatchOpening, GroupOpeningClaim,
     TaggedGroupOpeningClaim,

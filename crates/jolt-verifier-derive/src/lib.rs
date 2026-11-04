@@ -462,6 +462,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 quote! {
                     __members.push(::jolt_sumcheck::MemberDegrees {
                         offset: __member.instance_point_offset(__max_num_vars)?,
+                        degree: __member.degree(),
                         round_degrees: __member.round_degrees(),
                     });
                 },
@@ -750,11 +751,11 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             if plan.is_option {
                 quote! {
                     if self.#id.is_some() {
-                        __batching_coefficients.push(channel.challenge());
+                        __batching_coefficients.push(channel.challenge()?);
                     }
                 }
             } else {
-                quote!(__batching_coefficients.push(channel.challenge());)
+                quote!(__batching_coefficients.push(channel.challenge()?);)
             }
         });
 
@@ -772,10 +773,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 #krate::VerifierError,
             >
             where
-                __C: ::jolt_transcript::Channel + ::jolt_transcript::PrivateChannel,
-                __C::Error: ::core::convert::From<::jolt_transcript::TranscriptError>
-                    + ::core::convert::From<::jolt_sumcheck::SumcheckError<#f>>,
-                #krate::VerifierError: ::core::convert::From<__C::Error>,
+                __C: #krate::stages::zk::MaskedChannel<#f>,
             {
                 use #relations::ConcreteSumcheck as _;
 
@@ -1240,8 +1238,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             channel: &mut __C,
         ) -> ::core::result::Result<#relations::MaskedClaims<#f>, #krate::VerifierError>
         where
-            __C: ::jolt_transcript::PrivateChannel,
-            #krate::VerifierError: ::core::convert::From<__C::Error>,
+            __C: #krate::stages::zk::MaskedChannel<#f>,
         {
             let mut __claims = #relations::MaskedClaims::default();
             #(#masked_receives)*
@@ -1278,9 +1275,10 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
                 transcript: &mut __T,
                 claims: &#output_claims_name<#f>,
             ) {
-                for value in self.opening_values(claims) {
-                    transcript.append(&value);
-                }
+                ::jolt_transcript::PrivateChannel::append_private(
+                    transcript,
+                    &self.opening_values(claims),
+                );
             }
         }
     };

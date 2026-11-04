@@ -13,7 +13,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_claim_reduction::{
@@ -87,11 +87,11 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage2)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    mut pads: Option<&mut CommittedPadsView<P>>,
+    mut masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage1: &Stage1Output<PCS::Field>,
 ) -> Result<Stage2Output<PCS::Field>, VerifierError>
 where
@@ -122,11 +122,11 @@ where
             }
         })?;
 
-    let uniskip = verify_product_uniskip::<PCS, VC, T, ZkProof, P>(
+    let uniskip = verify_product_uniskip::<PCS, VC, T, ZkProof, O, P>(
         checked,
         proof,
         transcript,
-        pads.as_deref_mut(),
+        masked.as_deref_mut(),
         stage1,
     )?;
 
@@ -189,7 +189,7 @@ where
             });
         };
         let batch =
-            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage2Output::Zk(Stage2ZkOutput {
             challenges,
@@ -262,11 +262,11 @@ pub fn product_tau_low<F: JoltField>(
     Ok(tau_low)
 }
 
-fn verify_product_uniskip<PCS, VC, T, ZkProof, P>(
+fn verify_product_uniskip<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage1: &Stage1Output<PCS::Field>,
 ) -> Result<ProductUniskipStep<PCS::Field>, VerifierError>
 where
@@ -305,7 +305,7 @@ where
         }
         Stage1Output::Zk(_) => {
             let verified =
-                uniskip::verify_masked(&uniskip_params, &mut masked_channel(pads, transcript)?)?;
+                uniskip::verify_masked(&uniskip_params, &mut masked_channel(masked, transcript)?)?;
             Ok(ProductUniskipStep {
                 tau_low,
                 tau_high,

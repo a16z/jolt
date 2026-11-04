@@ -22,9 +22,9 @@
     not(feature = "zk")
 ))]
 mod active {
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::field_inline::relations::product::FieldRegistersProductOutputClaims;
     use jolt_claims::protocols::field_inline::relations::spartan::FieldRegistersSpartanOuterOutputClaims;
-    use jolt_algebra::{Fr, Ring};
     use jolt_verifier::proof::{ClearProofClaims, JoltProofClaims};
 
     use crate::support::tamper_manifest::{

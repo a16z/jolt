@@ -6,14 +6,14 @@ use std::borrow::BorrowMut;
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
-use jolt_crypto::VectorCommitment;
 use jolt_algebra::{CanonicalBytes, JoltField};
+use jolt_crypto::VectorCommitment;
 use jolt_openings::{
     CommitmentScheme, GroupBatchOpening, GroupCommitmentMetadata, GroupSetupMetadata,
     TransparentObjectSetup,
 };
 use jolt_transcript::{Encoding, FieldTranscript, ProverInit, ProverState};
-use jolt_verifier::config::JoltProtocolConfig;
+use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
@@ -189,7 +189,7 @@ where
     ]);
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+        protocol: JoltProtocolConfig::for_zk(ZkConfig::Transparent),
         commitments: stage0.commitment,
         fused_inc_commitment: Some(stage0.fused_inc.commitment),
         stages: JoltStageProofs {

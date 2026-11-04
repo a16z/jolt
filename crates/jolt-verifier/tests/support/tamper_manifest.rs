@@ -1,11 +1,11 @@
 use jolt_claims::protocols::jolt::relations::booleanity::BooleanityOutputClaims;
 use std::collections::BTreeSet;
 
+use jolt_algebra::{Fr, JoltField};
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldInlineRelationId;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::JoltRelationId;
-use jolt_algebra::{Fr, JoltField};
 use jolt_verifier::stages::pow::PowSite;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage2::outputs::FieldRegistersClaimReductionOutputClaims;

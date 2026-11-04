@@ -9,13 +9,13 @@
 //! relation's fold of the stage-1 openings), so the verification core is
 //! shared here.
 
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
-use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_uniskip_opening, product_uniskip_opening,
 };
@@ -24,9 +24,10 @@ use jolt_sumcheck::{
     receive_masked_rounds, CenteredIntegerDomain, DegreeSchedule, MaskedRound, RoundWire,
     SumcheckClaim, SumcheckError, SumcheckProof,
 };
-use jolt_transcript::{Channel, FieldTranscript, PrivateChannel, TranscriptError};
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
 use crate::stages::relations::{receive_masked_value, MaskedClaims};
+use crate::stages::zk::MaskedChannel;
 use crate::VerifierError;
 
 const UNISKIP_ROUNDS: usize = 1;
@@ -167,7 +168,7 @@ where
     // Match the prover transcript: the uni-skip output is absorbed as an
     // opening claim before any post-uni-skip draw (the remainder batch's RLC
     // coefficient squeeze in particular).
-    transcript.append(&output_claim);
+    transcript.append_private(&[output_claim]);
 
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));
@@ -184,9 +185,7 @@ pub fn verify_masked<F, C>(
 ) -> Result<UniskipMasked<F>, VerifierError>
 where
     F: JoltField,
-    C: Channel + PrivateChannel,
-    C::Error: From<TranscriptError> + From<SumcheckError<F>>,
-    VerifierError: From<C::Error>,
+    C: MaskedChannel<F>,
 {
     let rounds = receive_masked_rounds::<F, C>(
         &DegreeSchedule::uniform(UNISKIP_ROUNDS, params.degree),

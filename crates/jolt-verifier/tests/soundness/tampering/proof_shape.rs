@@ -8,9 +8,9 @@ use crate::support::tamper_manifest;
 use jolt_verifier::proof::JoltProofClaims;
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use {
+    jolt_algebra::{Fr, Ring},
     jolt_blindfold::BlindFoldProof,
     jolt_crypto::VectorCommitmentOpening,
-    jolt_algebra::{Fr, Ring},
     jolt_sumcheck::CompressedSumcheckProof,
 };
 

@@ -62,7 +62,7 @@ pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
     VerifierPreprocessingWire,
 };
-pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+pub use proof::{BlindFoldZkProof, ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "akita")]
 pub use verifier::absorb_akita_commitments;
 #[cfg(not(feature = "akita"))]

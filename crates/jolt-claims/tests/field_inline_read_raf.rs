@@ -1,11 +1,11 @@
 //! The field-register read-RAF fold against the per-row stage values.
 #![cfg(feature = "field-inline")]
 
+use jolt_algebra::{Fr, Ring};
 use jolt_claims::protocols::field_inline::geometry::bytecode::{
     read_raf_folded_stage_values, read_raf_stage_values,
     FieldInlineBytecodeReadRafStageValueInputs, FIELD_INLINE_BYTECODE_STAGE4_GAMMA_COUNT,
 };
-use jolt_algebra::{Fr, Ring};
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use jolt_riscv::JoltInstructionRow;
 use jolt_riscv::{JoltInstructionKind, NormalizedOperands};

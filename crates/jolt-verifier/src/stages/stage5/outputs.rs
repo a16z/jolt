@@ -173,6 +173,7 @@ impl<F: JoltField> Stage5Output<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, squeeze};
+    use jolt_algebra::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
@@ -180,7 +181,6 @@ mod tests {
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafOutputClaims;
     use jolt_claims::protocols::jolt::relations::ram::RamRaClaimReductionOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersValEvaluationOutputClaims;
-    use jolt_algebra::{Fr, Ring};
     use jolt_transcript::FieldTranscript;
 
     fn fr(value: u64) -> Fr {

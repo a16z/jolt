@@ -80,6 +80,7 @@ use super::ram_ra_virtualization::RamRaVirtualization;
     no_opening_values,
     no_draw_challenges,
     no_output_shape,
+    routes,
     crate = "crate"
 )]
 pub struct Stage6bSumchecks<F: JoltField> {
@@ -115,6 +116,34 @@ pub struct Stage6bSumchecks<F: JoltField> {
 /// `reverse(opening_point)` (see `cycle_phase_opening_point` in `jolt-claims`
 /// `claim_reductions::precommitted`).
 impl<F: JoltField> Stage6bOutputPoints<F> {
+    /// The stage-6b claim routes: a booleanity `bytecode_ra` cell whose point
+    /// equals the bytecode read-RAF point is an [`Alias`](ClaimRoute::Alias)
+    /// of that read-RAF opening. A clear proof absorbs it once, through its
+    /// curated order; a masked proof sends it with an equality row
+    /// ([`ClaimRoutes::masked`]).
+    pub fn claim_routes(&self) -> Result<ClaimRoutes, VerifierError> {
+        let booleanity_point = self.booleanity_opening_point().ok_or_else(|| {
+            VerifierError::StageClaimPublicInputFailed {
+                stage: JoltRelationId::Booleanity,
+                reason: "Stage 6 booleanity produced no opening point".to_string(),
+            }
+        })?;
+        let mut routes = ClaimRoutes::default();
+        for (index, point) in self.bytecode_read_raf.bytecode_ra.iter().enumerate() {
+            if point.as_slice() == booleanity_point {
+                let polynomial = JoltCommittedPolynomial::BytecodeRa(index);
+                routes.set(
+                    JoltOpeningId::committed(polynomial, JoltRelationId::Booleanity),
+                    ClaimRoute::Alias(
+                        JoltOpeningId::committed(polynomial, JoltRelationId::BytecodeReadRaf)
+                            .into(),
+                    ),
+                );
+            }
+        }
+        Ok(routes)
+    }
+
     /// The shared booleanity opening point (`r_address ++ r_cycle`); every
     /// produced booleanity RA opening uses it. `None` only if booleanity produced
     /// no openings (never in practice — at least one RA family is always present).

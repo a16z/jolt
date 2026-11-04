@@ -7,12 +7,11 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
-use jolt_algebra::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_read_write_checking::{
@@ -28,6 +27,7 @@ use super::{
         ram_val_check_init_structure, ram_val_check_initial_evaluation,
         ram_val_check_input_points_from_upstream, ram_val_check_input_values_from_upstream,
         RamValCheck, RamValCheckInitStructure, RamValCheckInitialEvaluation,
+        RamValCheckStagedOpenings,
     },
     registers_read_write_checking::{
         registers_read_write_input_points_from_upstream,
@@ -86,12 +86,12 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage4)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage2: &Stage2Output<PCS::Field>,
     stage3: &Stage3Output<PCS::Field>,
 ) -> Result<Stage4Output<PCS::Field>, VerifierError>
@@ -222,7 +222,7 @@ where
             &init_structure,
         );
         let staged_points = init_structure.staged_points();
-        let mut channel = masked_channel(pads, transcript)?;
+        let mut channel = masked_channel(masked, transcript)?;
         let staged = RamValCheckStagedOpenings::receive_masked(&staged_points, &mut channel)?;
         let mut batch = sumchecks.verify_masked(&input_points, &mut channel)?;
         batch.output_claims.received.extend(staged);

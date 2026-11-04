@@ -28,6 +28,8 @@ use std::convert::Infallible;
 use jolt_algebra::JoltField;
 use jolt_claims::SymbolicSumcheck;
 use jolt_transcript::{FieldTranscript, PrivateChannel};
+
+use crate::stages::zk::MaskedChannel;
 use jolt_zk::masking::{MaskedOperand, PadIndex};
 use std::collections::BTreeMap;
 
@@ -56,9 +58,7 @@ pub trait OutputAppend<F: JoltField>: OutputClaims<F> {
     /// and MUST match the order in which the
     /// prover commits the openings.
     fn append_openings<T: FieldTranscript<F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append(&value);
-        }
+        transcript.append_private(&self.opening_values());
     }
 }
 
@@ -528,12 +528,15 @@ pub struct MaskedClaims<F> {
 pub fn receive_masked_value<F, C>(channel: &mut C) -> Result<MaskedOperand<F>, VerifierError>
 where
     F: JoltField,
-    C: PrivateChannel,
-    VerifierError: From<C::Error>,
+    C: MaskedChannel<F>,
 {
-    let mut value = [F::zero()];
-    let slots = channel.exchange_private_base(&mut value)?;
-    let [masked] = value;
+    let (value, slots) = channel.receive_private(1)?;
+    let masked = value
+        .first()
+        .copied()
+        .ok_or(VerifierError::MissingProofPayload {
+            field: "masked value",
+        })?;
     Ok(MaskedOperand {
         masked,
         pad: PadIndex(slots.start),
@@ -557,8 +560,7 @@ where
     SumcheckOutputPoints<F, I>:
         MapCells<Vec<F>, F, OpeningIdOf<F, I>, Mapped = SumcheckOutputClaims<F, I>>,
     OpeningIdOf<F, I>: Copy + Into<ComposedOpeningId>,
-    C: PrivateChannel,
-    VerifierError: From<C::Error>,
+    C: MaskedChannel<F>,
 {
     let static_aliases = static_aliases::<F, I>();
     for id in point_cell_ids::<F, I>(points).into_iter().map(Into::into) {
@@ -834,7 +836,10 @@ mod tests {
             via_values.append(&value);
         }
 
-        assert_eq!(via_append.absorbed(), via_values.absorbed());
+        assert_eq!(
+            via_append.absorbed().concat(),
+            via_values.absorbed().concat()
+        );
     }
 
     #[derive(OutputClaims)]
@@ -1229,9 +1234,9 @@ mod sumcheck_batch_derive_tests {
         InstructionReadRaf, InstructionReadRafOutputClaims, RegistersValEvaluation,
         RegistersValEvaluationOutputClaims,
     };
+    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
 
     fn instruction_read_raf() -> InstructionReadRaf<Fr> {

@@ -12,7 +12,7 @@ use jolt_claims::protocols::jolt::{
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{
@@ -52,12 +52,12 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 
 #[jolt_verifier_derive::fs_scope(Stage7)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage4: &Stage4Output<PCS::Field>,
     stage6: &Stage6bOutput<PCS::Field>,
 ) -> Result<Stage7Output<PCS::Field>, VerifierError>
@@ -126,7 +126,7 @@ where
         // members' own `derive_output_term`.
         let input_points = sumchecks.empty_input_points();
         let batch =
-            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
             #[cfg(all(feature = "akita", feature = "zk"))]

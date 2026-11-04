@@ -27,10 +27,10 @@
 use jolt_akita::{AkitaField, AkitaScheme};
 use jolt_claims::protocols::jolt::relations::booleanity::BooleanityOutputClaims;
 
+use jolt_algebra::{JoltField, Ring};
 use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeBytecodeReadRafOutputClaims;
 use jolt_claims::protocols::jolt::relations::claim_reductions::bytecode::BytecodeReductionIntermediateClaims;
 use jolt_claims::protocols::jolt::TracePolynomialOrder;
-use jolt_algebra::{JoltField, Ring};
 use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_transcript::{Keccak, VerifierState};
 use jolt_verifier::preprocessing::{CommittedProgramPreprocessing, ProgramPreprocessing};

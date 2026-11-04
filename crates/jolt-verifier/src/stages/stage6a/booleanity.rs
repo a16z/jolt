@@ -13,7 +13,6 @@ pub use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityAddressPhaseOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_algebra::JoltField;
 use jolt_transcript::FieldTranscript;
 
 use crate::stages::relations::ConcreteSumcheck;

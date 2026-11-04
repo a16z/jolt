@@ -1,8 +1,8 @@
 use common::jolt_device::JoltDevice;
+use jolt_algebra::JoltField;
 use jolt_blindfold::BlindFoldProtocol;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_algebra::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{Encoding, FieldTranscript, VerifierInit};
 

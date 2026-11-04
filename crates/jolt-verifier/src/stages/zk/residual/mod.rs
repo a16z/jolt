@@ -40,6 +40,7 @@ use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 use jolt_claims::protocols::jolt::relations;
 #[cfg(feature = "fuzzing")]
 use jolt_claims::protocols::jolt::{JoltExpr, JoltOpeningId};
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
     protocols::jolt::{
@@ -219,6 +220,10 @@ where
 {
     pub checked: &'a CheckedInputs,
     pub preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
+    /// The proof's read-write and one-hot configurations, which shape the
+    /// stages' dimensions.
+    pub rw_config: JoltReadWriteConfig,
+    pub one_hot_config: JoltOneHotConfig,
     pub stage1: &'a Stage1ZkOutput<PCS::Field>,
     pub stage2: &'a Stage2ZkOutput<PCS::Field>,
     pub stage3: &'a Stage3ZkOutput<PCS::Field>,
@@ -802,10 +807,11 @@ where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    crate::stages::build_formula_dimensions(
-        input.preprocessing,
-        input.checked,
+    crate::stages::formula_dimensions_from_parts(
+        input.one_hot_config,
         crate::num::ilog2(input.checked.trace_length),
+        input.preprocessing.program.bytecode_len(),
+        input.checked.ram_K,
         JoltRelationId::BytecodeReadRaf,
     )
 }
@@ -1652,6 +1658,10 @@ fn hamming_virtualization_address_point<F: JoltField>(
 }
 
 impl<F: JoltField> SourceValues<F> {
+    fn has_public(&self, id: VerifierPublicId) -> bool {
+        self.publics.contains_key(&id)
+    }
+
     fn public(&mut self, id: impl Into<VerifierPublicId>, value: F) -> Result<(), VerifierError> {
         let id = id.into();
         match self.publics.entry(id) {

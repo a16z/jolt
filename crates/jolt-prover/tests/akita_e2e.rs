@@ -33,10 +33,10 @@ mod akita_tests {
     use jolt_akita::{
         AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
     };
+    use jolt_algebra::Ring;
     use jolt_claims::protocols::jolt::{
         JoltAdviceKind, JoltCommittedPolynomial, JoltOneHotConfig, TracePolynomialOrder,
     };
-    use jolt_algebra::Ring;
     use jolt_prover::akita;
     use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
     use jolt_prover::akita::witness::commit_advice;

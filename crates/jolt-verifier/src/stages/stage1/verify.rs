@@ -1,9 +1,9 @@
+use jolt_algebra::Ring;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
-use jolt_algebra::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::MaskedSession;
 
 use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
 use super::outputs::{
@@ -22,11 +22,11 @@ use crate::{
 };
 
 #[jolt_verifier_derive::fs_scope(Stage1)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
 ) -> Result<Stage1Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -99,7 +99,7 @@ where
     }
 
     {
-        let mut channel = masked_channel(pads, transcript)?;
+        let mut channel = masked_channel(masked, transcript)?;
         let uniskip = uniskip::verify_masked(&uniskip_params, &mut channel)?;
         let uniskip_challenge = uniskip.challenge;
 
@@ -112,6 +112,7 @@ where
         };
         let input_points = sumchecks.empty_input_points();
 
+        check_pow(PowSite::Stage1, pow_nonces, channel.transcript())?;
         let batch = sumchecks.verify_masked(&input_points, &mut channel)?;
 
         Ok(Stage1Output::Zk(Stage1ZkOutput {

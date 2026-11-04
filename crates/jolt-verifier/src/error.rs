@@ -165,7 +165,7 @@ impl From<VerificationError> for VerifierError {
 impl From<ZkError> for VerifierError {
     fn from(error: ZkError) -> Self {
         match error {
-            ZkError::Transcript(_) => Self::TranscriptRejected,
+            ZkError::TranscriptRejected | ZkError::ChallengeRejected => Self::TranscriptRejected,
             ZkError::PadsExhausted { .. }
             | ZkError::PadCountMismatch { .. }
             | ZkError::OperandPadsMismatch
@@ -180,6 +180,8 @@ impl From<ZkError> for VerifierError {
             | ZkError::BlindFoldProver(_)
             | ZkError::BlindFoldRejected(_)
             | ZkError::Whiteout(_)
+            | ZkError::MaskedTapeExhausted
+            | ZkError::MaskedTapeTrailing
             | ZkError::FoldOverflow { .. } => Self::Masking(error),
         }
     }

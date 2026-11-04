@@ -15,6 +15,8 @@ use crate::support::{
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support::proof_claims::{offset_opening_claim, opening_claim};
+#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
+use jolt_algebra::{Fr, Ring};
 #[cfg(all(
     feature = "prover-fixtures",
     not(feature = "zk"),
@@ -42,8 +44,6 @@ use jolt_claims::protocols::jolt::{
 };
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_claims::{protocols::jolt::geometry::spartan, protocols::jolt::relations, OutputClaims};
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_algebra::{Fr, Ring};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]

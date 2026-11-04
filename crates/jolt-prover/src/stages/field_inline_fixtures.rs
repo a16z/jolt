@@ -21,6 +21,7 @@ use std::sync::Arc;
 use crate::JoltBackend;
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
+use jolt_algebra::Fr;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_algebra::Ring;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
@@ -28,7 +29,6 @@ use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
 use jolt_crypto::{Bn254, JoltGroup, PedersenSetup};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
-use jolt_algebra::Fr;
 #[cfg(feature = "akita")]
 use jolt_kernels::{
     CommitWitness, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,
@@ -626,6 +626,7 @@ pub(crate) fn verify_through(
 #[expect(clippy::unwrap_used, reason = "test twin helpers")]
 pub(crate) mod twins {
     use common::jolt_device::JoltDevice;
+    use jolt_algebra::Ring;
     use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
     use jolt_claims::protocols::jolt::geometry::ram::RamRafEvaluationDimensions;
     use jolt_claims::protocols::jolt::geometry::spartan::{
@@ -633,7 +634,6 @@ pub(crate) mod twins {
     };
     use jolt_claims::protocols::jolt::TraceDimensions;
     use jolt_claims::NoChallenges;
-    use jolt_algebra::Ring;
     use jolt_program::preprocess::PublicIoMemory;
     use jolt_transcript::{Encoding, Keccak, ProverState};
     use jolt_verifier::config::JOLT_VERIFIER_CONFIG;
@@ -661,13 +661,13 @@ pub(crate) mod twins {
         self, draw_spartan_outer_tau, draw_spartan_product_tau_high, UniskipParams,
     };
 
+    use jolt_algebra::Fr;
     use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
     #[cfg(feature = "akita")]
     use jolt_claims::protocols::jolt::lattice::relations::read_raf::LatticeReadRafAddressPhaseInputClaims;
     use jolt_claims::protocols::jolt::JoltRelationId;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_algebra::Fr;
     use jolt_verifier::stages::stage4::field_registers_read_write_checking::FieldRegistersReadWriteChecking;
     use jolt_verifier::stages::stage4::outputs::Stage4Sumchecks;
     use jolt_verifier::stages::stage4::ram_val_check::RamValCheck;

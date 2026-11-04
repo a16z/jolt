@@ -1,12 +1,11 @@
 use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
-use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_val_evaluation::{
@@ -82,12 +81,12 @@ pub fn stage5_input_points_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage5)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage2: &Stage2Output<PCS::Field>,
     stage4: &Stage4Output<PCS::Field>,
 ) -> Result<Stage5Output<PCS::Field>, VerifierError>
@@ -160,7 +159,7 @@ where
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
         let batch =
-            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
         let instruction_r_address = batch.output_points.instruction_r_address();
 
         Ok(Stage5Output::Zk(Stage5ZkOutput {

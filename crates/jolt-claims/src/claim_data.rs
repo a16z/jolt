@@ -108,6 +108,25 @@ pub trait OutputClaims<F: JoltField, O = JoltOpeningId> {
         O: core::fmt::Debug;
 }
 
+/// A produced-claim struct over cell type `A`, mapped cell by cell into the
+/// same struct over cell type `B`.
+///
+/// Cells are visited in canonical (field-declaration) order, each with its
+/// opening id, and the result has exactly the source's shape: every `Vec`
+/// family keeps its length and every `Option` cell its presence. The masked
+/// verifier uses it to read masked claims in the shape of its derived output
+/// points. `#[derive(OutputClaims)]` implements it.
+pub trait MapCells<A, B, O = JoltOpeningId> {
+    /// The same struct over cell type `B`.
+    type Mapped;
+
+    /// Map every cell through `f`, stopping at the first error.
+    fn try_map_cells<E>(
+        &self,
+        f: &mut impl FnMut(&O, &A) -> Result<B, E>,
+    ) -> Result<Self::Mapped, E>;
+}
+
 /// The input-formula resolver for a relation's *consumed* opening-claim struct
 /// (populated by explicit cross-stage wiring).
 ///

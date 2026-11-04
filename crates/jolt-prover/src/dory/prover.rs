@@ -7,10 +7,12 @@ use jolt_algebra::{Accumulator, JoltField, WithAccumulator};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_transcript::{ChallengeCodec, Encoding, FieldTranscript, ProverInit};
+use jolt_verifier::config::JoltProtocolConfig;
+#[cfg(not(feature = "zk"))]
+use jolt_verifier::config::ZkConfig;
 #[cfg(feature = "zk")]
 use jolt_verifier::config::SELECTED_ZK_CONFIG;
-use jolt_verifier::config::JoltProtocolConfig;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::proof::ClearProofClaims;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
@@ -63,7 +65,7 @@ pub fn prove<F, PCS, VC, T>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField + Encoding,
+    F: JoltField + Encoding + ChallengeCodec,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output, Blind = F>,
@@ -85,20 +87,26 @@ where
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
     #[cfg(feature = "zk")]
-    let mut mode = commit_pads::<F, PCS, VC, H>(
+    let mut committed = commit_pads::<F, PCS, VC, T>(
         preprocessing,
-        public_io,
-        trusted_advice.map(|trusted| &trusted.commitment),
+        config,
+        &checked,
+        &stage0.commitments,
+        stage0.untrusted_advice_commitment.as_ref(),
         &mut transcript,
     )?;
+    #[cfg(feature = "zk")]
+    let mode = &mut committed.mode;
     #[cfg(not(feature = "zk"))]
-    let mut mode = ProofMode::<VC>::clear();
+    let mut clear_mode = ProofMode::<VC>::clear();
+    #[cfg(not(feature = "zk"))]
+    let mode = &mut clear_mode;
 
-    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mut mode, log_t, &mut transcript)?;
+    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, mode, log_t, &mut transcript)?;
     finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         &mut backend,
-        &mut mode,
+        mode,
         config,
         public_io,
         &stage1.clear_output,
@@ -107,7 +115,7 @@ where
     finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         &mut backend,
-        &mut mode,
+        mode,
         config,
         &stage1.clear_output,
         &stage2.clear_output,
@@ -116,7 +124,7 @@ where
     finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         &mut backend,
-        &mut mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -127,7 +135,7 @@ where
     finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         &mut backend,
-        &mut mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -138,7 +146,7 @@ where
     finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         &mut backend,
-        &mut mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -152,7 +160,7 @@ where
     finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         &mut backend,
-        &mut mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -167,7 +175,7 @@ where
     finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         &mut backend,
-        &mut mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -224,7 +232,7 @@ where
     #[cfg(not(feature = "zk"))]
     {
         Ok(JoltProof {
-            protocol: JoltProtocolConfig::for_zk(false),
+            protocol: JoltProtocolConfig::for_zk(ZkConfig::Transparent),
             commitments: stage0.commitments,
             stages,
             joint_opening_proof: stage8.joint_opening_proof,
@@ -248,20 +256,38 @@ where
         })
     }
     #[cfg(feature = "zk")]
-    prove_blindfold::<F, PCS, VC, T>(
-        preprocessing,
-        public_io,
-        trusted_advice.map(|trusted| &trusted.commitment),
-        mode.into_pads(),
-        &ZkFinalOpening {
-            joint_evaluation: stage8.joint_evaluation,
-            evaluation_blind: stage8.evaluation_blind,
-        },
-        &mut transcript,
-    )?;
-
-    Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(SELECTED_ZK_CONFIG),
-        narg: transcript.finish(),
-    })
+    {
+        let shell = JoltProof {
+            protocol: JoltProtocolConfig::for_zk(SELECTED_ZK_CONFIG),
+            commitments: stage0.commitments,
+            stages,
+            joint_opening_proof: stage8.joint_opening_proof,
+            untrusted_advice_commitment: stage0.untrusted_advice_commitment,
+            claims: JoltProofClaims::Zk {
+                masked: committed.mode.tape().clone(),
+                zk_proof: (),
+            },
+            trace_length: config.trace_length,
+            ram_K: config.ram_K,
+            rw_config: config.rw_config,
+            one_hot_config: config.one_hot_config,
+            trace_polynomial_order: config.trace_polynomial_order,
+            narg: Vec::new(),
+        };
+        let (masked, zk_proof) = prove_blindfold::<F, PCS, VC, T>(
+            preprocessing,
+            public_io,
+            trusted_advice.map(|trusted| &trusted.commitment),
+            &shell,
+            committed,
+            &ZkFinalOpening {
+                joint_evaluation: stage8.joint_evaluation,
+                evaluation_blind: stage8.evaluation_blind,
+            },
+            &mut transcript,
+        )?;
+        let mut proof = shell.with_claims(JoltProofClaims::Zk { masked, zk_proof });
+        proof.narg = transcript.narg_string().to_vec();
+        Ok(proof)
+    }
 }

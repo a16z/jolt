@@ -108,7 +108,6 @@ where
         mode.recorder(),
         transcript,
     )?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     let instruction_r_address = proved.output_points.instruction_r_address();

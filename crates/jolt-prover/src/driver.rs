@@ -533,8 +533,19 @@ macro_rules! impl_stage_prover {
                 };
                 $($crate::driver::__stage_member!(park $presence $member, kernels);)+
 
-                let __opening_values =
-                    self.curate_opening_values(&__output_claims, &__output_points)?;
+                // A clear proof absorbs the stage's curated order; a masked one
+                // sends the cells on its wire routes, as the generated
+                // `verify_masked` reads them.
+                let __opening_values = if <Rec as $crate::recorder::ClaimRecorder>::MASKED {
+                    Self::wire_claim_values(
+                        &__output_claims,
+                        &<Rec as $crate::recorder::ClaimRecorder>::wire_routes(
+                            Self::claim_routes(&__output_points)?,
+                        ),
+                    )
+                } else {
+                    self.curate_opening_values(&__output_claims, &__output_points)?
+                };
                 $crate::driver::__stage_shape_check!($shape, self, __output_claims);
 
                 let __expected = self.expected_final_claim(

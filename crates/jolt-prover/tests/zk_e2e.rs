@@ -33,11 +33,11 @@ mod zk {
     use jolt_prover::zk_secrets::{self, ZkSecrets};
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_riscv::JoltTraceRow;
-    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_transcript::{Keccak, ProverState, VerifierInit, VerifierState};
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
     use jolt_verifier::{
-        jolt_protocol_id, verify_stages, MaskedStages, VerifiedStages, JOLT_SESSION,
+        validate_and_seed_transcript, verify_stages_on, MaskedStages, VerifiedStages, JOLT_SESSION,
     };
     use jolt_verifier::{JoltProtocolConfig, ZkConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -152,7 +152,7 @@ mod zk {
     /// A proved muldiv ZK proof, its secrets, and the verifier's masked
     /// stage outputs replayed from its argument string.
     struct CheatingProver {
-        masked: MaskedStages<Fr, Bn254G1>,
+        masked: MaskedStages<'static, Fr, Bn254G1>,
         secrets: ZkSecrets<Fr>,
         /// The honest masked auxiliary block and its relation: a shift that
         /// leaves the block unchanged leaves the relation unchanged.
@@ -161,19 +161,32 @@ mod zk {
 
     impl CheatingProver {
         fn new() -> Self {
-            let proved = prove_muldiv(JoltBackend::optimized());
+            // The masked stages borrow the proof's tape for the rest of the test.
+            let proved: &'static ProvedGuest =
+                Box::leak(Box::new(prove_muldiv(JoltBackend::optimized())));
             let secrets = zk_secrets::take::<Fr>().expect("a ZK prove records its secrets");
-            let mut transcript = VerifierTranscript::<JoltSponge>::new(
-                &jolt_protocol_id::<JoltSponge>(),
-                JOLT_SESSION,
-                &proved.proof.narg,
-            );
+            let (checked, mut transcript) = validate_and_seed_transcript(
+                &proved.preprocessing.verifier,
+                &proved.public_io,
+                &proved.proof,
+                proved.trusted_advice_commitment.as_ref(),
+                |statement| {
+                    VerifierState::<Keccak>::init(&JOLT_SESSION, statement, &proved.proof.narg)
+                },
+            )
+            .expect("seed the honest proof");
+            let JoltProofClaims::Zk { zk_proof, .. } = &proved.proof.claims else {
+                panic!("a ZK proof carries a masked payload");
+            };
             let VerifiedStages::Zk(masked) =
-                verify_stages::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+                verify_stages_on::<Fr, DoryScheme, Pedersen<Bn254G1>, _, _>(
                     &proved.preprocessing.verifier,
-                    &proved.public_io,
+                    &proved.proof,
                     proved.trusted_advice_commitment.as_ref(),
+                    &checked,
                     &mut transcript,
+                    Some(zk_proof.pad_commitment.clone()),
+                    None,
                 )
                 .expect("stage spine accepts the honest proof")
             else {
@@ -194,12 +207,12 @@ mod zk {
         /// The auxiliary block a prover holding `pads` sends: the masked
         /// messages already sent decode against `pads`, and the products are
         /// recomputed from those decoded values to fit.
-        fn masked_auxiliary(masked: &MaskedStages<Fr, Bn254G1>, pads: &[Fr]) -> Vec<Fr> {
+        fn masked_auxiliary(masked: &MaskedStages<'_, Fr, Bn254G1>, pads: &[Fr]) -> Vec<Fr> {
             let auxiliary = masked
                 .residual
                 .auxiliary_values(|operand| Ok(operand.masked - pads[operand.pad.0]))
                 .expect("auxiliary values");
-            let start = masked.pads.layout().auxiliary.start;
+            let start = masked.session.pads.layout().auxiliary.start;
             auxiliary
                 .iter()
                 .zip(&pads[start..])
@@ -251,7 +264,7 @@ mod zk {
         with_zk_stack(|| {
             let cheater = CheatingProver::new();
             let delta = Fr::from_u64(7);
-            let base = cheater.masked.pads.layout().auxiliary.start;
+            let base = cheater.masked.session.pads.layout().auxiliary.start;
             let undetected: Vec<usize> = (0..base)
                 .filter(|&slot| {
                     cheater
@@ -312,10 +325,10 @@ mod zk {
     fn zk_muldiv_tampered_blindfold_is_rejected() {
         with_zk_stack(|| {
             let mut proved = prove_muldiv(JoltBackend::reference());
-            let JoltProofClaims::Zk { blindfold_proof } = &mut proved.proof.claims else {
+            let JoltProofClaims::Zk { zk_proof, .. } = &mut proved.proof.claims else {
                 panic!("ZK proof must carry BlindFold claims");
             };
-            blindfold_proof.random_u += Fr::from_u64(1);
+            zk_proof.blindfold.folding.random_u += Fr::from_u64(1);
             assert!(verify(&proved).is_err());
         });
     }

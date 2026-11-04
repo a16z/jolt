@@ -34,7 +34,7 @@ where
     let booleanity_dimensions = BooleanityDimensions::new(
         formula_dimensions.ra_layout,
         log_t,
-        input.checked.one_hot_config.committed_chunk_bits(),
+        input.one_hot_config.committed_chunk_bits(),
     );
     let booleanity_claims = BooleanityCyclePhase::new(booleanity_dimensions);
     let ram_hamming_claims = HammingBooleanity::new(trace_dimensions);

@@ -5,7 +5,7 @@ use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, 
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
@@ -39,13 +39,13 @@ use crate::{
     reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
 #[jolt_verifier_derive::fs_scope(Stage6a)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage1: &Stage1Output<PCS::Field>,
     stage2: &Stage2Output<PCS::Field>,
     stage3: &Stage3Output<PCS::Field>,
@@ -98,7 +98,7 @@ where
     if checked.zk.is_masked() {
         let batch = address_sumchecks.verify_masked(
             &address_input_points,
-            &mut masked_channel(pads, transcript)?,
+            &mut masked_channel(masked, transcript)?,
         )?;
         return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
             #[cfg(all(feature = "akita", feature = "zk"))]
@@ -194,10 +194,10 @@ mod tests {
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
     use crate::stages::relations::draw_recording::{record, recorder, squeeze};
+    use jolt_algebra::{Fr, Ring};
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
-    use jolt_algebra::{Fr, Ring};
     use jolt_transcript::{prover_transcript, Keccak, ScriptedTranscript, Transcript};
 
     fn fr(value: u64) -> Fr {
@@ -328,7 +328,7 @@ mod tests {
             want.append(&value);
         }
 
-        assert_eq!(got.absorbed(), want.absorbed());
+        assert_eq!(got.absorbed().concat(), want.absorbed().concat());
     }
 
     /// The `stage_gamma_powers` expansion of a drawn scalar must equal

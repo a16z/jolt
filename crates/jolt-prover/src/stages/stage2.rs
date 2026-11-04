@@ -175,7 +175,6 @@ where
         mode.recorder(),
         transcript,
     )?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     let claims = Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());

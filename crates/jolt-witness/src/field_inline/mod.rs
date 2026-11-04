@@ -704,8 +704,8 @@ fn invalid_row(index: usize, reason: &'static str) -> WitnessError {
 #[expect(clippy::unwrap_used)]
 mod tests {
     use common::constants::RAM_START_ADDRESS;
-    use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_algebra::{Fr, Ring, Zero};
+    use jolt_claims::protocols::jolt::JoltOneHotConfig;
     use jolt_program::{
         execution::{JoltProgram, TraceOutput},
         preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing},

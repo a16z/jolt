@@ -12,18 +12,18 @@
 #[cfg(not(feature = "zk"))]
 use core::marker::PhantomData;
 
-#[cfg(feature = "zk")]
-use jolt_algebra::CanonicalEncoding;
 use jolt_algebra::JoltField;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
-#[cfg(feature = "zk")]
-use jolt_sumcheck::{prove_uniskip, ProvedUniskip};
 #[cfg(not(feature = "zk"))]
 use jolt_sumcheck::prove_uniskip_clear;
+#[cfg(feature = "zk")]
+use jolt_sumcheck::{ClearProof, ClearSumcheckProof};
+use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
+#[cfg(feature = "zk")]
+use jolt_transcript::PadSlots;
 #[cfg(not(feature = "zk"))]
 use jolt_transcript::PrivateChannel;
 use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
@@ -31,7 +31,7 @@ use jolt_verifier::stages::relations::ClaimRoutes;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_zk::blindfold::BlindFoldPadOpening;
 #[cfg(feature = "zk")]
-use jolt_zk::masking::{CommittedPads, MaskingRecorder};
+use jolt_zk::masking::{prove_uniskip_masked, CommittedPads, MaskedMessages, MaskingRecorder};
 #[cfg(all(feature = "zk", feature = "akita"))]
 use jolt_zk::whiteout::WhiteoutPadOpening;
 
@@ -49,8 +49,6 @@ type ModePadOpening<VC> = WhiteoutPadOpening<<VC as VectorCommitment>::Field>;
 #[cfg(feature = "zk")]
 pub type ModePads<VC> = CommittedPads<<VC as VectorCommitment>::Field, ModePadOpening<VC>>;
 
-use crate::ProverError;
-
 /// The compiled mode's batch recorder: compressed clear proofs or committed
 /// proofs with retained witnesses for BlindFold.
 #[cfg(feature = "zk")]
@@ -61,11 +59,17 @@ pub type ModeRecorder<'a, VC> = ClearSumcheckRecorder<<VC as VectorCommitment>::
 
 /// Which output-claim routes a recorder sends after a batch's rounds.
 pub trait ClaimRecorder {
+    /// Whether the recorder masks: a masked proof sends its output claims on
+    /// its wire routes instead of the clear curated absorb order.
+    const MASKED: bool;
+
     /// The routes a proof in this recorder's mode sends on.
     fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes;
 }
 
-impl<F> ClaimRecorder for ClearSumcheckRecorder<F> {
+impl<F: jolt_algebra::Field> ClaimRecorder for ClearSumcheckRecorder<F> {
+    const MASKED: bool = false;
+
     fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {
         routes
     }
@@ -75,6 +79,8 @@ impl<F> ClaimRecorder for ClearSumcheckRecorder<F> {
 /// before the challenges that decide the alias ([`ClaimRoutes::masked`]).
 #[cfg(feature = "zk")]
 impl<F, O> ClaimRecorder for MaskingRecorder<'_, F, O> {
+    const MASKED: bool = true;
+
     fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {
         routes.masked().0
     }
@@ -90,10 +96,12 @@ pub struct ProvedUniskipMode<F: JoltField, C> {
 
 /// The per-proof mode context. Clear builds carry nothing; ZK builds carry
 /// the pads committed before the first challenge, which every recorder and
-/// private send masks with.
+/// private send masks with, and the proof's masked tape they write.
 pub struct ProofMode<VC: VectorCommitment> {
     #[cfg(feature = "zk")]
     pads: ModePads<VC>,
+    #[cfg(feature = "zk")]
+    tape: MaskedMessages<VC::Field>,
     #[cfg(not(feature = "zk"))]
     _vc: PhantomData<VC>,
 }
@@ -106,18 +114,24 @@ impl<VC: VectorCommitment> ProofMode<VC> {
 }
 
 #[cfg(feature = "zk")]
-impl<VC: VectorCommitment> ProofMode<VC>
-where
-    VC::Field: CanonicalEncoding,
-{
-    /// The masked mode over `pads`.
+impl<VC: VectorCommitment> ProofMode<VC> {
+    /// The masked mode over `pads`, with an empty masked tape.
     pub fn masked(pads: ModePads<VC>) -> Self {
-        Self { pads }
+        Self {
+            pads,
+            tape: MaskedMessages::default(),
+        }
     }
 
-    /// The pads, for the residual proof once every masked message is sent.
-    pub fn into_pads(self) -> ModePads<VC> {
-        self.pads
+    /// The pads, for the residual proof once every masked message is sent,
+    /// and the masked tape the proof carries.
+    pub fn into_parts(self) -> (ModePads<VC>, MaskedMessages<VC::Field>) {
+        (self.pads, self.tape)
+    }
+
+    /// The masked tape so far.
+    pub fn tape(&self) -> &MaskedMessages<VC::Field> {
+        &self.tape
     }
 }
 
@@ -126,7 +140,7 @@ impl<VC: VectorCommitment> ProofMode<VC> {
     pub fn recorder(&mut self) -> ModeRecorder<'_, VC> {
         #[cfg(feature = "zk")]
         {
-            MaskingRecorder::new(&mut self.pads)
+            MaskingRecorder::new(&mut self.pads, &mut self.tape)
         }
         #[cfg(not(feature = "zk"))]
         {
@@ -146,7 +160,7 @@ impl<VC: VectorCommitment> ProofMode<VC> {
     {
         #[cfg(feature = "zk")]
         {
-            let _ = self.pads.send(values, transcript)?;
+            let _: PadSlots = self.pads.send(values, &mut self.tape, transcript)?;
         }
         #[cfg(not(feature = "zk"))]
         {
@@ -176,15 +190,20 @@ impl<VC: VectorCommitment> ProofMode<VC> {
         #[cfg(feature = "zk")]
         {
             let _span = tracing::info_span!("prove_uniskip_masked").entered();
-            let (proved, ()): (ProvedUniskip<VC::Field>, ()) = prove_uniskip(
-                round_poly,
+            let proved = prove_uniskip_masked(
+                &mut self.pads,
+                &mut self.tape,
+                &round_poly,
                 input_claim,
                 degree,
                 domain_size,
-                MaskingRecorder::new(&mut self.pads),
                 transcript,
             )?;
-            Ok(proved)
+            Ok(ProvedUniskipMode {
+                proof: SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default())),
+                challenge: proved.challenge,
+                output_claim: proved.output_claim,
+            })
         }
         #[cfg(not(feature = "zk"))]
         {

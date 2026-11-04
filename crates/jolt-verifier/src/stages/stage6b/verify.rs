@@ -7,8 +7,8 @@ use jolt_claims::protocols::jolt::{
 use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::FieldTranscript;
-use jolt_zk::masking::CommittedPadsView;
+use jolt_transcript::{FieldTranscript, PrivateChannel};
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{
@@ -70,13 +70,13 @@ use crate::{
     reason = "Stage 6b consumes the stage-6a output plus all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
 #[jolt_verifier_derive::fs_scope(Stage6b)]
-pub fn verify<PCS, VC, T, ZkProof, P>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    pads: Option<&mut CommittedPadsView<P>>,
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
     stage1: &Stage1Output<PCS::Field>,
     stage2: &Stage2Output<PCS::Field>,
     stage3: &Stage3Output<PCS::Field>,
@@ -122,7 +122,7 @@ where
 
     if checked.zk.is_masked() {
         let batch =
-            sumchecks.verify_masked(&input_points, &mut masked_channel(pads, transcript)?)?;
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
             #[cfg(all(feature = "akita", feature = "zk"))]
@@ -518,9 +518,11 @@ fn append_opening_claims<F, T>(
 {
     // Single-sourced with the prover-curation order: both fronts absorb the
     // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
-    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
-        transcript.append(&value);
-    }
+    transcript.append_private(&stage6b_opening_values(
+        claims,
+        bytecode_read_raf_points,
+        booleanity_point,
+    ));
 }
 
 #[cfg(test)]
@@ -777,7 +779,7 @@ mod tests {
             want.append(&value);
         }
 
-        assert_eq!(got.absorbed(), want.absorbed());
+        assert_eq!(got.absorbed().concat(), want.absorbed().concat());
     }
 
     #[test]

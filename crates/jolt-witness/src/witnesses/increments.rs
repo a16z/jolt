@@ -1,5 +1,4 @@
 use jolt_algebra::Field;
-use jolt_claims::lattice::{balanced_carry_row, balanced_digit_row};
 use jolt_riscv::CircuitFlags;
 use jolt_riscv::JoltTraceRow as TraceRow;
 

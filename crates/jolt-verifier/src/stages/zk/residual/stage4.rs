@@ -20,7 +20,6 @@ where
     let log_k = crate::num::ilog2(input.checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
     let register_dimensions = input
-        .checked
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
     // Eager: the proof-supplied phase split feeds round-count subtractions

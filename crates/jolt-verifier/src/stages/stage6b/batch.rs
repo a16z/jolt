@@ -148,10 +148,10 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         clippy::too_many_arguments,
         reason = "Stage 6b's batch is built from the stage-6a output plus all five prior stage outputs directly; bundling them would reintroduce the removed `Stage6bParams` pack/unpack indirection."
     )]
-    pub(super) fn build<PCS, VC, ZkProof>(
+    pub(super) fn build<PCS, VC, ZkProof, O>(
         checked: &CheckedInputs,
         preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-        proof: &JoltProof<PCS, VC, ZkProof>,
+        proof: &JoltProof<PCS, VC, ZkProof, O>,
         formula_dimensions: &JoltFormulaDimensions,
         stage1: &Stage1Output<F>,
         stage2: &Stage2Output<F>,

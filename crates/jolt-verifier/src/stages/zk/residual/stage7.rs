@@ -14,7 +14,7 @@ where
     let formula_dimensions = formula_dimensions(input)?;
     let hamming_dimensions = hamming_weight::HammingWeightClaimReductionDimensions::new(
         formula_dimensions.ra_layout,
-        input.checked.one_hot_config.committed_chunk_bits(),
+        input.one_hot_config.committed_chunk_bits(),
     );
     let hamming_claims =
         relations::claim_reductions::hamming_weight::ClaimReduction::new(hamming_dimensions);

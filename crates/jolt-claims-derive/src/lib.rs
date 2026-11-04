@@ -506,6 +506,9 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
     let mut value_chains = Vec::new();
     let mut resolve_arms = Vec::new();
     let mut construct_fields = Vec::new();
+    // Field initializers for `MapCells`, in declaration order (struct literal
+    // fields evaluate in written order, so cells are visited canonically).
+    let mut map_fields = Vec::new();
 
     for plan in &plans {
         let FieldPlan {
@@ -518,6 +521,14 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         if *is_many {
             let id = id_expr(&namespace, kind, relation, Some(quote!(index)));
             order_chains.push(quote!(.chain(self.#ident.iter().enumerate().map(|(index, _)| #id))));
+            map_fields.push(quote! {
+                #ident: self
+                    .#ident
+                    .iter()
+                    .enumerate()
+                    .map(|(index, __cell)| f(&#id, __cell))
+                    .collect::<::core::result::Result<::std::vec::Vec<_>, __E>>()?,
+            });
             value_chains.push(quote!(.chain(self.#ident.iter().copied())));
             resolve_arms.push(quote! {
                 if let #id = *id {
@@ -540,6 +551,9 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         } else if *is_option {
             let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(self.#ident.as_ref().map(|_| #id))));
+            map_fields.push(quote! {
+                #ident: self.#ident.as_ref().map(|__cell| f(&#id, __cell)).transpose()?,
+            });
             value_chains.push(quote!(.chain(self.#ident.iter().copied())));
             resolve_arms.push(quote! {
                 if let ::core::option::Option::Some(__value) = &self.#ident {
@@ -552,6 +566,9 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
         } else {
             let id = id_expr(&namespace, kind, relation, None);
             order_chains.push(quote!(.chain(::core::iter::once(#id))));
+            map_fields.push(quote! {
+                #ident: f(&#id, &self.#ident)?,
+            });
             value_chains.push(quote!(.chain(::core::iter::once(self.#ident))));
             resolve_arms.push(quote! {
                 if *id == (#id) {
@@ -631,6 +648,21 @@ fn expand_output(input: DeriveInput) -> Result<TokenStream2> {
             ) -> ::core::result::Result<Self, ::jolt_claims::MissingOpeningValue<#id_ty>> {
                 ::core::result::Result::Ok(Self {
                     #(#construct_fields)*
+                })
+            }
+        }
+
+        // The structural cell map, over any pair of cell types: the struct's
+        // own declaration fixes the visit order and the mapped shape.
+        impl<__A, __B> ::jolt_claims::MapCells<__A, __B, #id_ty> for #name<__A> {
+            type Mapped = #name<__B>;
+
+            fn try_map_cells<__E>(
+                &self,
+                f: &mut impl ::core::ops::FnMut(&#id_ty, &__A) -> ::core::result::Result<__B, __E>,
+            ) -> ::core::result::Result<#name<__B>, __E> {
+                ::core::result::Result::Ok(#name {
+                    #(#map_fields)*
                 })
             }
         }

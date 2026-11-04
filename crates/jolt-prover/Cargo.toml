@@ -65,6 +65,7 @@ zk = [
   "jolt-verifier/zk",
   "jolt-kernels/zk",
   "dep:jolt-zk",
+  "jolt-zk/prover",
   "dep:rand_core",
   "jolt-akita?/zk-prover",
 ]

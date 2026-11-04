@@ -1,15 +1,17 @@
 use jolt_algebra::JoltField;
 use jolt_sumcheck::BatchedMaskedRounds;
-use jolt_transcript::FieldTranscript;
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
-use crate::stages::relations::{MaskedClaims, OutputClaims, SumcheckBatch};
+use crate::stages::relations::{ClaimRoutes, MaskedClaims, OutputClaims, SumcheckBatch};
 use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
 pub use super::field_registers_read_write_checking::{
     FieldRegistersReadWriteChecking, FieldRegistersReadWriteOutputClaims,
 };
-use super::ram_val_check::{RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims};
+use super::ram_val_check::{
+    RamValCheck, RamValCheckInitialEvaluation, RamValCheckOutputClaims, RamValCheckStagedOpenings,
+};
 use super::registers_read_write_checking::{
     RegistersReadWriteChecking, RegistersReadWriteOutputClaims,
 };
@@ -37,7 +39,7 @@ use super::registers_read_write_checking::{
 /// (see its `wire_output_openings` override), so the generated output-shape
 /// count/validator cover their presence and count.
 #[derive(SumcheckBatch)]
-#[sumcheck_batch(no_opening_values, crate = "crate")]
+#[sumcheck_batch(no_opening_values, routes, crate = "crate")]
 pub struct Stage4Sumchecks<F: JoltField> {
     pub registers_read_write: RegistersReadWriteChecking<F>,
     /// The field-inline Twist read/write instance over `T * 2^log_k`. Declaration position
@@ -106,13 +108,24 @@ impl<F: JoltField> Stage4OutputClaims<F> {
     /// Append every produced opening to the transcript in canonical order,
     /// matching the prover's commitment order.
     pub fn append_to_transcript<T: FieldTranscript<F>>(&self, transcript: &mut T) {
-        for value in self.opening_values() {
-            transcript.append(&value);
-        }
+        transcript.append_private(&self.opening_values());
     }
 }
 
 impl<F: JoltField> Stage4OutputPoints<F> {
+    /// The stage-4 claim routes: every staged advice / program-image cell is
+    /// [`ClaimRoute::Staged`](crate::stages::relations::ClaimRoute::Staged). A
+    /// masked proof sends those cells before the batch, so its post-round
+    /// claims are only the register and RAM value-check openings.
+    pub fn claim_routes(&self) -> Result<ClaimRoutes, VerifierError> {
+        Ok(RamValCheckStagedOpenings {
+            untrusted_advice: Some(Vec::<F>::new()),
+            trusted_advice: Some(Vec::new()),
+            program_image: Some(Vec::new()),
+        }
+        .claim_routes())
+    }
+
     /// The register read-write opening point (shared by all five register
     /// openings).
     pub fn registers_read_write_point(&self) -> &[F] {
@@ -198,6 +211,7 @@ impl<F: JoltField> Stage4Output<F> {
 mod tests {
     use super::*;
     use crate::stages::relations::draw_recording::{record, squeeze, TranscriptEvent};
+    use jolt_algebra::{Fr, Ring};
     #[cfg(feature = "field-inline")]
     use jolt_claims::protocols::field_inline::FieldInlineConfig;
     use jolt_claims::protocols::jolt::geometry::dimensions::{
@@ -206,7 +220,6 @@ mod tests {
     use jolt_claims::protocols::jolt::geometry::ram::RamValCheckInit;
     use jolt_claims::protocols::jolt::relations::ram::RamValCheckOutputClaims;
     use jolt_claims::protocols::jolt::relations::registers::RegistersReadWriteOutputClaims;
-    use jolt_algebra::{Fr, Ring};
     use jolt_transcript::FieldTranscript;
 
     fn fr(value: u64) -> Fr {

@@ -85,7 +85,6 @@ where
         mode.recorder(),
         transcript,
     )?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage3ProverOutput {
