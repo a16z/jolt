@@ -21,7 +21,7 @@ impl BooleanityChunks {
         debug_assert!(width == 1 || width == 2);
         let instruction = columns.min(self.instruction_chunks);
         if instruction != 0 {
-            let radix = radix - 1;
+            let radix = 1usize << chunk_bits;
             let states = radix.pow(width as u32);
             let skip = (self.instruction_chunks - instruction) * chunk_bits;
             let mask = (1u128 << chunk_bits) - 1;
