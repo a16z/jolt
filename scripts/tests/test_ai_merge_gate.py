@@ -402,8 +402,9 @@ class AiMergeGateTests(unittest.TestCase):
                         base = {f"crates/{crate}/src/part{i}.rs": "old();\n" * lines for i in range(file_count)}
                         head = {path: "new();\n" * lines for path in base}
                         apis = evaluate(changed_contents(base, head, verdict=verdict, risk=3))
-                        self.assertIn(f"risk-{expected}", apis.labels)
-                        self.assertEqual(apis.approved(), [HEAD] if expected == 3 else [])
+                        wanted = 4 if crate == "jolt-akita" else expected
+                        self.assertIn(f"risk-{wanted}", apis.labels)
+                        self.assertEqual(apis.approved(), [HEAD] if wanted == 3 else [])
         prover, field = "crates/jolt-prover/src/big.rs", "crates/jolt-field/src/lib.rs"
         apis = evaluate(changed_contents({prover: "old();\n" * 200, field: "// old\nfn helper() {}\n"},
                                          {prover: "new();\n" * 200, field: "// new\nfn helper() {}\n"},
@@ -548,7 +549,7 @@ class AiMergeGateTests(unittest.TestCase):
             ({"crates/jolt-verifier/src/config.rs": 1}, 4),
             ({"README.md": 1, "crates/jolt-prover/src/stages/stage3.rs": 2}, 2),
             ({"crates/jolt-akita/src/native_batching.rs": 4}, 4),
-            ({"crates/jolt-akita/src/adapters.rs": 3}, 3),
+            ({"crates/jolt-akita/src/adapters.rs": 3}, 4),
             ({"new/shared.rs": 3}, 3),
         ]:
             with self.subTest(levels=levels):

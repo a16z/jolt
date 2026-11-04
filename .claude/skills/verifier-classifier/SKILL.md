@@ -73,7 +73,7 @@ proof is not itself a format change; explain why the protocol-facing contract st
 
 Changes to those acceptance surfaces are **risk-4**, even in prover code or when intended to be
 equivalent. Untraced reachability is **risk-4/UNCERTAIN**, except the existing bounded shared-code
-risk-3 rule for localized indirect helpers; that exception never downgrades direct verifier,
+risk-3 rule for localized indirect helpers outside the risk-4 path hints; that exception never downgrades direct verifier,
 protocol, transcript or wire-format edits. A spent read budget proves no exclusion.
 
 - **risk-1:** tests, scripts, CI or documentation only. A cfg(test)-exclusive or comment-only
@@ -82,11 +82,11 @@ protocol, transcript or wire-format edits. A spent read budget proves no exclusi
   The gate independently checks this exception
   on level-3/4 paths; a level-1 answer cannot waive a runtime-code default.
 - **risk-2:** prover or other non-verifier code, or dependency-only bumps outside the verifier
-  dependency closure. Traced prover-only behavior is risk-2 in **any** path, regardless of the
-  policy's path default or the number of changed lines. This is a per-path finding: another
-  file making the overall verdict AFFECTS does not raise this file's level.
+  dependency closure. Applies in any path and at any size; another file's AFFECTS verdict does
+  not raise this path's level.
 - **risk-3:** dependency-only bumps in the verifier dependency closure, or shared-code changes
-  under the minimality rule. For AFFECTS or UNCERTAIN at effective risk-3, the gate allows at
+  outside the risk-4 path hints under the minimality rule. On risk-4-hint paths, model level 3
+  becomes 4; traced prover-only level 2 still stays 2. For AFFECTS or UNCERTAIN at effective risk-3, the gate allows at
   most `risk-3.max_changed_lines` added plus removed non-test, non-comment, non-blank lines across
   all paths whose effective level is 3, including lower-default paths raised by your rating,
   excluding lockfile lines and deterministic dependency-only files. Non-Rust
@@ -105,10 +105,8 @@ edges over-approximates the runtime closure. Trusted instructions list the paths
 this way. Do not escalate their levels or the overall verdict because their new code is opaque;
 judge the remaining changes independently. A bump-only pull request uses no classifier call.
 
-The path lists are hints for semantic analysis, not production risk floors. Per-path levels 2–4
-come from the changed behavior, not the highest matching glob; traced prover-only code is level 2.
-The gate trusts the required reachability evidence, rather than implementing another call-graph
-analysis. A level-1 result declares no production or build-input change, but cannot override
+Reachability is a model judgment, not a second gate call-graph analysis.
+A level-1 result declares no production or build-input change, but cannot override
 level-3/4 runtime-code defaults without the scanner's test/comment exception. Deterministic
 dependency-bump levels still take precedence over model ratings. Unknown paths require semantic
 classification, not a low default. The PR takes the highest effective level across all paths; when any hunk remains

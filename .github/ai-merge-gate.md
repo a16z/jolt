@@ -69,11 +69,12 @@ through callers in both revisions, including shared helpers, trait implementatio
 code and feature gates, and cite why no changed behavior reaches verifier logic, verifier
 preprocessing, proof (de)serialization or format, transcript/Fiat–Shamir operations, sumcheck
 order/expressions or PCS/commitment parameters. The policy's path lists are hints, not production
-risk floors: per-path levels 2–4 come from semantic analysis. Traced prover-only code is level 2, even when
+risk floors for traced prover-only code. Traced prover-only code is level 2, even when
 another file makes the overall verdict `AFFECTS`; its size does not raise it to risk-3 or risk-4.
 The gate trusts the classifier's reachability evidence, not a second deterministic call-graph
 analysis. Direct changes to the acceptance surfaces above stay risk-4, including in prover code.
-Unresolved reachability is risk-4 unless the bounded shared-code exception below applies; that
+Unresolved reachability is risk-4 unless the bounded shared-code exception below applies outside
+the risk-4 path hints. On risk-4-hint paths, model level 3 becomes 4; level 2 stays 2. That
 exception does not apply to direct verifier, transcript, protocol or wire-format edits.
 
 A level-1 answer still cannot waive level-3/4 runtime-code defaults, subject to the accepted
@@ -88,8 +89,9 @@ attributes alone do not qualify for this exception. Inline comment edits on line
 code are conservatively counted as code changes.
 
 For paths at effective risk-3, `AFFECTS` or `UNCERTAIN` can stay risk-3 only if the change is minimal.
-The effective level is the classifier's rating, except for deterministic dependency bumps and
-the scanner guard on level-1 answers above. This count includes paths outside the risk-3 hints
+The effective level is the classifier's rating, except for deterministic dependency bumps,
+the scanner guard on level-1 answers and level 3 becoming 4 on risk-4-hint paths.
+The bounded shared-code exception applies only outside the risk-4 hints. This count includes paths outside the risk-3 hints
 that the classifier rates 3. Pika's
 chosen threshold is at most **20 added plus removed non-test, non-comment, non-blank lines**
 across all effective level-3 paths, configured by `risk-3.max_changed_lines` in the risk JSON. For example,
@@ -669,9 +671,10 @@ if retiring them. Keep the separate Pika App and local review skill.
 - Crafted `#[cfg(test)]` attributes inside multiline generic lists can make the source scanner
   misread the rest of a runtime function as test code. The scanner is not a Rust parser.
 - Submodule gitlinks on floor paths count zero code lines. None exist on those paths today.
-- Out-of-line test edits in `crates/jolt-akita/src/verifier_resources/tests.rs` and
-  `crates/jolt-akita/src/trace_onehot/tests.rs` still receive risk-4; the test-only exception
-  does not meet the intended behavior for these files.
+- The syntactic risk-1 exception does not resolve out-of-line test modules, including
+  `crates/jolt-akita/src/verifier_resources/tests.rs` and
+  `crates/jolt-akita/src/trace_onehot/tests.rs`. A level-1 answer for these files can be raised to
+  risk-4; a semantically established prover-only level 2 is honored.
 - The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
   Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.
 - Event delivery delays withdrawal. The gate cannot withdraw its approval after a dismissed

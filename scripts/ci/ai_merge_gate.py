@@ -760,6 +760,8 @@ class Gate:
                 raise GateError("the classifier returned invalid or duplicate per-path risk evidence")
             path, level = item["path"], item["level"]
             floor = paths[path]
+            if level == 3 and floor == 4:
+                level = 4
             if path in code and code[path] == 0:
                 floor = 1
             risks[path] = bumps.get(path, max(level, floor) if level == 1 and floor >= 3 else level)
