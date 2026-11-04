@@ -200,11 +200,9 @@ pub trait Field: Ring {
             .zip(b)
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
     }
-    #[cfg(feature = "terminal-contraction")]
     crate::terminal_contraction::field_methods!();
     #[cfg(feature = "signed-byte-sum")]
     crate::signed_byte_sum::field_methods!();
-    #[cfg(feature = "fill-ingress")]
     crate::algebra::fill_ingress_field_method!();
     #[cfg(feature = "setup-weight-tiles")]
     crate::setup_weight_tiles::field_methods!();
@@ -675,7 +673,6 @@ impl<
 {
 }
 
-#[cfg(feature = "terminal-contraction")]
 pub(crate) fn signed_i16_dot_fold<F: Field>(
     weights: &[F],
     coefficients: impl IntoIterator<Item = i16>,
@@ -688,13 +685,11 @@ pub(crate) fn signed_i16_dot_fold<F: Field>(
         })
 }
 
-// `fill-ingress` (default off): `Field::scale_slice_into`, the
+// `Field::scale_slice_into` computes the
 // slice product `dst[i] = src[i] * scale` over the shorter of the two slices.
 // The default multiplies in software; a field with a field-inline guest path
 // overrides it to load the scale once per call. The trait gains the method
-// from this macro, invoked inside the trait next to the terminal-contraction
-// methods.
-#[cfg(feature = "fill-ingress")]
+// from this macro, invoked inside the trait.
 macro_rules! fill_ingress_field_method {
     () => {
         /// `dst[i] = src[i] * scale` over the shorter of the two slices.
@@ -706,5 +701,4 @@ macro_rules! fill_ingress_field_method {
         }
     };
 }
-#[cfg(feature = "fill-ingress")]
 pub(crate) use fill_ingress_field_method;

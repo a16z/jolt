@@ -1,4 +1,3 @@
-// Keep the head's existing source locations unchanged when the feature is off.
 macro_rules! field_methods {
     () => {
         /// A weighted sum of row dot products, with checked rectangular shape.
