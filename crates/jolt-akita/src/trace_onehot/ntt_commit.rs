@@ -1,9 +1,8 @@
 use std::ops::Range;
 
 use akita_algebra::ntt::butterfly::inverse_ntt;
-use akita_algebra::ntt::prime::MontCoeff;
 use akita_algebra::tables::q128_primes;
-use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut};
+use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, MontCoeff};
 use akita_error::AkitaError;
 use akita_pcs::custom_source::CommitInnerPlan;
 use jolt_field::Fp128x8i32;
@@ -308,8 +307,10 @@ impl<const D: usize> NttCommitScratch<D> {
                     .iter_mut()
                     .zip(&accumulator.limbs[0])
                 {
-                    // Multiplication by raw 1 removes Montgomery scaling. Its signed
-                    // result is already in [-(p-1)/2, (p-1)/2].
+                    // Multiplication by raw 1 removes Montgomery scaling. Akita's signed
+                    // reduction returns z = (a - t*p) / 2^32 with a, t signed 32-bit words;
+                    // `NttPrime::new` asserts p < 2^30, so |a - t*p| < 2^62 fits in i64 and
+                    // |z| < (p+1)/2: z is already the centered residue in [-(p-1)/2, (p-1)/2].
                     digits.0[limb] += prime.mul(value, MontCoeff::from_raw(1)).raw();
                 }
                 *accumulator = NttRing::zero();
