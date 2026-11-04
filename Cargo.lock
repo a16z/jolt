@@ -3493,6 +3493,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-dit"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "jolt-dory"
 version = "0.1.0"
 dependencies = [
