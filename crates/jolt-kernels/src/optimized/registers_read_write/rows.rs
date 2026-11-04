@@ -91,6 +91,9 @@ impl SharedRdIndices {
 
 const COLLECT_CHUNK: usize = 1 << 16;
 
+// RegisterCycleRow::from_row rejects register indices at or above this sentinel.
+pub(super) const ABSENT_REGISTER: u8 = 1 << REGISTER_ADDRESS_BITS;
+
 /// Signed rd write delta, or zero without an rd operand.
 #[inline]
 pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
@@ -102,8 +105,8 @@ pub(super) fn raw_rd_inc(cycle: &RegisterCycleRow) -> i128 {
 
 pub(super) struct CollectRegisterEntries {
     pub(super) entries: Vec<SeedEntry>,
-    pub(super) rs1_indices: Vec<Option<u8>>,
-    pub(super) rs2_indices: Vec<Option<u8>>,
+    pub(super) rs1_indices: Vec<u8>,
+    pub(super) rs2_indices: Vec<u8>,
     pub(super) rd_indices: Vec<Option<u8>>,
     pub(super) rd_inc: Vec<i128>,
 }
@@ -116,8 +119,10 @@ impl StreamConsumer for CollectRegisterEntries {
             let row = self.rs1_indices.len() as u32;
             let (cells, len) = cycle.entries(row);
             self.entries.extend_from_slice(&cells[..len]);
-            self.rs1_indices.push(cycle.rs1.map(|(k, _)| k));
-            self.rs2_indices.push(cycle.rs2.map(|(k, _)| k));
+            self.rs1_indices
+                .push(cycle.rs1.map_or(ABSENT_REGISTER, |(k, _)| k));
+            self.rs2_indices
+                .push(cycle.rs2.map_or(ABSENT_REGISTER, |(k, _)| k));
             self.rd_indices.push(cycle.rd.map(|(k, ..)| k));
             self.rd_inc.push(raw_rd_inc(cycle));
         }
@@ -171,8 +176,8 @@ impl CollectRegisterEntries {
     ) -> Result<Self, KernelError<F>> {
         use core::mem::MaybeUninit;
         const CHUNK: usize = 1 << 14;
-        let mut rs1_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
-        let mut rs2_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
+        let mut rs1_indices: Vec<u8> = Vec::with_capacity(cycles);
+        let mut rs2_indices: Vec<u8> = Vec::with_capacity(cycles);
         let mut rd_indices: Vec<Option<u8>> = Vec::with_capacity(cycles);
         let mut rd_inc: Vec<i128> = Vec::with_capacity(cycles);
         let error = FirstErrorLatch::new();
@@ -193,8 +198,10 @@ impl CollectRegisterEntries {
                     match access.window::<RegisterCycleRow>(base + offset) {
                         Ok(cycle) => {
                             count += cycle.entry_count();
-                            let _ = rs1[offset].write(cycle.rs1.map(|(k, _)| k));
-                            let _ = rs2[offset].write(cycle.rs2.map(|(k, _)| k));
+                            let _ = rs1[offset]
+                                .write(cycle.rs1.map_or(ABSENT_REGISTER, |(k, _)| k));
+                            let _ = rs2[offset]
+                                .write(cycle.rs2.map_or(ABSENT_REGISTER, |(k, _)| k));
                             let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
                             let _ = inc[offset].write(raw_rd_inc(&cycle));
                         }

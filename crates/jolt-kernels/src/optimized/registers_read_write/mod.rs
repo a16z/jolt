@@ -46,7 +46,7 @@ mod tests;
 pub(crate) use rows::{RegisterCycleRow, SharedRdIndices};
 
 use address_first::AddressFirstKernel;
-use rows::CollectRegisterEntries;
+use rows::{CollectRegisterEntries, ABSENT_REGISTER};
 use sparse::{CoeffLut, CycleState};
 
 pub struct OptimizedRegistersReadWrite;
@@ -128,8 +128,8 @@ struct ReadWriteKernel<F: JoltField> {
     cycle: CycleState<F>,
     gruen: GruenSplitEqPolynomial<F>,
     address: RegisterAddressState<F>,
-    rs1_indices: Vec<Option<u8>>,
-    rs2_indices: Vec<Option<u8>>,
+    rs1_indices: Vec<u8>,
+    rs2_indices: Vec<u8>,
     challenges: RoundChallenges<F>,
 }
 
@@ -200,10 +200,12 @@ impl<F: JoltField> ReadWriteKernel<F> {
             }
             let mut sums = [F::Accumulator::default(), F::Accumulator::default()];
             for j in block_start..block_end {
-                if let Some(rs1) = rs1_indices[j] {
+                let rs1 = rs1_indices[j];
+                if rs1 != ABSENT_REGISTER {
                     sums[0].add(e_lo[eq.low_index(j, rs1)]);
                 }
-                if let Some(rs2) = rs2_indices[j] {
+                let rs2 = rs2_indices[j];
+                if rs2 != ABSENT_REGISTER {
                     sums[1].add(e_lo[eq.low_index(j, rs2)]);
                 }
             }
