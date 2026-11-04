@@ -687,37 +687,45 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
             ..
         } = &self.tables
         {
-            if !tables.is_empty()
-                && CategoricalProducts::<F, BooleanityChunks, false>::fits_budget(
-                    *width,
-                    tables[0].len() / width,
-                    source.cycles(),
-                )
-            {
-                let products = CategoricalProducts::<F, _, false>::new(
-                    tables,
-                    *width,
-                    source,
-                    &self.gamma_powers,
-                );
-                return products.lookup(&self.eq, round, previous_claim, prefix_pairs, tail_mass);
-            }
-            // Retain direct indexing whenever the full table fits. The
-            // compact table enables caching without increasing its budget.
-            if !tables.is_empty()
-                && CategoricalProducts::<F, BooleanityChunks, true>::fits_budget(
-                    *width,
-                    tables[0].len() / width,
-                    source.cycles(),
-                )
-            {
-                let products = CategoricalProducts::<F, _, true>::new(
-                    tables,
-                    *width,
-                    source,
-                    &self.gamma_powers,
-                );
-                return products.lookup(&self.eq, round, previous_claim, prefix_pairs, tail_mass);
+            if !tables.is_empty() {
+                let addresses = tables[0].len() / width;
+                let cycles = source.cycles();
+                if CategoricalProducts::<F, BooleanityChunks, false>::fits_budget(
+                    *width, addresses, cycles,
+                ) {
+                    return CategoricalProducts::<F, _, false>::new(
+                        tables,
+                        *width,
+                        source,
+                        &self.gamma_powers,
+                    )
+                    .lookup(
+                        &self.eq,
+                        round,
+                        previous_claim,
+                        prefix_pairs,
+                        tail_mass,
+                    );
+                }
+                // Retain direct indexing whenever the full table fits. The
+                // compact table enables caching without increasing its budget.
+                if CategoricalProducts::<F, BooleanityChunks, true>::fits_budget(
+                    *width, addresses, cycles,
+                ) {
+                    return CategoricalProducts::<F, _, true>::new(
+                        tables,
+                        *width,
+                        source,
+                        &self.gamma_powers,
+                    )
+                    .lookup(
+                        &self.eq,
+                        round,
+                        previous_claim,
+                        prefix_pairs,
+                        tail_mass,
+                    );
+                }
             }
         }
         let tables = &self.tables;
@@ -1409,6 +1417,19 @@ mod tests {
     #[test]
     fn cycle_kernel_matches_reference_with_zero_batching_gamma() {
         cycle_parity_with_gamma(5, 4, false, Fr::from_u64(0));
+    }
+
+    /// Round 0 reaches the categorical cache from `BooleanityChunks`: at
+    /// `log_t = 12` only the triangular table fits `T/16`.
+    #[test]
+    fn cycle_kernel_matches_reference_with_triangular_categories() {
+        cycle_parity(12, 4, false);
+    }
+
+    /// At `log_t = 13` round 0 caches with the full table.
+    #[test]
+    fn cycle_kernel_matches_reference_with_full_categories() {
+        cycle_parity(13, 4, false);
     }
 
     #[test]
