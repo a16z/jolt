@@ -55,7 +55,8 @@ impl OperatorNormRejection {
     };
 
     /// D=128 selective-L2 policy. Its support certificate is
-    /// `scripts/operator_norm/d128/cert_d128_w31_gamma13.json`.
+    /// `scripts/operator_norm/d128/cert_d128_w31_gamma13.json` in
+    /// LayerZero-Labs/akita.
     pub const D128_SELECTIVE_L2: Self = Self {
         threshold: 13,
         fractional_bits: 48,
@@ -86,17 +87,6 @@ impl OperatorNormRejection {
             return Err("unsupported operator-norm rejection policy or challenge family");
         }
         Ok(())
-    }
-
-    /// Canonical transcript-domain bytes for this rejection policy.
-    pub fn domain_separator_bytes(self) -> [u8; 17] {
-        let mut out = [0u8; 17];
-        out[0] = 2;
-        out[1..5].copy_from_slice(&self.threshold.to_le_bytes());
-        out[5..9].copy_from_slice(&self.fractional_bits.to_le_bytes());
-        out[9..13].copy_from_slice(&self.root_coordinate_error_units.to_le_bytes());
-        out[13..17].copy_from_slice(&self.rounding_margin_units.to_le_bytes());
-        out
     }
 }
 
@@ -310,16 +300,6 @@ impl SparseChallengeConfig {
     pub fn validate_for_ring_dim(&self, ring_d: usize) -> Result<(), &'static str> {
         self.validate_dyn(ring_d)?;
         self.validate_min_entropy_for_ring_dim(ring_d, MIN_FOLD_CHALLENGE_ENTROPY_BITS)
-    }
-
-    /// Canonical byte encoding used for transcript domain separation.
-    #[inline]
-    pub fn domain_separator_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(1 + 16);
-        out.push(0);
-        out.extend_from_slice(&(self.count_pm1 as u64).to_le_bytes());
-        out.extend_from_slice(&(self.count_pm2 as u64).to_le_bytes());
-        out
     }
 
     /// Validate basic invariants for a given ring degree `D`.

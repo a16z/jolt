@@ -44,6 +44,9 @@ lattice = [
   "dep:zeroize",
   "jolt-algebra/solinas",
 ]
+# The D64 selective-L2 operator-norm table reads its base tables from
+# generated static data (the same entries) instead of building them.
+ont-static-base = ["lattice"]
 # Whiteout's constant-time Gaussian sampler and joint rejection rule. Prover-only,
 # so separate from `lattice` and kept out of every verifier build.
 sample = ["dep:subtle", "dep:num-bigint", "dep:rand_chacha", "dep:zeroize"]

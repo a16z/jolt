@@ -6,11 +6,15 @@
 //! - [`OperatorNormRejection`]: the optional operator-norm rejection rule.
 //! - [`Challenges`]: sampled folding challenges in claim-major block order.
 //! - [`sample_indexed_challenges_from_seed`]: the indexed signed-sparse
-//!   sampler, one SHAKE256-keyed stream per coordinate. Akita's fold-response
-//!   drawing (`fold_draw.rs`, which stays in Akita) is its consumer.
+//!   sampler, one SHAKE256-keyed stream per coordinate. Whiteout's Σ verifier
+//!   recomputes its attempt challenges with it.
 //! - [`sample_challenge_ct`] (feature `sample`): the same draw for one D = 64
 //!   selective-L2 challenge, constant time in the challenge, for Whiteout's
 //!   prover.
+//! - [`SparseChallengeShell`] and [`SparseChallengeStream`]: one group's
+//!   fixed-length transcript message layout and its decoder. Akita's
+//!   fold-challenge drawing (`fold_draw.rs`, which stays in Akita) squeezes
+//!   the message and is their consumer.
 
 mod challenges;
 mod config;
@@ -29,7 +33,9 @@ pub use config::{
 pub use sampler::sample_challenge_ct;
 #[cfg(feature = "sample-diagnostics")]
 pub use sampler::sample_challenge_ct_counted;
-pub use sampler::sample_indexed_challenges_from_seed;
+pub use sampler::{
+    sample_indexed_challenges_from_seed, SparseChallengeShell, SparseChallengeStream,
+};
 pub use sparse::{
     SparseChallenge, SparseChallengeCoefficients, SparseChallengePositions, INLINE_SPARSE_WEIGHT,
 };

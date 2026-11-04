@@ -10,21 +10,20 @@
 //! type check cheap shape/range errors needed for memory safety, but they do
 //! not re-validate every sampler invariant on the hot path.
 //!
-//! This module depends on `jolt-algebra` and on the lattice module's ring
-//! dimension; it does not pull in the transcript layer or the sampler.
+//! This module deliberately depends only on `jolt-algebra`; it does not pull in
+//! the transcript layer or the sampler.
 
-use crate::lattice::CHALLENGE_RING_DIM;
 use crate::CryptoError;
 
 use jolt_algebra::{ExtField, Field, Ring};
 use smallvec::SmallVec;
 
-use crate::challenge::{D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT};
+use crate::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
+use crate::lattice::CHALLENGE_RING_DIM;
 
-/// Inline capacity chosen for the heaviest family, the D64 selective-L2 shell
-/// `(31, 11)`. The D64 production family `(31, 10)` and every other ring
-/// dimension's family have smaller weight and also fit.
-pub const INLINE_SPARSE_WEIGHT: usize = D64_L2_OP_NORM_PM1_COUNT + D64_L2_OP_NORM_PM2_COUNT;
+/// Inline capacity chosen for the heaviest production family, D64 `(31, 10)`.
+/// Every other production ring dimension has weight at most 31 and also fits.
+pub const INLINE_SPARSE_WEIGHT: usize = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
 
 /// Public storage type for sparse challenge positions.
 pub type SparseChallengePositions = SmallVec<[u32; INLINE_SPARSE_WEIGHT]>;
@@ -67,31 +66,6 @@ pub struct SparseChallenge {
     /// Small integer coefficients at the corresponding positions. Stored
     /// as `i8` since every shipping sampling family caps `|coeff| <= 8`.
     pub coeffs: SparseChallengeCoefficients,
-}
-
-impl SparseChallenge {
-    /// The dense coefficients of a D = 64 challenge, built by a masked scan
-    /// in which every output coefficient reads every support entry, so no
-    /// address depends on the positions. Entries at a repeated position add.
-    pub fn to_dense_ct(&self) -> Result<[i8; CHALLENGE_RING_DIM], CryptoError> {
-        if self.positions.len() != self.coeffs.len() {
-            return Err(CryptoError::InvalidInput(
-                "sparse challenge positions and coefficients differ in length".into(),
-            ));
-        }
-        // One aggregate range check: a position at or above 64 sets a high bit.
-        if self
-            .positions
-            .iter()
-            .fold(0u32, |acc, &position| acc | position)
-            >= 64
-        {
-            return Err(CryptoError::InvalidInput(
-                "sparse challenge position outside a D = 64 ring".into(),
-            ));
-        }
-        Ok(scatter_ct(&self.positions, &self.coeffs))
-    }
 }
 
 impl SparseChallenge {
@@ -163,16 +137,20 @@ impl SparseChallenge {
 
     /// Evaluate this challenge against precomputed scalar powers.
     ///
-    /// The small integer coefficients are first embedded into the base field
-    /// `F`, then multiplied into `E` with a mixed base-field operation. The
-    /// ordinary base-field case is `E = F`.
+    /// Coefficients of magnitude one or two use signed addition in `E`.
+    /// Other coefficients are embedded into `F` and multiplied into `E` with
+    /// a mixed base-field operation. The ordinary base-field case is `E = F`.
     ///
     /// # Errors
     ///
-    /// Returns an error if `alpha_pows` does not have length `D`, or if a
-    /// term would index outside the supplied powers. This method assumes the
+    /// Returns an error for mismatched term counts, zero coefficients, or a
+    /// position outside the supplied powers. This method assumes the
     /// challenge came from the crate's fold-challenge sampler and therefore
     /// does not re-check uniqueness of positions on the hot path.
+    #[expect(
+        clippy::indexing_slicing,
+        reason = "every position is checked against alpha_pows.len() before indexing"
+    )]
     pub fn eval_at_pows<F, E>(&self, alpha_pows: &[E]) -> Result<E, CryptoError>
     where
         F: Field + Ring,
@@ -185,22 +163,72 @@ impl SparseChallenge {
             ));
         }
 
-        let mut acc = E::zero();
+        let mut signed_terms = true;
         for (&pos, &coeff) in self.positions.iter().zip(self.coeffs.iter()) {
             let idx = pos as usize;
-            let Some(&alpha_pow) = alpha_pows.get(idx) else {
+            if idx >= ring_d {
                 return Err(CryptoError::InvalidInput(format!(
                     "sparse challenge position {idx} out of range for D={ring_d}"
                 )));
-            };
+            }
             if coeff == 0 {
                 return Err(CryptoError::InvalidInput(
                     "sparse challenge coefficients must be non-zero".to_string(),
                 ));
             }
-            accumulate_small_signed::<F, E>(&mut acc, alpha_pow, i64::from(coeff));
+            signed_terms &= matches!(coeff, -2 | -1 | 1 | 2);
+        }
+        if signed_terms {
+            // The checked positions borrow canonical powers. Repeating a term
+            // for magnitude two preserves the polynomial over every field;
+            // field-inline guests keep the sum in one accumulator.
+            return Ok(E::signed_sum(
+                self.positions
+                    .iter()
+                    .zip(&self.coeffs)
+                    .flat_map(|(&position, &coefficient)| {
+                        std::iter::repeat_n(
+                            (&alpha_pows[position as usize], coefficient < 0),
+                            usize::from(coefficient.unsigned_abs()),
+                        )
+                    }),
+            ));
+        }
+
+        let mut acc = E::zero();
+        for (&position, &coefficient) in self.positions.iter().zip(&self.coeffs) {
+            accumulate_small_signed::<F, E>(
+                &mut acc,
+                alpha_pows[position as usize],
+                i64::from(coefficient),
+            );
         }
         Ok(acc)
+    }
+}
+
+impl SparseChallenge {
+    /// The dense coefficients of a D = 64 challenge, built by a masked scan
+    /// in which every output coefficient reads every support entry, so no
+    /// address depends on the positions. Entries at a repeated position add.
+    pub fn to_dense_ct(&self) -> Result<[i8; CHALLENGE_RING_DIM], CryptoError> {
+        if self.positions.len() != self.coeffs.len() {
+            return Err(CryptoError::InvalidInput(
+                "sparse challenge positions and coefficients differ in length".into(),
+            ));
+        }
+        // One aggregate range check: a position at or above 64 sets a high bit.
+        if self
+            .positions
+            .iter()
+            .fold(0u32, |acc, &position| acc | position)
+            >= 64
+        {
+            return Err(CryptoError::InvalidInput(
+                "sparse challenge position outside a D = 64 ring".into(),
+            ));
+        }
+        Ok(scatter_ct(&self.positions, &self.coeffs))
     }
 }
 
@@ -229,7 +257,7 @@ pub(crate) fn scatter_ct(positions: &[u32], coeffs: &[i8]) -> [i8; CHALLENGE_RIN
 #[cfg(test)]
 mod tests {
     use super::*;
-    use jolt_algebra::Prime128Offset275;
+    use jolt_algebra::{One, Prime128Offset275, Zero};
 
     type F = Prime128Offset275;
     const D: usize = 4;
@@ -297,6 +325,66 @@ mod tests {
     }
 
     #[test]
+    fn eval_at_pows_matches_dense_polynomial_at_boundary_points() {
+        let coefficients = [1, -2, 2, -1, 1, -1, 2, -2];
+        let challenge = SparseChallenge {
+            positions: (0..coefficients.len() as u32).collect(),
+            coeffs: coefficients.into_iter().collect(),
+        };
+        for alpha in [F::zero(), F::one(), -F::one(), F::from_u64(13)] {
+            let mut powers = Vec::new();
+            let mut power = F::one();
+            for _ in coefficients {
+                powers.push(power);
+                power *= alpha;
+            }
+            let expected = coefficients
+                .iter()
+                .rev()
+                .fold(F::zero(), |value, &coefficient| {
+                    value * alpha + F::from_i64(i64::from(coefficient))
+                });
+            assert_eq!(challenge.eval_at_pows::<F, F>(&powers).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn eval_at_pows_retains_general_coefficient_and_duplicate_semantics() {
+        let powers = [F::from_u64(7), -F::one()];
+        for coefficients in [[i8::MIN, i8::MAX], [-2, 2], [-8, 3]] {
+            let challenge = SparseChallenge {
+                positions: vec![1, 1].into(),
+                coeffs: coefficients.into_iter().collect(),
+            };
+            let sum = i64::from(coefficients[0]) + i64::from(coefficients[1]);
+            assert_eq!(
+                challenge.eval_at_pows::<F, F>(&powers).unwrap(),
+                -F::from_i64(sum),
+            );
+            assert!(challenge.validate_dyn(powers.len()).is_err());
+        }
+        let empty = SparseChallenge {
+            positions: Default::default(),
+            coeffs: Default::default(),
+        };
+        assert_eq!(empty.eval_at_pows::<F, F>(&[]).unwrap(), F::zero());
+    }
+
+    #[test]
+    fn eval_at_pows_rejects_zero_after_valid_terms() {
+        for coefficients in [[1, 0], [3, 0]] {
+            let challenge = SparseChallenge {
+                positions: vec![0, 1].into(),
+                coeffs: coefficients.into_iter().collect(),
+            };
+            assert!(matches!(
+                challenge.eval_at_pows::<F, F>(&alpha_pows()),
+                Err(CryptoError::InvalidInput(message)) if message.contains("non-zero")
+            ));
+        }
+    }
+
+    #[test]
     fn validate_rejects_duplicate_positions() {
         let challenge = SparseChallenge {
             positions: vec![1, 1].into(),
@@ -330,22 +418,5 @@ mod tests {
         let err = challenge.validate::<D>().unwrap_err();
 
         assert!(matches!(err, CryptoError::InvalidInput(msg) if msg.contains("out of range")));
-    }
-
-    #[test]
-    fn scatter_places_each_coefficient() {
-        let dense = scatter_ct(&[3, 0, 63], &[-2, 1, -1]);
-        let mut expected = [0i8; CHALLENGE_RING_DIM];
-        expected[3] = -2;
-        expected[0] = 1;
-        expected[63] = -1;
-        assert_eq!(dense, expected);
-    }
-
-    #[test]
-    fn scatter_adds_repeated_positions() {
-        let dense = scatter_ct(&[5, 5, 9], &[1, -2, 2]);
-        assert_eq!((dense[5], dense[9]), (-1, 2));
-        assert_eq!(dense.iter().filter(|&&coeff| coeff != 0).count(), 2);
     }
 }

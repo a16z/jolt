@@ -216,7 +216,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::challenge::sampler::IndexedXofPrefix;
+    use crate::challenge::sampler::xof::IndexedXofPrefix;
 
     #[test]
     fn sparse_virtual_permutation_matches_dense_partial_fisher_yates() {

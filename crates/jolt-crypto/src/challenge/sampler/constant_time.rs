@@ -21,8 +21,8 @@
 //!
 //! [`sample_indexed_challenges_from_seed`]: super::sample_indexed_challenges_from_seed
 
-use super::{XofCursor, D64_SELECTIVE_L2_OP_NORM_TABLE, MAX_OP_NORM_ATTEMPTS};
-use crate::challenge::sampler::IndexedXofPrefix;
+use super::xof::{IndexedXofPrefix, XofCursor};
+use super::{D64_SELECTIVE_L2_OP_NORM_TABLE, MAX_OP_NORM_ATTEMPTS};
 use crate::challenge::sparse::{eq_mask, scatter_ct};
 use crate::challenge::{
     OperatorNormRejection, SparseChallenge, D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT,
