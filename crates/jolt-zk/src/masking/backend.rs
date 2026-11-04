@@ -5,9 +5,9 @@ use std::error::Error;
 
 use jolt_algebra::Field;
 use jolt_sumcheck::SumcheckError;
-use jolt_transcript::{
-    ClaimMismatch, ProverTranscript, Sponge, TranscriptError, VerifierTranscript,
-};
+#[cfg(feature = "prover")]
+use jolt_transcript::ProverTranscript;
+use jolt_transcript::{ClaimMismatch, FieldTranscript, Transcript, VerificationError};
 use rand_core::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
@@ -27,8 +27,14 @@ pub type ErasedSource = Box<dyn Error + Send + Sync + 'static>;
 /// caller may rerun the whole proof with fresh randomness.
 #[derive(Debug, ThisError)]
 pub enum ZkError {
-    #[error("ZK transcript: {0}")]
-    Transcript(#[from] TranscriptError),
+    #[error("the ZK transcript rejected a read, a challenge or a proof of work")]
+    TranscriptRejected,
+    #[error("a challenge draw was rejected")]
+    ChallengeRejected,
+    #[error("the masked tape ended before the verifier's schedule")]
+    MaskedTapeExhausted,
+    #[error("the masked tape holds messages past the verifier's schedule")]
+    MaskedTapeTrailing,
     #[error("pad schedule exhausted: {requested} pads requested, {remaining} remaining")]
     PadsExhausted { requested: usize, remaining: usize },
     #[error("pad schedule has {scheduled} pads but {used} were used")]
@@ -95,7 +101,10 @@ impl ZkError {
                 source.downcast_ref::<WhiteoutError>(),
                 Some(WhiteoutError::AttemptsExhausted)
             ),
-            Self::Transcript(_)
+            Self::TranscriptRejected
+            | Self::ChallengeRejected
+            | Self::MaskedTapeExhausted
+            | Self::MaskedTapeTrailing
             | Self::PadsExhausted { .. }
             | Self::PadCountMismatch { .. }
             | Self::InvalidLayout { .. }
@@ -123,11 +132,14 @@ impl From<WhiteoutError> for ZkError {
 /// A transcript failure surfaces as [`ZkError::Transcript`], and a
 /// [`ZkError`] that crossed the sumcheck engine as
 /// [`SumcheckError::PrivateChannel`] comes back as itself.
+impl From<VerificationError> for ZkError {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
+}
+
 impl<F: Field + 'static> From<SumcheckError<F>> for ZkError {
     fn from(error: SumcheckError<F>) -> Self {
-        if let SumcheckError::Transcript(error) = error {
-            return Self::Transcript(error);
-        }
         if let SumcheckError::PrivateChannel(source) = error {
             return source
                 .downcast::<Self>()
@@ -149,65 +161,74 @@ impl<F: Field> From<ZkError> for SumcheckError<F> {
 /// with `R` reached through `Setup`, since `ResponseProver` is not
 /// dyn-compatible.
 pub trait ZkBackend<F> {
+    /// The back end's public setup.
     type Setup;
-    /// What the verifier holds after the pad commitment is sent.
+    /// The pad commitment, carried in the proof and absorbed before the
+    /// first challenge.
     type PadCommitment;
-    /// Prover-side data that opens the pad commitment.
+    /// The prover's opening data for the pad commitment.
     type PadOpening;
-    /// The commitment to the residual witness.
+    /// The residual commitment the relation's witness opens to.
     type ResidualCommitment;
+    /// The prover's residual witness.
     type Witness;
+    /// The back end's proof of the residual relation, carried in the proof.
+    type Proof;
 
-    /// Samples pads, commits to them and sends the commitment. Called before
-    /// the first challenge.
+    /// Samples and commits the pads of `layout`, absorbs the commitment, and
+    /// returns the pads with the commitment the proof carries.
     ///
     /// # Errors
     ///
-    /// [`ZkError`] if the layout does not fit the setup.
-    fn commit_pads<H: Sponge, R: RngCore + CryptoRng>(
+    /// A layout the back end cannot commit.
+    #[cfg(feature = "prover")]
+    fn commit_pads<T: Transcript, R: RngCore + CryptoRng>(
         setup: &Self::Setup,
         layout: &PadLayout,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut T,
         rng: &mut R,
-    ) -> Result<CommittedPads<F, Self::PadOpening>, ZkError>;
+    ) -> Result<(CommittedPads<F, Self::PadOpening>, Self::PadCommitment), ZkError>;
 
-    /// Reads the pad commitment at the same transcript position. The
-    /// verifier's masked channel can only be built from the returned view.
+    /// Checks the proof's pad commitment against `layout` and absorbs it,
+    /// at the position [`commit_pads`](Self::commit_pads) absorbed it.
     ///
     /// # Errors
     ///
-    /// [`ZkError`] on a malformed commitment.
-    fn receive_pad_commitment<H: Sponge>(
+    /// A commitment of the wrong shape.
+    fn receive_pad_commitment<T: Transcript>(
         setup: &Self::Setup,
         layout: &PadLayout,
-        transcript: &mut VerifierTranscript<'_, H>,
+        commitment: Self::PadCommitment,
+        transcript: &mut T,
     ) -> Result<CommittedPadsView<Self::PadCommitment>, ZkError>;
 
-    /// Proves that the committed pads and `witness` satisfy `relation`.
+    /// Proves the residual relation over the committed pads.
     ///
     /// # Errors
     ///
-    /// [`ZkError`] if they do not, or the back end fails.
-    fn prove<H: Sponge, R: RngCore + CryptoRng>(
+    /// Unused pads, a relation the pads do not satisfy, or a prover failure.
+    #[cfg(feature = "prover")]
+    fn prove<T: FieldTranscript<F> + ProverTranscript, R: RngCore + CryptoRng>(
         setup: &Self::Setup,
         relation: &ResidualRelation<F>,
         pads: CommittedPads<F, Self::PadOpening>,
         residual: &Self::ResidualCommitment,
         witness: &Self::Witness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut T,
         rng: &mut R,
-    ) -> Result<(), ZkError>;
+    ) -> Result<Self::Proof, ZkError>;
 
-    /// Verifies the back end's proof of `relation` over the committed pads.
+    /// Verifies `proof` of the residual relation over the pad commitment.
     ///
     /// # Errors
     ///
-    /// [`ZkError`] if the proof is rejected.
-    fn verify<H: Sponge>(
+    /// Unused pads or a rejected proof.
+    fn verify<T: FieldTranscript<F>>(
         setup: &Self::Setup,
         relation: &ResidualRelation<F>,
         pads: &CommittedPadsView<Self::PadCommitment>,
         residual: &Self::ResidualCommitment,
-        transcript: &mut VerifierTranscript<'_, H>,
+        proof: &Self::Proof,
+        transcript: &mut T,
     ) -> Result<(), ZkError>;
 }

@@ -60,3 +60,48 @@ pub fn append_compressed_round<F: Field + Encoding, T: Transcript>(transcript: &
     transcript.append(&(sent.len() as u64));
     transcript.append_private(sent);
 }
+
+/// `poly`'s coefficients padded with zeros to the `degree + 1` of its degree
+/// bound: the fixed-width form a masked round sends, since a masked message's
+/// length must not depend on the witness.
+///
+/// # Errors
+///
+/// [`SumcheckError::DegreeOverflow`] if `degree + 1` overflows, and
+/// [`SumcheckError::DegreeBoundExceeded`] if `poly` has more coefficients.
+pub fn padded_coefficients<F: Field>(
+    poly: &UnivariatePoly<F>,
+    degree: usize,
+) -> Result<Vec<F>, SumcheckError<F>> {
+    let width = degree
+        .checked_add(1)
+        .ok_or(SumcheckError::DegreeOverflow { degree })?;
+    let coefficients = poly.coefficients();
+    if coefficients.len() > width {
+        return Err(SumcheckError::DegreeBoundExceeded {
+            got: UnivariatePolynomial::degree(poly),
+            max: degree,
+        });
+    }
+    let mut padded = coefficients.to_vec();
+    padded.resize(width, F::zero());
+    Ok(padded)
+}
+
+/// The fixed-width compressed form of a round of degree bound `degree`:
+/// `[c0, c2, …, c_degree]`, the linear coefficient omitted and nothing
+/// trimmed.
+///
+/// # Errors
+///
+/// As [`padded_coefficients`].
+pub fn compressed_wire<F: Field>(
+    poly: &UnivariatePoly<F>,
+    degree: usize,
+) -> Result<Vec<F>, SumcheckError<F>> {
+    let padded = padded_coefficients(poly, degree.max(1))?;
+    Ok(UnivariatePoly::new(padded)
+        .compress()
+        .coeffs_except_linear_term()
+        .to_vec())
+}

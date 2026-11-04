@@ -1,14 +1,14 @@
 //! The pad schedule: the public layout, the prover's committed pads and the
 //! verifier's view of their commitment.
 
-use std::any::Any;
 use std::ops::Range;
 
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, ExtField, Field};
-use jolt_transcript::{
-    Channel, PadSlots, PrivateChannel, ProverTranscript, SiteId, Sponge, TranscriptError,
-    VerifierTranscript,
-};
+use jolt_algebra::{ExtField, Field};
+use jolt_sumcheck::{round_pow_bits, MaskedRound, MaskedRoundReader, SumcheckError};
+#[cfg(feature = "prover")]
+use jolt_transcript::ProverTranscript;
+use jolt_transcript::{Encoding, FieldTranscript, PadSlots, PrivateChannel};
+use serde::{Deserialize, Serialize};
 
 use super::ZkError;
 use crate::secret::SecretVec;
@@ -95,6 +95,20 @@ impl Cursor {
     }
 }
 
+/// Every masked message of a proof, in transcript order: the masked values
+/// m̂ = m + p of each private field message, and the proof-of-work nonces of
+/// the masked sumcheck rounds. Both roles absorb each message where the clear
+/// protocol absorbs its value, so a masked proof carries this tape in place of
+/// the clear proof's round polynomials and output claims.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: Deserialize<'de>"))]
+pub struct MaskedMessages<F> {
+    /// The masked values, message after message.
+    pub values: Vec<F>,
+    /// The nonces of the masked rounds whose challenges need proof of work.
+    pub nonces: Vec<u64>,
+}
+
 /// Pads committed before the first challenge, with the back end's opening
 /// data `O`. Only a [`ZkBackend`](super::ZkBackend) builds one, so masking
 /// cannot run before the commitment exists. The pads are zeroed when it is
@@ -105,7 +119,7 @@ pub struct CommittedPads<F, O> {
     opening: O,
 }
 
-impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
+impl<F: Field, O> CommittedPads<F, O> {
     pub(crate) fn new(layout: PadLayout, pads: Vec<F>, opening: O) -> Result<Self, ZkError> {
         if pads.len() != layout.num_pads {
             return Err(ZkError::InvalidLayout {
@@ -131,25 +145,13 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
         &self.opening
     }
 
-    /// Sends `values` masked by the next `values.len()` pads, m̂ = m + p, and
-    /// returns the masked values as sent.
+    /// `values` masked by the next `values.len()` pads, m̂ = m + p, and their
+    /// slots. The caller sends the masked values in its own encoding.
     ///
     /// # Errors
     ///
     /// [`ZkError::PadsExhausted`] past the end of the schedule.
-    pub fn send<H: Sponge>(
-        &mut self,
-        values: &[F],
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<Vec<F>, ZkError> {
-        let (slots, mut masked) = self.mask(values)?;
-        transcript.exchange_all(&mut masked)?;
-        transcript.mark_masked(slots);
-        Ok(masked)
-    }
-
-    /// `values` masked by the next `values.len()` pads, and their slots.
-    fn mask(&mut self, values: &[F]) -> Result<(PadSlots, Vec<F>), ZkError> {
+    pub fn mask(&mut self, values: &[F]) -> Result<(PadSlots, Vec<F>), ZkError> {
         let slots = self.cursor.take(values.len())?;
         let pads =
             self.pads
@@ -163,13 +165,61 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
         ))
     }
 
-    /// The prover's masked [`PrivateChannel`] over `transcript`.
-    pub fn channel<'a, H: Sponge>(
+    /// Extension values masked coordinate by coordinate: each value takes
+    /// `E::DEGREE` pads, in [`ExtField`] coefficient order.
+    ///
+    /// # Errors
+    ///
+    /// As [`mask`](Self::mask), and [`ZkError::InvalidLayout`] if the pad
+    /// count overflows.
+    pub fn mask_ext<E: ExtField<F>>(&mut self, values: &[E]) -> Result<(PadSlots, Vec<E>), ZkError> {
+        let coordinates: Vec<F> = values
+            .iter()
+            .flat_map(|value| (0..E::DEGREE).map(|index| value.base_coefficient(index)))
+            .collect();
+        let (slots, masked) = self.mask(&coordinates)?;
+        #[expect(
+            clippy::indexing_slicing,
+            reason = "each chunk holds E::DEGREE coordinates and from_base_fn asks for 0..E::DEGREE"
+        )]
+        let masked = masked
+            .chunks_exact(E::DEGREE)
+            .map(|chunk| E::from_base_fn(|index| chunk[index]))
+            .collect();
+        Ok((slots, masked))
+    }
+
+    /// Masks `values`, absorbs the masked values where the clear protocol
+    /// absorbs `values` (one [`PrivateChannel::append_private`] message),
+    /// and appends them to the proof's masked tape.
+    ///
+    /// # Errors
+    ///
+    /// As [`mask`](Self::mask).
+    pub fn send<T: PrivateChannel + ?Sized>(
+        &mut self,
+        values: &[F],
+        tape: &mut MaskedMessages<F>,
+        transcript: &mut T,
+    ) -> Result<PadSlots, ZkError>
+    where
+        F: Encoding,
+    {
+        let (slots, masked) = self.mask(values)?;
+        transcript.append_private(&masked);
+        tape.values.extend_from_slice(&masked);
+        Ok(slots)
+    }
+
+    /// The prover's masked channel over `transcript`, writing `tape`.
+    pub fn channel<'a, T>(
         &'a mut self,
-        transcript: &'a mut ProverTranscript<H>,
-    ) -> MaskedProver<'a, F, O, H> {
+        tape: &'a mut MaskedMessages<F>,
+        transcript: &'a mut T,
+    ) -> MaskedProver<'a, F, O, T> {
         MaskedProver {
             pads: self,
+            tape,
             transcript,
         }
     }
@@ -198,7 +248,7 @@ impl<F: Field + CanonicalEncoding, O> CommittedPads<F, O> {
     }
 }
 
-impl<F: Field + CanonicalEncoding> CommittedPads<F, ()> {
+impl<F: Field> CommittedPads<F, ()> {
     /// `pads` under `layout` with no commitment, for tests of protocols
     /// written over the masked channel (Akita's masked levels). It hides
     /// nothing a verifier could check, and no back end opens it.
@@ -236,14 +286,39 @@ impl<C> CommittedPadsView<C> {
         &self.commitment
     }
 
-    /// The masked private-message channel over `transcript`.
-    pub fn channel<'a, 'p, H: Sponge>(
+    /// The slots of the next masked message of `len` base coordinates.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::PadsExhausted`] past the end of the schedule.
+    pub fn take(&mut self, len: usize) -> Result<PadSlots, ZkError> {
+        self.cursor.take(len)
+    }
+
+    /// The slots of the next masked message of `len` values of an extension
+    /// of degree `degree`.
+    ///
+    /// # Errors
+    ///
+    /// As [`take`](Self::take), and [`ZkError::InvalidLayout`] if the pad
+    /// count overflows.
+    pub fn take_ext(&mut self, len: usize, degree: usize) -> Result<PadSlots, ZkError> {
+        let len = len.checked_mul(degree).ok_or(ZkError::InvalidLayout {
+            reason: "extension pad count overflows usize",
+        })?;
+        self.cursor.take(len)
+    }
+
+    /// The verifier's masked channel over `transcript`, reading `tape`.
+    pub fn channel<'a, 'm, F, T>(
         &'a mut self,
-        transcript: &'a mut VerifierTranscript<'p, H>,
-    ) -> MaskedVerifier<'a, 'p, H> {
+        tape: &'a mut MaskedReader<'m, F>,
+        transcript: &'a mut T,
+    ) -> MaskedVerifier<'a, 'm, F, C, T> {
         MaskedVerifier {
+            view: self,
+            tape,
             transcript,
-            cursor: &mut self.cursor,
         }
     }
 
@@ -254,6 +329,11 @@ impl<C> CommittedPadsView<C> {
     /// [`ZkError::PadCountMismatch`] otherwise.
     pub fn finish(&self) -> Result<(), ZkError> {
         self.cursor.finish()
+    }
+
+    /// The number of pads the masked messages read so far took.
+    pub fn used(&self) -> usize {
+        self.cursor.next
     }
 }
 
@@ -274,330 +354,251 @@ impl CommittedPadsView<()> {
     }
 }
 
-impl<C> CommittedPadsView<C> {
-    /// The number of pads the masked messages read so far took.
-    pub fn used(&self) -> usize {
-        self.cursor.next
+/// The verifier's cursor over a proof's [`MaskedMessages`].
+#[derive(Clone, Debug)]
+pub struct MaskedReader<'m, F> {
+    source: TapeSource<'m, F>,
+    next_value: usize,
+    next_nonce: usize,
+}
+
+#[derive(Clone, Debug)]
+enum TapeSource<'m, F> {
+    Proof(&'m MaskedMessages<F>),
+    /// An unbounded tape of zeros, for a layout replay over a shape-correct
+    /// proof (`ShapeTranscript` prices away every nonce).
+    Zeros,
+}
+
+impl<'m, F: Field> MaskedReader<'m, F> {
+    pub fn new(messages: &'m MaskedMessages<F>) -> Self {
+        Self {
+            source: TapeSource::Proof(messages),
+            next_value: 0,
+            next_nonce: 0,
+        }
     }
-}
 
-/// The verifier's masked [`PrivateChannel`]: it reads m̂ in place of each
-/// private value and returns the pad slots the prover used. Derived claims
-/// bind nothing, since the masked messages they derive from already do.
-pub struct MaskedVerifier<'a, 'p, H: Sponge> {
-    transcript: &'a mut VerifierTranscript<'p, H>,
-    cursor: &'a mut Cursor,
-}
+    /// An unbounded tape of zero values and zero nonces, for counting a pad
+    /// layout. [`finish`](Self::finish) always succeeds on it.
+    pub fn zeros() -> Self {
+        Self {
+            source: TapeSource::Zeros,
+            next_value: 0,
+            next_nonce: 0,
+        }
+    }
 
-/// The verifier's reads of the public proof-of-work messages a protocol
-/// interleaves with its masked messages (Akita's grinding nonces and
-/// fold-response counters, `specs/whiteout-akita.md` §4.5). They take no pad.
-impl<H: Sponge> MaskedVerifier<'_, '_, H> {
-    /// [`VerifierTranscript::check_grind`].
+    /// The next `len` masked values.
     ///
     /// # Errors
     ///
-    /// As [`VerifierTranscript::check_grind`].
-    pub fn check_grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
-        self.transcript.check_grind(bits)
+    /// [`ZkError::MaskedTapeExhausted`] if fewer remain.
+    pub fn values(&mut self, len: usize) -> Result<Vec<F>, ZkError> {
+        let end = self
+            .next_value
+            .checked_add(len)
+            .ok_or(ZkError::MaskedTapeExhausted)?;
+        let values = match self.source {
+            TapeSource::Proof(messages) => messages
+                .values
+                .get(self.next_value..end)
+                .ok_or(ZkError::MaskedTapeExhausted)?
+                .to_vec(),
+            TapeSource::Zeros => vec![F::zero(); len],
+        };
+        self.next_value = end;
+        Ok(values)
     }
 
-    /// [`VerifierTranscript::receive_nonce`].
+    /// The next proof-of-work nonce.
     ///
     /// # Errors
     ///
-    /// As [`VerifierTranscript::receive_nonce`].
-    pub fn receive_nonce(&mut self, nonce_bits: u8) -> Result<u32, TranscriptError> {
-        self.transcript.receive_nonce(nonce_bits)
+    /// [`ZkError::MaskedTapeExhausted`] if none remains.
+    pub fn nonce(&mut self) -> Result<u64, ZkError> {
+        let nonce = match self.source {
+            TapeSource::Proof(messages) => *messages
+                .nonces
+                .get(self.next_nonce)
+                .ok_or(ZkError::MaskedTapeExhausted)?,
+            TapeSource::Zeros => 0,
+        };
+        self.next_nonce += 1;
+        Ok(nonce)
     }
 
-    /// The unread proof bytes.
-    pub fn remaining(&self) -> usize {
-        self.transcript.remaining()
-    }
-}
-
-/// Public absorbs, explicitly public messages and challenges pass through to
-/// the transcript. A clear message is refused: it has no masked form here.
-impl<H: Sponge> Channel for MaskedVerifier<'_, '_, H> {
-    type Sponge = H;
-
-    fn site(&mut self, site: SiteId) {
-        self.transcript.site(site);
-    }
-
-    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize) {
-        self.transcript.record_fork_draw(absorbed, squeezed);
-    }
-
-    fn public<A: CanonicalBytes>(&mut self, value: &A) {
-        self.transcript.public(value);
-    }
-
-    fn public_all<A: CanonicalBytes>(&mut self, values: &[A]) {
-        self.transcript.public_all(values);
-    }
-
-    fn public_bytes(&mut self, bytes: &[u8]) {
-        self.transcript.public_bytes(bytes);
-    }
-
-    fn exchange<A: CanonicalDecode>(&mut self, _: &mut A) -> Result<(), TranscriptError> {
-        Err(TranscriptError::ClearMessageOnMaskedChannel)
-    }
-
-    fn exchange_all<A: CanonicalDecode>(&mut self, _: &mut [A]) -> Result<(), TranscriptError> {
-        Err(TranscriptError::ClearMessageOnMaskedChannel)
-    }
-
-    fn exchange_public<A: CanonicalDecode>(
-        &mut self,
-        value: &mut A,
-    ) -> Result<(), TranscriptError> {
-        self.transcript.exchange_public(value)
-    }
-
-    fn exchange_public_all<A: CanonicalDecode>(
-        &mut self,
-        values: &mut [A],
-    ) -> Result<(), TranscriptError> {
-        self.transcript.exchange_public_all(values)
-    }
-
-    fn challenge<F: Field>(&mut self) -> F {
-        self.transcript.challenge()
-    }
-
-    fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
-        self.transcript.challenge_small()
-    }
-
-    fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
-        self.transcript.challenge_bytes()
-    }
-}
-
-impl<H: Sponge> PrivateChannel for MaskedVerifier<'_, '_, H> {
-    type Error = ZkError;
-
-    fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, ZkError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode,
-    {
-        let len = values
-            .len()
-            .checked_mul(E::DEGREE)
-            .ok_or(ZkError::InvalidLayout {
-                reason: "extension pad count overflows usize",
-            })?;
-        self.transcript.exchange_all(values)?;
-        let slots = self.cursor.take(len)?;
-        self.transcript.mark_masked(slots);
-        Ok(slots)
-    }
-
-    fn bind_derived<F, E>(&mut self, _claim: &E) -> Result<(), ZkError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode,
-    {
-        Ok(())
-    }
-
-    fn exchange_private_base<F>(&mut self, values: &mut [F]) -> Result<PadSlots, ZkError>
-    where
-        F: Field + CanonicalEncoding,
-    {
-        self.transcript.exchange_all(values)?;
-        let slots = self.cursor.take(values.len())?;
-        self.transcript.mark_masked(slots);
-        Ok(slots)
-    }
-
-    fn bind_derived_base<F>(&mut self, _claim: &F) -> Result<(), ZkError>
-    where
-        F: Field + CanonicalEncoding,
-    {
-        Ok(())
-    }
-}
-
-/// The prover's masked [`PrivateChannel`], for protocols written once over
-/// both roles' channels, such as Akita's masked levels and `prove_single`
-/// (Akita `specs/whiteout-akita.md` §4.5). Each private value goes out as
-/// m̂ = m + p through [`CommittedPads::send`]'s masking, one pad per base
-/// coordinate in the order [`MaskedVerifier`] takes them; derived claims bind
-/// nothing.
-///
-/// The channel's methods are generic over the message field; a release check
-/// fails with [`ZkError::MessageFieldMismatch`] unless it is the pad field `F`.
-pub struct MaskedProver<'a, F, O, H: Sponge> {
-    pads: &'a mut CommittedPads<F, O>,
-    transcript: &'a mut ProverTranscript<H>,
-}
-
-/// The prover's public proof-of-work messages, interleaved with its masked
-/// ones (Akita's grinding nonces and fold-response counters,
-/// `specs/whiteout-akita.md` §4.5). A nonce is found from public transcript
-/// state alone, so it takes no pad. The only other unmasked messages are
-/// [`Channel::exchange_public`]'s (Akita's D images and `cm(u_a)`, hidden by
-/// their images' own randomness, `specs/whiteout-akita.md` §4.2, A47).
-impl<F, O, H: Sponge> MaskedProver<'_, F, O, H> {
-    /// [`ProverTranscript::grind`].
+    /// Checks that every masked value and nonce was read.
     ///
     /// # Errors
     ///
-    /// As [`ProverTranscript::grind`].
-    pub fn grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
-        self.transcript.grind(bits)
-    }
-
-    /// [`ProverTranscript::send_nonce`]: a counter the verifier rechecks
-    /// against public challenges.
-    pub fn send_nonce(&mut self, nonce: u32) {
-        self.transcript.send_nonce(nonce);
-    }
-
-    /// The length of the argument string so far.
-    pub fn narg_len(&self) -> usize {
-        self.transcript.narg().len()
+    /// [`ZkError::MaskedTapeTrailing`] otherwise.
+    pub fn finish(&self) -> Result<(), ZkError> {
+        match self.source {
+            TapeSource::Proof(messages)
+                if self.next_value != messages.values.len()
+                    || self.next_nonce != messages.nonces.len() =>
+            {
+                Err(ZkError::MaskedTapeTrailing)
+            }
+            TapeSource::Proof(_) | TapeSource::Zeros => Ok(()),
+        }
     }
 }
 
-/// `value` as a `T`, if `S` is `T`.
-fn same_field<S: Copy + 'static, T: Copy + 'static>(value: S) -> Result<T, ZkError> {
-    (&value as &dyn Any)
-        .downcast_ref::<T>()
-        .copied()
-        .ok_or(ZkError::MessageFieldMismatch)
+/// The verifier's masked channel: it reads m̂ in place of each private value
+/// from the proof's masked tape, absorbs it where the clear verifier absorbs
+/// the value, and returns the pad slots the prover used. Derived claims bind
+/// nothing, since the masked messages they derive from already do.
+pub struct MaskedVerifier<'a, 'm, F, C, T> {
+    view: &'a mut CommittedPadsView<C>,
+    tape: &'a mut MaskedReader<'m, F>,
+    transcript: &'a mut T,
 }
 
-/// Public absorbs, explicitly public messages and challenges pass through to
-/// the transcript, unmasked. A clear message is refused, so a private value
-/// sent through [`Channel::exchange`] never goes out clear.
-impl<F, O, H: Sponge> Channel for MaskedProver<'_, F, O, H> {
-    type Sponge = H;
-
-    fn site(&mut self, site: SiteId) {
-        self.transcript.site(site);
-    }
-
-    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize) {
-        self.transcript.record_fork_draw(absorbed, squeezed);
-    }
-
-    fn public<A: CanonicalBytes>(&mut self, value: &A) {
-        self.transcript.public(value);
-    }
-
-    fn public_all<A: CanonicalBytes>(&mut self, values: &[A]) {
-        self.transcript.public_all(values);
-    }
-
-    fn public_bytes(&mut self, bytes: &[u8]) {
-        self.transcript.public_bytes(bytes);
-    }
-
-    fn exchange<A: CanonicalDecode>(&mut self, _: &mut A) -> Result<(), TranscriptError> {
-        Err(TranscriptError::ClearMessageOnMaskedChannel)
-    }
-
-    fn exchange_all<A: CanonicalDecode>(&mut self, _: &mut [A]) -> Result<(), TranscriptError> {
-        Err(TranscriptError::ClearMessageOnMaskedChannel)
-    }
-
-    fn exchange_public<A: CanonicalDecode>(
-        &mut self,
-        value: &mut A,
-    ) -> Result<(), TranscriptError> {
-        self.transcript.exchange_public(value)
-    }
-
-    fn exchange_public_all<A: CanonicalDecode>(
-        &mut self,
-        values: &mut [A],
-    ) -> Result<(), TranscriptError> {
-        self.transcript.exchange_public_all(values)
-    }
-
-    fn challenge<C: Field>(&mut self) -> C {
-        self.transcript.challenge()
-    }
-
-    fn challenge_small<C: CanonicalEncoding>(&mut self) -> C {
-        self.transcript.challenge_small()
-    }
-
-    fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
-        self.transcript.challenge_bytes()
-    }
-}
-
-impl<P, O, H> PrivateChannel for MaskedProver<'_, P, O, H>
+impl<F, C, T> MaskedVerifier<'_, '_, F, C, T>
 where
-    P: Field + CanonicalEncoding,
-    H: Sponge,
+    F: Field + Encoding,
+    T: FieldTranscript<F>,
+{
+    /// Reads, absorbs and places one private message of `len` values.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::MaskedTapeExhausted`] or [`ZkError::PadsExhausted`].
+    pub fn receive_private(&mut self, len: usize) -> Result<(Vec<F>, PadSlots), ZkError> {
+        let values = self.tape.values(len)?;
+        self.transcript.append_private(&values);
+        let slots = self.view.take(len)?;
+        Ok((values, slots))
+    }
+
+    /// The transcript, for the public absorbs and challenges a masked stage
+    /// interleaves with its private messages.
+    pub fn transcript(&mut self) -> &mut T {
+        self.transcript
+    }
+
+    /// Checks one round's proof of work at degree bound `degree`, its nonce
+    /// read from the tape when the challenge set needs one.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::MaskedTapeExhausted`] or a rejected proof of work.
+    pub fn check_round_pow(&mut self, round: usize, degree: usize) -> Result<(), ZkError> {
+        let bits = round_pow_bits::<F, T>(degree).map_err(ZkError::from)?;
+        let nonce = if bits > 0 {
+            Some(self.tape.nonce()?)
+        } else {
+            None
+        };
+        self.transcript
+            .check_public_grind(bits, nonce)
+            .map_err(|_| ZkError::from(SumcheckError::<F>::ProofOfWorkRejected { round }))
+    }
+}
+
+impl<F, C, T> MaskedRoundReader<F> for MaskedVerifier<'_, '_, F, C, T>
+where
+    F: Field + Encoding + 'static,
+    T: FieldTranscript<F>,
 {
     type Error = ZkError;
 
-    /// Masks each base coordinate of each value and sends the masked
-    /// elements, so the bytes are `E`'s encoding, as the verifier reads them.
-    fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, ZkError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode,
-    {
-        let coordinates = values
-            .iter()
-            .flat_map(|value| (0..E::DEGREE).map(|index| value.base_coefficient(index)))
-            .map(same_field::<F, P>)
-            .collect::<Result<Vec<P>, ZkError>>()?;
-        let (slots, masked) = self.pads.mask(&coordinates)?;
-        let masked = masked
-            .into_iter()
-            .map(same_field::<P, F>)
-            .collect::<Result<Vec<F>, ZkError>>()?;
-        #[expect(
-            clippy::indexing_slicing,
-            reason = "each chunk holds E::DEGREE coordinates and from_base_fn asks for 0..E::DEGREE"
-        )]
-        let mut masked: Vec<E> = masked
-            .chunks_exact(E::DEGREE)
-            .map(|chunk| E::from_base_fn(|index| chunk[index]))
-            .collect();
-        self.transcript.exchange_all(&mut masked)?;
-        self.transcript.mark_masked(slots);
-        Ok(slots)
+    fn read_round(
+        &mut self,
+        round: usize,
+        width: usize,
+        degree: usize,
+    ) -> Result<MaskedRound<F>, ZkError> {
+        let (wire, slots) = self.receive_private(width)?;
+        self.check_round_pow(round, degree)?;
+        let challenge = self.transcript.challenge().map_err(|_| ZkError::ChallengeRejected)?;
+        Ok(MaskedRound {
+            wire,
+            slots,
+            challenge,
+        })
+    }
+}
+
+/// The prover's masked channel: each private message goes out as
+/// m̂ = m + p, absorbed where the clear prover absorbs the value and written
+/// to the proof's masked tape, in the order [`MaskedVerifier`] reads them.
+pub struct MaskedProver<'a, F, O, T> {
+    pads: &'a mut CommittedPads<F, O>,
+    tape: &'a mut MaskedMessages<F>,
+    transcript: &'a mut T,
+}
+
+impl<F, O, T> MaskedProver<'_, F, O, T>
+where
+    F: Field + Encoding,
+    T: FieldTranscript<F>,
+{
+    /// Masks, absorbs and records one private message.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::PadsExhausted`] past the end of the schedule.
+    pub fn send_private(&mut self, values: &[F]) -> Result<PadSlots, ZkError> {
+        self.pads.send(values, self.tape, self.transcript)
     }
 
-    fn bind_derived<F, E>(&mut self, _claim: &E) -> Result<(), ZkError>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode,
-    {
+    /// The transcript, for public absorbs and challenges.
+    pub fn transcript(&mut self) -> &mut T {
+        self.transcript
+    }
+}
+
+#[cfg(feature = "prover")]
+impl<F, O, T> MaskedProver<'_, F, O, T>
+where
+    F: Field + Encoding,
+    T: FieldTranscript<F> + ProverTranscript,
+{
+    /// Grinds one round's proof of work at degree bound `degree` and records
+    /// its nonce on the tape when the challenge set needs one.
+    ///
+    /// # Errors
+    ///
+    /// When the nonce search fails.
+    pub fn grind_round(&mut self, round: usize, degree: usize) -> Result<(), ZkError> {
+        let bits = round_pow_bits::<F, T>(degree).map_err(ZkError::from)?;
+        let nonce = self
+            .transcript
+            .public_grind(bits)
+            .map_err(|_| ZkError::from(SumcheckError::<F>::ProofOfWorkRejected { round }))?;
+        self.tape.nonces.extend(nonce);
         Ok(())
     }
+}
 
-    fn exchange_private_base<F>(&mut self, values: &mut [F]) -> Result<PadSlots, ZkError>
-    where
-        F: Field + CanonicalEncoding,
-    {
-        let values = values
-            .iter()
-            .copied()
-            .map(same_field::<F, P>)
-            .collect::<Result<Vec<P>, ZkError>>()?;
-        let (slots, mut masked) = self.pads.mask(&values)?;
-        self.transcript.exchange_all(&mut masked)?;
-        self.transcript.mark_masked(slots);
-        Ok(slots)
+/// A masked verifier's state across one proof: its view of the pad
+/// commitment and its cursor over the proof's masked tape. The masked stage
+/// verifiers borrow one [`MaskedVerifier`] from it per stage.
+pub struct MaskedSession<'m, F, C> {
+    pub pads: CommittedPadsView<C>,
+    pub tape: MaskedReader<'m, F>,
+}
+
+impl<'m, F: Field, C> MaskedSession<'m, F, C> {
+    pub fn new(pads: CommittedPadsView<C>, tape: MaskedReader<'m, F>) -> Self {
+        Self { pads, tape }
     }
 
-    fn bind_derived_base<F>(&mut self, _claim: &F) -> Result<(), ZkError>
-    where
-        F: Field + CanonicalEncoding,
-    {
-        Ok(())
+    /// The masked channel over `transcript`.
+    pub fn channel<'a, T>(&'a mut self, transcript: &'a mut T) -> MaskedVerifier<'a, 'm, F, C, T> {
+        self.pads.channel(&mut self.tape, transcript)
+    }
+
+    /// Checks that every scheduled pad and every masked message was used.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError::PadCountMismatch`] or [`ZkError::MaskedTapeTrailing`].
+    pub fn finish(&self) -> Result<(), ZkError> {
+        self.pads.finish()?;
+        self.tape.finish()
     }
 }

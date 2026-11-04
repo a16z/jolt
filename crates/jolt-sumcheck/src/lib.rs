@@ -75,7 +75,7 @@
 //! # Dependency position
 //!
 //! ```text
-//! jolt-field      ─┐
+//! jolt-algebra      ─┐
 //! jolt-poly       ─┼─> jolt-sumcheck
 //! jolt-transcript ─┘
 //!
@@ -110,6 +110,7 @@ pub mod claim;
 pub mod committed;
 pub mod domain;
 pub mod error;
+pub mod masked;
 mod pow;
 pub mod proof;
 #[cfg(feature = "prover")]
@@ -142,6 +143,9 @@ pub use domain::{
     BooleanHypercube, CenteredIntegerDomain, EqFactoredRound, SumcheckDomain, SumcheckDomainSpec,
 };
 pub use error::SumcheckError;
+pub use masked::{
+    receive_masked_rounds, BatchedMaskedRounds, MaskedRound, MaskedRoundReader, RoundWire,
+};
 #[cfg(feature = "prover")]
 pub use pow::grind_round;
 pub use pow::round_pow_bits;
@@ -150,7 +154,7 @@ pub use proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, Sumchec
 pub use prover::prove_uniskip_committed;
 #[cfg(feature = "prover")]
 pub use prover::{
-    prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
+    check_uniskip_round, prove_batch, prove_uniskip_clear, MemberFinish, MemberRound, ProveRounds, ProvedBatch,
     ProvedUniskip, ProvedUniskipCommitted, RoundScheduler, SequentialRounds,
 };
 #[cfg(feature = "r1cs")]
@@ -162,7 +166,9 @@ pub use r1cs::{
 #[cfg(all(feature = "committed", feature = "prover"))]
 pub use recorder::CommittedSumcheckRecorder;
 pub use recorder::{ClearSumcheckRecorder, RecordedSumcheck, SumcheckRecorder};
-pub use round_proof::{append_compressed_round, ClearRound, RoundMessage};
+pub use round_proof::{
+    append_compressed_round, compressed_wire, padded_coefficients, ClearRound, RoundMessage,
+};
 #[cfg(feature = "prover")]
 pub use single::prove_single;
 pub use single::{

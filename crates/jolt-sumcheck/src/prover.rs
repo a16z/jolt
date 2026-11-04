@@ -413,7 +413,7 @@ pub struct ProvedUniskipCommitted<F: Field, C> {
 /// Self-check the uni-skip round polynomial against the verifier's round
 /// checks before anything reaches the transcript: degree bound and
 /// centered-integer-domain round sum.
-fn check_uniskip_round<F: Field + Encoding>(
+pub fn check_uniskip_round<F: Field + Encoding>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,
     degree: usize,

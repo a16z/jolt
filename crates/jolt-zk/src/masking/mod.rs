@@ -26,8 +26,11 @@ pub use lowering::{
     RoundFormat, RowsDomain, ValuesDomain,
 };
 pub use pads::{
-    CommittedPads, CommittedPadsView, MaskedProver, MaskedVerifier, PadIndex, PadLayout,
+    CommittedPads, CommittedPadsView, MaskedMessages, MaskedProver, MaskedReader, MaskedSession,
+    MaskedVerifier, PadIndex, PadLayout,
 };
+#[cfg(feature = "prover")]
+pub use recorder::{prove_uniskip_masked, MaskedUniskip};
 pub use recorder::MaskingRecorder;
 pub use residual::{
     AffineRow, MaskedOperand, OperandRule, ProductOperand, ProductPair, ProductRow,

@@ -83,7 +83,7 @@ impl<F: Ring, O, P, C> FactoredExpr<F, O, P, C> {
     }
 }
 
-impl<F: Ring, O: Clone, P: Clone, C: Clone> FactoredExpr<F, O, P, C> {
+impl<F: Ring, O: Copy, P: Copy, C: Copy> FactoredExpr<F, O, P, C> {
     /// The flat monomial form: each term multiplied out.
     pub fn expand(self) -> Expr<F, O, P, C> {
         self.terms.into_iter().fold(Expr::zero(), |sum, term| {
