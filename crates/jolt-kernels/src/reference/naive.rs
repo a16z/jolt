@@ -450,7 +450,7 @@ mod tests {
     use jolt_field::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
-        prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, ProveRounds,
+        prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, DegreeSchedule, ProveRounds,
         SequentialRounds, SumcheckProof, SumcheckRecorder,
     };
     use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, Transcript};
@@ -672,8 +672,7 @@ mod tests {
                 rounds: ROUNDS,
                 offset: 0,
             }],
-            ROUNDS,
-            relation.degree(),
+            DegreeSchedule::uniform(ROUNDS, relation.degree()),
         );
 
         let mut naive = NaiveSumcheckProver::new(
@@ -743,9 +742,8 @@ mod tests {
         verifier_transcript.append(&verifier_input_claim);
         let verifier_coefficient: Fr = verifier_transcript.challenge().unwrap();
         let reduction = SumcheckProof::<Fr, Fr>::from(recorded.proof)
-            .verify_compressed_boolean(
-                ROUNDS,
-                verifier_relation.degree(),
+            .verify_compressed_scheduled(
+                &DegreeSchedule::uniform(ROUNDS, verifier_relation.degree()),
                 verifier_coefficient * verifier_input_claim,
                 &mut verifier_transcript,
             )
@@ -790,8 +788,7 @@ mod tests {
                 rounds: ROUNDS,
                 offset: 0,
             }],
-            ROUNDS,
-            relation.degree(),
+            DegreeSchedule::uniform(ROUNDS, relation.degree()),
         );
         let mut recorder = ClearSumcheckRecorder::<Fr>::new();
         let inputs = ToyInputs {

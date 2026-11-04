@@ -64,8 +64,8 @@ pub trait SumcheckRecorder<F: Field> {
 
     /// Record one round polynomial and squeeze the round challenge. Clear:
     /// appended compressed, after its count word, then the round's proof of
-    /// work is ground at the difficulty for `degree_bound` (the batch's degree
-    /// bound, which the verifier prices the round at). Committed: Pedersen
+    /// work is ground at the difficulty for `degree_bound` (the round's degree
+    /// in the batch's schedule, which the verifier prices the round at). Committed: Pedersen
     /// commitment appended, with no proof of work (the challenge set must be
     /// wide enough to need none).
     #[cfg(feature = "prover")]
