@@ -218,22 +218,24 @@ jolt-sumcheck = { path = "crates/jolt-sumcheck" }
 jolt-zk = { path = "crates/jolt-zk" }
 jolt-inlines-ntt = { path = "jolt-inlines/ntt" }
 
-# [pin] Local-only: build against the Akita integration branch (~/akita-whiteout).
+# [pin] Local-only: build against the Akita integration branch (~/akita-wo-t0).
 [patch."https://github.com/LayerZero-Labs/akita.git"]
-akita-algebra = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-algebra" }
-akita-config = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-config" }
-akita-cpu-backend = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-cpu-backend" }
-akita-error = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-error" }
-akita-params = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-params" }
-akita-pcs = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-pcs" }
-akita-planner = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-planner" }
-akita-prover = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-prover" }
-akita-schedules = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-schedules" }
-akita-serialization = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-serialization" }
-akita-setup = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-setup" }
-akita-sumcheck = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-sumcheck" }
-akita-types = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-types" }
-akita-verifier = { path = "/Users/mgeorghiades/akita-whiteout/crates/akita-verifier" }
+akita-algebra = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-algebra" }
+akita-challenges = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-challenges" }
+akita-config = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-config" }
+akita-cpu-backend = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-cpu-backend" }
+akita-error = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-error" }
+akita-params = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-params" }
+akita-pcs = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-pcs" }
+akita-planner = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-planner" }
+akita-prover = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-prover" }
+akita-schedules = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-schedules" }
+akita-serialization = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-serialization" }
+akita-setup = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-setup" }
+akita-transcript = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-transcript" }
+akita-sumcheck = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-sumcheck" }
+akita-types = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-types" }
+akita-verifier = { path = "/Users/mgeorghiades/akita-wo-t0/crates/akita-verifier" }
 
 [workspace.metadata.cargo-machete]
 ignored = ["jolt-sdk"]
