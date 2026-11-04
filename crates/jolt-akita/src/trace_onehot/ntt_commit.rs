@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use akita_algebra::ntt::butterfly::inverse_ntt;
+use akita_algebra::ntt::prime::MontCoeff;
 use akita_algebra::tables::q128_primes;
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut};
 use akita_error::AkitaError;
@@ -307,7 +308,9 @@ impl<const D: usize> NttCommitScratch<D> {
                     .iter_mut()
                     .zip(&accumulator.limbs[0])
                 {
-                    digits.0[limb] += prime.center(prime.to_canonical(value));
+                    // Multiplication by raw 1 removes Montgomery scaling. Its signed
+                    // result is already in [-(p-1)/2, (p-1)/2].
+                    digits.0[limb] += prime.mul(value, MontCoeff::from_raw(1)).raw();
                 }
                 *accumulator = NttRing::zero();
             }
