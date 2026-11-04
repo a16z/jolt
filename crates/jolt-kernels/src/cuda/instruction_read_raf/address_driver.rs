@@ -169,6 +169,7 @@ impl DeviceAddressPhase {
             }
         }
 
+        let shards = AddressShard::balance(shards)?;
         let present: Vec<LookupTableKind<RISCV_XLEN>> = LookupTableKind::<RISCV_XLEN>::iter()
             .filter(|table| used[table.index()])
             .collect();

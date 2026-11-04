@@ -1,8 +1,9 @@
 //! CUDA instruction read+RAF checking.
 //!
 //! The address phase follows optimized's eight-variable prefix/suffix chunks
-//! over the 128-bit lookup index. CUDA reduces suffix and RAF buckets across
-//! resident cycle windows, then binds the small phase tables on GPU 0.
+//! over the 128-bit lookup index. CUDA balances retained row/weight pairs across
+//! GPUs for these reductions, then binds the small phase tables on GPU 0.
+//! The original resident windows remain available for cycle rounds and claims.
 //! Lookup-table prefix definitions and combination rules remain host-owned.
 //!
 //! At the address/cycle boundary, CUDA materializes the combined value and
@@ -20,6 +21,7 @@
 //! evaluation grid; CUDA multiplies the explicit prefix's factors per cycle
 //! and evaluation point.
 
+mod address_balance;
 pub(super) mod address_driver;
 pub(super) mod address_phase;
 mod combine;
