@@ -653,7 +653,7 @@ def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
                 or relative.startswith(("src/bin/", "examples/", "benches/", "tests/")):
             roots.add(path)
     literal = r'r(?P<hashes>\#*)"[\s\S]*?"(?P=hashes)|"(?:\\[\s\S]|[^"\\])*"'
-    events = re.compile(r'(?P<path>#\s*!?\[\s*path\s*=\s*)|(?P<include>\binclude\s*!\s*\(\s*)|'
+    events = re.compile(r'(?P<path>#\s*!?\[[^]]*?\bpath\s*=\s*)|(?P<include>\binclude\s*!\s*\(\s*)|'
                         f'(?P<string>{literal})|' + r'(?P<generated>\bmod\s+\$)|'
                         r'\bmod\s+(?:r#)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<delimiter>[;{])|[{}]')
     for path, text in files.items():

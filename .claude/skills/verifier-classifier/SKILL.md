@@ -80,9 +80,11 @@ protocol, transcript or wire-format edits. A spent read budget proves no exclusi
   edit can be risk-1 inside a production source file. The gate's syntactic exception recognizes
   standalone cfg-gated top-level items, stacked multiline attributes, file-inner cfg(test),
   and ordinary out-of-file modules whose parent declarations are all test-only. Custom
-  path/include targets and Cargo build/target roots remain conservative. Runtime macro-generated
-  module declarations and non-literal includes block exemptions only in their own compilation
-  targets; nested macro-like cfg input is not exempt.
+  path/include targets and Cargo build/target roots remain conservative. Local runtime `mod $...`
+  declarations and non-literal includes block exemptions only in their own compilation targets.
+  External `macro_export` and procedural-macro output are not detected at invocation sites:
+  trace them independently; the syntactic projection does not prove their exclusion.
+  Nested macro-like cfg input is not exempt.
   The gate independently checks this exception
   on level-3/4 paths; a level-1 answer cannot waive a runtime-code default.
 - **risk-2:** prover or other non-verifier code, or dependency-only bumps outside the verifier

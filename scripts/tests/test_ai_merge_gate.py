@@ -444,6 +444,7 @@ class AiMergeGateTests(unittest.TestCase):
         cases = [
             (helper, {"crates/other/Cargo.toml": '[package]\nname = "other"\n',
                       "crates/other/src/lib.rs": '#[path = "../../jolt-verifier/src/helper.rs"]\npub mod helper;\n'}),
+            (helper, {f"{crate}/src/lib.rs": '#[cfg_attr(not(test), path = "helper.rs")]\nmod alias;\n#[cfg(test)]\nmod helper;\n'}),
             (helper, {"crates/other/Cargo.toml": '[package]\nname = "other"\n',
                       "crates/other/src/lib.rs": 'include!("../../jolt-verifier/src/helper.rs");\n'}),
             (helper, {f"{crate}/src/outer.rs": 'mod inline { #[path = "../../helper.rs"] mod runtime; }\n'}),

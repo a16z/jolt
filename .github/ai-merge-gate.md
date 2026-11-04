@@ -622,9 +622,11 @@ if retiring them. Keep the separate Pika App and local review skill.
 - Out-of-file test modules use ordinary Rust module paths and all parent declarations.
   Literal `#[path]`/`include!` targets and Cargo build/target roots keep their normal floor.
   Literal references resolve relative to the declaring file and inline-module directory.
-  Non-literal includes and macro-generated module declarations conservatively block only
+  Non-literal includes and local `mod $...` macro declarations conservatively block only
   their runtime-reachable compilation targets, not unrelated library or integration-test targets.
-  The scanner does not expand macros or resolve generated module paths.
+  The scanner does not detect module declarations emitted by another crate's `macro_export`
+  macro or by a procedural macro at the invocation site. Such output can defeat the syntactic
+  test-only projection; the agent must trace it. This is accepted debt, not an expansion guarantee.
 - The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
   Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.
 - Event delivery delays withdrawal. The gate cannot withdraw its approval after a dismissed
