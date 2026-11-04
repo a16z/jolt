@@ -14,10 +14,8 @@ use jolt_akita::{
     AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaNativeBatchStatement,
     AkitaNativeBatching, AkitaScheme,
 };
-use jolt_openings::{
-    BatchOpeningScheme, CommitmentScheme, OpeningsError, ZkBatchOpeningScheme, ZkOpeningScheme,
-};
-use jolt_poly::{MultilinearPoly, OneHotPolynomial, Point, Polynomial, HIGH_TO_LOW};
+use jolt_openings::{BatchOpeningScheme, CommitmentScheme, OpeningsError};
+use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
 use jolt_transcript::{prover_transcript, Blake2b512};
 use serde_json::{json, Value};
 
@@ -198,72 +196,6 @@ fn akita_native_batching_rejects_corrupted_proof_payloads() {
     }
 }
 
-#[test]
-fn akita_zk_interfaces_are_explicitly_unsupported() {
-    let (prover_setup, verifier_setup) = native_setup();
-    let poly = polynomial(16, 1);
-    let point: Vec<_> = (0..16).map(|i| f(2 + 3 * i)).collect();
-    let eval = poly.evaluate(&point);
-    let (commitment, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).unwrap();
-
-    let mut prover_state = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-zk-unsupported"),
-        b"",
-    );
-    let (proof, _, ()) = AkitaScheme::open_zk(
-        &poly,
-        &point,
-        eval,
-        &prover_setup,
-        hint.clone(),
-        &mut prover_state,
-    )
-    .unwrap();
-
-    let mut verifier_transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-zk-unsupported"),
-        b"",
-    );
-    assert_transparent_zk_error(AkitaScheme::verify_zk(
-        &commitment,
-        &point,
-        &proof,
-        &verifier_setup,
-        &mut verifier_transcript,
-    ));
-
-    let zk_point = Point::<HIGH_TO_LOW, _>::high_to_low(point);
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-zk-batch-prove-unsup"),
-        b"",
-    );
-    assert_transparent_zk_error(
-        <AkitaNativeBatching as ZkBatchOpeningScheme>::prove_batch_zk(
-            &prover_setup,
-            zk_point.clone(),
-            vec![commitment.clone()],
-            batch_polynomials([&poly]),
-            hint,
-            vec![eval],
-            &mut transcript,
-        ),
-    );
-
-    let mut transcript = prover_transcript::<Blake2b512>(
-        &jolt_transcript::protocol_tag(b"akita-zk-batch-verify-unsup"),
-        b"",
-    );
-    assert_transparent_zk_error(
-        <AkitaNativeBatching as ZkBatchOpeningScheme>::verify_batch_zk(
-            &verifier_setup,
-            zk_point,
-            vec![commitment],
-            &proof,
-            &mut transcript,
-        ),
-    );
-}
-
 fn native_proof_fixture(
     label: &'static [u8],
 ) -> (VerifierSetup, AkitaNativeBatchStatement, AkitaBatchProof) {
@@ -309,11 +241,4 @@ fn mutate_byte_array_field(proof: &AkitaBatchProof, field: &str) -> AkitaBatchPr
     .expect("proof byte array element should fit in u8");
     *first = Value::from(byte ^ 1);
     serde_json::from_value(value).expect("mutated proof should still deserialize")
-}
-
-fn assert_transparent_zk_error<T>(result: Result<T, OpeningsError>) {
-    assert!(
-        matches!(result, Err(OpeningsError::InvalidBatch(message)) if message.contains("transparent-only")),
-        "Akita ZK APIs should fail with the explicit transparent-only error"
-    );
 }

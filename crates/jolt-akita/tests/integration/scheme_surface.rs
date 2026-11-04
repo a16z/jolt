@@ -2,12 +2,12 @@
 
 use crate::support::{f, layout, polynomial, setup_for};
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaChunkProfile, AkitaHidingCommitment, AkitaScheduleArtifacts,
-    AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
+    AkitaBackendFlavor, AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AKITA_ONE_HOT_K16,
 };
-use jolt_openings::{CommitmentScheme, OpeningsError, ZkOpeningScheme};
+use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::{prover_transcript, Blake2b512, Transcript};
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 /// The smallest dense dimension the checked-in catalog schedules.
 const DENSE_VARS: usize = 14;
@@ -149,58 +149,5 @@ fn open_without_hint_recommits_deterministically() {
     assert_eq!(
         prover_state.verifier_message::<[u8; 32]>(),
         verifier_transcript.verifier_message::<[u8; 32]>()
-    );
-}
-
-#[test]
-fn hiding_commitment_transcript_binding_tracks_the_evaluation() {
-    let (prover_setup, _) = setup_for(DENSE_VARS, 1, layout(7));
-    let poly = polynomial(DENSE_VARS, 50);
-    let point: Vec<_> = (0..DENSE_VARS).map(|index| f(index as u64 + 2)).collect();
-    let eval = poly.evaluate(&point);
-    let (_, hint) = AkitaScheme::commit_zk(&poly, &prover_setup).expect("commit_zk succeeds");
-
-    let mut transcript =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-hiding"), b"");
-    let (_, hiding, ()) = AkitaScheme::open_zk(
-        &poly,
-        &point,
-        eval,
-        &prover_setup,
-        hint.clone(),
-        &mut transcript,
-    )
-    .expect("open_zk should produce a hiding commitment");
-
-    // The next squeeze after binding a hiding commitment.
-    let bound = |hiding: &AkitaHidingCommitment| {
-        let mut transcript = prover_transcript::<Blake2b512>(
-            &jolt_transcript::protocol_tag(b"akita-hiding-bind"),
-            b"",
-        );
-        transcript.append(hiding);
-        transcript.verifier_message::<[u8; 32]>()
-    };
-    assert_eq!(bound(&hiding), bound(&hiding), "binding is deterministic");
-
-    let mut other_point = point.clone();
-    other_point[DENSE_VARS - 1] += f(1);
-    let other_eval = poly.evaluate(&other_point);
-    assert_ne!(eval, other_eval, "fixture needs distinct evaluations");
-    let mut transcript =
-        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-hiding"), b"");
-    let (_, other_hiding, ()) = AkitaScheme::open_zk(
-        &poly,
-        &other_point,
-        other_eval,
-        &prover_setup,
-        hint,
-        &mut transcript,
-    )
-    .expect("open_zk should produce a hiding commitment");
-    assert_ne!(
-        bound(&hiding),
-        bound(&other_hiding),
-        "distinct evaluations must bind distinct transcript states"
     );
 }
