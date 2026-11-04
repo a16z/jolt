@@ -53,10 +53,8 @@
 //! construction — so it reuses the reference kernel's explicit four-point
 //! sampling verbatim; only the table construction is replaced.
 //!
-//! Cross-stage carry: both prepares reclaim the packed stage-5 rows with
-//! [`ProofSession::take`], clone the [`Arc`], and park the carry back for
-//! the later consumers (mixed-backend registries fall back to a fresh
-//! streaming pass when the carry is absent or geometry-stale).
+//! Cross-stage carry: both prepares share the packed stage-5 rows through
+//! `SharedInstructionRows`, whose docs own the carry protocol.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

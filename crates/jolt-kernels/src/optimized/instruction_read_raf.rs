@@ -263,12 +263,18 @@ impl InstructionCycleRow {
 
 /// The collected stage-5 rows, parked in the [`ProofSession`] for the
 /// stage-6b instruction RA virtualization kernel (its committed one-hot
-/// chunks are chunks of the same per-cycle lookup index) and the
-/// stage-6a/6b booleanity kernels (all three one-hot chunk families).
+/// chunks are chunks of the same per-cycle lookup index), the stage-6a/6b
+/// booleanity and bytecode read-RAF kernels, and the stage-7 Hamming-weight
+/// reduction.
 ///
-/// Streaming witnesses retain this carry to avoid replaying execution.
-/// Stage 5 and address preparations also use it to hand rows to the next consumer;
-/// `shared` then restores weak caching for random-access witnesses.
+/// Streaming witnesses keep this carry for the whole proof, since collecting
+/// again would replay execution. For random-access witnesses, stage 5 and the
+/// stage-6a address preparations park it so the rows outlive their kernels,
+/// and the first [`InstructionCycleRow::shared`] call (any optimized stage-6b
+/// cycle consumer, else the stage-7 Hamming-weight reduction) replaces it
+/// with [`SharedInstructionRowsWeak`]. A registry with none of those
+/// consumers optimized keeps the rows alive until
+/// [`KernelContext::finish`](crate::KernelContext::finish).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct SharedInstructionRows(pub(crate) Arc<ConstantSuffix<InstructionCycleRow>>);
 
@@ -298,15 +304,17 @@ impl InstructionCycleRow {
             .filter(|rows| rows.len() == cycles)
     }
 
-    /// Keep one reference for the next consumer even if this kernel releases
-    /// its own rows first; `shared` releases this session
-    /// ownership once a random-access consumer acquires its own reference.
+    /// Reuse cached rows or collect them, retaining a strong carry for a later
+    /// consumer whatever the witness kind.
     pub(crate) fn shared_for_next_consumer<F: JoltField>(
         session: &mut ProofSession,
         witness: &dyn JoltWitnessPlane<F>,
         cycles: usize,
     ) -> Result<Arc<ConstantSuffix<Self>>, KernelError<F>> {
-        let rows = Self::shared(session, witness, cycles)?;
+        let rows = match Self::cached(session, witness, cycles) {
+            Some(rows) => rows,
+            None => Arc::new(Self::collect(witness, cycles)?),
+        };
         session.park(SharedInstructionRows(Arc::clone(&rows)));
         Ok(rows)
     }
