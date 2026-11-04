@@ -187,7 +187,10 @@ class ModelBroker:
 def configure_codex(endpoint: str, directory: Path) -> None:
     ripgrep = directory / "ripgrep.conf"
     ripgrep.write_text("--no-ignore\n--hidden\n")
-    environment = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(directory / "agent-state"),
+    rg = shutil.which("rg")
+    if rg is None:
+        raise AgentFailure("ripgrep is not installed")
+    environment = {"PATH": f"{Path(rg).parent}:/usr/local/bin:/usr/bin:/bin", "HOME": str(directory / "agent-state"),
         "RIPGREP_CONFIG_PATH": str(ripgrep),
         "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_ATTR_NOSYSTEM": "1", "GIT_CONFIG_COUNT": "4",

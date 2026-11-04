@@ -79,8 +79,9 @@ protocol, transcript or wire-format edits. A spent read budget proves no exclusi
 - **risk-1:** tests, scripts, CI or documentation only. A cfg(test)-exclusive or comment-only
   edit can be risk-1 inside a production source file. The gate's syntactic exception recognizes
   standalone cfg-gated top-level items, stacked multiline attributes, file-inner cfg(test),
-  and ordinary out-of-file modules whose parent declarations are all test-only. Unknown
-  path/include expansion remains conservative; nested macro-like cfg input is not exempt.
+  and ordinary out-of-file modules whose parent declarations are all test-only. Custom
+  path/include targets, Cargo build/target roots and crates with macro-generated module
+  declarations remain conservative; nested macro-like cfg input is not exempt.
   The gate independently checks this exception
   on level-3/4 paths; a level-1 answer cannot waive a runtime-code default.
 - **risk-2:** prover or other non-verifier code, or dependency-only bumps outside the verifier

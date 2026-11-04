@@ -388,14 +388,8 @@ security boundary is read-only filesystem access, no network and no readable rea
 PR text can still attempt to mislead a verdict. The publisher treats every verdict field as
 untrusted text, caps lengths, escapes HTML/Markdown and suppresses mentions before publication.
 
-The manual security diagnostic uses a fake key and no model requests:
-`uv run --no-project python scripts/ci/probe_classifier_sandbox.py "$RUNNER_TEMP/probe"`.
-It installs a fake key in its own initial process environment and verifies that positive
-control before testing that the shell cannot read it. No caller-supplied key is needed.
-Run it on the same Ubuntu image and Codex pin as the classifier. It checks writes, network,
-shell environment, every visible `/proc/*/environ`, explicit ancestor environments, Codex
-state/auth/config files and runner environment files. Local classification previews must stub
-and count all GitHub writes; they are not permission to publish or approve anything.
+Local classification previews must stub and count all GitHub writes; they are not permission
+to publish or approve anything.
 
 Row 5 protects the classifier skill, closure spec, risk policy, both gate entry workflows,
 the new reusable evaluation workflow and `scripts/ci/classifier_agent.py`. Proposed replacements
@@ -625,9 +619,11 @@ if retiring them. Keep the separate Pika App and local review skill.
 - Crafted `#[cfg(test)]` attributes inside multiline generic lists can make the source scanner
   misread the rest of a runtime function as test code. The scanner is not a Rust parser.
 - Submodule gitlinks on floor paths count zero code lines. None exist on those paths today.
-- Out-of-file test modules use ordinary Rust module paths and all parent declarations. A crate
-  with custom `#[path]` or `include!` expansion keeps the conservative file-level floor; the
-  scanner does not expand macros or resolve generated module paths.
+- Out-of-file test modules use ordinary Rust module paths and all parent declarations.
+  `#[path]`/`include!` targets and Cargo build/target roots keep their normal floor. Literal
+  references conservatively block every file with the referenced basename. Custom references
+  and macro-generated module declarations also block their declaring crate's exemption.
+  The scanner does not expand macros or resolve generated module paths.
 - The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
   Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.
 - Event delivery delays withdrawal. The gate cannot withdraw its approval after a dismissed

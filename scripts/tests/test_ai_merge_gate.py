@@ -436,6 +436,31 @@ class AiMergeGateTests(unittest.TestCase):
                 apis = evaluate(changed_contents(base, {**base, child: "fn check() { new(); }\n"}, risk=1))
                 self.assertIn(f"risk-{risk}", apis.labels)
 
+    def test_indirect_modules_and_cargo_targets_keep_the_runtime_floor(self):
+        crate = "crates/jolt-verifier"
+        helper = f"{crate}/src/helper.rs"
+        base = {f"{crate}/Cargo.toml": '[package]\nname = "jolt-verifier"\n',
+                f"{crate}/src/lib.rs": "#[cfg(test)]\nmod helper;\n"}
+        cases = [
+            (helper, {"crates/other/Cargo.toml": '[package]\nname = "other"\n',
+                      "crates/other/src/lib.rs": '#[path = "../../jolt-verifier/src/helper.rs"]\npub mod helper;\n'}),
+            (helper, {"crates/other/Cargo.toml": '[package]\nname = "other"\n',
+                      "crates/other/src/lib.rs": 'include!("../../jolt-verifier/src/helper.rs");\n'}),
+            (helper, {f"{crate}/src/lib.rs": "macro_rules! declare { ($n:ident) => { pub mod $n; }; }\n"
+                      "#[cfg(not(test))]\ndeclare!(helper);\n#[cfg(test)]\nmod helper;\n"}),
+            (f"{crate}/build.rs", {f"{crate}/mod.rs": "#[cfg(test)]\nmod build;\n"}),
+            (helper, {f"{crate}/Cargo.toml": '[package]\nname = "jolt-verifier"\nbuild = "src/helper.rs"\n'}),
+        ]
+        for target in ("src/main.rs", "src/bin/helper.rs", "examples/helper.rs", "benches/helper.rs", "tests/helper.rs"):
+            child = Path(target)
+            cases.append((f"{crate}/{target}", {f"{crate}/{child.parent}/mod.rs": f"#[cfg(test)]\nmod {child.stem};\n"}))
+        for child, extra in cases:
+            with self.subTest(child=child, extra=extra):
+                old = {**base, **extra, child: "fn main() { reject(); }\n"}
+                apis = changed_contents(old, {**old, child: "fn main() { accept(); }\n"}, risk=1)
+                source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
+                self.assertEqual(source.code_changes(child), 2)
+
     def test_affecting_or_uncertain_risk_three_changes_must_be_minimal_in_aggregate(self) -> None:
         for verdict in ("AFFECTS", "UNCERTAIN"):
             for crate in ("jolt-field", "jolt-prover", "jolt-akita"):

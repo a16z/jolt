@@ -605,7 +605,7 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
 
 
 def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
-    """Resolve ordinary mod declarations; unknown path/include expansion keeps its crate conservative."""
+    """Resolve ordinary modules, excluding indirect references and Cargo compilation roots."""
     def crate(path: str) -> str:
         return next((str(parent) for parent in PurePosixPath(path).parents
                      if str(parent / "Cargo.toml") in files), "")
@@ -613,6 +613,7 @@ def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
     incoming: dict[str, list[tuple[str, bool]]] = {}
     roots = set()
     blocked = set()
+    referenced_names = set()
     for manifest, text in files.items():
         if not manifest.endswith("Cargo.toml") or text is None:
             continue
@@ -622,16 +623,27 @@ def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
         except tomllib.TOMLDecodeError:
             blocked.add(owner)
             continue
-        for target in [cargo.get("lib", {}), *cargo.get("bin", []), *cargo.get("example", [])]:
+        for target in [cargo.get("lib", {}), *cargo.get("bin", []), *cargo.get("example", []),
+                       *cargo.get("bench", []), *cargo.get("test", [])]:
             if isinstance(target, dict) and isinstance(target.get("path"), str):
                 roots.add(posixpath.normpath(str(PurePosixPath(owner) / target["path"])))
+        build = cargo.get("package", {}).get("build")
+        if isinstance(build, str):
+            roots.add(posixpath.normpath(str(PurePosixPath(owner) / build)))
     for path, text in files.items():
+        owner = crate(path)
+        relative = posixpath.relpath(path, owner) if owner else path
+        if relative in ("build.rs", "src/lib.rs", "src/main.rs") \
+                or relative.startswith(("src/bin/", "examples/", "benches/", "tests/")):
+            roots.add(path)
         if not path.endswith(".rs") or text is None or not re.search(r"\bmod\b|\bpath\b|\binclude\b", text):
             continue
         scanner = _Scanner()
         code = "\n".join(scanner.scan_line(line).code for line in text.split("\n"))
-        owner = crate(path)
         if re.search(r"#\s*!?\[[^]]*\bpath\s*=|\binclude\s*!", code):
+            blocked.add(owner)
+            referenced_names.update(PurePosixPath(value).name for value in re.findall(r'"([^"\n]*)"', text))
+        if re.search(r"\bmod\s+\$", code):
             blocked.add(owner)
         regions = analyze_rust(text, cfg_test_only=True)
         source = PurePosixPath(path)
@@ -661,7 +673,7 @@ def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
         found = {path for path, parents in incoming.items() if path not in tests
                  and crate(path) and crate(path) not in blocked and path not in roots
                  and PurePosixPath(path).name not in ("lib.rs", "main.rs")
-                 and "/src/bin/" not in "/" + path
+                 and PurePosixPath(path).name not in referenced_names
                  and all(test or parent in tests for parent, test in parents)}
         if not found:
             return tests
