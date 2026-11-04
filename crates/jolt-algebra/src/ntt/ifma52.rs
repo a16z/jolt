@@ -264,7 +264,7 @@ pub fn ifma52_available() -> bool {
 /// Whether IFMA52 is available and SIMD has not been globally disabled.
 #[must_use]
 pub fn ifma52_enabled() -> bool {
-    ifma52_available() && std::env::var("AKITA_SCALAR_NTT").ok().as_deref() != Some("1")
+    ifma52_available() && !super::scalar_ntt_forced()
 }
 
 /// Forward transform of canonical residues.

@@ -5,7 +5,7 @@
 //! `i32_kernels`. Set `AKITA_SCALAR_NTT=1` to force scalar kernels for A/B
 //! measurements.
 
-use std::sync::OnceLock;
+use super::scalar_ntt_forced;
 
 #[cfg(target_endian = "little")]
 mod field_limbs;
@@ -33,8 +33,7 @@ pub(crate) use twiddles::BarrettTwiddles;
 /// Whether the NEON NTT path is active. Cached on first call.
 /// Set `AKITA_SCALAR_NTT=1` to force scalar fallback.
 pub fn use_neon_ntt() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").map_or(true, |v| v != "1"))
+    !scalar_ntt_forced()
 }
 
 /// NEON implementation of the architecture-neutral balanced-i16 predicate.

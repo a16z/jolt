@@ -9,9 +9,8 @@
 //! the baseline's design, ported unchanged; within this crate the expansion
 //! site is this crate, so its `parallel` feature governs.
 //!
-//! These helpers are backend-independent and available in every feature
-//! configuration. Consumers: the ring and NTT code here, jolt-crypto's
-//! lattice primitives, and Akita's kernels.
+//! The helpers are backend-independent, so they are available in every
+//! feature configuration.
 
 #[cfg(feature = "parallel")]
 pub use rayon::prelude::*;
@@ -87,7 +86,7 @@ macro_rules! cfg_chunks_mut {
 macro_rules! cfg_join {
     ($f_a:expr, $f_b:expr) => {{
         #[cfg(feature = "parallel")]
-        let result = $crate::solinas::parallel::__rayon_join($f_a, $f_b);
+        let result = $crate::parallel::__rayon_join($f_a, $f_b);
         #[cfg(not(feature = "parallel"))]
         let result = ($f_a(), $f_b());
         result

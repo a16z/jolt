@@ -1,3 +1,4 @@
+use crate::ntt::scalar_ntt_forced;
 use std::sync::OnceLock;
 
 /// Runtime-selected x86 CRT NTT SIMD mode.
@@ -26,7 +27,7 @@ pub fn avx_ntt_mode() -> Option<AvxNttMode> {
     static MODE: OnceLock<Option<AvxNttMode>> = OnceLock::new();
     *MODE.get_or_init(|| {
         select_avx_ntt_mode(
-            std::env::var("AKITA_SCALAR_NTT").ok().as_deref(),
+            scalar_ntt_forced(),
             std::env::var("AKITA_AVX512_NTT").ok().as_deref(),
             detect_cpu_features(),
         )
@@ -40,11 +41,11 @@ pub fn use_avx2_transform_ntt() -> bool {
 
 #[inline]
 pub(super) fn select_avx_ntt_mode(
-    scalar_ntt: Option<&str>,
+    scalar_forced: bool,
     avx512_ntt: Option<&str>,
     cpu: AvxCpuFeatures,
 ) -> Option<AvxNttMode> {
-    if scalar_ntt == Some("1") {
+    if scalar_forced {
         return None;
     }
     if avx512_ntt == Some("1") && cpu.avx2 && cpu.avx512 {

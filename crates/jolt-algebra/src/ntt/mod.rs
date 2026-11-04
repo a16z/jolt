@@ -23,3 +23,11 @@ pub use crt::{CrtCapacity, GarnerData, LimbQ, RADIX_BITS};
 pub use digit_validation::i16_values_in_balanced_range;
 pub use plan::NttKernelPlan;
 pub use prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
+use std::sync::OnceLock;
+
+/// Whether `AKITA_SCALAR_NTT=1` forces the scalar CRT NTT kernels on every
+/// SIMD backend. Read once; the NEON, AVX and IFMA52 dispatchers all ask here.
+pub(crate) fn scalar_ntt_forced() -> bool {
+    static FORCED: OnceLock<bool> = OnceLock::new();
+    *FORCED.get_or_init(|| std::env::var("AKITA_SCALAR_NTT").is_ok_and(|value| value == "1"))
+}
