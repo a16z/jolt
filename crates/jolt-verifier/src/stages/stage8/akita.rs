@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-use jolt_claims::protocols::jolt::lattice::increments::{fused_inc_group_role, FusedIncLayout};
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, committed_program_packing_plan, OneHotTraceShape, PrefixPackedObjectPlan,
 };
@@ -707,7 +706,7 @@ where
     F: JoltField,
     V: Clone,
     C: Clone,
-    Ch: Channel,
+    Ch: FieldTranscript<F>,
 {
     // An advice leaf and its object (its commitment) are present together.
     for polynomial in [
@@ -817,7 +816,7 @@ pub fn masked_group_claims<F, C, Ch>(
 where
     F: JoltField,
     C: Clone,
-    Ch: Channel,
+    Ch: FieldTranscript<F>,
 {
     let leaves = leaves(
         stage7_points,
@@ -890,7 +889,7 @@ pub fn clear_group_claims<F, C, Ch>(
 where
     F: JoltField,
     C: Clone,
-    Ch: Channel,
+    Ch: FieldTranscript<F>,
 {
     let leaves = leaves
         .iter()
@@ -1076,9 +1075,7 @@ pub fn leaf_claims<F: JoltField>(
             Poly::InstructionRa(index) => indexed(&hamming.instruction_ra, index, polynomial),
             Poly::BytecodeRa(index) => indexed(&hamming.bytecode_ra, index, polynomial),
             Poly::RamRa(index) => indexed(&hamming.ram_ra, index, polynomial),
-            Poly::BalancedIncDigit(_)
-            | Poly::BalancedIncCarry
-            | Poly::RdInc
+            Poly::RdInc
             | Poly::RamInc
             | Poly::Reserved4(_)
             | Poly::TrustedAdvice

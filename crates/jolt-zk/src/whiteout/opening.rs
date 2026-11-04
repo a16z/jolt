@@ -6,7 +6,7 @@
 
 use jolt_algebra::JoltField;
 use jolt_transcript::VerifierState;
-use spongefish::DuplexSpongeInterface;
+use spongefish::DuplexSpongeInit;
 
 use super::LatticePadPayload;
 use crate::masking::{
@@ -61,7 +61,7 @@ pub struct MaskedOpeningShape {
 /// as in `jolt_openings::GroupBatchOpening`.
 pub trait MaskedGroupOpening<F: JoltField> {
     /// The transcript sponge the opening runs on.
-    type Sponge: DuplexSpongeInterface<U = u8>;
+    type Sponge: DuplexSpongeInit<U = u8>;
     type Setup;
     type GroupCommitment;
     /// The public setup of one opening shape, derived from the verifier

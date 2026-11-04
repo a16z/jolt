@@ -7,23 +7,24 @@ use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::FieldInlineRepresentation;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+#[cfg(not(all(feature = "akita", feature = "zk")))]
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
-#[cfg(feature = "akita")]
+#[cfg(not(all(feature = "akita", feature = "zk")))]
+use jolt_transcript::VerifierInit;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use jolt_transcript::VerifierState;
-use jolt_transcript::{
-    protocol_tag, BytesMsg, Encoding, FieldTranscript, Transcript, VerifierInit, TAG_BYTES,
-};
+use jolt_transcript::{protocol_tag, BytesMsg, Encoding, FieldTranscript, Transcript, TAG_BYTES};
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::{ChallengeCodec, Shake128, ShapeTranscript};
 #[cfg(not(feature = "akita"))]
@@ -46,12 +47,14 @@ use crate::stages::{
     stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
     stage5::Stage5Output, stage6a::Stage6aOutput, stage6b::Stage6bOutput, stage7::Stage7Output,
 };
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use std::borrow::BorrowMut;
 
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
-#[cfg(feature = "akita")]
+#[cfg(not(all(feature = "akita", feature = "zk")))]
+use crate::stages::stage8;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use crate::stages::stage8::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage8::Stage8Output;
@@ -64,8 +67,8 @@ use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::{JoltProof, TracePolynomialOrder},
     stages::{
-        stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
-        CommittedProgramSchedule, PrecommittedSchedule,
+        stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, CommittedProgramSchedule,
+        PrecommittedSchedule,
     },
     VerifierError,
 };

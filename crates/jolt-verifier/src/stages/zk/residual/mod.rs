@@ -36,6 +36,7 @@ use jolt_claims::protocols::composed::r1cs::{
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
 #[cfg(not(any(feature = "field-inline", feature = "akita")))]
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 use jolt_claims::protocols::jolt::relations;
 #[cfg(feature = "fuzzing")]
@@ -1658,6 +1659,7 @@ fn hamming_virtualization_address_point<F: JoltField>(
 }
 
 impl<F: JoltField> SourceValues<F> {
+    #[cfg(not(feature = "akita"))]
     fn has_public(&self, id: VerifierPublicId) -> bool {
         self.publics.contains_key(&id)
     }
