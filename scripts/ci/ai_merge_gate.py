@@ -646,6 +646,8 @@ class Gate:
                 for path in self.pinned(pull).changed()}
 
     def risk_level(self, pull: dict) -> int:
+        if any(path.startswith(GATE_INPUTS) for path in self.pinned(pull).changed()):
+            return 4
         if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
             return record.risk
         paths = self.path_risks(pull)
@@ -715,6 +717,10 @@ class Gate:
         number, head = pull["number"], pull["head"]["sha"]
         self.ledger = self.attempts()
         paths = self.path_risks(pull)
+        if any(path.startswith(GATE_INPUTS) for path in paths):
+            self.records.append(Record(CLASSIFIER, "success", "Protected gate inputs: risk-4",
+                                       "Gate-input changes require a current-head maintainer approval.", 4))
+            return
         source = self.pinned(pull)
         bumps = source.dependency_bumps(set(paths), self.policy["risk-3"]["dependency_roots"])
         if bumps.keys() == paths.keys() and bumps:

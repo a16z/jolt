@@ -42,9 +42,9 @@ an approval counts when it comes from someone with write permission, and a revie
 changes must approve before the pull request can merge. GitHub dismisses an approval as stale
 when a push changes the pull request's diff.
 
-The gate's policy asks for more than one approval from anyone with write access. At risk-4 it
+The gate's policy asks for more than one approval from anyone with write access. At risk-4, including gate-input changes, it
 asks for an approval of the current head from a maintainer other than the author, and it asks
-for a writer's approval of any change to the gate's inputs or from a non-maintainer author.
+for a writer's approval of changes from a non-maintainer author.
 GitHub cannot check maintainer-list membership or risk levels, so a human approval
 from any writer satisfies the ruleset whatever the policy asks. For human approvals the policy
 is advisory: the managed labels and the `ai-merge-gate` check tell reviewers what it wants;
@@ -121,7 +121,8 @@ when GitHub is reachable. `UNCERTAIN`
 or `AFFECTS` with no non-bump path at risk-3 or above becomes risk-4. The classifier still asks about verifier acceptance;
 this does not add a witness-confidentiality check for prover-only code.
 
-Without a cached or new classification, a change wholly within level-1 paths has internal risk-1;
+Changes to protected gate inputs are always risk-4, even with a lower classifier result.
+Otherwise, without a cached or new classification, a change wholly within level-1 paths has internal risk-1;
 other changes have internal risk-4 until they can be classified. Maintainer-authored drafts
 receive the corresponding label without running a model; non-maintainer pull requests receive
 no risk label. Internal risk still sets their approval threshold. This path rule cannot earn the

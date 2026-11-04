@@ -573,7 +573,7 @@ class AiMergeGateTests(unittest.TestCase):
             ({}, {"risk-2"}, 1),
             ({"author": "outsider", "files": ["docs/guide.md"]},
              {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
-            ({"files": [".claude/skills/verifier-classifier/SKILL.md"]}, {"risk-1", "no-reviewer-assigned"}, 0),
+            ({"files": [".claude/skills/verifier-classifier/SKILL.md"]}, {"risk-4", "no-reviewer-assigned"}, 0),
             ({"author": "outsider"}, {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
             ({"draft": True}, {"risk-4"}, 0),
         ]:
@@ -1273,6 +1273,23 @@ class AiMergeGateTests(unittest.TestCase):
                 trees = {urlsplit(url).path.rsplit("/", 1)[1] for _, url in apis.requests if "/git/trees/" in url}
                 self.assertEqual(trees, {BASE, HEAD})
 
+    def test_gate_inputs_are_risk_four_before_and_after_classification(self) -> None:
+        for path in (GATE.WORKFLOW, ".github/workflows/ai-merge-gate-events.yml",
+                     ".claude/skills/verifier-classifier/SKILL.md",
+                     "specs/verifier-closure-lints.md", GATE.RISK_POLICY):
+            for cached in (False, True):
+                apis = FakeApis(files=[path], risk=1,
+                                records=[record(GATE.CLASSIFIER)] if cached else [])
+                github = GATE.GitHub(apis, "token", REPO)
+                gate = GATE.Gate(github, GATE.Model(apis, "sk-test"), "main", MAINTAINERS, RUN_ID)
+                pull = github.get(f"/repos/{REPO}/pulls/7")
+                with self.subTest(path=path, cached=cached, source="fallback or cache"):
+                    self.assertEqual(gate.risk_level(pull), 4)
+                gate.classify(pull)
+                with self.subTest(path=path, cached=cached, source="classification"):
+                    self.assertEqual(gate.records[-1].risk, 4)
+                    self.assertEqual(gate.risk_level(pull), 4)
+
     def test_changes_to_gate_inputs_never_get_the_gates_approval(self) -> None:
         attested = [comment("core-a", attestation())]
         renamed = {"filename": "docs/classifier.md", "previous_filename": ".claude/skills/verifier-classifier/SKILL.md",
@@ -1289,10 +1306,14 @@ class AiMergeGateTests(unittest.TestCase):
                 apis = evaluate(FakeApis(comments=attested, files=files, counts=(len(files), 1, 1)))
                 self.assertEqual(apis.gate(), ("neutral", "Human approval required: the change edits the gate's inputs"))
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
-        # A writer's approval satisfies the policy; the gate still does not add its own.
-        approved = evaluate(FakeApis(comments=attested, files=[".claude/skills/verifier-classifier/SKILL.md"],
-                                     reviews=[review("maintainer", "APPROVED")]))
-        self.assertEqual((approved.gate(), approved.review_writes), (("success", "Approved by maintainer"), []))
+        for approver, expected in [
+            ("maintainer", ("neutral", "Risk 4: current-head maintainer approval required")),
+            ("core-b", ("success", "Risk 4 approved by core-b")),
+        ]:
+            with self.subTest(approver=approver):
+                approved = evaluate(FakeApis(comments=attested, files=[".claude/skills/verifier-classifier/SKILL.md"],
+                                             reviews=[review(approver, "APPROVED")]))
+                self.assertEqual((approved.gate(), approved.review_writes), (expected, []))
         path = ".github/ISSUE_TEMPLATE/bug_report.md"
         old, new = "Describe the bug\n", "Describe the bug and how to reproduce it\n"
         template = evaluate(FakeApis(comments=attested, files=[path], diff=unified_diff(path, old, new),
