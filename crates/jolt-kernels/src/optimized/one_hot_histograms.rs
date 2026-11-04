@@ -180,7 +180,7 @@ pub(crate) fn pushforward_access<F: JoltField>(
 // can dominate the larger tables even when the instruction count falls.
 enum InstructionHistogram<F: JoltField> {
     Digits(Vec<Vec<F::Accumulator>>),
-    Pairs(Vec<Vec<F::SumAccumulator>>),
+    Pairs(Vec<[F::SumAccumulator; 256]>),
 }
 
 impl<F: JoltField> InstructionHistogram<F> {
@@ -193,7 +193,7 @@ impl<F: JoltField> InstructionHistogram<F> {
             && block_len >= 1024
             && std::mem::size_of::<F::SumAccumulator>() <= block_len / 32
         {
-            Self::Pairs(vec![vec![F::SumAccumulator::default(); 256]; columns / 2])
+            Self::Pairs(vec![[F::SumAccumulator::default(); 256]; columns / 2])
         } else {
             Self::Digits(vec![vec![F::Accumulator::default(); k_chunk]; columns])
         }
@@ -237,8 +237,8 @@ impl<F: JoltField> InstructionHistogram<F> {
     }
 }
 
-fn add_instruction_digits<A: Accumulator>(
-    buckets: &mut [Vec<A>],
+fn add_instruction_digits<A: Accumulator, B: AsMut<[A]>>(
+    buckets: &mut [B],
     index: u128,
     weight: A::Element,
     k_chunk: usize,
@@ -254,6 +254,7 @@ fn add_instruction_digits<A: Accumulator>(
                 continue;
             }
             for bucket in buckets.iter_mut().rev() {
+                let bucket = bucket.as_mut();
                 let digit = limb as usize & (k_chunk - 1);
                 if !omit_zero || digit != 0 {
                     bucket[digit].add(weight);
@@ -264,6 +265,7 @@ fn add_instruction_digits<A: Accumulator>(
     } else {
         let mut index = index;
         for bucket in buckets.iter_mut().rev() {
+            let bucket = bucket.as_mut();
             let digit = (index & (k_chunk - 1) as u128) as usize;
             if !omit_zero || digit != 0 {
                 bucket[digit].add(weight);
