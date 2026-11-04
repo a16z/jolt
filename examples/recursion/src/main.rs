@@ -1109,14 +1109,12 @@ fn tamper_proof(
     save_proof_data(guest, &tampered, output);
 }
 
-/// Guest build settings the verifier guest uses by default (feature
-/// `guest-codegen`): a higher LLVM inline threshold, one codegen unit and no
+/// Guest build settings: a higher LLVM inline threshold, one codegen unit and no
 /// debug information for the guest's release profile. Measured as the fewest
 /// trace rows of the guest build configurations screened at inner sizes 2^12
 /// and 2^20; the inner proofs are unchanged. A value the caller already set for
-/// any of these variables wins, and `RECURSION_GUEST_CODEGEN=off` (or building
-/// without the feature) restores the stock guest build.
-const RECURSION_GUEST_CODEGEN: [(&str, &str); 3] = [
+/// any of these variables wins.
+const GUEST_BUILD_SETTINGS: [(&str, &str); 3] = [
     (
         "ZEROOS_GUEST_RUSTFLAGS",
         "-Cllvm-args=-inline-threshold=1750 -Cllvm-args=-enable-gvn-hoist -Cllvm-args=-enable-dfa-jump-thread -Cllvm-args=-enable-ext-tsp-block-placement -Cllvm-args=-enable-tail-merge=false -Cllvm-args=-split-spill-mode=size -Cllvm-args=-riscv-disable-cost-per-use=true -Cllvm-args=-phi-elim-split-all-critical-edges=true -Cllvm-args=-no-phi-elim-live-out-early-exit=true -Cllvm-args=-enable-spill-copy-elim=true -Cllvm-args=-enable-post-misched=true",
@@ -1130,7 +1128,7 @@ const RECURSION_GUEST_CODEGEN: [(&str, &str); 3] = [
 /// diff, every file under `examples/recursion` (the generated guest sources
 /// included), the Cargo git checkouts, the toolchain (`rustc -Vv`, `cargo -V`,
 /// the jolt CLI binary), this host binary (its features and build code), the
-/// guest build environment (RUSTFLAGS, the guest-codegen variables), the
+/// guest build environment (RUSTFLAGS, the guest build settings), the
 /// bytes of the immutable recipe tables file (by content, not by path) and the
 /// target directory. `None` when any part cannot be read; the build then runs
 /// as usual. Tooling only: a hit reuses an ELF built from the same inputs.
@@ -1147,7 +1145,7 @@ rustc -Vv
 cargo -V
 sha256sum "$(command -v "${JOLT_PATH:-jolt}")"
 sha256sum "$2"
-env | grep -E '^(ZEROOS_GUEST_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]*|RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_[A-Z0-9_]*|RECURSION_GUEST_CODEGEN|JOLT_FUNC_NAME)=' | sort || true
+env | grep -E '^(ZEROOS_GUEST_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]*|RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_[A-Z0-9_]*|JOLT_FUNC_NAME)=' | sort || true
 if [ -n "${JOLT_IMMUTABLE_RECIPES_RS:-}" ]; then echo immutable-recipes-tables; sha256sum < "$JOLT_IMMUTABLE_RECIPES_RS"; else echo immutable-recipes-tables-none; fi
 echo "$3"
 } | sha256sum | cut -c1-64
@@ -1215,19 +1213,12 @@ fn recursion_guest_link_order_flag(target_dir: &str) -> Option<String> {
 /// With `RECURSION_GUEST_ELF_CACHE_PROBE` also set, the host logs the key and
 /// whether the lookup hits, then exits without building.
 fn build_recursion_guest(program: &mut Program, target_dir: &str) {
-    let enabled = cfg!(feature = "guest-codegen")
-        && !matches!(
-            std::env::var("RECURSION_GUEST_CODEGEN").as_deref(),
-            Ok("off")
-        );
     let caller_guest_rustflags = std::env::var_os("ZEROOS_GUEST_RUSTFLAGS");
     let mut applied = Vec::new();
-    if enabled {
-        for (key, value) in RECURSION_GUEST_CODEGEN {
-            if std::env::var_os(key).is_none() {
-                std::env::set_var(key, value);
-                applied.push(key);
-            }
+    for (key, value) in GUEST_BUILD_SETTINGS {
+        if std::env::var_os(key).is_none() {
+            std::env::set_var(key, value);
+            applied.push(key);
         }
     }
     let link_order = recursion_guest_link_order_flag(target_dir);
@@ -1730,7 +1721,6 @@ mod guest_build_tests {
     fn generated_writes_and_guest_settings_preserve_caller_state() {
         let keys = [
             "RECURSION_WRITE_IF_CHANGED",
-            "RECURSION_GUEST_CODEGEN",
             "RECURSION_GUEST_LINK_ORDER",
             "RECURSION_GUEST_ELF_CACHE",
             "RECURSION_GUEST_ELF_CACHE_PROBE",

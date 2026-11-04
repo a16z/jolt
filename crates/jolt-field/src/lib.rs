@@ -191,7 +191,6 @@ pub enum FieldError {
 mod setup_weight_tiles;
 #[cfg(feature = "signed-byte-sum")]
 mod signed_byte_sum;
-#[cfg(feature = "terminal-contraction")]
 mod terminal_contraction;
 #[doc(hidden)]
 #[macro_export]
