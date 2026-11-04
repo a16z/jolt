@@ -1,4 +1,4 @@
-use jolt_transcript::TranscriptError;
+use jolt_transcript::VerificationError;
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum OpeningsError {
@@ -20,6 +20,14 @@ pub enum OpeningsError {
     #[error("polynomial size {poly_size} exceeds setup max {setup_max}")]
     PolynomialTooLarge { poly_size: usize, setup_max: usize },
 
-    #[error("opening proof transcript: {0}")]
-    Transcript(#[from] TranscriptError),
+    /// The transcript refused a challenge draw: the codec does not support the
+    /// request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl From<VerificationError> for OpeningsError {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

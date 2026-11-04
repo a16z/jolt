@@ -197,7 +197,7 @@ mod injection {
 #[cfg(test)]
 mod tests {
     use common::constants::RISCV_REGISTER_COUNT;
-    use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding};
+    use jolt_algebra::{CanonicalBytes, CanonicalEncoding};
     use jolt_riscv::FIELD_REGISTER_COUNT;
     use rand::SeedableRng;
 

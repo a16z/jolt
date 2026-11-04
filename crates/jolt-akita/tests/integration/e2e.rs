@@ -4,13 +4,11 @@
     reason = "benchmarks and tests unwrap successful PCS operations"
 )]
 
-use crate::support::{
-    assert_transcripts_agree, f, layout, new_prover_transcript, new_verifier_transcript,
-    polynomial, setup_for,
-};
+use crate::support::{f, layout, polynomial, setup_for};
 use jolt_akita::{AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::Polynomial;
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 #[test]
 fn akita_single_opening_roundtrips_across_dimensions() {
@@ -20,31 +18,33 @@ fn akita_single_opening_roundtrips_across_dimensions() {
 }
 
 #[test]
-fn akita_single_opening_rejects_wrong_eval_point_and_transcript() {
+fn akita_single_opening_rejects_wrong_eval_point_setup_and_transcript() {
     let (prover_setup, verifier_setup) = setup_for(14, 1, layout(7));
     let poly = polynomial(14, 100);
     let point: Vec<_> = (0..14).map(|i| f(2 + 3 * i)).collect();
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup).unwrap();
 
-    let mut prover_transcript = new_prover_transcript(b"akita-e2e-rejects");
-    AkitaScheme::open(
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-e2e-rejects"), b"");
+    let proof = AkitaScheme::open(
         &poly,
         &point,
         eval,
         &prover_setup,
         Some(hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
-    let proof = prover_transcript.narg().to_vec();
 
-    let mut transcript = new_verifier_transcript(b"akita-e2e-rejects", &proof);
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-e2e-rejects"), b"");
     assert!(
         AkitaScheme::verify(
             &commitment,
             &point,
             eval + f(1),
+            &proof,
             &verifier_setup,
             &mut transcript,
         )
@@ -54,12 +54,14 @@ fn akita_single_opening_rejects_wrong_eval_point_and_transcript() {
 
     let mut wrong_point = point.clone();
     wrong_point[2] += f(1);
-    let mut transcript = new_verifier_transcript(b"akita-e2e-rejects", &proof);
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-e2e-rejects"), b"");
     assert!(
         AkitaScheme::verify(
             &commitment,
             &wrong_point,
             eval,
+            &proof,
             &verifier_setup,
             &mut transcript,
         )
@@ -67,17 +69,37 @@ fn akita_single_opening_rejects_wrong_eval_point_and_transcript() {
         "wrong opening point should reject"
     );
 
-    let mut wrong_transcript = new_verifier_transcript(b"akita-e2e-wrong-domain", &proof);
+    let mut wrong_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-e2e-wrong-domain"),
+        b"",
+    );
     assert!(
         AkitaScheme::verify(
             &commitment,
             &point,
             eval,
+            &proof,
             &verifier_setup,
             &mut wrong_transcript,
         )
         .is_err(),
         "different transcript domain should reject"
+    );
+
+    let (_, wrong_layout_setup) = setup_for(14, 1, layout(8));
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-e2e-rejects"), b"");
+    assert!(
+        AkitaScheme::verify(
+            &commitment,
+            &point,
+            eval,
+            &proof,
+            &wrong_layout_setup,
+            &mut transcript,
+        )
+        .is_err(),
+        "wrong verifier setup key should reject"
     );
 }
 
@@ -143,26 +165,31 @@ fn single_opening_roundtrip(
     let eval = poly.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit(&poly, &prover_setup).unwrap();
 
-    let mut prover_transcript = new_prover_transcript(label);
-    AkitaScheme::open(
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
+    let proof = AkitaScheme::open(
         &poly,
         &point,
         eval,
         &prover_setup,
         Some(hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
-    let proof = prover_transcript.narg().to_vec();
 
-    let mut verifier_transcript = new_verifier_transcript(label, &proof);
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
     AkitaScheme::verify(
         &commitment,
         &point,
         eval,
+        &proof,
         &verifier_setup,
         &mut verifier_transcript,
     )
     .expect("single proof should verify");
-    assert_transcripts_agree(prover_transcript, verifier_transcript);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }

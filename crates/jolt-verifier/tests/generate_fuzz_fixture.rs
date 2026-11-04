@@ -2,12 +2,8 @@
 //! fuzz workspace. Transparent and ZK builds generate their own protocol-
 //! compatible fixtures.
 //!
-//! Each bundle is `(preprocessing, public_io, proof, trusted_advice_commitment)`
-//! in bincode-serde encoding, with `proof` the NARG `JoltProof`. Run both
-//! builds explicitly and commit the output:
+//! Run explicitly and commit the output:
 //! `cargo nextest run -p jolt-verifier --features prover-fixtures \
-//!   --test generate_fuzz_fixture --run-ignored ignored-only`
-//! `cargo nextest run -p jolt-verifier --features prover-fixtures,zk \
 //!   --test generate_fuzz_fixture --run-ignored ignored-only`
 
 #![cfg(all(
@@ -28,15 +24,17 @@ use common::jolt_device::JoltDevice;
 use jolt_algebra::Fr;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::{DoryCommitment, DoryScheme};
-use jolt_verifier::{JoltProof, JoltSponge, JoltVerifierPreprocessing};
+use jolt_transcript::{Keccak, VerifierState};
+use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 
 mod support;
 
 type FuzzPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
+type FuzzProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 type FuzzBundle = (
     FuzzPreprocessing,
     JoltDevice,
-    JoltProof,
+    FuzzProof,
     Option<DoryCommitment>,
 );
 
@@ -136,7 +134,7 @@ fn write_bundle(filename: &str, bundle: FuzzBundle, zk: bool) {
     assert_eq!(consumed, bytes.len(), "fuzz bundle has trailing bytes");
     support::assert_accepts_mode(
         zk,
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &decoded.0,
             &decoded.1,
             &decoded.2,

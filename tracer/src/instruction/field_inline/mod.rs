@@ -92,7 +92,7 @@ fn encode_field<F: CanonicalEncoding>(value: F) -> FieldEncodedValue {
 
 #[cfg(test)]
 mod tests {
-    use jolt_algebra::{CanonicalBytes, CanonicalDecode, Ring};
+    use jolt_algebra::{CanonicalBytes, Ring};
 
     use super::*;
 

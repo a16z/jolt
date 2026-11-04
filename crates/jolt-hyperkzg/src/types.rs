@@ -1,6 +1,6 @@
 use jolt_algebra::Fr;
 use jolt_crypto::{Bn254G1, Bn254G2, JoltGroup};
-use jolt_transcript::{Channel, TranscriptError};
+use jolt_transcript::{FieldTranscript, VerificationError};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -61,24 +61,36 @@ impl HyperKZGVerifierSetup {
         Ok(len)
     }
 
-    /// Binds the setup and the whole opening statement before any opening
-    /// message, on either side.
-    pub(crate) fn bind_statement<C: Channel>(
+    /// Absorbs the setup, the commitment, the point and the evaluation.
+    ///
+    /// # Security
+    /// The point is absorbed with no count, so the caller must validate
+    /// `point.len()` first, as the scheme's entry points do with
+    /// [`Self::check_arity`].
+    pub(crate) fn append_statement(
         &self,
         commitment: &Bn254G1,
         point: &[Fr],
         evaluation: Fr,
-        channel: &mut C,
+        transcript: &mut impl FieldTranscript<Fr>,
     ) {
-        channel.public(&self.num_powers.to_le_bytes());
-        channel.public(&self.setup_id);
-        channel.public(&self.g1);
-        channel.public(&self.g2);
-        channel.public(&self.beta_g2);
-        channel.public(commitment);
-        channel.public_all(point);
-        channel.public(&evaluation);
+        transcript.append(&self.num_powers);
+        transcript.append(&self.setup_id);
+        transcript.append(&self.g1);
+        transcript.append(&self.g2);
+        transcript.append(&self.beta_g2);
+        transcript.append(commitment);
+        transcript.append_values(point);
+        transcript.append(&evaluation);
     }
+}
+
+/// Binary fold commitments, evaluations at `[r, -r, r^2]`, and KZG witnesses.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HyperKZGProof {
+    pub com: Vec<Bn254G1>,
+    pub v: [Vec<Fr>; 3],
+    pub w: [Bn254G1; 3],
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
@@ -99,8 +111,16 @@ pub enum HyperKZGError {
     Folding,
     #[error("KZG pairing equation failed")]
     Pairing,
-    #[error(transparent)]
-    Transcript(#[from] TranscriptError),
+    /// The transcript refused a challenge draw: the codec does not support the
+    /// request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl From<VerificationError> for HyperKZGError {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }
 
 #[cfg(test)]
@@ -111,12 +131,10 @@ pub enum HyperKZGError {
 mod tests {
     use jolt_algebra::{One, Ring, Zero};
     use jolt_crypto::Bn254;
-    use jolt_transcript::{Blake2b512, ProtocolId, VerifierTranscript};
+    use jolt_transcript::{prover_transcript, Blake2b512};
 
     use super::*;
     use crate::HyperKZGScheme;
-
-    const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-hyperkzg/test");
 
     #[test]
     fn decoded_verifier_metadata_is_rechecked() {
@@ -127,22 +145,25 @@ mod tests {
             g2: Bn254::g2_generator(),
             beta_g2: Bn254::g2_generator().scalar_mul(&Fr::from_u64(7)),
         };
+        let proof = HyperKZGProof {
+            com: vec![],
+            v: std::array::from_fn(|_| vec![Fr::zero()]),
+            w: [Bn254G1::identity(); 3],
+        };
         let verify = |key: &HyperKZGVerifierSetup| {
-            let mut transcript =
-                VerifierTranscript::<Blake2b512>::new(&PROTOCOL, b"decoded-key", &[]);
             HyperKZGScheme::verify_opening(
                 &Bn254G1::identity(),
                 &[Fr::one()],
                 Fr::zero(),
+                &proof,
                 key,
-                &mut transcript,
+                &mut prover_transcript::<Blake2b512>(
+                    &jolt_transcript::protocol_tag(b"decoded-key"),
+                    b"",
+                ),
             )
         };
-        // A valid key reaches the (here empty) opening messages.
-        assert_eq!(
-            verify(&valid),
-            Err(HyperKZGError::Transcript(TranscriptError::Truncated))
-        );
+        verify(&valid).unwrap();
         let mut invalid = std::array::from_fn::<_, 4, _>(|_| valid.clone());
         let [capacity, g1, g2, beta_g2] = &mut invalid;
         capacity.num_powers = 0;

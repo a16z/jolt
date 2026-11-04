@@ -2,8 +2,8 @@
 
 use jolt_algebra::signed::S256;
 use jolt_algebra::{
-    Accumulator, CanonicalBytes, CanonicalDecode, CanonicalEncoding, ExtField, Field, JoltField,
-    NaiveAccumulator, One, Ring, WithAccumulator, Zero, F128, F192, F64, F8,
+    Accumulator, CanonicalBytes, CanonicalEncoding, ExtField, Field, JoltField, NaiveAccumulator,
+    One, Ring, WithAccumulator, Zero, F128, F192, F64, F8,
 };
 use rand_core::{Error, RngCore};
 use std::collections::HashSet;
@@ -103,8 +103,6 @@ fn spine_contract() {
     }
     for (input, expected) in [(&[][..], F8::zero()), (&[0xab, 0xcd][..], value)] {
         assert_eq!(F8::from_bytes_le_reduced(input), expected);
-        assert_eq!(F8::from_challenge_bytes(input), expected);
-        assert_eq!(F8::from_scalar_challenge_bytes(input), expected);
     }
     assert_eq!(F8::from_bytes_le_checked(&[]), None);
     assert_eq!(F8::from_bytes_le_checked(&[0xab]), Some(value));

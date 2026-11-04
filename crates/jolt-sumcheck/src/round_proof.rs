@@ -1,185 +1,62 @@
-//! Round polynomials on the wire.
-//!
-//! A round polynomial of degree bound `d` always travels at full width, so its
-//! shape is fixed by public parameters: the full form sends the `d + 1`
-//! coefficients, and the compressed Boolean-hypercube form sends the `d`
-//! coefficients `[c0, c2, ..., cd]`, from which the verifier recovers `c1`
-//! through `s(0) + s(1) = running_sum`. A polynomial of lower degree is padded
-//! with zero coefficients.
-
-use jolt_algebra::{CanonicalEncoding, Field};
-use jolt_poly::{CompressedPoly, UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{
-    PadSlots, PrivateChannel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript,
-};
+use jolt_algebra::Field;
+use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_transcript::{Encoding, PrivateChannel, Transcript};
 
 use crate::error::SumcheckError;
 
-/// `poly`'s coefficients padded with zeros to `degree + 1`.
-///
-/// # Errors
-///
-/// [`SumcheckError::DegreeBoundExceeded`] if `poly` exceeds `degree`.
-pub fn padded_coefficients<F: Field>(
-    poly: &UnivariatePoly<F>,
-    degree: usize,
-) -> Result<Vec<F>, SumcheckError<F>> {
-    let width = degree
-        .checked_add(1)
-        .ok_or(SumcheckError::DegreeOverflow { degree })?;
-    let coefficients = poly.coefficients();
-    if coefficients.len() > width {
-        return Err(SumcheckError::DegreeBoundExceeded {
-            got: UnivariatePolynomial::degree(poly),
-            max: degree,
-        });
+pub trait RoundMessage {
+    fn degree(&self) -> usize;
+
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T);
+}
+
+/// A round message whose polynomial is available to the verifier.
+pub trait ClearRound<F: Field>: RoundMessage {
+    fn evaluate(&self, challenge: F) -> F;
+
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F;
+
+    fn check_round_well_formed(&self, _round: usize) -> Result<(), SumcheckError<F>> {
+        Ok(())
     }
-    let mut padded = coefficients.to_vec();
-    padded.resize(width, F::zero());
-    Ok(padded)
 }
 
-/// Sends `poly` as a full round message of degree bound `degree`.
-///
-/// # Errors
-///
-/// [`SumcheckError::DegreeBoundExceeded`] if `poly` exceeds `degree`.
-pub fn send_full_round<F, H>(
-    poly: &UnivariatePoly<F>,
-    degree: usize,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<(), SumcheckError<F>>
-where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
-{
-    let _: PadSlots = transcript.exchange_private_base(&mut padded_coefficients(poly, degree)?)?;
-    Ok(())
+/// A round polynomial absorbs as one public `u64` count word, then its
+/// coefficients as one private message. The prover chooses the degree up to
+/// the bound, so the count word keeps a longer polynomial from absorbing like
+/// a shorter one. Uni-skip and standard rounds absorb alike; their position
+/// tells them apart.
+impl<F: Field + Encoding> RoundMessage for UnivariatePoly<F> {
+    fn degree(&self) -> usize {
+        UnivariatePolynomial::degree(self)
+    }
+
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        let coeffs = self.coefficients();
+        transcript.append(&(coeffs.len() as u64));
+        transcript.append_private(coeffs);
+    }
 }
 
-/// The compressed Boolean-hypercube wire form of `poly` at degree bound
-/// `degree >= 1`: `[c0, c2, ..., cd]`, the linear coefficient omitted.
-///
-/// # Errors
-///
-/// [`SumcheckError::DegreeBoundExceeded`] if `poly` exceeds `degree`.
-pub fn compressed_wire<F: Field>(
-    poly: &UnivariatePoly<F>,
-    degree: usize,
-) -> Result<Vec<F>, SumcheckError<F>> {
-    let padded = padded_coefficients(poly, degree.max(1))?;
-    Ok(UnivariatePoly::new(padded)
-        .compress()
-        .coeffs_except_linear_term()
-        .to_vec())
+impl<F: Field + Encoding> ClearRound<F> for UnivariatePoly<F> {
+    fn evaluate(&self, challenge: F) -> F {
+        UnivariatePoly::evaluate(self, challenge)
+    }
+
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F {
+        self.coefficients()
+            .iter()
+            .zip(coefficients)
+            .map(|(&coefficient, &scale)| coefficient * scale)
+            .sum()
+    }
 }
 
-/// Sends `poly` as a compressed Boolean-hypercube round message of degree
-/// bound `degree >= 1`, omitting the linear coefficient.
-///
-/// # Errors
-///
-/// [`SumcheckError::DegreeBoundExceeded`] if `poly` exceeds `degree`.
-pub fn send_compressed_round<F, H>(
-    poly: &UnivariatePoly<F>,
-    degree: usize,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<(), SumcheckError<F>>
-where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
-{
-    let mut wire = compressed_wire(poly, degree)?;
-    let _: PadSlots = transcript.exchange_private_base(&mut wire)?;
-    Ok(())
-}
-
-/// Receives a full round message of degree bound `degree`.
-///
-/// # Errors
-///
-/// [`SumcheckError::Transcript`] if the proof does not hold `degree + 1`
-/// canonical coefficients.
-pub fn receive_full_round<F, H>(
-    degree: usize,
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<UnivariatePoly<F>, SumcheckError<F>>
-where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
-{
-    let width = degree
-        .checked_add(1)
-        .ok_or(SumcheckError::DegreeOverflow { degree })?;
-    Ok(UnivariatePoly::new(receive_private(width, transcript)?))
-}
-
-/// Receives a compressed Boolean-hypercube round message of degree bound
-/// `degree >= 1`.
-///
-/// # Errors
-///
-/// [`SumcheckError::Transcript`] if the proof does not hold `degree` canonical
-/// coefficients.
-pub fn receive_compressed_round<F, H>(
-    degree: usize,
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<CompressedPoly<F>, SumcheckError<F>>
-where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
-{
-    Ok(CompressedPoly::new(receive_private(
-        degree.max(1),
-        transcript,
-    )?))
-}
-
-/// Receives `count` private field messages; `count` comes from the public
-/// degree bound.
-fn receive_private<F, H>(
-    count: usize,
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<Vec<F>, SumcheckError<F>>
-where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
-{
-    let mut values = vec![F::zero(); count];
-    let _: PadSlots = transcript.exchange_private_base(&mut values)?;
-    Ok(values)
-}
-
-/// Sends one private field message, such as a claimed evaluation.
-///
-/// # Errors
-///
-/// As [`PrivateChannel::exchange_private_base`]; clear mode never fails.
-pub fn send_private_value<F, H>(
-    value: F,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<PadSlots, TranscriptError>
-where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
-{
-    transcript.exchange_private_base(&mut [value])
-}
-
-/// Receives one private field message and the pad slots it used.
-///
-/// # Errors
-///
-/// [`TranscriptError`] if the proof does not hold a canonical value.
-pub fn receive_private_value<F, H>(
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<(F, PadSlots), TranscriptError>
-where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
-{
-    let mut value = [F::zero()];
-    let pads = transcript.exchange_private_base(&mut value)?;
-    let [value] = value;
-    Ok((value, pads))
+/// Absorbs a compressed round's sent coefficients `[c0, c2, ..., cd]`: one
+/// public `u64` count word, then the coefficients as one private message.
+/// The prover's recorder, the verifier's compressed-proof loop and the
+/// BlindFold prover all call this, so the encoding has one owner.
+pub fn append_compressed_round<F: Field + Encoding, T: Transcript>(transcript: &mut T, sent: &[F]) {
+    transcript.append(&(sent.len() as u64));
+    transcript.append_private(sent);
 }

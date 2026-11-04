@@ -14,12 +14,12 @@ use jolt_algebra::Fr;
 use jolt_crypto::{Bn254G1, Bn254GT, Commitment, DeriveSetup, JoltGroup, PedersenSetup};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::MultilinearPoly;
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::FieldTranscript;
 use rayon::prelude::*;
 
 use crate::routines::{JoltG1Routines, JoltG2Routines};
-use crate::transcript::{read_proof, DoryProverChannel, DoryVerifierChannel};
-use crate::types::{DoryCommitment, DoryHint, DoryProverSetup, DoryVerifierSetup};
+use crate::transcript::JoltToDoryTranscript;
+use crate::types::{DoryCommitment, DoryHint, DoryProof, DoryProverSetup, DoryVerifierSetup};
 
 // All jolt types below are #[repr(transparent)] over the same arkworks
 // inner type as their dory-pcs counterpart, guaranteeing identical layout.
@@ -131,23 +131,24 @@ impl DoryScheme {
         let canonical_max_num_vars = canonical_setup_log_n(max_num_vars);
         #[cfg(not(target_arch = "wasm32"))]
         let setup = {
-            // dory persists a freshly OsRng-generated URS with an unlocked
-            // truncating write, so concurrent processes generate different
-            // random SRS and last-writer-wins. A single run calls setup more
-            // than once, so it can commit under its own SRS and then load a
-            // sibling process's, diverging the generators mid-proof.
+            // dory publishes a freshly OsRng-generated URS first-writer-wins
+            // via hard_link, but falls back to last-writer-wins rename on
+            // filesystems without hard links. A single run calls setup more
+            // than once, so a lost race there can commit under its own SRS and
+            // then load a sibling process's, diverging the generators
+            // mid-proof. The lock also stops concurrent processes from each
+            // generating a URS.
             let _urs_lock = crate::urs_lock::lock_urs_cache();
             ArkworksProverSetup::new_from_urs(canonical_max_num_vars)
         };
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
-        // Deliberately NOT priming dory's global prepared-point cache (the
-        // legacy prover does): the cache only grows and its consumers
-        // prefix-match blindly, so any process touching two setup sizes —
-        // the URS seeds generators on the exact size — silently pairs
-        // against the wrong generators. The saving is ~0.2 s wall of G2
-        // Miller preprocessing per 2^20 proof; not worth the footgun.
+        // Deliberately NOT priming dory's global prepared-point cache: it
+        // holds one setup's points, so a process touching two setup sizes
+        // (the URS seeds generators on the exact size) would thrash it, and
+        // every hit pays a full prefix comparison. The saving is ~0.2 s wall
+        // of G2 Miller preprocessing per 2^20 proof.
         DoryProverSetup(setup)
     }
 
@@ -200,6 +201,7 @@ impl Commitment for DoryScheme {
 
 impl CommitmentScheme for DoryScheme {
     type Field = Fr;
+    type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
     type OpeningHint = DoryHint;
@@ -225,34 +227,18 @@ impl CommitmentScheme for DoryScheme {
         Self::commit_with_mode::<P, Transparent>(poly, setup)
     }
 
-    fn send_commitment<H: Sponge>(commitment: &Self::Output, transcript: &mut ProverTranscript<H>) {
-        transcript.send(commitment);
-    }
-
-    fn receive_commitment<H: Sponge>(
-        _setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self::Output, OpeningsError> {
-        Ok(transcript.receive()?)
-    }
-
-    fn absorb_commitment<C: Channel>(commitment: &Self::Output, channel: &mut C) {
-        channel.public(commitment);
-    }
-
     #[tracing::instrument(skip_all, name = "DoryScheme::open")]
-    fn open<P: MultilinearPoly<Fr> + ?Sized, H: Sponge>(
+    fn open<P: MultilinearPoly<Fr> + ?Sized>(
         poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), OpeningsError> {
+        transcript: &mut impl FieldTranscript<Self::Field>,
+    ) -> Result<Self::Proof, OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let (nu, sigma) = matrix_shape(num_vars);
 
         let (row_commitments, commit_blind) = match hint {
             Some(h) => h.into_ark_parts(),
@@ -267,10 +253,9 @@ impl CommitmentScheme for DoryScheme {
         );
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        let mut dory_transcript = DoryProverChannel::new(transcript);
+        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
-        // Every message of the returned proof is already in the transcript.
-        let (_proof, _blind) =
+        let (proof, _blind) =
             dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, Transparent>(
                 &adapter,
                 &ark_point,
@@ -282,33 +267,45 @@ impl CommitmentScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove failed: {e:?}")))?;
-        Ok(())
+        dory_transcript.finish()?;
+
+        Ok(DoryProof(proof))
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::verify")]
-    fn verify<H: Sponge>(
+    fn verify(
         commitment: &Self::Output,
         point: &[Fr],
         eval: Fr,
+        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
-        let proof = read_proof(transcript.unread(), point.len(), false)?;
+        check_matrix_shape(proof, point.len())?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         let ark_eval = jolt_fr_to_ark(&eval);
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
-        let mut dory_transcript = DoryVerifierChannel::new(transcript);
+        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
+
+        if proof.0.e2.is_some()
+            || proof.0.y_com.is_some()
+            || proof.0.sigma1_proof.is_some()
+            || proof.0.sigma2_proof.is_some()
+            || proof.0.scalar_product_proof.is_some()
+        {
+            return Err(OpeningsError::VerificationFailed);
+        }
 
         dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             ark_eval,
             &ark_point,
-            &proof,
+            &proof.0,
             setup.0.clone().into_inner(),
             &mut dory_transcript,
         )
         .map_err(|_| OpeningsError::VerificationFailed)?;
-        dory_transcript.finish(&proof)
+        dory_transcript.finish()
     }
 }
 
@@ -317,11 +314,10 @@ impl AdditivelyHomomorphic for DoryScheme {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
 
-        let combined = commitments
-            .par_iter()
-            .zip(scalars.par_iter())
-            .map(|(c, s)| jolt_fr_to_ark(s) * jolt_gt_to_ark(&c.0))
-            .reduce(ArkGT::identity, |acc, x| acc + x);
+        let ark_commitments: Vec<ArkGT> =
+            commitments.iter().map(|c| jolt_gt_to_ark(&c.0)).collect();
+        let ark_scalars: Vec<ArkFr> = scalars.iter().map(jolt_fr_to_ark).collect();
+        let combined = InnerBN254::gt_msm(&ark_commitments, &ark_scalars);
 
         DoryCommitment(ark_to_jolt_gt(&combined))
     }
@@ -375,23 +371,26 @@ impl ZkOpeningScheme for DoryScheme {
         Self::commit_with_mode::<P, dory::ZK>(poly, setup)
     }
 
+    #[expect(
+        clippy::type_complexity,
+        reason = "ZK openings return the native proof, hiding commitment, and blind"
+    )]
     #[tracing::instrument(skip_all, name = "DoryScheme::open_zk")]
-    fn open_zk<P: MultilinearPoly<Fr> + ?Sized, H: Sponge>(
+    fn open_zk<P: MultilinearPoly<Fr> + ?Sized>(
         poly: &P,
         point: &[Fr],
         _eval: Fr,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(Self::HidingCommitment, Self::Blind), OpeningsError> {
+        transcript: &mut impl FieldTranscript<Self::Field>,
+    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
         let num_vars = point.len();
         let adapter = DorySourceAdapter::new(poly);
-        let sigma = num_vars.div_ceil(2);
-        let nu = num_vars - sigma;
+        let (nu, sigma) = matrix_shape(num_vars);
         let (row_commitments, commit_blind) = hint.into_ark_parts();
 
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
-        let mut dory_transcript = DoryProverChannel::new(transcript);
+        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
 
         let (proof, y_blinding) =
             dory::prove::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _, _, ZK>(
@@ -405,7 +404,7 @@ impl ZkOpeningScheme for DoryScheme {
                 &mut dory_transcript,
             )
             .map_err(|e| OpeningsError::ProveFailed(format!("dory::prove (ZK) failed: {e:?}")))?;
-        dory_transcript.send_sigma1_responses(&proof)?;
+        dory_transcript.finish()?;
 
         let y_com = proof
             .y_com
@@ -415,40 +414,61 @@ impl ZkOpeningScheme for DoryScheme {
             OpeningsError::ProveFailed("ZK proof must return y_blinding".to_owned())
         })?;
 
-        Ok((y_com, blinding))
+        Ok((DoryProof(proof), y_com, blinding))
     }
 
     #[tracing::instrument(skip_all, name = "DoryScheme::verify_zk")]
-    fn verify_zk<H: Sponge>(
+    fn verify_zk(
         commitment: &Self::Output,
         point: &[Fr],
+        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
-        let proof = read_proof(transcript.unread(), point.len(), true)?;
+        check_matrix_shape(proof, point.len())?;
         let ark_point: Vec<ArkFr> = point.iter().rev().map(jolt_fr_to_ark).collect();
         // In ZK mode dory::verify reads the evaluation commitment from `proof.y_com`,
         // so the caller-side eval is unused here.
         let dummy_eval = <ArkFr as DoryField>::zero();
         let ark_commitment = jolt_gt_to_ark(&commitment.0);
+        let mut dory_transcript = JoltToDoryTranscript::new(transcript);
         let hiding_commitment = proof
+            .0
             .y_com
             .map(ark_to_jolt_g1)
             .ok_or(OpeningsError::VerificationFailed)?;
-        let mut dory_transcript = DoryVerifierChannel::new(transcript);
 
         dory::verify::<ArkFr, InnerBN254, JoltG1Routines, JoltG2Routines, _>(
             ark_commitment,
             dummy_eval,
             &ark_point,
-            &proof,
+            &proof.0,
             setup.0.clone().into_inner(),
             &mut dory_transcript,
         )
         .map_err(|_| OpeningsError::VerificationFailed)?;
-        dory_transcript.finish(&proof)?;
+        dory_transcript.finish()?;
 
         Ok(hiding_commitment)
+    }
+}
+
+/// Jolt's Dory matrix shape for `num_vars` variables, as `(nu, sigma)`:
+/// `sigma = ceil(num_vars / 2)` column variables and `nu = floor(num_vars / 2)`
+/// row variables.
+fn matrix_shape(num_vars: usize) -> (usize, usize) {
+    let sigma = num_vars.div_ceil(2);
+    (num_vars - sigma, sigma)
+}
+
+/// dory-pcs reads `nu` and `sigma` from the proof and accepts any split with
+/// `nu <= sigma`. Jolt fixes the split from the point's length, so a proof
+/// with another split is rejected before Dory runs.
+fn check_matrix_shape(proof: &DoryProof, num_vars: usize) -> Result<(), OpeningsError> {
+    if (proof.0.nu, proof.0.sigma) == matrix_shape(num_vars) {
+        Ok(())
+    } else {
+        Err(OpeningsError::VerificationFailed)
     }
 }
 

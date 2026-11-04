@@ -14,17 +14,20 @@ use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
 use jolt_prover::JoltBackend;
 use jolt_prover::ProverConfig;
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::proof::JoltProof;
-use jolt_verifier::{verify, JoltSponge, JoltVerifierPreprocessing, VerifierError};
+use jolt_verifier::{verify, JoltVerifierPreprocessing, VerifierError};
 
 use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
 
+pub type AkitaJoltProof = JoltProof<AkitaScheme, AkitaVc>;
+
 pub struct AkitaFixtureCase {
     pub preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
     pub public_io: JoltDevice,
-    pub proof: JoltProof,
+    pub proof: AkitaJoltProof,
     pub trusted_advice_commitment: Option<AkitaCommitment>,
     /// Whiteout: the proof's pads, for probes that rebuild the residual
     /// relation as a cheating prover would.
@@ -37,8 +40,8 @@ impl AkitaFixtureCase {
         self.verify_proof(&self.proof)
     }
 
-    pub fn verify_proof(&self, proof: &JoltProof) -> Result<(), VerifierError> {
-        verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+    pub fn verify_proof(&self, proof: &AkitaJoltProof) -> Result<(), VerifierError> {
+        verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &self.preprocessing,
             &self.public_io,
             proof,
@@ -201,7 +204,7 @@ fn prove_prepared(
         preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+    let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
         &config,
@@ -243,7 +246,7 @@ mod field_inline {
     use jolt_prover::akita::preprocessing::AkitaVc;
     use jolt_prover::JoltBackend;
     use jolt_prover::{akita, ProverConfig};
-    use jolt_verifier::JoltSponge;
+    use jolt_transcript::{Keccak, ProverState};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -343,7 +346,7 @@ mod field_inline {
         .expect("trace witness")
         .with_field_inline()
         .expect("field-inline witness view");
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
             &config,

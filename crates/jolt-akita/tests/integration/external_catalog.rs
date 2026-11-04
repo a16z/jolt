@@ -12,11 +12,12 @@ use akita_params::{
 use akita_schedules::ValidatedScheduleCatalog;
 use jolt_akita::configs::{JoltOneHotK16, JoltOneHotK16Direct};
 use jolt_akita::{
-    AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaNativeBatching, AkitaScheduleArtifacts,
-    AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaNativeBatching,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup,
 };
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 use crate::support;
 
@@ -34,23 +35,32 @@ fn external_multichunk_catalog_survives_transport() {
             AkitaCommitment,
             Vec<AkitaField>,
             AkitaField,
-            Vec<u8>,
+            AkitaBatchProof,
         ) = serde_json::from_slice(&fs::read(path).expect("read public verification inputs"))
             .expect("restore verifier without source catalogs");
         let mut statement = support::single_statement(commitment, &point, evaluation);
         assert_eq!(setup.akita_chunk_profile(), AkitaChunkProfile::new(2, 4));
-        let mut transcript = support::new_verifier_transcript(DOMAIN, &proof);
-        AkitaNativeBatching::verify_batch(&setup, &statement, &mut transcript)
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"");
+        AkitaNativeBatching::verify_batch(&setup, &statement, &proof, &mut transcript)
             .expect("upstream verifier accepts the transported multi-chunk proof");
         let mut wrong = serde_json::to_value(&setup).expect("encode trusted setup");
         wrong["schedule_artifacts"]["one_hot"]["profile"]["levels"] = serde_json::json!(2);
         let wrong: AkitaVerifierSetup =
             serde_json::from_value(wrong).expect("decode altered setup");
-        let mut transcript = support::new_verifier_transcript(DOMAIN, &proof);
-        assert!(AkitaNativeBatching::verify_batch(&wrong, &statement, &mut transcript).is_err());
+        assert!(AkitaNativeBatching::verify_batch(
+            &wrong,
+            &statement,
+            &proof,
+            &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"")
+        )
+        .is_err());
         statement[0].evaluation.value += support::f(1);
-        let mut transcript = support::new_verifier_transcript(DOMAIN, &proof);
-        assert!(AkitaNativeBatching::verify_batch(&setup, &statement, &mut transcript).is_err());
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"");
+        assert!(
+            AkitaNativeBatching::verify_batch(&setup, &statement, &proof, &mut transcript).is_err()
+        );
         return;
     }
 
@@ -129,8 +139,9 @@ fn external_multichunk_catalog_survives_transport() {
         AkitaScheme::commit_one_hot_group(&prover, support::layout(3), &polynomials)
             .expect("commit one-hot source");
     let statement = support::single_statement(commitment.clone(), &point, evaluation);
-    let mut transcript = support::new_prover_transcript(DOMAIN);
-    AkitaNativeBatching::prove_batch(
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"");
+    let proof = AkitaNativeBatching::prove_batch(
         &prover,
         statement.clone(),
         polynomials
@@ -141,7 +152,6 @@ fn external_multichunk_catalog_survives_transport() {
         &mut transcript,
     )
     .expect("produce multi-chunk proof");
-    let proof = transcript.narg().to_vec();
     let inputs = serde_json::to_vec(&(&verifier, &commitment, &point, evaluation, &proof))
         .expect("export public verification inputs");
     drop(prover);

@@ -1,176 +1,313 @@
-//! Unit tests for round messages, recorders, the batched prover, and the
-//! uni-skip provers against the verifier entry points.
-
 #![expect(
     clippy::unwrap_used,
-    clippy::indexing_slicing,
+    clippy::panic,
     clippy::panic_in_result_fn,
-    reason = "tests may panic on assertion failures and index fixture data"
+    clippy::wildcard_enum_match_arm,
+    clippy::indexing_slicing,
+    reason = "tests may panic on assertion failures, index directly, and match errors with catch-all arms"
 )]
 
-use jolt_algebra::{CanonicalBytes, Field, Fr, Ring};
-use jolt_poly::UnivariatePoly;
+use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorCommitment};
+use jolt_algebra::{Field, Fr, Prime128OffsetA7F7, Prime32Offset99, Ring};
+use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_transcript::{
-    Blake2b512, Channel, PadSlots, PrivateChannel, ProtocolId, ProverTranscript, TranscriptError,
-    VerifierTranscript,
+    prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, ProverTranscript,
+    Transcript,
 };
 
-use crate::batch::{BatchMember, BatchPrelude};
-use crate::claim::{SumcheckClaim, SumcheckStatement};
-use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
-use crate::error::SumcheckError;
-use crate::masked::{BatchedMaskedRounds, MaskedRound};
-use crate::prover::{prove_batch, prove_uniskip_clear, ProveRounds, ProvedBatch, SequentialRounds};
-use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
-use crate::round_proof::{
-    receive_compressed_round, receive_full_round, send_compressed_round, send_full_round,
+use crate::claim::{EvaluationClaim, SumcheckClaim, SumcheckStatement};
+use crate::committed::{
+    CommittedOutputClaims, CommittedRound, CommittedRoundWitness, CommittedSumcheckConsistency,
+    CommittedSumcheckProof, VerifiedCommittedRound,
 };
+use crate::error::SumcheckError;
+use crate::proof::{ClearProof, ClearSumcheckProof, CompressedSumcheckProof, SumcheckProof};
+use crate::round_proof::{append_compressed_round, ClearRound, RoundMessage};
 use crate::schedule::{DegreeSchedule, MemberDegrees};
 use crate::verifier::SumcheckVerifier;
-use jolt_poly::EvaluationClaim;
+use crate::{
+    round_pow_bits, BatchedCommittedSumcheckConsistency, BooleanHypercube, CenteredIntegerDomain,
+    SumcheckDomain,
+};
 
 type F = Fr;
-type H = Blake2b512;
+/// BN254 challenges need no proof of work, so the proof-of-work tests run
+/// over Akita's field, whose rounds grind.
+type P = Prime128OffsetA7F7;
+type PT = ProverState<Blake2b512>;
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<H>("jolt-sumcheck/unit-tests");
-
-pub(crate) fn prover(session: &[u8]) -> ProverTranscript<H> {
-    ProverTranscript::new(&PROTOCOL, session)
+fn pow_bits(degree: usize) -> u32 {
+    round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap()
 }
 
-fn verifier<'a>(session: &[u8], narg: &'a [u8]) -> VerifierTranscript<'a, H> {
-    VerifierTranscript::new(&PROTOCOL, session, narg)
-}
-
-/// The sponge state both roles must agree on after the same message sequence.
-pub(crate) fn fingerprint<C: Channel>(channel: &mut C) -> [u8; 32] {
-    channel.challenge_bytes::<32>()
-}
-
-fn poly(coefficients: &[u64]) -> UnivariatePoly<F> {
-    UnivariatePoly::new(coefficients.iter().copied().map(F::from_u64).collect())
-}
-
-fn encode(values: &[u64]) -> Vec<u8> {
-    values
+/// Replays the verifier's round loop on `transcript` — absorb, proof of work,
+/// challenge — and returns the nonces it grinds at the difficulty for `degree`.
+fn grind_rounds<R: RoundMessage>(
+    rounds: &[R],
+    degree: usize,
+    transcript: &mut ProverState<Blake2b512>,
+) -> Vec<u64> {
+    rounds
         .iter()
-        .flat_map(|&value| F::from_u64(value).to_bytes_le_vec())
+        .filter_map(|round| {
+            round.append_to_transcript(transcript);
+            let nonce = transcript.public_grind(pow_bits(degree)).unwrap();
+            let _challenge: F = transcript.challenge().unwrap();
+            nonce
+        })
         .collect()
 }
 
+fn honest_prove<E: Field + Encoding, T: FieldTranscript<E> + ProverTranscript>(
+    evals: &[E],
+    num_vars: usize,
+    transcript: &mut T,
+) -> ClearSumcheckProof<E> {
+    let mut buf = evals.to_vec();
+    let mut round_polys = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
+
+    for _round in 0..num_vars {
+        let half = buf.len() / 2;
+
+        let mut eval_0 = E::from_u64(0);
+        let mut eval_1 = E::from_u64(0);
+        for i in 0..half {
+            eval_0 += buf[i];
+            eval_1 += buf[i + half];
+        }
+
+        let c0 = eval_0;
+        let c1 = eval_1 - eval_0;
+        let round_poly = UnivariatePoly::new(vec![c0, c1]);
+
+        // Absorb through the same path the verifier uses.
+        <UnivariatePoly<E> as RoundMessage>::append_to_transcript(&round_poly, transcript);
+        pow_nonces.extend(
+            transcript
+                .public_grind(round_pow_bits::<E, T>(1).unwrap())
+                .unwrap(),
+        );
+
+        let r: E = transcript.challenge().unwrap();
+        round_polys.push(round_poly);
+
+        for i in 0..half {
+            buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
+        }
+        buf.truncate(half);
+    }
+
+    ClearSumcheckProof {
+        round_polynomials: round_polys,
+        pow_nonces,
+    }
+}
+
+fn honest_prove_compressed<E: Field + Encoding, T: FieldTranscript<E> + ProverTranscript>(
+    evals: &[E],
+    num_vars: usize,
+    transcript: &mut T,
+) -> CompressedSumcheckProof<E> {
+    let mut buf = evals.to_vec();
+    let mut round_polynomials = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
+
+    for _round in 0..num_vars {
+        let half = buf.len() / 2;
+
+        let mut eval_0 = E::from_u64(0);
+        let mut eval_1 = E::from_u64(0);
+        for i in 0..half {
+            eval_0 += buf[i];
+            eval_1 += buf[i + half];
+        }
+
+        let compressed = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]).compress();
+        append_compressed_round(transcript, compressed.coeffs_except_linear_term());
+        pow_nonces.extend(
+            transcript
+                .public_grind(round_pow_bits::<E, T>(1).unwrap())
+                .unwrap(),
+        );
+
+        let r: E = transcript.challenge().unwrap();
+        round_polynomials.push(compressed);
+
+        for i in 0..half {
+            buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
+        }
+        buf.truncate(half);
+    }
+
+    CompressedSumcheckProof {
+        round_polynomials,
+        pow_nonces,
+    }
+}
+
+fn compute_sum<E: Ring>(evals: &[E]) -> E {
+    evals.iter().copied().sum()
+}
+
 #[test]
-fn round_messages_travel_at_the_degree_bound_width() {
-    let quadratic = poly(&[2, 3, 5]);
+fn verify_valid_degree1_proof() {
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
+    let num_vars = 3;
 
-    let mut full = prover(b"wire");
-    send_full_round(&quadratic, 3, &mut full).unwrap();
-    let full = full.finish();
-    assert_eq!(full, encode(&[2, 3, 5, 0]));
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let proof = honest_prove(&evals, num_vars, &mut prover_state);
 
-    let mut compressed = prover(b"wire");
-    send_compressed_round(&quadratic, 3, &mut compressed).unwrap();
-    let compressed = compressed.finish();
-    assert_eq!(compressed, encode(&[2, 5, 0]));
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum: sum,
+    };
 
-    let mut full_reader = verifier(b"wire", &full);
-    let received = receive_full_round::<F, _>(3, &mut full_reader).unwrap();
-    assert_eq!(received, poly(&[2, 3, 5, 0]));
-    full_reader.finish().unwrap();
-
-    let mut compressed_reader = verifier(b"wire", &compressed);
-    let received = receive_compressed_round::<F, _>(3, &mut compressed_reader).unwrap();
-    assert_eq!(
-        received.coeffs_except_linear_term(),
-        poly(&[2, 5, 0]).coefficients()
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut verifier_transcript,
     );
-    compressed_reader.finish().unwrap();
-}
+    assert!(result.is_ok(), "verification failed: {:?}", result.err());
 
-#[test]
-fn senders_reject_rounds_above_the_degree_bound_before_writing() {
-    let cubic = poly(&[1, 2, 3, 4]);
-    let mut transcript = prover(b"over-degree");
-    let mut untouched = prover(b"over-degree");
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
+    assert_eq!(challenges.len(), num_vars);
 
-    assert!(matches!(
-        send_full_round(&cubic, 2, &mut transcript),
-        Err(SumcheckError::DegreeBoundExceeded { got: 3, max: 2 })
-    ));
-    assert!(matches!(
-        send_compressed_round(&cubic, 2, &mut transcript),
-        Err(SumcheckError::DegreeBoundExceeded { got: 3, max: 2 })
-    ));
-    assert!(transcript.narg().is_empty());
-    assert_eq!(fingerprint(&mut transcript), fingerprint(&mut untouched));
-}
-
-fn verify_single_round(
-    round: &UnivariatePoly<F>,
-    degree: usize,
-    claimed_sum: F,
-    domain: CenteredIntegerDomain,
-) -> Result<EvaluationClaim<F>, SumcheckError<F>> {
-    let mut transcript = prover(b"integer-domain");
-    send_full_round(round, degree, &mut transcript).unwrap();
-    let narg = transcript.finish();
-    let mut transcript = verifier(b"integer-domain", &narg);
-    let reduced = SumcheckVerifier::verify(
-        &SumcheckClaim::new(1, degree, claimed_sum),
-        domain,
-        &mut transcript,
-    )?;
-    transcript.finish()?;
-    Ok(reduced)
+    // Verify the final evaluation matches direct evaluation at the challenge point.
+    // evaluate_and_consume binds variables in order, matching the sumcheck bind order.
+    let poly = jolt_poly::Polynomial::new(evals);
+    let expected = poly.evaluate_and_consume(&challenges);
+    assert_eq!(final_eval, expected);
 }
 
 #[test]
 fn centered_integer_domain_verifies_round_sum() {
-    // Domain {-1, 0, 1}: s(-1) + s(0) + s(1) = 4 + 2 + 10.
-    let round = poly(&[2, 3, 5]);
-    let reduced =
-        verify_single_round(&round, 2, F::from_u64(16), CenteredIntegerDomain::new(3)).unwrap();
-    assert_eq!(reduced.point.len(), 1);
-    assert_eq!(reduced.value, round.evaluate(reduced.point[0]));
+    let round_poly = UnivariatePoly::new(vec![F::from_u64(2), F::from_u64(3), F::from_u64(5)]);
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 2,
+        claimed_sum: F::from_u64(16),
+    };
+
+    let pow_nonces = grind_rounds(
+        std::slice::from_ref(&round_poly),
+        2,
+        &mut prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"sumcheck-integer-domain-test"),
+            b"",
+        ),
+    );
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"sumcheck-integer-domain-test"),
+        b"",
+    );
+    let result = SumcheckVerifier::verify(
+        &claim,
+        std::slice::from_ref(&round_poly),
+        &pow_nonces,
+        CenteredIntegerDomain::new(3),
+        &mut transcript,
+    )
+    .unwrap();
+
+    assert_eq!(result.point.len(), 1);
+    assert_eq!(result.value, round_poly.evaluate(result.point[0]));
 }
 
 #[test]
 fn centered_integer_domain_uses_core_even_window_convention() {
-    // Domain {-1, 0, 1, 2}: the identity sums to 2.
-    let reduced = verify_single_round(
-        &poly(&[0, 1]),
+    let round_poly = UnivariatePoly::new(vec![F::from_u64(0), F::from_u64(1)]);
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_i64(2),
+    };
+
+    let pow_nonces = grind_rounds(
+        std::slice::from_ref(&round_poly),
         1,
-        F::from_u64(2),
-        CenteredIntegerDomain::new(4),
+        &mut prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"sumcheck-integer-domain-test"),
+            b"",
+        ),
     );
-    assert!(reduced.is_ok(), "verification failed: {:?}", reduced.err());
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"sumcheck-integer-domain-test"),
+        b"",
+    );
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &[round_poly],
+        &pow_nonces,
+        CenteredIntegerDomain::new(4),
+        &mut transcript,
+    );
+
+    assert!(result.is_ok(), "verification failed: {:?}", result.err());
 }
 
 #[test]
 fn centered_integer_domain_rejects_wrong_sum() {
-    let result = verify_single_round(
-        &poly(&[0, 1]),
-        1,
-        F::from_u64(3),
-        CenteredIntegerDomain::new(4),
+    let round_poly = UnivariatePoly::new(vec![F::from_u64(0), F::from_u64(1)]);
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_u64(3),
+    };
+
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"sumcheck-integer-domain-test"),
+        b"",
     );
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &[round_poly],
+        &[],
+        CenteredIntegerDomain::new(4),
+        &mut transcript,
+    );
+
     assert!(matches!(
         result,
         Err(SumcheckError::RoundCheckFailed {
             round: 0,
             expected,
             actual,
-        }) if expected == F::from_u64(3) && actual == F::from_u64(2)
+        }) if expected == F::from_u64(3) && actual == F::from_i64(2)
     ));
 }
 
 #[test]
 fn centered_integer_domain_rejects_empty_domain() {
-    let result = verify_single_round(
-        &poly(&[0, 1]),
-        1,
-        F::from_u64(0),
-        CenteredIntegerDomain::new(0),
+    let round_poly = UnivariatePoly::new(vec![F::from_u64(0), F::from_u64(1)]);
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_u64(0),
+    };
+
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"sumcheck-integer-domain-test"),
+        b"",
     );
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &[round_poly],
+        &[],
+        CenteredIntegerDomain::new(0),
+        &mut transcript,
+    );
+
     assert!(matches!(
         result,
         Err(SumcheckError::InvalidIntegerDomain { domain_size: 0 })
@@ -205,58 +342,385 @@ fn centered_integer_domain_exposes_power_sums() {
     );
 }
 
-fn batched_rounds_with_challenges(challenges: &[F], max_num_vars: usize) -> BatchedMaskedRounds<F> {
-    BatchedMaskedRounds {
-        rounds: challenges
-            .iter()
-            .enumerate()
-            .map(|(index, &challenge)| MaskedRound {
-                wire: vec![F::from_u64(50 + index as u64)],
-                slots: PadSlots {
-                    start: index,
-                    len: 1,
-                },
-                challenge,
-            })
-            .collect(),
-        batching_coefficients: vec![F::from_u64(7)],
-        degrees: DegreeSchedule::uniform(max_num_vars, 1),
+#[test]
+fn verify_round_check_failure() {
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
+
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let mut proof = honest_prove(&evals, 3, &mut pt);
+
+    let bad_coeffs = vec![F::from_u64(999), F::from_u64(1)];
+    proof.round_polynomials[0] = UnivariatePoly::new(bad_coeffs);
+
+    let claim = SumcheckClaim {
+        num_vars: 3,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        SumcheckError::RoundCheckFailed { round, .. } => assert_eq!(round, 0),
+        other => panic!("expected RoundCheckFailed, got {other:?}"),
     }
 }
 
 #[test]
-fn batched_masked_round_accessors() {
-    let challenges = vec![F::from_u64(101), F::from_u64(102), F::from_u64(103)];
-    let batched = batched_rounds_with_challenges(&challenges, 3);
+fn verify_wrong_num_rounds() {
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
 
-    assert_eq!(batched.challenges(), challenges);
-    assert_eq!(batched.try_round_offset(1).unwrap(), 2);
-    assert_eq!(
-        batched.try_instance_point(1).unwrap(),
-        challenges[2..].to_vec()
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let mut proof = honest_prove(&evals, 3, &mut pt);
+
+    let _ = proof.round_polynomials.pop();
+
+    let claim = SumcheckClaim {
+        num_vars: 3,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
     );
-    assert_eq!(batched.try_instance_point_at(0, 3).unwrap(), challenges);
+    match result.unwrap_err() {
+        SumcheckError::WrongNumberOfRounds { expected, got } => {
+            assert_eq!(expected, 3);
+            assert_eq!(got, 2);
+        }
+        other => panic!("expected WrongNumberOfRounds, got {other:?}"),
+    }
+}
+
+#[test]
+fn verify_degree_exceeded() {
+    let evals: Vec<F> = (1..=4).map(F::from_u64).collect();
+    let sum = compute_sum(&evals);
+
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let mut proof = honest_prove(&evals, 2, &mut pt);
+
+    proof.round_polynomials[0] =
+        UnivariatePoly::new(vec![sum, F::from_u64(1), F::from_u64(0), F::from_u64(1)]);
+
+    let claim = SumcheckClaim {
+        num_vars: 2,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
+    match result.unwrap_err() {
+        SumcheckError::DegreeBoundExceeded { got, max } => {
+            assert_eq!(max, 1);
+            assert!(got > 1);
+        }
+        other => panic!("expected DegreeBoundExceeded, got {other:?}"),
+    }
+}
+
+#[test]
+fn clear_round_absorbs_count_word_then_coefficients() {
+    let poly = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3)]);
+
+    let mut t1 =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&poly, &mut t1);
+    let c1: F = t1.challenge().unwrap();
+
+    let mut t2 =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    t2.append(&2u64);
+    for coeff in poly.coefficients() {
+        t2.append(&coeff);
+    }
+    let c2: F = t2.challenge().unwrap();
+
+    assert_eq!(
+        c1, c2,
+        "a round must absorb its coefficient count, then its coefficients"
+    );
+}
+
+#[test]
+fn clear_round_binds_the_coefficient_count() {
+    let short = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3)]);
+    let long = UnivariatePoly::new(vec![F::from_u64(5), F::from_u64(3), F::from_u64(0)]);
+    let draw = |poly: &UnivariatePoly<F>| -> F {
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(poly, &mut transcript);
+        transcript.challenge().unwrap()
+    };
+
+    assert_ne!(draw(&short), draw(&long));
+}
+
+/// A compressed round absorbs one count word, then `[c0, c2, c3]` as one
+/// message zero-padded to a word. For 4-byte coefficients that is 12 bytes and
+/// 4 zeros, so the next message starts on a word boundary; for BN254 there is
+/// no padding.
+fn check_compressed_round_layout<E: Field + Encoding>() {
+    let poly = UnivariatePoly::new((1..=4).map(|i| E::from_u64(i * 1000 + 7)).collect());
+    let coeffs = poly.coefficients();
+    let mut layout = 3u64.to_le_bytes().to_vec();
+    for c in [coeffs[0], coeffs[2], coeffs[3]] {
+        layout.extend_from_slice(c.encode().as_ref());
+    }
+    layout.resize(layout.len().next_multiple_of(8), 0);
+    let next = 0x0123_4567_89ab_cdef_u64;
+    let transcript =
+        || prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+
+    let mut absorbed = transcript();
+    append_compressed_round(&mut absorbed, poly.compress().coeffs_except_linear_term());
+    absorbed.append(&next);
+    let mut expected = transcript();
+    for byte in &layout {
+        expected.public_message(byte);
+    }
+    expected.public_message(&next);
+
+    assert_eq!(
+        absorbed.verifier_message::<[u8; 32]>(),
+        expected.verifier_message::<[u8; 32]>()
+    );
+}
+
+#[test]
+fn compressed_round_layout_pads_four_byte_and_bn254_coefficients() {
+    assert_eq!(Prime32Offset99::from_u64(1).encode().as_ref().len(), 4);
+    check_compressed_round_layout::<Prime32Offset99>();
+    check_compressed_round_layout::<F>();
+}
+
+#[test]
+fn owned_compressed_verify_accepts_an_honest_proof() {
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let num_vars = 3;
+    let sum = compute_sum(&evals);
+
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let compressed_proof = honest_prove_compressed(&evals, num_vars, &mut prover_state);
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 1,
+        claimed_sum: sum,
+    };
+
+    let mut owned_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let owned = compressed_proof
+        .verify(&claim, BooleanHypercube, &mut owned_transcript)
+        .unwrap();
+
+    let poly = jolt_poly::Polynomial::new(evals);
+    assert_eq!(owned.value, poly.evaluate_and_consume(&owned.point));
+}
+
+#[test]
+fn owned_compressed_verify_rejects_wrong_round_count() {
+    let proof = CompressedSumcheckProof {
+        round_polynomials: Vec::new(),
+        pow_nonces: Vec::new(),
+    };
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_u64(0),
+    };
+
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = proof.verify(&claim, BooleanHypercube, &mut transcript);
+
     assert!(matches!(
-        batched.try_instance_point(4),
-        Err(SumcheckError::BatchedPointOutOfRange {
-            offset: 0,
-            num_vars: 4,
-            total: 3
+        result,
+        Err(SumcheckError::WrongNumberOfRounds {
+            expected: 1,
+            got: 0,
         })
     ));
+}
+
+#[test]
+fn owned_compressed_verify_rejects_degree_bound_exceeded() {
+    let proof = CompressedSumcheckProof {
+        round_polynomials: vec![CompressedPoly::new(vec![F::from_u64(1), F::from_u64(2)])],
+        pow_nonces: Vec::new(),
+    };
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_u64(3),
+    };
+
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = proof.verify(&claim, BooleanHypercube, &mut transcript);
+
     assert!(matches!(
-        batched.try_instance_point_at(usize::MAX, 1),
-        Err(SumcheckError::BatchedPointRangeOverflow {
-            offset: usize::MAX,
-            num_vars: 1
+        result,
+        Err(SumcheckError::DegreeBoundExceeded { got: 2, max: 1 })
+    ));
+}
+
+#[test]
+fn owned_compressed_verify_rejects_empty_round_polynomial() {
+    let proof = CompressedSumcheckProof {
+        round_polynomials: vec![CompressedPoly::new(Vec::new())],
+        pow_nonces: Vec::new(),
+    };
+    let claim = SumcheckClaim {
+        num_vars: 1,
+        degree: 1,
+        claimed_sum: F::from_u64(0),
+    };
+
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = proof.verify(&claim, BooleanHypercube, &mut transcript);
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::CompressedPolynomialTooShort { round: 0, got: 0 })
+    ));
+}
+
+#[test]
+fn sumcheck_proof_verify_dispatches_full_clear() {
+    let round_poly = UnivariatePoly::new(vec![F::from_u64(2), F::from_u64(3)]);
+    let pow_nonces = grind_rounds(
+        std::slice::from_ref(&round_poly),
+        1,
+        &mut prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"sumcheck-proof-dispatch"),
+            b"",
+        ),
+    );
+    let proof = SumcheckProof::<F, F>::Clear(ClearProof::Full(ClearSumcheckProof {
+        round_polynomials: vec![round_poly],
+        pow_nonces,
+    }));
+    let claim = SumcheckClaim::new(1, 1, F::from_u64(7));
+
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"sumcheck-proof-dispatch"),
+        b"",
+    );
+    let reduction = proof
+        .verify(&claim, BooleanHypercube, &mut transcript)
+        .unwrap();
+
+    assert_eq!(reduction.point.len(), 1);
+}
+
+#[test]
+fn sumcheck_proof_verify_rejects_wrong_clear_encoding() {
+    let proof = SumcheckProof::<F, F>::Clear(ClearProof::Compressed(CompressedSumcheckProof {
+        round_polynomials: Vec::new(),
+        pow_nonces: Vec::new(),
+    }));
+    let claim = SumcheckClaim::new(1, 1, F::from_u64(0));
+
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"sumcheck-proof-dispatch"),
+        b"",
+    );
+    let result = proof.verify(&claim, BooleanHypercube, &mut transcript);
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::WrongProofEncoding {
+            expected: "full clear",
+            got: "compressed clear",
         })
     ));
+}
+
+#[test]
+fn sumcheck_proof_verify_rejects_committed_encoding() {
+    let proof = SumcheckProof::<F, F>::Committed(CommittedSumcheckProof {
+        rounds: vec![CommittedRound {
+            commitment: F::from_u64(11),
+            degree: 1,
+        }],
+        output_claims: CommittedOutputClaims {
+            commitments: vec![F::from_u64(21)],
+        },
+    });
+    let claim = SumcheckClaim::new(1, 1, F::from_u64(0));
+
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"sumcheck-proof-dispatch"),
+        b"",
+    );
+    let result = proof.verify(&claim, BooleanHypercube, &mut transcript);
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::WrongProofEncoding {
+            expected: "full clear",
+            got: "committed",
+        })
+    ));
+}
+
+fn batched_consistency_with_challenges(
+    challenges: &[F],
+    max_num_vars: usize,
+) -> BatchedCommittedSumcheckConsistency<F, F> {
+    BatchedCommittedSumcheckConsistency {
+        consistency: CommittedSumcheckConsistency {
+            rounds: challenges
+                .iter()
+                .enumerate()
+                .map(|(index, &challenge)| VerifiedCommittedRound {
+                    commitment: F::from_u64(50 + index as u64),
+                    degree: 1,
+                    challenge,
+                })
+                .collect(),
+        },
+        batching_coefficients: vec![F::from_u64(7)],
+        max_num_vars,
+        max_degree: 1,
+    }
 }
 
 #[test]
 fn batched_try_round_offset_rejects_instance_wider_than_batch() {
     let challenges: Vec<F> = (101..=103).map(F::from_u64).collect();
-    let batched = batched_rounds_with_challenges(&challenges, 3);
+    let batched = batched_consistency_with_challenges(&challenges, 3);
 
     assert!(matches!(
         batched.try_round_offset(4),
@@ -272,7 +736,7 @@ fn batched_try_round_offset_rejects_instance_wider_than_batch() {
 #[test]
 fn batched_instance_points_are_challenge_suffixes_for_mixed_arities() {
     let challenges: Vec<F> = (201..=204).map(F::from_u64).collect();
-    let batched = batched_rounds_with_challenges(&challenges, 4);
+    let batched = batched_consistency_with_challenges(&challenges, 4);
 
     // Tail-aligned members of a mixed-arity batch (4, 2, and 1 rounds) get
     // dummy rounds front-loaded, so each point is a challenge suffix.
@@ -301,7 +765,7 @@ fn batched_instance_points_are_challenge_suffixes_for_mixed_arities() {
 #[test]
 fn batched_instance_point_at_rejects_windows_past_recorded_challenges() {
     let challenges: Vec<F> = (301..=303).map(F::from_u64).collect();
-    let batched = batched_rounds_with_challenges(&challenges, 3);
+    let batched = batched_consistency_with_challenges(&challenges, 3);
 
     assert!(matches!(
         batched.try_instance_point_at(2, 2),
@@ -338,7 +802,7 @@ fn batched_instance_point_rejects_declared_width_exceeding_recorded_rounds() {
     // recorded three. The suffix offset is computed from the declared width,
     // so the lookup must fail against the recorded challenge count.
     let challenges: Vec<F> = (401..=403).map(F::from_u64).collect();
-    let batched = batched_rounds_with_challenges(&challenges, 5);
+    let batched = batched_consistency_with_challenges(&challenges, 5);
 
     assert_eq!(batched.try_round_offset(1).unwrap(), 4);
     assert!(matches!(
@@ -349,6 +813,317 @@ fn batched_instance_point_rejects_declared_width_exceeding_recorded_rounds() {
             total: 3
         })
     ));
+}
+
+#[test]
+fn committed_rounds_check_transcript_and_return_public_data() {
+    let rounds = vec![
+        CommittedRound {
+            commitment: F::from_u64(11),
+            degree: 1,
+        },
+        CommittedRound {
+            commitment: F::from_u64(12),
+            degree: 2,
+        },
+        CommittedRound {
+            commitment: F::from_u64(13),
+            degree: 0,
+        },
+    ];
+
+    let mut manual =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-sumcheck"), b"");
+    let mut expected_challenges: Vec<F> = Vec::new();
+    for round in &rounds {
+        manual.append(&(round.degree as u64));
+        manual.append(&round.commitment);
+        expected_challenges.push(manual.challenge().unwrap());
+    }
+
+    let mut verifier =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-sumcheck"), b"");
+    let consistency = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
+        SumcheckStatement::new(3, 2),
+        &rounds,
+        &mut verifier,
+    )
+    .unwrap();
+
+    assert_eq!(consistency.challenges(), expected_challenges);
+    assert_eq!(consistency.round_degrees(), vec![1, 2, 0]);
+    assert_eq!(
+        consistency.round_commitments(),
+        rounds
+            .iter()
+            .map(|round| round.commitment)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        verifier.verifier_message::<[u8; 32]>(),
+        manual.verifier_message::<[u8; 32]>()
+    );
+}
+
+#[test]
+fn committed_rounds_reject_wrong_round_count() {
+    let rounds = vec![CommittedRound {
+        commitment: F::from_u64(11),
+        degree: 1,
+    }];
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-sumcheck"), b"");
+
+    let result = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
+        SumcheckStatement::new(2, 1),
+        &rounds,
+        &mut transcript,
+    );
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::WrongNumberOfRounds {
+            expected: 2,
+            got: 1
+        })
+    ));
+}
+
+#[test]
+fn committed_rounds_reject_degree_bound_before_absorbing() {
+    let rounds = vec![CommittedRound {
+        commitment: F::from_u64(11),
+        degree: 3,
+    }];
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-sumcheck"), b"");
+    let mut untouched =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-sumcheck"), b"");
+
+    let result = SumcheckVerifier::verify_committed_round_consistency::<F, _, _>(
+        SumcheckStatement::new(1, 2),
+        &rounds,
+        &mut transcript,
+    );
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::DegreeBoundExceeded { got: 3, max: 2 })
+    ));
+    assert_eq!(
+        transcript.verifier_message::<[u8; 32]>(),
+        untouched.verifier_message::<[u8; 32]>()
+    );
+}
+
+#[test]
+fn committed_output_claims_absorb_count_then_commitments() {
+    let output_claims = CommittedOutputClaims {
+        commitments: vec![F::from_u64(3), F::from_u64(5), F::from_u64(8)],
+    };
+
+    let mut actual =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-output"), b"");
+    actual.append(&output_claims);
+
+    let mut expected =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-output"), b"");
+    expected.append(&3u64);
+    for commitment in &output_claims.commitments {
+        expected.append(&commitment);
+    }
+
+    assert_eq!(
+        actual.verifier_message::<[u8; 32]>(),
+        expected.verifier_message::<[u8; 32]>()
+    );
+    let actual: F = actual.challenge().unwrap();
+    let expected: F = expected.challenge().unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn committed_output_claims_bind_the_split_point() {
+    let claims = |values: &[u64]| CommittedOutputClaims {
+        commitments: values.iter().map(|&v| F::from_u64(v)).collect::<Vec<_>>(),
+    };
+    let challenge_after = |first: &[u64], second: &[u64]| -> F {
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"committed-output"),
+            b"",
+        );
+        transcript.append(&claims(first));
+        transcript.append(&claims(second));
+        transcript.challenge().unwrap()
+    };
+
+    assert_ne!(
+        challenge_after(&[3, 5], &[8]),
+        challenge_after(&[3], &[5, 8])
+    );
+}
+
+#[test]
+fn committed_proof_checks_rounds_then_output_claims() {
+    let proof = CommittedSumcheckProof {
+        rounds: vec![
+            CommittedRound {
+                commitment: F::from_u64(11),
+                degree: 1,
+            },
+            CommittedRound {
+                commitment: F::from_u64(12),
+                degree: 2,
+            },
+        ],
+        output_claims: CommittedOutputClaims {
+            commitments: vec![F::from_u64(21), F::from_u64(34)],
+        },
+    };
+
+    let mut manual =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-proof"), b"");
+    let mut expected_challenges: Vec<F> = Vec::new();
+    for round in &proof.rounds {
+        manual.append(&(round.degree as u64));
+        manual.append(&round.commitment);
+        expected_challenges.push(manual.challenge().unwrap());
+    }
+    manual.append(&(proof.output_claims.commitments.len() as u64));
+    for commitment in &proof.output_claims.commitments {
+        manual.append(&commitment);
+    }
+
+    let mut verifier =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-proof"), b"");
+    let consistency: CommittedSumcheckConsistency<F, F> = proof
+        .verify_committed_consistency(SumcheckStatement::new(2, 2), &mut verifier)
+        .unwrap();
+
+    assert_eq!(consistency.challenges(), expected_challenges);
+    assert_eq!(consistency.round_degrees(), vec![1, 2]);
+    assert_eq!(
+        verifier.verifier_message::<[u8; 32]>(),
+        manual.verifier_message::<[u8; 32]>()
+    );
+}
+
+#[test]
+fn committed_round_witness_commits_with_generic_vector_commitment() {
+    type VC = Pedersen<Bn254G1>;
+
+    let generator = Bn254::g1_generator();
+    let setup = PedersenSetup::new(
+        vec![
+            generator,
+            generator.scalar_mul(&F::from_u64(2)),
+            generator.scalar_mul(&F::from_u64(3)),
+        ],
+        generator.scalar_mul(&F::from_u64(99)),
+    );
+    let witness = CommittedRoundWitness {
+        coefficients: vec![F::from_u64(4), F::from_u64(5), F::from_u64(6)],
+        blinding: F::from_u64(7),
+    };
+
+    let round = witness.commit::<VC>(&setup).unwrap();
+
+    assert_eq!(round.degree, 2);
+    assert!(VC::verify(
+        &setup,
+        &round.commitment,
+        &witness.coefficients,
+        &witness.blinding
+    ));
+    assert!(!VC::verify(
+        &setup,
+        &round.commitment,
+        &witness.coefficients,
+        &(witness.blinding + F::from_u64(1))
+    ));
+}
+
+#[test]
+fn committed_round_witness_rejects_empty_coefficients() {
+    type VC = Pedersen<Bn254G1>;
+
+    let generator = Bn254::g1_generator();
+    let setup = PedersenSetup::new(vec![generator], generator.scalar_mul(&F::from_u64(99)));
+    let witness = CommittedRoundWitness {
+        coefficients: Vec::new(),
+        blinding: F::from_u64(7),
+    };
+
+    let result = witness.commit::<VC>(&setup);
+
+    assert!(matches!(result, Err(SumcheckError::EmptyRoundCoefficients)));
+}
+
+struct MockClearRound {
+    fixed_sum: F,
+}
+
+impl RoundMessage for MockClearRound {
+    fn degree(&self) -> usize {
+        0
+    }
+
+    fn append_to_transcript<T: Transcript>(&self, transcript: &mut T) {
+        transcript.append(&F::from_u64(42));
+    }
+}
+
+impl ClearRound<F> for MockClearRound {
+    fn evaluate(&self, _challenge: F) -> F {
+        self.fixed_sum
+    }
+
+    fn coefficient_linear_combination(&self, coefficients: &[F]) -> F {
+        self.fixed_sum * coefficients[0]
+    }
+}
+
+#[test]
+fn verify_accepts_custom_clear_round_messages() {
+    let fixed = F::from_u64(0);
+    let round_proofs = [
+        MockClearRound { fixed_sum: fixed },
+        MockClearRound { fixed_sum: fixed },
+        MockClearRound { fixed_sum: fixed },
+    ];
+
+    let claim = SumcheckClaim {
+        num_vars: 3,
+        degree: 1,
+        claimed_sum: F::from_u64(0),
+    };
+
+    let pow_nonces = grind_rounds(
+        &round_proofs,
+        1,
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b""),
+    );
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &round_proofs,
+        &pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
+    assert!(
+        result.is_ok(),
+        "mock verifier should accept: {:?}",
+        result.err()
+    );
+
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = result.unwrap();
+    assert_eq!(challenges.len(), 3);
+    assert_eq!(final_eval, fixed);
 }
 
 #[test]
@@ -363,22 +1138,25 @@ fn sumcheck_statement_new_rejects_degree_zero() {
     let _ = SumcheckStatement::new(3, 0);
 }
 
-/// Drive an honest degree-1 sumcheck through the clear recorder: the claim
-/// is absorbed publicly, the rounds and the output claim are sent, and the
-/// verifier reading them back must land on the prover's bound value.
+/// Drive an honest degree-1 sumcheck through the clear recorder and check the
+/// assembled proof against `verify_compressed_scheduled` on a twin transcript:
+/// the recorder's writes (claim absorb, compressed round polys, opening-claim
+/// absorb) must be byte-identical to what the verifier reads back, and the
+/// verifier's reduction must land on the prover's bound value.
 #[test]
 fn clear_recorder_roundtrip_matches_compressed_verifier() {
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+
     let num_vars = 3;
     let evals: Vec<F> = (0..1u64 << num_vars)
         .map(|i| F::from_u64(3 * i + 7))
         .collect();
-    let claimed_sum: F = evals.iter().copied().sum();
+    let claimed_sum = compute_sum(&evals);
 
-    let mut prover_transcript = prover(b"recorder");
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"recorder-test"), b"");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
-    recorder
-        .absorb_input_claims(&[claimed_sum], &mut prover_transcript)
-        .unwrap();
+    recorder.absorb_input_claims(&[claimed_sum], &mut prover_state);
 
     let mut buf = evals;
     for _round in 0..num_vars {
@@ -388,7 +1166,7 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
         let round_poly = UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]);
 
         let r = recorder
-            .absorb_round(&round_poly, 1, &mut prover_transcript)
+            .absorb_round(&round_poly, 1, &mut prover_state)
             .unwrap();
 
         for i in 0..half {
@@ -397,30 +1175,30 @@ fn clear_recorder_roundtrip_matches_compressed_verifier() {
         buf.truncate(half);
     }
     let final_eval = buf[0];
-    recorder
-        .finish(&[final_eval], &mut prover_transcript)
-        .unwrap();
-    let prover_state = fingerprint(&mut prover_transcript);
-    let narg = prover_transcript.finish();
+    let recorded = recorder.finish(&[final_eval], &mut prover_state).unwrap();
 
-    let mut verifier_transcript = verifier(b"recorder", &narg);
-    verifier_transcript.public(&claimed_sum);
-    let reduction = SumcheckVerifier::verify_compressed(
-        &SumcheckClaim::new(num_vars, 1, claimed_sum),
-        &mut verifier_transcript,
-    )
-    .unwrap();
-    let output_claim: F = verifier_transcript.receive().unwrap();
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"recorder-test"), b"");
+    verifier_transcript.append(&claimed_sum);
+    let reduction = SumcheckProof::<F, Bn254G1>::from(recorded.proof)
+        .verify_compressed_scheduled(
+            &DegreeSchedule::uniform(num_vars, 1),
+            claimed_sum,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+    verifier_transcript.append(&reduction.value);
 
     assert_eq!(reduction.value, final_eval);
-    assert_eq!(output_claim, final_eval);
-    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
-    verifier_transcript.finish().unwrap();
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
-/// A minimal dense multilinear [`ProveRounds`] member (HighToLow binding),
-/// constructible with a prescribed total sum — the engine tests' stand-in for
-/// a real kernel-backed batch member.
+/// A minimal dense multilinear [`ProveRounds`](crate::prover::ProveRounds)
+/// member (HighToLow binding), constructible with a prescribed total sum —
+/// the engine tests' stand-in for a real kernel-backed batch member.
 pub(crate) struct DenseMember {
     evals: Vec<F>,
     num_rounds: usize,
@@ -438,7 +1216,9 @@ impl DenseMember {
     fn final_eval(&self) -> F {
         self.evals[0]
     }
+}
 
+impl DenseMember {
     fn bind(&mut self, challenge: F) {
         let half = self.evals.len() / 2;
         for i in 0..half {
@@ -448,7 +1228,7 @@ impl DenseMember {
     }
 }
 
-impl ProveRounds<F> for DenseMember {
+impl crate::prover::ProveRounds<F> for DenseMember {
     fn num_rounds(&self) -> usize {
         self.num_rounds
     }
@@ -475,133 +1255,23 @@ impl ProveRounds<F> for DenseMember {
     }
 }
 
-/// A dense member exercising the fused contract for real: on each
-/// `prove_round` the pending bind and the round evaluation happen in ONE pass
-/// over the table (each pair is bound and immediately accumulated), never
-/// leaving a fully bound intermediate table behind.
-struct FusedDenseMember {
-    evals: Vec<F>,
-    num_rounds: usize,
+fn pedersen_setup(capacity: u64) -> PedersenSetup<Bn254G1> {
+    let generator = Bn254::g1_generator();
+    let generators = (2..2 + capacity)
+        .map(|k| generator.scalar_mul(&F::from_u64(k)))
+        .collect();
+    PedersenSetup::new(generators, generator.scalar_mul(&F::from_u64(99)))
 }
 
-impl ProveRounds<F> for FusedDenseMember {
-    fn num_rounds(&self) -> usize {
-        self.num_rounds
-    }
-
-    fn prove_round(
-        &mut self,
-        bind: Option<F>,
-        _round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        if let Some(challenge) = bind {
-            let half = self.evals.len() / 2;
-            let quarter = half / 2;
-            let mut eval_0 = F::from_u64(0);
-            let mut eval_1 = F::from_u64(0);
-            for i in 0..half {
-                let bound = self.evals[i] + challenge * (self.evals[i + half] - self.evals[i]);
-                self.evals[i] = bound;
-                if i < quarter {
-                    eval_0 += bound;
-                } else {
-                    eval_1 += bound;
-                }
-            }
-            self.evals.truncate(half);
-            assert_eq!(eval_0 + eval_1, previous_claim);
-            return Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]));
-        }
-        let half = self.evals.len() / 2;
-        let eval_0: F = self.evals[..half].iter().copied().sum();
-        let eval_1: F = self.evals[half..].iter().copied().sum();
-        assert_eq!(eval_0 + eval_1, previous_claim);
-        Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
-    }
-
-    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
-        let half = self.evals.len() / 2;
-        for i in 0..half {
-            self.evals[i] = self.evals[i] + bind * (self.evals[i + half] - self.evals[i]);
-        }
-        self.evals.truncate(half);
-        Ok(())
-    }
-}
-
-/// The `begin_batch` head both roles run: input claims absorbed by the
-/// recorder (publicly for the clear one), then one coefficient per member.
-fn batch_head<R, C>(recorder: &mut R, input_claims: &[F], channel: &mut C) -> Vec<F>
-where
-    R: SumcheckRecorder<F, Error = SumcheckError<F>>,
-    C: Channel + PrivateChannel<Error = TranscriptError>,
-{
-    recorder.absorb_input_claims(input_claims, channel).unwrap();
-    channel.challenges_small(input_claims.len())
-}
-
-fn prelude(members: &[(F, F, usize, usize)], max_num_vars: usize) -> BatchPrelude<F> {
-    BatchPrelude::new(
-        members
-            .iter()
-            .map(|&(input_claim, coefficient, rounds, offset)| BatchMember {
-                input_claim,
-                coefficient,
-                rounds,
-                offset,
-            })
-            .collect(),
-        DegreeSchedule::uniform(max_num_vars, 1),
-    )
-}
-
-/// A member fusing bind and eval into one table pass must be byte-identical
-/// to the reference member that binds and evaluates separately.
-#[test]
-fn fused_bind_eval_member_byte_matches_separate_passes() {
-    let num_rounds = 4;
-    let sum = F::from_u64(90210);
-    let prove = |member: &mut dyn ProveRounds<F>| {
-        let mut transcript = prover(b"fused-vs-separate");
-        let mut recorder = ClearSumcheckRecorder::<F>::new();
-        let coefficients = batch_head(&mut recorder, &[sum], &mut transcript);
-        let prelude = prelude(&[(sum, coefficients[0], num_rounds, 0)], num_rounds);
-        let mut members: Vec<&mut dyn ProveRounds<F>> = vec![member];
-        let proved = prove_batch(
-            &prelude,
-            &mut members,
-            &mut SequentialRounds,
-            &mut recorder,
-            &mut transcript,
-        )
-        .unwrap();
-        recorder
-            .finish(&proved.member_claims, &mut transcript)
-            .unwrap();
-        let state = fingerprint(&mut transcript);
-        (proved, transcript.finish(), state)
-    };
-
-    let mut separate = DenseMember::with_sum(num_rounds, sum, 41);
-    let mut fused = FusedDenseMember {
-        evals: separate.evals.clone(),
-        num_rounds,
-    };
-    let (separate_proved, separate_narg, separate_state) = prove(&mut separate);
-    let (fused_proved, fused_narg, fused_state) = prove(&mut fused);
-
-    assert_eq!(separate_proved, fused_proved);
-    assert_eq!(separate_narg, fused_narg);
-    assert_eq!(separate.final_eval(), fused.evals[0]);
-    assert_eq!(separate_state, fused_state);
-}
-
-/// A batch that schedules a round at degree 0 must be rejected with
-/// `ZeroBatchDegree`, not proved (a degree-0 round polynomial
+/// A batch that declares `max_degree == 0` while having rounds to prove must
+/// be rejected with `ZeroBatchDegree`, not proved (a degree-0 round polynomial
 /// cannot carry a sumcheck round) and not panic.
 #[test]
 fn prove_batch_rejects_zero_max_degree() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
+    use crate::recorder::ClearSumcheckRecorder;
+
     let sum = F::from_u64(42);
     let mut member = DenseMember::with_sum(2, sum, 7);
     let prelude = BatchPrelude {
@@ -615,7 +1285,8 @@ fn prove_batch_rejects_zero_max_degree() {
         degrees: DegreeSchedule::uniform(2, 0),
     };
     let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
-    let mut transcript = prover(b"zero-degree-batch");
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"zero-degree-batch"), b"");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
     let result = prove_batch(
         &prelude,
@@ -633,333 +1304,807 @@ fn prove_batch_rejects_zero_max_degree() {
     ));
 }
 
-/// Proves a 3-round and a 1-round member through the clear recorder and
-/// replays the verifier's half of the protocol over the proof: head,
-/// compressed rounds, then the sent member claims.
-fn clear_batch_twin(
-    session: &[u8],
-    long: &mut DenseMember,
-    short: &mut DenseMember,
-    input_claims: [F; 2],
-    short_offset: usize,
-) -> ProvedBatch<F> {
-    let mut prover_transcript = prover(session);
+/// Twin-transcript lock for the batched engine, padding included: a
+/// 3-round and a 1-round member proved through `prove_batch` with the clear
+/// recorder must be byte-identical to the verifier's head-replica +
+/// `verify_compressed_scheduled` + opening-claim absorbs, and the reduction must
+/// land on the prover's final claim and challenges.
+#[test]
+fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+    use jolt_algebra::Ring;
+
+    let sum_long = F::from_u64(1234);
+    let sum_short = F::from_u64(777);
+    let mut long = DenseMember::with_sum(3, sum_long, 5);
+    let mut short = DenseMember::with_sum(1, sum_short, 91);
+
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"prove-batch-twin"), b"");
     let mut recorder = ClearSumcheckRecorder::<F>::new();
-    let coefficients = batch_head(&mut recorder, &input_claims, &mut prover_transcript);
-    let prelude = prelude(
-        &[
-            (input_claims[0], coefficients[0], 3, 0),
-            (input_claims[1], coefficients[1], 1, short_offset),
+    recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_state);
+    let coeff_long: F = prover_state.challenge().unwrap();
+    let coeff_short: F = prover_state.challenge().unwrap();
+    let prelude = BatchPrelude::new(
+        vec![
+            BatchMember {
+                input_claim: sum_long,
+                coefficient: coeff_long,
+                rounds: 3,
+                offset: 0,
+            },
+            BatchMember {
+                input_claim: sum_short,
+                coefficient: coeff_short,
+                rounds: 1,
+                offset: 2,
+            },
         ],
-        3,
+        DegreeSchedule::uniform(3, 1),
     );
-    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![long, short];
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
     let proved = prove_batch(
         &prelude,
         &mut members,
         &mut SequentialRounds,
         &mut recorder,
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
-    recorder
-        .finish(&proved.member_claims, &mut prover_transcript)
-        .unwrap();
-    let prover_state = fingerprint(&mut prover_transcript);
-    let narg = prover_transcript.finish();
-
-    let mut verifier_transcript = verifier(session, &narg);
-    let verifier_coefficients = batch_head(
-        &mut ClearSumcheckRecorder::<F>::new(),
-        &input_claims,
-        &mut verifier_transcript,
-    );
-    assert_eq!(verifier_coefficients, coefficients);
-    // The padded claimed sum is position-independent: the short member is
-    // scaled by 2^(3 - 1) whether it is head- or tail-aligned.
-    let claimed_sum = verifier_coefficients[0] * input_claims[0]
-        + verifier_coefficients[1] * input_claims[1].mul_pow_2(2);
-    assert_eq!(claimed_sum, prelude.claimed_sum);
-    let reduction = SumcheckVerifier::verify_compressed(
-        &SumcheckClaim::new(3, 1, claimed_sum),
-        &mut verifier_transcript,
-    )
-    .unwrap();
-    let member_claims: Vec<F> = verifier_transcript.receive_n(2).unwrap();
-
-    assert_eq!(member_claims, proved.member_claims);
-    assert_eq!(reduction.value, proved.final_claim);
-    assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
-    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
-    verifier_transcript.finish().unwrap();
-    proved
-}
-
-#[test]
-fn prove_batch_clear_twin_matches_compressed_verifier_with_padding() {
-    let input_claims = [F::from_u64(1234), F::from_u64(777)];
-    let mut long = DenseMember::with_sum(3, input_claims[0], 5);
-    let mut short = DenseMember::with_sum(1, input_claims[1], 91);
-
-    let proved = clear_batch_twin(b"prove-batch-twin", &mut long, &mut short, input_claims, 2);
     assert_eq!(
         proved.member_claims,
         vec![long.final_eval(), short.final_eval()]
     );
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_state)
+        .unwrap();
+    assert!(recorded.committed_witness.is_none());
+
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"prove-batch-twin"), b"");
+    verifier_transcript.append(&sum_long);
+    verifier_transcript.append(&sum_short);
+    let verifier_coeff_long: F = verifier_transcript.challenge().unwrap();
+    let verifier_coeff_short: F = verifier_transcript.challenge().unwrap();
+    assert_eq!(
+        (verifier_coeff_long, verifier_coeff_short),
+        (coeff_long, coeff_short)
+    );
+
+    let claimed_sum =
+        verifier_coeff_long * sum_long + verifier_coeff_short * sum_short.mul_pow_2(2);
+    assert_eq!(claimed_sum, prelude.claimed_sum);
+    let reduction = SumcheckProof::<F, Bn254G1>::from(recorded.proof)
+        .verify_compressed_scheduled(
+            &DegreeSchedule::uniform(3, 1),
+            claimed_sum,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+    for value in &proved.member_claims {
+        verifier_transcript.append(value);
+    }
+
+    assert_eq!(reduction.value, proved.final_claim);
+    assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
-/// A 1-round member at `offset: 0` is active in the batch's FIRST round and
-/// then halves through the trailing dummy rounds. Its kernel must emit at the
-/// dummy-round padding scale (the table sums to `2^(max − rounds) ·
-/// input_claim`), so its final batch claim is the fully-bound value with the
-/// padding halved back out.
+/// Twin-transcript lock for a head-aligned member: a 1-round member at
+/// `offset: 0` is active in the batch's FIRST round and then halves through
+/// the trailing dummy rounds. Its kernel must emit at the dummy-round padding
+/// scale (the table sums to `2^(max − rounds) · input_claim`), so its final
+/// batch claim is the fully-bound value with the padding halved back out.
 #[test]
 fn prove_batch_clear_twin_head_aligned_member() {
-    let input_claims = [F::from_u64(1234), F::from_u64(777)];
-    let mut long = DenseMember::with_sum(3, input_claims[0], 5);
-    let mut short = DenseMember::with_sum(1, input_claims[1].mul_pow_2(2), 91);
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+    use jolt_algebra::{Field, Ring};
 
-    let proved = clear_batch_twin(
-        b"prove-batch-head-twin",
-        &mut long,
-        &mut short,
-        input_claims,
-        0,
+    let sum_long = F::from_u64(1234);
+    let sum_short = F::from_u64(777);
+    let mut long = DenseMember::with_sum(3, sum_long, 5);
+    // The head-aligned kernel's table carries the 2^(3 - 1) padding scale.
+    let mut short = DenseMember::with_sum(1, sum_short.mul_pow_2(2), 91);
+
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"prove-batch-head-twin"),
+        b"",
     );
+    let mut recorder = ClearSumcheckRecorder::<F>::new();
+    recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_state);
+    let coeff_long: F = prover_state.challenge().unwrap();
+    let coeff_short: F = prover_state.challenge().unwrap();
+    let prelude = BatchPrelude::new(
+        vec![
+            BatchMember {
+                input_claim: sum_long,
+                coefficient: coeff_long,
+                rounds: 3,
+                offset: 0,
+            },
+            BatchMember {
+                input_claim: sum_short,
+                coefficient: coeff_short,
+                rounds: 1,
+                offset: 0,
+            },
+        ],
+        DegreeSchedule::uniform(3, 1),
+    );
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
+    let proved = prove_batch(
+        &prelude,
+        &mut members,
+        &mut SequentialRounds,
+        &mut recorder,
+        &mut prover_state,
+    )
+    .unwrap();
     let quarter = F::from_u64(4).inverse().unwrap();
     assert_eq!(
         proved.member_claims,
         vec![long.final_eval(), short.final_eval() * quarter]
     );
-}
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_state)
+        .unwrap();
 
-fn uniskip_round() -> (UnivariatePoly<F>, F, usize, usize) {
-    let degree = 3;
-    let domain_size = 4;
-    let round_poly = poly(&[3, 1, 4, 1]);
-    let start = CenteredIntegerDomain::new(domain_size).start().unwrap();
-    let input_claim = (start..start + domain_size as i64)
-        .map(|point| round_poly.evaluate(F::from_i64(point)))
-        .sum();
-    (round_poly, input_claim, degree, domain_size)
-}
-
-/// The clear uni-skip prover against the verify choreography of
-/// `jolt-verifier`'s `uniskip::verify_clear`: a full round over the centered
-/// domain, its challenge, then the sent output claim.
-#[test]
-fn prove_uniskip_clear_twin_matches_uniskip_verify() {
-    let (round_poly, input_claim, degree, domain_size) = uniskip_round();
-
-    let mut prover_transcript = prover(b"uniskip-twin");
-    let proved = prove_uniskip_clear(
-        round_poly.clone(),
-        input_claim,
-        degree,
-        domain_size,
-        &mut prover_transcript,
-    )
-    .unwrap();
-    let prover_state = fingerprint(&mut prover_transcript);
-    let narg = prover_transcript.finish();
-
-    let mut verifier_transcript = verifier(b"uniskip-twin", &narg);
-    let reduction = SumcheckVerifier::verify(
-        &SumcheckClaim::new(1, degree, input_claim),
-        CenteredIntegerDomain::new(domain_size),
-        &mut verifier_transcript,
-    )
-    .unwrap();
-    let output_claim: F = verifier_transcript.receive().unwrap();
-
-    assert_eq!(reduction.point.as_slice(), &[proved.challenge]);
-    assert_eq!(reduction.value, round_poly.evaluate(proved.challenge));
-    assert_eq!(output_claim, reduction.value);
-    assert_eq!(proved.output_claim, reduction.value);
-    assert_eq!(fingerprint(&mut verifier_transcript), prover_state);
-    verifier_transcript.finish().unwrap();
-}
-
-#[test]
-fn prove_uniskip_rejects_a_round_off_the_domain_sum_before_writing() {
-    let (round_poly, input_claim, degree, domain_size) = uniskip_round();
-    let mut transcript = prover(b"uniskip-bad-sum");
-    let result = prove_uniskip_clear(
-        round_poly,
-        input_claim + F::from_u64(1),
-        degree,
-        domain_size,
-        &mut transcript,
+    // Verifier twin: the claimed sum is position-independent — identical to
+    // the tail-aligned layout's.
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"prove-batch-head-twin"),
+        b"",
     );
-    assert!(matches!(
-        result,
-        Err(SumcheckError::RoundCheckFailed { round: 0, .. })
-    ));
-    assert!(transcript.finish().is_empty());
-}
-
-/// A member whose every round polynomial is the quadratic
-/// `x + (claim − 2x − 1)·X + X²`.
-struct QuadraticMember {
-    rounds: usize,
-}
-
-impl ProveRounds<F> for QuadraticMember {
-    fn num_rounds(&self) -> usize {
-        self.rounds
+    verifier_transcript.append(&sum_long);
+    verifier_transcript.append(&sum_short);
+    let verifier_coeff_long: F = verifier_transcript.challenge().unwrap();
+    let verifier_coeff_short: F = verifier_transcript.challenge().unwrap();
+    let claimed_sum =
+        verifier_coeff_long * sum_long + verifier_coeff_short * sum_short.mul_pow_2(2);
+    assert_eq!(claimed_sum, prelude.claimed_sum);
+    let reduction = SumcheckProof::<F, Bn254G1>::from(recorded.proof)
+        .verify_compressed_scheduled(
+            &DegreeSchedule::uniform(3, 1),
+            claimed_sum,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+    for value in &proved.member_claims {
+        verifier_transcript.append(value);
     }
 
-    fn prove_round(
-        &mut self,
-        _bind: Option<F>,
-        _round: usize,
-        previous_claim: F,
-    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
-        let x = F::from_u64(3);
-        Ok(UnivariatePoly::new(vec![
-            x,
-            previous_claim - x - x - F::from_u64(1),
-            F::from_u64(1),
-        ]))
-    }
-
-    fn finish_rounds(&mut self, _bind: F) -> Result<(), SumcheckError<F>> {
-        Ok(())
-    }
+    assert_eq!(reduction.value, proved.final_claim);
+    assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
-/// Proves a 3-round multilinear member under `degrees`, returning the proof,
-/// the batch's claimed sum, and the member's final claim.
-fn scheduled_proof(degrees: &DegreeSchedule) -> (Vec<u8>, F) {
-    let input_claim = F::from_u64(1234);
-    let mut member = DenseMember::with_sum(3, input_claim, 5);
-    let mut transcript = prover(b"degree-schedule");
-    let mut recorder = ClearSumcheckRecorder::<F>::new();
+/// The committed twin of the batched engine: the same members proved through
+/// the committed recorder must be byte-identical to
+/// `verify_committed_consistency_dims` (coefficient draws included — no claim
+/// scalars are absorbed on either side), and the retained witness must open
+/// every round commitment.
+#[test]
+fn prove_batch_committed_twin_matches_committed_consistency() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
+    use crate::recorder::{CommittedSumcheckRecorder, SumcheckRecorder};
+
+    type VC = Pedersen<Bn254G1>;
+    let setup = pedersen_setup(4);
+
+    let sum_long = F::from_u64(4242);
+    let sum_short = F::from_u64(1717);
+    let mut long = DenseMember::with_sum(3, sum_long, 23);
+    let mut short = DenseMember::with_sum(1, sum_short, 57);
+
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"prove-batch-zk-twin"),
+        b"",
+    );
+    let mut recorder =
+        CommittedSumcheckRecorder::<F, VC, _>::new(&setup, rand_core::OsRng).unwrap();
+    recorder.absorb_input_claims(&[sum_long, sum_short], &mut prover_state);
+    let coeff_long: F = prover_state.challenge().unwrap();
+    let coeff_short: F = prover_state.challenge().unwrap();
     let prelude = BatchPrelude::new(
-        vec![BatchMember {
-            input_claim,
-            coefficient: F::from_u64(1),
-            rounds: 3,
-            offset: 0,
-        }],
-        degrees.clone(),
+        vec![
+            BatchMember {
+                input_claim: sum_long,
+                coefficient: coeff_long,
+                rounds: 3,
+                offset: 0,
+            },
+            BatchMember {
+                input_claim: sum_short,
+                coefficient: coeff_short,
+                rounds: 1,
+                offset: 2,
+            },
+        ],
+        DegreeSchedule::uniform(3, 1),
     );
-    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut long, &mut short];
     let proved = prove_batch(
         &prelude,
         &mut members,
         &mut SequentialRounds,
         &mut recorder,
-        &mut transcript,
+        &mut prover_state,
     )
     .unwrap();
-    recorder
-        .finish(&proved.member_claims, &mut transcript)
+    let recorded = recorder
+        .finish(&proved.member_claims, &mut prover_state)
         .unwrap();
-    (transcript.finish(), prelude.claimed_sum)
-}
 
-/// Verifies a [`scheduled_proof`] end to end: the rounds at `degrees`, the
-/// member claim against the reduced value, and exact consumption.
-fn verify_scheduled_proof(
-    narg: &[u8],
-    claimed_sum: F,
-    degrees: &DegreeSchedule,
-) -> Result<(), SumcheckError<F>> {
-    let mut transcript = verifier(b"degree-schedule", narg);
-    let reduction =
-        SumcheckVerifier::verify_compressed_scheduled(claimed_sum, degrees, &mut transcript)?;
-    let member_claim: F = transcript.receive()?;
-    if member_claim != reduction.value {
-        return Err(SumcheckError::RoundCheckFailed {
-            round: degrees.num_rounds(),
-            expected: reduction.value,
-            actual: member_claim,
-        });
+    // Verifier twin: the committed path absorbs no claim scalars — only the
+    // coefficient squeezes and the commitments the proof carries.
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"prove-batch-zk-twin"),
+        b"",
+    );
+    let _coeff_long: F = verifier_transcript.challenge().unwrap();
+    let _coeff_short: F = verifier_transcript.challenge().unwrap();
+    let consistency = recorded
+        .proof
+        .verify_committed_consistency_dims(3, 1, &mut verifier_transcript)
+        .unwrap();
+
+    assert_eq!(consistency.challenges(), proved.challenges);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
+
+    let witness = recorded.committed_witness.unwrap();
+    let committed = recorded.proof.as_committed().unwrap();
+    assert_eq!(witness.round_coefficients.len(), committed.rounds.len());
+    for ((round, coefficients), blinding) in committed
+        .rounds
+        .iter()
+        .zip(&witness.round_coefficients)
+        .zip(&witness.round_blindings)
+    {
+        assert!(VC::verify(
+            &setup,
+            &round.commitment,
+            coefficients,
+            blinding
+        ));
     }
-    transcript.finish()?;
-    Ok(())
+    for ((commitment, row), blinding) in committed
+        .output_claims
+        .commitments
+        .iter()
+        .zip(&witness.output_claim_rows)
+        .zip(&witness.output_claim_blindings)
+    {
+        assert!(VC::verify(&setup, commitment, row, blinding));
+    }
+    assert_eq!(witness.output_claim_rows.concat(), proved.member_claims,);
+}
+
+/// Twin-transcript lock for the clear uni-skip prover against the verify
+/// choreography `jolt-verifier`'s `uniskip::verify_clear` performs: full
+/// round poly with its count word, challenge, then the output claim before
+/// any later draw.
+#[test]
+fn prove_uniskip_clear_twin_matches_uniskip_verify() {
+    use crate::prover::prove_uniskip_clear;
+    use crate::CenteredIntegerDomain;
+
+    let degree = 3;
+    let domain_size = 4;
+    let poly = UnivariatePoly::new(vec![
+        F::from_u64(3),
+        F::from_u64(1),
+        F::from_u64(4),
+        F::from_u64(1),
+    ]);
+    let domain = CenteredIntegerDomain::new(domain_size);
+    let coefficients = domain.round_sum_coefficients(degree).unwrap();
+    let input_claim =
+        <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(&poly, &coefficients);
+
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"uniskip-twin"), b"");
+    let proved =
+        prove_uniskip_clear::<F, _>(poly, input_claim, degree, domain_size, &mut prover_state)
+            .unwrap();
+
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"uniskip-twin"), b"");
+    let reduction = SumcheckProof::<F, Bn254G1>::from(proved.proof)
+        .verify(
+            &SumcheckClaim::new(1, degree, input_claim),
+            domain,
+            &mut verifier_transcript,
+        )
+        .unwrap();
+    assert_eq!(reduction.value, proved.output_claim);
+    verifier_transcript.append(&proved.output_claim);
+
+    assert_eq!(reduction.point.as_slice(), &[proved.challenge]);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
+}
+
+/// The committed uni-skip twin: `prove_uniskip_committed` must be
+/// byte-identical to `verify_committed_consistency` (the transcript path of
+/// `uniskip::verify_zk` — its commitment-count check is transcript-pure), and
+/// the witness must open the round and output-claim commitments.
+#[test]
+fn prove_uniskip_committed_twin_matches_committed_consistency() {
+    use crate::prover::prove_uniskip_committed;
+    use crate::CenteredIntegerDomain;
+
+    type VC = Pedersen<Bn254G1>;
+    let setup = pedersen_setup(4);
+
+    let degree = 3;
+    let domain_size = 4;
+    let poly = UnivariatePoly::new(vec![
+        F::from_u64(2),
+        F::from_u64(7),
+        F::from_u64(1),
+        F::from_u64(8),
+    ]);
+    let domain = CenteredIntegerDomain::new(domain_size);
+    let coefficients = domain.round_sum_coefficients(degree).unwrap();
+    let input_claim =
+        <UnivariatePoly<F> as ClearRound<F>>::coefficient_linear_combination(&poly, &coefficients);
+
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"uniskip-zk-twin"), b"");
+    let proved = prove_uniskip_committed::<F, VC, _, _>(
+        poly,
+        input_claim,
+        degree,
+        domain_size,
+        &setup,
+        rand_core::OsRng,
+        &mut prover_state,
+    )
+    .unwrap();
+
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"uniskip-zk-twin"), b"");
+    let consistency = proved
+        .proof
+        .verify_committed_consistency(SumcheckStatement::new(1, degree), &mut verifier_transcript)
+        .unwrap();
+
+    assert_eq!(consistency.challenges(), vec![proved.challenge]);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
+    assert_eq!(
+        proved.witness.output_claim_rows.concat(),
+        vec![proved.output_claim],
+    );
+}
+
+/// The nonces are a plain list after the rounds: an empty one costs one
+/// byte, and nonces past `u32` round-trip.
+#[test]
+fn clear_proof_nonces_are_a_plain_list() {
+    let config = bincode::config::standard();
+    let evals: Vec<F> = (1..=8).map(F::from_u64).collect();
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let mut proof = honest_prove(&evals, 3, &mut transcript);
+    assert!(proof.pow_nonces.is_empty());
+    let wire = bincode::serde::encode_to_vec(&proof, config).unwrap();
+    let rounds_only = bincode::serde::encode_to_vec(&proof.round_polynomials, config).unwrap();
+    assert_eq!(wire, [rounds_only.as_slice(), &[0]].concat());
+
+    proof.pow_nonces = vec![0, u64::from(u32::MAX), 1 << 32, u64::MAX];
+    let wire = bincode::serde::encode_to_vec(&proof, config).unwrap();
+    let (decoded, read): (ClearSumcheckProof<F>, usize) =
+        bincode::serde::decode_from_slice(&wire, config).unwrap();
+    assert_eq!((decoded, read), (proof, wire.len()));
+}
+
+/// Replays rounds `0..round` with their honest nonces on a transcript for
+/// `session`, absorbs `rounds[round]`, and returns the first nonce that fails
+/// that round's proof of work.
+fn failing_nonce<R>(
+    rounds: &[R],
+    append: impl Fn(&R, &mut PT),
+    nonces: &[u64],
+    round: usize,
+    degree: usize,
+    session: &[u8],
+) -> u64 {
+    let bits = round_pow_bits::<P, PT>(degree).unwrap();
+    let probe = || {
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(session), b"");
+        for (message, &nonce) in rounds[..round].iter().zip(nonces) {
+            append(message, &mut transcript);
+            transcript.check_public_grind(bits, Some(nonce)).unwrap();
+            let _challenge: P = transcript.challenge().unwrap();
+        }
+        append(&rounds[round], &mut transcript);
+        transcript
+    };
+    (0..u64::MAX)
+        .find(|&nonce| probe().check_public_grind(bits, Some(nonce)).is_err())
+        .unwrap()
 }
 
 #[test]
-fn rounds_are_sent_at_their_scheduled_widths() {
-    let degrees = DegreeSchedule::batched::<F>(
+fn clear_verify_rejects_wrong_pow_nonce() {
+    let evals: Vec<P> = (1..=8).map(P::from_u64).collect();
+    let claim = SumcheckClaim::new(3, 1, compute_sum(&evals));
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let mut proof = honest_prove(&evals, 3, &mut prover_state);
+    proof.pow_nonces[1] = failing_nonce(
+        &proof.round_polynomials,
+        |poly, transcript| poly.append_to_transcript(transcript),
+        &proof.pow_nonces,
+        1,
+        1,
+        b"sumcheck-test",
+    );
+
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut transcript,
+    );
+
+    assert!(matches!(
+        result,
+        Err(SumcheckError::ProofOfWorkRejected { round: 1 })
+    ));
+}
+
+#[test]
+fn clear_verify_rejects_dropped_and_extra_pow_nonces() {
+    let evals: Vec<P> = (1..=8).map(P::from_u64).collect();
+    let claim = SumcheckClaim::new(3, 1, compute_sum(&evals));
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let proof = honest_prove(&evals, 3, &mut prover_state);
+    let dropped = &proof.pow_nonces[..2];
+    let extra = [proof.pow_nonces.as_slice(), &[0]].concat();
+
+    for (nonces, got) in [(dropped, 2), (extra.as_slice(), 4)] {
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+        let mut untouched =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+        let result = SumcheckVerifier::verify(
+            &claim,
+            &proof.round_polynomials,
+            nonces,
+            BooleanHypercube,
+            &mut transcript,
+        );
+
+        assert!(matches!(
+            result,
+            Err(SumcheckError::WrongNumberOfPowNonces { expected: 3, got: actual }) if actual == got
+        ));
+        assert_eq!(
+            transcript.verifier_message::<[u8; 32]>(),
+            untouched.verifier_message::<[u8; 32]>()
+        );
+    }
+}
+
+#[test]
+fn compressed_verify_rejects_wrong_and_dropped_pow_nonces() {
+    let evals: Vec<P> = (1..=8).map(P::from_u64).collect();
+    let claim = SumcheckClaim::new(3, 1, compute_sum(&evals));
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    let compressed_proof = honest_prove_compressed(&evals, 3, &mut prover_state);
+
+    let mut wrong = compressed_proof.clone();
+    wrong.pow_nonces[2] = failing_nonce(
+        &compressed_proof.round_polynomials,
+        |poly, transcript| append_compressed_round(transcript, poly.coeffs_except_linear_term()),
+        &compressed_proof.pow_nonces,
+        2,
+        1,
+        b"sumcheck-test",
+    );
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    assert!(matches!(
+        wrong.verify(&claim, BooleanHypercube, &mut transcript),
+        Err(SumcheckError::ProofOfWorkRejected { round: 2 })
+    ));
+
+    let mut dropped = compressed_proof;
+    dropped.pow_nonces.clear();
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
+    assert!(matches!(
+        dropped.verify(&claim, BooleanHypercube, &mut transcript),
+        Err(SumcheckError::WrongNumberOfPowNonces {
+            expected: 3,
+            got: 0
+        })
+    ));
+}
+
+/// Committed proofs carry no nonces, so the committed path refuses a
+/// challenge set whose rounds would need proof of work.
+#[test]
+fn committed_rounds_reject_a_challenge_set_that_needs_pow() {
+    let rounds = vec![CommittedRound {
+        commitment: P::from_u64(11),
+        degree: 2,
+    }];
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"committed-sumcheck"), b"");
+    assert!(matches!(
+        SumcheckVerifier::verify_committed_round_consistency::<P, _, _>(
+            SumcheckStatement::new(1, 2),
+            &rounds,
+            &mut transcript,
+        ),
+        Err(SumcheckError::NeedsProofOfWork)
+    ));
+}
+
+/// Each scheduled round's proof of work is priced at its own degree.
+/// `prove_batch` proves a batch whose last round is scheduled at a lower
+/// degree than the first two; that round's nonce is then replaced by one
+/// built to pass its own difficulty and fail the batch maximum's. The
+/// scheduled verifier accepts it, and the uniform bound at the maximum
+/// rejects exactly that round.
+#[test]
+fn scheduled_rounds_grind_at_their_own_degree() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
+    use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
+
+    /// A multilinear table over Akita's field, bound low to high: a batch member
+    /// whose rounds are linear, whatever degree the batch schedules them at.
+    struct LinearMember(Vec<P>);
+
+    impl ProveRounds<P> for LinearMember {
+        fn num_rounds(&self) -> usize {
+            self.0.len().trailing_zeros() as usize
+        }
+
+        fn prove_round(
+            &mut self,
+            bind: Option<P>,
+            _round: usize,
+            _previous_claim: P,
+        ) -> Result<UnivariatePoly<P>, SumcheckError<P>> {
+            if let Some(challenge) = bind {
+                self.finish_rounds(challenge)?;
+            }
+            let half = self.0.len() / 2;
+            let eval_0: P = self.0[..half].iter().copied().sum();
+            let eval_1: P = self.0[half..].iter().copied().sum();
+            Ok(UnivariatePoly::new(vec![eval_0, eval_1 - eval_0]))
+        }
+
+        fn finish_rounds(&mut self, bind: P) -> Result<(), SumcheckError<P>> {
+            let half = self.0.len() / 2;
+            for i in 0..half {
+                self.0[i] = self.0[i] + bind * (self.0[i + half] - self.0[i]);
+            }
+            self.0.truncate(half);
+            Ok(())
+        }
+    }
+
+    let (low, high) = (2, 8);
+    let (low_bits, high_bits) = (
+        round_pow_bits::<P, PT>(low).unwrap(),
+        round_pow_bits::<P, PT>(high).unwrap(),
+    );
+    assert!(0 < low_bits && low_bits < high_bits);
+
+    let table: Vec<P> = (1..=8).map(P::from_u64).collect();
+    let claimed_sum = compute_sum(&table);
+    let degrees = DegreeSchedule::batched::<P>(
         3,
         [MemberDegrees {
             offset: 0,
-            round_degrees: vec![1, 3, 2],
+            degree: high,
+            round_degrees: vec![high, high, low],
         }],
     )
     .unwrap();
-    let (narg, claimed_sum) = scheduled_proof(&degrees);
-    assert_eq!(narg.len(), (1 + 3 + 2 + 1) * F::NUM_BYTES);
-    verify_scheduled_proof(&narg, claimed_sum, &degrees).unwrap();
-}
-
-/// A round sent longer or shorter than its schedule shifts every later read:
-/// the verifier rejects instead of reinterpreting the bytes.
-#[test]
-fn rounds_off_their_scheduled_width_are_rejected() {
-    let degrees = DegreeSchedule::batched::<F>(
-        3,
-        [MemberDegrees {
-            offset: 0,
-            round_degrees: vec![1, 3, 2],
-        }],
-    )
-    .unwrap();
-    let (narg, claimed_sum) = scheduled_proof(&degrees);
-    let width = F::NUM_BYTES;
-
-    let mut padded = narg.clone();
-    drop(padded.splice(width..width, vec![0; width]));
-    assert!(verify_scheduled_proof(&padded, claimed_sum, &degrees).is_err());
-
-    let mut trimmed = narg.clone();
-    drop(trimmed.drain(3 * width..4 * width));
-    assert!(verify_scheduled_proof(&trimmed, claimed_sum, &degrees).is_err());
-
-    // The old uniform max-degree wire reads past the scheduled rounds.
-    assert!(verify_scheduled_proof(&narg, claimed_sum, &DegreeSchedule::uniform(3, 3)).is_err());
-}
-
-#[test]
-fn member_above_its_round_degree_is_rejected_before_the_transcript() {
-    let input_claim = F::from_u64(9);
-    let mut member = QuadraticMember { rounds: 2 };
     let prelude = BatchPrelude::new(
         vec![BatchMember {
-            input_claim,
-            coefficient: F::from_u64(1),
-            rounds: 2,
+            input_claim: claimed_sum,
+            coefficient: P::from_u64(1),
+            rounds: 3,
             offset: 0,
         }],
-        DegreeSchedule::batched::<F>(
-            2,
-            [MemberDegrees {
-                offset: 0,
-                round_degrees: vec![2, 1],
-            }],
-        )
-        .unwrap(),
+        degrees.clone(),
     );
-    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
-    let mut transcript = prover(b"degree-schedule-bound");
-    let result = prove_batch(
+    let session = jolt_transcript::protocol_tag(b"scheduled-pow");
+    let mut member = LinearMember(table);
+    let mut members: Vec<&mut dyn ProveRounds<P>> = vec![&mut member];
+    let mut recorder = ClearSumcheckRecorder::<P>::new();
+    let proved = prove_batch(
         &prelude,
         &mut members,
         &mut SequentialRounds,
-        &mut ClearSumcheckRecorder::<F>::new(),
-        &mut transcript,
-    );
+        &mut recorder,
+        &mut prover_transcript::<Blake2b512>(&session, b""),
+    )
+    .unwrap();
+    assert_eq!(proved.challenges.len(), 3);
+    let mut proof = recorder
+        .finish(&[], &mut prover_transcript::<Blake2b512>(&session, b""))
+        .unwrap()
+        .proof;
+    assert_eq!(proof.pow_nonces.len(), 3);
+
+    // The transcript just before the last round's proof of work.
+    let before_last = || {
+        let mut transcript = prover_transcript::<Blake2b512>(&session, b"");
+        for (round, poly) in proof.round_polynomials.iter().enumerate() {
+            append_compressed_round(&mut transcript, poly.coeffs_except_linear_term());
+            if round == 2 {
+                return transcript;
+            }
+            transcript
+                .check_public_grind(high_bits, Some(proof.pow_nonces[round]))
+                .unwrap();
+            let _challenge: P = transcript.challenge().unwrap();
+        }
+        unreachable!("the proof has three rounds")
+    };
+    proof.pow_nonces[2] = (0..u64::MAX)
+        .find(|&nonce| {
+            before_last()
+                .check_public_grind(low_bits, Some(nonce))
+                .is_ok()
+                && before_last()
+                    .check_public_grind(high_bits, Some(nonce))
+                    .is_err()
+        })
+        .unwrap();
+
+    let reduction = SumcheckVerifier::verify_compressed_scheduled(
+        claimed_sum,
+        &degrees,
+        &proof,
+        BooleanHypercube,
+        &mut prover_transcript::<Blake2b512>(&session, b""),
+    )
+    .unwrap();
+    assert_eq!(reduction.point.as_slice()[..2], proved.challenges[..2]);
     assert!(matches!(
-        result,
+        SumcheckVerifier::verify_compressed(
+            &SumcheckClaim::new(3, high, claimed_sum),
+            &proof,
+            BooleanHypercube,
+            &mut prover_transcript::<Blake2b512>(&session, b""),
+        ),
+        Err(SumcheckError::ProofOfWorkRejected { round: 2 })
+    ));
+}
+
+/// A round longer than its scheduled degree is rejected before it is
+/// absorbed, even when a longer round elsewhere in the batch is allowed.
+#[test]
+fn scheduled_verify_rejects_a_round_above_its_degree() {
+    let quadratic = || CompressedPoly::new(vec![F::from_u64(1), F::from_u64(2)]);
+    let proof = CompressedSumcheckProof {
+        round_polynomials: vec![quadratic(), quadratic()],
+        pow_nonces: Vec::new(),
+    };
+    let degrees = DegreeSchedule::batched::<F>(
+        2,
+        [MemberDegrees {
+            offset: 0,
+            degree: 2,
+            round_degrees: vec![2, 1],
+        }],
+    )
+    .unwrap();
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"scheduled-degree"), b"");
+    assert!(matches!(
+        SumcheckVerifier::verify_compressed_scheduled(
+            F::from_u64(0),
+            &degrees,
+            &proof,
+            BooleanHypercube,
+            &mut transcript,
+        ),
+        Err(SumcheckError::DegreeBoundExceeded { got: 2, max: 1 })
+    ));
+}
+
+/// A member whose round polynomial exceeds its round's scheduled degree is
+/// rejected before the round reaches the transcript.
+#[test]
+fn prove_batch_rejects_a_member_above_its_round_degree() {
+    use crate::batch::{BatchMember, BatchPrelude};
+    use crate::prover::{prove_batch, ProveRounds, SequentialRounds};
+    use crate::recorder::ClearSumcheckRecorder;
+
+    struct Quadratic;
+    impl ProveRounds<F> for Quadratic {
+        fn num_rounds(&self) -> usize {
+            1
+        }
+
+        fn prove_round(
+            &mut self,
+            _bind: Option<F>,
+            _round: usize,
+            previous_claim: F,
+        ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+            // s(X) = c0 + X^2 with s(0) + s(1) = previous_claim.
+            let c0 = (previous_claim - F::from_u64(1)) * F::from_u64(2).inverse().unwrap();
+            Ok(UnivariatePoly::new(vec![
+                c0,
+                F::from_u64(0),
+                F::from_u64(1),
+            ]))
+        }
+
+        fn finish_rounds(&mut self, _bind: F) -> Result<(), SumcheckError<F>> {
+            Ok(())
+        }
+    }
+
+    let claim = F::from_u64(9);
+    let prelude = BatchPrelude::new(
+        vec![BatchMember {
+            input_claim: claim,
+            coefficient: F::from_u64(1),
+            rounds: 1,
+            offset: 0,
+        }],
+        DegreeSchedule::uniform(1, 1),
+    );
+    let mut member = Quadratic;
+    let mut members: Vec<&mut dyn ProveRounds<F>> = vec![&mut member];
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"round-degree"), b"");
+    let mut untouched =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"round-degree"), b"");
+    assert!(matches!(
+        prove_batch(
+            &prelude,
+            &mut members,
+            &mut SequentialRounds,
+            &mut ClearSumcheckRecorder::<F>::new(),
+            &mut transcript,
+        ),
         Err(SumcheckError::RoundDegreeBoundExceeded {
-            round: 1,
+            round: 0,
             member: 0,
             got: 2,
             max: 1
         })
     ));
-    assert_eq!(transcript.finish().len(), 2 * F::NUM_BYTES);
+    assert_eq!(
+        transcript.verifier_message::<[u8; 32]>(),
+        untouched.verifier_message::<[u8; 32]>()
+    );
 }

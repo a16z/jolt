@@ -8,17 +8,16 @@
 )]
 
 use crate::support::{
-    assert_transcripts_agree, batch_polynomials, f, layout, native_setup, native_statement,
-    new_prover_transcript, new_verifier_transcript, polynomial, setup_for,
+    batch_polynomials, f, layout, native_setup, native_statement, polynomial, setup_for,
 };
 use jolt_akita::{
-    AkitaBackendFlavor, AkitaCommitment, AkitaNativeBatchStatement, AkitaNativeBatching,
-    AkitaScheme,
+    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaNativeBatchStatement,
+    AkitaNativeBatching, AkitaScheme,
 };
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
-use jolt_transcript::TranscriptError;
-use serde_json::json;
+use jolt_transcript::{prover_transcript, Blake2b512};
+use serde_json::{json, Value};
 
 type VerifierSetup = <AkitaScheme as CommitmentScheme>::VerifierSetup;
 
@@ -82,33 +81,49 @@ fn akita_public_commit_open_uses_upstream_one_hot_path_for_k256() {
     let eval = one_hot.evaluate(&point);
     assert_eq!(eval, dense.evaluate(&point));
 
-    let mut prover_transcript = new_prover_transcript(b"akita-native-one-hot");
-    AkitaScheme::open(
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-native-one-hot"),
+        b"",
+    );
+    let proof = AkitaScheme::open(
         &one_hot,
         &point,
         eval,
         &prover_setup,
         Some(one_hot_hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .unwrap();
-    let proof = prover_transcript.narg().to_vec();
 
-    let mut verifier_transcript = new_verifier_transcript(b"akita-native-one-hot", &proof);
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-native-one-hot"),
+        b"",
+    );
     AkitaScheme::verify(
         &one_hot_commitment,
         &point,
         eval,
+        &proof,
         &verifier_setup,
         &mut verifier_transcript,
     )
     .expect("native Akita one-hot proof should verify");
-    assert_transcripts_agree(prover_transcript, verifier_transcript);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
 #[test]
-fn akita_commitments_reject_unknown_serialized_fields() {
-    let (_, statement, _) = native_proof_fixture(b"akita-payload-unknown-fields");
+fn akita_proof_payloads_reject_unknown_serialized_fields() {
+    let (_, statement, proof) = native_proof_fixture(b"akita-payload-unknown-fields");
+
+    let mut top_level = serde_json::to_value(&proof).expect("proof should serialize");
+    let _ = top_level
+        .as_object_mut()
+        .expect("proof should serialize as object")
+        .insert("unexpected".to_owned(), json!(true));
+    assert!(serde_json::from_value::<AkitaBatchProof>(top_level).is_err());
 
     let commitment = &statement[0].commitment;
     let mut tampered = serde_json::to_value(commitment).expect("commitment should serialize");
@@ -141,10 +156,14 @@ fn akita_forged_commitment_metadata_rejects_before_shape_backed_allocation() {
             evaluation: claim.evaluation.clone(),
         })
         .collect();
-    let mut transcript = new_verifier_transcript(b"akita-forged-metadata", &proof);
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-forged-metadata"),
+        b"",
+    );
     let err = <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &forged_statement,
+        &proof,
         &mut transcript,
     )
     .expect_err("forged backend_coeff_len should reject");
@@ -158,77 +177,28 @@ fn akita_forged_commitment_metadata_rejects_before_shape_backed_allocation() {
 fn akita_native_batching_rejects_corrupted_proof_payloads() {
     let (verifier_setup, statement, proof) = native_proof_fixture(b"akita-corrupt-proof");
 
-    // The selected schedule row leads the opening; Akita's messages follow.
-    for position in [0, 32, proof.len() / 2, proof.len() - 1] {
-        let mut tampered = proof.clone();
-        tampered[position] ^= 1;
-        let mut transcript = new_verifier_transcript(b"akita-corrupt-proof", &tampered);
+    for field in ["schedule_selection", "backend_proof"] {
+        let tampered = mutate_byte_array_field(&proof, field);
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"akita-corrupt-proof"),
+            b"",
+        );
         assert!(
             <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
                 &verifier_setup,
-                &statement,
+                &statement.clone(),
+                &tampered,
                 &mut transcript,
             )
             .is_err(),
-            "a flipped bit at proof byte {position} should reject"
+            "tampered {field} should reject"
         );
     }
 }
 
-/// A commitment's wire form decodes only from the exact bytes
-/// `send_commitment` writes: a known flavor, the flavor's chunk size,
-/// canonical coefficients, and nothing after them.
-#[test]
-fn akita_commitment_wire_form_rejects_noncanonical_encodings() {
-    let (verifier_setup, statement, _) = native_proof_fixture(b"akita-commitment-wire");
-    let commitment = &statement[0].commitment;
-    let mut prover_transcript = new_prover_transcript(b"akita-commitment-wire");
-    AkitaScheme::send_commitment(commitment, &mut prover_transcript);
-    let wire = prover_transcript.finish();
-    let receive = |bytes: &[u8]| {
-        let mut transcript = new_verifier_transcript(b"akita-commitment-wire", bytes);
-        let received = AkitaScheme::receive_commitment(&verifier_setup, &mut transcript)?;
-        transcript.finish()?;
-        Ok::<_, OpeningsError>(received)
-    };
-    assert_eq!(receive(&wire).as_ref(), Ok(commitment));
-
-    // Header: flavor tag, 32-byte layout digest, then u64 num_vars,
-    // poly_count, one_hot_k, and coefficient count.
-    let mut unknown_flavor = wire.clone();
-    unknown_flavor[0] = 2;
-    assert!(receive(&unknown_flavor).is_err(), "unknown flavor tag");
-
-    let mut dense_chunk_size = wire.clone();
-    dense_chunk_size[1 + 32 + 16] = 16;
-    assert!(
-        receive(&dense_chunk_size).is_err(),
-        "a dense commitment must carry no one-hot chunk size"
-    );
-
-    let mut noncanonical = wire.clone();
-    let coefficient_start = noncanonical.len() - 16;
-    noncanonical[coefficient_start..].fill(0xff);
-    assert!(
-        receive(&noncanonical).is_err(),
-        "a coefficient at or above the modulus"
-    );
-
-    let mut trailing = wire.clone();
-    trailing.push(0);
-    assert_eq!(
-        receive(&trailing),
-        Err(OpeningsError::Transcript(TranscriptError::TrailingBytes))
-    );
-    assert!(
-        receive(&wire[..wire.len() - 1]).is_err(),
-        "truncated payload"
-    );
-}
-
 fn native_proof_fixture(
     label: &'static [u8],
-) -> (VerifierSetup, AkitaNativeBatchStatement, Vec<u8>) {
+) -> (VerifierSetup, AkitaNativeBatchStatement, AkitaBatchProof) {
     let (prover_setup, verifier_setup) = native_setup();
     let poly_a = polynomial(16, 1);
     let poly_b = polynomial(16, 20);
@@ -240,8 +210,9 @@ fn native_proof_fixture(
             .expect("grouped commit should succeed");
     let statement = native_statement(commitment, &point, [eval_a, eval_b]);
 
-    let mut transcript = new_prover_transcript(label);
-    <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
+    let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
         batch_polynomials([&poly_a, &poly_b]),
@@ -249,5 +220,25 @@ fn native_proof_fixture(
         &mut transcript,
     )
     .expect("black-box proof should be produced");
-    (verifier_setup, statement, transcript.finish())
+    (verifier_setup, statement, proof)
+}
+
+fn mutate_byte_array_field(proof: &AkitaBatchProof, field: &str) -> AkitaBatchProof {
+    let mut value = serde_json::to_value(proof).expect("proof should serialize");
+    let bytes = value
+        .get_mut(field)
+        .expect("proof should contain field")
+        .as_array_mut()
+        .expect("proof field should serialize as byte array");
+    let first = bytes
+        .first_mut()
+        .expect("proof byte array should not be empty");
+    let byte = u8::try_from(
+        first
+            .as_u64()
+            .expect("proof byte array element should be a number"),
+    )
+    .expect("proof byte array element should fit in u8");
+    *first = Value::from(byte ^ 1);
+    serde_json::from_value(value).expect("mutated proof should still deserialize")
 }

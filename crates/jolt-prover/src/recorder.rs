@@ -14,21 +14,20 @@ use core::marker::PhantomData;
 
 #[cfg(feature = "zk")]
 use jolt_algebra::CanonicalEncoding;
+use jolt_algebra::JoltField;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::ClearSumcheckRecorder;
+use jolt_sumcheck::{ClearSumcheckRecorder, SumcheckProof};
 #[cfg(feature = "zk")]
 use jolt_sumcheck::{prove_uniskip, ProvedUniskip};
 #[cfg(not(feature = "zk"))]
-use jolt_sumcheck::{prove_uniskip_clear, ProvedUniskip};
+use jolt_sumcheck::prove_uniskip_clear;
 #[cfg(not(feature = "zk"))]
-use jolt_transcript::{PadSlots, PrivateChannel};
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_transcript::PrivateChannel;
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::relations::ClaimRoutes;
-#[cfg(not(feature = "zk"))]
-use jolt_verifier::VerifierError;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_zk::blindfold::BlindFoldPadOpening;
 #[cfg(feature = "zk")]
@@ -50,7 +49,10 @@ type ModePadOpening<VC> = WhiteoutPadOpening<<VC as VectorCommitment>::Field>;
 #[cfg(feature = "zk")]
 pub type ModePads<VC> = CommittedPads<<VC as VectorCommitment>::Field, ModePadOpening<VC>>;
 
-/// The compiled mode's batch recorder type.
+use crate::ProverError;
+
+/// The compiled mode's batch recorder: compressed clear proofs or committed
+/// proofs with retained witnesses for BlindFold.
 #[cfg(feature = "zk")]
 pub type ModeRecorder<'a, VC> =
     MaskingRecorder<'a, <VC as VectorCommitment>::Field, ModePadOpening<VC>>;
@@ -76,6 +78,14 @@ impl<F, O> ClaimRecorder for MaskingRecorder<'_, F, O> {
     fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {
         routes.masked().0
     }
+}
+
+/// A proved uni-skip round in the compiled mode: the wire proof, the
+/// reduction challenge, and the prover-internal output claim.
+pub struct ProvedUniskipMode<F: JoltField, C> {
+    pub proof: SumcheckProof<F, C>,
+    pub challenge: F,
+    pub output_claim: F,
 }
 
 /// The per-proof mode context. Clear builds carry nothing; ZK builds carry
@@ -126,38 +136,47 @@ impl<VC: VectorCommitment> ProofMode<VC> {
 
     /// Sends private values outside a sumcheck (stage 4's staged openings):
     /// clear, or masked by the next pads.
-    pub fn send_private<H: Sponge>(
+    pub fn send_private<T>(
         &mut self,
         values: &[VC::Field],
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), ProverError<VC::Field>> {
+        transcript: &mut T,
+    ) -> Result<(), ProverError<VC::Field>>
+    where
+        T: FieldTranscript<VC::Field> + ProverTranscript,
+    {
         #[cfg(feature = "zk")]
         {
             let _ = self.pads.send(values, transcript)?;
         }
         #[cfg(not(feature = "zk"))]
         {
-            let _: PadSlots = transcript
-                .exchange_private_base(&mut values.to_vec())
-                .map_err(VerifierError::from)?;
+            transcript.append_private(values);
         }
         Ok(())
     }
 
     /// Prove a uni-skip first round in the compiled mode: the full round
     /// polynomial and the output claim, sent clear or masked.
-    pub fn prove_uniskip<H: Sponge>(
+    #[expect(
+        clippy::type_complexity,
+        reason = "the associated-type projections spell out one small struct"
+    )]
+    pub fn prove_uniskip<T>(
         &mut self,
         round_poly: UnivariatePoly<VC::Field>,
         input_claim: VC::Field,
         degree: usize,
         domain_size: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<ProvedUniskip<VC::Field>, ProverError<VC::Field>> {
+        transcript: &mut T,
+    ) -> Result<ProvedUniskipMode<VC::Field, VC::Output>, ProverError<VC::Field>>
+    where
+        VC::Output: Clone + Encoding,
+        T: FieldTranscript<VC::Field> + ProverTranscript,
+    {
         #[cfg(feature = "zk")]
         {
             let _span = tracing::info_span!("prove_uniskip_masked").entered();
-            let (proved, ()) = prove_uniskip(
+            let (proved, ()): (ProvedUniskip<VC::Field>, ()) = prove_uniskip(
                 round_poly,
                 input_claim,
                 degree,
@@ -169,13 +188,18 @@ impl<VC: VectorCommitment> ProofMode<VC> {
         }
         #[cfg(not(feature = "zk"))]
         {
-            Ok(prove_uniskip_clear::<VC::Field, H>(
+            let proved = prove_uniskip_clear::<VC::Field, T>(
                 round_poly,
                 input_claim,
                 degree,
                 domain_size,
                 transcript,
-            )?)
+            )?;
+            Ok(ProvedUniskipMode {
+                proof: proved.proof.into(),
+                challenge: proved.challenge,
+                output_claim: proved.output_claim,
+            })
         }
     }
 }

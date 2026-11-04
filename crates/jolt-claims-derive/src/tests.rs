@@ -48,7 +48,7 @@ fn canonical_order_follows_field_declaration_order() {
         "CircuitFlags::VirtualInstruction",
         "JoltVirtualPolynomial::LookupTableFlag",
         "JoltCommittedPolynomial::RamInc",
-        "trusted_advice",
+        "JoltOpeningId::TrustedAdvice",
     ]
     .iter()
     .map(|needle| {
@@ -249,7 +249,7 @@ fn challenges_reject_option_fields() {
                 tau: Option<F>,
             }
         },
-        "challenge fields are an unconditional scalar `F`; a conditional `Option<F>` challenge is not supported (no relation draws one, and the `draw_challenges` default treats every field as one exact `challenge()`)",
+        "challenge fields are an unconditional scalar `F`; a conditional `Option<F>` challenge is not supported (no relation draws one, and the `draw_challenges` default treats every field as one `challenge`)",
     );
 }
 

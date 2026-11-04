@@ -8,7 +8,7 @@
 
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RamValCheckPublic};
-use jolt_poly::UnivariatePoly;
+use jolt_poly::{bind_prefix_in_place, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
@@ -20,8 +20,7 @@ use std::sync::Arc;
 use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa};
 use super::ram_trace::{RamAccessColumns, RamAddresses, NO_ACCESS};
 use super::support::{
-    bind_prefix_pairs, bound_pair, map_indices, pin_derived_term, triple_product_round_evals,
-    RoundProgress, SplitLt,
+    bound_pair, map_indices, pin_derived_term, triple_product_round_evals, RoundProgress, SplitLt,
 };
 use super::OptimizedBackend;
 use crate::reference::views::eq_table;
@@ -111,7 +110,7 @@ impl<F: JoltField> RamValCheckKernel<F> {
     fn bind(&mut self, challenge: F) {
         let mut freed_columns = false;
         if let IncColumn::Bound(inc) = &mut self.inc {
-            bind_prefix_pairs(inc, challenge, F::zero());
+            let _ = bind_prefix_in_place(inc, challenge, F::zero());
         } else {
             let placeholder = IncColumn::Raw(RamAccessColumns {
                 addresses: Arc::new(Vec::new().into()),
@@ -256,7 +255,6 @@ mod tests {
     use super::*;
     use crate::reference::views::address_fold;
     use crate::ReferenceBackend;
-    use jolt_verifier::stages::stage4::ram_val_check::RamValCheckStagedOpenings;
 
     fn run_parity(shape: FixtureShape, ops: Vec<RamOp>, seed: u64) {
         with_ram_fixture(shape, ops, |witness| {
@@ -267,7 +265,6 @@ mod tests {
                 TraceDimensions::new(shape.log_t),
                 shape.log_k(),
                 RamValCheckInit::full(Fr::from_u64(0)),
-                RamValCheckStagedOpenings::default(),
             );
             let claims = RamValCheckInputClaims {
                 ram_val: Fr::from_u64(0),

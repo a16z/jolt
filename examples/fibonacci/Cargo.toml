@@ -4,8 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-transcript-poseidon = ["jolt-sdk/transcript-poseidon"]
-transcript-keccak = ["jolt-sdk/transcript-keccak"]
 transcript-blake2b = ["jolt-sdk/transcript-blake2b"]
 
 [dependencies]

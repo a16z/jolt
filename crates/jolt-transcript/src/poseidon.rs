@@ -8,11 +8,8 @@
 //!
 //! Byte traffic is mapped to `Fr` via 31-byte little-endian chunks
 //! (`Fr::from_le_bytes_mod_order` is injective on chunks ≤ 31 bytes since
-//! 248 bits < BN254 modulus). Each permutation yields the low 16 bytes of
-//! `into_bigint().to_bytes_le()` of the running state: a uniform element of
-//! `[0, p)` reduced mod `2^128` is within `2^-125` of uniform, while its full
-//! 32 bytes are not (the top byte is at most `0x30`), so challenges drawn at
-//! any squeeze offset stay uniform.
+//! 248 bits < BN254 modulus). Squeezed bytes come from
+//! `into_bigint().to_bytes_le()` of the running state.
 //!
 //! Round constants are built once per `PoseidonSponge` construction; the
 //! same `Poseidon<Fr>` is reused for every `permute` call in this sponge's
@@ -22,9 +19,9 @@
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
 use light_poseidon::{Poseidon, PoseidonHasher};
-use spongefish::DuplexSpongeInterface;
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
-const SQUEEZE_BYTES: usize = 16;
+const SQUEEZE_BYTES: usize = 32;
 const ABSORB_CHUNK_BYTES: usize = 31;
 
 #[expect(
@@ -52,6 +49,13 @@ impl PoseidonSponge {
             pending_squeeze: [0u8; SQUEEZE_BYTES],
             squeeze_offset: SQUEEZE_BYTES,
         }
+    }
+
+    /// Advance the state and discard any pending squeezed bytes.
+    pub fn ratchet(&mut self) -> &mut Self {
+        self.permute(Fr::zero(), Fr::zero());
+        self.squeeze_offset = SQUEEZE_BYTES;
+        self
     }
 
     /// One Poseidon application over the current state plus two `Fr` rate
@@ -114,6 +118,14 @@ impl std::fmt::Debug for PoseidonSponge {
     }
 }
 
+impl DuplexSpongeInit for PoseidonSponge {
+    fn init(session_id: &[u8; 32]) -> Self {
+        let mut sponge = Self::new();
+        let _ = sponge.absorb(session_id);
+        sponge
+    }
+}
+
 impl DuplexSpongeInterface for PoseidonSponge {
     type U = u8;
 
@@ -150,18 +162,6 @@ impl DuplexSpongeInterface for PoseidonSponge {
             self.squeeze_offset += take;
             remaining = tail;
         }
-        self
-    }
-
-    fn ratchet(&mut self) -> &mut Self {
-        // Intentional double-permute on the `ratchet ; squeeze` path: the
-        // permutation here is the one-way ratchet, and the next `squeeze`
-        // call's `refill_squeeze` runs a second permutation to produce the
-        // first squeeze block. Matches spongefish's own `DuplexSponge::ratchet`
-        // semantics (one permute in `ratchet`, another in the first
-        // `squeeze`); do not collapse to a single call.
-        self.permute(Fr::zero(), Fr::zero());
-        self.squeeze_offset = SQUEEZE_BYTES;
         self
     }
 }

@@ -1,16 +1,20 @@
 //! The top-level prover: the stage recipes run in protocol order on one
-//! transcript and one backend session, and the transcript's argument string
-//! is the [`JoltProof`].
+//! transcript and one backend session, and their wire outputs assemble into
+//! the complete [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
-use jolt_algebra::CanonicalDecode;
 use jolt_algebra::{Accumulator, JoltField, WithAccumulator};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::Sponge;
-use jolt_verifier::config::{JoltProtocolConfig, SELECTED_ZK_CONFIG};
-use jolt_verifier::proof::JoltProof;
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+#[cfg(feature = "zk")]
+use jolt_verifier::config::SELECTED_ZK_CONFIG;
+use jolt_verifier::config::JoltProtocolConfig;
+#[cfg(not(feature = "zk"))]
+use jolt_verifier::proof::ClearProofClaims;
+use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
 #[cfg(feature = "zk")]
 use crate::blindfold::{commit_pads, prove_blindfold, ZkFinalOpening};
@@ -30,10 +34,11 @@ use crate::stages::stage7::prove_stage7;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 
 /// Prove one execution: run stages 0 through 8 on a fresh transcript and
-/// backend session in the compiled proof mode — clear claims without the `zk`
-/// feature, the BlindFold tail with it — and return the argument string.
+/// backend session, and assemble the [`JoltProof`] in the compiled proof
+/// mode — clear claims without the `zk` feature, the BlindFold tail with it.
 ///
-/// `config` is the derived proof shape (sent as the proof header), `backend` binds the witness used by the kernels,
+/// `config` is the derived proof shape (its five wire fields are copied into
+/// the proof verbatim), `backend` binds the witness used by the kernels,
 /// and `public_io` the Fiat-Shamir preamble's program I/O.
 ///
 /// `trusted_advice` is the externally supplied (preprocessing-time)
@@ -50,25 +55,25 @@ use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 /// bytecode/image hints). Dominant advice returns
 /// [`ProverError::Unsupported`] at stage 0.
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
-pub fn prove<F, PCS, VC, H>(
+pub fn prove<F, PCS, VC, T>(
     mut backend: KernelContext<'_, F, JoltBackend<F, PCS>>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&TrustedAdviceCommitment<PCS>>,
     public_io: &JoltDevice,
-) -> Result<JoltProof, ProverError<F>>
+) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField,
+    F: JoltField + Encoding,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output, Blind = F>,
-    PCS::Output: HomomorphicCommitment<F>,
+    PCS::Output: Encoding + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    VC::Output: Copy + HomomorphicCommitment<F> + CanonicalDecode,
-    H: Sponge,
+    VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
+    T: FieldTranscript<F> + ProverInit,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
-    let stage0 = prove_stage0::<F, PCS, VC, H>(
+    let stage0 = prove_stage0::<F, PCS, VC, T>(
         &mut backend,
         preprocessing,
         config,
@@ -89,9 +94,9 @@ where
     #[cfg(not(feature = "zk"))]
     let mut mode = ProofMode::<VC>::clear();
 
-    let stage1 = prove_stage1::<F, PCS, VC, H>(&mut backend, &mut mode, log_t, &mut transcript)?;
+    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mut mode, log_t, &mut transcript)?;
     finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
-    let stage2 = prove_stage2::<F, PCS, VC, H>(
+    let stage2 = prove_stage2::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
         config,
@@ -100,7 +105,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
-    let stage3 = prove_stage3::<F, PCS, VC, H>(
+    let stage3 = prove_stage3::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
         config,
@@ -109,7 +114,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
-    let stage4 = prove_stage4::<F, PCS, VC, H>(
+    let stage4 = prove_stage4::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
         &checked,
@@ -120,7 +125,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
-    let stage5 = prove_stage5::<F, PCS, VC, H>(
+    let stage5 = prove_stage5::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
         &checked,
@@ -131,7 +136,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
-    let stage6a = prove_stage6a::<F, PCS, VC, H>(
+    let stage6a = prove_stage6a::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
         &checked,
@@ -145,7 +150,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
-    let stage6b = prove_stage6b::<F, PCS, VC, H>(
+    let stage6b = prove_stage6b::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
         &checked,
@@ -160,7 +165,7 @@ where
         &mut transcript,
     )?;
     finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
-    let stage7 = prove_stage7::<F, PCS, VC, H>(
+    let stage7 = prove_stage7::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
         &checked,
@@ -171,12 +176,13 @@ where
         &mut transcript,
     )?;
     finish_stage("stage7", log_t, backend.session(), &stage7.clear_output);
-    let stage8 = prove_stage8::<F, PCS, VC, H>(
+    let stage8 = prove_stage8::<F, PCS, VC, T>(
         &mut backend,
         &checked,
         config,
         preprocessing,
         &stage0.commitments,
+        stage0.untrusted_advice_commitment.as_ref(),
         trusted_advice.map(|trusted| &trusted.commitment),
         stage0.hints,
         #[cfg(feature = "field-inline")]
@@ -188,10 +194,61 @@ where
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 
+    let stages = JoltStageProofs {
+        stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
+        stage1_sumcheck_proof: stage1.sumcheck_proof,
+        stage2_uni_skip_first_round_proof: stage2.uniskip_proof,
+        stage2_sumcheck_proof: stage2.sumcheck_proof,
+        stage3_sumcheck_proof: stage3.sumcheck_proof,
+        stage4_sumcheck_proof: stage4.sumcheck_proof,
+        stage5_sumcheck_proof: stage5.sumcheck_proof,
+        stage6a_sumcheck_proof: stage6a.sumcheck_proof,
+        stage6b_sumcheck_proof: stage6b.sumcheck_proof,
+        stage7_sumcheck_proof: stage7.sumcheck_proof,
+        // The homomorphic opening draws no selector point, so stage 8 has no
+        // nonce.
+        pow_nonces: StagePowNonces::from_iter([
+            (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+            (PowSite::Stage1, stage1.pow_nonce),
+            (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+            (PowSite::Stage2, stage2.pow_nonce),
+            (PowSite::Stage3, stage3.pow_nonce),
+            (PowSite::Stage4, stage4.pow_nonce),
+            (PowSite::Stage5, stage5.pow_nonce),
+            (PowSite::Stage6a, stage6a.pow_nonce),
+            (PowSite::Stage6b, stage6b.pow_nonce),
+            (PowSite::Stage7, stage7.pow_nonce),
+        ]),
+    };
+
     #[cfg(not(feature = "zk"))]
-    let _ = stage8;
+    {
+        Ok(JoltProof {
+            protocol: JoltProtocolConfig::for_zk(false),
+            commitments: stage0.commitments,
+            stages,
+            joint_opening_proof: stage8.joint_opening_proof,
+            untrusted_advice_commitment: stage0.untrusted_advice_commitment,
+            claims: JoltProofClaims::Clear(ClearProofClaims {
+                stage1: stage1.claims,
+                stage2: stage2.claims,
+                stage3: stage3.claims,
+                stage4: stage4.claims,
+                stage5: stage5.claims,
+                stage6a: stage6a.claims,
+                stage6b: stage6b.claims,
+                stage7: stage7.claims,
+            }),
+            trace_length: config.trace_length,
+            ram_K: config.ram_K,
+            rw_config: config.rw_config,
+            one_hot_config: config.one_hot_config,
+            trace_polynomial_order: config.trace_polynomial_order,
+            narg: transcript.narg_string().to_vec(),
+        })
+    }
     #[cfg(feature = "zk")]
-    prove_blindfold::<F, PCS, VC, H>(
+    prove_blindfold::<F, PCS, VC, T>(
         preprocessing,
         public_io,
         trusted_advice.map(|trusted| &trusted.commitment),

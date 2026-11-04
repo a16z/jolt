@@ -1,14 +1,11 @@
 use std::marker::PhantomData;
 
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, JoltField};
 use jolt_crypto::{Commitment, HomomorphicCommitment};
+use jolt_algebra::JoltField;
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, OpeningsError, ZkOpeningScheme};
 use jolt_poly::{MultilinearPoly, Polynomial};
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{Encoding, FieldTranscript};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use spongefish::Encoding;
-use spongefish::NargDeserialize;
-use spongefish::VerificationResult;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound = "")]
@@ -28,21 +25,19 @@ impl<F: JoltField> Default for MockCommitment<F> {
     }
 }
 
-/// The mock "opening proof" is the polynomial itself, sent in the clear.
-fn send_evaluations<F: JoltField, H: Sponge>(
-    evaluations: &[F],
-    transcript: &mut ProverTranscript<H>,
-) {
-    transcript.send(&(evaluations.len() as u64).to_le_bytes());
-    transcript.send_all(evaluations);
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: DeserializeOwned"))]
+pub struct MockProof<F: JoltField> {
+    evaluations: Vec<F>,
 }
 
-fn receive_evaluations<F: JoltField, H: Sponge>(
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<Vec<F>, OpeningsError> {
-    let len = usize::try_from(u64::from_le_bytes(transcript.receive()?))
-        .map_err(|_| OpeningsError::VerificationFailed)?;
-    Ok(transcript.receive_n(len)?)
+impl<F: JoltField> Encoding for MockCommitment<F> {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.evaluations
+            .iter()
+            .flat_map(|evaluation| evaluation.encode().as_ref().to_vec())
+            .collect::<Vec<u8>>()
+    }
 }
 
 impl<F> Commitment for MockCommitmentScheme<F>
@@ -57,6 +52,7 @@ where
     F: JoltField + Serialize + DeserializeOwned,
 {
     type Field = F;
+    type Proof = MockProof<F>;
     type ProverSetup = ();
     type VerifierSetup = ();
     type OpeningHint = ();
@@ -76,47 +72,31 @@ where
         Ok((MockCommitment { evaluations }, ()))
     }
 
-    fn send_commitment<H: Sponge>(commitment: &Self::Output, transcript: &mut ProverTranscript<H>) {
-        send_evaluations(&commitment.evaluations, transcript);
-    }
-
-    fn receive_commitment<H: Sponge>(
-        _setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self::Output, OpeningsError> {
-        Ok(MockCommitment {
-            evaluations: receive_evaluations(transcript)?,
-        })
-    }
-
-    fn absorb_commitment<C: Channel>(commitment: &Self::Output, channel: &mut C) {
-        channel.public_all(&commitment.evaluations);
-    }
-
-    fn open<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
+    fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         _point: &[Self::Field],
         _eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Option<()>,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), OpeningsError> {
-        send_evaluations(&poly.to_dense(), transcript);
-        Ok(())
+        _transcript: &mut impl FieldTranscript<Self::Field>,
+    ) -> Result<Self::Proof, OpeningsError> {
+        let evaluations = poly.to_dense().into_owned();
+        Ok(MockProof { evaluations })
     }
 
-    fn verify<H: Sponge>(
+    fn verify(
         commitment: &Self::Output,
         point: &[Self::Field],
         eval: Self::Field,
+        proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
+        _transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
-        let evaluations = receive_evaluations(transcript)?;
-        if commitment.evaluations != evaluations {
+        if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::VerificationFailed);
         }
-        if Polynomial::new(evaluations).evaluate(point) != eval {
+        let poly = Polynomial::new(proof.evaluations.clone());
+        if poly.evaluate(point) != eval {
             return Err(OpeningsError::VerificationFailed);
         }
         Ok(())
@@ -167,29 +147,9 @@ pub struct MockHidingCommitment<F: JoltField> {
     pub eval: F,
 }
 
-impl<F: JoltField> CanonicalBytes for MockHidingCommitment<F> {
-    const NUM_BYTES: usize = F::NUM_BYTES;
-
-    fn to_bytes_le(&self, out: &mut [u8]) {
-        self.eval.to_bytes_le(out);
-    }
-}
-
-impl<F: JoltField> Encoding<[u8]> for MockHidingCommitment<F> {
+impl<F: JoltField> Encoding for MockHidingCommitment<F> {
     fn encode(&self) -> impl AsRef<[u8]> {
-        jolt_algebra::narg::encode(self)
-    }
-}
-
-impl<F: JoltField> CanonicalDecode for MockHidingCommitment<F> {
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        F::from_bytes_le_checked(bytes).map(|eval| Self { eval })
-    }
-}
-
-impl<F: JoltField> NargDeserialize for MockHidingCommitment<F> {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        jolt_algebra::narg::deserialize(buf)
+        self.eval.encode()
     }
 }
 
@@ -207,30 +167,31 @@ where
         Self::commit(poly, setup)
     }
 
-    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
+    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         _point: &[Self::Field],
         eval: Self::Field,
         _setup: &Self::ProverSetup,
         _hint: Self::OpeningHint,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(Self::HidingCommitment, Self::Blind), OpeningsError> {
-        send_evaluations(&poly.to_dense(), transcript);
-        Ok((MockHidingCommitment { eval }, ()))
+        _transcript: &mut impl FieldTranscript<Self::Field>,
+    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError> {
+        let evaluations = poly.to_dense().into_owned();
+        Ok((MockProof { evaluations }, MockHidingCommitment { eval }, ()))
     }
 
-    fn verify_zk<H: Sponge>(
+    fn verify_zk(
         commitment: &Self::Output,
         point: &[Self::Field],
+        proof: &Self::Proof,
         _setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
+        _transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError> {
-        let evaluations = receive_evaluations(transcript)?;
-        if commitment.evaluations != evaluations {
+        if commitment.evaluations != proof.evaluations {
             return Err(OpeningsError::VerificationFailed);
         }
+        let poly = Polynomial::new(proof.evaluations.clone());
         Ok(MockHidingCommitment {
-            eval: Polynomial::new(evaluations).evaluate(point),
+            eval: poly.evaluate(point),
         })
     }
 }

@@ -8,20 +8,28 @@ use criterion::{
 };
 use jolt_algebra::Fr;
 use jolt_transcript::{
-    Blake2b512, Channel, Keccak, PoseidonSponge, ProtocolId, ProverTranscript, Sponge,
+    protocol_tag, prover_transcript, Blake2b512, FieldTranscript, Keccak, PoseidonSponge,
+    ProverState, Transcript,
 };
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface};
 
-fn transcript<H: Sponge>() -> ProverTranscript<H> {
-    ProverTranscript::new(&ProtocolId::new::<H>("bench"), b"")
+fn fresh<H: DuplexSpongeInterface<U = u8> + DuplexSpongeInit>() -> ProverState<H> {
+    prover_transcript::<H>(&protocol_tag(b"bench"), b"bench")
 }
 
-fn bench_send<H: Sponge>(group: &mut BenchmarkGroup<'_, WallTime>, name: &str) {
-    let values: Vec<Fr> = (0..8u64).map(Fr::from).collect();
-    group.bench_with_input(BenchmarkId::new(name, "8xFr"), &values, |bench, values| {
+fn bench_append_bytes_with<H>(
+    group: &mut BenchmarkGroup<'_, WallTime>,
+    name: &str,
+    label: &str,
+    data: &[u8],
+) where
+    H: DuplexSpongeInterface<U = u8> + DuplexSpongeInit,
+{
+    group.bench_with_input(BenchmarkId::new(name, label), data, |bench, data| {
         bench.iter_batched(
-            transcript::<H>,
+            fresh::<H>,
             |mut t| {
-                t.send_all(black_box(values));
+                t.append_bytes(black_box(data));
                 t
             },
             BatchSize::SmallInput,
@@ -29,62 +37,48 @@ fn bench_send<H: Sponge>(group: &mut BenchmarkGroup<'_, WallTime>, name: &str) {
     });
 }
 
-fn bench_public_bytes<H: Sponge>(group: &mut BenchmarkGroup<'_, WallTime>, name: &str) {
-    for (label, data) in [("32B", &[0xABu8; 32][..]), ("256B", &[0xCDu8; 256][..])] {
-        group.bench_with_input(BenchmarkId::new(name, label), data, |bench, data| {
-            bench.iter_batched(
-                transcript::<H>,
-                |mut t| {
-                    t.public_bytes(black_box(data));
-                    t
-                },
-                BatchSize::SmallInput,
-            );
-        });
+fn bench_append_bytes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("append_bytes");
+    let data_32 = [0xABu8; 32];
+    let data_256 = [0xCDu8; 256];
+
+    for (label, data) in [("32B", &data_32[..]), ("256B", &data_256[..])] {
+        bench_append_bytes_with::<Blake2b512>(&mut group, "Blake2b", label, data);
+        bench_append_bytes_with::<Keccak>(&mut group, "Keccak", label, data);
+        bench_append_bytes_with::<PoseidonSponge>(&mut group, "Poseidon", label, data);
     }
+    group.finish();
 }
 
-fn bench_challenge<H: Sponge>(group: &mut BenchmarkGroup<'_, WallTime>, name: &str) {
-    let seeded = || {
-        let mut t = transcript::<H>();
-        t.public_bytes(&[42u8; 32]);
-        t
-    };
-    group.bench_function(BenchmarkId::new(name, "uniform"), |bench| {
-        bench.iter_batched(seeded, |mut t| t.challenge::<Fr>(), BatchSize::SmallInput);
-    });
-    group.bench_function(BenchmarkId::new(name, "small"), |bench| {
+fn bench_challenge(c: &mut Criterion) {
+    let mut group = c.benchmark_group("challenge");
+
+    group.bench_function("Blake2b", |bench| {
         bench.iter_batched(
-            seeded,
-            |mut t| t.challenge_small::<Fr>(),
+            || {
+                let mut t = fresh::<Blake2b512>();
+                t.append_bytes(&[42u8; 32]);
+                t
+            },
+            |mut t| FieldTranscript::<Fr>::challenge(&mut t),
             BatchSize::SmallInput,
         );
     });
-}
 
-fn bench_send_all(c: &mut Criterion) {
-    let mut group = c.benchmark_group("send");
-    bench_send::<Blake2b512>(&mut group, "Blake2b");
-    bench_send::<Keccak>(&mut group, "Keccak");
-    bench_send::<PoseidonSponge>(&mut group, "Poseidon");
+    group.bench_function("Keccak", |bench| {
+        bench.iter_batched(
+            || {
+                let mut t = fresh::<Keccak>();
+                t.append_bytes(&[42u8; 32]);
+                t
+            },
+            |mut t| FieldTranscript::<Fr>::challenge(&mut t),
+            BatchSize::SmallInput,
+        );
+    });
+
     group.finish();
 }
 
-fn bench_public(c: &mut Criterion) {
-    let mut group = c.benchmark_group("public_bytes");
-    bench_public_bytes::<Blake2b512>(&mut group, "Blake2b");
-    bench_public_bytes::<Keccak>(&mut group, "Keccak");
-    bench_public_bytes::<PoseidonSponge>(&mut group, "Poseidon");
-    group.finish();
-}
-
-fn bench_challenges(c: &mut Criterion) {
-    let mut group = c.benchmark_group("challenge");
-    bench_challenge::<Blake2b512>(&mut group, "Blake2b");
-    bench_challenge::<Keccak>(&mut group, "Keccak");
-    bench_challenge::<PoseidonSponge>(&mut group, "Poseidon");
-    group.finish();
-}
-
-criterion_group!(benches, bench_send_all, bench_public, bench_challenges);
+criterion_group!(benches, bench_append_bytes, bench_challenge);
 criterion_main!(benches);

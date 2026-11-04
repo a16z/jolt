@@ -52,9 +52,9 @@ sample = ["dep:subtle", "dep:num-bigint", "dep:rand_chacha", "dep:zeroize"]
 sample-diagnostics = ["sample"]
 
 [dependencies]
-spongefish = { workspace = true, features = ["sha3"] }
 jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
+jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
 rand_chacha = { workspace = true, optional = true }
@@ -89,6 +89,10 @@ serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
 libm = { workspace = true }
+jolt-transcript = { workspace = true, features = [
+  "bn254",
+  "transcript-blake2b",
+] }
 
 [[test]]
 name = "coverage"

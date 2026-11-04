@@ -12,8 +12,8 @@ mod pipeline {
     use jolt::host::JoltProgramSource;
     use jolt::{
         JoltProgramPreprocessing, JoltProverPreprocessing, JoltSharedPreprocessing, MemoryConfig,
-        ProtocolSponge, TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS,
-        VerifierVC,
+        ProofTranscript, TraceInputs, TraceOutput, TracerBackend, VerifierField, VerifierPCS,
+        VerifierTranscript, VerifierVC,
     };
     use jolt_algebra::{CanonicalBytes, Ring};
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceData};
@@ -164,7 +164,7 @@ mod pipeline {
 
         let prover_preprocessing = preprocessing;
         let backend = JoltBackend::<Fr, VerifierPCS>::reference();
-        let proof = jolt_prover::prove::<Fr, VerifierPCS, VerifierVC, ProtocolSponge>(
+        let proof = jolt_prover::prove::<Fr, VerifierPCS, VerifierVC, ProofTranscript>(
             backend.with_witness(&witness),
             &prover_preprocessing,
             &config,
@@ -173,7 +173,7 @@ mod pipeline {
         )
         .expect("modular field-inline prove");
 
-        jolt::jolt_verifier::verify::<Fr, VerifierPCS, VerifierVC, ProtocolSponge>(
+        jolt::jolt_verifier::verify::<Fr, VerifierPCS, VerifierVC, VerifierTranscript<'_>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,

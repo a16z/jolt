@@ -369,8 +369,10 @@ pub fn lane_weights<F: JoltField>(
         weights[layout.instr_start + (InstructionFlags::RightOperandIsImm as usize)] +=
             coeff * g[5];
         weights[layout.instr_start + (InstructionFlags::IsNoop as usize)] += coeff * g[6];
-        weights[layout.circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[7];
-        weights[layout.circuit_start + (CircuitFlags::IsFirstInSequence as usize)] += coeff * g[8];
+        weights[layout.instr_start + (InstructionFlags::RightOperandIsRdWriteValue as usize)] +=
+            coeff * g[7];
+        weights[layout.circuit_start + (CircuitFlags::VirtualInstruction as usize)] += coeff * g[8];
+        weights[layout.circuit_start + (CircuitFlags::IsFirstInSequence as usize)] += coeff * g[9];
     }
     {
         let coeff = eta_powers[3];
@@ -466,6 +468,7 @@ mod tests {
         InstructionFlags::RightOperandIsRs2Value,
         InstructionFlags::Branch,
         InstructionFlags::IsNoop,
+        InstructionFlags::RightOperandIsRdWriteValue,
     ];
 
     fn fr(value: u64) -> Fr {
@@ -591,7 +594,7 @@ mod tests {
         let eta = fr(31);
         let stage1_gammas = gamma_powers(3, 2 + NUM_CIRCUIT_FLAGS);
         let stage2_gammas = gamma_powers(5, 4);
-        let stage3_gammas = gamma_powers(7, 9);
+        let stage3_gammas = gamma_powers(7, 10);
         let stage4_gammas = gamma_powers(11, 3);
         let stage5_gammas = gamma_powers(13, 2 + LookupTableKind::<XLEN>::COUNT);
 
@@ -660,7 +663,7 @@ mod tests {
             eta: fr(31),
             stage1_gammas: &stage1_gammas,
             stage2_gammas: &[fr(1); 4],
-            stage3_gammas: &[fr(1); 9],
+            stage3_gammas: &[fr(1); 10],
             stage4_gammas: &[fr(1); 3],
             stage5_gammas: &stage5_gammas,
             register_read_write_point: &register_point[..REGISTER_ADDRESS_BITS - 1],

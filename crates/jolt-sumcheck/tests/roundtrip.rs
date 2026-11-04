@@ -1,71 +1,191 @@
-//! An honest prover writes each round into a `ProverTranscript`, in full or
-//! compressed form, and the verifier reads the resulting proof back; the
-//! reduced claim must match the product of the factors at the challenge point.
-
-#![expect(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    reason = "tests may panic on assertion failures and index fixture data"
-)]
+#![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
 
 use jolt_algebra::{Fr, Ring};
-use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
-use jolt_sumcheck::{
-    send_compressed_round, send_full_round, BooleanHypercube, EvaluationClaim, SumcheckClaim,
-    SumcheckVerifier,
+use jolt_poly::{Polynomial, UnivariatePoly};
+use jolt_sumcheck::claim::{EvaluationClaim, SumcheckClaim};
+use jolt_sumcheck::proof::{ClearSumcheckProof, CompressedSumcheckProof};
+use jolt_sumcheck::round_proof::{append_compressed_round, RoundMessage};
+use jolt_sumcheck::{round_pow_bits, BooleanHypercube, SumcheckVerifier};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, FieldTranscript, ProverState, ProverTranscript,
 };
-use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
 
 type F = Fr;
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-sumcheck/tests/roundtrip");
-const SESSION: &[u8] = b"sumcheck-roundtrip";
-
-#[derive(Clone, Copy)]
-enum Wire {
-    Full,
-    Compressed,
+/// Grinds one round's proof of work the way the verifier checks it: after the
+/// round message is absorbed, at the difficulty for the claim's `degree`.
+fn grind_round(degree: usize, transcript: &mut ProverState<Blake2b512>, nonces: &mut Vec<u64>) {
+    let bits = round_pow_bits::<F, ProverState<Blake2b512>>(degree).unwrap();
+    nonces.extend(transcript.public_grind(bits).unwrap());
 }
 
-/// Proves `sum_{x in {0,1}^n} prod_j f_j(x)` for multilinear `f_j` (HighToLow
-/// binding) and returns the proof, the claim, and the prover's final sponge
-/// fingerprint.
+/// Prove a sumcheck for the product of `polys` multilinear polynomials.
+///
+/// Given d multilinear polynomials over n variables, proves the claim
+/// `sum_{x in {0,1}^n} prod_j f_j(x) = C`. The round polynomial in
+/// round i is degree d, requiring d+1 evaluation points.
+///
+/// Returns (proof, claimed_sum).
 fn prove_product(
     polys: &[Vec<F>],
     num_vars: usize,
-    wire: Wire,
-) -> (Vec<u8>, SumcheckClaim<F>, [u8; 32]) {
+    transcript: &mut ProverState<Blake2b512>,
+) -> (ClearSumcheckProof<F>, F) {
     let degree = polys.len();
     let n = 1 << num_vars;
     assert!(polys.iter().all(|p| p.len() == n));
+
     let claimed_sum: F = (0..n)
         .map(|i| polys.iter().map(|p| p[i]).product::<F>())
         .sum();
 
-    let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, SESSION);
     let mut bufs: Vec<Vec<F>> = polys.to_vec();
+    let mut round_polys = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
+
     for _round in 0..num_vars {
         let half = bufs[0].len() / 2;
-        let points: Vec<(F, F)> = (0..=degree)
+
+        let evals: Vec<F> = (0..=degree)
             .map(|t| {
                 let ft = F::from_u64(t as u64);
-                let value = (0..half)
-                    .map(|i| {
-                        bufs.iter()
-                            .map(|buf| buf[i] + ft * (buf[i + half] - buf[i]))
-                            .product::<F>()
-                    })
-                    .sum();
-                (ft, value)
+                let mut sum = F::from_u64(0);
+                for i in 0..half {
+                    let mut prod = F::from_u64(1);
+                    for buf in &bufs {
+                        let lo = buf[i];
+                        let hi = buf[i + half];
+                        prod *= lo + ft * (hi - lo);
+                    }
+                    sum += prod;
+                }
+                sum
             })
             .collect();
+
+        let points: Vec<(F, F)> = evals
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (F::from_u64(i as u64), v))
+            .collect();
         let round_poly = UnivariatePoly::interpolate(&points);
-        match wire {
-            Wire::Full => send_full_round(&round_poly, degree, &mut transcript),
-            Wire::Compressed => send_compressed_round(&round_poly, degree, &mut transcript),
+
+        // Absorb through the same path the unlabelled verifier uses.
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, transcript);
+        grind_round(degree, transcript, &mut pow_nonces);
+
+        let r: F = transcript.challenge().unwrap();
+        round_polys.push(round_poly);
+
+        // Bind all polynomials (HighToLow)
+        for buf in &mut bufs {
+            for i in 0..half {
+                buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
+            }
+            buf.truncate(half);
         }
-        .unwrap();
-        let r: F = transcript.challenge_small();
+    }
+
+    (
+        ClearSumcheckProof {
+            round_polynomials: round_polys,
+            pow_nonces,
+        },
+        claimed_sum,
+    )
+}
+
+#[test]
+fn degree3_final_eval_correct() {
+    let num_vars = 3;
+    let n = 1 << num_vars;
+
+    let f_evals: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
+    let g_evals: Vec<F> = (0..n).map(|i| F::from_u64((i * 5 + 2) as u64)).collect();
+    let h_evals: Vec<F> = (0..n).map(|i| F::from_u64((i + 7) as u64)).collect();
+
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
+    let (proof, claimed_sum) = prove_product(
+        &[f_evals.clone(), g_evals.clone(), h_evals.clone()],
+        num_vars,
+        &mut pt,
+    );
+
+    let claim = SumcheckClaim {
+        num_vars,
+        degree: 3,
+        claimed_sum,
+    };
+
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
+    let EvaluationClaim {
+        point: challenges,
+        value: final_eval,
+    } = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    )
+    .unwrap();
+
+    let f_at_r = Polynomial::new(f_evals).evaluate_and_consume(&challenges);
+    let g_at_r = Polynomial::new(g_evals).evaluate_and_consume(&challenges);
+    let h_at_r = Polynomial::new(h_evals).evaluate_and_consume(&challenges);
+    assert_eq!(final_eval, f_at_r * g_at_r * h_at_r);
+}
+
+#[test]
+fn compressed_round_verifier_roundtrip() {
+    let num_vars = 3;
+    let n = 1 << num_vars;
+    let degree = 2;
+
+    let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
+    let g: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 * 2 + 3)).collect();
+
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
+    let mut bufs = vec![f.clone(), g.clone()];
+    let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
+    let mut round_polys = Vec::with_capacity(num_vars);
+    let mut pow_nonces = Vec::new();
+
+    for _round in 0..num_vars {
+        let half = bufs[0].len() / 2;
+        let evals: Vec<F> = (0..=degree)
+            .map(|t| {
+                let ft = F::from_u64(t as u64);
+                let mut sum = F::from_u64(0);
+                for i in 0..half {
+                    let mut prod = F::from_u64(1);
+                    for buf in &bufs {
+                        let lo = buf[i];
+                        let hi = buf[i + half];
+                        prod *= lo + ft * (hi - lo);
+                    }
+                    sum += prod;
+                }
+                sum
+            })
+            .collect();
+
+        let points: Vec<(F, F)> = evals
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (F::from_u64(i as u64), v))
+            .collect();
+        let round_poly = UnivariatePoly::interpolate(&points);
+
+        let compressed = round_poly.compress();
+        append_compressed_round(&mut pt, compressed.coeffs_except_linear_term());
+        grind_round(degree, &mut pt, &mut pow_nonces);
+
+        let r: F = pt.challenge().unwrap();
+        round_polys.push(compressed);
 
         for buf in &mut bufs {
             for i in 0..half {
@@ -75,90 +195,104 @@ fn prove_product(
         }
     }
 
-    let fingerprint = transcript.challenge_bytes::<32>();
-    (
-        transcript.finish(),
-        SumcheckClaim::new(num_vars, degree, claimed_sum),
-        fingerprint,
-    )
-}
+    let proof = CompressedSumcheckProof {
+        round_polynomials: round_polys,
+        pow_nonces,
+    };
+    let claim = SumcheckClaim {
+        num_vars,
+        degree,
+        claimed_sum,
+    };
 
-/// Proves and verifies the product of `polys` in `wire` form, checking the
-/// reduced claim against the factors' evaluations at the challenge point.
-fn assert_product_roundtrip(polys: &[Vec<F>], num_vars: usize, wire: Wire) {
-    let (narg, claim, prover_state) = prove_product(polys, num_vars, wire);
-
-    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, SESSION, &narg);
-    let EvaluationClaim { point, value } = match wire {
-        Wire::Full => SumcheckVerifier::verify(&claim, BooleanHypercube, &mut transcript),
-        Wire::Compressed => SumcheckVerifier::verify_compressed(&claim, &mut transcript),
-    }
-    .unwrap();
-    assert_eq!(transcript.challenge_bytes::<32>(), prover_state);
-    transcript.finish().unwrap();
-
-    assert_eq!(point.len(), num_vars);
-    let expected: F = polys
-        .iter()
-        .map(|p| Polynomial::new(p.clone()).evaluate_and_consume(&point))
-        .product();
-    assert_eq!(value, expected);
-}
-
-fn table(num_vars: usize, map: impl Fn(u64) -> u64) -> Vec<F> {
-    (0..1u64 << num_vars).map(|i| F::from_u64(map(i))).collect()
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
+    let EvaluationClaim { point, value } = proof.verify(&claim, BooleanHypercube, &mut vt).unwrap();
+    let f_at_r = Polynomial::new(f).evaluate_and_consume(&point);
+    let g_at_r = Polynomial::new(g).evaluate_and_consume(&point);
+    assert_eq!(value, f_at_r * g_at_r);
 }
 
 #[test]
-fn degree1_roundtrip() {
-    for num_vars in [1, 3] {
-        for wire in [Wire::Full, Wire::Compressed] {
-            assert_product_roundtrip(&[table(num_vars, |i| i + 1)], num_vars, wire);
+fn full_round_verifier_roundtrip() {
+    // Test the full round verifier path (used by jolt-verifier)
+    let num_vars = 3;
+    let n = 1 << num_vars;
+
+    let f: Vec<F> = (0..n).map(|i| F::from_u64(i as u64 + 1)).collect();
+    let g: Vec<F> = (0..n).map(|i| F::from_u64((i + 5) as u64)).collect();
+
+    let mut pt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
+    let degree = 2;
+    let mut bufs = vec![f.clone(), g.clone()];
+    let claimed_sum: F = (0..n).map(|i| bufs[0][i] * bufs[1][i]).sum();
+    let mut round_polys = Vec::new();
+    let mut pow_nonces = Vec::new();
+
+    for _round in 0..num_vars {
+        let half = bufs[0].len() / 2;
+        let evals: Vec<F> = (0..=degree)
+            .map(|t| {
+                let ft = F::from_u64(t as u64);
+                let mut sum = F::from_u64(0);
+                for i in 0..half {
+                    let mut prod = F::from_u64(1);
+                    for buf in &bufs {
+                        let lo = buf[i];
+                        let hi = buf[i + half];
+                        prod *= lo + ft * (hi - lo);
+                    }
+                    sum += prod;
+                }
+                sum
+            })
+            .collect();
+
+        let points: Vec<(F, F)> = evals
+            .iter()
+            .enumerate()
+            .map(|(i, &v)| (F::from_u64(i as u64), v))
+            .collect();
+        let round_poly = UnivariatePoly::interpolate(&points);
+
+        <UnivariatePoly<F> as RoundMessage>::append_to_transcript(&round_poly, &mut pt);
+        grind_round(degree, &mut pt, &mut pow_nonces);
+
+        let r: F = pt.challenge().unwrap();
+        round_polys.push(round_poly);
+
+        for buf in &mut bufs {
+            for i in 0..half {
+                buf[i] = buf[i] + r * (buf[i + half] - buf[i]);
+            }
+            buf.truncate(half);
         }
     }
-}
 
-#[test]
-fn degree2_product_roundtrip() {
-    let num_vars = 4;
-    let polys = [table(num_vars, |i| i + 1), table(num_vars, |i| i * 3 + 7)];
-    for wire in [Wire::Full, Wire::Compressed] {
-        assert_product_roundtrip(&polys, num_vars, wire);
-    }
-}
+    let proof = ClearSumcheckProof {
+        round_polynomials: round_polys,
+        pow_nonces,
+    };
 
-#[test]
-fn degree3_product_roundtrip() {
-    let num_vars = 3;
-    let polys = [
-        table(num_vars, |i| i + 1),
-        table(num_vars, |i| i * 5 + 2),
-        table(num_vars, |i| i + 7),
-    ];
-    for wire in [Wire::Full, Wire::Compressed] {
-        assert_product_roundtrip(&polys, num_vars, wire);
-    }
-}
+    let claim = SumcheckClaim {
+        num_vars,
+        degree,
+        claimed_sum,
+    };
 
-#[test]
-fn eq_weighted_sumcheck() {
-    // eq(r, x) * f(x), the Spartan outer-sumcheck shape.
-    let num_vars = 4;
-    let r: Vec<F> = (0..num_vars)
-        .map(|i| F::from_u64(i as u64 * 7 + 13))
-        .collect();
-    let polys = [
-        EqPolynomial::evals::<F>(&r, None),
-        table(num_vars, |i| i * 3 + 1),
-    ];
-    for wire in [Wire::Full, Wire::Compressed] {
-        assert_product_roundtrip(&polys, num_vars, wire);
-    }
-}
-
-#[test]
-fn large_num_vars_roundtrip() {
-    let num_vars = 10;
-    let polys = [table(num_vars, |i| i + 1), table(num_vars, |i| i * 7 + 3)];
-    assert_product_roundtrip(&polys, num_vars, Wire::Compressed);
+    let mut vt =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-roundtrip"), b"");
+    let result = SumcheckVerifier::verify(
+        &claim,
+        &proof.round_polynomials,
+        &proof.pow_nonces,
+        BooleanHypercube,
+        &mut vt,
+    );
+    assert!(
+        result.is_ok(),
+        "full round verifier roundtrip failed: {:?}",
+        result.err()
+    );
 }

@@ -7,13 +7,12 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_crypto::VectorCommitment;
+use jolt_algebra::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_transcript::FieldTranscript;
 use jolt_zk::masking::CommittedPadsView;
-
-use crate::sites::STAGE4;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_read_write_checking::{
@@ -29,7 +28,6 @@ use super::{
         ram_val_check_init_structure, ram_val_check_initial_evaluation,
         ram_val_check_input_points_from_upstream, ram_val_check_input_values_from_upstream,
         RamValCheck, RamValCheckInitStructure, RamValCheckInitialEvaluation,
-        RamValCheckStagedOpenings,
     },
     registers_read_write_checking::{
         registers_read_write_input_points_from_upstream,
@@ -40,7 +38,9 @@ use super::{
 use crate::config::JOLT_VERIFIER_CONFIG;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
         zk::masked_channel,
@@ -85,10 +85,12 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<PCS, VC, H, P>(
+#[jolt_verifier_derive::fs_scope(Stage4)]
+pub fn verify<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    transcript: &mut VerifierTranscript<'_, H>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    transcript: &mut T,
     pads: Option<&mut CommittedPadsView<P>>,
     stage2: &Stage2Output<PCS::Field>,
     stage3: &Stage3Output<PCS::Field>,
@@ -96,13 +98,12 @@ pub fn verify<PCS, VC, H, P>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    H: Sponge,
+    T: FieldTranscript<PCS::Field>,
 {
-    transcript.site(STAGE4);
     let log_t = crate::num::ilog2(checked.trace_length);
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
-    let register_dimensions = checked
+    let register_dimensions = proof
         .rw_config
         .register_dimensions(log_t, REGISTER_ADDRESS_BITS);
     // Eager: the proof-supplied phase split feeds round-count subtractions
@@ -146,11 +147,10 @@ where
     // decomposition must stay in lockstep with the prover's and BlindFold's.
     let init_structure = ram_val_check_init_structure(
         checked,
-        checked.untrusted_advice_commitment_present,
+        proof.untrusted_advice_commitment.is_some(),
         r_address,
         ram_val_check_public_eval,
     )?;
-    let staged_points = init_structure.staged_points();
 
     // Field-register dimensions use the compile-time config's phase split, so they need
     // no validation of a proof-supplied split like the ordinary register dimensions above.
@@ -162,27 +162,25 @@ where
                 .field_inline
                 .read_write_dimensions(log_t),
         ),
-        ram_val_check: RamValCheck::new(
-            trace_dimensions,
-            log_k,
-            init_structure.decomposition(),
-            staged_points.clone(),
-        ),
+        ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
 
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
-    // the field-register read-write gamma, then the RAM value-check gamma (each a single
-    // `challenge`).
+    // the field-register read-write gamma, then the RAM value-check gamma, each a single
+    // `challenge()` in one squeeze run behind the stage-4 proof of work.
+    check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk.is_masked() {
+        let claims = &proof.clear_claims()?.stage4;
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
-        // The staged advice / program-image openings feed the RAM value-check input
-        // claim, so they arrive before the batch; attaching them also carries them
-        // downstream for the stage-6/7 address-phase reductions.
-        let staged = RamValCheckStagedOpenings::receive(&staged_points, transcript)?;
-        let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, &staged)?;
+        sumchecks.validate_output_claims(claims)?;
+        // Attaches the claimed advice / program-image opening values (consumed by the
+        // input wiring and carried downstream for the stage-6/7 address-phase
+        // reductions); presence against the init structure is validated by the
+        // generated `validate_output_claims` above and re-checked here.
+        let ram_val_check_init = ram_val_check_initial_evaluation(&init_structure, claims)?;
 
         let input_values = stage4_input_values_from_upstream(
             &stage2.output_values,
@@ -195,24 +193,20 @@ where
             &init_structure,
         );
 
-        let (output_points, output_values) = sumchecks.verify_clear_with(
+        let output_points = sumchecks.verify_clear(
             &input_values,
             &input_points,
             &challenges,
+            claims,
+            &proof.stages.stage4_sumcheck_proof,
             transcript,
             4,
-            |points, transcript| {
-                Stage4Sumchecks::receive_output_claims(
-                    points,
-                    &Stage4Sumchecks::claim_routes(points)?,
-                    staged.by_id(),
-                    transcript,
-                )
-            },
         )?;
 
+        claims.append_to_transcript(transcript);
+
         return Ok(Stage4Output::Clear(Stage4ClearOutput {
-            output_values,
+            output_values: claims.clone(),
             output_points,
             ram_val_check_init,
         }));
@@ -227,6 +221,7 @@ where
             stage3.output_points(),
             &init_structure,
         );
+        let staged_points = init_structure.staged_points();
         let mut channel = masked_channel(pads, transcript)?;
         let staged = RamValCheckStagedOpenings::receive_masked(&staged_points, &mut channel)?;
         let mut batch = sumchecks.verify_masked(&input_points, &mut channel)?;

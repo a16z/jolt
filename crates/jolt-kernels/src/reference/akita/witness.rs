@@ -314,7 +314,15 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
     #[cfg(feature = "field-inline")]
     let increments = {
         const CHUNK_SIZE: usize = 1 << 14;
-        let mut increments = jolt_utils::unsafe_allocate_zero_vec(num_rows);
+        let prefix = field_oracle.rd_increment_prefix_len()?;
+        if prefix > num_rows {
+            return Err(KernelError::TableSizeMismatch {
+                table: "FieldRdInc prefix".to_owned(),
+                expected: num_rows,
+                got: prefix,
+            });
+        }
+        let mut increments = jolt_utils::unsafe_allocate_zero_vec(prefix);
         #[cfg(feature = "parallel")]
         let chunks = increments.par_chunks_mut(CHUNK_SIZE);
         #[cfg(not(feature = "parallel"))]
@@ -362,7 +370,7 @@ pub(super) fn assemble_one_hot_trace_rows<F: JoltField>(
             selected_rows,
         }),
         #[cfg(feature = "field-inline")]
-        increments: FieldIncrementColumn::from_values(increments),
+        increments: FieldIncrementColumn::from_prefix(increments, num_rows)?,
         #[cfg(not(feature = "field-inline"))]
         field: PhantomData,
     })

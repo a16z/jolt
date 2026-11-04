@@ -1,15 +1,13 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-use crate::support::{
-    assert_transcripts_agree, f, layout, native_statement, new_prover_transcript,
-    new_verifier_transcript,
-};
+use crate::support::{f, layout, native_statement};
 use jolt_akita::{
     AkitaChunkProfile, AkitaField, AkitaNativeBatchPolynomials, AkitaNativeBatching,
     AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams, AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{BatchOpeningScheme, CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial};
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 /// `log2(K) + 8`: the smallest K=16 one-hot dimension the folded-only
 /// planner schedules (mirrors the scheme unit tests' roundtrip size).
@@ -87,40 +85,56 @@ fn owned_group_opens_through_native_batching_and_verifies() {
         .collect();
     let statement = native_statement(commitment, &point, evaluations.iter().copied());
 
-    let mut prover_transcript = new_prover_transcript(b"akita-owned-one-hot");
-    <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
+    let proof = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement.clone(),
         witnesses.clone(),
         hint.clone(),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .expect("owned one-hot group should prove");
-    let proof = prover_transcript.narg().to_vec();
 
-    let mut verifier_transcript = new_verifier_transcript(b"akita-owned-one-hot", &proof);
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
     <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
         &verifier_setup,
         &statement,
+        &proof,
         &mut verifier_transcript,
     )
     .expect("owned one-hot group proof should verify");
-    assert_transcripts_agree(prover_transcript, verifier_transcript);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 
     let mut tampered = statement.clone();
     tampered[0].evaluation.value += f(1);
-    let mut verifier_transcript = new_verifier_transcript(b"akita-owned-one-hot", &proof);
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
     assert!(
         <AkitaNativeBatching as BatchOpeningScheme>::verify_batch(
             &verifier_setup,
             &tampered,
+            &proof,
             &mut verifier_transcript,
         )
         .is_err(),
         "tampered evaluation must reject"
     );
 
-    let mut transcript = new_prover_transcript(b"akita-owned-one-hot");
+    let mut transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-owned-one-hot"),
+        b"",
+    );
     let err = <AkitaNativeBatching as BatchOpeningScheme>::prove_batch(
         &prover_setup,
         statement[..1].to_vec(),

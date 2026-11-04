@@ -324,7 +324,7 @@ fn virtual_oracle_views_materialize_stage1_r1cs_inputs() -> Result<(), String> {
     assert_virtual_values(
         &witness,
         JoltVirtualPolynomial::RightInstructionInput,
-        &[3, 0, 0, 0],
+        &[3, 7, 0, 0],
     )?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::Product, &[15, 0, 0, 0])?;
     assert_virtual_values(&witness, JoltVirtualPolynomial::LookupOutput, &[8, 0, 0, 0])?;

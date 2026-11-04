@@ -1,15 +1,22 @@
-#![cfg(feature = "binary")]
-
 use std::error::Error;
 
-use jolt_algebra::{CanonicalEncoding, Field, F128, F192, F64, F8};
+use jolt_algebra::{Field, F128, F192, F64, F8};
 use jolt_poly::lagrange::F8DomainSizeError;
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
-    send_full_round, EvaluationClaim, F8Domain, SumcheckClaim, SumcheckDomain, SumcheckError,
-    SumcheckVerifier,
+    grind_round, ClearProof, ClearSumcheckProof, F8Domain, RoundMessage, SumcheckClaim,
+    SumcheckDomain, SumcheckError, SumcheckProof,
 };
-use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, VerifierTranscript};
+use jolt_transcript::{
+    prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, ProverTranscript,
+    ScriptedTranscript,
+};
+
+const LABEL: &[u8] = b"f8-uniskip-reduction";
+
+fn blake2b() -> ProverState<Blake2b512> {
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(LABEL), b"")
+}
 
 fn horner<F: Field>(coefficients: &[F], point: F) -> F {
     coefficients
@@ -72,33 +79,32 @@ fn degree_overflow<F: Field + From<F8>>() -> Result<(), F8DomainSizeError> {
     Ok(())
 }
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-sumcheck/f8-domain-tests");
-const SESSION: &[u8] = b"f8-uniskip-reduction";
-
-fn verify_full_round<F: Field + CanonicalEncoding>(
-    coefficients: Vec<F>,
+/// A one-round proof of `coefficients` for `claim`, with the round nonce
+/// ground as the prover grinds it: after the round message, before the
+/// challenge.
+fn full_clear_round<F, T>(
     claim: &SumcheckClaim<F>,
-    domain: F8Domain,
-) -> Result<EvaluationClaim<F>, Box<dyn Error>>
+    coefficients: Vec<F>,
+    mut transcript: T,
+) -> Result<SumcheckProof<F, ()>, SumcheckError<F>>
 where
-    F8Domain: SumcheckDomain<F>,
+    F: Field + Encoding,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    let mut prover = ProverTranscript::<Blake2b512>::new(&PROTOCOL, SESSION);
-    send_full_round(
-        &UnivariatePoly::new(coefficients),
-        claim.degree,
-        &mut prover,
-    )?;
-    let narg = prover.finish();
-    let mut verifier = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, SESSION, &narg);
-    let reduced = SumcheckVerifier::verify(claim, domain, &mut verifier)?;
-    verifier.finish()?;
-    Ok(reduced)
+    let round_polynomial = UnivariatePoly::new(coefficients);
+    round_polynomial.append_to_transcript(&mut transcript);
+    let mut pow_nonces = Vec::new();
+    grind_round::<F, T>(claim.degree, 0, &mut pow_nonces, &mut transcript)?;
+    Ok(SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof {
+        round_polynomials: vec![round_polynomial],
+        pow_nonces,
+    })))
 }
 
-fn one_round_reduction<F>() -> Result<(), Box<dyn Error>>
+fn one_round_reduction<F, T>(new_transcript: impl Fn() -> T) -> Result<(), Box<dyn Error>>
 where
-    F: Field + From<F8> + CanonicalEncoding + 'static,
+    F: Field + From<F8> + Encoding + 'static,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let coefficients = [0x31, 0x47, 0x59, 0x6d, 0x83, 0x97].map(|word| F::from(F8::from_raw(word)));
     let direct_sum: F = (0..4)
@@ -106,9 +112,18 @@ where
         .sum();
     let claim = SumcheckClaim::new(1, 5, direct_sum);
     let domain = F8Domain::new(4)?;
-    let reduced = verify_full_round(coefficients.to_vec(), &claim, domain)?;
-    assert_eq!(reduced.point.len(), 1);
-    let challenge = *reduced.point.first().ok_or("missing challenge")?;
+    let mut transcript = new_transcript();
+    let reduced = full_clear_round(&claim, coefficients.to_vec(), new_transcript())?.verify(
+        &claim,
+        domain,
+        &mut transcript,
+    )?;
+    assert_eq!(reduced.point.as_slice().len(), 1);
+    let challenge = *reduced
+        .point
+        .as_slice()
+        .first()
+        .ok_or("missing challenge")?;
     assert_eq!(reduced.value, horner(&coefficients, challenge));
 
     let changed_cubic = coefficients
@@ -123,12 +138,14 @@ where
                 }
         })
         .collect();
-    let rejected = verify_full_round(changed_cubic, &claim, domain)
-        .err()
-        .ok_or("tampered cubic coefficient accepted")?;
+    let mut transcript = new_transcript();
     assert!(matches!(
-        rejected.downcast_ref::<SumcheckError<F>>(),
-        Some(SumcheckError::RoundCheckFailed { round: 0, .. })
+        full_clear_round(&claim, changed_cubic, new_transcript())?.verify(
+            &claim,
+            domain,
+            &mut transcript,
+        ),
+        Err(SumcheckError::RoundCheckFailed { round: 0, .. })
     ));
 
     let changed_constant = coefficients
@@ -136,15 +153,24 @@ where
         .enumerate()
         .map(|(index, &coefficient)| coefficient + if index == 0 { F::one() } else { F::zero() })
         .collect();
-    let reduced = verify_full_round(changed_constant, &claim, domain)?;
-    let challenge = *reduced.point.first().ok_or("missing challenge")?;
+    let mut transcript = new_transcript();
+    let reduced = full_clear_round(&claim, changed_constant, new_transcript())?.verify(
+        &claim,
+        domain,
+        &mut transcript,
+    )?;
+    let challenge = *reduced
+        .point
+        .as_slice()
+        .first()
+        .ok_or("missing challenge")?;
     assert_ne!(reduced.value, horner(&coefficients, challenge));
     assert_eq!(reduced.value, horner(&coefficients, challenge) + F::one());
     Ok(())
 }
 
 macro_rules! field_tests {
-    ($module:ident, $field:ty) => {
+    ($module:ident, $field:ty, $transcript:expr) => {
         mod $module {
             use super::*;
 
@@ -165,15 +191,19 @@ macro_rules! field_tests {
 
             #[test]
             fn full_round_reduction_and_coefficient_tampering() -> Result<(), Box<dyn Error>> {
-                one_round_reduction::<$field>()
+                one_round_reduction::<$field, _>($transcript)
             }
         }
     };
 }
 
-field_tests!(f64, F64);
-field_tests!(f128, F128);
-field_tests!(f192, F192);
+// `F64` challenges carry 64 bits, which no supported proof of work lifts to
+// the 128-bit target, so a priced transcript rejects every round; the `F64`
+// reduction runs unpriced and checks the domain's algebra, not Fiat-Shamir
+// security.
+field_tests!(f64, F64, || ScriptedTranscript::<_, F64>::new(blake2b()));
+field_tests!(f128, F128, blake2b);
+field_tests!(f192, F192, blake2b);
 
 #[test]
 fn new_rejects_sizes_outside_1_to_256() {

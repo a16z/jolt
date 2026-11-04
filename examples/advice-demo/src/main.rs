@@ -1,4 +1,3 @@
-use jolt_sdk::ProtocolSponge;
 use std::time::Instant;
 use tracing::info;
 
@@ -24,10 +23,7 @@ pub fn main() {
     let prove_time = now.elapsed();
     info!("Prover runtime: {} s", prove_time.as_secs_f64());
 
-    let trace_length_advice = proof
-        .header::<ProtocolSponge>()
-        .expect("proof header")
-        .trace_length;
+    let trace_length_advice = proof.trace_length;
 
     verify_advice_demo(n, a, b, output, program_io.panic, proof)
         .expect("Proof verification failed");

@@ -1,23 +1,30 @@
-#![expect(clippy::unwrap_used, reason = "tests may panic on assertion failures")]
-
-use std::vec::IntoIter;
+#![expect(
+    clippy::panic,
+    clippy::unwrap_used,
+    reason = "tests may panic on assertion failures"
+)]
 
 use jolt_algebra::{Field, Fr, JoltField, One, Ring, F128, F64};
-use jolt_poly::{Polynomial, UnivariatePoly};
+use jolt_poly::{CompressedPoly, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{
-    prove_batch, prove_uniskip_clear, send_compressed_round, send_full_round, BatchMember,
-    BatchPrelude, BooleanHypercube, CenteredIntegerDomain, ClearSumcheckRecorder, DegreeSchedule,
-    EvaluationClaim, ProveRounds, ProvedBatch, SequentialRounds, SumcheckClaim, SumcheckDomain,
-    SumcheckDomainSpec, SumcheckError, SumcheckRecorder, SumcheckVerifier,
+    prove_batch, prove_uniskip_clear, round_pow_bits, BatchMember, BatchPrelude, BooleanHypercube,
+    CenteredIntegerDomain, ClearProof, ClearSumcheckRecorder, DegreeSchedule, EvaluationClaim,
+    ProveRounds, ProvedBatch, RoundMessage, SequentialRounds, SumcheckClaim, SumcheckDomain,
+    SumcheckDomainSpec, SumcheckError, SumcheckProof, SumcheckRecorder, SumcheckVerifier,
 };
 use jolt_transcript::{
-    Blake2b512, Channel, PrivateChannel, ProtocolId, ProverTranscript, Sponge, TranscriptError,
-    VerifierTranscript,
+    prover_transcript, Blake2b512, ChallengeCodec, Encoding, FieldTranscript, ProverState,
+    ProverTranscript, ScriptedTranscript, Transcript,
 };
 
 const LABEL: &[u8] = b"binary-sumcheck";
 
-trait BinaryField: JoltField {
+trait BinaryField: JoltField + Encoding + ChallengeCodec {
+    /// The hashing transcript these tests run over this field.
+    type HashTranscript: FieldTranscript<Self> + ProverTranscript;
+
+    fn hash_transcript() -> Self::HashTranscript;
+
     fn sample(seed: u64) -> Self;
 }
 
@@ -29,6 +36,12 @@ fn sample_word(seed: u64) -> u64 {
 }
 
 impl BinaryField for F128 {
+    type HashTranscript = ProverState<Blake2b512>;
+
+    fn hash_transcript() -> Self::HashTranscript {
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(LABEL), b"")
+    }
+
     fn sample(seed: u64) -> Self {
         Self::from_raw(
             u128::from(sample_word(seed)) | (u128::from(sample_word(seed.wrapping_add(1))) << 64),
@@ -36,7 +49,19 @@ impl BinaryField for F128 {
     }
 }
 
+// `F64` challenges carry 64 bits, which no supported proof of work lifts to
+// the 128-bit target, so a priced transcript rejects every round; the `F64`
+// tests check sumcheck algebra, not Fiat-Shamir security.
 impl BinaryField for F64 {
+    type HashTranscript = ScriptedTranscript<ProverState<Blake2b512>, Self>;
+
+    fn hash_transcript() -> Self::HashTranscript {
+        ScriptedTranscript::new(prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(LABEL),
+            b"",
+        ))
+    }
+
     fn sample(seed: u64) -> Self {
         Self::from_raw(sample_word(seed))
     }
@@ -144,119 +169,31 @@ impl<F: JoltField> ProveRounds<F> for DenseProduct<F> {
     }
 }
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-sumcheck/binary-fields");
-
-fn prover() -> ProverTranscript<Blake2b512> {
-    ProverTranscript::new(&PROTOCOL, LABEL)
-}
-
-fn verifier(narg: &[u8]) -> VerifierTranscript<'_, Blake2b512> {
-    VerifierTranscript::new(&PROTOCOL, LABEL, narg)
-}
-
-/// The sponge state both roles must agree on after the same message sequence.
-fn fingerprint<C: Channel>(channel: &mut C) -> [u8; 32] {
-    channel.challenge_bytes::<32>()
-}
-
-/// A clear recorder whose round challenges come from a fixed script instead of
-/// the transcript, to reach challenge values a sponge would draw only by
-/// chance. Its argument string has no verifier counterpart.
-struct ScriptedRecorder<F> {
-    script: IntoIter<F>,
-}
-
-impl<F: BinaryField> SumcheckRecorder<F> for ScriptedRecorder<F> {
-    type Witness = ();
-    type Error = SumcheckError<F>;
-
-    fn absorb_input_claims<C>(
-        &mut self,
-        input_claims: &[F],
-        channel: &mut C,
-    ) -> Result<(), SumcheckError<F>>
-    where
-        C: PrivateChannel<Error = TranscriptError>,
-    {
-        for claim in input_claims {
-            channel.bind_derived_base(claim)?;
-        }
-        Ok(())
-    }
-
-    fn absorb_round<H: Sponge>(
-        &mut self,
-        round_poly: &UnivariatePoly<F>,
-        degree: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<F, SumcheckError<F>> {
-        send_compressed_round(round_poly, degree, transcript)?;
-        Ok(self.script.next().unwrap())
-    }
-
-    fn absorb_full_round<H: Sponge>(
-        &mut self,
-        round_poly: &UnivariatePoly<F>,
-        degree: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<F, SumcheckError<F>> {
-        send_full_round(round_poly, degree, transcript)?;
-        Ok(self.script.next().unwrap())
-    }
-
-    fn finish<H: Sponge>(
-        self,
-        output_claim_values: &[F],
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), SumcheckError<F>> {
-        transcript.send_all(output_claim_values);
-        Ok(())
-    }
-}
-
-/// How a fixture draws its batching coefficients and round challenges.
-enum Challenges<F> {
-    Transcript,
-    Scripted {
-        coefficients: Vec<F>,
-        rounds: Vec<F>,
-    },
-}
-
 struct BatchFixture<F: Field> {
     prelude: BatchPrelude<F>,
     proved: ProvedBatch<F>,
-    narg: Vec<u8>,
-    fingerprint: [u8; 32],
+    proof: SumcheckProof<F, ()>,
+    transcript_state: F,
 }
 
-impl<F: BinaryField> BatchFixture<F> {
-    fn prove(
+impl<F: JoltField + Encoding> BatchFixture<F> {
+    fn prove<T: FieldTranscript<F> + ProverTranscript>(
         original: &[DenseProduct<F>],
         offsets: &[usize],
         max_num_vars: usize,
         max_degree: usize,
-        challenges: Challenges<F>,
+        mut transcript: T,
     ) -> Self {
-        let mut transcript = prover();
+        let mut recorder = ClearSumcheckRecorder::<F>::new();
         let claims: Vec<_> = original.iter().map(DenseProduct::claimed_sum).collect();
-        transcript.public_all(&claims);
-        let (mut coefficients, scripted_rounds) = match challenges {
-            Challenges::Transcript => (None, None),
-            Challenges::Scripted {
-                coefficients,
-                rounds,
-            } => (Some(coefficients.into_iter()), Some(rounds)),
-        };
+        recorder.absorb_input_claims(&claims, &mut transcript);
         let members = original
             .iter()
             .zip(offsets)
             .zip(claims)
             .map(|((member, &offset), input_claim)| BatchMember {
                 input_claim,
-                coefficient: coefficients
-                    .as_mut()
-                    .map_or_else(|| transcript.challenge(), |script| script.next().unwrap()),
+                coefficient: transcript.challenge().unwrap(),
                 rounds: member.rounds,
                 offset,
             })
@@ -275,86 +212,50 @@ impl<F: BinaryField> BatchFixture<F> {
             .iter_mut()
             .map(|member| member as &mut dyn ProveRounds<F>)
             .collect();
-        let proved = if let Some(rounds) = scripted_rounds {
-            let mut recorder = ScriptedRecorder {
-                script: rounds.into_iter(),
-            };
-            let proved = prove_batch(
-                &prelude,
-                &mut members,
-                &mut SequentialRounds,
-                &mut recorder,
-                &mut transcript,
-            )
-            .unwrap();
-            recorder
-                .finish(&proved.member_claims, &mut transcript)
-                .unwrap();
-            proved
-        } else {
-            let mut recorder = ClearSumcheckRecorder::<F>::new();
-            let proved = prove_batch(
-                &prelude,
-                &mut members,
-                &mut SequentialRounds,
-                &mut recorder,
-                &mut transcript,
-            )
-            .unwrap();
-            recorder
-                .finish(&proved.member_claims, &mut transcript)
-                .unwrap();
-            proved
-        };
-        let narg = transcript.narg().to_vec();
-        Self {
-            prelude,
-            proved,
-            narg,
-            fingerprint: fingerprint(&mut transcript),
-        }
-    }
-
-    fn replay_head(&self, transcript: &mut VerifierTranscript<'_, Blake2b512>) {
-        let claims: Vec<F> = self
-            .prelude
-            .members
-            .iter()
-            .map(|member| member.input_claim)
-            .collect();
-        transcript.public_all(&claims);
-        for member in &self.prelude.members {
-            assert_eq!(transcript.challenge::<F>(), member.coefficient);
-        }
-    }
-
-    fn reduce(&self, narg: &[u8]) -> Result<EvaluationClaim<F>, SumcheckError<F>> {
-        let mut transcript = verifier(narg);
-        self.replay_head(&mut transcript);
-        SumcheckVerifier::verify_compressed_scheduled(
-            self.prelude.claimed_sum,
-            &self.prelude.degrees,
-            &mut transcript,
-        )
-    }
-
-    fn verify(&self) -> EvaluationClaim<F> {
-        let mut transcript = verifier(&self.narg);
-        self.replay_head(&mut transcript);
-        let reduced = SumcheckVerifier::verify_compressed_scheduled(
-            self.prelude.claimed_sum,
-            &self.prelude.degrees,
+        let proved = prove_batch(
+            &prelude,
+            &mut members,
+            &mut SequentialRounds,
+            &mut recorder,
             &mut transcript,
         )
         .unwrap();
-        let claims: Vec<F> = transcript
-            .receive_n(self.proved.member_claims.len())
+        let recorded = recorder
+            .finish(&proved.member_claims, &mut transcript)
             .unwrap();
-        assert_eq!(claims, self.proved.member_claims);
+        Self {
+            prelude,
+            proved,
+            proof: recorded.proof.into(),
+            transcript_state: transcript.challenge().unwrap(),
+        }
+    }
+
+    fn replay_head<T: FieldTranscript<F>>(&self, transcript: &mut T) {
+        for member in &self.prelude.members {
+            transcript.append(&member.input_claim);
+        }
+        for member in &self.prelude.members {
+            assert_eq!(transcript.challenge().unwrap(), member.coefficient);
+        }
+    }
+
+    fn verify<T: FieldTranscript<F>>(&self, mut transcript: T) -> EvaluationClaim<F> {
+        self.replay_head(&mut transcript);
+        let reduced = self
+            .proof
+            .verify_compressed_scheduled(
+                &self.prelude.degrees,
+                self.prelude.claimed_sum,
+                &mut transcript,
+            )
+            .unwrap();
+        for claim in &self.proved.member_claims {
+            transcript.append(claim);
+        }
         assert_eq!(reduced.point.as_slice(), self.proved.challenges);
         assert_eq!(reduced.value, self.proved.final_claim);
-        assert_eq!(fingerprint(&mut transcript), self.fingerprint);
-        transcript.finish().unwrap();
+        assert_eq!(transcript.challenge().unwrap(), self.transcript_state);
         reduced
     }
 
@@ -382,17 +283,35 @@ impl<F: BinaryField> BatchFixture<F> {
 fn single_members<F: BinaryField>() {
     for degree in 1..=3 {
         let products = [DenseProduct::<F>::sampled(4, degree, 11)];
-        let fixture = BatchFixture::prove(&products, &[0], 4, degree, Challenges::Transcript);
-        let reduced = fixture.verify();
+        let script = vec![
+            F::one(),
+            F::sample(1001),
+            F::sample(1002),
+            F::sample(1003),
+            F::sample(1004),
+        ];
+        let fixture = BatchFixture::prove(
+            &products,
+            &[0],
+            4,
+            degree,
+            ScriptedTranscript::with_script(
+                prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(LABEL), b""),
+                script.clone(),
+            ),
+        );
+        let reduced = fixture.verify(ScriptedTranscript::with_script(
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(LABEL), b""),
+            script,
+        ));
         assert_eq!(
             fixture.prelude.members[0].input_claim,
             products[0].claimed_sum()
         );
         let expected = products[0].evaluate(reduced.point.as_slice());
         assert_eq!(fixture.proved.member_claims[0], expected);
-        let scaled = fixture.prelude.members[0].coefficient * expected;
-        assert_eq!(fixture.proved.final_claim, scaled);
-        assert_eq!(reduced.value, scaled);
+        assert_eq!(fixture.proved.final_claim, expected);
+        assert_eq!(reduced.value, expected);
         fixture.check_output_scales(&products);
     }
 }
@@ -404,8 +323,8 @@ fn mixed_linear_members<F: BinaryField>() {
         DenseProduct::<F>::sampled(2, 1, 300),
         DenseProduct::<F>::sampled(2, 1, 400),
     ];
-    let fixture = BatchFixture::prove(&products, &[0, 2, 0, 1], 4, 1, Challenges::Transcript);
-    let _ = fixture.verify();
+    let fixture = BatchFixture::prove(&products, &[0, 2, 0, 1], 4, 1, F::hash_transcript());
+    let _ = fixture.verify(F::hash_transcript());
     for (member, indices) in [(1, [0, 1, 2, 3]), (2, [0, 4, 8, 12]), (3, [0, 2, 4, 6])] {
         let mut extended = vec![F::zero(); 16];
         for (&value, index) in products[member].factors[0].iter().zip(indices) {
@@ -425,8 +344,8 @@ fn mixed_quadratic_members<F: BinaryField>() {
         DenseProduct::<F>::sampled(2, 2, 200),
         DenseProduct::<F>::sampled(2, 2, 300),
     ];
-    let fixture = BatchFixture::prove(&products, &[0, 2, 1], 4, 2, Challenges::Transcript);
-    let _ = fixture.verify();
+    let fixture = BatchFixture::prove(&products, &[0, 2, 1], 4, 2, F::hash_transcript());
+    let _ = fixture.verify(F::hash_transcript());
     let r = &fixture.proved.challenges;
     assert_eq!(
         fixture.proved.member_claims[1],
@@ -449,29 +368,30 @@ fn zero_native_claim<F: BinaryField>() {
             rounds: 1,
         },
     ];
-    let fixture = BatchFixture::prove(&products, &[0, 1], 2, 1, Challenges::Transcript);
+    let fixture = BatchFixture::prove(&products, &[0, 1], 2, 1, F::hash_transcript());
     assert_eq!(fixture.prelude.members[1].input_claim, F::zero());
     assert_eq!(
         fixture.proved.member_claims[1],
         u * (F::one() - fixture.proved.challenges[0])
     );
     assert!(!fixture.proved.member_claims[1].is_zero());
-    let _ = fixture.verify();
+    let _ = fixture.verify(F::hash_transcript());
     fixture.check_output_scales(&products);
 }
 
 fn zero_padding_factor<F: BinaryField>() {
     for (offset, challenges) in [(1, [F::one(), F::sample(6)]), (0, [F::sample(6), F::one()])] {
         let products = [DenseProduct::<F>::sampled(1, 2, 200)];
+        let script = vec![F::sample(19), challenges[0], challenges[1]];
         let fixture = BatchFixture::prove(
             &products,
             &[offset],
             2,
             2,
-            Challenges::Scripted {
-                coefficients: vec![F::sample(19)],
-                rounds: challenges.to_vec(),
-            },
+            ScriptedTranscript::with_script(
+                prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(LABEL), b""),
+                script.clone(),
+            ),
         );
         assert_eq!(fixture.proved.challenges, challenges);
         assert_eq!(
@@ -480,6 +400,10 @@ fn zero_padding_factor<F: BinaryField>() {
         );
         assert_eq!(fixture.proved.member_claims, vec![F::zero()]);
         assert_eq!(fixture.proved.final_claim, F::zero());
+        let _ = fixture.verify(ScriptedTranscript::with_script(
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(LABEL), b""),
+            script,
+        ));
         fixture.check_output_scales(&products);
     }
 }
@@ -489,7 +413,7 @@ fn rejection<F: BinaryField>() {
         DenseProduct::<F>::sampled(4, 2, 31),
         DenseProduct::<F>::sampled(2, 2, 97),
     ];
-    let fixture = BatchFixture::prove(&products, &[0, 1], 4, 2, Challenges::Transcript);
+    let fixture = BatchFixture::prove(&products, &[0, 1], 4, 2, F::hash_transcript());
     let mut changed_prelude = fixture.prelude.clone();
     changed_prelude.claimed_sum += F::one();
     let mut members = products.clone();
@@ -497,26 +421,55 @@ fn rejection<F: BinaryField>() {
         .iter_mut()
         .map(|member| member as &mut dyn ProveRounds<F>)
         .collect();
+    let mut transcript = F::hash_transcript();
+    fixture.replay_head(&mut transcript);
     assert!(matches!(
         prove_batch(
             &changed_prelude,
             &mut references,
             &mut SequentialRounds,
             &mut ClearSumcheckRecorder::<F>::new(),
-            &mut prover()
+            &mut transcript
         ),
         Err(SumcheckError::RoundCheckFailed { round: 0, .. }),
     ));
 
-    // Each compressed degree-2 round carries two coefficients; shift the last
-    // round's constant term.
-    let mut altered = fixture.narg.clone();
-    let last_round = 3 * 2 * F::NUM_BYTES;
-    let constant = F::from_bytes_le_checked(&altered[last_round..last_round + F::NUM_BYTES])
-        .unwrap()
-        + F::one();
-    altered[last_round..last_round + F::NUM_BYTES].copy_from_slice(&constant.to_bytes_le_vec());
-    let reduced = fixture.reduce(&altered).unwrap();
+    let mut altered = fixture.proof.clone();
+    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = &mut altered else {
+        panic!("expected a compressed proof")
+    };
+    let round = proof.round_polynomials.last_mut().unwrap();
+    let mut coefficients = round.coeffs_except_linear_term().to_vec();
+    coefficients[0] += F::one();
+    *round = CompressedPoly::new(coefficients);
+    // The honest nonces were ground against the untampered rounds; regrind so
+    // the round loop reaches the final oracle check under test.
+    let mut transcript = F::hash_transcript();
+    fixture.replay_head(&mut transcript);
+    proof.pow_nonces = proof
+        .round_polynomials
+        .iter()
+        .filter_map(|round| {
+            let coefficients = round.coeffs_except_linear_term();
+            transcript.append(&(coefficients.len() as u64));
+            for coefficient in coefficients {
+                transcript.append(coefficient);
+            }
+            let bits = round_pow_bits::<F, F::HashTranscript>(2).unwrap();
+            let nonce = transcript.public_grind(bits).unwrap();
+            let _ = transcript.challenge().unwrap();
+            nonce
+        })
+        .collect();
+    let mut transcript = F::hash_transcript();
+    fixture.replay_head(&mut transcript);
+    let reduced = altered
+        .verify_compressed_scheduled(
+            &DegreeSchedule::uniform(4, 2),
+            fixture.prelude.claimed_sum,
+            &mut transcript,
+        )
+        .unwrap();
     let expected: F = fixture
         .prelude
         .members
@@ -536,42 +489,67 @@ fn rejection<F: BinaryField>() {
         .sum();
     assert_ne!(reduced.value, expected);
 
-    let missing_round = &fixture.narg[..last_round];
+    let mut missing_round = fixture.proof.clone();
+    let SumcheckProof::Clear(ClearProof::Compressed(proof)) = &mut missing_round else {
+        panic!("expected a compressed proof")
+    };
+    let _ = proof.round_polynomials.pop().unwrap();
+    let mut transcript = F::hash_transcript();
+    fixture.replay_head(&mut transcript);
+    let mut untouched = F::hash_transcript();
+    fixture.replay_head(&mut untouched);
     assert!(matches!(
-        fixture.reduce(missing_round),
-        Err(SumcheckError::Transcript(_))
+        missing_round.verify_compressed_scheduled(
+            &DegreeSchedule::uniform(4, 2),
+            fixture.prelude.claimed_sum,
+            &mut transcript
+        ),
+        Err(SumcheckError::WrongNumberOfRounds {
+            expected: 4,
+            got: 3
+        })
     ));
+    assert_eq!(
+        transcript.challenge().unwrap(),
+        untouched.challenge().unwrap()
+    );
 }
 
 fn uncompressed<F: BinaryField>() {
     let original = DenseProduct::<F>::sampled(4, 3, 27);
     let input_claim = original.claimed_sum();
     let mut member = original.clone();
-    let mut transcript = prover();
+    let mut prover = F::hash_transcript();
     let mut previous_claim = input_claim;
     let mut bind = None;
+    let mut rounds = Vec::new();
     let mut challenges = Vec::new();
+    let mut pow_nonces = Vec::new();
     for round in 0..4 {
         let polynomial = member.prove_round(bind, round, previous_claim).unwrap();
-        send_full_round(&polynomial, 3, &mut transcript).unwrap();
-        let challenge = transcript.challenge_small();
+        polynomial.append_to_transcript(&mut prover);
+        let bits = round_pow_bits::<F, F::HashTranscript>(3).unwrap();
+        pow_nonces.extend(prover.public_grind(bits).unwrap());
+        let challenge = prover.challenge().unwrap();
         previous_claim = polynomial.evaluate(challenge);
         bind = Some(challenge);
         challenges.push(challenge);
+        rounds.push(polynomial);
     }
     member.finish_rounds(bind.unwrap()).unwrap();
-    let narg = transcript.narg().to_vec();
-    let mut reader = verifier(&narg);
+    let mut verifier = F::hash_transcript();
     let reduced = SumcheckVerifier::verify(
         &SumcheckClaim::new(4, 3, input_claim),
+        &rounds,
+        &pow_nonces,
         BooleanHypercube,
-        &mut reader,
+        &mut verifier,
     )
     .unwrap();
     assert_eq!(reduced.point.as_slice(), challenges);
     assert_eq!(reduced.value, original.evaluate(&challenges));
     assert_eq!(reduced.value, previous_claim);
-    assert_eq!(fingerprint(&mut transcript), fingerprint(&mut reader));
+    assert_eq!(prover.challenge().unwrap(), verifier.challenge().unwrap());
 }
 
 fn output_scale_errors<F: BinaryField>() {
@@ -592,7 +570,7 @@ fn output_scale_errors<F: BinaryField>() {
     ));
     assert!(matches!(
         prelude.member_output_scale(0, &[F::sample(7); 3]),
-        Err(SumcheckError::WrongNumberOfChallenges {
+        Err(SumcheckError::WrongNumberOfRounds {
             expected: 4,
             got: 3
         })
@@ -604,7 +582,7 @@ fn output_scale_errors<F: BinaryField>() {
         Err(SumcheckError::BatchMemberWindowOutOfRange { member: 0, .. })
     ));
     invalid = prelude.clone();
-    invalid.degrees = DegreeSchedule::uniform(1, 1);
+    invalid.degrees = DegreeSchedule::uniform(1, 2);
     assert!(matches!(
         invalid.member_output_scale(0, &[F::sample(7)]),
         Err(SumcheckError::BatchMemberRoundsOutOfRange { member: 0, .. })
@@ -619,7 +597,7 @@ fn output_scale_errors<F: BinaryField>() {
         })
     ));
     invalid = prelude;
-    invalid.degrees = DegreeSchedule::uniform(258, 1);
+    invalid.degrees = DegreeSchedule::uniform(258, 2);
     assert!(matches!(
         invalid.member_output_scale(0, &[F::sample(7); 258]),
         Err(SumcheckError::BatchPaddingExponentOutOfRange {
@@ -663,8 +641,8 @@ fn integer_domains<F: BinaryField>() {
         CenteredIntegerDomain::new(3).check_round_sum(0, F::sample(4), &polynomial),
         Err(SumcheckError::IntegerDomainNotDistinct { domain_size: 3 })
     ));
-    let mut transcript = prover();
-    let mut untouched = prover();
+    let mut transcript = F::hash_transcript();
+    let mut untouched = F::hash_transcript();
     assert!(matches!(
         prove_uniskip_clear::<F, _>(polynomial.clone(), F::sample(4), 2, 3, &mut transcript),
         Err(SumcheckError::IntegerDomainNotDistinct { domain_size: 3 })
@@ -673,8 +651,10 @@ fn integer_domains<F: BinaryField>() {
         prove_uniskip_clear::<F, _>(polynomial, F::sample(4), 1, 3, &mut transcript),
         Err(SumcheckError::DegreeBoundExceeded { got: 2, max: 1 })
     ));
-    assert!(transcript.narg().is_empty());
-    assert_eq!(fingerprint(&mut transcript), fingerprint(&mut untouched));
+    assert_eq!(
+        transcript.challenge().unwrap(),
+        untouched.challenge().unwrap()
+    );
 }
 
 macro_rules! binary_tests {

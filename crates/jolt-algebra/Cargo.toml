@@ -15,6 +15,7 @@ ignored = ["cc", "allocative"]
 workspace = true
 
 [dependencies]
+jolt-riscv = { workspace = true, features = ["field-inline"], optional = true }
 ark-ff = { workspace = true, optional = true }
 ark-serialize = { workspace = true, optional = true }
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -24,10 +25,8 @@ allocative = { workspace = true, optional = true }
 bytemuck = { workspace = true, optional = true }
 rand_core = { workspace = true }
 rayon = { workspace = true, optional = true }
+spongefish = { workspace = true, optional = true }
 thiserror = { workspace = true }
-# The transcript codec traits atoms implement. spongefish 0.7 references its
-# sha3 `StdHash` even when another sponge is selected.
-spongefish = { workspace = true, features = ["sha3"] }
 
 [features]
 default = ["bn254"]
@@ -38,17 +37,27 @@ asm = []
 fuzzing = ["asm"]
 parallel = ["dep:rayon"]
 allocative = ["dep:allocative"]
+# spongefish `Encoding` for every field, so `F: JoltField` can be absorbed.
+spongefish = ["dep:spongefish"]
 # Byte views of `Fp128` for device buffers (`jolt-metal`).
 bytemuck = ["dep:bytemuck"]
 fp128-proof-linkage = ["asm"]
 fp64-proof-linkage = []
+# Guest arithmetic on the field-inline unit (see `field_inline`), which computes in
+# one field: a guest selects it with `-bn254` (`Fr`) or `-fp128`
+# (`Prime128OffsetA7F7`); other fields keep software arithmetic.
+# Internal: enable through exactly one field selector below.
+field-inline-guest = ["dep:jolt-riscv"]
+field-inline-guest-bn254 = ["field-inline-guest"]
+field-inline-guest-fp128 = ["field-inline-guest"]
 
 [dev-dependencies]
-spongefish = { workspace = true, features = ["sha3"] }
 # The spine test's oracle field must satisfy `JoltField`, which requires
 # `Allocative` under the `allocative` feature; integration tests do not see
 # the optional dependency above.
 allocative = { workspace = true }
+# Likewise `spongefish::Encoding` under the `spongefish` feature.
+spongefish = { workspace = true }
 bincode = { workspace = true }
 criterion = { workspace = true }
 num-bigint = { workspace = true }

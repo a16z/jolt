@@ -1,141 +1,176 @@
-//!
-//! A proof is its argument string. Its leading prover messages are the
-//! [`ProofHeader`] and the [`ProofCommitments`]; every later message's width is
-//! derived from them and from the verifier's preprocessing.
-
-#[cfg(not(feature = "akita"))]
-use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+use jolt_zk::blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+use jolt_crypto::{Commitment, VectorCommitment};
+use jolt_algebra::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
+use jolt_sumcheck::SumcheckProof;
 use serde::{Deserialize, Serialize};
 
-use crate::{config::JoltProtocolConfig, jolt_protocol_id, num, VerifierError, JOLT_SESSION};
+use crate::{
+    config::JoltProtocolConfig,
+    stages::{
+        pow::StagePowNonces, stage1::outputs::Stage1OutputClaims,
+        stage2::outputs::Stage2OutputClaims, stage3::outputs::Stage3OutputClaims,
+        stage4::outputs::Stage4OutputClaims, stage5::outputs::Stage5OutputClaims,
+        stage6a::outputs::Stage6aOutputClaims, stage6b::outputs::Stage6bOutputClaims,
+        stage7::outputs::Stage7OutputClaims,
+    },
+    VerifierError,
+};
 
-/// A Jolt proof: the argument string, plus the protocol axes it was produced
-/// under so a build mismatch is reported as such instead of as a transcript
-/// failure. The verifier binds its own configuration into the transcript, so
-/// `protocol` carries no soundness weight.
-///
-/// The argument string's regions, in order, each opened by its
-/// [`sites`](crate::sites) label:
-///
-/// 1. [`ProofHeader`], then [`ProofCommitments`].
-/// 2. ZK proofs only: the pad commitment ([`PADS`](crate::sites::PADS)).
-/// 3. Stages 1–7: per batch, any uni-skip round, the rounds, then the output
-///    claims in the shape of the verifier-derived output points. A clear proof
-///    sends the generated `wire_claim_values`; a ZK proof sends every round
-///    coefficient and output claim masked by the next pads. Stage 4 sends its
-///    [`RamValCheckStagedOpenings`](crate::stages::stage4::ram_val_check::RamValCheckStagedOpenings)
-///    before its batch, clear or masked.
-/// 4. Stage 8: the joint opening (hiding in a ZK proof).
-/// 5. ZK proofs only ([`BLINDFOLD`](crate::sites::BLINDFOLD)): the masked
-///    auxiliary block, then BlindFold's proof of the residual relation.
+/// The proof-carried polynomial commitments on the homomorphic build: one
+/// commitment per committed polynomial.
+#[cfg(not(feature = "akita"))]
+pub type ProofCommitments<PCS> = JoltCommitments<<PCS as Commitment>::Output>;
+/// The proof-carried polynomial commitments on the `akita` build: the single
+/// native `OneHotTrace` group commitment carrying the RA columns.
+#[cfg(feature = "akita")]
+pub type ProofCommitments<PCS> = <PCS as Commitment>::Output;
+
+/// The final-opening discharge on the homomorphic build: one RLC-batched PCS
+/// opening proof at the unified point.
+#[cfg(not(feature = "akita"))]
+pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
+#[cfg(feature = "akita")]
+pub type JointOpeningProof<PCS> = <PCS as CommitmentScheme>::Proof;
+
+#[expect(non_snake_case, reason = "Preserves the deployed proof field name.")]
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct JoltProof {
+#[serde(bound(
+    serialize = "PCS::Field: Serialize, ZkProof: Serialize",
+    deserialize = "PCS::Field: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
+))]
+pub struct JoltProof<
+    PCS,
+    VC,
+    ZkProof = BlindFoldProof<<PCS as CommitmentScheme>::Field, <VC as Commitment>::Output>,
+> where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
     pub protocol: JoltProtocolConfig,
-    pub narg: Vec<u8>,
-}
-
-impl JoltProof {
-    /// Decodes the proof header (the argument string's first message) on
-    /// sponge `H`, without verifying the proof.
-    pub fn header<H: Sponge>(&self) -> Result<ProofHeader, VerifierError> {
-        let mut transcript =
-            VerifierTranscript::<H>::new(&jolt_protocol_id::<H>(), JOLT_SESSION, &self.narg);
-        ProofHeader::receive(&mut transcript)
-    }
-}
-
-/// The prover-chosen shape parameters, sent first.
-#[expect(non_snake_case, reason = "Preserves the protocol's parameter name.")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ProofHeader {
+    pub commitments: ProofCommitments<PCS>,
+    pub stages: JoltStageProofs<PCS::Field, VC>,
+    pub joint_opening_proof: JointOpeningProof<PCS>,
+    pub untrusted_advice_commitment: Option<PCS::Output>,
+    /// Required RV64 increment commitment in Akita proofs.
+    #[cfg(feature = "akita")]
+    pub fused_inc_commitment: Option<PCS::Output>,
+    /// Direct commitment to the full field-register increment polynomial.
+    /// Required for every Akita field-inline proof, including an all-zero trace.
+    /// Producers without field-inline semantics leave this absent and are rejected
+    /// by the protocol-config gate when field-inline is required.
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub field_inc_commitment: Option<PCS::Output>,
+    pub claims: JoltProofClaims<PCS::Field, ZkProof>,
     pub trace_length: usize,
     pub ram_K: usize,
     pub rw_config: JoltReadWriteConfig,
     pub one_hot_config: JoltOneHotConfig,
     pub trace_polynomial_order: TracePolynomialOrder,
-    pub untrusted_advice: bool,
+    /// The spongefish NARG string: the prover messages the verifier reads
+    /// from its transcript. Every message of the current protocol is a field
+    /// of this struct absorbed as a public message, so the prover leaves it
+    /// empty; the verifier still requires it to be read to its end.
+    pub narg: Vec<u8>,
 }
 
-impl ProofHeader {
-    pub fn send<H: Sponge>(&self, transcript: &mut ProverTranscript<H>) {
-        transcript.send(&num::u64_from_usize(self.trace_length).to_le_bytes());
-        transcript.send(&num::u64_from_usize(self.ram_K).to_le_bytes());
-        // One `[u8; 6]` message, matching `receive`: a length-binding sponge
-        // such as Poseidon absorbs six 1-byte messages differently.
-        transcript.send(&[
-            self.rw_config.ram_rw_phase1_num_rounds,
-            self.rw_config.ram_rw_phase2_num_rounds,
-            self.rw_config.registers_rw_phase1_num_rounds,
-            self.rw_config.registers_rw_phase2_num_rounds,
-            self.one_hot_config.log_k_chunk,
-            self.one_hot_config.lookups_ra_virtual_log_k_chunk,
-        ]);
-        transcript.send(
-            &self
-                .trace_polynomial_order
-                .transcript_scalar()
-                .to_le_bytes(),
-        );
-        transcript.send(&[u8::from(self.untrusted_advice)]);
-    }
-
-    /// Reads the header, rejecting values outside each field's encoding. The
-    /// values themselves are validated against the preprocessing by
-    /// [`validate_inputs`](crate::verifier::validate_inputs).
-    pub fn receive<H: Sponge>(
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self, VerifierError> {
-        let trace_length = usize_field(receive_u64(transcript)?, "trace_length")?;
-        let ram_k = usize_field(receive_u64(transcript)?, "ram_K")?;
-        let [ram_phase1, ram_phase2, registers_phase1, registers_phase2, log_k_chunk, lookups_chunk]: [u8; 6] =
-            transcript.receive()?;
-        let trace_polynomial_order = TracePolynomialOrder::from_transcript_scalar(receive_u64(
-            transcript,
-        )?)
-        .ok_or(VerifierError::MalformedProofHeader {
-            field: "trace_polynomial_order",
-        })?;
-        let untrusted_advice = match transcript.receive::<[u8; 1]>()? {
-            [0] => false,
-            [1] => true,
-            _ => {
-                return Err(VerifierError::MalformedProofHeader {
-                    field: "untrusted_advice",
-                })
-            }
-        };
-        Ok(Self {
+impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    /// Assemble a proof shell. Akita producers must attach `fused_inc_commitment`;
+    /// field-inline producers also attach the field-increment payload with
+    /// [`Self::with_field_inc_commitment`]. Verification rejects missing required payloads.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per proof component, mirroring the wire struct"
+    )]
+    pub fn new(
+        protocol: JoltProtocolConfig,
+        commitments: ProofCommitments<PCS>,
+        stages: JoltStageProofs<PCS::Field, VC>,
+        joint_opening_proof: JointOpeningProof<PCS>,
+        untrusted_advice_commitment: Option<PCS::Output>,
+        claims: JoltProofClaims<PCS::Field, ZkProof>,
+        trace_length: usize,
+        ram_k: usize,
+        rw_config: JoltReadWriteConfig,
+        one_hot_config: JoltOneHotConfig,
+        trace_polynomial_order: TracePolynomialOrder,
+    ) -> Self {
+        Self {
+            protocol,
+            commitments,
+            stages,
+            joint_opening_proof,
+            untrusted_advice_commitment,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: None,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_commitment: None,
+            claims,
             trace_length,
             ram_K: ram_k,
-            rw_config: JoltReadWriteConfig {
-                ram_rw_phase1_num_rounds: ram_phase1,
-                ram_rw_phase2_num_rounds: ram_phase2,
-                registers_rw_phase1_num_rounds: registers_phase1,
-                registers_rw_phase2_num_rounds: registers_phase2,
-            },
-            one_hot_config: JoltOneHotConfig {
-                log_k_chunk,
-                lookups_ra_virtual_log_k_chunk: lookups_chunk,
-            },
+            rw_config,
+            one_hot_config,
             trace_polynomial_order,
-            untrusted_advice,
-        })
+            narg: Vec::new(),
+        }
+    }
+
+    /// Attach the direct field-increment commitment required by Akita field-inline proofs.
+    #[cfg(all(feature = "akita", feature = "field-inline"))]
+    pub fn with_field_inc_commitment(mut self, commitment: PCS::Output) -> Self {
+        self.field_inc_commitment = Some(commitment);
+        self
     }
 }
 
-/// A `u64` header field, carried as its eight little-endian bytes.
-fn receive_u64<H: Sponge>(
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<u64, VerifierError> {
-    Ok(u64::from_le_bytes(transcript.receive()?))
-}
+impl<PCS, VC, ZkProof> JoltProof<PCS, VC, ZkProof>
+where
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+{
+    pub(crate) fn clear_claims(&self) -> Result<&ClearProofClaims<PCS::Field>, VerifierError> {
+        match &self.claims {
+            JoltProofClaims::Clear(claims) => Ok(claims),
+            JoltProofClaims::Zk { .. } => Err(VerifierError::UnexpectedBlindFoldProof),
+        }
+    }
 
-fn usize_field(value: u64, field: &'static str) -> Result<usize, VerifierError> {
-    usize::try_from(value).map_err(|_| VerifierError::MalformedProofHeader { field })
+    #[cfg(not(feature = "akita"))]
+    pub(crate) fn blindfold_proof(&self) -> Result<&ZkProof, VerifierError> {
+        match &self.claims {
+            JoltProofClaims::Clear(_) => Err(VerifierError::MissingBlindFoldProof),
+            JoltProofClaims::Zk { blindfold_proof } => Ok(blindfold_proof),
+        }
+    }
+
+    /// Replace the claims payload, retyping the `ZkProof` slot; every wire
+    /// field carries over unchanged.
+    pub fn with_claims<Z>(self, claims: JoltProofClaims<PCS::Field, Z>) -> JoltProof<PCS, VC, Z> {
+        JoltProof {
+            protocol: self.protocol,
+            commitments: self.commitments,
+            stages: self.stages,
+            joint_opening_proof: self.joint_opening_proof,
+            untrusted_advice_commitment: self.untrusted_advice_commitment,
+            #[cfg(feature = "akita")]
+            fused_inc_commitment: self.fused_inc_commitment,
+            #[cfg(all(feature = "akita", feature = "field-inline"))]
+            field_inc_commitment: self.field_inc_commitment,
+            claims,
+            trace_length: self.trace_length,
+            ram_K: self.ram_K,
+            rw_config: self.rw_config,
+            one_hot_config: self.one_hot_config,
+            trace_polynomial_order: self.trace_polynomial_order,
+            narg: self.narg,
+        }
+    }
 }
 
 /// The field-register commitments of the field-inline extension. `FieldRdInc` is the
@@ -143,7 +178,7 @@ fn usize_field(value: u64, field: &'static str) -> Result<usize, VerifierError> 
 /// (anchored through the bytecode read-RAF path), so this nest stays one deep until the
 /// protocol commits more.
 #[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldRegistersCommitments<C> {
     pub rd_inc: C,
 }
@@ -151,138 +186,150 @@ pub struct FieldRegistersCommitments<C> {
 /// The field-inline extension's committed payload, grouped by component as the
 /// protocol spec lays it out (`FieldInlineCommitments::field_registers`).
 #[cfg(feature = "field-inline")]
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FieldInlineCommitments<C> {
     pub field_registers: FieldRegistersCommitments<C>,
 }
 
-/// One commitment per committed trace polynomial on the homomorphic build.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltCommitments<C> {
     pub rd_inc: C,
     pub ram_inc: C,
     pub instruction_ra: Vec<C>,
     pub ram_ra: Vec<C>,
     pub bytecode_ra: Vec<C>,
+    /// Present on every field-inline proof (the build with field-inline enabled proves all
+    /// guests under the composed protocol). Carried as an `Option` because this type is shared
+    /// with producers that cannot supply field-inline commitments — the legacy prover and the
+    /// Akita converter — whose proofs fail the protocol-config gate before this field is ever
+    /// read; [`validate_proof_consistency`] rejects a missing payload fail-closed for
+    /// everything else.
+    ///
+    /// [`validate_proof_consistency`]: crate::verifier::validate_proof_consistency
     #[cfg(feature = "field-inline")]
-    pub field_inline: FieldInlineCommitments<C>,
+    pub field_inline: Option<FieldInlineCommitments<C>>,
 }
 
-/// The polynomial commitments a proof sends, in send order.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProofCommitments<C> {
-    /// One commitment per committed trace polynomial.
-    #[cfg(not(feature = "akita"))]
-    pub trace: JoltCommitments<C>,
-    /// The single native `OneHotTrace` group commitment carrying the RA columns.
-    #[cfg(feature = "akita")]
-    pub one_hot_trace: C,
-    /// The direct bounded-dense commitment to the fused RV64 increment
-    /// polynomial.
-    #[cfg(feature = "akita")]
-    pub fused_inc: C,
-    /// The direct commitment to the full field-register increment polynomial.
-    #[cfg(all(feature = "akita", feature = "field-inline"))]
-    pub field_inc: C,
-    /// Present exactly when the header declares untrusted advice.
-    pub untrusted_advice: Option<C>,
-}
-
-impl<C> ProofCommitments<C> {
-    pub fn send<PCS, H>(&self, transcript: &mut ProverTranscript<H>)
-    where
-        PCS: CommitmentScheme<Output = C>,
-        H: Sponge,
-    {
-        #[cfg(not(feature = "akita"))]
-        {
-            let trace = &self.trace;
-            PCS::send_commitment(&trace.rd_inc, transcript);
-            PCS::send_commitment(&trace.ram_inc, transcript);
-            for commitment in trace
-                .instruction_ra
-                .iter()
-                .chain(&trace.ram_ra)
-                .chain(&trace.bytecode_ra)
-            {
-                PCS::send_commitment(commitment, transcript);
-            }
+impl<C> JoltCommitments<C> {
+    pub fn new(
+        rd_inc: C,
+        ram_inc: C,
+        instruction_ra: Vec<C>,
+        ram_ra: Vec<C>,
+        bytecode_ra: Vec<C>,
+    ) -> Self {
+        Self {
+            rd_inc,
+            ram_inc,
+            instruction_ra,
+            ram_ra,
+            bytecode_ra,
             #[cfg(feature = "field-inline")]
-            PCS::send_commitment(&trace.field_inline.field_registers.rd_inc, transcript);
-        }
-        #[cfg(feature = "akita")]
-        {
-            PCS::send_commitment(&self.one_hot_trace, transcript);
-            PCS::send_commitment(&self.fused_inc, transcript);
-            #[cfg(feature = "field-inline")]
-            PCS::send_commitment(&self.field_inc, transcript);
-        }
-        if let Some(commitment) = &self.untrusted_advice {
-            PCS::send_commitment(commitment, transcript);
+            field_inline: None,
         }
     }
 
-    /// Reads the commitments at the counts `layout` (homomorphic build) and
-    /// `header` fix.
-    pub fn receive<PCS, H>(
-        setup: &PCS::VerifierSetup,
-        header: &ProofHeader,
-        #[cfg(not(feature = "akita"))] layout: JoltRaPolynomialLayout,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self, VerifierError>
-    where
-        PCS: CommitmentScheme<Output = C>,
-        H: Sponge,
-    {
-        let mut receive = || {
-            PCS::receive_commitment(setup, transcript).map_err(|error| {
-                VerifierError::MalformedCommitment {
-                    reason: error.to_string(),
-                }
-            })
-        };
-        #[cfg(not(feature = "akita"))]
-        let trace = {
-            let rd_inc = receive()?;
-            let ram_inc = receive()?;
-            let instruction_ra = (0..layout.instruction())
-                .map(|_| receive())
-                .collect::<Result<_, _>>()?;
-            let ram_ra = (0..layout.ram())
-                .map(|_| receive())
-                .collect::<Result<_, _>>()?;
-            let bytecode_ra = (0..layout.bytecode())
-                .map(|_| receive())
-                .collect::<Result<_, _>>()?;
-            JoltCommitments {
-                rd_inc,
-                ram_inc,
-                instruction_ra,
-                ram_ra,
-                bytecode_ra,
-                #[cfg(feature = "field-inline")]
-                field_inline: FieldInlineCommitments {
-                    field_registers: FieldRegistersCommitments { rd_inc: receive()? },
-                },
-            }
-        };
-        #[cfg(feature = "akita")]
-        let one_hot_trace = receive()?;
-        #[cfg(feature = "akita")]
-        let fused_inc = receive()?;
-        #[cfg(all(feature = "akita", feature = "field-inline"))]
-        let field_inc = receive()?;
-        let untrusted_advice = header.untrusted_advice.then(&mut receive).transpose()?;
-        Ok(Self {
-            #[cfg(not(feature = "akita"))]
-            trace,
-            #[cfg(feature = "akita")]
-            one_hot_trace,
-            #[cfg(feature = "akita")]
-            fused_inc,
-            #[cfg(all(feature = "akita", feature = "field-inline"))]
-            field_inc,
-            untrusted_advice,
-        })
+    /// Attach the field-inline committed payload (the modular prover's stage 0 sets this on
+    /// every field-inline proof).
+    #[cfg(feature = "field-inline")]
+    pub fn with_field_inline(mut self, field_inline: FieldInlineCommitments<C>) -> Self {
+        self.field_inline = Some(field_inline);
+        self
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(
+    not(feature = "akita"),
+    expect(
+        clippy::large_enum_variant,
+        reason = "clear claims stay inline on the standard verifier's common path"
+    )
+)]
+#[serde(bound(
+    serialize = "F: Serialize, ZkProof: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"
+))]
+pub enum JoltProofClaims<F, ZkProof>
+where
+    F: JoltField,
+{
+    Clear(ClearProofClaims<F>),
+    Zk { blindfold_proof: ZkProof },
+}
+
+impl<F, ZkProof> JoltProofClaims<F, ZkProof>
+where
+    F: JoltField,
+{
+    pub const fn is_zk(&self) -> bool {
+        matches!(self, Self::Zk { .. })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
+pub struct ClearProofClaims<F: JoltField> {
+    pub stage1: Stage1OutputClaims<F>,
+    pub stage2: Stage2OutputClaims<F>,
+    pub stage3: Stage3OutputClaims<F>,
+    pub stage4: Stage4OutputClaims<F>,
+    pub stage5: Stage5OutputClaims<F>,
+    pub stage6a: Stage6aOutputClaims<F>,
+    pub stage6b: Stage6bOutputClaims<F>,
+    pub stage7: Stage7OutputClaims<F>,
+}
+
+impl<F: JoltField> ClearProofClaims<F> {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one argument per stage, mirroring the wire struct"
+    )]
+    pub fn new(
+        stage1: Stage1OutputClaims<F>,
+        stage2: Stage2OutputClaims<F>,
+        stage3: Stage3OutputClaims<F>,
+        stage4: Stage4OutputClaims<F>,
+        stage5: Stage5OutputClaims<F>,
+        stage6a: Stage6aOutputClaims<F>,
+        stage6b: Stage6bOutputClaims<F>,
+        stage7: Stage7OutputClaims<F>,
+    ) -> Self {
+        Self {
+            stage1,
+            stage2,
+            stage3,
+            stage4,
+            stage5,
+            stage6a,
+            stage6b,
+            stage7,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "F: Serialize, <VC as Commitment>::Output: Serialize",
+    deserialize = "F: for<'a> Deserialize<'a>, <VC as Commitment>::Output: serde::de::DeserializeOwned"
+))]
+pub struct JoltStageProofs<F, VC>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+{
+    pub stage1_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
+    pub stage1_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage2_uni_skip_first_round_proof: SumcheckProof<F, VC::Output>,
+    pub stage2_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage3_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage4_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage5_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage6a_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage6b_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    pub stage7_sumcheck_proof: SumcheckProof<F, VC::Output>,
+    /// Nonces of the challenge bursts outside the sumcheck rounds. A slot is
+    /// filled only where the site is visited and the challenge set needs proof
+    /// of work, so a BN254 proof carries none.
+    pub pow_nonces: StagePowNonces,
 }

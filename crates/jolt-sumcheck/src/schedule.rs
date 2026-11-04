@@ -4,27 +4,26 @@ use jolt_algebra::Field;
 
 use crate::error::SumcheckError;
 
-/// The degree bound of every round of a sumcheck, in round order. Round `j`
-/// sends its polynomial at `degree(j)`'s wire width (the compressed form
-/// sends `degree(j)` coefficients), so prover and verifier agree on every
-/// message's length without sending it.
+/// The degree bound of every round of a sumcheck, in round order. Round `j`'s
+/// polynomial has degree at most `degrees()[j]`: the verifier rejects a
+/// longer one, and the round's proof of work is priced at that degree.
 ///
 /// A batch's schedule is derived from public data only:
 /// [`batched`](Self::batched) takes each member's activation offset and its
-/// declared per-round degrees. Every consumer — the prove loop, the clear
-/// verifier, and the masked verifier and its residual lowering — reads the
-/// same schedule.
+/// declared per-round degrees. The prove loop and the clear verifier read the
+/// same schedule, from the generated `degree_schedule`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DegreeSchedule {
     degrees: Vec<usize>,
 }
 
 /// One batch member's contribution to a [`DegreeSchedule`]: its activation
-/// offset in the batch and its declared degree bound for each of its own
-/// rounds.
+/// offset in the batch, its declared degree bound `degree`, and its declared
+/// bound for each of its own rounds, each at most `degree`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemberDegrees {
     pub offset: usize,
+    pub degree: usize,
     pub round_degrees: Vec<usize>,
 }
 
@@ -46,7 +45,8 @@ impl DegreeSchedule {
     ///
     /// [`SumcheckError::BatchMemberWindowOverflow`] or
     /// [`SumcheckError::BatchMemberWindowOutOfRange`] if a member's rounds
-    /// leave the batch.
+    /// leave the batch, and [`SumcheckError::MemberRoundDegreeAboveBound`] if a
+    /// member declares a round above its own degree bound.
     pub fn batched<F: Field>(
         num_rounds: usize,
         members: impl IntoIterator<Item = MemberDegrees>,
@@ -71,7 +71,16 @@ impl DegreeSchedule {
                     max_num_vars: num_rounds,
                 },
             )?;
-            for (slot, degree) in slots.iter_mut().zip(described.round_degrees) {
+            for (round, (slot, degree)) in slots.iter_mut().zip(described.round_degrees).enumerate()
+            {
+                if degree > described.degree {
+                    return Err(SumcheckError::MemberRoundDegreeAboveBound {
+                        member,
+                        round,
+                        got: degree,
+                        max: described.degree,
+                    });
+                }
                 *slot = (*slot).max(degree);
             }
         }
@@ -85,6 +94,11 @@ impl DegreeSchedule {
     /// The degree bounds in round order.
     pub fn degrees(&self) -> &[usize] {
         &self.degrees
+    }
+
+    /// The largest round degree bound, or 0 for a schedule with no rounds.
+    pub fn max_degree(&self) -> usize {
+        self.degrees.iter().copied().max().unwrap_or(0)
     }
 
     /// Checks every round is provable: degree at least 1 and a representable
@@ -123,6 +137,7 @@ mod tests {
     fn member(offset: usize, round_degrees: &[usize]) -> MemberDegrees {
         MemberDegrees {
             offset,
+            degree: round_degrees.iter().copied().max().unwrap_or(1),
             round_degrees: round_degrees.to_vec(),
         }
     }
@@ -161,6 +176,21 @@ mod tests {
         assert!(matches!(
             DegreeSchedule::batched::<F>(3, [member(usize::MAX, &[1])]),
             Err(SumcheckError::BatchMemberWindowOverflow { member: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn a_round_above_the_member_bound_is_rejected() {
+        let mut above = member(0, &[2, 3]);
+        above.degree = 2;
+        assert!(matches!(
+            DegreeSchedule::batched::<F>(2, [above]),
+            Err(SumcheckError::MemberRoundDegreeAboveBound {
+                member: 0,
+                round: 1,
+                got: 3,
+                max: 2
+            })
         ));
     }
 

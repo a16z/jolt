@@ -1,9 +1,9 @@
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_crypto::VectorCommitment;
+use jolt_openings::CommitmentScheme;
+use jolt_transcript::FieldTranscript;
 use jolt_zk::masking::CommittedPadsView;
-
-use crate::sites::STAGE3;
 
 use super::{
     instruction_input::{instruction_input_input_values_from_upstream, InstructionInput},
@@ -16,7 +16,9 @@ use super::{
     spartan_shift::{spartan_shift_input_values_from_upstream, SpartanShift},
 };
 use crate::{
+    proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage1::{Stage1BatchOutputClaims, Stage1Output},
         stage2::{Stage2BatchOutputClaims, Stage2Output},
         zk::masked_channel,
@@ -40,18 +42,20 @@ pub fn stage3_input_values_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<F, H, P>(
+#[jolt_verifier_derive::fs_scope(Stage3)]
+pub fn verify<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
-    transcript: &mut VerifierTranscript<'_, H>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    transcript: &mut T,
     pads: Option<&mut CommittedPadsView<P>>,
-    stage1: &Stage1Output<F>,
-    stage2: &Stage2Output<F>,
-) -> Result<Stage3Output<F>, VerifierError>
+    stage1: &Stage1Output<PCS::Field>,
+    stage2: &Stage2Output<PCS::Field>,
+) -> Result<Stage3Output<PCS::Field>, VerifierError>
 where
-    F: JoltField,
-    H: Sponge,
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
-    transcript.site(STAGE3);
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = TraceDimensions::new(log_t);
 
@@ -71,24 +75,36 @@ where
     };
 
     // Draw each relation's batching gamma in declaration order (shift, instruction
-    // input, register reduction); each is a single exact `challenge()`. The drawn
+    // input, register reduction); each is a single `challenge()`. The drawn
     // challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
+    check_pow(PowSite::Stage3, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk.is_masked() {
+        let claims = &proof.clear_claims()?.stage3;
         let stage1 = stage1.clear()?;
         let stage2 = stage2.clear()?;
+        sumchecks.validate_output_claims(claims)?;
 
         let input_values =
             stage3_input_values_from_upstream(&stage1.output_values, &stage2.output_values);
         let input_points = sumchecks.empty_input_points();
 
-        let (output_points, output_values) =
-            sumchecks.verify_clear(&input_values, &input_points, &challenges, transcript, 3)?;
+        let output_points = sumchecks.verify_clear(
+            &input_values,
+            &input_points,
+            &challenges,
+            claims,
+            &proof.stages.stage3_sumcheck_proof,
+            transcript,
+            3,
+        )?;
+
+        sumchecks.append_output_claims(transcript, claims);
 
         return Ok(Stage3Output::Clear(Stage3ClearOutput {
-            output_values,
+            output_values: claims.clone(),
             output_points,
         }));
     }

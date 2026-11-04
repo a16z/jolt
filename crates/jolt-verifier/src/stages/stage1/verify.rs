@@ -1,9 +1,9 @@
-use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_crypto::VectorCommitment;
+use jolt_algebra::Ring;
+use jolt_openings::CommitmentScheme;
+use jolt_transcript::FieldTranscript;
 use jolt_zk::masking::CommittedPadsView;
-
-use crate::sites::STAGE1;
 
 use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
 use super::outputs::{
@@ -11,32 +11,52 @@ use super::outputs::{
     Stage1Output, Stage1ZkOutput,
 };
 use crate::{
-    stages::{uniskip, zk::masked_channel},
+    proof::JoltProof,
+    stages::{
+        pow::{check_pow, PowSite},
+        uniskip,
+        zk::masked_channel,
+    },
     verifier::CheckedInputs,
     VerifierError,
 };
 
-pub fn verify<F, H, P>(
+#[jolt_verifier_derive::fs_scope(Stage1)]
+pub fn verify<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
-    transcript: &mut VerifierTranscript<'_, H>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    transcript: &mut T,
     pads: Option<&mut CommittedPadsView<P>>,
-) -> Result<Stage1Output<F>, VerifierError>
+) -> Result<Stage1Output<PCS::Field>, VerifierError>
 where
-    F: JoltField,
-    H: Sponge,
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
-    transcript.site(STAGE1);
     let uniskip_params = uniskip::UniskipParams::spartan_outer();
     let log_t = crate::num::ilog2(checked.trace_length);
     let dimensions = SpartanOuterDimensions::rv64(log_t);
-    let tau = uniskip::draw_spartan_outer_tau(transcript, log_t);
+    let pow_nonces = &proof.stages.pow_nonces;
+    check_pow(PowSite::Stage1Tau, pow_nonces, transcript)?;
+    let tau = uniskip::draw_spartan_outer_tau(transcript, log_t)?;
 
     if !checked.zk.is_masked() {
+        let claims = &proof.clear_claims()?.stage1;
+        let uni_skip_first_round_proof = &proof.stages.stage1_uni_skip_first_round_proof;
+        let sumcheck_proof = &proof.stages.stage1_sumcheck_proof;
         // The uni-skip first round consumes no openings: its symbolic `input_expression`
         // is `zero` (jolt-claims `spartan/outer_uniskip.rs`), so the input claim is the
         // constant zero. BlindFold still single-sources this claim from that same symbolic
         // Expr, and muldiv (host) catches any drift between the two.
-        let uniskip = uniskip::verify_clear(&uniskip_params, F::from_u64(0), transcript)?;
+        let uniskip_input_claim = PCS::Field::from_u64(0);
+        let uniskip_output_claim = claims.uniskip_output_claim;
+        let uniskip_challenge = uniskip::verify_clear(
+            uni_skip_first_round_proof,
+            &uniskip_params,
+            uniskip_input_claim,
+            uniskip_output_claim,
+            transcript,
+        )?;
 
         // Built after the uni-skip step so the relation carries `tau` and the
         // uni-skip reduction challenge; the coefficient table completes itself from
@@ -44,27 +64,36 @@ where
         // (no-op) member draw are transcript-neutral, so their position relative to
         // the uni-skip is immaterial.
         let sumchecks = Stage1BatchSumchecks {
-            outer_remainder: OuterRemainder::new(dimensions, tau, uniskip.challenge),
+            outer_remainder: OuterRemainder::new(dimensions, tau, uniskip_challenge),
         };
+        check_pow(PowSite::Stage1, pow_nonces, transcript)?;
         let batch_challenges = sumchecks.draw_challenges(transcript)?;
         let input_points = sumchecks.empty_input_points();
+
+        sumchecks.validate_output_claims(&claims.outer)?;
 
         // The remainder consumes the uni-skip's reduced opening as its input claim
         // (the relation's `input_claim` is the bare consumed opening).
         let input_values = Stage1BatchInputClaims {
-            outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip.output_claim),
+            outer_remainder: outer_remainder_input_values_from_uniskip_output(uniskip_output_claim),
         };
 
-        let (output_points, output_values) = sumchecks.verify_clear(
+        let output_points = sumchecks.verify_clear(
             &input_values,
             &input_points,
             &batch_challenges,
+            &claims.outer,
+            sumcheck_proof,
             transcript,
             1,
         )?;
 
+        // Append the 35 produced openings in canonical (declaration) order, matching
+        // the prover's commitment order.
+        sumchecks.append_output_claims(transcript, &claims.outer);
+
         return Ok(Stage1Output::Clear(Stage1ClearOutput {
-            output_values,
+            output_values: claims.outer.clone(),
             output_points,
         }));
     }

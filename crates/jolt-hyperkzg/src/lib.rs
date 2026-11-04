@@ -25,4 +25,6 @@ mod scheme;
 mod types;
 
 pub use scheme::HyperKZGScheme;
-pub use types::{HyperKZGError, HyperKZGProverSetup, HyperKZGSetupParams, HyperKZGVerifierSetup};
+pub use types::{
+    HyperKZGError, HyperKZGProof, HyperKZGProverSetup, HyperKZGSetupParams, HyperKZGVerifierSetup,
+};

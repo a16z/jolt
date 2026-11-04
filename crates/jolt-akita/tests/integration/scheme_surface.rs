@@ -1,15 +1,13 @@
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-use crate::support::{
-    assert_transcripts_agree, f, layout, new_prover_transcript, new_verifier_transcript,
-    polynomial, setup_for,
-};
+use crate::support::{f, layout, polynomial, setup_for};
 use jolt_akita::{
     AkitaBackendFlavor, AkitaChunkProfile, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
     AKITA_ONE_HOT_K16,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError};
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 /// The smallest dense dimension the checked-in catalog schedules.
 const DENSE_VARS: usize = 14;
@@ -86,33 +84,42 @@ fn single_k16_one_hot_commit_roundtrips_with_transported_verifier_setup() {
 
     let point: Vec<_> = (0..ONE_HOT_VARS).map(|index| f(index as u64 + 5)).collect();
     let eval = MultilinearPoly::evaluate(&one_hot, &point);
-    let mut prover_transcript = new_prover_transcript(b"akita-k16-transported");
-    AkitaScheme::open(
+    let mut prover_state = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-k16-transported"),
+        b"",
+    );
+    let proof = AkitaScheme::open(
         &one_hot,
         &point,
         eval,
         &prover_setup,
         Some(hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .expect("one-hot opening should prove");
-    let proof = prover_transcript.narg().to_vec();
 
     let json = serde_json::to_string(&verifier_setup).expect("verifier setup serializes");
     let transported: <AkitaScheme as CommitmentScheme>::VerifierSetup =
         serde_json::from_str(&json).expect("verifier setup deserializes");
     assert_eq!(transported, verifier_setup);
 
-    let mut verifier_transcript = new_verifier_transcript(b"akita-k16-transported", &proof);
+    let mut verifier_transcript = prover_transcript::<Blake2b512>(
+        &jolt_transcript::protocol_tag(b"akita-k16-transported"),
+        b"",
+    );
     AkitaScheme::verify(
         &commitment,
         &point,
         eval,
+        &proof,
         &transported,
         &mut verifier_transcript,
     )
     .expect("transported setup must re-derive the one-hot backend key");
-    assert_transcripts_agree(prover_transcript, verifier_transcript);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }
 
 #[test]
@@ -123,26 +130,24 @@ fn open_without_hint_recommits_deterministically() {
     let eval = poly.evaluate(&point);
     let (commitment, _) = AkitaScheme::commit(&poly, &prover_setup).expect("commit succeeds");
 
-    let mut prover_transcript = new_prover_transcript(b"akita-no-hint");
-    AkitaScheme::open(
-        &poly,
-        &point,
-        eval,
-        &prover_setup,
-        None,
-        &mut prover_transcript,
-    )
-    .expect("hint-free opening should prove");
-    let proof = prover_transcript.narg().to_vec();
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-no-hint"), b"");
+    let proof = AkitaScheme::open(&poly, &point, eval, &prover_setup, None, &mut prover_state)
+        .expect("hint-free opening should prove");
 
-    let mut verifier_transcript = new_verifier_transcript(b"akita-no-hint", &proof);
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"akita-no-hint"), b"");
     AkitaScheme::verify(
         &commitment,
         &point,
         eval,
+        &proof,
         &verifier_setup,
         &mut verifier_transcript,
     )
     .expect("hint-free proof should verify against the original commitment");
-    assert_transcripts_agree(prover_transcript, verifier_transcript);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 }

@@ -1,6 +1,6 @@
 use jolt_algebra::{Fr, One, Zero};
 use jolt_crypto::{Bn254, Bn254G1, JoltGroup, PairingGroup};
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::FieldTranscript;
 
 use crate::{HyperKZGError, HyperKZGProverSetup, HyperKZGVerifierSetup};
 
@@ -16,20 +16,19 @@ impl HyperKZGProverSetup {
         Ok(Bn254G1::msm(bases, coefficients))
     }
 
-    /// Sends the evaluations at `points` and the batched KZG witnesses.
-    pub(crate) fn open_batch<H: Sponge>(
+    pub(crate) fn open_batch(
         &self,
         polynomials: &[Vec<Fr>],
         points: [Fr; 3],
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), HyperKZGError> {
-        let mut evaluations = points.map(|point| {
+        transcript: &mut impl FieldTranscript<Fr>,
+    ) -> Result<([Bn254G1; 3], [Vec<Fr>; 3]), HyperKZGError> {
+        let evaluations = points.map(|point| {
             polynomials
                 .iter()
                 .map(|coefficients| evaluate(coefficients, point))
                 .collect::<Vec<_>>()
         });
-        let powers = exchange_evaluations(&mut evaluations, transcript)?;
+        let powers = absorb_evaluations(&evaluations, transcript)?;
         let first = polynomials.first().ok_or(HyperKZGError::PolynomialShape)?;
         let mut combined = vec![Fr::zero(); first.len()];
         for (polynomial, weight) in polynomials.iter().zip(powers) {
@@ -38,37 +37,35 @@ impl HyperKZGProverSetup {
             }
         }
         let [a, b, c] = points.map(|point| self.commit_coefficients(&quotient(&combined, point)));
-        let mut witnesses = [a?, b?, c?];
-        let _ = exchange_witnesses(&mut witnesses, transcript)?;
-        Ok(())
+        let witnesses = [a?, b?, c?];
+        let _ = absorb_witnesses(&witnesses, transcript)?;
+        Ok((witnesses, evaluations))
     }
 }
 
 impl HyperKZGVerifierSetup {
-    /// Receives the KZG witnesses for `evaluations` (already received, with
-    /// their batching `powers`) and checks the batched pairing equation.
-    pub(crate) fn verify_batch<H: Sponge>(
+    pub(crate) fn verify_batch(
         &self,
         commitments: &[Bn254G1],
         points: [Fr; 3],
         evaluations: &[Vec<Fr>; 3],
-        powers: &[Fr],
-        transcript: &mut VerifierTranscript<'_, H>,
+        witnesses: &[Bn254G1; 3],
+        transcript: &mut impl FieldTranscript<Fr>,
     ) -> Result<(), HyperKZGError> {
-        let mut witnesses = [Bn254G1::identity(); 3];
-        let d = exchange_witnesses(&mut witnesses, transcript)?;
+        let powers = absorb_evaluations(evaluations, transcript)?;
+        let d = absorb_witnesses(witnesses, transcript)?;
         let weights = [Fr::one(), d, d * d];
         let scale = weights.iter().copied().sum::<Fr>();
-        let mut lhs = Bn254G1::msm(commitments, powers).scalar_mul(&scale);
+        let mut lhs = Bn254G1::msm(commitments, &powers).scalar_mul(&scale);
         let mut rhs = Bn254G1::identity();
         let mut evaluation = Fr::zero();
         for (((row, point), witness), weight) in
-            evaluations.iter().zip(points).zip(&witnesses).zip(weights)
+            evaluations.iter().zip(points).zip(witnesses).zip(weights)
         {
             evaluation += weight
                 * row
                     .iter()
-                    .zip(powers)
+                    .zip(&powers)
                     .map(|(value, power)| *value * power)
                     .sum::<Fr>();
             lhs += witness.scalar_mul(&(point * weight));
@@ -82,30 +79,27 @@ impl HyperKZGVerifierSetup {
     }
 }
 
-/// Exchanges the three evaluation rows, then draws the batching powers.
-pub(crate) fn exchange_evaluations<C: Channel>(
-    evaluations: &mut [Vec<Fr>; 3],
-    channel: &mut C,
+fn absorb_evaluations(
+    evaluations: &[Vec<Fr>; 3],
+    transcript: &mut impl FieldTranscript<Fr>,
 ) -> Result<Vec<Fr>, HyperKZGError> {
-    for row in evaluations.iter_mut() {
-        channel.exchange_all(row)?;
+    for row in evaluations {
+        for value in row {
+            transcript.append(value);
+        }
     }
-    let q: Fr = channel.challenge();
     let [first, _, _] = evaluations;
-    Ok(
-        std::iter::successors(Some(Fr::one()), |power| Some(*power * q))
-            .take(first.len())
-            .collect(),
-    )
+    Ok(transcript.challenge_powers(first.len())?)
 }
 
-/// Exchanges the three KZG witnesses, then draws their combination weight.
-fn exchange_witnesses<C: Channel>(
-    witnesses: &mut [Bn254G1; 3],
-    channel: &mut C,
+fn absorb_witnesses(
+    witnesses: &[Bn254G1; 3],
+    transcript: &mut impl FieldTranscript<Fr>,
 ) -> Result<Fr, HyperKZGError> {
-    channel.exchange_all(witnesses)?;
-    Ok(channel.challenge())
+    for witness in witnesses {
+        transcript.append(witness);
+    }
+    Ok(transcript.challenge()?)
 }
 
 fn evaluate(coefficients: &[Fr], point: Fr) -> Fr {

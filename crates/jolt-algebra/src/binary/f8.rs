@@ -1,12 +1,8 @@
 use super::inverse;
-use crate::{
-    CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator, Ring,
-    WithAccumulator,
-};
+use crate::{CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring, WithAccumulator};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use rand_core::RngCore;
-use spongefish::{Encoding, NargDeserialize, VerificationResult};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// `F_2[x]/(x^8 + x^4 + x^3 + x + 1)`, with bit i the coefficient of x^i.
@@ -103,26 +99,10 @@ impl CanonicalBytes for F8 {
     }
 }
 
-impl Encoding<[u8]> for F8 {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        crate::narg::encode(self)
-    }
-}
-
-impl CanonicalDecode for F8 {
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        Some(Self(u8::from_le_bytes(bytes.try_into().ok()?)))
-    }
-}
-
-impl NargDeserialize for F8 {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        crate::narg::deserialize(buf)
-    }
-}
-
 impl CanonicalEncoding for F8 {
     const MODULUS_BITS: u32 = 9;
+    /// The canonical encoding: a bijection onto the field.
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [1 << 8, 0, 0, 0];
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut word = [0; 1];
@@ -130,6 +110,10 @@ impl CanonicalEncoding for F8 {
             *dest = *src;
         }
         Self(u8::from_le_bytes(word))
+    }
+
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        Some(Self(u8::from_le_bytes(bytes.try_into().ok()?)))
     }
 
     fn to_u128_checked(&self) -> Option<u128> {
@@ -147,13 +131,10 @@ impl CanonicalEncoding for F8 {
     fn num_bits(&self) -> u32 {
         u8::BITS - self.0.leading_zeros()
     }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl WithAccumulator for F8 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = NaiveAccumulator<Self>;
     type SmallScalarAccumulator = NaiveAccumulator<Self>;
     type SignedProductAccumulator = NaiveAccumulator<Self>;

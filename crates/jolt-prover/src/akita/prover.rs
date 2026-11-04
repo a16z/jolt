@@ -1,47 +1,57 @@
 //! The Akita top-level prover: the stage recipes run in protocol order on
-//! one transcript and one backend session, and the transcript's argument
-//! string is the [`JoltProof`]; Akita's opening messages are its tail.
+//! one transcript and one backend session, and their wire outputs assemble
+//! into the Akita-envelope [`JoltProof`].
 
 use common::jolt_device::JoltDevice;
 use jolt_akita::TraceOneHotCommitment;
-use jolt_algebra::JoltField;
 use jolt_crypto::VectorCommitment;
+use jolt_algebra::{CanonicalBytes, JoltField};
 use jolt_openings::{
     CommitmentScheme, GroupCommitmentMetadata, GroupSetupMetadata, TransparentObjectSetup,
 };
-use jolt_transcript::Sponge;
-use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
-use jolt_verifier::proof::JoltProof;
+use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_verifier::config::JoltProtocolConfig;
+use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
-use super::spine::{mark_region, prove_stages_1_to_7};
 use super::stage0::prove_stage0;
 use super::stage8::prove_stage8;
 use super::witness::AdviceObject;
 use crate::boundary::finish_stage;
-use crate::ProofMode;
-use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
+use crate::stages::stage1::prove_stage1;
+use crate::stages::stage2::prove_stage2;
+use crate::stages::stage3::prove_stage3;
+use crate::stages::stage4::prove_stage4;
+use crate::stages::stage5::prove_stage5;
+use crate::stages::stage6a::prove_stage6a;
+use crate::stages::stage6b::prove_stage6b;
+use crate::stages::stage7::prove_stage7;
+use crate::{JoltProverPreprocessing, ProofMode, ProverConfig, ProverError};
 use jolt_kernels::{JoltBackend, KernelContext};
 
-/// Proves one execution in protocol order on one transcript.
+/// See [`super::prove`].
 #[tracing::instrument(skip_all, name = "jolt_prover::prove", fields(trace_length = config.trace_length))]
-pub fn prove<F, PCS, VC, H>(
+pub fn prove<F, PCS, VC, T>(
     mut backend: KernelContext<'_, F, JoltBackend<F, PCS>>,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     trusted_advice: Option<&AdviceObject<PCS>>,
     public_io: &JoltDevice,
-) -> Result<JoltProof, ProverError<F>>
+) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField,
+    F: JoltField + CanonicalBytes + Encoding,
     PCS: CommitmentScheme<Field = F> + TraceOneHotCommitment + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
-    PCS::Output: Clone + PartialEq + GroupCommitmentMetadata,
+    PCS::Output: Clone + PartialEq + Encoding + GroupCommitmentMetadata,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    VC::Output: Clone + Encoding,
+    T: FieldTranscript<F> + ProverInit,
 {
+    // The clear Akita prover: the Whiteout build proves through
+    // `super::whiteout`, so the mode context here carries nothing.
     let mut mode = ProofMode::<VC>::clear();
-    let stage0 = prove_stage0::<F, PCS, VC, H>(
+    let stage0 = prove_stage0::<F, PCS, VC, T>(
         &mut backend,
         preprocessing,
         config,
@@ -50,19 +60,93 @@ where
     )?;
     let log_t = config.trace_length.ilog2() as usize;
     finish_stage("stage0", log_t, backend.session(), &());
+    let checked = stage0.checked;
     let mut transcript = stage0.transcript;
-    mark_region("stage0", &transcript);
-    let (stage4, stage6b, stage7) = prove_stages_1_to_7::<F, PCS, VC, H>(
+
+    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mut mode, log_t, &mut transcript)?;
+    finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
+    let stage2 = prove_stage2::<F, PCS, VC, T>(
         &mut backend,
         &mut mode,
-        &stage0.checked,
         config,
-        preprocessing,
         public_io,
+        &stage1.clear_output,
         &mut transcript,
     )?;
-    prove_stage8::<F, PCS, VC, H>(
-        &stage0.checked,
+    finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
+    let stage3 = prove_stage3::<F, PCS, VC, T>(
+        &mut backend,
+        &mut mode,
+        config,
+        &stage1.clear_output,
+        &stage2.clear_output,
+        &mut transcript,
+    )?;
+    finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
+    let stage4 = prove_stage4::<F, PCS, VC, T>(
+        &mut backend,
+        &mut mode,
+        &checked,
+        config,
+        preprocessing,
+        &stage2.clear_output,
+        &stage3.clear_output,
+        &mut transcript,
+    )?;
+    finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
+    let stage5 = prove_stage5::<F, PCS, VC, T>(
+        &mut backend,
+        &mut mode,
+        &checked,
+        config,
+        preprocessing,
+        &stage2.clear_output,
+        &stage4.clear_output,
+        &mut transcript,
+    )?;
+    finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
+    let stage6a = prove_stage6a::<F, PCS, VC, T>(
+        &mut backend,
+        &mut mode,
+        &checked,
+        config,
+        preprocessing,
+        &stage1.clear_output,
+        &stage2.clear_output,
+        &stage3.clear_output,
+        &stage4.clear_output,
+        &stage5.clear_output,
+        &mut transcript,
+    )?;
+    finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
+    let stage6b = prove_stage6b::<F, PCS, VC, T>(
+        &mut backend,
+        &mut mode,
+        &checked,
+        config,
+        preprocessing,
+        &stage1.clear_output,
+        &stage2.clear_output,
+        &stage3.clear_output,
+        &stage4.clear_output,
+        &stage5.clear_output,
+        &stage6a.clear_output,
+        &mut transcript,
+    )?;
+    finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
+    let stage7 = prove_stage7::<F, PCS, VC, T>(
+        &mut backend,
+        &mut mode,
+        &checked,
+        config,
+        preprocessing,
+        &stage4.clear_output,
+        &stage6b.clear_output,
+        &mut transcript,
+    )?;
+    finish_stage("stage7", log_t, backend.session(), &stage7.clear_output);
+    let (joint_opening_proof, stage8_pow_nonce) = prove_stage8::<F, PCS, VC, T>(
+        &checked,
         config,
         preprocessing,
         &stage0.commitment,
@@ -76,17 +160,66 @@ where
             .committed_program
             .as_ref()
             .map(|data| &data.direct_program),
-        &stage4,
-        &stage6b,
-        &stage7,
+        &stage4.clear_output,
+        &stage6b.clear_output,
+        &stage7.clear_output,
         &mut transcript,
     )?;
-    mark_region("stage8", &transcript);
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 
+    let pow_nonces = StagePowNonces::from_iter([
+        (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+        (PowSite::Stage1, stage1.pow_nonce),
+        (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+        (PowSite::Stage2, stage2.pow_nonce),
+        (PowSite::Stage3, stage3.pow_nonce),
+        (PowSite::Stage4, stage4.pow_nonce),
+        (PowSite::Stage5, stage5.pow_nonce),
+        (PowSite::Stage6a, stage6a.pow_nonce),
+        (PowSite::Stage6b, stage6b.pow_nonce),
+        (PowSite::Stage7, stage7.pow_nonce),
+        (PowSite::Stage8, stage8_pow_nonce),
+    ]);
+
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(ZkConfig::Transparent),
-        narg: transcript.finish(),
+        protocol: JoltProtocolConfig::for_zk(false),
+        commitments: stage0.commitment,
+        fused_inc_commitment: Some(stage0.fused_inc.commitment),
+        stages: JoltStageProofs {
+            stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
+            stage1_sumcheck_proof: stage1.sumcheck_proof,
+            stage2_uni_skip_first_round_proof: stage2.uniskip_proof,
+            stage2_sumcheck_proof: stage2.sumcheck_proof,
+            stage3_sumcheck_proof: stage3.sumcheck_proof,
+            stage4_sumcheck_proof: stage4.sumcheck_proof,
+            stage5_sumcheck_proof: stage5.sumcheck_proof,
+            stage6a_sumcheck_proof: stage6a.sumcheck_proof,
+            stage6b_sumcheck_proof: stage6b.sumcheck_proof,
+            stage7_sumcheck_proof: stage7.sumcheck_proof,
+            pow_nonces,
+        },
+        joint_opening_proof,
+        untrusted_advice_commitment: stage0
+            .untrusted_advice
+            .map(|object| object.commitment.clone()),
+        #[cfg(feature = "field-inline")]
+        field_inc_commitment: Some(stage0.field_inc.commitment),
+        claims: JoltProofClaims::Clear(ClearProofClaims {
+            stage1: stage1.claims,
+            stage2: stage2.claims,
+            stage3: stage3.claims,
+            stage4: stage4.claims,
+            stage5: stage5.claims,
+            stage6a: stage6a.claims,
+            stage6b: stage6b.claims,
+            stage7: stage7.claims,
+        }),
+        trace_length: config.trace_length,
+        ram_K: config.ram_K,
+        rw_config: config.rw_config,
+        one_hot_config: config.one_hot_config,
+        trace_polynomial_order: config.trace_polynomial_order,
+        narg: transcript.narg_string().to_vec(),
     })
 }

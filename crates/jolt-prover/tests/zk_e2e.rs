@@ -33,9 +33,8 @@ mod zk {
     use jolt_prover::zk_secrets::{self, ZkSecrets};
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_riscv::JoltTraceRow;
-    use jolt_transcript::VerifierTranscript;
-    use jolt_verifier::proof::JoltProof;
-    use jolt_verifier::JoltSponge;
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
     use jolt_verifier::{
         jolt_protocol_id, verify_stages, MaskedStages, VerifiedStages, JOLT_SESSION,
@@ -46,7 +45,7 @@ mod zk {
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
 
-    type Proof = JoltProof;
+    type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 
     struct ProvedGuest {
         preprocessing: DoryProverPreprocessing,
@@ -105,14 +104,15 @@ mod zk {
             jolt_prover::dory::commit_trusted_advice(&preprocessing, &case.trusted_advice)
                 .expect("trusted advice commitment")
         });
-        let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
-            backend.with_witness(&witness),
-            &preprocessing,
-            &config,
-            trusted.as_ref(),
-            &public_io,
-        )
-        .expect("modular ZK prove");
+        let proof =
+            jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+                backend.with_witness(&witness),
+                &preprocessing,
+                &config,
+                trusted.as_ref(),
+                &public_io,
+            )
+            .expect("modular ZK prove");
         ProvedGuest {
             trusted_advice_commitment: trusted.map(|entry| entry.commitment),
             preprocessing,
@@ -126,7 +126,7 @@ mod zk {
     }
 
     fn verify(proved: &ProvedGuest) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &proved.preprocessing.verifier,
             &proved.public_io,
             &proved.proof,
@@ -144,6 +144,7 @@ mod zk {
                 proved.proof.protocol,
                 JoltProtocolConfig::for_zk(ZkConfig::BlindFold)
             );
+            assert!(matches!(proved.proof.claims, JoltProofClaims::Zk { .. }));
             verify(&proved).expect("modular ZK proof must verify");
         });
     }
@@ -311,28 +312,11 @@ mod zk {
     fn zk_muldiv_tampered_blindfold_is_rejected() {
         with_zk_stack(|| {
             let mut proved = prove_muldiv(JoltBackend::reference());
-            // The argument string ends with BlindFold's openings.
-            *proved.proof.narg.last_mut().expect("non-empty proof") ^= 1;
+            let JoltProofClaims::Zk { blindfold_proof } = &mut proved.proof.claims else {
+                panic!("ZK proof must carry BlindFold claims");
+            };
+            blindfold_proof.random_u += Fr::from_u64(1);
             assert!(verify(&proved).is_err());
-        });
-    }
-
-    #[test]
-    fn zk_advice_consumer_modular_proof_is_accepted() {
-        with_zk_stack(|| {
-            let proved = prove_guest(
-                GuestCase {
-                    inputs: postcard::to_stdvec(&12u64).expect("serialize input"),
-                    untrusted_advice: postcard::to_stdvec(&5u64)
-                        .expect("serialize untrusted advice"),
-                    trusted_advice: postcard::to_stdvec(&7u64).expect("serialize trusted advice"),
-                    ..GuestCase::new("advice-consumer-guest")
-                },
-                JoltBackend::reference(),
-                |_| {},
-            );
-            assert!(!proved.public_io.untrusted_advice.is_empty());
-            verify(&proved).expect("modular ZK advice proof must verify");
         });
     }
 
@@ -353,15 +337,16 @@ mod zk {
                 ),
                 JoltVmWitnessInputs::new(&run.program, &program_preprocessing, run.trace),
             );
-            let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
-                JoltBackend::reference().with_witness(&witness),
-                &preprocessing,
-                &config,
-                None,
-                &public_io,
-            )
-            .expect("committed ZK prove");
-            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+            let proof =
+                jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+                    JoltBackend::reference().with_witness(&witness),
+                    &preprocessing,
+                    &config,
+                    None,
+                    &public_io,
+                )
+                .expect("committed ZK prove");
+            jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
                 &preprocessing.verifier,
                 &public_io,
                 &proof,

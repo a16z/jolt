@@ -27,8 +27,10 @@ use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_claims::protocols::jolt::geometry::registers::rd_inc_val_evaluation;
 use jolt_claims::protocols::jolt::{JoltDerivedId, RegistersValEvaluationPublic};
-use jolt_poly::{EqPolynomial, UnivariatePoly};
+use jolt_poly::{bind_prefix_in_place, EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
+#[cfg(feature = "parallel")]
+use jolt_utils::par_collect_windows;
 use jolt_verifier::stages::relations::{
     ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints, SumcheckOutputPoints,
 };
@@ -43,8 +45,7 @@ use rayon::prelude::*;
 use super::prefix_product::PrefixColumn;
 use super::registers_read_write::{RegisterCycleRow, SharedRdIndices};
 use super::support::{
-    bind_prefix_pairs, collect_rows, pin_derived_term, triple_product_round_evals, BundleStore,
-    RoundProgress, SplitLt,
+    collect_rows, pin_derived_term, triple_product_round_evals, BundleStore, RoundProgress, SplitLt,
 };
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -117,7 +118,9 @@ impl<F: JoltField> WaState<F> {
                 let dense: Vec<F> = (0..half).map(bind_pair).collect();
                 *self = Self::Bound(dense);
             }
-            Self::Bound(values) => bind_prefix_pairs(values, r, F::zero()),
+            Self::Bound(values) => {
+                let _ = bind_prefix_in_place(values, r, F::zero());
+            }
         }
     }
 
@@ -252,10 +255,7 @@ impl<F: JoltField> ValEvaluationKernel<F> {
                     Ok(lo + challenge * (hi - lo))
                 };
                 #[cfg(feature = "parallel")]
-                let table = (0..half)
-                    .into_par_iter()
-                    .map(bound)
-                    .collect::<Result<Vec<F>, _>>()?;
+                let table = par_collect_windows(half, bound)?;
                 #[cfg(not(feature = "parallel"))]
                 let table = (0..half).map(bound).collect::<Result<Vec<F>, _>>()?;
                 self.inc = IncState::Dense(PrefixColumn {

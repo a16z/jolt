@@ -10,6 +10,8 @@ pub struct Attributes {
     pub wasm: bool,
     pub nightly: bool,
     pub guest_only: bool,
+    /// Opt-in guest return expression for decoding errors or nonzero public-input padding.
+    pub input_error: Option<Expr>,
     /// Optional cargo profile name to use for guest builds (e.g. "guest", "release").
     pub profile: Option<String>,
     pub heap_size: u64,
@@ -36,6 +38,7 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
     let mut attributes = HashMap::<_, u64>::new();
     let mut wasm = false;
     let mut guest_only = false;
+    let mut input_error = None;
     let mut nightly = false;
     let mut profile: Option<String> = None;
     let mut backtrace: Option<String> = None;
@@ -43,6 +46,10 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
     for meta in attr {
         match meta {
             Meta::NameValue(MetaNameValue { path, value, .. }) => {
+                if path.is_ident("input_error") {
+                    input_error = Some(value.clone());
+                    continue;
+                }
                 let ident = &path.get_ident().expect("Expected identifier");
                 let lit = match value {
                     Expr::Lit(ExprLit { lit, .. }) => lit,
@@ -123,6 +130,7 @@ pub fn parse_attributes(attr: &Punctuated<Meta, Comma>) -> Attributes {
         wasm,
         nightly,
         guest_only,
+        input_error,
         profile,
         heap_size,
         stack_size,

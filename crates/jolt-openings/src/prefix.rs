@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 
 use jolt_algebra::JoltField;
 use jolt_poly::{eq_index_msb, Point, HIGH_TO_LOW};
-use jolt_transcript::Channel;
+use jolt_transcript::FieldTranscript;
 
 use crate::{EvaluationClaim, OpeningsError};
 
@@ -193,14 +193,14 @@ where
 
     /// Binds the semantic statement, samples the selector, and returns the
     /// corresponding claim on the physical polynomial.
-    pub fn reduce_claims<F, C>(
+    pub fn reduce_claims<F, T>(
         &self,
         claims: &PrefixPackedClaims<F>,
-        transcript: &mut C,
+        transcript: &mut T,
     ) -> Result<EvaluationClaim<F>, OpeningsError>
     where
         F: JoltField,
-        C: Channel,
+        T: FieldTranscript<F>,
     {
         let selection = self.select(
             &claims.layout_digest,
@@ -226,7 +226,7 @@ where
     ) -> Result<PrefixSelection<F>, OpeningsError>
     where
         F: JoltField,
-        C: Channel,
+        C: FieldTranscript<F>,
     {
         if point.len() != self.logical_num_vars {
             return Err(OpeningsError::InvalidBatch(format!(
@@ -243,16 +243,16 @@ where
             )));
         }
 
-        transcript.public(&(self.logical_num_vars as u64));
-        transcript.public(&(self.slot_capacity as u64));
-        transcript.public(layout_digest);
-        transcript.public_all(point);
+        transcript.append(&(self.logical_num_vars as u64));
+        transcript.append(&(self.slot_capacity as u64));
+        transcript.append(layout_digest);
+        transcript.append_values(point);
         match evaluations {
-            PackedEvaluations::Clear(evaluations) => transcript.public_all(evaluations),
+            PackedEvaluations::Clear(evaluations) => transcript.append_values(evaluations),
             PackedEvaluations::Masked { .. } => {}
         }
 
-        let selector = transcript.challenges_small(self.selector_num_vars);
+        let selector = transcript.challenge_vector(self.selector_num_vars)?;
         let packed_point = self.pack_point(&selector, point)?;
         let weights = self.slot_weights(&selector)?;
         Ok(PrefixSelection {

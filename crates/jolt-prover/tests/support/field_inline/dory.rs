@@ -3,14 +3,14 @@ use jolt_algebra::Fr;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_prover::{dory, JoltBackend, JoltSharedPreprocessing, ProverConfig, ProverError};
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_verifier::proof::JoltProof;
-use jolt_verifier::JoltSponge;
 use jolt_verifier::{JoltVerifierPreprocessing, VerifierError};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 use crate::support::{self, GuestCase, PreparedGuest};
 
-pub type Proof = JoltProof;
+pub type Proof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 pub type VerifierPreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
 pub fn prove(
@@ -56,7 +56,7 @@ pub fn try_prove(
     )
     .with_field_inline()
     .expect("field-inline witness view");
-    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+    let proof = dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &preprocessing,
         &config,
@@ -71,7 +71,7 @@ pub fn verify_full(
     public_io: &JoltDevice,
     proof: &Proof,
 ) -> Result<(), VerifierError> {
-    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+    jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
         preprocessing,
         public_io,
         proof,

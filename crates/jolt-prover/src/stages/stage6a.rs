@@ -22,8 +22,11 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
-use jolt_verifier::sites::STAGE6A;
+use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
+
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage1::Stage1ClearOutput;
 use jolt_verifier::stages::stage2::outputs::Stage2ClearOutput;
 use jolt_verifier::stages::stage3::outputs::Stage3ClearOutput;
@@ -35,22 +38,28 @@ use jolt_verifier::stages::stage6a::bytecode_read_raf::bytecode_read_raf_address
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage6a::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
 use jolt_verifier::stages::stage6a::outputs::{
-    Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aSumchecks,
+    Stage6aCarriedChallenges, Stage6aClearOutput, Stage6aInputClaims, Stage6aOutputClaims,
+    Stage6aSumchecks,
 };
 use jolt_verifier::CheckedInputs;
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
-/// Stage 6a's outputs: the verifier-typed cross-stage carrier stage 6b consumes.
-pub struct Stage6aProverOutput<F: JoltField> {
+/// Stage 6a's outputs: the wire proof, the wire claims, and the verifier-typed
+/// cross-stage carrier stage 6b consumes.
+pub struct Stage6aProverOutput<F: JoltField, C> {
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u64>,
+    pub sumcheck_proof: SumcheckProof<F, C>,
+    pub claims: Stage6aOutputClaims<F>,
     pub clear_output: Stage6aClearOutput<F>,
 }
 
 /// Prove stage 6a on `transcript` (positioned at the stage-5 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage6a<F, PCS, VC, H>(
+pub fn prove_stage6a<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &mut ProofMode<VC>,
     checked: &CheckedInputs,
@@ -61,15 +70,14 @@ pub fn prove_stage6a<F, PCS, VC, H>(
     stage3: &Stage3ClearOutput<F>,
     stage4: &Stage4ClearOutput<F>,
     stage5: &Stage5ClearOutput<F>,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<Stage6aProverOutput<F>, ProverError<F>>
+    transcript: &mut T,
+) -> Result<Stage6aProverOutput<F, VC::Output>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    transcript.site(STAGE6A);
     let formula_dimensions = super::formula_dimensions(
         checked,
         config,
@@ -104,6 +112,7 @@ where
     // then the booleanity member's override (the reference-address pad draw
     // and the gamma). The 6a verifier only carries the booleanity values; this
     // prover's booleanity kernel consumes them off the challenge aggregate.
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage6a, transcript)?;
     let address_challenges = sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -150,8 +159,13 @@ where
         mode.recorder(),
         transcript,
     )?;
+    #[cfg(not(feature = "zk"))]
+    let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage6aProverOutput {
+        pow_nonce,
+        sumcheck_proof,
+        claims: proved.output_claims.clone(),
         clear_output: Stage6aClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,
@@ -160,10 +174,15 @@ where
     })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-6a recipe through
-/// the production stage-1..6a verifiers over the prover's argument string, on
-/// the field-active arithmetic trace: the appendage openings are nonzero, so
-/// the address kernel's field-inline stage-value legs are exercised for real.
+/// Clear round-trips with field-inline enabled of the stage-6a recipe against the verifier's own
+/// public constituents — `stage6a::verify`'s clear body (the batch built by
+/// the promoted `build_from_parts` with the field-register access geometry on the bytecode
+/// member, the field-inline appendage composition, the composed input claim with its
+/// gamma-power extension) on a twin transcript positioned by the stage-1..5
+/// replays, on the field-active arithmetic trace: the appendage openings are
+/// nonzero, so the address kernel's field-inline stage-value legs are exercised for
+/// real (round 0's engine check pins the composed input claim to the
+/// summand).
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
@@ -171,13 +190,12 @@ mod field_inline_round_trip {
     use jolt_algebra::{Fr, Ring};
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_verifier::JoltSponge;
+    use jolt_transcript::{prover_transcript, Keccak, ProverState};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
-        test_checked_inputs, test_mode, test_prover_config, test_public_io, verify_through,
-        Through,
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs, test_mode,
+        test_prover_config, test_public_io, twins,
     };
 
     #[test]
@@ -191,7 +209,10 @@ mod field_inline_round_trip {
         let checked = test_checked_inputs();
         let preprocessing = field_arithmetic_preprocessing();
 
-        let mut prover_transcript = fixture_transcript();
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage6a-field-inline"),
+            b"",
+        );
         let (((stage1, stage2, stage3), stage4), stage5) = FixtureProver {
             backend: &mut context,
             mode: &mut mode,
@@ -199,10 +220,10 @@ mod field_inline_round_trip {
             public_io: &public_io,
             checked: &checked,
             preprocessing: &preprocessing,
-            transcript: &mut prover_transcript,
+            transcript: &mut prover_state,
         }
         .through_stage5();
-        let _stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        let out = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mut mode,
             &checked,
@@ -213,7 +234,7 @@ mod field_inline_round_trip {
             &stage3.clear_output,
             &stage4.clear_output,
             &stage5.clear_output,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
@@ -228,11 +249,47 @@ mod field_inline_round_trip {
         let zero = Fr::from_u64(0);
         assert!(appendage.rd_wa_read_write != zero);
 
-        verify_through(
-            Through::Stage6a,
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage6a-field-inline"),
+            b"",
+        );
+        twins::replay_stage1(&mut transcript, &stage1);
+        twins::replay_stage2(&mut transcript, &config, &public_io, &stage1, &stage2);
+        twins::replay_stage3(&mut transcript, &stage1, &stage2, &stage3);
+        twins::replay_stage4(
+            &mut transcript,
+            &config,
             &checked,
             &preprocessing,
-            &mut prover_transcript,
+            &stage2,
+            &stage3,
+            &stage4,
+        );
+        twins::replay_stage5(
+            &mut transcript,
+            &config,
+            &checked,
+            &preprocessing,
+            &stage2,
+            &stage4,
+            &stage5,
+        );
+        twins::replay_stage6a(
+            &mut transcript,
+            &config,
+            &checked,
+            &preprocessing,
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            &out,
+        );
+
+        assert_eq!(
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
         );
     }
 }

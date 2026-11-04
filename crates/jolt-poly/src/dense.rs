@@ -37,6 +37,115 @@ pub struct Polynomial<T> {
     num_vars: usize,
 }
 
+/// Binds adjacent evaluation pairs in place, with `boundary` supplying the
+/// missing high entry of an odd-length prefix. The implicit suffix itself
+/// is the caller's responsibility. Returns whether backing storage shrank.
+pub fn bind_prefix_in_place<F: JoltField>(values: &mut Vec<F>, scalar: F, boundary: F) -> bool {
+    bind_prefix_waves(values, scalar, &[boundary], |dst, src| {
+        let write = |(k, out): (usize, &mut F)| {
+            let lo = src[2 * k];
+            *out = scalar.mul_add(src[2 * k + 1] - lo, lo);
+        };
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            dst.par_iter_mut()
+                .enumerate()
+                .with_min_len(min_parallel_binds::<F>())
+                .for_each(write);
+        }
+        #[cfg(not(feature = "parallel"))]
+        dst.iter_mut().enumerate().for_each(write);
+    })
+}
+
+/// Row-major [`bind_prefix_in_place`]: `values` holds whole rows of
+/// `boundary.len()` columns, adjacent rows bind column-wise, and `boundary`
+/// supplies the missing high row of an odd-length prefix.
+pub fn bind_prefix_rows_in_place<F: JoltField>(
+    values: &mut Vec<F>,
+    scalar: F,
+    boundary: &[F],
+) -> bool {
+    let columns = boundary.len();
+    bind_prefix_waves(values, scalar, boundary, |dst, src| {
+        let write = |(out, pair): (&mut [F], &[F])| {
+            let (lo, hi) = pair.split_at(columns);
+            bind_row(scalar, out, lo, hi);
+        };
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            dst.par_chunks_exact_mut(columns)
+                .zip(src.par_chunks_exact(2 * columns))
+                .with_min_len(min_parallel_binds::<F>().div_ceil(columns))
+                .for_each(write);
+        }
+        #[cfg(not(feature = "parallel"))]
+        dst.chunks_exact_mut(columns)
+            .zip(src.chunks_exact(2 * columns))
+            .for_each(write);
+    })
+}
+
+#[cfg(feature = "parallel")]
+fn min_parallel_binds<F: JoltField>() -> usize {
+    if F::NUM_BYTES <= 16 {
+        1 << 14
+    } else {
+        1 << 10
+    }
+}
+
+#[inline]
+fn bind_row<F: JoltField>(scalar: F, out: &mut [F], lo: &[F], hi: &[F]) {
+    for ((out, &lo), &hi) in out.iter_mut().zip(lo).zip(hi) {
+        *out = scalar.mul_add(hi - lo, lo);
+    }
+}
+
+/// The in-place dyadic wave schedule over rows of `boundary.len()` values.
+/// `bind_wave(dst, src)` binds the complete row pairs of `src` into `dst`.
+///
+/// Each wave writes below its source window, so parallel writes never
+/// overwrite an unread entry. No second field buffer is allocated.
+fn bind_prefix_waves<F: JoltField>(
+    values: &mut Vec<F>,
+    scalar: F,
+    boundary: &[F],
+    bind_wave: impl Fn(&mut [F], &[F]),
+) -> bool {
+    let columns = boundary.len();
+    let rows = values.len().checked_div(columns).unwrap_or(0);
+    if rows == 0 {
+        return false;
+    }
+    let (first, rest) = values.split_at_mut(columns);
+    let hi = rest.get(..columns).unwrap_or(boundary);
+    for (lo, &hi) in first.iter_mut().zip(hi) {
+        *lo = scalar.mul_add(hi - *lo, *lo);
+    }
+    let mut start = 2;
+    while start < rows {
+        let count = (rows - start).min(start);
+        let (head, tail) = values.split_at_mut(start * columns);
+        let dst = &mut head[start / 2 * columns..(start / 2 + count.div_ceil(2)) * columns];
+        let (complete, odd) = dst.split_at_mut(count / 2 * columns);
+        let src = &tail[..count * columns];
+        bind_wave(complete, &src[..count / 2 * 2 * columns]);
+        if count % 2 != 0 {
+            bind_row(scalar, odd, &src[(count - 1) * columns..], boundary);
+        }
+        start *= 2;
+    }
+    values.truncate(rows.div_ceil(2) * columns);
+    let shrink = values.capacity() >= 8 * values.len().max(1);
+    if shrink {
+        values.shrink_to_fit();
+    }
+    shrink
+}
+
 #[derive(Deserialize)]
 #[serde(bound(deserialize = "T: for<'a> Deserialize<'a>"))]
 struct PolynomialRaw<T> {
@@ -268,39 +377,9 @@ impl<F: JoltField> Polynomial<F> {
     pub fn bind_low_to_high_in_place(&mut self, scalar: F) -> bool {
         assert!(self.num_vars > 0, "cannot bind a zero-variable polynomial");
         debug_assert!(self.evals.len().is_power_of_two());
-        let half = self.evals.len() / 2;
-
-        let (lo, hi) = (self.evals[0], self.evals[1]);
-        self.evals[0] = scalar.mul_add(hi - lo, lo);
-        let mut e = 2;
-        while e <= half {
-            let (head, tail) = self.evals.split_at_mut(e);
-            let dst = &mut head[e / 2..];
-            let src = &tail[..e];
-            let write = |(k, out): (usize, &mut F)| {
-                let lo = src[2 * k];
-                *out = scalar.mul_add(src[2 * k + 1] - lo, lo);
-            };
-            #[cfg(feature = "parallel")]
-            {
-                use rayon::prelude::*;
-                dst.par_iter_mut()
-                    .enumerate()
-                    .with_min_len(1 << 10)
-                    .for_each(write);
-            }
-            #[cfg(not(feature = "parallel"))]
-            dst.iter_mut().enumerate().for_each(write);
-            e *= 2;
-        }
-        self.evals.truncate(half);
-
+        let shrunk = bind_prefix_in_place(&mut self.evals, scalar, F::zero());
         self.num_vars -= 1;
-        let shrink = self.evals.capacity() >= 8 * self.evals.len().max(1);
-        if shrink {
-            self.evals.shrink_to_fit();
-        }
-        shrink
+        shrunk
     }
 
     /// Binds the LSB variable, writing the result into a caller-provided scratch buffer.
@@ -884,5 +963,57 @@ mod tests {
         }
         assert_eq!(lo_to_hi.len(), 1);
         assert_eq!(lo_to_hi.evaluations()[0], poly.evaluate(&point));
+    }
+    #[test]
+    fn prefix_rows_binding_matches_each_column() {
+        let columns = 3;
+        for live in [0usize, 1, 2, 3, 7, 9, 4095, 4097] {
+            let tail: Vec<Fr> = (0..columns).map(|c| Fr::from_u64(97 + c as u64)).collect();
+            let mut rows: Vec<_> = (0..live * columns)
+                .map(|i| Fr::from_u64(13 * i as u64 + 5))
+                .collect();
+            let len = live.max(2).next_power_of_two();
+            let mut full: Vec<_> = (0..columns)
+                .map(|c| {
+                    let mut column: Vec<_> = (0..live).map(|r| rows[r * columns + c]).collect();
+                    column.resize(len, tail[c]);
+                    Polynomial::new(column)
+                })
+                .collect();
+            for round in 0..len.ilog2() {
+                let challenge = Fr::from_u64(u64::from(round) + 19);
+                let _ = bind_prefix_rows_in_place(&mut rows, challenge, &tail);
+                for (c, full) in full.iter_mut().enumerate() {
+                    full.bind_with_order(challenge, BindingOrder::LowToHigh);
+                    let live = rows.len() / columns;
+                    let column: Vec<_> = (0..live).map(|r| rows[r * columns + c]).collect();
+                    assert_eq!(&full.evals()[..live], column.as_slice());
+                    assert!(full.evals()[live..].iter().all(|value| *value == tail[c]));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn prefix_in_place_binding_preserves_constant_extension() {
+        for live in [0usize, 1, 2, 3, 7, 8, 9, 15, 16, 17, 4095, 4096, 4097] {
+            for tail in [Fr::from_u64(0), Fr::from_u64(97)] {
+                let mut prefix: Vec<_> =
+                    (0..live).map(|i| Fr::from_u64(13 * i as u64 + 5)).collect();
+                let len = live.max(2).next_power_of_two();
+                let mut full = prefix.clone();
+                full.resize(len, tail);
+                let mut full = Polynomial::new(full);
+                for round in 0..len.ilog2() {
+                    let challenge = Fr::from_u64(u64::from(round) + 19);
+                    let _ = bind_prefix_in_place(&mut prefix, challenge, tail);
+                    full.bind_with_order(challenge, BindingOrder::LowToHigh);
+                    assert_eq!(&full.evals()[..prefix.len()], prefix.as_slice());
+                    assert!(full.evals()[prefix.len()..]
+                        .iter()
+                        .all(|value| *value == tail));
+                }
+            }
+        }
     }
 }

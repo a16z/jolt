@@ -1,19 +1,26 @@
-//! Fiat-Shamir transcripts for Jolt in the NARG model, on spongefish.
+//! Fiat-Shamir transcripts for Jolt, backed by spongefish.
 //!
-//! A proof is its argument string. [`ProverTranscript`] and
-//! [`VerifierTranscript`] are typed layers over spongefish's `ProverState` and
-//! `VerifierState`: the prover appends every message and absorbs its
-//! encoding, the verifier reads it back and absorbs the same encoding. No
-//! code reads or copies spongefish's sponge state. Code that both
-//! roles run identically is written against [`Channel`]. Protocols compose by
-//! sharing one transcript: a sub-protocol takes the caller's transcript rather
-//! than starting its own.
+//! The prover runs spongefish's `ProverState` and the verifier its
+//! `VerifierState`. [`Transcript`] and [`FieldTranscript`] are the operations
+//! both sides share: public messages, field challenges through each field's
+//! [`ChallengeCodec`], and proof-of-work steps whose nonce the proof carries.
+//! [`ProverTranscript`] and [`VerifierTranscript`] add the NARG string.
+//! [`PrivateChannel`] absorbs witness-dependent values, which a masked mode
+//! hides behind pads; on a clear transcript they are public messages.
+//! [`ClaimDomain`] is what a verifier check on those values is written over,
+//! so the clear and masked verifiers share one formula.
+//! [`prover_transcript`] and [`verifier_transcript`] bind the session and the
+//! public statement before the first message.
 //!
-//! Message atoms are the [`CanonicalBytes`](jolt_algebra::CanonicalBytes) /
-//! [`CanonicalDecode`](jolt_algebra::CanonicalDecode) codecs owned by each
-//! type's crate, whose spongefish `Encoding` / `NargDeserialize` they are. Challenges are exactly uniform ([`Channel::challenge`]) or
-//! drawn from a field's small challenge set ([`Channel::challenge_small`]).
-//! The sponge is a type parameter ([`Sponge`]) bound into the [`ProtocolId`].
+//! The transcript is positional and word aligned: no message carries a label,
+//! and every absorb and squeeze is a whole number of eight-byte words
+//! ([`PROTOCOL_ID`] lists the layout).
+//!
+//! Three sponges are feature-gated: `transcript-keccak` (spongefish `Keccak`,
+//! the default), `transcript-blake2b` (spongefish `Blake2b512`) and
+//! `transcript-poseidon` (a Circom-compatible BN254 [`PoseidonSponge`]).
+//! Field challenges need uniform squeezed bytes ([`UniformBytes`]), which
+//! Poseidon does not give, so a Poseidon transcript cannot draw them.
 
 #![deny(missing_docs)]
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
@@ -32,44 +39,67 @@
     clippy::wildcard_enum_match_arm
 )]
 
-mod channel;
-mod error;
-mod fork;
-mod grinding;
-mod nonce;
+mod challenge;
+mod claim_domain;
+mod codec;
+mod digest_hash;
+mod grind_bits;
 #[cfg(feature = "transcript-poseidon")]
 mod poseidon;
+mod pow;
 mod private;
-mod protocol;
 mod prover;
-mod site;
-mod sponge;
-mod state;
+#[cfg(feature = "test-utils")]
+mod scripted;
+mod setup;
+mod shake128;
+mod transcript;
 mod verifier;
 
-pub use channel::Channel;
-pub use error::TranscriptError;
-pub use fork::{is_fork_domain, Fork, ATTEMPT_NONCE_LEN, FORK_SEED_LEN};
-pub use grinding::{
-    grinding_predicate_accepts, GRINDING_NONCE_SLACK_BITS, GRINDING_PREDICATE_LEN,
-    MAX_GRINDING_BITS,
+pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
+pub use claim_domain::{ClaimDomain, ClaimMismatch, ClearDomain};
+pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
+pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
+pub use grind_bits::{
+    grind_bits_for_loss, require_no_pow, ChallengeSetSize, GrindBitsError, MAX_POW_BITS,
+    SECURITY_BITS,
 };
-pub use nonce::Nonce;
-pub use private::{ClaimDomain, ClaimMismatch, ClearDomain, PadSlots, PrivateChannel};
-pub use protocol::ProtocolId;
-pub use prover::ProverTranscript;
-#[cfg(feature = "logging")]
-pub use site::TranscriptEvent;
-pub use site::{SiteId, TranscriptOp};
-pub use sponge::Sponge;
-#[cfg(feature = "transcript-blake2b")]
-pub use spongefish::instantiations::Blake2b512;
-#[cfg(feature = "transcript-keccak")]
-pub use spongefish::instantiations::Keccak;
-/// The duplex interface every [`Sponge`] implements; re-exported so a custom
-/// sponge needs no direct spongefish dependency.
-pub use spongefish::DuplexSpongeInterface;
-pub use verifier::VerifierTranscript;
-
 #[cfg(feature = "transcript-poseidon")]
 pub use poseidon::PoseidonSponge;
+pub use private::PrivateChannel;
+pub use prover::{ProverInit, ProverTranscript};
+#[cfg(feature = "test-utils")]
+pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
+pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
+pub use shake128::{ProverState, Shake128, Shake128Hasher};
+pub use spongefish::{Encoding, VerificationError, VerifierState};
+pub use transcript::{FieldTranscript, Transcript};
+pub use verifier::{VerifierInit, VerifierTranscript};
+
+#[cfg(all(
+    feature = "transcript-blake2b",
+    not(all(feature = "blake2-inline", target_arch = "riscv64"))
+))]
+use blake2::Blake2b512 as Blake2b512Digest;
+#[cfg(all(
+    feature = "transcript-blake2b",
+    feature = "blake2-inline",
+    target_arch = "riscv64"
+))]
+use jolt_inlines_blake2::digest_adapter::{Blake2b, U64};
+#[cfg(all(
+    feature = "transcript-blake2b",
+    feature = "blake2-inline",
+    target_arch = "riscv64"
+))]
+type Blake2b512Digest = Blake2b<U64>;
+#[cfg(feature = "transcript-blake2b")]
+use spongefish::instantiations::Hash;
+
+/// Spongefish's fixed-output hash bridge instantiated with Blake2b-512.
+#[cfg(feature = "transcript-blake2b")]
+pub type Blake2b512 = Hash<Blake2b512Digest>;
+
+/// Spongefish's Keccak-f[1600] duplex sponge.
+#[cfg(feature = "transcript-keccak")]
+pub use spongefish::instantiations::Keccak;

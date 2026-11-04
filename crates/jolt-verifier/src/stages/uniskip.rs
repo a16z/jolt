@@ -9,22 +9,22 @@
 //! relation's fold of the stage-1 openings), so the verification core is
 //! shared here.
 
-use jolt_algebra::JoltField;
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
 use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::spartan::{
     outer_uniskip_opening, product_uniskip_opening,
 };
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_sumcheck::{
-    receive_masked_rounds, receive_private_value, CenteredIntegerDomain, DegreeSchedule,
-    MaskedRound, RoundWire, SumcheckClaim, SumcheckError, SumcheckVerifier,
+    receive_masked_rounds, CenteredIntegerDomain, DegreeSchedule, MaskedRound, RoundWire,
+    SumcheckClaim, SumcheckError, SumcheckProof,
 };
-use jolt_transcript::{Channel, PrivateChannel, Sponge, TranscriptError, VerifierTranscript};
+use jolt_transcript::{Channel, FieldTranscript, PrivateChannel, TranscriptError};
 
 use crate::stages::relations::{receive_masked_value, MaskedClaims};
 use crate::VerifierError;
@@ -43,6 +43,7 @@ pub struct UniskipParams {
     stage_number: usize,
     degree: usize,
     domain_size: usize,
+    proof_field: &'static str,
 }
 
 impl UniskipParams {
@@ -54,6 +55,7 @@ impl UniskipParams {
             stage_number: 1,
             degree: SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
+            proof_field: "stage1_uni_skip_first_round_proof",
         }
     }
 
@@ -65,6 +67,7 @@ impl UniskipParams {
             stage_number: 2,
             degree: SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
+            proof_field: "stage2_uni_skip_first_round_proof",
         }
     }
 
@@ -92,27 +95,29 @@ impl UniskipParams {
 /// uni-skip round (the Spartan outer relation's cycle variables plus the two
 /// uni-skip-collapsed row variables). Both fronts call this, so the draw is
 /// single-sourced.
-pub fn draw_spartan_outer_tau<F, C>(transcript: &mut C, log_t: usize) -> Vec<F>
+pub fn draw_spartan_outer_tau<F, T>(
+    transcript: &mut T,
+    log_t: usize,
+) -> Result<Vec<F>, VerifierError>
 where
     F: JoltField,
-    C: Channel,
+    T: FieldTranscript<F>,
 {
     #[expect(
         clippy::arithmetic_side_effects,
         reason = "log_t is an ilog2 result (< 64); log_t + 2 cannot overflow usize"
     )]
-    transcript.challenges_small(log_t + 2)
+    Ok(transcript.challenge_vector(log_t + 2)?)
 }
 
-/// The stage-2 product tau_high, drawn before the product uni-skip round from
-/// the small challenge set. Both fronts call this, so the draw is
-/// single-sourced.
-pub fn draw_spartan_product_tau_high<F, C>(transcript: &mut C) -> F
+/// The stage-2 product tau_high, drawn before the product uni-skip round.
+/// Both fronts call this, so the draw is single-sourced.
+pub fn draw_spartan_product_tau_high<F, T>(transcript: &mut T) -> Result<F, VerifierError>
 where
     F: JoltField,
-    C: Channel,
+    T: FieldTranscript<F>,
 {
-    transcript.challenge_small()
+    Ok(transcript.challenge()?)
 }
 
 /// The masked uni-skip step's outputs: the masked round and output claim
@@ -125,50 +130,49 @@ pub struct UniskipMasked<F> {
     pub challenge: F,
 }
 
-/// The clear uni-skip step's outputs: the single reduction challenge and the
-/// received output claim.
-pub struct UniskipClear<F> {
-    pub challenge: F,
-    pub output_claim: F,
-}
-
-/// Verify a clear-mode uni-skip round against its input claim.
+/// Verify a clear-mode uni-skip round against its input and output claims and
+/// return the single reduction challenge.
 ///
-/// Protocol contract (the prover's uni-skip round must mirror it): the round
-/// polynomial is read as a one-round sumcheck of `params`' degree over
-/// `params`' centered integer domain, then the output claim is received and
-/// hard-checked against the reduced value — BEFORE any post-uni-skip draw (the
-/// remainder batch's coefficient draw in particular). Errors are attributed to
+/// Protocol contract (byte-exact; the prover's uni-skip round must mirror it):
+/// the wire proof is verified as a one-round sumcheck of `params`' degree over
+/// `params`' centered integer domain, the reduced value is hard-checked
+/// against `output_claim`, and `output_claim` is then absorbed — BEFORE any
+/// post-uni-skip draw (the remainder
+/// batch's coefficient squeeze in particular). Errors are attributed to
 /// `params`' stage.
-pub fn verify_clear<F, H>(
+pub fn verify_clear<F, C, T>(
+    proof: &SumcheckProof<F, C>,
     params: &UniskipParams,
     input_claim: F,
-    transcript: &mut VerifierTranscript<'_, H>,
-) -> Result<UniskipClear<F>, VerifierError>
+    output_claim: F,
+    transcript: &mut T,
+) -> Result<F, VerifierError>
 where
     F: JoltField,
-    H: Sponge,
+    T: FieldTranscript<F>,
 {
-    let reduction = SumcheckVerifier::verify(
-        &SumcheckClaim::new(UNISKIP_ROUNDS, params.degree, input_claim),
-        CenteredIntegerDomain::new(params.domain_size),
-        transcript,
-    )
-    .map_err(|error| params.sumcheck_failed(error))?;
-    let (output_claim, _pads) = receive_private_value(transcript)?;
+    let reduction = proof
+        .verify(
+            &SumcheckClaim::new(UNISKIP_ROUNDS, params.degree, input_claim),
+            CenteredIntegerDomain::new(params.domain_size),
+            transcript,
+        )
+        .map_err(|error| params.sumcheck_failed(error))?;
     if reduction.value != output_claim {
         return Err(VerifierError::StageClaimOutputMismatch {
             stage: params.stage_number,
         });
     }
 
+    // Match the prover transcript: the uni-skip output is absorbed as an
+    // opening claim before any post-uni-skip draw (the remainder batch's RLC
+    // coefficient squeeze in particular).
+    transcript.append(&output_claim);
+
     let [challenge] = reduction.point.as_slice() else {
         return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));
     };
-    Ok(UniskipClear {
-        challenge: *challenge,
-        output_claim,
-    })
+    Ok(*challenge)
 }
 
 /// Verify a masked uni-skip round: read the masked round at full width, its

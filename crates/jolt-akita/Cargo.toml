@@ -9,9 +9,17 @@ description = "Akita batch opening adapter for the Jolt zkVM"
 workspace = true
 
 [features]
+default = ["parallel"]
+# Akita's rayon-backed kernels and backend thread pool. A single-core zkVM
+# guest builds without it; Jolt's own prover kernels in this crate still link
+# rayon, which a guest verifier never calls.
+parallel = ["akita-pcs/parallel"]
+# Akita's NTT kernels over the jolt-inlines NTT inline, for a RISC-V guest
+# verifier. Akita runs on Jolt's Keccak transcript sponge, for which
+# jolt-transcript has no guest inline.
+ntt-inline = ["akita-pcs/ntt-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
-profiling = []
 # Whiteout (zero knowledge over Akita), verifier half: the zero-knowledge
 # configurations and the masked opening's verification. It compiles no prover
 # sampler (I6), so jolt-verifier's `akita` with `zk` selects only this.
@@ -32,23 +40,27 @@ zk-prover = [
   "jolt-zk/whiteout-prover",
   "akita-pcs/zk-prover",
 ]
+profiling = ["parallel"]
 
 [dependencies]
-spongefish = { workspace = true, features = ["sha3"] }
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
+akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-params.workspace = true
-akita-pcs = { workspace = true, features = ["parallel"] }
-akita-planner = { workspace = true, features = ["parallel"] }
+akita-pcs = { workspace = true, features = ["transcript-keccak"] }
+akita-challenges.workspace = true
+akita-planner.workspace = true
 akita-schedules.workspace = true
+akita-transcript.workspace = true
 akita-types.workspace = true
+akita-params.workspace = true
+akita-verifier.workspace = true
 # Canonical trace geometry without selecting the Akita PIOP feature.
 jolt-claims.workspace = true
 jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
-  "lattice",
   "parallel",
+  "lattice",
 ] }
 jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
   "solinas",
@@ -57,18 +69,21 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
   "parallel",
 ] }
 jolt-poly.workspace = true
-jolt-transcript = { path = "../jolt-transcript", default-features = false }
+jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
+  "solinas",
+] }
 jolt-zk = { workspace = true, optional = true }
 rand_core = { workspace = true, optional = true }
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
+serde_bytes.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
 bincode.workspace = true
-rand = { workspace = true, features = ["std_rng"] }
 jolt-transcript = { workspace = true, default-features = false, features = [
   "transcript-blake2b",
 ] }
+rand = { workspace = true, features = ["std_rng"] }
 serde_json = { workspace = true, features = ["std"] }

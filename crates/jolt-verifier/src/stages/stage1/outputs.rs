@@ -1,10 +1,27 @@
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_sumcheck::{BatchedMaskedRounds, MaskedRound};
+use serde::{Deserialize, Serialize};
 
 use super::outer_remainder::{OuterRemainder, OuterRemainderOutputClaims};
 use crate::stages::relations::{MaskedClaims, SumcheckBatch};
 use crate::VerifierError;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(bound(serialize = "F: Serialize", deserialize = "F: for<'a> Deserialize<'a>"))]
+pub struct Stage1OutputClaims<F: JoltField> {
+    pub uniskip_output_claim: F,
+    pub outer: Stage1BatchOutputClaims<F>,
+}
+
+impl<F: JoltField> Stage1OutputClaims<F> {
+    pub fn new(uniskip_output_claim: F, outer: Stage1BatchOutputClaims<F>) -> Self {
+        Self {
+            uniskip_output_claim,
+            outer,
+        }
+    }
+}
 
 /// Source-of-truth for stage 1's singleton sumcheck batch: the Spartan outer
 /// *remainder* sumcheck (the companion uni-skip first round is a separate
@@ -13,8 +30,10 @@ use crate::VerifierError;
 /// `#[derive(SumcheckBatch)]` generates the `Stage1BatchInputClaims<F>` /
 /// `Stage1BatchInputPoints<F>`, `Stage1BatchOutputClaims<F>` /
 /// `Stage1BatchOutputPoints<F>`, and `Stage1BatchChallenges<F>` aggregates — one
-/// field per instance, in this declaration order. The generated claim
-/// plumbing walks the member's typed output claims: base columns followed by
+/// field per instance, in this declaration order. With a single instance and no
+/// cross-relation aliasing there is no `no_opening_values` opt-out: the
+/// generated absorb (`opening_values` / `append_output_claims` on this struct)
+/// delegates to the member's typed output claims: base columns followed by
 /// field-inline columns when enabled.
 ///
 /// The member's `SpartanOuterPublic` coefficient table depends on the batch's own

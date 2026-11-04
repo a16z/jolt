@@ -4,38 +4,36 @@
 
 #![expect(clippy::expect_used, reason = "tests assert successful proof setup")]
 
-use crate::support::{
-    assert_transcripts_agree, f, layout, new_prover_transcript, new_verifier_transcript,
-    polynomial, setup_for,
-};
+use crate::support::{f, layout, polynomial, setup_for};
 use akita_params::{PolynomialGroupLayout, ScheduleLookupKey};
 use jolt_akita::{
-    AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts,
+    AkitaScheme,
 };
 use jolt_openings::{CommitmentScheme, OpeningsError};
-use jolt_transcript::TranscriptError;
+use jolt_transcript::{prover_transcript, Blake2b512};
 
 struct ProofFixture {
     verifier_setup: <AkitaScheme as CommitmentScheme>::VerifierSetup,
     commitment: AkitaCommitment,
     point: Vec<AkitaField>,
     eval: AkitaField,
-    proof: Vec<u8>,
+    proof: AkitaBatchProof,
     label: &'static [u8],
 }
 
 impl ProofFixture {
-    /// Verifies `proof` as the whole argument string of a standalone opening.
-    fn verify(&self, proof: &[u8]) -> Result<(), OpeningsError> {
-        let mut transcript = new_verifier_transcript(self.label, proof);
+    fn verify(&self, proof: &AkitaBatchProof) -> Result<(), OpeningsError> {
+        let mut transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(self.label), b"");
         AkitaScheme::verify(
             &self.commitment,
             &self.point,
             self.eval,
+            proof,
             &self.verifier_setup,
             &mut transcript,
-        )?;
-        Ok(transcript.finish()?)
+        )
     }
 }
 
@@ -47,28 +45,33 @@ fn fold_roundtrip(num_vars: usize, label: &'static [u8]) -> ProofFixture {
     let (commitment, hint) =
         AkitaScheme::commit(&poly, &prover_setup).expect("dense commit should succeed");
 
-    let mut prover_transcript = new_prover_transcript(label);
-    AkitaScheme::open(
+    let mut prover_state =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
+    let proof = AkitaScheme::open(
         &poly,
         &point,
         eval,
         &prover_setup,
         Some(hint),
-        &mut prover_transcript,
+        &mut prover_state,
     )
     .expect("fold-schedule proof should be produced");
-    let proof = prover_transcript.narg().to_vec();
 
-    let mut verifier_transcript = new_verifier_transcript(label, &proof);
+    let mut verifier_transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(label), b"");
     AkitaScheme::verify(
         &commitment,
         &point,
         eval,
+        &proof,
         &verifier_setup,
         &mut verifier_transcript,
     )
     .expect("fold-schedule proof should verify");
-    assert_transcripts_agree(prover_transcript, verifier_transcript);
+    assert_eq!(
+        prover_state.verifier_message::<[u8; 32]>(),
+        verifier_transcript.verifier_message::<[u8; 32]>()
+    );
 
     ProofFixture {
         verifier_setup,
@@ -101,12 +104,14 @@ fn deep_recursive_fold_schedule_roundtrips() {
 
     let mut tampered_eval = fixture.eval;
     tampered_eval += f(1);
-    let mut transcript = new_verifier_transcript(fixture.label, &fixture.proof);
+    let mut transcript =
+        prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(fixture.label), b"");
     assert!(
         AkitaScheme::verify(
             &fixture.commitment,
             &fixture.point,
             tampered_eval,
+            &fixture.proof,
             &fixture.verifier_setup,
             &mut transcript,
         )
@@ -115,23 +120,42 @@ fn deep_recursive_fold_schedule_roundtrips() {
     );
 }
 
-/// The opening must consume exactly one complete argument string.
 #[test]
 fn proof_payloads_with_trailing_or_missing_bytes_reject() {
     let fixture = fold_roundtrip(14, b"akita-fold-trailing");
 
-    let mut extended = fixture.proof.clone();
-    extended.push(0);
-    assert_eq!(
-        fixture.verify(&extended),
-        Err(OpeningsError::Transcript(TranscriptError::TrailingBytes)),
-        "trailing proof bytes must be rejected"
+    let mut value = serde_json::to_value(&fixture.proof).expect("proof should serialize to JSON");
+    value
+        .get_mut("backend_proof")
+        .expect("proof should expose the payload")
+        .as_array_mut()
+        .expect("payload should serialize as a byte array")
+        .push(serde_json::json!(0));
+    let extended: AkitaBatchProof =
+        serde_json::from_value(value.clone()).expect("extended proof should deserialize");
+
+    let err = fixture
+        .verify(&extended)
+        .expect_err("trailing payload bytes must be rejected");
+    assert!(
+        matches!(&err, OpeningsError::VerificationFailed),
+        "expected a verification failure, got: {err}"
     );
 
-    let proof_len = fixture.proof.len();
+    let proof_len = fixture.proof.backend_proof_body_size();
     for length in [0, 1, proof_len / 2, proof_len - 1] {
+        let mut truncated = value.clone();
+        truncated["backend_proof"]
+            .as_array_mut()
+            .expect("payload should serialize as a byte array")
+            .truncate(length);
+        let truncated: AkitaBatchProof =
+            serde_json::from_value(truncated).expect("truncated proof should deserialize");
         assert!(
-            fixture.verify(&fixture.proof[..length]).is_err(),
+            matches!(
+                fixture.verify(&truncated),
+                Err(OpeningsError::VerificationFailed)
+            ),
             "proof truncated to {length} bytes must reject"
         );
     }

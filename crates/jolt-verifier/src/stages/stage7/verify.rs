@@ -9,10 +9,10 @@ use jolt_claims::protocols::jolt::{
     },
     JoltOpeningId, JoltRelationId, PrecommittedReductionLayout,
 };
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_crypto::VectorCommitment;
+use jolt_openings::CommitmentScheme;
+use jolt_transcript::FieldTranscript;
 use jolt_zk::masking::CommittedPadsView;
-
-use crate::sites::STAGE7;
 
 #[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{
@@ -36,7 +36,9 @@ use crate::stages::stage6b::committed_reduction_cycle_phase::advice_reference_po
 use crate::stages::stage6b::outputs::BytecodeReductionWeights;
 use crate::stages::zk::masked_channel;
 use crate::{
+    proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
         PrecommittedSchedule,
@@ -49,22 +51,24 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 
-pub fn verify<F, H, P>(
+#[jolt_verifier_derive::fs_scope(Stage7)]
+pub fn verify<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
-    transcript: &mut VerifierTranscript<'_, H>,
+    transcript: &mut T,
     pads: Option<&mut CommittedPadsView<P>>,
-    stage4: &Stage4Output<F>,
-    stage6: &Stage6bOutput<F>,
-) -> Result<Stage7Output<F>, VerifierError>
+    stage4: &Stage4Output<PCS::Field>,
+    stage6: &Stage6bOutput<PCS::Field>,
+) -> Result<Stage7Output<PCS::Field>, VerifierError>
 where
-    F: JoltField,
-    H: Sponge,
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
-    transcript.site(STAGE7);
     let hamming_dimensions = hamming_weight_claim_reduction_dimensions(
         formula_dimensions.ra_layout,
-        checked.one_hot_config.committed_chunk_bits(),
+        proof.one_hot_config.committed_chunk_bits(),
     )?;
 
     // The reference geometry each address phase's output publics read
@@ -106,11 +110,12 @@ where
         },
     )?;
 
-    // Draw the hamming-weight reduction's batching gamma (a single `challenge`,
+    // Draw the hamming-weight reduction's batching gamma (a single `challenge()`,
     // matching the relation's default `draw_challenges`) path-agnostically before the
     // ZK/clear branch; the advice and committed-program address phases draw nothing
     // (`NoChallenges`). BlindFold sources the gamma from
     // `challenges.hamming_weight_claim_reduction.gamma`.
+    check_pow(PowSite::Stage7, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if checked.zk.is_masked() {
@@ -134,14 +139,30 @@ where
     }
 
     let stage6 = stage6.clear()?;
+    let claims = &proof.clear_claims()?.stage7;
+
+    // Also rejects claims supplied for phases that did not run, with the same
+    // `UnexpectedOpeningClaim` ids the former hand-written guards used (the id is
+    // derived from the supplied claims' canonical order).
+    sumchecks.validate_output_claims(claims)?;
+
     let input_values = stage7_input_values_from_upstream(&sumchecks, stage6)?;
     let input_points = sumchecks.empty_input_points();
 
-    let (output_points, output_values) =
-        sumchecks.verify_clear(&input_values, &input_points, &challenges, transcript, 7)?;
+    let output_points = sumchecks.verify_clear(
+        &input_values,
+        &input_points,
+        &challenges,
+        claims,
+        &proof.stages.stage7_sumcheck_proof,
+        transcript,
+        7,
+    )?;
+
+    sumchecks.append_output_claims(transcript, claims);
 
     Ok(Stage7Output::Clear(Stage7ClearOutput {
-        output_values,
+        output_values: claims.clone(),
         output_points,
     }))
 }

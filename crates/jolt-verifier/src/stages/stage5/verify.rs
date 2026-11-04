@@ -1,11 +1,12 @@
 use jolt_algebra::JoltField;
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
+use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_crypto::VectorCommitment;
+use jolt_openings::CommitmentScheme;
+use jolt_transcript::FieldTranscript;
 use jolt_zk::masking::CommittedPadsView;
-
-use crate::sites::STAGE5;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_val_evaluation::{
@@ -32,7 +33,9 @@ use super::{
 };
 use crate::stages::zk::masked_channel;
 use crate::{
+    proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
     },
@@ -78,19 +81,21 @@ pub fn stage5_input_points_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<F, H, P>(
+#[jolt_verifier_derive::fs_scope(Stage5)]
+pub fn verify<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
-    transcript: &mut VerifierTranscript<'_, H>,
+    transcript: &mut T,
     pads: Option<&mut CommittedPadsView<P>>,
-    stage2: &Stage2Output<F>,
-    stage4: &Stage4Output<F>,
-) -> Result<Stage5Output<F>, VerifierError>
+    stage2: &Stage2Output<PCS::Field>,
+    stage4: &Stage4Output<PCS::Field>,
+) -> Result<Stage5Output<PCS::Field>, VerifierError>
 where
-    F: JoltField,
-    H: Sponge,
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
-    transcript.site(STAGE5);
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = formula_dimensions.trace;
 
@@ -108,11 +113,14 @@ where
     // registers draws nothing, and neither does the `field-inline` value-evaluation member.
     // The drawn challenges feed the input/output claims and populate the stage aggregate
     // carried downstream.
+    check_pow(PowSite::Stage5, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     if !checked.zk.is_masked() {
+        let claims = &proof.clear_claims()?.stage5;
         let stage2 = stage2.clear()?;
         let stage4 = stage4.clear()?;
+        sumchecks.validate_output_claims(claims)?;
 
         // The reduced lookup output aliases the product remainder's lookup output
         // (same opening point and value); stage 2's generated `validate_aliases`
@@ -123,13 +131,22 @@ where
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
 
-        let (output_points, output_values) =
-            sumchecks.verify_clear(&input_values, &input_points, &challenges, transcript, 5)?;
+        let output_points = sumchecks.verify_clear(
+            &input_values,
+            &input_points,
+            &challenges,
+            claims,
+            &proof.stages.stage5_sumcheck_proof,
+            transcript,
+            5,
+        )?;
+
+        sumchecks.append_output_claims(transcript, claims);
 
         let instruction_r_address = output_points.instruction_r_address();
         return Ok(Stage5Output::Clear(Stage5ClearOutput {
             challenges,
-            output_values,
+            output_values: claims.clone(),
             output_points,
             instruction_r_address,
         }));
@@ -139,8 +156,7 @@ where
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points; `derive_opening_points` ignores the instruction relation's
-        // input points, so carrying the real claim-reduction point here is harmless.
+        // output points.
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
         let batch =

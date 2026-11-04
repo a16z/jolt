@@ -24,6 +24,7 @@ This section is comprised of the following subsections:
 - [Dory](./dory.md)
 - [Akita](./akita.md)
 - [BlindFold (Zero Knowledge)](./blindfold.md)
+- [Fiat-Shamir transcript](./fiat-shamir.md)
 - [Optimizations](./optimizations/optimizations.md)
     - [Batched sumcheck](./optimizations/batched-sumcheck.md)
     - [Batched openings](./optimizations/batched-openings.md)

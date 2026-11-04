@@ -81,17 +81,26 @@ impl<const P: u128> Fp128SignedAccumulator<P> {
         Fp128::<P>::reduce_small_product(self.pos) - Fp128::<P>::reduce_small_product(self.neg)
     }
 
+    /// Fold the high limbs into three deferred slots. With B = 2^64,
+    /// B² ≡ C, so B³*r3 + B⁴*r4 + B⁵*r5 ≡ B*(C*r3 + C²*r5) + C²*r4.
+    /// C < 2^32 implies C² + C < B; both intermediate products fit u128.
     #[inline(always)]
-    fn product(value: Fp128<P>, magnitude: [u64; 4]) -> Fp128<P> {
-        if magnitude[3] == 0 {
-            Fp128::<P>::solinas_reduce(&value.mul_wide_limbs::<3, 5>([
-                magnitude[0],
-                magnitude[1],
-                magnitude[2],
-            ]))
+    fn product(value: Fp128<P>, magnitude: [u64; 4]) -> Fp128MulU64Accum {
+        let [r0, r1, r2, r3, r4, r5] = if magnitude[3] == 0 {
+            let [r0, r1, r2, r3, r4] =
+                value.mul_wide_limbs::<3, 5>([magnitude[0], magnitude[1], magnitude[2]]);
+            [r0, r1, r2, r3, r4, 0]
         } else {
-            Fp128::<P>::solinas_reduce(&value.mul_wide_limbs::<4, 6>(magnitude))
-        }
+            value.mul_wide_limbs::<4, 6>(magnitude)
+        };
+        let c = Fp128::<P>::C;
+        let low = u128::from(r4) * (c * c);
+        let high = u128::from(r3) * c + u128::from(r5) * (c * c);
+        Fp128MulU64Accum([
+            u128::from(r0) + u128::from(low as u64),
+            u128::from(r1) + (low >> 64) + u128::from(high as u64),
+            u128::from(r2) + (high >> 64),
+        ])
     }
 }
 
@@ -163,10 +172,38 @@ impl<const P: u128> Accumulator for Fp128SignedAccumulator<P> {
         if magnitude == [0; 4] {
             return;
         }
-        self.accumulate(
-            Fp128MulU64Accum::from(Self::product(value, magnitude)),
-            scalar.is_positive,
-        );
+        self.accumulate(Self::product(value, magnitude), scalar.is_positive);
+    }
+}
+
+/// Deferred field sums retain only the two nonzero base-2^64 slots.
+/// Each slot has headroom for at least 2^64 - 1 field additions, including
+/// additions represented by merged partial sums.
+#[derive(Clone, Copy, Default)]
+pub struct Fp128SumAccumulator<const P: u128>([u128; 2]);
+
+impl<const P: u128> Accumulator for Fp128SumAccumulator<P> {
+    type Element = Fp128<P>;
+
+    #[inline(always)]
+    fn add(&mut self, value: Fp128<P>) {
+        for (slot, limb) in self.0.iter_mut().zip(value.to_limbs()) {
+            *slot += u128::from(limb);
+        }
+    }
+    #[inline(always)]
+    fn merge(&mut self, other: Self) {
+        for (slot, other) in self.0.iter_mut().zip(other.0) {
+            *slot += other;
+        }
+    }
+    #[inline(always)]
+    fn reduce(self) -> Fp128<P> {
+        Fp128::<P>::reduce_product(Fp128ProductAccum([self.0[0], self.0[1], 0, 0]))
+    }
+    #[inline(always)]
+    fn fmadd(&mut self, a: Fp128<P>, b: Fp128<P>) {
+        self.add(a * b);
     }
 }
 
@@ -174,6 +211,7 @@ impl<const P: u128> Accumulator for Fp128SignedAccumulator<P> {
 mod tests {
     use super::*;
     use crate::{Field, NaiveAccumulator};
+    use num_bigint::BigUint;
     use rand_chacha::ChaCha20Rng;
     use rand_core::{RngCore, SeedableRng};
 
@@ -239,6 +277,52 @@ mod tests {
             expected.fmadd(value, TestField::from_i128(extreme));
         }
         assert_eq!(candidate.reduce(), expected.reduce());
+    }
+
+    #[test]
+    fn signed_product_boundaries_and_merge_headroom() {
+        fn check<const P: u128>() {
+            let modulus = BigUint::from(P);
+            for value in [0, 1, P - 1] {
+                for magnitude in [
+                    [0; 4],
+                    [u64::MAX, 0, 0, 0],
+                    [u64::MAX, u64::MAX, 0, 0],
+                    [u64::MAX, u64::MAX, u64::MAX, 0],
+                    [0, 0, 0, 1],
+                    [u64::MAX; 4],
+                ] {
+                    let integer = magnitude.iter().rev().fold(BigUint::from(0u8), |n, &limb| {
+                        (n << 64) + BigUint::from(limb)
+                    });
+                    let product = (BigUint::from(value) * integer) % &modulus;
+                    for is_positive in [true, false] {
+                        let mut expected = if is_positive || product == BigUint::from(0u8) {
+                            product.clone()
+                        } else {
+                            &modulus - &product
+                        };
+                        let mut accumulator = Fp128SignedAccumulator::<P>::default();
+                        accumulator.fmadd_s256(
+                            Fp128::<P>::from_u128(value),
+                            &S256::new(magnitude, is_positive),
+                        );
+                        for log_terms in 0..=62 {
+                            let [lo, hi] = accumulator.reduce().to_limbs();
+                            let actual = (BigUint::from(hi) << 64) + BigUint::from(lo);
+                            assert_eq!(actual, expected, "log_terms={log_terms}");
+                            if log_terms < 62 {
+                                accumulator.merge(accumulator);
+                                expected = (expected << 1) % &modulus;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        check::<TEST_MODULUS>();
+        // Largest supported offset; the modular identity does not require primality.
+        check::<{ 0u128.wrapping_sub(u32::MAX as u128) }>();
     }
 
     #[test]

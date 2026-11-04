@@ -1,5 +1,5 @@
 //! Stage 8: the joint batched opening — no sumcheck, one homomorphic PCS
-//! batch over every committed polynomial, written to the transcript.
+//! batch over every committed polynomial.
 //!
 //! Pure orchestration mirroring `stage8::verify`: the batch entries come from
 //! the verifier's promoted `batch_entries` assembly (the prover passes its
@@ -44,42 +44,37 @@ use jolt_openings::{
     VerifierOpeningClaim, ZkOpeningScheme,
 };
 use jolt_poly::Point;
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
-use jolt_verifier::proof::ProofCommitments;
-use jolt_verifier::sites::STAGE8;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::proof::JoltCommitments;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 use jolt_verifier::stages::stage8::{batch_entries, precommitted_final_openings};
 use jolt_verifier::{CheckedInputs, VerifierError};
 
 use crate::{CommittedProgramCandidates, JoltProverPreprocessing, ProverConfig, ProverError};
-#[cfg(not(feature = "zk"))]
-use core::marker::PhantomData;
 
-/// Stage 8's ZK output: the joint evaluation and its blind, the secrets inside
-/// the hiding evaluation commitment that the BlindFold final-opening binding
-/// opens. The opening itself is written to the transcript.
-#[cfg(feature = "zk")]
+/// Stage 8's output: the joint PCS opening proof (the last wire component of
+/// a clear proof), plus — in ZK builds — the joint evaluation and its blind,
+/// the secrets inside the hiding evaluation commitment that the BlindFold
+/// final-opening binding opens.
 pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
+    pub joint_opening_proof: PCS::Proof,
+    #[cfg(feature = "zk")]
     pub joint_evaluation: PCS::Field,
+    #[cfg(feature = "zk")]
     pub evaluation_blind: PCS::Field,
-}
-
-/// Stage 8's clear output: the opening is written to the transcript.
-#[cfg(not(feature = "zk"))]
-pub struct Stage8ProverOutput<PCS: CommitmentScheme> {
-    _pcs: PhantomData<PCS>,
 }
 
 /// Prove stage 8 on `transcript` (positioned at the stage-7 boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage8<F, PCS, VC, H>(
+pub fn prove_stage8<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
-    commitments: &ProofCommitments<PCS::Output>,
+    commitments: &JoltCommitments<PCS::Output>,
+    untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
     hints: impl Into<Vec<(JoltCommittedPolynomial, PCS::OpeningHint)>>,
     #[cfg(feature = "field-inline")] field_inline_hints: Vec<(
@@ -88,16 +83,15 @@ pub fn prove_stage8<F, PCS, VC, H>(
     )>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
-    transcript: &mut ProverTranscript<H>,
+    transcript: &mut T,
 ) -> Result<Stage8ProverOutput<PCS>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F> + AdditivelyHomomorphic + ZkOpeningScheme<Blind = F>,
     PCS::Output: HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    transcript.site(STAGE8);
     let log_t = checked.trace_length.ilog2() as usize;
     let precommitted = &checked.precommitted;
     let formula_dimensions = JoltFormulaDimensions::try_from(config.one_hot_config.dimensions(
@@ -147,8 +141,8 @@ where
 
     let entries = batch_entries::<F, PCS, VC>(
         &preprocessing.verifier,
-        &commitments.trace,
-        commitments.untrusted_advice.as_ref(),
+        commitments,
+        untrusted_advice_commitment,
         layout,
         config.trace_polynomial_order,
         trusted_advice_commitment,
@@ -165,7 +159,7 @@ where
         let mut entries = entries;
         jolt_verifier::stages::stage8::field_inline::splice_final_opening(
             &mut entries,
-            &commitments.trace,
+            commitments,
             config.trace_polynomial_order,
             &opening_point,
             stage6b.output_points.field_registers_inc_opening_point(),
@@ -299,7 +293,7 @@ where
     // joint evaluation and blind for BlindFold.
     #[cfg(not(feature = "zk"))]
     {
-        HomomorphicBatch::<PCS>::prove_batch(
+        let joint_opening_proof = HomomorphicBatch::<PCS>::prove_batch(
             &preprocessing.pcs_setup,
             statement,
             polynomials.iter().map(|poly| &**poly).collect(),
@@ -308,7 +302,9 @@ where
         )
         .map_err(KernelError::<F>::from)?;
 
-        Ok(Stage8ProverOutput { _pcs: PhantomData })
+        Ok(Stage8ProverOutput {
+            joint_opening_proof,
+        })
     }
     #[cfg(feature = "zk")]
     {
@@ -332,6 +328,7 @@ where
         .map_err(KernelError::<F>::from)?;
 
         Ok(Stage8ProverOutput {
+            joint_opening_proof: opening.proof,
             joint_evaluation: opening.joint_evaluation,
             evaluation_blind: opening.blind,
         })

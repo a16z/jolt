@@ -1,10 +1,9 @@
 use super::accumulator::F64Accumulator;
 use super::{arithmetic, inverse};
-use crate::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, Ring, WithAccumulator};
+use crate::{CanonicalBytes, CanonicalEncoding, Field, Ring, WithAccumulator};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use rand_core::RngCore;
-use spongefish::{Encoding, NargDeserialize, VerificationResult};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// `F_2[x]/(x^64 + x^4 + x^3 + x + 1)`, with bit i the coefficient of x^i.
@@ -86,26 +85,10 @@ impl CanonicalBytes for F64 {
     }
 }
 
-impl Encoding<[u8]> for F64 {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        crate::narg::encode(self)
-    }
-}
-
-impl CanonicalDecode for F64 {
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        Some(Self(u64::from_le_bytes(bytes.try_into().ok()?)))
-    }
-}
-
-impl NargDeserialize for F64 {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        crate::narg::deserialize(buf)
-    }
-}
-
 impl CanonicalEncoding for F64 {
     const MODULUS_BITS: u32 = 65;
+    /// The canonical encoding: a bijection onto the field.
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [0, 1, 0, 0];
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut word = [0; 8];
@@ -113,6 +96,10 @@ impl CanonicalEncoding for F64 {
             *dest = *src;
         }
         Self(u64::from_le_bytes(word))
+    }
+
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        Some(Self(u64::from_le_bytes(bytes.try_into().ok()?)))
     }
 
     fn to_u128_checked(&self) -> Option<u128> {
@@ -130,13 +117,10 @@ impl CanonicalEncoding for F64 {
     fn num_bits(&self) -> u32 {
         u64::BITS - self.0.leading_zeros()
     }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl WithAccumulator for F64 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = F64Accumulator;
     type SmallScalarAccumulator = F64Accumulator;
     type SignedProductAccumulator = F64Accumulator;

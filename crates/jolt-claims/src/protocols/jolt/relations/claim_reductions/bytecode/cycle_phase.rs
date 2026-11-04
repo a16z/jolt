@@ -12,8 +12,8 @@ use crate::protocols::jolt::{
     JoltRelationId, PrecommittedReductionDimensions,
 };
 use crate::{
-    challenge, opening, InputClaims, MapCells, MissingOpeningValue, OutputClaims,
-    SumcheckChallenges, SymbolicSumcheck,
+    challenge, opening, InputClaims, MissingOpeningValue, OutputClaims, SumcheckChallenges,
+    SymbolicSumcheck,
 };
 
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
@@ -79,20 +79,6 @@ impl<F: JoltField> OutputClaims<F> for BytecodeReductionCyclePhaseOutputClaims<F
         } else {
             BytecodeReductionAddressPhaseOutputClaims::from_opening_values(resolve).map(Self::Final)
         }
-    }
-}
-
-impl<A, B> MapCells<A, B> for BytecodeReductionCyclePhaseOutputClaims<A> {
-    type Mapped = BytecodeReductionCyclePhaseOutputClaims<B>;
-
-    fn try_map_cells<E>(
-        &self,
-        f: &mut impl FnMut(&JoltOpeningId, &A) -> Result<B, E>,
-    ) -> Result<Self::Mapped, E> {
-        Ok(match self {
-            Self::Intermediate(claims) => Self::Mapped::Intermediate(claims.try_map_cells(f)?),
-            Self::Final(claims) => Self::Mapped::Final(claims.try_map_cells(f)?),
-        })
     }
 }
 

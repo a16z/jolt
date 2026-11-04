@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use jolt_algebra::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN};
 use serde::{Deserialize, Serialize};
@@ -6,12 +8,13 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
     left_lookup_operand_reduced, lookup_output_reduced, right_lookup_operand_reduced,
 };
 use crate::protocols::jolt::geometry::instruction::{
-    eq_table_value, instruction_ra_factors, instruction_raf_flag, lookup_table_flag,
-    InstructionReadRafDimensions, READ_RAF_ADDRESS_ROUND_DEGREE, READ_RAF_BASE_DEGREE,
+    eq_table_value, instruction_ra, instruction_ra_factors, instruction_raf_flag,
+    lookup_table_flag, InstructionReadRafDimensions, READ_RAF_ADDRESS_ROUND_DEGREE,
+    READ_RAF_BASE_DEGREE,
 };
 use crate::protocols::jolt::{
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltExpr, JoltFactoredExpr,
-    JoltRelationId,
+    JoltOpeningId, JoltRelationId,
 };
 use crate::{challenge, derived, opening, InputClaims, OutputClaims, SumcheckChallenges};
 use crate::{FactoredExpr, SymbolicSumcheck};
@@ -121,6 +124,17 @@ impl SymbolicSumcheck for ReadRaf {
         factors.push(table_sum);
         FactoredExpr::product(factors)
     }
+
+    /// Every output term multiplies the full RA product by a distinct flag
+    /// (or by no flag), so no term cancels: the openings are the RA factors
+    /// and the flags, listed without expanding the output.
+    fn expected_output_openings<F: Ring>(&self) -> BTreeSet<JoltOpeningId> {
+        (0..self.shape.num_virtual_ra_polys())
+            .map(instruction_ra)
+            .chain(LookupTableKind::<XLEN>::iter().map(lookup_table_flag))
+            .chain([instruction_raf_flag()])
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -136,6 +150,15 @@ mod tests {
     fn read_raf_dimensions(num_virtual_ra_polys: usize) -> InstructionReadRafDimensions {
         InstructionReadRafDimensions::try_from((5, 128, num_virtual_ra_polys))
             .unwrap_or_else(|err| panic!("test read-RAF dimensions should be nonzero: {err}"))
+    }
+
+    #[test]
+    fn expected_output_openings_match_expanded_output() {
+        let relation = ReadRaf::new(read_raf_dimensions(3));
+        assert_eq!(
+            relation.expected_output_openings::<Fr>(),
+            crate::referenced_openings([relation.output_expression::<Fr>()])
+        );
     }
 
     #[test]

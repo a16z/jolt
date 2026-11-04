@@ -463,6 +463,7 @@ mod tests {
         CommitmentScheme, StreamingCommitment, ZkOpeningScheme, ZkStreamingCommitment,
     };
     use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial};
+    use jolt_transcript::Blake2b512;
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -501,8 +502,11 @@ mod tests {
             .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
-        let mut prove_transcript = crate::test_support::prover(b"stream-open");
-        DoryScheme::open(
+        let mut prove_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"stream-open"),
+            b"",
+        );
+        let proof = DoryScheme::open(
             &poly,
             &point,
             eval,
@@ -512,12 +516,15 @@ mod tests {
         )
         .unwrap();
         let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
-        let narg = prove_transcript.finish();
-        let mut verify_transcript = crate::test_support::verifier(b"stream-open", &narg);
+        let mut verify_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"stream-open"),
+            b"",
+        );
         let result = DoryScheme::verify(
             &streamed,
             &point,
             eval,
+            &proof,
             &verifier_setup,
             &mut verify_transcript,
         );
@@ -558,8 +565,11 @@ mod tests {
             .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
-        let mut prove_transcript = crate::test_support::prover(b"u64-stream-open");
-        DoryScheme::open(
+        let mut prove_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"u64-stream-open"),
+            b"",
+        );
+        let proof = DoryScheme::open(
             &poly,
             &point,
             eval,
@@ -569,12 +579,15 @@ mod tests {
         )
         .unwrap();
         let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
-        let narg = prove_transcript.finish();
-        let mut verify_transcript = crate::test_support::verifier(b"u64-stream-open", &narg);
+        let mut verify_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"u64-stream-open"),
+            b"",
+        );
         let result = DoryScheme::verify(
             &streamed,
             &point,
             eval,
+            &proof,
             &verifier_setup,
             &mut verify_transcript,
         );
@@ -690,8 +703,11 @@ mod tests {
             .map(|_| <Fr as Field>::random(&mut rng))
             .collect::<Vec<_>>();
         let eval = poly.evaluate(&point);
-        let mut prove_transcript = crate::test_support::prover(b"one-hot-zk-open");
-        let (_hiding, _blind) = DoryScheme::open_zk(
+        let mut prove_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"one-hot-zk-open"),
+            b"",
+        );
+        let (proof, _, _) = DoryScheme::open_zk(
             &poly,
             &point,
             eval,
@@ -700,10 +716,17 @@ mod tests {
             &mut prove_transcript,
         )
         .unwrap();
-        let narg = prove_transcript.finish();
-        let mut verify_transcript = crate::test_support::verifier(b"one-hot-zk-open", &narg);
-        let result =
-            DoryScheme::verify_zk(&commitment, &point, &verifier_setup, &mut verify_transcript);
+        let mut verify_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"one-hot-zk-open"),
+            b"",
+        );
+        let result = DoryScheme::verify_zk(
+            &commitment,
+            &point,
+            &proof,
+            &verifier_setup,
+            &mut verify_transcript,
+        );
 
         assert!(result.is_ok(), "one-hot ZK streaming hint should open");
     }
@@ -749,8 +772,11 @@ mod tests {
             .map(|_| <Fr as Field>::random(&mut rng))
             .collect();
         let eval = poly.evaluate(&point);
-        let mut prove_transcript = crate::test_support::prover(b"i128-stream-open");
-        DoryScheme::open(
+        let mut prove_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"i128-stream-open"),
+            b"",
+        );
+        let proof = DoryScheme::open(
             &poly,
             &point,
             eval,
@@ -760,12 +786,15 @@ mod tests {
         )
         .unwrap();
         let verifier_setup = DoryScheme::verifier_setup(&prover_setup);
-        let narg = prove_transcript.finish();
-        let mut verify_transcript = crate::test_support::verifier(b"i128-stream-open", &narg);
+        let mut verify_transcript = jolt_transcript::prover_transcript::<Blake2b512>(
+            &jolt_transcript::protocol_tag(b"i128-stream-open"),
+            b"",
+        );
         let result = DoryScheme::verify(
             &streamed,
             &point,
             eval,
+            &proof,
             &verifier_setup,
             &mut verify_transcript,
         );

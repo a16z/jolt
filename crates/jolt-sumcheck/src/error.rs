@@ -1,21 +1,9 @@
-use std::error::Error;
-
 use jolt_algebra::Field;
-use jolt_transcript::TranscriptError;
+use jolt_transcript::VerificationError;
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum SumcheckError<F: Field> {
-    /// The proof's transcript rejected a round message.
-    #[error("sumcheck transcript: {0}")]
-    Transcript(#[from] TranscriptError),
-
-    /// A private-message channel failed outside the transcript, such as a
-    /// masked channel whose pad schedule is exhausted. The source is the
-    /// channel's own error type.
-    #[error("private message channel: {0}")]
-    PrivateChannel(#[source] Box<dyn Error + Send + Sync + 'static>),
-
     /// Round check failed: the domain sum did not match the expected value
     /// carried forward from the previous round.
     #[error("round {round}: expected sum {expected}, got {actual}")]
@@ -48,9 +36,18 @@ pub enum SumcheckError<F: Field> {
         max: usize,
     },
 
+    /// A batch member declared a round degree above its own degree bound.
+    #[error("batch member {member} declares round {round} at degree {got}, above its bound {max}")]
+    MemberRoundDegreeAboveBound {
+        member: usize,
+        round: usize,
+        got: usize,
+        max: usize,
+    },
+
     /// A batch's degree schedule gives one of its rounds degree zero. A
-    /// sumcheck round polynomial must have degree at least 1 — the same
-    /// invariant `SumcheckClaim::new` enforces on the verify side.
+    /// sumcheck round polynomial must have degree at least 1, the invariant
+    /// `SumcheckClaim::new` enforces on the verify side.
     #[error("batch schedules round {round} of its {max_num_vars} at degree 0")]
     ZeroBatchDegree {
         /// Number of rounds that would need round polynomials.
@@ -97,6 +94,17 @@ pub enum SumcheckError<F: Field> {
     #[error("sumcheck degree {degree} cannot be represented with its coefficient count")]
     DegreeOverflow { degree: usize },
 
+    /// A round polynomial encoded in compressed form had fewer than two
+    /// coefficients, so there is no linear term to omit. Any valid
+    /// compressed sumcheck round polynomial has degree ≥ 1.
+    #[error("round {round}: compressed round polynomial requires >= 2 coefficients, got {got}")]
+    CompressedPolynomialTooShort {
+        /// Zero-indexed round number where the malformed polynomial appeared.
+        round: usize,
+        /// Actual number of coefficients received.
+        got: usize,
+    },
+
     /// The domain-sum coefficient vector must have exactly one scalar per
     /// round-polynomial coefficient.
     #[error("round {round}: expected {expected} round-sum coefficients, got {got}")]
@@ -114,6 +122,16 @@ pub enum SumcheckError<F: Field> {
     InvalidIntegerDomain {
         /// Number of integer points in the domain.
         domain_size: usize,
+    },
+
+    /// The number of round polynomials in the proof does not match
+    /// the number of variables in the claim.
+    #[error("expected {expected} rounds, proof contains {got}")]
+    WrongNumberOfRounds {
+        /// Expected number of rounds (equal to `num_vars`).
+        expected: usize,
+        /// Actual number of round polynomials in the proof.
+        got: usize,
     },
 
     #[error("round polynomial must contain at least one coefficient")]
@@ -195,6 +213,16 @@ pub enum SumcheckError<F: Field> {
         members: usize,
     },
 
+    /// The caller selected a verifier path that is incompatible with the proof
+    /// wire encoding.
+    #[error("wrong sumcheck proof encoding: expected {expected}, got {got}")]
+    WrongProofEncoding {
+        /// Expected proof encoding.
+        expected: &'static str,
+        /// Actual proof encoding.
+        got: &'static str,
+    },
+
     /// A batched committed consistency was asked for an impossible point slice.
     #[error("batched point range overflow: offset {offset}, num_vars {num_vars}")]
     BatchedPointRangeOverflow {
@@ -217,18 +245,37 @@ pub enum SumcheckError<F: Field> {
         total: usize,
     },
 
+    /// The proof carries the wrong number of proof-of-work nonces: one per
+    /// round when the round difficulty is positive, none otherwise.
+    #[error("expected {expected} proof-of-work nonces, proof contains {got}")]
+    WrongNumberOfPowNonces {
+        /// Expected number of nonces.
+        expected: usize,
+        /// Actual number of nonces in the proof.
+        got: usize,
+    },
+
+    /// A round's proof-of-work nonce is missing, out of range, or misses the
+    /// difficulty target.
+    #[error("round {round}: proof of work rejected")]
+    ProofOfWorkRejected {
+        /// Zero-indexed round number.
+        round: usize,
+    },
+
+    /// No supported proof-of-work difficulty reaches the Fiat-Shamir target
+    /// for rounds of this degree.
+    #[error("no proof-of-work difficulty reaches the target for round degree {degree}")]
+    PowDifficulty { degree: usize },
+
+    /// A committed (zero-knowledge) sumcheck ran over a challenge set that
+    /// needs proof of work; committed proofs carry no nonces.
+    #[error("committed sumcheck challenges need proof of work, which committed proofs omit")]
+    NeedsProofOfWork,
+
     /// Consecutive integer domain points have colliding images in the field.
     #[error("integer sumcheck domain of size {domain_size} is not distinct in the field")]
     IntegerDomainNotDistinct { domain_size: usize },
-
-    /// A batch's round challenges were supplied with the wrong count.
-    #[error("expected {expected} round challenges, got {got}")]
-    WrongNumberOfChallenges {
-        /// The batch's round count.
-        expected: usize,
-        /// Number of challenges supplied.
-        got: usize,
-    },
 
     /// A single-instance sumcheck declared degree bound zero.
     #[error("sumcheck degree bound must be at least 1")]
@@ -242,8 +289,7 @@ pub enum SumcheckError<F: Field> {
     #[error("equality point has {got} coordinates for {expected} rounds")]
     EqualityPointLengthMismatch { expected: usize, got: usize },
 
-    /// A single-instance shape whose round indices do not fit a transcript
-    /// site, or whose proof size `degree × rounds` overflows.
+    /// A single-instance shape whose proof size `degree × rounds` overflows.
     #[error("sumcheck shape of {rounds} rounds at degree {degree} is not representable")]
     ShapeOverflow { rounds: usize, degree: usize },
 
@@ -251,8 +297,23 @@ pub enum SumcheckError<F: Field> {
     #[error("equality-factored sumcheck needs at least one round")]
     EqFactoredZeroRounds,
 
-    /// A clear replay read a round through a masked channel: its values are
-    /// m̂ = m + p, which only a residual lowering may use.
-    #[error("round {round} arrived masked in a clear replay")]
-    MaskedRoundInClearReplay { round: usize },
+    /// A single-instance round carries the wrong number of wire coefficients:
+    /// every round sends exactly the instance's degree bound of them.
+    #[error("round {round}: expected {expected} wire coefficients, got {got}")]
+    WrongRoundWidth {
+        round: usize,
+        expected: usize,
+        got: usize,
+    },
+
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: Field> From<VerificationError> for SumcheckError<F> {
+    fn from(_: VerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }

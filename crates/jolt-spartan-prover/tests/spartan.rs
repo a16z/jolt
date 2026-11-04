@@ -9,15 +9,12 @@ use jolt_crypto::{Bn254, JoltGroup};
 use jolt_dory::DoryScheme;
 use jolt_hyperkzg::{HyperKZGScheme, HyperKZGSetupParams};
 use jolt_openings::CommitmentScheme;
+use jolt_poly::CompressedPoly;
 use jolt_r1cs::ConstraintMatrices;
 use jolt_spartan_prover::prove;
 use jolt_spartan_verifier::{SpartanError, SpartanKey};
-use jolt_transcript::{
-    Blake2b512, Channel, ProtocolId, ProverTranscript, TranscriptError, VerifierTranscript,
-};
-
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-spartan/test");
-const SESSION: &[u8] = b"spartan-test";
+use jolt_sumcheck::SumcheckError;
+use jolt_transcript::{prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState};
 
 fn matrices() -> ConstraintMatrices<Fr> {
     let one = Fr::one();
@@ -43,6 +40,9 @@ fn public() -> [Fr; 1] {
 fn witness() -> [Fr; 3] {
     [3, 9, 27].map(Fr::from_u64)
 }
+fn transcript() -> ProverState<Blake2b512> {
+    prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"spartan-test"), b"")
+}
 
 fn hyperkzg_setup() -> (
     <HyperKZGScheme as CommitmentScheme>::ProverSetup,
@@ -61,42 +61,26 @@ fn hyperkzg_setup() -> (
     .unwrap()
 }
 
-fn prove_narg<PCS: CommitmentScheme<Field = Fr>>(
-    key: &SpartanKey<Fr>,
-    public_inputs: &[Fr],
-    witness: &[Fr],
-    pk: &PCS::ProverSetup,
-) -> Result<Vec<u8>, SpartanError<Fr>> {
-    let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, SESSION);
-    prove::<PCS, _>(key, public_inputs, witness, pk, &mut transcript)?;
-    Ok(transcript.finish())
-}
-
-/// Verifies `narg` as the whole argument string of one Spartan proof.
-fn verify_narg<PCS: CommitmentScheme<Field = Fr>>(
-    key: &SpartanKey<Fr>,
-    public_inputs: &[Fr],
-    vk: &PCS::VerifierSetup,
-    narg: &[u8],
-) -> Result<(), SpartanError<Fr>> {
-    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, SESSION, narg);
-    key.verify::<PCS, _>(public_inputs, vk, &mut transcript)?;
-    Ok(transcript.finish()?)
-}
-
-fn check_backend<PCS: CommitmentScheme<Field = Fr>>(
-    pk: &PCS::ProverSetup,
-    vk: &PCS::VerifierSetup,
-) {
+fn check_backend<PCS: CommitmentScheme<Field = Fr>>(pk: &PCS::ProverSetup, vk: &PCS::VerifierSetup)
+where
+    PCS::Output: Encoding,
+{
     let key = key();
-    let mut pt = ProverTranscript::<Blake2b512>::new(&PROTOCOL, SESSION);
-    prove::<PCS, _>(&key, &public(), &witness(), pk, &mut pt).unwrap();
-    let narg = pt.narg().to_vec();
-    let mut vt = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, SESSION, &narg);
-    key.verify::<PCS, _>(&public(), vk, &mut vt).unwrap();
-    assert_eq!(pt.challenge_bytes::<32>(), vt.challenge_bytes::<32>());
-    vt.finish().unwrap();
-    assert!(verify_narg::<PCS>(&key, &[Fr::from_u64(33)], vk, &narg).is_err());
+    let mut pt = transcript();
+    let proof = prove::<PCS>(&key, &public(), &witness(), pk, &mut pt).unwrap();
+    let mut vt = transcript();
+    key.verify::<PCS>(&public(), &proof, vk, &mut vt).unwrap();
+    let (prover_next, verifier_next): (Fr, Fr) = (pt.challenge().unwrap(), vt.challenge().unwrap());
+    assert_eq!(prover_next, verifier_next);
+    let bytes = bincode::serde::encode_to_vec(&proof, bincode::config::standard()).unwrap();
+    let (decoded, used) =
+        bincode::serde::decode_from_slice(&bytes, bincode::config::standard()).unwrap();
+    assert_eq!(used, bytes.len());
+    key.verify::<PCS>(&public(), &decoded, vk, &mut transcript())
+        .unwrap();
+    assert!(key
+        .verify::<PCS>(&[Fr::from_u64(33)], &proof, vk, &mut transcript())
+        .is_err());
 }
 
 #[test]
@@ -132,23 +116,25 @@ fn one_row_one_witness_and_no_public_input_are_supported() {
     );
     let key = SpartanKey::new(m, 0, [19; 32]).unwrap();
     let (pk, vk) = hyperkzg_setup();
-    let narg = prove_narg::<HyperKZGScheme>(&key, &[], &[Fr::from_u64(3)], &pk).unwrap();
-    verify_narg::<HyperKZGScheme>(&key, &[], &vk, &narg).unwrap();
+    let proof =
+        prove::<HyperKZGScheme>(&key, &[], &[Fr::from_u64(3)], &pk, &mut transcript()).unwrap();
+    key.verify::<HyperKZGScheme>(&[], &proof, &vk, &mut transcript())
+        .unwrap();
 }
 
 #[test]
 fn bad_inputs_and_malformed_matrices_reject() {
     let (pk, _) = hyperkzg_setup();
     assert!(matches!(
-        prove_narg::<HyperKZGScheme>(&key(), &[], &witness(), &pk),
+        prove::<HyperKZGScheme>(&key(), &[], &witness(), &pk, &mut transcript()),
         Err(SpartanError::PublicInputs)
     ));
     assert!(matches!(
-        prove_narg::<HyperKZGScheme>(&key(), &public(), &[], &pk),
+        prove::<HyperKZGScheme>(&key(), &public(), &[], &pk, &mut transcript()),
         Err(SpartanError::WitnessLength)
     ));
     assert!(matches!(
-        prove_narg::<HyperKZGScheme>(&key(), &public(), &[Fr::zero(); 3], &pk),
+        prove::<HyperKZGScheme>(&key(), &public(), &[Fr::zero(); 3], &pk, &mut transcript()),
         Err(SpartanError::Unsatisfied(_))
     ));
     let mut m = matrices();
@@ -174,51 +160,100 @@ fn bad_inputs_and_malformed_matrices_reject() {
 #[test]
 fn relation_digest_binds_encoding_of_evaluation_equivalent_matrices() {
     let (pk, vk) = hyperkzg_setup();
-    let narg = prove_narg::<HyperKZGScheme>(&key(), &public(), &witness(), &pk).unwrap();
+    let proof =
+        prove::<HyperKZGScheme>(&key(), &public(), &witness(), &pk, &mut transcript()).unwrap();
     let mut m = matrices();
     m.c[0] = vec![(3, Fr::from_u64(2)), (3, -Fr::one())];
     m.b[0].push((1, Fr::zero()));
     let equivalent = SpartanKey::new(m, 1, [19; 32]).unwrap();
-    let equivalent_narg =
-        prove_narg::<HyperKZGScheme>(&equivalent, &public(), &witness(), &pk).unwrap();
-    verify_narg::<HyperKZGScheme>(&equivalent, &public(), &vk, &equivalent_narg).unwrap();
-    assert!(verify_narg::<HyperKZGScheme>(&equivalent, &public(), &vk, &narg).is_err());
+    let equivalent_proof =
+        prove::<HyperKZGScheme>(&equivalent, &public(), &witness(), &pk, &mut transcript())
+            .unwrap();
+    equivalent
+        .verify::<HyperKZGScheme>(&public(), &equivalent_proof, &vk, &mut transcript())
+        .unwrap();
+    assert!(equivalent
+        .verify::<HyperKZGScheme>(&public(), &proof, &vk, &mut transcript())
+        .is_err());
     let another_policy = SpartanKey::new(matrices(), 1, [20; 32]).unwrap();
-    assert!(verify_narg::<HyperKZGScheme>(&another_policy, &public(), &vk, &narg).is_err());
+    assert!(another_policy
+        .verify::<HyperKZGScheme>(&public(), &proof, &vk, &mut transcript())
+        .is_err());
 }
 
 #[test]
-fn every_proof_message_is_bound() {
-    // Every message in the argument string (the witness commitment, each
-    // sumcheck round, the outer and witness evaluations, and the HyperKZG
-    // opening) is a 32-byte canonical element, so flipping a bit of any one
-    // either breaks its encoding or changes a bound value.
+fn proof_claims_commitment_and_opening_are_bound() {
     let key = key();
     let (pk, vk) = hyperkzg_setup();
-    let narg = prove_narg::<HyperKZGScheme>(&key, &public(), &witness(), &pk).unwrap();
-    verify_narg::<HyperKZGScheme>(&key, &public(), &vk, &narg).unwrap();
-    assert_eq!(narg.len() % 32, 0);
-    for element in 0..narg.len() / 32 {
-        let mut changed = narg.clone();
-        changed[element * 32] ^= 1;
-        assert!(
-            verify_narg::<HyperKZGScheme>(&key, &public(), &vk, &changed).is_err(),
-            "flipping element {element} must reject"
-        );
+    let proof =
+        prove::<HyperKZGScheme>(&key, &public(), &witness(), &pk, &mut transcript()).unwrap();
+    let reject = |proof: &_| {
+        assert!(key
+            .verify::<HyperKZGScheme>(&public(), proof, &vk, &mut transcript())
+            .is_err());
+    };
+    for index in 0..3 {
+        let mut changed = proof.clone();
+        changed.outer_evaluations[index] += Fr::one();
+        reject(&changed);
+    }
+    let mut changed = proof.clone();
+    changed.witness_evaluation += Fr::one();
+    reject(&changed);
+    let mut changed = proof.clone();
+    changed.witness_commitment += Bn254::g1_generator();
+    reject(&changed);
+    let mut changed = proof.clone();
+    changed.opening.w[0] += Bn254::g1_generator();
+    reject(&changed);
+    for outer in [true, false] {
+        let mut changed = proof.clone();
+        let round = if outer {
+            &mut changed.outer.round_polynomials[0]
+        } else {
+            &mut changed.inner.round_polynomials[0]
+        };
+        let mut coefficients = round.coeffs_except_linear_term().to_vec();
+        coefficients[0] += Fr::one();
+        *round = CompressedPoly::new(coefficients);
+        reject(&changed);
     }
 }
 
 #[test]
-fn truncated_and_extended_arguments_reject() {
+fn exact_round_counts_and_degrees_are_enforced() {
     let key = key();
     let (pk, vk) = hyperkzg_setup();
-    let narg = prove_narg::<HyperKZGScheme>(&key, &public(), &witness(), &pk).unwrap();
-    assert!(verify_narg::<HyperKZGScheme>(&key, &public(), &vk, &narg[..narg.len() - 32]).is_err());
-    let extended = [narg.as_slice(), &[0; 32]].concat();
-    assert!(matches!(
-        verify_narg::<HyperKZGScheme>(&key, &public(), &vk, &extended),
-        Err(SpartanError::Transcript(TranscriptError::TrailingBytes))
-    ));
+    let proof =
+        prove::<HyperKZGScheme>(&key, &public(), &witness(), &pk, &mut transcript()).unwrap();
+    for outer in [true, false] {
+        let mut changed = proof.clone();
+        let rounds = if outer {
+            &mut changed.outer.round_polynomials
+        } else {
+            &mut changed.inner.round_polynomials
+        };
+        rounds[0] = CompressedPoly::new(vec![Fr::zero(); if outer { 4 } else { 3 }]);
+        assert!(matches!(
+            key.verify::<HyperKZGScheme>(&public(), &changed, &vk, &mut transcript()),
+            Err(SpartanError::Sumcheck(
+                SumcheckError::DegreeBoundExceeded { .. }
+            ))
+        ));
+        let mut changed = proof.clone();
+        let rounds = if outer {
+            &mut changed.outer.round_polynomials
+        } else {
+            &mut changed.inner.round_polynomials
+        };
+        let _ = rounds.pop();
+        assert!(matches!(
+            key.verify::<HyperKZGScheme>(&public(), &changed, &vk, &mut transcript()),
+            Err(SpartanError::Sumcheck(
+                SumcheckError::WrongNumberOfRounds { .. }
+            ))
+        ));
+    }
 }
 
 #[test]
@@ -236,8 +271,11 @@ fn unequal_row_and_witness_padding_accepts() {
         ],
     );
     let key = SpartanKey::new(m, 0, [19; 32]).unwrap();
-    assert_eq!((key.row_vars(), key.witness_vars()), (2, 1));
     let (pk, vk) = hyperkzg_setup();
-    let narg = prove_narg::<HyperKZGScheme>(&key, &[], &[Fr::from_u64(3)], &pk).unwrap();
-    verify_narg::<HyperKZGScheme>(&key, &[], &vk, &narg).unwrap();
+    let proof =
+        prove::<HyperKZGScheme>(&key, &[], &[Fr::from_u64(3)], &pk, &mut transcript()).unwrap();
+    assert_eq!(proof.outer.round_polynomials.len(), 2);
+    assert_eq!(proof.inner.round_polynomials.len(), 1);
+    key.verify::<HyperKZGScheme>(&[], &proof, &vk, &mut transcript())
+        .unwrap();
 }

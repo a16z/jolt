@@ -23,17 +23,16 @@ use jolt_host::Program;
 use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_prover::dory::DoryProverPreprocessing;
 use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
-use jolt_verifier::{verify, JoltProof, JoltSponge, JoltVerifierPreprocessing, VerifierError};
+use jolt_transcript::{Keccak, ProverState, VerifierState};
+use jolt_verifier::{verify, JoltProof, JoltVerifierPreprocessing, VerifierError};
 
 use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 static VERIFIER_FIXTURE_LOCK: Mutex<()> = Mutex::new(());
-// Bumped whenever a cached section's encoding changes or cached proofs stop
-// verifying (cached ZK fixtures load without an acceptance check): proofs are
-// NARG argument strings (`JoltProof { protocol, narg }`) since JVCF0006; rounds
-// follow the per-round degree schedule since JVCF0007; JVCF0009 merges main's
-// JVCF0008 protocol changes into that encoding.
-const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0009";
+// Bump whenever cached proofs stop verifying: cached ZK fixtures load without an
+// acceptance check. JVCF0013: Whiteout's masked ZK proofs on main's JVCF0012
+// transcript.
+const FIXTURE_MAGIC: &[u8; 8] = b"JVCF0013";
 const REGENERATE_ARTIFACTS_ENV: &str = "JOLT_VERIFIER_REGENERATE_VERIFIER_FIXTURES";
 const VERIFIER_FIXTURE_LOCK_FILE: &str = "jolt-verifier-fixtures.lock";
 
@@ -116,6 +115,7 @@ fn lock_exclusive(file: &fs::File) {
     }
 }
 
+pub type VerifierFixtureProof = JoltProof<DoryScheme, Pedersen<Bn254G1>>;
 type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
 
 #[cfg(not(feature = "zk"))]
@@ -123,23 +123,17 @@ type VerifierFixturePreprocessing = JoltVerifierPreprocessing<DoryScheme, Peders
 pub struct VerifierFixtureCase {
     pub preprocessing: VerifierFixturePreprocessing,
     pub public_io: JoltDevice,
-    pub proof: JoltProof,
+    pub proof: VerifierFixtureProof,
     pub trusted_advice_commitment: Option<DoryCommitment>,
 }
 
 #[cfg(not(feature = "zk"))]
 impl VerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        self.verify_proof(&self.proof)
-    }
-
-    /// Verifies `proof` against this case's preprocessing, public I/O, and
-    /// trusted-advice commitment.
-    pub fn verify_proof(&self, proof: &JoltProof) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &self.preprocessing,
             &self.public_io,
-            proof,
+            &self.proof,
             self.trusted_advice_commitment.as_ref(),
         )
     }
@@ -150,23 +144,17 @@ impl VerifierFixtureCase {
 pub struct ZkVerifierFixtureCase {
     pub preprocessing: VerifierFixturePreprocessing,
     pub public_io: JoltDevice,
-    pub proof: JoltProof,
+    pub proof: VerifierFixtureProof,
     pub trusted_advice_commitment: Option<DoryCommitment>,
 }
 
 #[cfg(feature = "zk")]
 impl ZkVerifierFixtureCase {
     pub fn verify(&self) -> Result<(), VerifierError> {
-        self.verify_proof(&self.proof)
-    }
-
-    /// Verifies `proof` against this case's preprocessing, public I/O, and
-    /// trusted-advice commitment.
-    pub fn verify_proof(&self, proof: &JoltProof) -> Result<(), VerifierError> {
-        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &self.preprocessing,
             &self.public_io,
-            proof,
+            &self.proof,
             self.trusted_advice_commitment.as_ref(),
         )
     }
@@ -341,7 +329,7 @@ fn case_from_parts(
 struct GeneratedVerifierFixture {
     preprocessing: VerifierFixturePreprocessing,
     public_io: JoltDevice,
-    proof: JoltProof,
+    proof: VerifierFixtureProof,
     trusted_advice_commitment: Option<DoryCommitment>,
 }
 
@@ -405,11 +393,13 @@ impl VerifierFixtureKind {
             // cache, so a ZK transcript change must rename them or stale cached
             // proofs fail verification instead of regenerating.
             #[cfg(feature = "zk")]
-            Self::ZkMulDivSmall => "zk-muldiv-small-masked",
+            Self::ZkMulDivSmall => "zk-muldiv-small-masked-word-aligned-sha3",
             #[cfg(feature = "zk")]
-            Self::ZkCommittedMulDivSmall => "zk-committed-muldiv-small-masked-shared-products",
+            Self::ZkCommittedMulDivSmall => {
+                "zk-committed-muldiv-small-masked-shared-products-word-aligned-sha3"
+            }
             #[cfg(feature = "zk")]
-            Self::ZkAdviceConsumer => "zk-advice-consumer-masked",
+            Self::ZkAdviceConsumer => "zk-advice-consumer-masked-word-aligned-sha3",
         }
     }
 }
@@ -540,10 +530,10 @@ fn deserialize_verifier_object<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> 
 
 fn assert_verifier_accepts(
     fixture: &GeneratedVerifierFixture,
-    proof: JoltProof,
+    proof: VerifierFixtureProof,
     public_io: JoltDevice,
 ) {
-    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+    let result = verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
         &fixture.preprocessing,
         &public_io,
         &proof,
@@ -735,7 +725,7 @@ fn prove_prepared(
         jolt_prover::dory::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
-    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+    let proof = jolt_prover::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
         JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
         &config,
@@ -761,7 +751,7 @@ mod field_inline {
     use jolt_dory::DoryScheme;
     use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
     use jolt_prover::{JoltBackend, ProverConfig};
-    use jolt_verifier::JoltSponge;
+    use jolt_transcript::{Keccak, ProverState};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
     use tracer::execution_backend::TracerBackend;
 
@@ -839,7 +829,7 @@ mod field_inline {
         let witness = Arc::new(witness);
 
         let backend = JoltBackend::<Fr, DoryScheme>::reference();
-        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        let proof = jolt_prover::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             backend.with_witness(&witness),
             &prover_preprocessing,
             &config,

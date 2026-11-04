@@ -10,21 +10,33 @@
 //! this engine and the recorder touch the transcript; batch members compute
 //! pure field data. Padding and member-claim scales follow [`BatchPrelude`].
 //!
-//! [`prove_uniskip`] mirrors `jolt-verifier/src/stages/uniskip.rs`: a
-//! univariate-skip round is a genuinely different round type (separate wire
-//! proof, single degree-bounded round over a centered integer domain, full —
-//! not compressed — coefficients), so it is not a batch member; it records its
-//! round and output claim through the recorder's full-round hook.
+//! [`prove_uniskip_clear`] and the `committed` feature's uni-skip prover mirror
+//! `jolt-verifier/src/stages/uniskip.rs`'s two verify arms: a univariate-skip
+//! round is a genuinely different round type (separate wire proof, single
+//! degree-bounded round over a centered integer domain, full — not compressed
+//! — coefficients in the clear), so it is not a batch member and does not go
+//! through the recorder.
 
-use jolt_algebra::{CanonicalEncoding, Field};
-use jolt_poly::UnivariatePoly;
-use jolt_transcript::{ProverTranscript, Sponge};
+#[cfg(feature = "committed")]
+use jolt_crypto::VectorCommitment;
+use jolt_algebra::Field;
+#[cfg(feature = "committed")]
+use jolt_algebra::JoltField;
+use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
+use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel, ProverTranscript};
+#[cfg(feature = "committed")]
+use rand_core::RngCore;
 
 use crate::batch::{BatchPrelude, PaddingRule};
+#[cfg(feature = "committed")]
+use crate::committed::CommittedSumcheckBuilder;
+use crate::committed::CommittedSumcheckWitness;
 use crate::domain::{CenteredIntegerDomain, SumcheckDomain};
 use crate::error::SumcheckError;
-use crate::recorder::{ClearSumcheckRecorder, SumcheckRecorder};
-use crate::round_proof::padded_coefficients;
+use crate::pow::grind_round;
+use crate::proof::{ClearSumcheckProof, SumcheckProof};
+use crate::recorder::SumcheckRecorder;
+use crate::round_proof::RoundMessage;
 
 /// One batch member's prove-side round interface, consumed by
 /// [`prove_batch`]'s round loop. Object-safe on purpose: a stage's members are
@@ -44,9 +56,9 @@ use crate::round_proof::padded_coefficients;
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
 ///
-/// `Err` is the kernel's failure type. Batch members keep the default;
-/// [`prove_single`](crate::prove_single) drives kernels with any `Err` that
-/// embeds [`SumcheckError`].
+/// `Err` is the kernel's error. The batched engine uses the default
+/// [`SumcheckError`]; [`prove_single`](crate::prove_single) takes any error
+/// that embeds one, so a kernel can report its own failures.
 pub trait ProveRounds<F: Field, Err = SumcheckError<F>> {
     fn num_rounds(&self) -> usize;
 
@@ -155,6 +167,17 @@ pub struct ProvedBatch<F> {
     pub member_claims: Vec<F>,
 }
 
+/// Drop trailing zero coefficients down to the minimum two (degree 1) the
+/// compressed wire form requires. The batched polynomial is assembled over
+/// the round's scheduled `degree + 1` slots, so rounds where every active
+/// member's degree is lower carry trailing zeros that must not reach the wire.
+fn trim_round_polynomial<F: Field>(mut coefficients: Vec<F>) -> UnivariatePoly<F> {
+    while coefficients.len() > 2 && coefficients.last().is_some_and(|value| *value == F::zero()) {
+        let _ = coefficients.pop();
+    }
+    UnivariatePoly::new(coefficients)
+}
+
 /// Prove one batched sumcheck, mirroring the generated verify drivers'
 /// structure: per round, combine the active members' round polynomials with
 /// their batching coefficients and the padding rule of [`BatchPrelude`], self-check
@@ -168,7 +191,8 @@ pub struct ProvedBatch<F> {
 /// stage-side, so the stage computes its canonical opening values and calls
 /// `recorder.finish` itself.
 ///
-/// Each round is combined and sent at its degree in `prelude.degrees`. Returns
+/// Each round is assembled at its degree in `prelude.degrees`, and its proof
+/// of work is priced at that degree. Returns
 /// [`SumcheckError::ZeroBatchDegree`] if the schedule gives a round degree 0 —
 /// a sumcheck round polynomial must have degree at least 1 (the same
 /// invariant `SumcheckClaim::new` enforces on the verify side) — and
@@ -179,17 +203,17 @@ pub struct ProvedBatch<F> {
     name = "prove_batch",
     fields(num_rounds = prelude.max_num_vars(), members = members.len())
 )]
-pub fn prove_batch<F, R, H>(
+pub fn prove_batch<F, R, T>(
     prelude: &BatchPrelude<F>,
     members: &mut [&mut dyn ProveRounds<F>],
     scheduler: &mut dyn RoundScheduler<F>,
     recorder: &mut R,
-    transcript: &mut ProverTranscript<H>,
+    transcript: &mut T,
 ) -> Result<ProvedBatch<F>, SumcheckError<F>>
 where
     F: Field,
-    R: SumcheckRecorder<F, Error = SumcheckError<F>>,
-    H: Sponge,
+    R: SumcheckRecorder<F>,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     if members.len() != prelude.members.len() {
         return Err(SumcheckError::BatchMemberCountMismatch {
@@ -306,7 +330,7 @@ where
             }
         }
 
-        let batched_poly = UnivariatePoly::new(batched_coefficients);
+        let batched_poly = trim_round_polynomial(batched_coefficients);
         let round_sum = batched_poly.evaluate(F::zero()) + batched_poly.evaluate(F::one());
         if round_sum != running_claim {
             return Err(SumcheckError::RoundCheckFailed {
@@ -364,11 +388,24 @@ where
     })
 }
 
-/// A proved clear uni-skip round: the reduction challenge and the output claim
-/// (the round polynomial at the challenge — the batch driver absorbs it again
-/// as the remainder's input claim).
+/// A proved clear uni-skip round: the one-round full-coefficient wire proof,
+/// the reduction challenge, and the output claim (the round polynomial at the
+/// challenge — the batch driver absorbs it again as the remainder's input
+/// claim).
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProvedUniskip<F> {
+pub struct ProvedUniskip<F: Field> {
+    pub proof: ClearSumcheckProof<F>,
+    pub challenge: F,
+    pub output_claim: F,
+}
+
+/// A proved committed uni-skip round: the committed wire proof, its retained
+/// witness (for BlindFold), the reduction challenge, and the (prover-internal,
+/// never absorbed) output claim.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvedUniskipCommitted<F: Field, C> {
+    pub proof: SumcheckProof<F, C>,
+    pub witness: CommittedSumcheckWitness<F>,
     pub challenge: F,
     pub output_claim: F,
 }
@@ -376,73 +413,92 @@ pub struct ProvedUniskip<F> {
 /// Self-check the uni-skip round polynomial against the verifier's round
 /// checks before anything reaches the transcript: degree bound and
 /// centered-integer-domain round sum.
-fn check_uniskip_round<F: Field>(
+fn check_uniskip_round<F: Field + Encoding>(
     round_poly: &UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
     domain_size: usize,
 ) -> Result<(), SumcheckError<F>> {
-    let padded = UnivariatePoly::new(padded_coefficients(round_poly, degree)?);
-    CenteredIntegerDomain::new(domain_size).check_round_sum(0, input_claim, &padded)
-}
-
-/// Prove a uni-skip first round through `recorder`, mirroring the verifier's
-/// uni-skip step: self-check the round, record it at full width, draw the
-/// reduction challenge, evaluate the output claim and record it — before any
-/// post-uni-skip draw (the remainder batch's coefficient draw in particular),
-/// which is why the claim is recorded here and not in the stage. Each mode's
-/// entry point ([`prove_uniskip_clear`], the masked one in `jolt-zk`) wraps
-/// this in its own profiling span.
-pub fn prove_uniskip<F, R, H>(
-    round_poly: UnivariatePoly<F>,
-    input_claim: F,
-    degree: usize,
-    domain_size: usize,
-    mut recorder: R,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<(ProvedUniskip<F>, R::Witness), SumcheckError<F>>
-where
-    F: Field,
-    R: SumcheckRecorder<F, Error = SumcheckError<F>>,
-    H: Sponge,
-{
-    check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
-
-    let challenge = recorder.absorb_full_round(&round_poly, degree, transcript)?;
-    let output_claim = round_poly.evaluate(challenge);
-    let witness = recorder.finish(&[output_claim], transcript)?;
-
-    Ok((
-        ProvedUniskip {
-            challenge,
-            output_claim,
-        },
-        witness,
-    ))
+    let round_degree = UnivariatePolynomial::degree(round_poly);
+    if round_degree > degree {
+        return Err(SumcheckError::DegreeBoundExceeded {
+            got: round_degree,
+            max: degree,
+        });
+    }
+    CenteredIntegerDomain::new(domain_size).check_round_sum(0, input_claim, round_poly)
 }
 
 /// Prove a clear uni-skip first round, mirroring the verifier's
-/// `uniskip::verify_clear`: [`prove_uniskip`] with the clear recorder, which
-/// sends the full round polynomial and the output claim.
+/// `uniskip::verify_clear`: absorb the full round polynomial, grind its proof
+/// of work, squeeze the reduction challenge, evaluate the output claim, and
+/// absorb it — before any post-uni-skip draw
+/// (the remainder batch's coefficient squeeze in particular), which is why the
+/// absorb lives here and not in the stage.
 #[tracing::instrument(skip_all, name = "prove_uniskip_clear")]
-pub fn prove_uniskip_clear<F, H>(
+pub fn prove_uniskip_clear<F, T>(
     round_poly: UnivariatePoly<F>,
     input_claim: F,
     degree: usize,
     domain_size: usize,
-    transcript: &mut ProverTranscript<H>,
+    transcript: &mut T,
 ) -> Result<ProvedUniskip<F>, SumcheckError<F>>
 where
-    F: Field + CanonicalEncoding,
-    H: Sponge,
+    F: Field + Encoding,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    let (proved, ()) = prove_uniskip(
-        round_poly,
-        input_claim,
-        degree,
-        domain_size,
-        ClearSumcheckRecorder::new(),
-        transcript,
-    )?;
-    Ok(proved)
+    check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
+
+    round_poly.append_to_transcript(transcript);
+    let mut pow_nonces = Vec::new();
+    grind_round(degree, 0, &mut pow_nonces, transcript)?;
+    let challenge = transcript.challenge()?;
+    let output_claim = round_poly.evaluate(challenge);
+    transcript.append_private(&[output_claim]);
+
+    Ok(ProvedUniskip {
+        proof: ClearSumcheckProof {
+            round_polynomials: vec![round_poly],
+            pow_nonces,
+        },
+        challenge,
+        output_claim,
+    })
+}
+
+/// Prove a committed uni-skip first round, mirroring the verifier's
+/// `uniskip::verify_zk`: commit the round polynomial (absorbing only the
+/// commitment), squeeze the reduction challenge, then
+/// commit and absorb the output claim. The claim scalar never reaches the transcript. Blindings
+/// come from the caller-supplied `rng`.
+#[tracing::instrument(skip_all, name = "prove_uniskip_committed")]
+#[cfg(feature = "committed")]
+pub fn prove_uniskip_committed<F, VC, T, R>(
+    round_poly: UnivariatePoly<F>,
+    input_claim: F,
+    degree: usize,
+    domain_size: usize,
+    setup: &VC::Setup,
+    rng: R,
+    transcript: &mut T,
+) -> Result<ProvedUniskipCommitted<F, VC::Output>, SumcheckError<F>>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+    T: FieldTranscript<F> + ProverTranscript,
+    R: RngCore,
+{
+    check_uniskip_round(&round_poly, input_claim, degree, domain_size)?;
+
+    let mut builder = CommittedSumcheckBuilder::<F, VC, R>::new(setup, rng)?;
+    let challenge = builder.commit_round(&round_poly, transcript)?;
+    let output_claim = round_poly.evaluate(challenge);
+    let (proof, witness) = builder.finish(&[output_claim], transcript)?;
+
+    Ok(ProvedUniskipCommitted {
+        proof,
+        witness,
+        challenge,
+        output_claim,
+    })
 }

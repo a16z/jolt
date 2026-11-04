@@ -198,6 +198,7 @@ class _CfgAttr:
     square_depth: int = 0
     started: bool = False
     inner: bool = False  # #![cfg(...)] file/module-inner attribute
+    top_level: bool = True
     lines: list[int] = field(default_factory=list)
 
     def push(self, scan: LineScan, lineno: int) -> None:
@@ -213,7 +214,10 @@ class _CfgAttr:
     def is_complete(self) -> bool:
         return self.started and self.square_depth <= 0
 
-    def is_test_only(self) -> bool:
+    def is_test_only(self, *, standalone: bool = False) -> bool:
+        if standalone and not (self.top_level and self.code.count("[") == self.code.count("]") == 1
+                               and self.code.rstrip().endswith("]")):
+            return False
         arg = _cfg_arg(self.code)
         return arg is not None and _is_test_only_cfg_expr(arg)
 
@@ -235,14 +239,28 @@ class _Item:
     saw_brace: bool = False
     brace_depth: int = 0
     group_depth: int = 0  # unclosed parens/brackets across lines
+    trailing_code: bool = False
 
     def consume_line(self, scan: LineScan) -> bool:
         """Feed one line; True when the item ends on this line."""
         if not scan.has_code:
             return False
+        if not self.saw_brace:
+            groups = self.group_depth
+            for index, char in enumerate(scan.code):
+                if char == "{":
+                    break
+                groups += (char in "([") - (char in ")]")
+                if char == ";" and groups == 0 and scan.code[index + 1:].strip():
+                    self.trailing_code = True
         if scan.open_braces > 0:
             self.saw_brace = True
         if self.saw_brace:
+            depth = self.brace_depth
+            for index, char in enumerate(scan.code):
+                depth += (char == "{") - (char == "}")
+                if char == "}" and depth == 0 and scan.code[index + 1:].strip() not in ("", ";", ","):
+                    self.trailing_code = True
             self.brace_depth += scan.open_braces - scan.close_braces
             return self.brace_depth <= 0
         if not self.keyword_item and scan.close_braces > scan.open_braces:
@@ -270,8 +288,7 @@ class _Item:
 
 
 def _starts_cfg_attr(code: str) -> bool:
-    code = code.lstrip()
-    return code.startswith("#[cfg") or code.startswith("#![cfg")
+    return re.match(r"^#!?\[\s*cfg\s*\(", code.lstrip()) is not None
 
 
 def _cfg_arg(attr: str) -> str | None:
@@ -309,7 +326,7 @@ def _call_args(expr: str, name: str) -> str | None:
         elif ch == ")":
             depth -= 1
             if depth == 0:
-                return rest[:offset]
+                return rest[:offset] if not rest[offset + 1:].strip() else None
     return None
 
 
@@ -457,6 +474,7 @@ class RustRegions:
 
     test_lines: set[int]
     doc_lines: set[int]
+    code_lines: set[int] = field(default_factory=set)
 
     def category(self, lineno: int) -> str:
         # Test region wins over a doc comment inside it.
@@ -467,17 +485,22 @@ class RustRegions:
         return "code"
 
 
-def analyze_rust(content: str) -> RustRegions:
+def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
+    """Rust line regions. cfg_test_only conservatively admits standalone cfg-gated top-level
+    items, not test-like attributes inside macro input or other nested contexts."""
     scanner = _Scanner()
     test_lines: set[int] = set()
     doc_lines: set[int] = set()
+    code_lines: set[int] = set()
 
     pending_cfg: _CfgAttr | None = None
     await_item = False  # a test-only attribute was seen; consume attrs then item
     item: _Item | None = None
     rest_of_file_is_test = False
+    scope_depth = 0
+    ambiguous_test = False
 
-    lines = content.splitlines()
+    lines = content.split("\n")
     for lineno, raw_line in enumerate(lines, start=1):
         stripped = raw_line.strip()
 
@@ -491,7 +514,13 @@ def analyze_rust(content: str) -> RustRegions:
         if clean_start and (stripped.startswith("///") or stripped.startswith("//!")):
             doc_lines.add(lineno)
 
+        in_literal = scanner.in_string or scanner.in_raw_string
         scan = scanner.scan_line(raw_line)
+        top_level = scope_depth == 0
+        scope_depth += sum(scan.code.count(ch) for ch in "([{")
+        scope_depth -= sum(scan.code.count(ch) for ch in ")]}")
+        if scan.has_code or in_literal:
+            code_lines.add(lineno)
 
         if rest_of_file_is_test:
             test_lines.add(lineno)
@@ -500,13 +529,14 @@ def analyze_rust(content: str) -> RustRegions:
         if item is not None:
             test_lines.add(lineno)
             if item.consume_line(scan):
+                ambiguous_test |= item.trailing_code
                 item = None
             continue
 
         if pending_cfg is not None:
             pending_cfg.push(scan, lineno)
             if pending_cfg.is_complete():
-                if pending_cfg.is_test_only():
+                if pending_cfg.is_test_only(standalone=cfg_test_only):
                     test_lines.update(pending_cfg.lines)
                     if pending_cfg.inner:
                         rest_of_file_is_test = True
@@ -519,6 +549,7 @@ def analyze_rust(content: str) -> RustRegions:
 
         if await_item:
             if code.startswith("#"):
+                ambiguous_test |= not (code.count("[") == code.count("]") == 1 and code.endswith("]"))
                 test_lines.add(lineno)  # stacked attribute on the test item
                 continue
             if scan.has_code:
@@ -526,16 +557,18 @@ def analyze_rust(content: str) -> RustRegions:
                 new_item = _Item(keyword_item=bool(_ITEM_KEYWORD.match(code)))
                 if not new_item.consume_line(scan):
                     item = new_item
+                else:
+                    ambiguous_test |= new_item.trailing_code
                 await_item = False
             else:
                 test_lines.add(lineno)  # blank/comment line between attr and item
             continue
 
         if _starts_cfg_attr(code):
-            pending_cfg = _CfgAttr(inner=code.startswith("#!"))
+            pending_cfg = _CfgAttr(inner=code.startswith("#!"), top_level=top_level)
             pending_cfg.push(scan, lineno)
             if pending_cfg.is_complete():
-                if pending_cfg.is_test_only():
+                if pending_cfg.is_test_only(standalone=cfg_test_only):
                     test_lines.update(pending_cfg.lines)
                     if pending_cfg.inner:
                         rest_of_file_is_test = True
@@ -544,12 +577,13 @@ def analyze_rust(content: str) -> RustRegions:
                 pending_cfg = None
             continue
 
-        if TEST_ATTR.match(code):
+        if not cfg_test_only and TEST_ATTR.match(code):
             test_lines.add(lineno)
             await_item = True
             continue
 
-    return RustRegions(test_lines=test_lines, doc_lines=doc_lines)
+    return RustRegions(test_lines=set() if cfg_test_only and ambiguous_test else test_lines,
+                       doc_lines=doc_lines, code_lines=code_lines)
 
 
 # --- Diff parsing ---------------------------------------------------------

@@ -4,10 +4,8 @@ use jolt_claims::protocols::composed::ComposedClaims;
 use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_transcript::FieldTranscript;
 use jolt_zk::masking::CommittedPadsView;
-
-use crate::sites::STAGE6A;
 
 #[cfg(feature = "field-inline")]
 use super::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
@@ -23,8 +21,13 @@ use super::{
 use crate::stages::zk::masked_channel;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
     stages::{
-        stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
+        pow::{check_pow, PowSite},
+        stage1::Stage1Output,
+        stage2::Stage2Output,
+        stage3::Stage3Output,
+        stage4::Stage4Output,
         stage5::Stage5Output,
     },
     verifier::CheckedInputs,
@@ -35,11 +38,13 @@ use crate::{
     clippy::too_many_arguments,
     reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
-pub fn verify<PCS, VC, H, P>(
+#[jolt_verifier_derive::fs_scope(Stage6a)]
+pub fn verify<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
-    transcript: &mut VerifierTranscript<'_, H>,
+    transcript: &mut T,
     pads: Option<&mut CommittedPadsView<P>>,
     stage1: &Stage1Output<PCS::Field>,
     stage2: &Stage2Output<PCS::Field>,
@@ -50,9 +55,8 @@ pub fn verify<PCS, VC, H, P>(
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    H: Sponge,
+    T: FieldTranscript<PCS::Field>,
 {
-    transcript.site(STAGE6A);
     // The upstream cycle/register points and entry index ride on the relation
     // (full geometry at construction) for the prover's address-phase kernel;
     // the verifier itself never evaluates them here.
@@ -62,7 +66,7 @@ where
         .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
     let address_sumchecks = Stage6aSumchecks::build_from_parts(Stage6aBuildParts {
         formula_dimensions,
-        committed_chunk_bits: checked.one_hot_config.committed_chunk_bits(),
+        committed_chunk_bits: proof.one_hot_config.committed_chunk_bits(),
         committed_program: checked.precommitted.bytecode.is_some(),
         entry_bytecode_index,
         stage1_cycle_binding: &stage1_cycle_binding,
@@ -74,8 +78,8 @@ where
 
     // The generated per-member draw: the bytecode member's six squeezes (the
     // fold gamma plus the five per-stage folding gammas, each formerly an
-    // inline `challenge_powers(..)` whose single draw's degree-1
-    // power equals the drawn scalar; byte- and value-equal, test-locked in
+    // inline `challenge_powers(..)` whose single squeeze's degree-1
+    // power equals the squeezed scalar; byte- and value-equal, test-locked in
     // `bytecode_read_raf.rs` — stage 6b's folds expand the power vectors via
     // `stage_gamma_powers`, test-locked below), then the booleanity member's
     // override (the reference-address pad draw and the gamma; schedule-locked
@@ -83,6 +87,7 @@ where
     // booleanity subprotocol samples them before the 6a batch runs, so the
     // transcript schedule fixes them here and they ride downstream as typed
     // upstream values (the same idiom as `Stage2ZkOutput`'s `product_tau_high`).
+    check_pow(PowSite::Stage6a, &proof.stages.pow_nonces, transcript)?;
     let address_challenges = address_sumchecks.draw_challenges(transcript)?;
     let carried = Stage6aCarriedChallenges::from(&address_challenges);
 
@@ -108,6 +113,12 @@ where
             output_points: batch.output_points,
         }));
     }
+
+    let claims = &proof.clear_claims()?.stage6a;
+    // Rejects val-stage claims whose presence or count disagrees with the
+    // committed-program mode (the bytecode member's wire set carries the staged
+    // `BytecodeValClaim` ids exactly when the program is committed).
+    address_sumchecks.validate_output_claims(claims)?;
 
     // The bytecode address-phase input claim is the gamma-folded bind of every
     // prior clear stage opening (plus, under akita, the four reduced `Inc`
@@ -144,22 +155,24 @@ where
         booleanity: BooleanityAddressPhaseInputClaims::default(),
     };
 
-    // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
-    // then booleanity `intermediate`) is single-sourced from the generated
-    // `receive_output_claims` (member declaration order = canonical Fiat-Shamir
-    // order; no alias dedup in the address phase). The bytecode member's wire set
-    // carries the staged `BytecodeValClaim` ids exactly when the program is
-    // committed.
-    let (output_points, output_values) = address_sumchecks.verify_clear(
+    let output_points = address_sumchecks.verify_clear(
         &address_input_values,
         &address_input_points,
         &address_challenges,
+        claims,
+        &proof.stages.stage6a_sumcheck_proof,
         transcript,
         6,
     )?;
 
+    // The address-phase opening order (bytecode `intermediate`, each `val_stages`,
+    // then booleanity `intermediate`) is single-sourced from the generated
+    // `append_output_claims` (member declaration order = canonical Fiat-Shamir
+    // order; no alias dedup in the address phase).
+    address_sumchecks.append_output_claims(transcript, claims);
+
     Ok(Stage6aOutput::Clear(Stage6aClearOutput {
-        output_values,
+        output_values: claims.clone(),
         output_points,
         challenges: carried,
     }))
@@ -180,12 +193,12 @@ mod tests {
     };
     use super::super::outputs::Stage6aOutputClaims;
     use super::*;
-    use crate::stages::relations::test_transcript::{assert_same_draws, fresh};
-    use crate::stages::relations::ClaimRoutes;
-    use jolt_algebra::{Fr, Ring};
+    use crate::stages::relations::draw_recording::{record, recorder, squeeze};
     use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
     use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafDimensions;
     use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomialLayout;
+    use jolt_algebra::{Fr, Ring};
+    use jolt_transcript::{prover_transcript, Keccak, ScriptedTranscript, Transcript};
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -229,26 +242,30 @@ mod tests {
         }
     }
 
-    /// The batch draws the bytecode member's six uniform gammas, then the
-    /// booleanity member's reference-address pad (the reversed stage-5
-    /// instruction address is narrower than the committed chunk width here, so
-    /// one small challenge fills the missing slot) and its small gamma.
+    /// Pins the batch's `draw_challenges` to the retired hand pre-batch draw:
+    /// the bytecode member's six gammas, then the booleanity member's override —
+    /// the reference-address pad draw (the reversed stage-5 instruction address
+    /// is narrower than the committed chunk width here) and the booleanity
+    /// gamma. The reference vectors are pure computation (reversal, pad slot)
+    /// off the stage-5 point the relation carries.
     #[test]
     #[expect(clippy::unwrap_used)]
-    fn draw_challenges_pads_narrow_reference_address() {
+    fn draw_challenges_matches_inline_draw_sequence() {
         let address = vec![fr(11)];
         let cycle = vec![fr(21), fr(22), fr(23), fr(24)];
         let sumchecks = sumchecks(address.clone(), cycle.clone());
 
-        let (challenges, (gammas, pad, gamma)) = assert_same_draws(
-            |t| sumchecks.draw_challenges(t).unwrap(),
-            |t| {
-                let gammas: Vec<Fr> = (0..6).map(|_| t.challenge()).collect();
-                let pad: Vec<Fr> = t.challenges_small(1);
-                (gammas, pad, t.challenge_small::<Fr>())
-            },
-        );
+        let (inline_events, (inline_gammas, inline_reference_address, inline_gamma)) =
+            record(|t| {
+                let gammas: Vec<Fr> = (0..6).map(|_| t.challenge().unwrap()).collect();
+                let mut reference_address: Vec<Fr> = address.iter().rev().copied().collect();
+                reference_address.extend(t.challenge_vector(1).unwrap());
+                (gammas, reference_address, t.challenge().unwrap())
+            });
+        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
+        assert_eq!(draw_events, inline_events);
+        assert_eq!(draw_events, (1..=8u64).map(squeeze).collect::<Vec<_>>());
         assert_eq!(
             vec![
                 challenges.bytecode_read_raf.gamma,
@@ -258,22 +275,22 @@ mod tests {
                 challenges.bytecode_read_raf.stage4_gamma,
                 challenges.bytecode_read_raf.stage5_gamma,
             ],
-            gammas,
+            inline_gammas,
         );
         assert_eq!(
             challenges.booleanity.reference_address,
-            [fr(11)].into_iter().chain(pad).collect::<Vec<_>>()
+            inline_reference_address
         );
         assert_eq!(
             sumchecks.booleanity.reference_cycle(),
             cycle.iter().rev().copied().collect::<Vec<_>>()
         );
-        assert_eq!(challenges.booleanity.gamma, gamma);
+        assert_eq!(challenges.booleanity.gamma, inline_gamma);
     }
 
     /// The truncate branch: a stage-5 instruction address wider than the
     /// committed chunk width keeps its reversed tail and draws no pad — only
-    /// the booleanity gamma follows the bytecode member's six.
+    /// the booleanity gamma squeeze follows the bytecode member's six.
     #[test]
     #[expect(
         clippy::unwrap_used,
@@ -284,44 +301,48 @@ mod tests {
         let address = vec![fr(11), fr(12), fr(13)];
         let sumchecks = sumchecks(address.clone(), vec![fr(21)]);
 
-        let (challenges, gamma) = assert_same_draws(
-            |t| sumchecks.draw_challenges(t).unwrap(),
-            |t| {
-                for _ in 0..6 {
-                    let _: Fr = t.challenge();
-                }
-                t.challenge_small::<Fr>()
-            },
-        );
+        let (draw_events, challenges) = record(|t| sumchecks.draw_challenges(t).unwrap());
 
+        assert_eq!(draw_events, (1..=7u64).map(squeeze).collect::<Vec<_>>());
         let reversed: Vec<Fr> = address.iter().rev().copied().collect();
         assert_eq!(challenges.booleanity.reference_address, reversed[1..]);
         assert_eq!(sumchecks.booleanity.reference_cycle(), vec![fr(21)]);
-        assert_eq!(challenges.booleanity.gamma, gamma);
+        assert_eq!(challenges.booleanity.gamma, fr(7));
     }
 
-    /// Locks the stage-6a address-phase opening order: bytecode read-RAF
-    /// `intermediate`, each `val_stages` entry, then booleanity `intermediate`.
+    /// Locks the stage-6a address-phase Fiat-Shamir append order against silent
+    /// drift: bytecode read-RAF `intermediate`, each `val_stages` entry, then
+    /// booleanity `intermediate`. Single-sourced from the generated
+    /// `append_output_claims`.
     #[test]
-    fn stage6a_wire_claims_follow_canonical_order() {
+    fn stage6a_output_claims_append_follows_canonical_order() {
+        let sumchecks = sumchecks(Vec::new(), Vec::new());
         let mut claims = sample_claims();
         claims.bytecode_read_raf.val_stages = (903..908).map(fr).collect();
 
-        assert_eq!(
-            Stage6aSumchecks::wire_claim_values(&claims, &ClaimRoutes::default()),
-            [901, 903, 904, 905, 906, 907, 902].map(fr).to_vec()
-        );
+        let mut got = recorder();
+        sumchecks.append_output_claims(&mut got, &claims);
+
+        let mut want = recorder();
+        for value in [901, 903, 904, 905, 906, 907, 902].map(fr) {
+            want.append(&value);
+        }
+
+        assert_eq!(got.absorbed(), want.absorbed());
     }
 
-    /// `stage_gamma_powers` expands each stored stage gamma into the power
-    /// vector `[1, gamma, ...]` of the stage's fold width, the vector
-    /// `challenge_powers` yields from the same uniform draw.
+    /// The `stage_gamma_powers` expansion of a drawn scalar must equal
+    /// `challenge_powers`' output for the same drawn scalar — the
+    /// value-identity the stage-6a generated draw substitution relies on
+    /// (the prover draws each stage's power vector inline; the verifier stores
+    /// the scalar and expands at the stage-6b folds).
     #[test]
-    fn stage_gamma_powers_expand_each_stage_gamma() {
+    #[expect(clippy::unwrap_used)]
+    fn stage_gamma_powers_matches_challenge_powers() {
         use jolt_claims::protocols::jolt::geometry::bytecode::BYTECODE_STAGE_GAMMA_COUNTS;
         use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 
-        let gamma: Fr = fresh().challenge();
+        let gamma = Fr::from_u64(7);
         let challenges = BytecodeReadRafAddressPhaseChallenges {
             gamma,
             stage1_gamma: gamma,
@@ -330,12 +351,16 @@ mod tests {
             stage4_gamma: gamma,
             stage5_gamma: gamma,
         };
+        let mut transcript = ScriptedTranscript::with_script(
+            prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(b"stage-gamma-powers"), b""),
+            vec![gamma; BYTECODE_STAGE_GAMMA_COUNTS.len()],
+        );
         for (powers, len) in challenges
             .stage_gamma_powers()
             .into_iter()
             .zip(BYTECODE_STAGE_GAMMA_COUNTS)
         {
-            assert_eq!(powers, fresh().challenge_powers::<Fr>(len));
+            assert_eq!(powers, transcript.challenge_powers(len).unwrap());
         }
     }
 }

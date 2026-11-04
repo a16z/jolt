@@ -46,9 +46,11 @@ pub(crate) mod num {
 
 pub mod config;
 pub mod error;
+#[cfg(feature = "fs-audit")]
+#[doc(hidden)]
+pub mod fs_audit;
 pub mod preprocessing;
 pub mod proof;
-pub mod sites;
 pub mod stages;
 pub mod verifier;
 #[cfg(all(feature = "akita", feature = "zk"))]
@@ -58,17 +60,22 @@ pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIF
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
+    VerifierPreprocessingWire,
 };
-pub use proof::{JoltProof, ProofCommitments, ProofHeader};
+pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
+#[cfg(feature = "akita")]
+pub use verifier::absorb_akita_commitments;
+#[cfg(not(feature = "akita"))]
+pub use verifier::absorb_transcript_commitments;
 #[cfg(not(feature = "akita"))]
 pub use verifier::pad_layout;
 #[cfg(not(all(feature = "akita", feature = "zk")))]
 pub use verifier::verify;
 pub use verifier::{
-    absorb_public_commitments, absorb_public_preamble, jolt_protocol_id, seed_transcript,
-    validate_inputs, CheckedInputs, JoltSponge, JOLT_SESSION,
+    absorb_committed_program_commitments, validate_and_seed_transcript, validate_inputs_from_parts,
+    CheckedInputs, JoltStatement, ProofTranscriptConfig, JOLT_SESSION,
 };
 #[cfg(not(feature = "akita"))]
-pub use verifier::{replay_stages, verify_residual, verify_stages, MaskedStages, VerifiedStages};
+pub use verifier::{verify_residual, verify_stages_on, MaskedStages, VerifiedStages};
 #[cfg(all(feature = "akita", feature = "zk"))]
 pub use whiteout::{pad_layout, verify};

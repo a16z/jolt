@@ -1,9 +1,8 @@
 //! Field and ring abstractions for the Jolt zkVM.
 //!
 //! A slim algebraic ladder — [`AdditiveGroup`] → [`Ring`] → [`Field`] — with
-//! orthogonal capabilities: [`CanonicalBytes`]/[`CanonicalDecode`] (the
-//! fixed-width canonical codec every transcript atom implements),
-//! [`CanonicalEncoding`] (the field decode-and-introspect surface on top of it)
+//! orthogonal capabilities: [`CanonicalBytes`]/[`CanonicalEncoding`] (the
+//! Fiat-Shamir transcript surface and the field decode surface on top of it)
 //! and [`WithAccumulator`] (deferred-reduction fused multiply-add).
 //! [`JoltField`] is the blanket-implemented bundle of everything Jolt's
 //! protocol stack requires of a scalar field: `Field + CanonicalEncoding +
@@ -73,7 +72,7 @@
 //! - Proof/wire serialization is serde + bincode over canonical
 //!   little-endian bytes (see [`impl_serde_bytes!`]); deserialization
 //!   rejects non-canonical encodings uniformly via
-//!   [`CanonicalDecode::from_bytes_le_checked`].
+//!   [`CanonicalEncoding::from_bytes_le_checked`].
 //! - Fiat-Shamir transcript bytes use the explicit little-endian encoding
 //!   ([`CanonicalBytes::to_bytes_le`]) and never go through a serialization
 //!   library.
@@ -105,6 +104,11 @@ mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
 pub mod checked;
+#[cfg(all(
+    feature = "spongefish",
+    any(feature = "bn254", feature = "solinas", feature = "binary")
+))]
+mod encoding;
 mod extension;
 #[cfg(feature = "solinas")]
 pub mod fft;
@@ -143,18 +147,47 @@ pub use ring::{
     DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
 };
 
-pub use algebra::narg;
 pub use algebra::{
-    lift_ct, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field,
-    JoltField, MaybeAllocative, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
+    lift_ct, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
+    MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
+#[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+mod field_inline;
+
+/// Prove that the field-inline unit computes in the field this guest's
+/// selector names, so that a guest built for one field cannot run under a
+/// tracer for the other. jolt-sdk's std runtime calls this once at boot,
+/// before `main`. Without a selector, or off a RISC-V guest, it does nothing.
+pub fn bind_field_inline_modulus() {
+    #[cfg(all(
+        feature = "field-inline-guest-bn254",
+        feature = "bn254",
+        target_arch = "riscv64"
+    ))]
+    field_inline::bind_modulus(&Fr::MODULUS_LIMBS);
+    #[cfg(all(
+        feature = "field-inline-guest-fp128",
+        feature = "solinas",
+        target_arch = "riscv64"
+    ))]
+    field_inline::bind_modulus(&Prime128OffsetA7F7::MODULUS_LIMBS);
+}
+#[cfg(all(
+    feature = "field-inline-guest-bn254",
+    feature = "field-inline-guest-fp128",
+    target_arch = "riscv64"
+))]
+compile_error!(
+    "the field-inline unit computes in one field: enable field-inline-guest-bn254 or \
+     field-inline-guest-fp128, not both"
+);
 #[cfg(feature = "binary")]
 pub use binary::{F128, F192, F64, F8};
 #[cfg(feature = "bn254")]
 pub use bn254::{Fq, Fr, FrSignedProductAccumulator, FrSmallScalarAccumulator, WideAccumulator};
 pub use extension::{Ext2Config, Ext2NonResidueKind, ExtField, MulBaseUnreduced, NegOneNr, TwoNr};
 #[cfg(feature = "solinas")]
-pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator};
+pub use fp128_accumulators::{Fp128Accumulator, Fp128SignedAccumulator, Fp128SumAccumulator};
 pub use limbs::Limbs;
 pub use num_traits::{One, Zero};
 pub use packed::{NoPacking, Packed, WithPacking};

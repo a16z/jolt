@@ -4,14 +4,14 @@
     reason = "fixtures assert provisioning outcomes and fail loudly"
 )]
 use super::*;
-use crate::adapters::{absorb_setup_catalog, receive_selection, AkitaBackendFlavor};
-use crate::test_transcripts::{new_prover_transcript, new_verifier_transcript};
 use crate::{
-    AkitaChunkProfile, AkitaCommitment, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
+    AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaScheduleArtifacts, AkitaScheme,
+    AkitaSetupParams,
 };
 use jolt_algebra::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{MultilinearPoly, OneHotPolynomial, Polynomial};
+use jolt_transcript::{protocol_tag, prover_transcript, Blake2b512};
 
 fn params(vars: usize) -> AkitaSetupParams {
     AkitaSetupParams::dense_only(
@@ -30,7 +30,7 @@ struct DenseFixture {
     commitment: AkitaCommitment,
     point: Vec<AkitaField>,
     evaluation: AkitaField,
-    proof: Vec<u8>,
+    proof: AkitaBatchProof,
 }
 
 impl DenseFixture {
@@ -44,17 +44,15 @@ impl DenseFixture {
         let point = vec![AkitaField::from_u64(3); vars];
         let evaluation = polynomial.evaluate(&point);
         let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover).unwrap();
-        let mut transcript = new_prover_transcript(b"verifier-resources");
-        AkitaScheme::open(
+        let proof = AkitaScheme::open(
             &polynomial,
             &point,
             evaluation,
             &prover,
             Some(hint),
-            &mut transcript,
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"verifier-resources"), b""),
         )
         .unwrap();
-        let proof = transcript.finish();
         Self {
             commitment,
             point,
@@ -64,15 +62,14 @@ impl DenseFixture {
     }
 
     fn verify(&self, setup: &AkitaVerifierSetup, evaluation: AkitaField) -> bool {
-        let mut transcript = new_verifier_transcript(b"verifier-resources", &self.proof);
         AkitaScheme::verify(
             &self.commitment,
             &self.point,
             evaluation,
+            &self.proof,
             setup,
-            &mut transcript,
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"verifier-resources"), b""),
         )
-        .and_then(|()| transcript.finish().map_err(OpeningsError::from))
         .is_ok()
     }
 }
@@ -179,20 +176,24 @@ fn one_hot_proofs_use_the_same_warm_backend_at_different_arities() {
         let point = vec![AkitaField::from_u64(3); vars];
         let evaluation = polynomial.evaluate(&point);
         let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover).unwrap();
-        let mut transcript = new_prover_transcript(b"warm-onehot");
-        AkitaScheme::open(
+        let proof = AkitaScheme::open(
             &polynomial,
             &point,
             evaluation,
             &prover,
             Some(hint),
-            &mut transcript,
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"warm-onehot"), b""),
         )
         .unwrap();
-        let proof = transcript.finish();
-        let mut transcript = new_verifier_transcript(b"warm-onehot", &proof);
-        AkitaScheme::verify(&commitment, &point, evaluation, &verifier, &mut transcript).unwrap();
-        transcript.finish().unwrap();
+        AkitaScheme::verify(
+            &commitment,
+            &point,
+            evaluation,
+            &proof,
+            &verifier,
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"warm-onehot"), b""),
+        )
+        .unwrap();
     }
 }
 
@@ -337,28 +338,21 @@ fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
     let point = vec![AkitaField::from_u64(3); 27];
     let evaluation = polynomial.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover).unwrap();
-    let mut transcript = new_prover_transcript(b"prefix-fold");
-    AkitaScheme::open(
+    let proof = AkitaScheme::open(
         &polynomial,
         &point,
         evaluation,
         &prover,
         Some(hint),
-        &mut transcript,
+        &mut prover_transcript::<Blake2b512>(&protocol_tag(b"prefix-fold"), b""),
     )
     .unwrap();
-    let proof = transcript.finish();
     drop((prover, polynomial));
-    let selection = {
-        let mut transcript = new_verifier_transcript(b"prefix-fold", &proof);
-        absorb_setup_catalog(&mut transcript, &verifier, AkitaBackendFlavor::OneHot).unwrap();
-        receive_selection(&mut transcript).unwrap()
-    };
     assert!(
         with_one_hot_family!(scheme verifier.one_hot_scheme().unwrap(), |scheme| {
             scheme
                 .schedules()
-                .resolve_selection(selection)
+                .resolve_selection(proof.selection())
                 .unwrap()
                 .schedule()
                 .recursive_folds
@@ -370,10 +364,15 @@ fn transported_setups_verify_a_proof_through_a_setup_prefix_fold() {
         serde_json::from_str(&serde_json::to_string(&verifier).unwrap()).unwrap()
     };
     let verifies = |setup: &AkitaVerifierSetup, evaluation| {
-        let mut transcript = new_verifier_transcript(b"prefix-fold", &proof);
-        AkitaScheme::verify(&commitment, &point, evaluation, setup, &mut transcript)
-            .and_then(|()| transcript.finish().map_err(OpeningsError::from))
-            .is_ok()
+        AkitaScheme::verify(
+            &commitment,
+            &point,
+            evaluation,
+            &proof,
+            setup,
+            &mut prover_transcript::<Blake2b512>(&protocol_tag(b"prefix-fold"), b""),
+        )
+        .is_ok()
     };
     let registry = PreparedRegistry::new();
     let alone = transported();

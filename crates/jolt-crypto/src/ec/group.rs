@@ -1,7 +1,8 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, JoltField};
+use jolt_algebra::JoltField;
+use jolt_transcript::Encoding;
 use serde::{Deserialize, Serialize};
 
 /// Cryptographic group suitable for commitments.
@@ -21,9 +22,8 @@ use serde::{Deserialize, Serialize};
 /// seeds accumulators with `Default::default()`; a non-identity default would
 /// silently offset every aggregate.
 ///
-/// Requires the canonical [`CanonicalBytes`]/[`CanonicalDecode`] codec so
-/// group elements travel as transcript atoms (e.g., Pedersen commitments in
-/// ZK sumcheck). Decoding must accept only valid group elements.
+/// Requires a fixed-width [`Encoding`] so group elements can be absorbed into
+/// Fiat-Shamir transcripts (e.g., Pedersen commitments in ZK sumcheck).
 pub trait JoltGroup:
     Clone
     + Copy
@@ -42,8 +42,7 @@ pub trait JoltGroup:
     + SubAssign
     + Serialize
     + for<'de> Deserialize<'de>
-    + CanonicalBytes
-    + CanonicalDecode
+    + Encoding
 {
     #[must_use]
     fn identity() -> Self;

@@ -1,24 +1,16 @@
-//! Soundness over the argument string: every prover message is a byte range
-//! of the proof's NARG, so the suites alter bytes and the statement rather
-//! than typed proof fields, and pin where each alteration must be caught
-//! (`support::narg::Region::deadline`).
-//!
-//! Each backend runs the same checks (`checks`) over its own fixtures. The
-//! event log that attributes a rejection to a protocol region needs the
-//! `logging` feature.
+pub mod tampering;
 
-#[cfg(all(feature = "prover-fixtures", feature = "logging"))]
-mod checks;
-
-#[cfg(all(feature = "prover-fixtures", feature = "logging", feature = "akita"))]
-mod akita;
+// Whiteout's soundness suite: the census, the message sweep and the per-class
+// tampers over the argument string, whose regions the `logging` event log
+// attributes (`support::narg`). The clear and BlindFold tamper sweeps are
+// main's `tampering` suite.
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "logging",
-    not(feature = "akita"),
-    not(feature = "zk")
+    feature = "akita",
+    feature = "zk"
 ))]
-mod dory;
+mod checks;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "logging",
@@ -26,11 +18,3 @@ mod dory;
     feature = "zk"
 ))]
 mod whiteout;
-#[cfg(all(
-    feature = "prover-fixtures",
-    feature = "logging",
-    not(feature = "akita"),
-    not(feature = "field-inline"),
-    feature = "zk"
-))]
-mod zk;

@@ -8,6 +8,8 @@ use super::geometry::{
     SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
     SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
+use std::collections::BTreeSet;
+
 use super::ComposedOpeningId;
 use crate::protocols::field_inline::geometry::{
     product as field_product, spartan as field_spartan,
@@ -25,8 +27,8 @@ use crate::protocols::jolt::{
     SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
 use crate::{
-    derived, opening, Expr, FactoredExpr, NoChallenges, Source, SumcheckDomain, SymbolicSumcheck,
-    Term,
+    derived, opening, referenced_openings, Expr, FactoredExpr, NoChallenges, Source,
+    SumcheckDomain, SymbolicSumcheck, Term,
 };
 use jolt_algebra::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -57,6 +59,23 @@ pub struct OuterRemainder {
     shape: SpartanOuterDimensions,
 }
 
+impl OuterRemainder {
+    /// The ordinary Az/Bz linear forms extended with the field-inline columns.
+    fn output_factor_expressions<F: Ring>(&self) -> (ComposedExpr<F>, ComposedExpr<F>) {
+        let (az, bz) = base::OuterRemainder::new(self.shape.clone()).output_factor_expressions();
+        let mut az = lift(az);
+        let mut bz = lift(bz);
+        let ids = (self.shape.variables().len()..).zip(field_spartan::outer_output_openings());
+        for (index, id) in ids {
+            az = az
+                + derived(JoltDerivedId::from(SpartanOuterPublic::AzWeight(index))) * opening(id);
+            bz = bz
+                + derived(JoltDerivedId::from(SpartanOuterPublic::BzWeight(index))) * opening(id);
+        }
+        (az, bz)
+    }
+}
+
 impl SymbolicSumcheck for OuterRemainder {
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
@@ -85,21 +104,20 @@ impl SymbolicSumcheck for OuterRemainder {
         self.output_factored().expand()
     }
     fn output_factored<F: Ring>(&self) -> ComposedFactoredExpr<F> {
-        let (az, bz) = base::OuterRemainder::new(self.shape.clone()).output_factor_expressions();
-        let mut az = lift(az);
-        let mut bz = lift(bz);
-        let ids = (self.shape.variables().len()..).zip(field_spartan::outer_output_openings());
-        for (index, id) in ids {
-            az = az
-                + derived(JoltDerivedId::from(SpartanOuterPublic::AzWeight(index))) * opening(id);
-            bz = bz
-                + derived(JoltDerivedId::from(SpartanOuterPublic::BzWeight(index))) * opening(id);
-        }
+        let (az, bz) = self.output_factor_expressions();
         FactoredExpr::product(vec![
             derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)),
             az,
             bz,
         ])
+    }
+
+    /// The openings of `az` and `bz`, without expanding their product: each
+    /// expanded term is a distinct weight-indexed monomial with coefficient
+    /// one, so no term cancels and the product references exactly these.
+    fn expected_output_openings<F: Ring>(&self) -> BTreeSet<ComposedOpeningId> {
+        let (az, bz) = self.output_factor_expressions::<F>();
+        referenced_openings([az, bz])
     }
 }
 
@@ -309,13 +327,16 @@ mod tests {
     use super::*;
     use crate::{InputClaims, OutputClaims};
     use jolt_algebra::Fr;
-    use std::collections::BTreeSet;
 
     #[test]
     fn symbolic_claims_include_every_extension_opening() {
         let outer = OuterRemainder::new(SpartanOuterDimensions::rv64(3));
         let outer_ids = outer.expected_output_openings::<Fr>();
         assert_eq!(outer_ids.len(), 50);
+        assert_eq!(
+            outer_ids,
+            referenced_openings([outer.output_expression::<Fr>()])
+        );
         let outputs = OuterOutputs::<Fr>::from_opening_values(|id| {
             outer_ids.contains(id).then_some(Fr::from_u64(1))
         })

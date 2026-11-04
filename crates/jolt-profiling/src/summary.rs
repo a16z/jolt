@@ -28,11 +28,21 @@
 //!   samples falling inside the stage / root span's interval; `null` when
 //!   the interval contains no samples (short stages at the monitor's
 //!   minimum 50 ms sampling interval).
-//! - *Per-stage boundary RSS* comes from [`StageMemoryRow`] (retained growth
-//!   per stage, deliberately not within-stage peak); *headline peak RSS* is
+//! - *Per-stage boundary RSS* comes from
+//!   [`StageBoundaryRow`](crate::span_boundary::StageBoundaryRow) (retained
+//!   growth per stage, deliberately not within-stage peak); *headline peak RSS* is
 //!   the `getrusage` high-water mark, which sampling cannot miss, and
 //!   *headline peak footprint* the kernel's physical-footprint high-water
 //!   mark, which also counts pages macOS compressed out of RSS.
+//! - *Per-stage / root instructions* come from the same boundary rows: user-space
+//!   instructions retired by every counted thread between the span's enter and
+//!   exit, so like wallclock they are not additive across parallel spans.
+//!   The root pairs with its row by exit order among root instances.
+//! - *Per-label instructions* sum the same per-instance deltas over a label's
+//!   instances, and are reported only when the layer sampled exactly as many
+//!   instances as the trace holds — i.e. every instance ran on the
+//!   orchestrating thread. A label with any instance on a pool thread, where
+//!   concurrent siblings share the process-wide delta, reports `null`.
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -42,8 +52,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::memory::PeakMemory;
-use crate::stage_memory::StageMemoryRow;
-use crate::taxonomy;
+use crate::span_boundary::BoundarySamples;
+use crate::taxonomy::{self, ROOT_SPAN};
 use crate::units::BYTES_PER_GIB;
 
 /// Version of the `summary.json` schema emitted by this module.
@@ -136,6 +146,11 @@ pub struct RootSummary {
     pub dark_time_fraction: f64,
     /// Max `memory_gib` sample inside the root span's interval.
     pub peak_memory_gib: Option<f64>,
+    /// User-space instructions retired by the process while the root span
+    /// was open (all counted threads); `null` without a hardware counter or
+    /// when the kernel multiplexed it.
+    #[serde(default)]
+    pub instructions: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -149,6 +164,12 @@ pub struct SpanAggregate {
     /// Exclusive time: inclusive minus same-thread children, summed over all
     /// instances.
     pub self_ns: u64,
+    /// User-space instructions the process retired inside this label's
+    /// instances, summed (inclusive, like `total_ns`). `null` unless every
+    /// instance ran on the orchestrating thread with a usable hardware
+    /// counter.
+    #[serde(default)]
+    pub instructions: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -156,7 +177,7 @@ pub struct SpanAggregate {
 pub struct StageSummary {
     pub label: String,
     pub wall_time_ns: u64,
-    /// Boundary RSS from [`StageMemoryRow`]: process RSS when the stage span
+    /// Boundary RSS from `StageBoundaryRow`: process RSS when the stage span
     /// opened / closed (retained growth, not within-stage peak).
     pub rss_open_gib: Option<f64>,
     pub rss_close_gib: Option<f64>,
@@ -164,6 +185,11 @@ pub struct StageSummary {
     /// Max `memory_gib` sample inside the stage span's interval; `null` when
     /// the stage closed between monitor samples.
     pub peak_memory_gib: Option<f64>,
+    /// User-space instructions retired by the process while the stage span
+    /// was open, from `StageBoundaryRow`; `null` without a hardware counter
+    /// or when the kernel multiplexed it.
+    #[serde(default)]
+    pub instructions: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -350,11 +376,21 @@ fn us_to_ns(us: f64) -> u64 {
     }
 }
 
+/// The longest root-span instance in a trace.
+#[derive(Clone, Copy)]
+pub(crate) struct RootInstance {
+    pub(crate) interval: Interval,
+    pub(crate) dark_ns: u64,
+    /// Exit-order index among root instances, which pairs it with its
+    /// [`StageBoundaryRow`](crate::span_boundary::StageBoundaryRow).
+    pub(crate) occurrence: usize,
+}
+
 /// Everything [`build_summary`] (and the memory-timeline viz) needs from
 /// one replay of the event stream.
 pub(crate) struct TraceAggregate {
     pub(crate) spans: BTreeMap<String, SpanAggregate>,
-    pub(crate) root: Option<(Interval, u64)>,
+    pub(crate) root: Option<RootInstance>,
     pub(crate) stage_intervals: Vec<(String, Interval)>,
     pub(crate) counter_points: BTreeMap<String, Vec<(f64, f64)>>,
     /// `heap_snapshot` instant events: snapshot label → absolute trace µs.
@@ -370,7 +406,8 @@ pub(crate) struct TraceAggregate {
 pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggregate {
     let mut stacks: HashMap<u64, Vec<OpenSpan>> = HashMap::new();
     let mut spans: BTreeMap<String, SpanAggregate> = BTreeMap::new();
-    let mut root: Option<(Interval, u64)> = None;
+    let mut root: Option<RootInstance> = None;
+    let mut root_exits = 0usize;
     let mut stage_intervals: Vec<(String, Interval)> = Vec::new();
     let mut counter_points: BTreeMap<String, Vec<(f64, f64)>> = BTreeMap::new();
     let mut snapshot_instants: Vec<(String, f64)> = Vec::new();
@@ -419,16 +456,22 @@ pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggreg
                     count: 0,
                     total_ns: 0,
                     self_ns: 0,
+                    instructions: None,
                 });
                 entry.count += 1;
                 entry.total_ns += us_to_ns(dur_us);
                 entry.self_ns += us_to_ns(self_us);
 
                 if open.name == root_span {
-                    let dark_ns = us_to_ns(self_us);
-                    if root.is_none_or(|(prev, _)| interval.duration_ns() > prev.duration_ns()) {
-                        root = Some((interval, dark_ns));
+                    if root.is_none_or(|prev| interval.duration_ns() > prev.interval.duration_ns())
+                    {
+                        root = Some(RootInstance {
+                            interval,
+                            dark_ns: us_to_ns(self_us),
+                            occurrence: root_exits,
+                        });
                     }
+                    root_exits += 1;
                 }
                 if open.name.starts_with("prove_stage") {
                     stage_intervals.push((open.name, interval));
@@ -486,35 +529,60 @@ fn peak_within(points: Option<&Vec<(f64, f64)>>, interval: Interval) -> Option<f
 }
 
 /// Pure assembly of the summary from parsed chrome events plus the
-/// out-of-band memory bookkeeping. The I/O wrapper is [`finalize_trace`];
+/// out-of-band boundary samples. The I/O wrapper is [`finalize_trace`];
 /// fixture tests call this directly.
 pub fn build_summary(
     events: &[Value],
     ctx: &SummaryContext,
-    stage_rows: &[StageMemoryRow],
+    samples: &BoundarySamples,
     peak: PeakMemory,
     timestamp_unix_secs: u64,
     git_rev: Option<String>,
     mut heap: BTreeMap<String, HeapSnapshot>,
 ) -> ProfileSummary {
-    let aggregate = aggregate_events(events, taxonomy::ROOT_SPAN);
+    let mut aggregate = aggregate_events(events, ROOT_SPAN);
+    for (label, span) in &mut aggregate.spans {
+        span.instructions = samples
+            .span_instructions
+            .get(label.as_str())
+            .filter(|sampled| sampled.instances == span.count)
+            .and_then(|sampled| sampled.instructions);
+    }
     let memory_points = aggregate.counter_points.get(MEMORY_COUNTER);
 
     // Situate the allocative snapshots on the trace clock: join the
     // driver's `heap_snapshot` instant events by label, as ns since the
     // root span opened.
-    if let Some((root_interval, _)) = aggregate.root {
+    if let Some(root) = aggregate.root {
         for (label, ts_us) in &aggregate.snapshot_instants {
             if let Some(snapshot) = heap.get_mut(label) {
-                snapshot.at_ns = Some(us_to_ns((ts_us - root_interval.start_us).max(0.0)));
+                snapshot.at_ns = Some(us_to_ns((ts_us - root.interval.start_us).max(0.0)));
             }
         }
     }
 
-    let root = aggregate.root.map(|(interval, dark_ns)| {
+    // Boundary rows and span intervals are both recorded in span-exit
+    // order, so the i-th instance of a label pairs with the i-th row of
+    // that label — occurrence-indexed, not first-match, so a trace with
+    // repeated labels (e.g. a future multi-prove harness) can't attach the
+    // first prove's samples to every instance.
+    let boundary_row = |label: &str, occurrence: usize| {
+        samples
+            .stage_rows
+            .iter()
+            .filter(|row| row.stage == label)
+            .nth(occurrence)
+    };
+
+    let root = aggregate.root.map(|root| {
+        let RootInstance {
+            interval,
+            dark_ns,
+            occurrence,
+        } = root;
         let wall_ns = interval.duration_ns();
         RootSummary {
-            label: taxonomy::ROOT_SPAN.to_string(),
+            label: ROOT_SPAN.to_string(),
             wall_time_ns: wall_ns,
             dark_time_ns: dark_ns,
             dark_time_fraction: if wall_ns == 0 {
@@ -523,6 +591,7 @@ pub fn build_summary(
                 dark_ns as f64 / wall_ns as f64
             },
             peak_memory_gib: peak_within(memory_points, interval),
+            instructions: boundary_row(ROOT_SPAN, occurrence).and_then(|row| row.instructions),
         }
     });
 
@@ -546,21 +615,14 @@ pub fn build_summary(
             .cloned(),
     );
 
-    // Stage intervals and StageMemoryRows are both recorded in span-close
-    // order, so the i-th interval of a label pairs with the i-th row of
-    // that label — occurrence-indexed, not first-match, so a trace with
-    // repeated stage labels (e.g. a future multi-prove harness) can't
-    // attach the first prove's boundary RSS to every instance. `ordered`
-    // preserves within-label close order by construction (stable filters).
+    // `ordered` preserves within-label exit order by construction (stable
+    // filters), so stages pair with their rows by occurrence.
     let mut label_occurrence: HashMap<String, usize> = HashMap::new();
     let stages = ordered
         .into_iter()
         .map(|(label, interval)| {
             let occurrence = label_occurrence.entry(label.clone()).or_insert(0);
-            let row = stage_rows
-                .iter()
-                .filter(|row| row.stage == label)
-                .nth(*occurrence);
+            let row = boundary_row(&label, *occurrence);
             *occurrence += 1;
             let open = row.map(|r| r.rss_open_bytes as f64 / BYTES_PER_GIB);
             let close = row.map(|r| r.rss_close_bytes as f64 / BYTES_PER_GIB);
@@ -570,6 +632,7 @@ pub fn build_summary(
                 rss_close_gib: close,
                 rss_delta_gib: close.zip(open).map(|(c, o)| c - o),
                 peak_memory_gib: peak_within(memory_points, interval),
+                instructions: row.and_then(|r| r.instructions),
                 label,
             }
         })
@@ -663,7 +726,7 @@ pub(crate) fn write_atomic(path: &Path, data: &str) -> Result<(), SummaryError> 
 /// Flush-time pipeline entry: rewrite counter events in the trace file
 /// (atomically — temp file + rename, never a truncating in-place write),
 /// then aggregate the same events (folding in the drained
-/// [`StageMemoryRow`]s and the caller-captured peak memory) into
+/// [`BoundarySamples`] and the caller-captured peak memory) into
 /// `summary.json` next to it.
 ///
 /// Call after dropping [`TracingGuards`](crate::TracingGuards) — the chrome
@@ -703,7 +766,7 @@ pub fn finalize_trace(
     let summary = build_summary(
         &events,
         ctx,
-        &crate::stage_memory::take_stage_memory_rows(),
+        &crate::span_boundary::take_boundary_samples(),
         peak,
         timestamp_unix_secs,
         git_rev(),
@@ -718,7 +781,7 @@ pub fn finalize_trace(
     // meaningful when the allocative lane produced snapshots and the trace
     // has a root span to anchor time.
     if !summary.heap.is_empty() && summary.root.is_some() {
-        let aggregate = aggregate_events(&events, taxonomy::ROOT_SPAN);
+        let aggregate = aggregate_events(&events, ROOT_SPAN);
         let _ =
             crate::memory_viz::write_memory_viz(trace_path, &summary, &aggregate, &folded_files)?;
     }

@@ -15,6 +15,7 @@ use jolt_lookup_tables::XLEN as RISCV_XLEN;
 use jolt_openings::CommitmentScheme;
 
 use crate::preprocessing::JoltVerifierPreprocessing;
+use crate::proof::JoltProof;
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
@@ -22,6 +23,7 @@ pub(crate) mod derivations;
 #[cfg(feature = "field-inline")]
 pub mod field_inline_bytecode;
 pub mod ids;
+pub mod pow;
 pub mod relations;
 pub mod stage1;
 pub mod stage2;
@@ -41,7 +43,8 @@ pub mod zk;
 /// length, RAM size), mapping the layout error to `stage`. Built once during
 /// verification and shared by the stages (5-8) that derive their RA layouts from
 /// it, and reused by the BlindFold input derivation.
-pub fn build_formula_dimensions<PCS, VC>(
+pub fn build_formula_dimensions<PCS, VC, ZkProof>(
+    proof: &JoltProof<PCS, VC, ZkProof>,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     checked: &CheckedInputs,
     log_t: usize,
@@ -52,7 +55,7 @@ where
     VC: VectorCommitment<Field = PCS::Field>,
 {
     formula_dimensions_from_parts(
-        checked.one_hot_config,
+        proof.one_hot_config,
         log_t,
         preprocessing.program.bytecode_len(),
         checked.ram_K,

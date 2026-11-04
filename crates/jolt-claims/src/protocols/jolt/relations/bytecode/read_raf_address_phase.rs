@@ -122,6 +122,8 @@ pub struct BytecodeReadRafAddressPhaseInputClaims<C> {
     pub right_operand_is_rs2_value: C,
     #[opening(InstructionFlags(InstructionFlags::RightOperandIsImm), from = InstructionInputVirtualization)]
     pub right_operand_is_imm: C,
+    #[opening(InstructionFlags(InstructionFlags::RightOperandIsRdWriteValue), from = InstructionInputVirtualization)]
+    pub right_operand_is_rd_write_value: C,
     #[opening(InstructionFlags(InstructionFlags::IsNoop), from = SpartanShift)]
     pub is_noop: C,
     #[opening(OpFlags(CircuitFlags::VirtualInstruction), from = SpartanShift)]
@@ -166,8 +168,8 @@ pub struct BytecodeReadRafAddressPhaseChallenges<F> {
 
 impl<F: JoltField> BytecodeReadRafAddressPhaseChallenges<F> {
     /// Expand the five drawn per-stage scalars into the gamma-power vectors the
-    /// bytecode folds consume (`[1, γ, γ², …]`, the powers of each stage's
-    /// single drawn scalar), sized
+    /// bytecode folds consume (`[1, γ, γ², …]` — the recurrence the prover's
+    /// `challenge_powers` applies to its single squeezed scalar), sized
     /// by [`BYTECODE_STAGE_GAMMA_COUNTS`].
     pub fn stage_gamma_powers(&self) -> [Vec<F>; 5] {
         let stage_gammas = [

@@ -1,16 +1,13 @@
 //! Verifier-selected protocol configuration.
 //!
 //! Every protocol axis is fixed at compile time — the `zk` feature selects
-//! zero knowledge (BlindFold over Dory, Whiteout over Akita), the `akita`
-//! feature selects Akita commitments, the
-//! `field-inline` feature enables the native field-register extension — so one
-//! compiled verifier runs exactly one protocol. The verifier absorbs its own
-//! configuration into the transcript ([`JoltProtocolConfig::transcript_bytes`]);
-//! a proof also self-describes its axes so [`validate_proof_config`] reports a
-//! mismatch directly.
+//! zero knowledge (BlindFold over Dory, Whiteout over Akita), the `akita` feature selects Akita commitments, the
+//! `field-inline` feature enables the native
+//! field-register extension — so one compiled verifier runs exactly one
+//! protocol. A proof self-describes its axes and [`validate_proof_config`]
+//! rejects a mismatch fail-closed.
 
 pub use jolt_claims::protocols::field_inline::FieldInlineConfig;
-use jolt_claims::protocols::field_inline::FieldInlineRepresentation;
 use jolt_riscv::JoltInstructionProfile;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT;
@@ -55,7 +52,6 @@ pub enum CommitmentConfig {
     Akita,
 }
 
-/// The protocol axes a proof is produced under.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JoltProtocolConfig {
     pub zk: ZkConfig,
@@ -70,40 +66,6 @@ impl JoltProtocolConfig {
             commitment: SELECTED_COMMITMENT_CONFIG,
             field_inline: SELECTED_FIELD_INLINE_CONFIG,
         }
-    }
-
-    /// The canonical encoding the transcript absorbs: one byte per axis, then
-    /// the field-inline parameters (`field_register_log_k` as `u64` little
-    /// endian, then the representation byte).
-    pub fn transcript_bytes(&self) -> [u8; 12] {
-        let zk = match self.zk {
-            ZkConfig::Transparent => 0,
-            ZkConfig::BlindFold => 1,
-            ZkConfig::Whiteout => 2,
-        };
-        let commitment = match self.commitment {
-            CommitmentConfig::Homomorphic => 0,
-            CommitmentConfig::Akita => 1,
-        };
-        let representation = match self.field_inline.representation {
-            FieldInlineRepresentation::NativeFieldElement => 0,
-        };
-        let [k0, k1, k2, k3, k4, k5, k6, k7] =
-            crate::num::u64_from_usize(self.field_inline.field_register_log_k).to_le_bytes();
-        [
-            zk,
-            commitment,
-            u8::from(self.field_inline.enabled),
-            k0,
-            k1,
-            k2,
-            k3,
-            k4,
-            k5,
-            k6,
-            k7,
-            representation,
-        ]
     }
 }
 
@@ -187,10 +149,6 @@ mod tests {
             protocol
         );
         assert!(postcard::from_bytes::<JoltProtocolConfig>(&[0, 0, 0]).is_err());
-        assert_eq!(
-            protocol.transcript_bytes(),
-            [0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0]
-        );
         let akita_protocol = JoltProtocolConfig {
             commitment: CommitmentConfig::Akita,
             ..protocol
@@ -203,10 +161,6 @@ mod tests {
             postcard::from_bytes::<JoltProtocolConfig>(&[0, 1, 0, 4, 0]).unwrap(),
             akita_protocol
         );
-        assert_eq!(
-            akita_protocol.transcript_bytes(),
-            [0, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0]
-        );
         let whiteout_protocol = JoltProtocolConfig {
             zk: ZkConfig::Whiteout,
             ..akita_protocol
@@ -218,10 +172,6 @@ mod tests {
         assert_eq!(
             postcard::from_bytes::<JoltProtocolConfig>(&[2, 1, 0, 4, 0]).unwrap(),
             whiteout_protocol
-        );
-        assert_eq!(
-            whiteout_protocol.transcript_bytes(),
-            [2, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0]
         );
     }
 

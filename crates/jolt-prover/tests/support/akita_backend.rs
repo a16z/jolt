@@ -25,7 +25,7 @@ use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaSch
 use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{AkitaProverPreprocessing, AkitaVc};
 use jolt_prover::ProverConfig;
-use jolt_verifier::JoltSponge;
+use jolt_transcript::{Keccak, ProverState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
 struct UnreadableWitness;
@@ -131,7 +131,7 @@ fn registry_reuses_short_lived_witnesses_and_releases_each_session() {
             trace_length: fixture.config.trace_length,
         });
         let backend = KernelContext::new(&registry, &witness, session);
-        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+        let result = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             backend,
             &fixture.preprocessing,
             &config,
@@ -177,7 +177,7 @@ fn successful_proof_releases_the_bound_witness_and_session() {
         trace_length: fixture.config.trace_length,
     });
     let context = KernelContext::new(&registry, witness, session);
-    let _proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+    let _proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         context,
         &fixture.preprocessing,
         &fixture.config,

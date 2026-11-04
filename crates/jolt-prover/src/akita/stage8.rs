@@ -3,41 +3,51 @@
 //! FieldInc (field-inline) OR ProgramBytecode, ProgramImageInit (committed),
 //! FusedInc, OneHotTrace]`. Field-inline and committed-program suffixes are exclusive.
 
+use jolt_kernels::akita::commitment::FusedIncObject;
+use jolt_verifier::stages::stage8::akita::fused_inc_claim;
 use std::collections::BTreeMap;
 
-use jolt_algebra::JoltField;
-use jolt_claims::protocols::jolt::lattice::packing::PrefixPackedObjectPlan;
-use jolt_claims::protocols::jolt::JoltCommittedPolynomial;
+use jolt_claims::protocols::jolt::lattice::packing::{OneHotTraceShape, PrefixPackedObjectPlan};
+use jolt_claims::protocols::jolt::lattice::strategy::ONE_HOT_TRACE_LAYOUT;
+use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_crypto::VectorCommitment;
-use jolt_kernels::akita::commitment::FusedIncObject;
+use jolt_algebra::JoltField;
 use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
-use jolt_verifier::sites::STAGE8;
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
+
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage4::outputs::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::stages::stage8::akita::field_inc_claim;
-use jolt_verifier::stages::stage8::akita::{fused_inc_claim, leaf_claims, object_leaf_claims};
-use jolt_verifier::CheckedInputs;
+use jolt_verifier::stages::stage8::akita::{
+    has_selectors, leaf_claims, object_leaf_claims, one_hot_trace_claim,
+};
+use jolt_verifier::{CheckedInputs, VerifierError};
 
-use super::spine::mark_region;
-use super::trace_group::{batch_failed, trace_group_claim};
 use super::witness::{AdviceObject, DirectProgramObjects};
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 #[cfg(feature = "field-inline")]
 use jolt_kernels::akita::commitment::FieldIncObject;
 
-fn reduce_precommitted<F, C>(
+fn batch_failed<F: JoltField>(reason: impl ToString) -> ProverError<F> {
+    ProverError::Verifier(VerifierError::FinalOpeningBatchFailed {
+        reason: reason.to_string(),
+    })
+}
+
+fn reduce_precommitted<F, T>(
     plan: &PrefixPackedObjectPlan,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
-    transcript: &mut C,
+    transcript: &mut T,
 ) -> Result<EvaluationClaim<F>, ProverError<F>>
 where
     F: JoltField,
-    C: Channel,
+    T: FieldTranscript<F> + ProverTranscript,
 {
     let claims = object_leaf_claims(plan, leaves).map_err(ProverError::Verifier)?;
     let semantic = plan.packed_claims(&claims).map_err(batch_failed::<F>)?;
@@ -46,9 +56,10 @@ where
         .map_err(batch_failed::<F>)
 }
 
+/// Returns the joint opening proof and the nonce of the selector points.
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage8<F, PCS, VC, H>(
+pub fn prove_stage8<F, PCS, VC, T>(
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -62,25 +73,52 @@ pub fn prove_stage8<F, PCS, VC, H>(
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
     stage7: &Stage7ClearOutput<F>,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<(), ProverError<F>>
+    transcript: &mut T,
+) -> Result<(PCS::Proof, Option<u64>), ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone,
+    PCS::Output: Clone + Encoding,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    transcript.site(STAGE8);
-    let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
-    let main_group = trace_group_claim(
+    let log_t = checked.trace_length.ilog2() as usize;
+    let chunk_width = config.one_hot_config.committed_chunk_bits();
+    let formula_dimensions = crate::stages::formula_dimensions(
         checked,
         config,
-        preprocessing,
-        &leaves,
-        one_hot_trace_commitment,
+        preprocessing.verifier.program.bytecode_len(),
+        JoltRelationId::HammingWeightClaimReduction,
     )?;
+    let plan = ONE_HOT_TRACE_LAYOUT
+        .plan(&OneHotTraceShape {
+            ra_layout: formula_dimensions.ra_layout,
+            log_t,
+            log_k_chunk: chunk_width,
+        })
+        .map_err(batch_failed::<F>)?;
 
+    let leaves = leaf_claims(&checked.precommitted, stage4, stage6b, stage7)?;
+
+    let main_group = one_hot_trace_claim(&plan, chunk_width, &leaves, one_hot_trace_commitment)
+        .map_err(ProverError::Verifier)?;
+
+    let selectors = has_selectors(
+        [untrusted_advice, trusted_advice]
+            .into_iter()
+            .flatten()
+            .map(|object| &object.plan)
+            .chain(
+                program
+                    .into_iter()
+                    .flat_map(|objects| objects.objects().map(|object| &object.plan)),
+            ),
+    );
+    let pow_nonce = if selectors {
+        grind_pow::<F, _>(PowSite::Stage8, transcript)?
+    } else {
+        None
+    };
     let untrusted_physical = untrusted_advice
         .map(|object| reduce_precommitted(&object.plan, &leaves, transcript))
         .transpose()?;
@@ -141,8 +179,7 @@ where
         fused_inc.hint.clone(),
     ));
 
-    mark_region("stage8_reductions", transcript);
-    tracing::info_span!("akita_main_batched_prove").in_scope(|| {
+    let joint_opening_proof = tracing::info_span!("akita_main_batched_prove").in_scope(|| {
         PCS::prove_batch(
             &preprocessing.pcs_setup,
             auxiliary_groups,
@@ -151,5 +188,6 @@ where
             transcript,
         )
         .map_err(batch_failed::<F>)
-    })
+    })?;
+    Ok((joint_opening_proof, pow_nonce))
 }

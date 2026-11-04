@@ -15,40 +15,51 @@ use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
-use jolt_verifier::sites::STAGE1;
+use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
+
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage1::outer_remainder::{
     outer_remainder_input_values_from_uniskip_output, OuterRemainder,
 };
 use jolt_verifier::stages::stage1::outputs::{
-    Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput,
+    Stage1BatchInputClaims, Stage1BatchSumchecks, Stage1ClearOutput, Stage1OutputClaims,
 };
 use jolt_verifier::stages::uniskip::draw_spartan_outer_tau;
 
 use crate::recorder::ProofMode;
 use crate::{ProverError, StageProver as _};
 
-/// Stage 1's outputs: the verifier-typed cross-stage carrier downstream stages consume.
-pub struct Stage1ProverOutput<F: JoltField> {
+/// Stage 1's outputs: the two wire proofs, the wire claims, and the
+/// verifier-typed cross-stage carrier downstream stages consume.
+pub struct Stage1ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the `tau` draw.
+    pub tau_pow_nonce: Option<u64>,
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u64>,
+    pub uniskip_proof: SumcheckProof<F, C>,
+    pub sumcheck_proof: SumcheckProof<F, C>,
+    pub claims: Stage1OutputClaims<F>,
     pub clear_output: Stage1ClearOutput<F>,
 }
 
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
-pub fn prove_stage1<F, PCS, VC, H>(
+pub fn prove_stage1<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &mut ProofMode<VC>,
     log_t: usize,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<Stage1ProverOutput<F>, ProverError<F>>
+    transcript: &mut T,
+) -> Result<Stage1ProverOutput<F, VC::Output>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    transcript.site(STAGE1);
-    let tau = draw_spartan_outer_tau(transcript, log_t);
+    let tau_pow_nonce = grind_pow::<F, _>(PowSite::Stage1Tau, transcript)?;
+    let tau = draw_spartan_outer_tau(transcript, log_t)?;
     // Backend-neutral kernel-seam spans at the call boundary, so every
     // `UniskipKernel` implementation inherits them — see the taxonomy's
     // kernel-seam contract.
@@ -73,6 +84,12 @@ where
             uniskip_challenge,
         ),
     };
+    // The committed path grinds no stage-1 nonce, matching the verifier's ZK
+    // branch (ZK runs over BN254 only, where no site needs one).
+    #[cfg(feature = "zk")]
+    let pow_nonce = None;
+    #[cfg(not(feature = "zk"))]
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage1, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
     let input_points = sumchecks.empty_input_points();
     let inputs = Stage1BatchInputClaims {
@@ -91,16 +108,33 @@ where
         mode.recorder(),
         transcript,
     )?;
+    #[cfg(not(feature = "zk"))]
+    let sumcheck_proof = proved.recorded.proof.into();
 
+    let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
     let clear_output = Stage1ClearOutput::new(proved.output_claims, proved.output_points);
-    Ok(Stage1ProverOutput { clear_output })
+    Ok(Stage1ProverOutput {
+        tau_pow_nonce,
+        pow_nonce,
+        uniskip_proof: proved_uniskip.proof,
+        sumcheck_proof,
+        claims,
+        clear_output,
+    })
 }
 
-/// Clear round-trips with field-inline enabled of the stage-1 recipe through
-/// the production `stage1::verify` over the prover's argument string.
+/// Clear round-trips with field-inline enabled of the stage-1 recipe against the verifier's own
+/// public constituents — `stage1::verify`'s clear body step for step (the
+/// tau draw, `uniskip::verify_clear`, the batch relations, the field-inline seam's
+/// attach, `verify_clear`, and the two-part opening absorb), on a twin
+/// transcript. The full `stage1::verify` entrypoint needs an assembled
+/// `JoltProof`, whose joint-opening slot has no test constructor, so this is
+/// the closest public seam; the 32-byte transcript-state equality pins the
+/// absorb order end to end.
 #[cfg(all(test, feature = "field-inline", not(feature = "zk")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_round_trip {
+    use crate::stages::field_inline_fixtures::twins;
     use jolt_algebra::Fr;
     use jolt_claims::protocols::field_inline::geometry::spartan::FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS;
     use jolt_claims::protocols::field_inline::FieldInlinePolynomialId;
@@ -108,31 +142,31 @@ mod field_inline_round_trip {
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_poly::Polynomial;
+    use jolt_transcript::{prover_transcript, Keccak, ProverState};
     use jolt_verifier::stages::stage2::product_tau_low;
-    use jolt_verifier::JoltSponge;
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
-        test_checked_inputs, test_mode, verify_through, FixturePreprocessing, Through, LOG_T,
-    };
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, test_mode, LOG_T};
 
-    fn round_trip(trace_backend: TraceBackend, preprocessing: FixturePreprocessing) {
+    fn round_trip(trace_backend: TraceBackend) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
         let mut mode = test_mode();
-        let mut prover_transcript = fixture_transcript();
-        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        let mut prover_state = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline"),
+            b"",
+        );
+        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mut mode,
             LOG_T,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
-        let field_inline_outer = &out.clear_output.output_values.outer_remainder.field_inline;
+        let field_inline_outer = &out.claims.outer.outer_remainder.field_inline;
 
         // The appendage values are honest evaluations: each field-inline cycle-domain
         // column's MLE at the stage-1 cycle binding (`tau_low`, the point
@@ -149,17 +183,21 @@ mod field_inline_round_trip {
             assert_eq!(Polynomial::<Fr>::new(table).evaluate(&tau_low), value);
         }
 
-        verify_through(
-            Through::Stage1,
-            &test_checked_inputs(),
-            &preprocessing,
-            &mut prover_transcript,
+        let mut transcript = prover_transcript::<Keccak>(
+            &jolt_transcript::protocol_tag(b"stage1-field-inline"),
+            b"",
+        );
+        twins::replay_stage1(&mut transcript, &out);
+
+        assert_eq!(
+            transcript.verifier_message::<[u8; 32]>(),
+            prover_state.verifier_message::<[u8; 32]>()
         );
     }
 
     #[test]
     fn field_arithmetic_stage1_round_trips_the_composed_verifier() {
-        round_trip(field_arithmetic_backend(), field_arithmetic_preprocessing());
+        round_trip(field_arithmetic_backend());
     }
 }
 

@@ -1,10 +1,4 @@
-// ZK fixtures exist only with field-inline disabled; the message layout comes
-// from the `logging` event log.
-#[cfg(all(
-    feature = "prover-fixtures",
-    feature = "logging",
-    feature = "zk",
-    not(feature = "akita"),
-    not(feature = "field-inline")
-))]
+// Legacy-generated ZK fixtures; only when field-inline is disabled (see
+// soundness/tampering/mod.rs).
+#[cfg(not(feature = "field-inline"))]
 pub mod zk;

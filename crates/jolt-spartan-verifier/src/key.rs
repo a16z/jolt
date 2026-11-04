@@ -1,8 +1,8 @@
-use blake2::{digest::consts::U32, Blake2b, Digest};
-use jolt_algebra::{CanonicalDecode, JoltField};
+use jolt_algebra::JoltField;
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::ConstraintMatrices;
-use jolt_transcript::Channel;
+use jolt_transcript::{DigestHasher, Encoding, FieldTranscript};
+use sha3::Digest;
 
 use crate::{outer_relation, SpartanError};
 
@@ -24,16 +24,16 @@ pub struct SpartanKey<F: JoltField> {
 
 const RELATION_DIGEST_DOMAIN: &[u8] = b"jolt-spartan-relation-v1";
 
-/// Blake2b-256 over the domain, `num_constraints`, `num_vars`,
-/// `public_columns`, then each A/B/C row as its length followed by
-/// `(column, coefficient)` entries. Integers are big-endian u64 and
+/// The selected digest hash ([`jolt_transcript::DIGEST_HASH`]) over the
+/// domain, `num_constraints`, `num_vars`, `public_columns`, then each A/B/C row
+/// as its length followed by `(column, coefficient)` entries. Integers are big-endian u64 and
 /// coefficients canonical little-endian; row counts are fixed by the validated
 /// `num_constraints`, so the encoding is injective.
 fn relation_digest<F: JoltField>(
     matrices: &ConstraintMatrices<F>,
     public_columns: usize,
 ) -> [u8; 32] {
-    let mut hasher = Blake2b::<U32>::new_with_prefix(RELATION_DIGEST_DOMAIN);
+    let mut hasher = DigestHasher::new_with_prefix(RELATION_DIGEST_DOMAIN);
     for word in [matrices.num_constraints, matrices.num_vars, public_columns] {
         hasher.update((word as u64).to_be_bytes());
     }
@@ -147,43 +147,37 @@ impl<F: JoltField> SpartanKey<F> {
     }
 }
 
-/// The Spartan message schedule, shared by both roles: every public value and
-/// prover message outside the two sumchecks and the PCS calls is bound here,
-/// in this order.
-impl<F: JoltField + CanonicalDecode> SpartanKey<F> {
-    /// Binds the authenticated relation and the public input. The caller then
-    /// exchanges the witness commitment and calls [`Self::draw_tau`].
-    pub fn bind_statement<C: Channel>(
+impl<F: JoltField + Encoding> SpartanKey<F> {
+    /// Bind the authenticated relation, public input, and commitment before tau.
+    pub fn begin<C: Encoding>(
         &self,
         public_inputs: &[F],
-        channel: &mut C,
-    ) -> Result<(), SpartanError<F>> {
+        commitment: &C,
+        transcript: &mut impl FieldTranscript<F>,
+    ) -> Result<Vec<F>, SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
-        channel.public(&self.relation_digest);
-        channel.public(&self.policy_id);
-        channel.public_all(public_inputs);
-        Ok(())
+        transcript.append(&self.relation_digest);
+        transcript.append(&self.policy_id);
+        transcript.append_values(public_inputs);
+        transcript.append(commitment);
+        Ok(transcript.challenge_vector(self.row_vars())?)
     }
 
-    /// Draws the outer sumcheck point `tau` and binds its zero input claim.
-    pub fn draw_tau<C: Channel>(&self, channel: &mut C) -> Vec<F> {
-        let tau = (0..self.row_vars()).map(|_| channel.challenge()).collect();
-        channel.public(&F::zero());
-        tau
-    }
-
-    /// Exchanges the outer evaluations, draws the matrix weights, and binds
-    /// the inner input claim it returns with the weights.
-    pub fn begin_inner<C: Channel>(
+    /// Absorb outer claims, draw matrix weights, and bind the inner input claim.
+    pub fn begin_inner(
         &self,
         row_weights: &[F],
         public_inputs: &[F],
-        evaluations: &mut [F; 3],
-        channel: &mut C,
+        evaluations: [F; 3],
+        transcript: &mut impl FieldTranscript<F>,
     ) -> Result<([F; 3], F), SpartanError<F>> {
         self.validate_public_inputs(public_inputs)?;
-        channel.exchange_all(evaluations)?;
-        let weights: [F; 3] = std::array::from_fn(|_| channel.challenge());
+        transcript.append_values(&evaluations);
+        let weights = [
+            transcript.challenge()?,
+            transcript.challenge()?,
+            transcript.challenge()?,
+        ];
         let public = std::iter::once(F::one())
             .chain(public_inputs.iter().copied())
             .collect::<Vec<_>>();
@@ -196,19 +190,16 @@ impl<F: JoltField + CanonicalDecode> SpartanKey<F> {
         )?;
         let claim = weights
             .iter()
-            .zip(evaluations.iter())
+            .zip(evaluations)
             .map(|(weight, evaluation)| *weight * evaluation)
             .sum::<F>()
             - contribution;
-        channel.public(&claim);
+        transcript.append(&claim);
         Ok((weights, claim))
     }
 
-    /// Exchanges the terminal witness claim, which the PCS opening then proves.
-    pub fn exchange_witness_evaluation<C: Channel>(
-        evaluation: &mut F,
-        channel: &mut C,
-    ) -> Result<(), SpartanError<F>> {
-        Ok(channel.exchange(evaluation)?)
+    /// Binds the terminal witness claim before the PCS opening transcript.
+    pub fn append_witness_evaluation(evaluation: F, transcript: &mut impl FieldTranscript<F>) {
+        transcript.append(&evaluation);
     }
 }

@@ -12,10 +12,10 @@
 //! `validate_derived_tables` → typed extraction into the stage's
 //! `OutputClaims` aggregate → per-member `park_residue` (cross-batch residues
 //! into the session; consumes the kernels, so it follows the borrowing
-//! extraction) → the generated `validate_output_shape` against the derived
-//! points → the `expected_final_claim` hard self-check → `recorder.finish`
-//! over the generated claim values on the stage's `claim_routes` (the cells a
-//! [`ClaimRecorder`](crate::recorder::ClaimRecorder) records). The recorder
+//! extraction) → [`curate_opening_values`](StageProver::curate_opening_values)
+//! (default: the derive-generated canonical absorb order; curated stages
+//! override at the invocation site) → shape validation → the
+//! `expected_final_claim` hard self-check → `recorder.finish`. The recorder
 //! is the clear/ZK seam, exactly as in `begin_batch`: no `prove_clear`/
 //! `prove_zk` split exists to drift.
 //!
@@ -31,8 +31,10 @@ use jolt_kernels::{
     KernelContext, PrepareKernel, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 use jolt_poly::UnivariatePoly;
-use jolt_sumcheck::{ProveRounds, RoundScheduler, SumcheckError, SumcheckRecorder};
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_sumcheck::{
+    ProveRounds, RecordedSumcheck, RoundScheduler, SumcheckError, SumcheckRecorder,
+};
+use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::relations::{
     ConcreteSumcheck, ConcreteSumcheckChallenges, SumcheckInputClaims, SumcheckInputPoints,
     SumcheckOutputClaims, SumcheckOutputPoints,
@@ -58,13 +60,13 @@ pub trait StageProver<F: JoltField>: Sized {
 
     /// Prove this stage's batch on `transcript`, recorder-generically: the
     /// recorder type decides clear vs. masked recording, never a runtime
-    /// flag. Returns the [`Proved`] carrier (recorder witness, typed output
+    /// flag. Returns the [`Proved`] carrier (recorded proof, typed output
     /// claims, derived points, hard-checked final claim).
     #[expect(
         clippy::too_many_arguments,
         reason = "the driver's fixed protocol signature: upstream carriers in, recorded proof out"
     )]
-    fn prove<B, Rec, H>(
+    fn prove<B, Rec, T>(
         &self,
         kernels: &mut KernelContext<'_, F, B>,
         scheduler: &mut dyn RoundScheduler<F>,
@@ -72,13 +74,24 @@ pub trait StageProver<F: JoltField>: Sized {
         input_points: &Self::InputPoints,
         challenges: &Self::Challenges,
         recorder: Rec,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<Proved<F, Self, Rec::Witness>, ProverError<F>>
+        transcript: &mut T,
+    ) -> Result<Proved<F, Self, Rec::Proof>, ProverError<F>>
     where
         B: ?Sized,
         for<'a> KernelContext<'a, F, B>: KernelSource<F, Self>,
-        Rec: SumcheckRecorder<F, Error = SumcheckError<F>> + ClaimRecorder,
-        H: Sponge;
+        Rec: SumcheckRecorder<F> + ClaimRecorder,
+        T: FieldTranscript<F> + ProverTranscript;
+
+    /// The stage's absorbed opening scalars, in the stage's curated order
+    /// (stage 6b's runtime point dedup reorders the returned values). The
+    /// default emitted by `impl_stage_prover!` returns the derive-generated
+    /// canonical order (`opening_values`); curated stages supply an override
+    /// block at the macro invocation site.
+    fn curate_opening_values(
+        &self,
+        claims: &Self::OutputClaims,
+        points: &Self::OutputPoints,
+    ) -> Result<Vec<F>, ProverError<F>>;
 }
 
 /// The per-stage kernel-source bound collector: `impl_stage_prover!` emits
@@ -99,12 +112,12 @@ pub trait KernelSource<F: JoltField, S: StageProver<F>> {
 }
 
 /// A proved stage batch, as assembled by the generated
-/// [`prove`](StageProver::prove): the recorder's retained witness (nothing for
-/// a clear recorder), the typed output claims and derived opening points, and
-/// the batch's final running claim (already hard-checked against the generated
-/// `expected_final_claim`).
-pub struct Proved<F: JoltField, S: StageProver<F>, W> {
-    pub witness: W,
+/// [`prove`](StageProver::prove): the recorded wire proof (plus retained
+/// witness for a committed recorder), the typed output claims and derived
+/// opening points, and the batch's final running claim (already hard-checked
+/// against the generated `expected_final_claim`).
+pub struct Proved<F: JoltField, S: StageProver<F>, P> {
+    pub recorded: RecordedSumcheck<F, P>,
     pub output_claims: S::OutputClaims,
     pub output_points: S::OutputPoints,
     pub final_claim: F,
@@ -392,6 +405,17 @@ macro_rules! __stage_member {
     };
 }
 
+/// The output-shape leg of the generated driver, keyed by the derive-emitted
+/// flag: `checked` runs the generated `validate_output_claims`; `unchecked`
+/// (a `no_output_shape` stage, whose wire shape is runtime-curated) has no
+/// validator to run.
+macro_rules! __stage_shape_check {
+    (checked, $self:expr, $claims:expr) => {
+        $self.validate_output_claims(&$claims)?;
+    };
+    (unchecked, $self:expr, $claims:expr) => {};
+}
+
 /// Expand one stage's [`StageProver`] and [`KernelSource`] impls from its
 /// derive-emitted member-list macro. Invoke as the member-list macro's
 /// callback, at a site where the batch's relation and aggregate names
@@ -399,9 +423,25 @@ macro_rules! __stage_member {
 ///
 /// ```ignore
 /// jolt_verifier::stage3_sumchecks_members!(impl_stage_prover);
+/// // a curated stage passes its absorb-order override ahead of the list
+/// // (the first closure parameter binds the batch, i.e. `&self`):
+/// jolt_verifier::stage6b_sumchecks_members!(impl_stage_prover curate = |batch, claims, points| { .. },);
 /// ```
 macro_rules! impl_stage_prover {
+    // Uncurated stage: default to the derive-generated canonical absorb order.
+    // The batch receiver is an explicit closure parameter (not `self`) because
+    // macro hygiene separates a `self` written in this arm from the `&self`
+    // the main arm's method signature introduces.
+    (batch = $($rest:tt)*) => {
+        $crate::driver::impl_stage_prover! {
+            curate = |__batch, __claims, __points| {
+                ::core::result::Result::Ok(__batch.opening_values(__claims))
+            },
+            batch = $($rest)*
+        }
+    };
     (
+        curate = |$curate_batch:ident, $curate_claims:ident, $curate_points:ident| $curate_body:block,
         batch = $batch:ident,
         label = $label:literal,
         aggregates = {
@@ -411,6 +451,7 @@ macro_rules! impl_stage_prover {
             output_points = $output_points:ident,
             challenges = $challenges_ty:ident,
         },
+        shape = $shape:ident,
         members = [
             $({ name: $member:ident, relation: $relation:ident, presence: $presence:ident },)+
         ]
@@ -423,7 +464,7 @@ macro_rules! impl_stage_prover {
             type OutputPoints = $output_points<F>;
             type Kernels = ( $($crate::driver::__stage_member!(kernel_ty $presence $relation),)+ );
 
-            fn prove<B, Rec, H>(
+            fn prove<B, Rec, T>(
                 &self,
                 kernels: &mut ::jolt_kernels::KernelContext<'_, F, B>,
                 scheduler: &mut dyn ::jolt_sumcheck::RoundScheduler<F>,
@@ -431,17 +472,16 @@ macro_rules! impl_stage_prover {
                 input_points: &Self::InputPoints,
                 challenges: &Self::Challenges,
                 mut recorder: Rec,
-                transcript: &mut ::jolt_transcript::ProverTranscript<H>,
+                transcript: &mut T,
             ) -> ::core::result::Result<
-                $crate::driver::Proved<F, Self, Rec::Witness>,
+                $crate::driver::Proved<F, Self, Rec::Proof>,
                 $crate::ProverError<F>,
             >
             where
                 B: ?Sized,
                 for<'a> ::jolt_kernels::KernelContext<'a, F, B>: $crate::driver::KernelSource<F, Self>,
-                Rec: ::jolt_sumcheck::SumcheckRecorder<F, Error = ::jolt_sumcheck::SumcheckError<F>>
-                    + $crate::recorder::ClaimRecorder,
-                H: ::jolt_transcript::Sponge,
+                Rec: ::jolt_sumcheck::SumcheckRecorder<F> + $crate::recorder::ClaimRecorder,
+                T: ::jolt_transcript::FieldTranscript<F> + ::jolt_transcript::ProverTranscript,
             {
                 let __stage_span =
                     ::tracing::info_span!(concat!($label, "::prove")).entered();
@@ -493,11 +533,9 @@ macro_rules! impl_stage_prover {
                 };
                 $($crate::driver::__stage_member!(park $presence $member, kernels);)+
 
-                self.validate_output_shape(&__output_claims, &__output_points)?;
-                let __routes = <Rec as $crate::recorder::ClaimRecorder>::wire_routes(
-                    Self::claim_routes(&__output_points)?,
-                );
-                let __claim_values = Self::wire_claim_values(&__output_claims, &__routes);
+                let __opening_values =
+                    self.curate_opening_values(&__output_claims, &__output_points)?;
+                $crate::driver::__stage_shape_check!($shape, self, __output_claims);
 
                 let __expected = self.expected_final_claim(
                     &__coefficients,
@@ -520,14 +558,26 @@ macro_rules! impl_stage_prover {
                     );
                 }
 
-                let __witness = recorder.finish(&__claim_values, transcript)?;
+                let __recorded = recorder.finish(&__opening_values, transcript)?;
                 ::core::result::Result::Ok($crate::driver::Proved {
-                    witness: __witness,
+                    recorded: __recorded,
                     output_claims: __output_claims,
                     output_points: __output_points,
                     final_claim: __proved.final_claim,
                 })
             }
+
+            fn curate_opening_values(
+                &self,
+                $curate_claims: &Self::OutputClaims,
+                $curate_points: &Self::OutputPoints,
+            ) -> ::core::result::Result<::std::vec::Vec<F>, $crate::ProverError<F>> {
+                let $curate_batch = self;
+                let _ = ($curate_batch, $curate_points);
+                $curate_body
+            }
+
+
         }
 
         impl<F: ::jolt_algebra::JoltField, B> $crate::driver::KernelSource<F, $batch<F>> for ::jolt_kernels::KernelContext<'_, F, B>
@@ -555,4 +605,4 @@ macro_rules! impl_stage_prover {
     };
 }
 
-pub(crate) use {__stage_member, impl_stage_prover};
+pub(crate) use {__stage_member, __stage_shape_check, impl_stage_prover};

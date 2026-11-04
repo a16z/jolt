@@ -16,10 +16,12 @@ jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-algebra = { workspace = true }
 jolt-poly = { workspace = true }
 jolt-transcript = { workspace = true, features = [
+  "bn254",
   "transcript-blake2b",
   "transcript-keccak",
   "transcript-poseidon",
 ] }
+spongefish = { workspace = true }
 common = { workspace = true, features = ["std"] }
 tracer = { workspace = true }
 

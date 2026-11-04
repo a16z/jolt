@@ -1,150 +1,249 @@
 //! The clear/ZK recording seam for sumcheck proving.
 //!
 //! A batched sumcheck's round loop is identical in clear and ZK mode; only the
-//! per-message encoding differs (cleartext values vs. values masked by
-//! committed pads in `jolt-zk`) and whether input claims enter the transcript. [`SumcheckRecorder`] captures exactly that difference so the engine
-//! and the generated per-stage drivers are written once, generic over the
-//! recorder. Whether claims are absorbed or sent is decided by the recorder
-//! **type**; there is no runtime mode boolean to drift.
+//! per-round recording differs (cleartext round polynomials vs. Pedersen
+//! commitments) and whether input/output claims are appended to the transcript
+//! in the clear. [`SumcheckRecorder`] captures exactly that difference so the
+//! engine and the generated per-stage drivers are written once, generic over
+//! the recorder. Whether transcript bytes are written is decided by the
+//! recorder **type** — there is no runtime mode boolean to drift.
 //!
 //! The generated `begin_batch` drivers (`#[derive(SumcheckBatch)]` in
 //! `jolt-verifier`) call [`absorb_input_claims`](SumcheckRecorder::absorb_input_claims);
-//! the prove-side round loop calls [`absorb_round`](SumcheckRecorder::absorb_round)
-//! per round and [`finish`](SumcheckRecorder::finish) once. The clear verifier
-//! also runs `begin_batch` (with [`ClearSumcheckRecorder`]) so the two sides
-//! share the head's Fiat-Shamir sequence structurally.
+//! the prove-side round loop calls `absorb_round` per round and `finish` once.
+//! The clear verifier also runs `begin_batch` (with [`ClearSumcheckRecorder`])
+//! so the two sides share the head's Fiat-Shamir sequence structurally.
+//! Without the `prover` feature only that head remains: `absorb_round`,
+//! `finish` and the committed recorder belong to the prover.
 
-use std::marker::PhantomData;
-
-use jolt_algebra::{CanonicalEncoding, Field};
+#[cfg(all(feature = "committed", feature = "prover"))]
+use jolt_crypto::VectorCommitment;
+use jolt_algebra::Field;
+#[cfg(all(feature = "committed", feature = "prover"))]
+use jolt_algebra::JoltField;
+use jolt_poly::CompressedPoly;
+#[cfg(feature = "prover")]
 use jolt_poly::UnivariatePoly;
-use jolt_transcript::{
-    Channel, PadSlots, PrivateChannel, ProverTranscript, Sponge, TranscriptError,
-};
+use jolt_transcript::{Encoding, PrivateChannel, Transcript};
+#[cfg(feature = "prover")]
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+#[cfg(all(feature = "committed", feature = "prover"))]
+use rand_core::RngCore;
 
+#[cfg(all(feature = "committed", feature = "prover"))]
+use crate::committed::CommittedSumcheckBuilder;
+use crate::committed::CommittedSumcheckWitness;
+#[cfg(feature = "prover")]
 use crate::error::SumcheckError;
-use crate::round_proof::{send_compressed_round, send_full_round};
+#[cfg(feature = "prover")]
+use crate::pow::grind_round;
+use crate::proof::CompressedSumcheckProof;
+#[cfg(all(feature = "committed", feature = "prover"))]
+use crate::proof::SumcheckProof;
+#[cfg(feature = "prover")]
+use crate::round_proof::append_compressed_round;
 
-/// Records one sumcheck's proof material into the prover transcript,
-/// abstracting over clear vs. masked (ZK) recording: `absorb_input_claims`
-/// once (from `begin_batch`), `absorb_round` per round (returning the
-/// Fiat-Shamir challenge), then `finish` with the flattened output-claim values.
-///
-/// The clear recorder is written against the private-message seam
-/// ([`PrivateChannel`]): input claims are derived claims, round coefficients
-/// and output claims are private messages.
+/// Records one sumcheck's proof material, abstracting over clear vs. committed
+/// (ZK) recording: `absorb_input_claims` once (from `begin_batch`),
+/// `absorb_round` per round (grinding a clear round's proof of work and
+/// returning the Fiat-Shamir challenge), then
+/// `finish` with the flattened output-claim values.
 pub trait SumcheckRecorder<F: Field> {
-    /// What the prover retains after recording.
-    type Witness;
-
-    /// Why recording failed: a [`SumcheckError`] for the clear and masking
-    /// recorders, which report pad exhaustion as
-    /// [`SumcheckError::PrivateChannel`].
-    type Error;
+    /// The proof encoding produced by this recorder.
+    type Proof;
 
     /// Absorb the batch's per-member input claims (present members, in
-    /// declaration order). Clear: bound as derived claims. Masked: nothing,
-    /// since the masked messages the claims derive from already bind them.
-    fn absorb_input_claims<C>(
+    /// declaration order). Clear: each bound as a derived claim
+    /// ([`PrivateChannel::bind_derived`]) in that order.
+    /// Committed: no-op — the claims' commitments were already absorbed by the
+    /// stage that produced them, so the transcript never sees the scalars.
+    fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T);
+
+    /// Record one round polynomial and squeeze the round challenge. Clear:
+    /// appended compressed, after its count word, then the round's proof of
+    /// work is ground at the difficulty for `degree_bound` (the round's degree
+    /// in the batch's schedule, which the verifier prices the round at). Committed: Pedersen
+    /// commitment appended, with no proof of work (the challenge set must be
+    /// wide enough to need none).
+    #[cfg(feature = "prover")]
+    fn absorb_round<T>(
         &mut self,
-        input_claims: &[F],
-        channel: &mut C,
-    ) -> Result<(), Self::Error>
+        round_poly: &UnivariatePoly<F>,
+        degree_bound: usize,
+        transcript: &mut T,
+    ) -> Result<F, SumcheckError<F>>
     where
-        C: PrivateChannel<Error = TranscriptError>;
+        T: FieldTranscript<F> + ProverTranscript;
 
-    /// Record one round polynomial of degree bound `degree`, compressed, and
-    /// draw the round challenge.
-    fn absorb_round<H: Sponge>(
-        &mut self,
-        round_poly: &UnivariatePoly<F>,
-        degree: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<F, Self::Error>;
-
-    /// Record one full-width round polynomial (every coefficient, as a
-    /// uni-skip round sends) of degree bound `degree` and draw the round
-    /// challenge.
-    fn absorb_full_round<H: Sponge>(
-        &mut self,
-        round_poly: &UnivariatePoly<F>,
-        degree: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<F, Self::Error>;
-
-    /// Record the flattened output-claim values (canonical order).
-    fn finish<H: Sponge>(
+    /// Record the flattened output-claim values (canonical absorb order) and
+    /// assemble the proof. Clear: the values as one private message
+    /// ([`PrivateChannel::append_private`]).
+    /// Committed: values are row-committed and only the
+    /// commitments are absorbed.
+    #[cfg(feature = "prover")]
+    fn finish<T>(
         self,
         output_claim_values: &[F],
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<Self::Witness, Self::Error>;
+        transcript: &mut T,
+    ) -> Result<RecordedSumcheck<F, Self::Proof>, SumcheckError<F>>
+    where
+        T: FieldTranscript<F> + ProverTranscript;
 }
 
-/// The clear recorder: binds input claims publicly and sends compressed
-/// round polynomials and output claims, exactly what the clear verifier reads
-/// back.
-pub struct ClearSumcheckRecorder<F> {
-    _field: PhantomData<F>,
+/// A recorded sumcheck: the wire proof, plus (for a committed recorder) the
+/// retained witness — round coefficients, output-claim rows, and their
+/// blindings — that BlindFold later opens. `None` for a clear recorder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RecordedSumcheck<F: Field, P> {
+    pub proof: P,
+    pub committed_witness: Option<CommittedSumcheckWitness<F>>,
 }
 
-impl<F> Default for ClearSumcheckRecorder<F> {
+/// The clear recorder: appends claims and compressed round polynomials to the
+/// transcript in the clear and collects the rounds into a
+/// [`CompressedSumcheckProof`]. Its transcript writes are byte-identical to
+/// what the clear verifier reads back.
+#[cfg_attr(
+    not(feature = "prover"),
+    expect(dead_code, reason = "a verifier build absorbs only the input claims")
+)]
+pub struct ClearSumcheckRecorder<F: Field> {
+    round_polynomials: Vec<CompressedPoly<F>>,
+    pow_nonces: Vec<u64>,
+}
+
+impl<F: Field> Default for ClearSumcheckRecorder<F> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<F> ClearSumcheckRecorder<F> {
+impl<F: Field> ClearSumcheckRecorder<F> {
     pub fn new() -> Self {
         Self {
-            _field: PhantomData,
+            round_polynomials: Vec::new(),
+            pow_nonces: Vec::new(),
         }
     }
 }
 
-impl<F: Field + CanonicalEncoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
-    type Witness = ();
-    type Error = SumcheckError<F>;
+impl<F: Field + Encoding> SumcheckRecorder<F> for ClearSumcheckRecorder<F> {
+    type Proof = CompressedSumcheckProof<F>;
 
-    fn absorb_input_claims<C>(
-        &mut self,
-        input_claims: &[F],
-        channel: &mut C,
-    ) -> Result<(), SumcheckError<F>>
-    where
-        C: PrivateChannel<Error = TranscriptError>,
-    {
-        for claim in input_claims {
-            channel.bind_derived_base(claim)?;
+    fn absorb_input_claims<T: Transcript>(&mut self, input_claims: &[F], transcript: &mut T) {
+        for input_claim in input_claims {
+            transcript.bind_derived(input_claim);
         }
-        Ok(())
     }
 
-    fn absorb_round<H: Sponge>(
+    #[cfg(feature = "prover")]
+    fn absorb_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
-        degree: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<F, SumcheckError<F>> {
-        send_compressed_round(round_poly, degree, transcript)?;
-        Ok(transcript.challenge_small())
+        degree_bound: usize,
+        transcript: &mut T,
+    ) -> Result<F, SumcheckError<F>>
+    where
+        T: FieldTranscript<F> + ProverTranscript,
+    {
+        let compressed = round_poly.compress();
+        append_compressed_round(transcript, compressed.coeffs_except_linear_term());
+        grind_round(
+            degree_bound,
+            self.round_polynomials.len(),
+            &mut self.pow_nonces,
+            transcript,
+        )?;
+        let challenge = transcript.challenge()?;
+        self.round_polynomials.push(compressed);
+        Ok(challenge)
     }
 
-    fn absorb_full_round<H: Sponge>(
-        &mut self,
-        round_poly: &UnivariatePoly<F>,
-        degree: usize,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<F, SumcheckError<F>> {
-        send_full_round(round_poly, degree, transcript)?;
-        Ok(transcript.challenge_small())
-    }
-
-    fn finish<H: Sponge>(
+    #[cfg(feature = "prover")]
+    fn finish<T>(
         self,
         output_claim_values: &[F],
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), SumcheckError<F>> {
-        let _: PadSlots = transcript.exchange_private_base(&mut output_claim_values.to_vec())?;
-        Ok(())
+        transcript: &mut T,
+    ) -> Result<RecordedSumcheck<F, Self::Proof>, SumcheckError<F>>
+    where
+        T: FieldTranscript<F> + ProverTranscript,
+    {
+        transcript.append_private(output_claim_values);
+        Ok(RecordedSumcheck {
+            proof: CompressedSumcheckProof {
+                round_polynomials: self.round_polynomials,
+                pow_nonces: self.pow_nonces,
+            },
+            committed_witness: None,
+        })
+    }
+}
+
+/// The committed (ZK) recorder: Pedersen-commits each round polynomial and the
+/// output-claim rows, absorbing only the commitments — the transcript never
+/// sees a claim or coefficient scalar. Input-claim absorbs are no-ops: the
+/// claims' commitments were already absorbed by the stage that produced them.
+/// The retained witness (coefficients, rows, blindings) is returned by
+/// [`finish`](SumcheckRecorder::finish) for BlindFold.
+#[cfg(all(feature = "committed", feature = "prover"))]
+pub struct CommittedSumcheckRecorder<'a, F, VC, R>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+    R: RngCore,
+{
+    builder: CommittedSumcheckBuilder<'a, F, VC, R>,
+}
+
+#[cfg(all(feature = "committed", feature = "prover"))]
+impl<'a, F, VC, R> CommittedSumcheckRecorder<'a, F, VC, R>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+    R: RngCore,
+{
+    pub fn new(setup: &'a VC::Setup, rng: R) -> Result<Self, SumcheckError<F>> {
+        Ok(Self {
+            builder: CommittedSumcheckBuilder::new(setup, rng)?,
+        })
+    }
+}
+
+#[cfg(all(feature = "committed", feature = "prover"))]
+impl<F, VC, R> SumcheckRecorder<F> for CommittedSumcheckRecorder<'_, F, VC, R>
+where
+    F: JoltField,
+    VC: VectorCommitment<Field = F>,
+    R: RngCore,
+{
+    type Proof = SumcheckProof<F, VC::Output>;
+
+    fn absorb_input_claims<T: Transcript>(&mut self, _input_claims: &[F], _transcript: &mut T) {}
+
+    fn absorb_round<T>(
+        &mut self,
+        round_poly: &UnivariatePoly<F>,
+        _degree_bound: usize,
+        transcript: &mut T,
+    ) -> Result<F, SumcheckError<F>>
+    where
+        T: FieldTranscript<F> + ProverTranscript,
+    {
+        self.builder.commit_round(round_poly, transcript)
+    }
+
+    fn finish<T>(
+        self,
+        output_claim_values: &[F],
+        transcript: &mut T,
+    ) -> Result<RecordedSumcheck<F, Self::Proof>, SumcheckError<F>>
+    where
+        T: FieldTranscript<F> + ProverTranscript,
+    {
+        let (proof, witness) = self.builder.finish(output_claim_values, transcript)?;
+        Ok(RecordedSumcheck {
+            proof,
+            committed_witness: Some(witness),
+        })
     }
 }

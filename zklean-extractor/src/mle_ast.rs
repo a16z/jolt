@@ -10,12 +10,13 @@ use ark_std::{One, Zero};
 use num_bigint::BigUint;
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
+use spongefish::Encoding;
 
 #[cfg(test)]
 use jolt_algebra::JoltField;
 use jolt_algebra::{
-    AdditiveGroup, CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, NaiveAccumulator,
-    Ring, WithAccumulator,
+    AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, NaiveAccumulator, Ring,
+    WithAccumulator,
 };
 
 #[cfg(test)]
@@ -24,9 +25,6 @@ use crate::util::LetBinderIndex;
 
 // Import scalar constants for internal use (pub use handles function re-exports)
 use crate::scalar_ops::{BN254_MODULUS, SCALAR_ONE, SCALAR_ZERO};
-use spongefish::Encoding;
-use spongefish::NargDeserialize;
-use spongefish::VerificationResult;
 
 // Re-export scalar_ops for external use
 pub use crate::scalar_ops::{
@@ -369,15 +367,6 @@ pub enum Node {
     /// Transforms: serialize(x) as LE bytes -> reverse -> from_le_bytes_mod_order.
     /// Used by transcript append_scalar which reverses bytes for EVM compatibility.
     ByteReverse(Edge),
-    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
-    /// Used for challenge_scalar_optimized which produces F::Challenge (MontU128Challenge).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
-    /// The 2^128 shift matches MontU128Challenge internal layout.
-    Truncate128Reverse(Edge),
-    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
-    /// Used for challenge_scalar which produces F (raw field element).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
-    Truncate128(Edge),
     /// Transform for transcript append_u64.
     ///
     /// Computes: bswap64(x) * 2^192
@@ -497,30 +486,6 @@ impl MleAst {
         }
     }
 
-    /// Truncate to 128 bits and byte-reverse, then shift by 2^128.
-    /// Used for challenge_scalar_optimized (produces MontU128Challenge).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes -> multiply by 2^128.
-    pub fn truncate_128_reverse(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::Truncate128Reverse(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
-        }
-    }
-
-    /// Truncate to 128 bits and byte-reverse WITHOUT shifting.
-    /// Used for challenge_scalar (produces raw F field element).
-    /// Transforms: take low 16 bytes (LE) -> reverse -> from_bytes.
-    pub fn truncate_128(input: &Self) -> Self {
-        let edge = edge_for_root(input.root);
-        let root = insert_node(Node::Truncate128(edge));
-        Self {
-            root,
-            reg_name: input.reg_name,
-        }
-    }
-
     /// Transform for PoseidonTranscript::append_u64.
     ///
     /// Computes: bswap64(x) * 2^192
@@ -565,11 +530,7 @@ fn evaluate_node<F: JoltField>(node: NodeId, env: &Environment<F>) -> F {
                     .inverse()
                     .expect("symbolic division evaluated with a zero denominator")
         }
-        Node::TranscriptHash(_, _, _)
-        | Node::ByteReverse(_)
-        | Node::Truncate128Reverse(_)
-        | Node::Truncate128(_)
-        | Node::AppendU64Transform(_) => {
+        Node::TranscriptHash(_, _, _) | Node::ByteReverse(_) | Node::AppendU64Transform(_) => {
             unreachable!("Hash/transform nodes should not appear in zklean-extractor tests")
         }
     }
@@ -681,16 +642,6 @@ fn fmt_node(
             fmt_edge(f, fmt_data, edge, false)?;
             write!(f, ")")
         }
-        Node::Truncate128Reverse(edge) => {
-            write!(f, "truncate_128_reverse(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
-        }
-        Node::Truncate128(edge) => {
-            write!(f, "truncate_128(")?;
-            fmt_edge(f, fmt_data, edge, false)?;
-            write!(f, ")")
-        }
         Node::AppendU64Transform(edge) => {
             write!(f, "append_u64_transform(")?;
             fmt_edge(f, fmt_data, edge, false)?;
@@ -714,12 +665,9 @@ fn node_depth(node: &Node) -> usize {
     }
     match node {
         Node::Atom(_) => 0,
-        Node::Neg(e)
-        | Node::Inv(e)
-        | Node::ByteReverse(e)
-        | Node::Truncate128Reverse(e)
-        | Node::Truncate128(e)
-        | Node::AppendU64Transform(e) => 1 + edge_depth(*e),
+        Node::Neg(e) | Node::Inv(e) | Node::ByteReverse(e) | Node::AppendU64Transform(e) => {
+            1 + edge_depth(*e)
+        }
         Node::Add(e1, e2) | Node::Mul(e1, e2) | Node::Sub(e1, e2) | Node::Div(e1, e2) => {
             1 + max(edge_depth(*e1), edge_depth(*e2))
         }
@@ -817,11 +765,7 @@ pub fn common_subexpression_elimination(node: Node) -> (Vec<Node>, Node) {
             }
             // Transpilation-only nodes: used by challenge derivation and Blake/Keccak transcripts.
             // Lean4 extraction never encounters them.
-            Node::TranscriptHash(..)
-            | Node::ByteReverse(..)
-            | Node::Truncate128Reverse(..)
-            | Node::Truncate128(..)
-            | Node::AppendU64Transform(..) => {
+            Node::TranscriptHash(..) | Node::ByteReverse(..) | Node::AppendU64Transform(..) => {
                 unreachable!(
                     "Transpilation-only node {:?} should never appear in Lean4 CSE",
                     node
@@ -1329,13 +1273,35 @@ impl CanonicalBytes for MleAst {
     }
 }
 
-impl Encoding<[u8]> for MleAst {
+/// The canonical bytes, so a transcript absorbs the AST as it absorbs `Fr`.
+impl Encoding for MleAst {
     fn encode(&self) -> impl AsRef<[u8]> {
-        jolt_algebra::narg::encode(self)
+        let mut bytes = [0u8; 32];
+        self.to_bytes_le(&mut bytes);
+        bytes
     }
 }
 
-impl CanonicalDecode for MleAst {
+impl CanonicalEncoding for MleAst {
+    const MODULUS_BITS: u32 = 254;
+    /// Mirrors BN254 `Fr`, which this AST models.
+    const CHALLENGE_SET_LIMBS: [u64; 4] = BN254_MODULUS;
+
+    fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
+        if let Some(challenge) = take_pending_challenge() {
+            return challenge;
+        }
+
+        let value = BigUint::from_bytes_le(bytes)
+            % BigUint::from_bytes_le(&BN254_MODULUS.map(u64::to_le_bytes).concat());
+        let digits = value.to_u64_digits();
+        let mut limbs = [0u64; 4];
+        for (dst, src) in limbs.iter_mut().zip(digits) {
+            *dst = src;
+        }
+        Self::new_scalar(limbs)
+    }
+
     fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
         if let Some(challenge) = take_pending_challenge() {
             return Some(challenge);
@@ -1355,31 +1321,6 @@ impl CanonicalDecode for MleAst {
             *dst = src;
         }
         Some(Self::new_scalar(limbs))
-    }
-}
-
-impl NargDeserialize for MleAst {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        jolt_algebra::narg::deserialize(buf)
-    }
-}
-
-impl CanonicalEncoding for MleAst {
-    const MODULUS_BITS: u32 = 254;
-
-    fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
-        if let Some(challenge) = take_pending_challenge() {
-            return challenge;
-        }
-
-        let value = BigUint::from_bytes_le(bytes)
-            % BigUint::from_bytes_le(&BN254_MODULUS.map(u64::to_le_bytes).concat());
-        let digits = value.to_u64_digits();
-        let mut limbs = [0u64; 4];
-        for (dst, src) in limbs.iter_mut().zip(digits) {
-            *dst = src;
-        }
-        Self::new_scalar(limbs)
     }
 
     fn to_u128_checked(&self) -> Option<u128> {
@@ -1402,13 +1343,10 @@ impl CanonicalEncoding for MleAst {
             u128::BITS - value.leading_zeros()
         })
     }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl WithAccumulator for MleAst {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = NaiveAccumulator<Self>;
     type SmallScalarAccumulator = NaiveAccumulator<Self>;
     type SignedProductAccumulator = NaiveAccumulator<Self>;

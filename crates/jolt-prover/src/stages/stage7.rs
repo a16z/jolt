@@ -16,12 +16,15 @@ use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_crypto::VectorCommitment;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::{Channel, ProverTranscript, Sponge};
-use jolt_verifier::sites::STAGE7;
+use jolt_sumcheck::SumcheckProof;
+use jolt_transcript::{FieldTranscript, ProverTranscript};
+use jolt_verifier::stages::pow::PowSite;
+
+use crate::stages::grind_pow;
 use jolt_verifier::stages::stage4::Stage4ClearOutput;
 use jolt_verifier::stages::stage6b::outputs::Stage6bClearOutput;
 use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::hamming_weight_claim_reduction_dimensions;
-use jolt_verifier::stages::stage7::outputs::Stage7ClearOutput;
+use jolt_verifier::stages::stage7::outputs::{Stage7ClearOutput, Stage7OutputClaims};
 use jolt_verifier::stages::stage7::{
     build_stage7_sumchecks, stage7_input_values_from_upstream, Stage7References,
 };
@@ -30,15 +33,20 @@ use jolt_verifier::CheckedInputs;
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
 
-/// Stage 7's outputs: the verifier-typed cross-stage carrier stage 8 consumes.
-pub struct Stage7ProverOutput<F: JoltField> {
+/// Stage 7's outputs: the wire proof, the wire claims, and the verifier-typed
+/// cross-stage carrier stage 8 consumes.
+pub struct Stage7ProverOutput<F: JoltField, C> {
+    /// Nonce ground before the stage's challenge burst.
+    pub pow_nonce: Option<u64>,
+    pub sumcheck_proof: SumcheckProof<F, C>,
+    pub claims: Stage7OutputClaims<F>,
     pub clear_output: Stage7ClearOutput<F>,
 }
 
 /// Prove stage 7 on `transcript` (positioned at the stage-6b boundary).
 #[expect(clippy::too_many_arguments, reason = "the stage's upstream carriers")]
 #[tracing::instrument(skip_all)]
-pub fn prove_stage7<F, PCS, VC, H>(
+pub fn prove_stage7<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
     mode: &mut ProofMode<VC>,
     checked: &CheckedInputs,
@@ -46,15 +54,14 @@ pub fn prove_stage7<F, PCS, VC, H>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     stage4: &Stage4ClearOutput<F>,
     stage6b: &Stage6bClearOutput<F>,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<Stage7ProverOutput<F>, ProverError<F>>
+    transcript: &mut T,
+) -> Result<Stage7ProverOutput<F, VC::Output>, ProverError<F>>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    T: FieldTranscript<F> + ProverTranscript,
 {
-    transcript.site(STAGE7);
     let precommitted = &checked.precommitted;
     let formula_dimensions = super::formula_dimensions(
         checked,
@@ -75,6 +82,7 @@ where
         #[cfg(not(feature = "akita"))]
         Some(stage4),
     )?;
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage7, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage7_input_values_from_upstream(&sumchecks, stage6b)?;
@@ -90,8 +98,13 @@ where
         mode.recorder(),
         transcript,
     )?;
+    #[cfg(not(feature = "zk"))]
+    let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage7ProverOutput {
+        pow_nonce,
+        sumcheck_proof,
+        claims: proved.output_claims.clone(),
         clear_output: Stage7ClearOutput {
             output_values: proved.output_claims,
             output_points: proved.output_points,

@@ -4,24 +4,25 @@ set -euo pipefail
 cargo nextest run \
   -p jolt-verifier \
   --test fs_obligations \
+  --features fs-audit \
   --cargo-quiet
 
 cargo nextest run \
   -p jolt-verifier \
   --test fs_attacks \
-  --features logging,prover-fixtures \
+  --features fs-audit,prover-fixtures \
   --cargo-quiet
 
 cargo nextest run \
   -p jolt-verifier \
   --test fs_attacks \
-  --features logging,prover-fixtures,zk \
+  --features fs-audit,prover-fixtures,zk \
   --cargo-quiet
 
 cargo nextest run \
   -p jolt-verifier \
   --test fs_attacks \
-  --features akita,logging,prover-fixtures \
+  --features akita,fs-audit,prover-fixtures \
   --cargo-quiet
 
 unsupported_log="$(mktemp)"
@@ -29,7 +30,7 @@ trap 'rm -f "$unsupported_log"' EXIT
 if cargo check \
   -p jolt-verifier \
   --lib \
-  --features akita,zk \
+  --features akita,fs-audit,zk \
   --quiet \
   2>"$unsupported_log"; then
   echo "Akita+ZK now builds; add it to the Fiat-Shamir fixture matrix." >&2

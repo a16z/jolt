@@ -13,7 +13,8 @@ pub use jolt_claims::protocols::jolt::relations::booleanity::{
     BooleanityAddressPhaseOutputClaims,
 };
 use jolt_claims::SymbolicSumcheck;
-use jolt_transcript::Channel;
+use jolt_algebra::JoltField;
+use jolt_transcript::FieldTranscript;
 
 use crate::stages::relations::ConcreteSumcheck;
 use crate::VerifierError;
@@ -69,20 +70,18 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
 
     /// Draws the booleanity pre-batch challenges at the frozen wire positions:
     /// the reference address is the reversed stage-5 instruction address,
-    /// padded with fresh `challenges_small` draws or truncated to the
+    /// padded with a fresh `challenge_vector` draw or truncated to the
     /// committed chunk width (`log_k_chunk`); then the batching gamma. This
     /// member is declared after the bytecode read-RAF one in
     /// `Stage6aSumchecks`, so the generated aggregate draw lands these
     /// squeezes exactly where the hand pre-batch block drew them — after the
     /// bytecode member's six gammas.
     ///
-    /// WARNING: these MUST stay `challenges_small` + `challenge_small()`,
-    /// unlike the relations' default exact `challenge()`: the two consume
-    /// different squeezes and decode them differently, so switching would
-    /// change the reference, the gamma, and every challenge after them.
-    fn draw_challenges<C: Channel>(
+    /// The pad is one `challenge_vector` message and the gamma one
+    /// `challenge()` message; merging them would squeeze different bytes.
+    fn draw_challenges<T: FieldTranscript<F>>(
         &self,
-        transcript: &mut C,
+        transcript: &mut T,
     ) -> Result<BooleanityAddressPhaseChallenges<F>, VerifierError> {
         let chunk_bits = self.dimensions.log_k_chunk;
         let mut reference_address: Vec<F> =
@@ -91,14 +90,14 @@ impl<F: JoltField> ConcreteSumcheck<F> for BooleanityAddressPhase<F> {
         // only settles the (unreachable) underflow for the arithmetic lint.
         if reference_address.len() < chunk_bits {
             let missing = chunk_bits.saturating_sub(reference_address.len());
-            reference_address.extend(transcript.challenges_small::<F>(missing));
+            reference_address.extend(transcript.challenge_vector(missing)?);
         } else {
             let excess = reference_address.len().saturating_sub(chunk_bits);
             reference_address = reference_address.split_off(excess);
         }
         Ok(BooleanityAddressPhaseChallenges {
             reference_address,
-            gamma: transcript.challenge_small(),
+            gamma: transcript.challenge()?,
         })
     }
 

@@ -8,14 +8,15 @@
 
 use std::{fmt::Debug, marker::PhantomData};
 
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, JoltField, Ring};
 use jolt_crypto::{Commitment, HomomorphicCommitment};
+use jolt_algebra::{JoltField, Ring};
 use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
-use jolt_transcript::{Channel, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{Encoding, FieldTranscript};
 use serde::{de::DeserializeOwned, Serialize};
 
-use crate::claims::{absorb_evaluation, VerifierOpeningClaim, ZkEvaluationClaim};
+use crate::claims::{VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
+use crate::EvaluationClaim;
 
 /// Self-describing metadata a group commitment carries: the backend flavor,
 /// the protocol-owned layout digest binding the ordered member identities,
@@ -50,13 +51,9 @@ pub trait GroupSetupMetadata {
 }
 
 /// Commit to f: F^n -> F, then prove f(r) = v for verifier-chosen r.
-///
-/// Opening proofs live in the caller's transcript: `open` writes its prover
-/// messages and `verify` reads them back. The scheme owns its commitments'
-/// wire codec through [`send_commitment`](Self::send_commitment) and
-/// [`receive_commitment`](Self::receive_commitment).
 pub trait CommitmentScheme: Commitment {
     type Field: JoltField;
+    type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 
@@ -76,35 +73,22 @@ pub trait CommitmentScheme: Commitment {
         setup: &Self::ProverSetup,
     ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError>;
 
-    /// Writes `commitment` into the proof as a prover message.
-    fn send_commitment<H: Sponge>(commitment: &Self::Output, transcript: &mut ProverTranscript<H>);
-
-    /// Reads one commitment written by [`send_commitment`](Self::send_commitment),
-    /// rejecting any encoding that is not a valid commitment under `setup`.
-    fn receive_commitment<H: Sponge>(
-        setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self::Output, OpeningsError>;
-
-    /// Absorbs a commitment both sides already hold, such as one fixed by
-    /// preprocessing.
-    fn absorb_commitment<C: Channel>(commitment: &Self::Output, channel: &mut C);
-
-    fn open<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
+    fn open<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Option<Self::OpeningHint>,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), OpeningsError>;
+        transcript: &mut impl FieldTranscript<Self::Field>,
+    ) -> Result<Self::Proof, OpeningsError>;
 
-    fn verify<H: Sponge>(
+    fn verify(
         commitment: &Self::Output,
         point: &[Self::Field],
         eval: Self::Field,
+        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError>;
 
     /// Commits a group of polynomials as one commitment object whose members
@@ -128,13 +112,13 @@ pub trait CommitmentScheme: Commitment {
     // TODO(#1782): fold the retained-state contract into a first-class
     // committed-object type on this trait instead of the `OpeningHint`
     // side-channel.
-    fn prove_batch<H: Sponge>(
+    fn prove_batch(
         _setup: &Self::ProverSetup,
         _groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
         _final_group: GroupOpeningClaim<Self::Field, Self::Output>,
         _final_hint: Self::OpeningHint,
-        _transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), OpeningsError> {
+        _transcript: &mut impl FieldTranscript<Self::Field>,
+    ) -> Result<Self::Proof, OpeningsError> {
         Err(OpeningsError::InvalidBatch(
             "this commitment scheme has no native group-batch opening".to_owned(),
         ))
@@ -142,11 +126,12 @@ pub trait CommitmentScheme: Commitment {
 
     /// Verifies one proof opening zero or more independently committed groups
     /// at their group-local points, followed by a final commitment group.
-    fn verify_batch<H: Sponge>(
+    fn verify_batch(
         _setup: &Self::VerifierSetup,
         _groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
         _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
-        _transcript: &mut VerifierTranscript<'_, H>,
+        _proof: &Self::Proof,
+        _transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<(), OpeningsError> {
         Err(OpeningsError::InvalidBatch(
             "this commitment scheme has no native group-batch opening".to_owned(),
@@ -349,8 +334,7 @@ pub trait ZkOpeningScheme: CommitmentScheme {
         + 'static
         + Serialize
         + DeserializeOwned
-        + CanonicalBytes
-        + CanonicalDecode;
+        + Encoding;
 
     type Blind: Clone + Send + Sync;
 
@@ -362,22 +346,27 @@ pub trait ZkOpeningScheme: CommitmentScheme {
 
     /// Open a ZK/hiding commitment using the opening hint returned by
     /// [`commit_zk`](Self::commit_zk).
-    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized, H: Sponge>(
+    #[expect(
+        clippy::type_complexity,
+        reason = "ZK openings return the native proof, hiding commitment, and blind"
+    )]
+    fn open_zk<P: MultilinearPoly<Self::Field> + ?Sized>(
         poly: &P,
         point: &[Self::Field],
         eval: Self::Field,
         setup: &Self::ProverSetup,
         hint: Self::OpeningHint,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(Self::HidingCommitment, Self::Blind), OpeningsError>;
+        transcript: &mut impl FieldTranscript<Self::Field>,
+    ) -> Result<(Self::Proof, Self::HidingCommitment, Self::Blind), OpeningsError>;
 
     /// Verify a ZK opening proof and return the hiding commitment to the
     /// evaluation that the proof binds internally.
-    fn verify_zk<H: Sponge>(
+    fn verify_zk(
         commitment: &Self::Output,
         point: &[Self::Field],
+        proof: &Self::Proof,
         setup: &Self::VerifierSetup,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut impl FieldTranscript<Self::Field>,
     ) -> Result<Self::HidingCommitment, OpeningsError>;
 }
 
@@ -430,30 +419,36 @@ pub trait BatchOpeningScheme {
         Self: 'a;
     /// Commit-time auxiliary data reused by the PCS when opening.
     type Hints;
+    type Proof;
 
-    fn prove_batch<'a, H: Sponge>(
+    fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         statement: Self::Statement,
         polynomials: Self::Polynomials<'a>,
         hints: Self::Hints,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), OpeningsError>
+        transcript: &mut T,
+    ) -> Result<Self::Proof, OpeningsError>
     where
-        Self: 'a;
+        Self: 'a,
+        T: FieldTranscript<Self::Field>;
 
-    fn verify_batch<H: Sponge>(
+    fn verify_batch<T>(
         setup: &Self::VerifierSetup,
         statement: &Self::Statement,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<(), OpeningsError>;
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<(), OpeningsError>
+    where
+        T: FieldTranscript<Self::Field>;
 }
 
-/// The prover-side outputs of a hiding batch opening: the hiding commitment
-/// binding the joint evaluation, that commitment's blind, and the joint
-/// evaluation itself (`Σ γⁱ · evalᵢ`) — the last two are the secrets a
-/// downstream ZK layer (BlindFold's final-opening binding) opens the hiding
-/// commitment with.
+/// The prover-side outputs of a hiding batch opening: the native proof, the
+/// hiding commitment binding the joint evaluation, that commitment's blind,
+/// and the joint evaluation itself (`Σ γⁱ · evalᵢ`) — the last two are the
+/// secrets a downstream ZK layer (BlindFold's final-opening binding) opens
+/// the hiding commitment with.
 pub struct ZkBatchOpening<S: ZkBatchOpeningScheme + ?Sized> {
+    pub proof: S::Proof,
     pub hiding_commitment: S::HidingCommitment,
     pub blind: S::Blind,
     pub joint_evaluation: S::Field,
@@ -470,24 +465,28 @@ pub trait ZkBatchOpeningScheme: BatchOpeningScheme {
     type HidingCommitment;
     type Blind;
 
-    fn prove_batch_zk<'a, H: Sponge>(
+    fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
         commitments: Vec<Self::Commitment>,
         polynomials: Self::Polynomials<'a>,
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut T,
     ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
-        Self: 'a;
+        Self: 'a,
+        T: FieldTranscript<Self::Field>;
 
-    fn verify_batch_zk<H: Sponge>(
+    fn verify_batch_zk<T>(
         setup: &Self::VerifierSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
         commitments: Vec<Self::Commitment>,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self::HidingCommitment, OpeningsError>;
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<Self::HidingCommitment, OpeningsError>
+    where
+        T: FieldTranscript<Self::Field>;
 }
 
 // Batching strategies are zero-sized marker types rather than impls on the
@@ -512,21 +511,23 @@ where
     where
         Self: 'a;
     type Hints = Vec<PCS::OpeningHint>;
+    type Proof = PCS::Proof;
 
     #[tracing::instrument(
         skip_all,
         name = "HomomorphicBatch::prove_batch",
         fields(claims = claims.len())
     )]
-    fn prove_batch<'a, H: Sponge>(
+    fn prove_batch<'a, T>(
         setup: &Self::ProverSetup,
         claims: Self::Statement,
         polynomials: Self::Polynomials<'a>,
         hints: Self::Hints,
-        transcript: &mut ProverTranscript<H>,
-    ) -> Result<(), OpeningsError>
+        transcript: &mut T,
+    ) -> Result<Self::Proof, OpeningsError>
     where
         Self: 'a,
+        T: FieldTranscript<Self::Field>,
     {
         let statement = HomomorphicBatchStatement::new(&claims)?;
         if polynomials.len() != statement.claims.len() || hints.len() != statement.claims.len() {
@@ -538,13 +539,13 @@ where
             )));
         }
 
-        statement.absorb_values(transcript);
-        let scalars = transcript.challenge_powers(statement.claims.len());
+        transcript.append(&statement);
+        let scalars = transcript.challenge_powers(statement.claims.len())?;
         let joint_eval = statement.joint_eval(&scalars);
         let joint_polynomial =
             Self::combine_polynomials(polynomials, &scalars, statement.point.len())?;
         let combined_hint = PCS::combine_hints(hints, &scalars);
-        PCS::open(
+        let proof = PCS::open(
             &joint_polynomial,
             statement.point.as_slice(),
             joint_eval,
@@ -552,18 +553,22 @@ where
             Some(combined_hint),
             transcript,
         )?;
-        absorb_evaluation(transcript, statement.point.as_slice(), &joint_eval);
-        Ok(())
+        transcript.append(&EvaluationClaim::new(statement.point.clone(), joint_eval));
+        Ok(proof)
     }
 
-    fn verify_batch<H: Sponge>(
+    fn verify_batch<T>(
         setup: &Self::VerifierSetup,
         claims: &Self::Statement,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<(), OpeningsError> {
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<(), OpeningsError>
+    where
+        T: FieldTranscript<Self::Field>,
+    {
         let statement = HomomorphicBatchStatement::new(claims)?;
-        statement.absorb_values(transcript);
-        let scalars = transcript.challenge_powers(statement.claims.len());
+        transcript.append(&statement);
+        let scalars = transcript.challenge_powers(statement.claims.len())?;
         let joint_eval = statement.joint_eval(&scalars);
         let commitments = statement.commitments();
         let joint_commitment = PCS::combine(&commitments, &scalars);
@@ -571,10 +576,11 @@ where
             &joint_commitment,
             statement.point.as_slice(),
             joint_eval,
+            proof,
             setup,
             transcript,
         )?;
-        absorb_evaluation(transcript, statement.point.as_slice(), &joint_eval);
+        transcript.append(&EvaluationClaim::new(statement.point.clone(), joint_eval));
         Ok(())
     }
 }
@@ -644,16 +650,12 @@ where
     }
 }
 
-impl<F: JoltField, C> HomomorphicBatchStatement<'_, F, C> {
-    /// Absorbs the claimed values. The commitments and the shared point are
-    /// already bound by the caller; see [`BatchOpeningScheme`].
-    fn absorb_values<Ch: Channel>(&self, channel: &mut Ch) {
-        let values: Vec<F> = self
-            .claims
-            .iter()
-            .map(|claim| claim.evaluation.value)
-            .collect();
-        channel.public_all(&values);
+impl<F, C> Encoding for HomomorphicBatchStatement<'_, F, C>
+where
+    F: JoltField,
+{
+    fn encode(&self) -> impl AsRef<[u8]> {
+        VerifierRlcClaims(self.claims).encode().as_ref().to_vec()
     }
 }
 
@@ -671,17 +673,18 @@ where
         name = "HomomorphicBatch::prove_batch_zk",
         fields(claims = commitments.len())
     )]
-    fn prove_batch_zk<'a, H: Sponge>(
+    fn prove_batch_zk<'a, T>(
         setup: &Self::ProverSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
         commitments: Vec<Self::Commitment>,
         polynomials: Self::Polynomials<'a>,
         hints: Self::Hints,
         evaluations: Vec<Self::Field>,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut T,
     ) -> Result<ZkBatchOpening<Self>, OpeningsError>
     where
         Self: 'a,
+        T: FieldTranscript<Self::Field>,
     {
         if commitments.is_empty() {
             return Err(OpeningsError::InvalidBatch(
@@ -700,7 +703,7 @@ where
                 commitments.len()
             )));
         }
-        let scalars = transcript.challenge_powers(commitments.len());
+        let scalars = transcript.challenge_powers(commitments.len())?;
 
         let joint_eval = evaluations
             .iter()
@@ -710,7 +713,7 @@ where
             });
         let joint_polynomial = Self::combine_polynomials(polynomials, &scalars, point.len())?;
         let combined_hint = PCS::combine_hints(hints, &scalars);
-        let (hiding_commitment, blind) = PCS::open_zk(
+        let (proof, hiding_commitment, blind) = PCS::open_zk(
             &joint_polynomial,
             point.as_slice(),
             joint_eval,
@@ -718,30 +721,46 @@ where
             combined_hint,
             transcript,
         )?;
-        ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment).absorb(transcript);
+        transcript.append(&ZkEvaluationClaim::new(
+            point.as_slice(),
+            &hiding_commitment,
+        ));
         Ok(ZkBatchOpening {
+            proof,
             hiding_commitment,
             blind,
             joint_evaluation: joint_eval,
         })
     }
 
-    fn verify_batch_zk<H: Sponge>(
+    fn verify_batch_zk<T>(
         setup: &Self::VerifierSetup,
         point: Point<HIGH_TO_LOW, Self::Field>,
         commitments: Vec<Self::Commitment>,
-        transcript: &mut VerifierTranscript<'_, H>,
-    ) -> Result<Self::HidingCommitment, OpeningsError> {
+        proof: &Self::Proof,
+        transcript: &mut T,
+    ) -> Result<Self::HidingCommitment, OpeningsError>
+    where
+        T: FieldTranscript<Self::Field>,
+    {
         if commitments.is_empty() {
             return Err(OpeningsError::InvalidBatch(
                 "batch opening requires at least one commitment".to_owned(),
             ));
         }
-        let scalars = transcript.challenge_powers(commitments.len());
+        let scalars = transcript.challenge_powers(commitments.len())?;
         let joint_commitment = PCS::combine(&commitments, &scalars);
-        let hiding_commitment =
-            PCS::verify_zk(&joint_commitment, point.as_slice(), setup, transcript)?;
-        ZkEvaluationClaim::new(point.as_slice(), &hiding_commitment).absorb(transcript);
+        let hiding_commitment = PCS::verify_zk(
+            &joint_commitment,
+            point.as_slice(),
+            proof,
+            setup,
+            transcript,
+        )?;
+        transcript.append(&ZkEvaluationClaim::new(
+            point.as_slice(),
+            &hiding_commitment,
+        ));
         Ok(hiding_commitment)
     }
 }

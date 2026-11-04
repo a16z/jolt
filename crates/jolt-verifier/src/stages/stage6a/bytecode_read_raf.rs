@@ -17,19 +17,22 @@ use jolt_claims::protocols::composed::ComposedClaims;
 use jolt_claims::protocols::composed::ReadRafAddressPhase as ComposedReadRafAddressPhase;
 #[cfg(not(feature = "akita"))]
 use relations::bytecode::ReadRafAddressPhase as BaseAddressPhaseSymbolic;
+use std::collections::BTreeSet;
 
 use jolt_algebra::JoltField;
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations;
+use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 pub use jolt_claims::protocols::jolt::relations::bytecode::{
     BytecodeReadRafAddressPhaseInputClaims, BytecodeReadRafAddressPhaseOutputClaims,
 };
 use jolt_claims::protocols::jolt::{
     geometry::{
-        bytecode::BytecodeReadRafDimensions, claim_reductions::bytecode as bytecode_reduction,
+        bytecode::{self, BytecodeReadRafDimensions},
+        claim_reductions::bytecode as bytecode_reduction,
         dimensions::REGISTER_ADDRESS_BITS,
     },
-    JoltRelationId,
+    BytecodeReadRafPublic, JoltChallengeId, JoltDerivedId, JoltRelationId,
 };
 use jolt_claims::SymbolicSumcheck;
 
@@ -229,6 +232,7 @@ pub fn bytecode_read_raf_address_phase_input_values_from_upstream<F: JoltField>(
         left_operand_is_pc: instruction_input.left_operand_is_pc,
         right_operand_is_rs2_value: instruction_input.right_operand_is_rs2,
         right_operand_is_imm: instruction_input.right_operand_is_imm,
+        right_operand_is_rd_write_value: instruction_input.right_operand_is_rd_write_value,
         is_noop: shift.is_noop,
         shift_virtual_instruction: shift.is_virtual,
         shift_is_first_in_sequence: shift.is_first_in_sequence,
@@ -352,6 +356,47 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
 
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
+    }
+
+    fn wire_output_openings(
+        &self,
+    ) -> BTreeSet<<AddressPhaseSymbolic as SymbolicSumcheck>::OpeningId> {
+        // Committed-program mode absorbs the staged `BytecodeValClaim` columns
+        // beyond the output-`Expr` set (the address-phase intermediate); their
+        // constraining fold happens in stage 6b's bytecode claim reduction.
+        let mut openings = self.symbolic().expected_output_openings::<F>();
+        openings.extend((0..self.num_val_stages()).map(|i| {
+            <AddressPhaseSymbolic as SymbolicSumcheck>::OpeningId::from(
+                bytecode_reduction::bytecode_val_stage_opening(i),
+            )
+        }));
+        openings
+    }
+
+    /// The batching-challenge powers the address fold references as derived
+    /// leaves (`challenge_pow_expr`), from the drawn challenges.
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "fail-closed: any other derived id is not an input derived of this relation"
+    )]
+    fn derive_input_term(
+        &self,
+        id: &JoltDerivedId,
+        challenges: &BytecodeReadRafAddressPhaseChallenges<F>,
+    ) -> Result<F, VerifierError> {
+        use jolt_claims::SumcheckChallenges as _;
+        match id {
+            JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                challenge,
+                exponent,
+            }) => challenges
+                .resolve_challenge(&(*challenge).into())
+                .map(|value| bytecode::challenge_pow(value, *exponent))
+                .ok_or(VerifierError::MissingStageClaimChallenge {
+                    id: JoltChallengeId::from(*challenge).into(),
+                }),
+            _ => Err(VerifierError::MissingStageClaimDerived { id: (*id).into() }),
+        }
     }
 
     #[cfg_attr(
@@ -485,12 +530,7 @@ mod field_inline_tests {
                         .resolve_challenge(id)
                         .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
                 },
-                |_| {
-                    Err(VerifierError::StageClaimPublicInputFailed {
-                        stage: JoltRelationId::BytecodeReadRaf,
-                        reason: "no input deriveds".to_string(),
-                    })
-                },
+                |id| relation.derive_input_term(id, &challenges),
             )
             .unwrap();
 

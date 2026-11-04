@@ -8,32 +8,70 @@ description = "Sumcheck protocol types and verification for the Jolt zkVM"
 [features]
 default = []
 binary = ["jolt-poly/binary", "jolt-algebra/binary"]
-parallel = ["jolt-algebra/parallel", "jolt-poly/parallel"]
+parallel = [
+  "jolt-algebra/parallel",
+  "jolt-poly/parallel",
+  "jolt-crypto?/parallel",
+]
 transcript-blake2b = ["jolt-transcript/transcript-blake2b"]
 transcript-keccak = ["jolt-transcript/transcript-keccak"]
 transcript-poseidon = ["jolt-transcript/transcript-poseidon"]
+committed = ["dep:jolt-crypto", "dep:rand_core"]
+# The prove side: the round loop, the recorders' rounds and the per-round
+# proof-of-work search, which copies the sponge state. Verifier builds leave it
+# off.
+prover = ["jolt-transcript/prover-grinding"]
+r1cs = ["dep:jolt-r1cs"]
 
 [lints]
 workspace = true
 
 [dependencies]
+jolt-crypto = { path = "../jolt-crypto", default-features = false, optional = true }
 jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
+jolt-r1cs = { path = "../jolt-r1cs", default-features = false, optional = true }
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
+rand_core = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
-spongefish = { workspace = true, features = ["sha3"] }
+bincode = { workspace = true }
+jolt-crypto = { workspace = true, features = ["bn254"] }
 jolt-algebra = { workspace = true, features = ["bn254", "solinas", "binary"] }
 jolt-transcript = { workspace = true, features = [
   "bn254",
+  "solinas",
+  "binary",
   "transcript-blake2b",
   "transcript-keccak",
+  "prover-grinding",
+  "test-utils",
 ] }
-num-traits = { workspace = true }
 rand_core = { workspace = true, features = ["getrandom"] }
 
+[[test]]
+name = "committed"
+required-features = ["committed"]
+
+[[test]]
+name = "binary_fields"
+required-features = ["prover"]
+
+[[test]]
+name = "extension_fields"
+required-features = ["prover"]
+
+[[test]]
+name = "single"
+required-features = ["prover"]
+
+[[test]]
+name = "f8_domain"
+required-features = ["binary", "prover"]
+
 [[example]]
-name = "clear_custom_transcript"
+name = "clear_sumcheck"
+required-features = ["prover"]

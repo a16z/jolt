@@ -1,4 +1,5 @@
 use crate::error::SumcheckError;
+use crate::round_proof::ClearRound;
 use core::ops::Range;
 use jolt_algebra::Field;
 #[cfg(feature = "binary")]
@@ -6,23 +7,22 @@ use jolt_algebra::F8;
 use jolt_poly::lagrange::{centered_domain_start, centered_power_sums, CenteredIntegerDomainError};
 #[cfg(feature = "binary")]
 use jolt_poly::lagrange::{f8_domain_nodes, F8DomainSize, F8DomainSizeError};
-use jolt_poly::UnivariatePoly;
 
 pub trait SumcheckDomain<F: Field> {
     fn round_sum_coefficients(&self, degree: usize) -> Result<Vec<F>, SumcheckError<F>>;
 
-    /// Checks that `round`'s sum over this domain equals `running_sum`.
-    fn check_round_sum(
+    fn check_round_sum<R>(
         &self,
         round_index: usize,
         running_sum: F,
-        round: &UnivariatePoly<F>,
-    ) -> Result<(), SumcheckError<F>> {
-        let expected = round.coefficients().len();
-        let degree = expected
-            .checked_sub(1)
-            .ok_or(SumcheckError::EmptyRoundCoefficients)?;
-        let coefficients = self.round_sum_coefficients(degree)?;
+        round: &R,
+    ) -> Result<(), SumcheckError<F>>
+    where
+        R: ClearRound<F>,
+    {
+        round.check_round_well_formed(round_index)?;
+        let coefficients = self.round_sum_coefficients(round.degree())?;
+        let expected = round.degree() + 1;
         if coefficients.len() != expected {
             return Err(SumcheckError::RoundSumCoefficientCountMismatch {
                 round: round_index,
@@ -31,12 +31,7 @@ pub trait SumcheckDomain<F: Field> {
             });
         }
 
-        let actual = round
-            .coefficients()
-            .iter()
-            .zip(&coefficients)
-            .map(|(&coefficient, &scale)| coefficient * scale)
-            .sum();
+        let actual = round.coefficient_linear_combination(&coefficients);
         if actual != running_sum {
             return Err(SumcheckError::RoundCheckFailed {
                 round: round_index,

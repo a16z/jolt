@@ -1,245 +1,177 @@
-//! The prover's end: spongefish's prover state, written through typed atoms.
+//! Prover-only operations on `spongefish::ProverState`.
 
-use core::fmt::Result as FmtResult;
-use std::num::NonZeroU8;
+use crate::codec::NargMessage;
+#[cfg(feature = "prover-grinding")]
+use crate::pow::{nonce_word, Leb128, SpongePow, CHECK_BYTES};
+use crate::{prover_transcript, ProverState as JoltProverState, Transcript, TAG_BYTES};
+#[cfg(feature = "prover-grinding")]
+use spongefish::VerificationError;
+use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState};
 
-use jolt_algebra::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field};
-use rand::rngs::StdRng;
-use spongefish::ProverState;
+/// The prover's side of a [`Transcript`]: messages written to the NARG string
+/// and the proof-of-work nonce searches.
+pub trait ProverTranscript: Transcript {
+    /// Absorbs `msg`'s [`Encoding`] and appends its NARG form
+    /// ([`NargMessage::write_narg`]) for verifier replay.
+    ///
+    /// This is not spongefish's inherent `ProverState::prover_message`, which
+    /// writes the absorbed encoding to the NARG string: for a [`BytesMsg`]
+    /// that is the padded form, which the verifier's [`FromNarg`] does not
+    /// read. The distinct name keeps the inherent method from shadowing this
+    /// one on a concrete `ProverState`.
+    ///
+    /// [`BytesMsg`]: crate::BytesMsg
+    /// [`FromNarg`]: spongefish::FromNarg
+    fn send<M: NargMessage + ?Sized>(&mut self, msg: &M);
 
-use crate::grinding::{grind_nonce, nonce_bits, GRINDING_SEED_LEN};
-use crate::site::{Log, TranscriptOp};
-use crate::state::SMALL_CHALLENGE_BYTES;
-use crate::state::{domain, Framed, Squeeze, BYTE_BLOCK};
-#[cfg(feature = "logging")]
-use crate::TranscriptEvent;
-use crate::{Channel, Nonce, PadSlots, ProtocolId, SiteId, Sponge, TranscriptError};
-use core::fmt::Debug;
-use core::fmt::Formatter;
+    /// Bytes accumulated in the NARG so far.
+    fn narg_string(&self) -> &[u8];
 
-/// Prover transcript: spongefish's [`ProverState`], which appends every prover
-/// message to the argument string and absorbs exactly its encoding.
-///
-/// Not `Clone`: copying a prover state lets a caller rewind the sponge and
-/// re-draw challenges.
-pub struct ProverTranscript<H: Sponge> {
-    state: ProverState<H, StdRng>,
-    log: Log,
-}
+    /// An owned callback that writes into its second argument the bytes the
+    /// transcript would squeeze right after absorbing its first, a candidate
+    /// prover message in its absorbed form. The transcript is unchanged, and
+    /// the callback holds a copy of the public sponge only: no private
+    /// randomness, no proof bytes. This is the extension oracle of
+    /// state-restoration soundness, shaped like spongefish's
+    /// `ProverState::verifier_message_oracle` (arkworks-rs/spongefish#306),
+    /// which is not in the published 0.8.0.
+    ///
+    /// A prover uses it to search over the next prover message, a
+    /// proof-of-work nonce or a retry counter whose following challenges must
+    /// satisfy a prover-side condition, and then sends the chosen message
+    /// through the ordinary calls.
+    ///
+    /// Needs the `prover-grinding` feature, which enables spongefish's
+    /// `yolocrypto` to copy the sponge state.
+    #[cfg(feature = "prover-grinding")]
+    fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<Self>;
 
-impl<H: Sponge> Debug for ProverTranscript<H> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
-        f.debug_struct("ProverTranscript")
-            .field("narg_len", &self.state.narg_string().len())
-            .finish_non_exhaustive()
-    }
-}
-
-impl<H: Sponge> ProverTranscript<H> {
-    /// Starts a transcript for `protocol`, bound to `session`.
-    #[must_use]
-    pub fn new(protocol: &ProtocolId, session: &[u8]) -> Self {
-        Self {
-            state: domain(protocol, session).to_prover(H::default()),
-            log: Log::default(),
-        }
-    }
-
-    /// Sends one atom.
-    pub fn send<A: CanonicalBytes>(&mut self, value: &A) {
-        let start = self.narg_len();
-        self.state.prover_message(value);
-        self.record_message(start);
-    }
-
-    /// Sends atoms in order.
-    pub fn send_all<A: CanonicalBytes>(&mut self, values: &[A]) {
-        let start = self.narg_len();
-        self.state.prover_messages(values);
-        self.record_message(start);
-    }
-
-    /// Sends bytes whose length the verifier already knows.
-    pub fn send_bytes(&mut self, bytes: &[u8]) {
-        let start = self.narg_len();
-        let (blocks, rest) = bytes.as_chunks::<BYTE_BLOCK>();
-        for block in blocks {
-            self.state.prover_message(block);
-        }
-        for byte in rest {
-            self.state.prover_message(&[*byte]);
-        }
-        self.record_message(start);
-    }
-
-    /// Sends a byte string of at most `max_len` bytes, prefixed by its `u32`
-    /// little-endian length.
+    /// A proof of work of `bits` bits whose nonce goes into the NARG string.
+    ///
+    /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, the
+    /// prover sends the least nonce below `2^(bits + 7)` for which the low
+    /// `bits` bits of the next eight squeezed bytes, read as a little-endian
+    /// `u64`, are zero, and squeezes those bytes. The nonce is one prover
+    /// message: canonical LEB128 in the NARG string, one `u64` LE word in the
+    /// sponge.
+    ///
+    /// The step protects the verifier messages drawn after it, up to the next
+    /// prover message. The protocol must draw the challenges it protects
+    /// directly after this step: a prover message in between would let the
+    /// prover change them without redoing the work.
+    ///
+    /// # Security
+    ///
+    /// With an ideal sponge, each attempt passes the check with probability
+    /// `2^-bits`, and the protected challenges come from the bytes after the
+    /// check. For the Keccak duplex sponge, the reduction of Chiesa and Orrù
+    /// prices this per permutation call; the Blake2b hash bridge and Poseidon
+    /// need their own argument. The difficulty, the position of this step and the
+    /// challenges it protects must be fixed by the protocol and bound in its
+    /// session.
     ///
     /// # Errors
-    ///
-    /// [`TranscriptError::OutOfBounds`] if `bytes` exceeds `max_len` or `u32`.
-    pub fn send_bounded_bytes(
-        &mut self,
-        bytes: &[u8],
-        max_len: usize,
-    ) -> Result<(), TranscriptError> {
-        if bytes.len() > max_len {
-            return Err(TranscriptError::OutOfBounds);
-        }
-        let len = u32::try_from(bytes.len()).map_err(|_| TranscriptError::OutOfBounds)?;
-        self.send(&len);
-        self.send_bytes(bytes);
-        Ok(())
-    }
+    /// Returns `VerificationError`, before touching the transcript, if
+    /// `bits > MAX_POW_BITS` or the nonce search exhausts the nonce space
+    /// (probability at most `e^-128` for an ideal sponge). Also returns it,
+    /// after the nonce is sent, if the real check disagrees with the search;
+    /// that means the sponge's absorb is not what the oracle replays, a bug.
+    #[cfg(feature = "prover-grinding")]
+    fn grind(&mut self, bits: u32) -> Result<(), VerificationError>;
 
-    /// Sends a search counter as a [`Nonce`] message.
-    pub fn send_nonce(&mut self, nonce: u32) {
-        let start = self.narg_len();
-        self.state.prover_message(&Nonce(nonce));
-        self.record_message(start);
-    }
-
-    /// Grinds `bits` bits of proof of work and returns the sent nonce. A zero
-    /// difficulty draws and sends nothing.
+    /// A proof of work of `bits` bits whose nonce the proof carries outside the
+    /// NARG string. Returns that nonce, or `None` for `bits == 0`, which leaves
+    /// the transcript unchanged.
     ///
-    /// Squeezes a seed, searches nonces on [`Fork`](crate::Fork)s, then sends
-    /// the first accepted nonce as a [`Nonce`]; the protected challenge is
-    /// drawn after.
+    /// The nonce is the least one below `2^(bits + 7)` that passes
+    /// [`check_public_grind`](Transcript::check_public_grind), which is then
+    /// applied to this transcript.
     ///
     /// # Errors
-    ///
-    /// [`TranscriptError::UnsupportedGrinding`] above
-    /// [`MAX_GRINDING_BITS`](crate::MAX_GRINDING_BITS), and
-    /// [`TranscriptError::GrindingExhausted`] if no nonce in range succeeds.
-    pub fn grind(&mut self, bits: u8) -> Result<u32, TranscriptError> {
-        let Some(bits) = NonZeroU8::new(bits) else {
-            return Ok(0);
-        };
-        let nonce_bits = nonce_bits(bits).ok_or(TranscriptError::UnsupportedGrinding)?;
-        let seed: [u8; GRINDING_SEED_LEN] = self.challenge_bytes();
-        let nonce =
-            grind_nonce::<H>(&seed, bits, nonce_bits).ok_or(TranscriptError::GrindingExhausted)?;
-        self.send_nonce(nonce);
-        Ok(nonce)
-    }
+    /// As [`grind`](Self::grind).
+    #[cfg(feature = "prover-grinding")]
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u64>, VerificationError>;
+}
 
-    /// The argument string written so far.
-    #[must_use]
-    pub fn narg(&self) -> &[u8] {
-        self.state.narg_string()
-    }
+/// A prover transcript that a prover builds itself, bound to the same
+/// instance its verifier binds: from the session and the public statement, as
+/// [`prover_transcript`] does.
+pub trait ProverInit: ProverTranscript + Sized {
+    /// The transcript bound to `session` and `statement`.
+    fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self;
+}
 
-    /// Records that the message just sent went out masked by `slots`
-    /// ([`TranscriptOp::Masked`]). Event log only: the sponge is untouched,
-    /// and without the `logging` feature this does nothing.
-    pub fn mark_masked(&mut self, slots: PadSlots) {
-        self.log.record(
-            TranscriptOp::Masked {
-                first_pad: slots.start,
+impl<H> ProverInit for JoltProverState<H>
+where
+    H: DuplexSpongeInit<U = u8>,
+{
+    fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self {
+        prover_transcript::<H>(session, statement)
+    }
+}
+
+impl<H, R> ProverTranscript for ProverState<H, R>
+where
+    H: DuplexSpongeInterface<U = u8>,
+    R: DuplexSpongeInit<U = u8>,
+{
+    fn send<M: NargMessage + ?Sized>(&mut self, msg: &M) {
+        ProverState::prover_message_with(
+            self,
+            msg,
+            |msg| msg.encode(),
+            |msg, narg| {
+                msg.write_narg(narg);
             },
-            slots.len,
-            None,
         );
     }
 
-    /// Recorded operations, in order.
-    #[cfg(feature = "logging")]
-    #[must_use]
-    pub fn events(&self) -> &[TranscriptEvent] {
-        self.log.events()
+    fn narg_string(&self) -> &[u8] {
+        ProverState::narg_string(self)
     }
 
-    /// Ends the transcript, returning the proof.
-    #[must_use]
-    pub fn finish(self) -> Vec<u8> {
-        self.state.narg_string().to_vec()
-    }
-
-    fn narg_len(&self) -> usize {
-        self.state.narg_string().len()
-    }
-
-    fn record_message(&mut self, start: usize) {
-        let end = self.narg_len();
-        self.log
-            .record(TranscriptOp::Message, end - start, Some(start..end));
-    }
-}
-
-impl<H: Sponge> Channel for ProverTranscript<H> {
-    type Sponge = H;
-
-    fn site(&mut self, site: SiteId) {
-        self.log.set_site(site);
-    }
-
-    fn record_fork_draw(&mut self, absorbed: usize, squeezed: usize) {
-        self.log.record(TranscriptOp::ForkAbsorb, absorbed, None);
-        self.log.record(TranscriptOp::ForkSqueeze, squeezed, None);
-    }
-
-    fn public<A: CanonicalBytes>(&mut self, value: &A) {
-        self.state.public_message(value);
-        self.log.record(TranscriptOp::Public, A::NUM_BYTES, None);
-    }
-
-    fn public_all<A: CanonicalBytes>(&mut self, values: &[A]) {
-        self.state.public_messages(values);
-        self.log
-            .record(TranscriptOp::Public, A::NUM_BYTES * values.len(), None);
-    }
-
-    fn public_bytes(&mut self, bytes: &[u8]) {
-        self.state.public_message(&Framed(bytes));
-        self.log.record(TranscriptOp::Public, 8 + bytes.len(), None);
-    }
-
-    fn exchange<A: CanonicalDecode>(&mut self, value: &mut A) -> Result<(), TranscriptError> {
-        self.send(value);
-        Ok(())
-    }
-
-    fn exchange_all<A: CanonicalDecode>(
-        &mut self,
-        values: &mut [A],
-    ) -> Result<(), TranscriptError> {
-        self.send_all(values);
-        Ok(())
-    }
-
-    fn exchange_public<A: CanonicalDecode>(
-        &mut self,
-        value: &mut A,
-    ) -> Result<(), TranscriptError> {
-        self.exchange(value)
-    }
-
-    fn exchange_public_all<A: CanonicalDecode>(
-        &mut self,
-        values: &mut [A],
-    ) -> Result<(), TranscriptError> {
-        self.exchange_all(values)
-    }
-
-    fn challenge<F: Field>(&mut self) -> F {
-        let (value, squeezed) = self.state.exact_challenge();
-        self.log.record(TranscriptOp::Challenge, squeezed, None);
-        if H::ABSORB_FORGETS_SQUEEZE_WIDTH {
-            self.public(&(squeezed as u64));
+    #[cfg(feature = "prover-grinding")]
+    fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<H, R> {
+        let snapshot = self.duplex_sponge_state.clone();
+        move |candidate, output| {
+            let mut sponge = snapshot.clone();
+            let _ = sponge.absorb(candidate);
+            let _ = sponge.squeeze(output);
         }
-        value
     }
 
-    fn challenge_small<F: CanonicalEncoding>(&mut self) -> F {
-        let value = self.state.small_challenge();
-        self.log
-            .record(TranscriptOp::Challenge, SMALL_CHALLENGE_BYTES, None);
-        value
+    #[cfg(feature = "prover-grinding")]
+    fn grind(&mut self, bits: u32) -> Result<(), VerificationError> {
+        if bits == 0 {
+            return Ok(());
+        }
+        let pow = SpongePow::new(bits).ok_or(VerificationError)?;
+        let nonce = pow
+            .search(self.verifier_message_oracle())
+            .ok_or(VerificationError)?;
+        ProverState::prover_message_with(
+            self,
+            &nonce,
+            |&nonce| nonce_word(nonce),
+            |&nonce, narg| narg.extend_from_slice(Leb128::new(nonce).as_bytes()),
+        );
+        if ProverState::verifier_message_as(self, CHECK_BYTES, |check| pow.accepts(check)) {
+            Ok(())
+        } else {
+            Err(VerificationError)
+        }
     }
 
-    fn challenge_bytes<const N: usize>(&mut self) -> [u8; N] {
-        let value = self.state.squeeze_array();
-        self.log.record(TranscriptOp::Challenge, N, None);
-        value
+    #[cfg(feature = "prover-grinding")]
+    fn public_grind(&mut self, bits: u32) -> Result<Option<u64>, VerificationError> {
+        if bits == 0 {
+            return Ok(None);
+        }
+        let pow = SpongePow::new(bits).ok_or(VerificationError)?;
+        let nonce = pow
+            .search(self.verifier_message_oracle())
+            .ok_or(VerificationError)?;
+        self.check_public_grind(bits, Some(nonce))?;
+        Ok(Some(nonce))
     }
 }

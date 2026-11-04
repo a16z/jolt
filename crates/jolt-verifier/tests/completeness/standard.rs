@@ -8,8 +8,6 @@
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use crate::support;
-#[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
-use jolt_verifier::JoltSponge;
 
 #[test]
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -63,10 +61,10 @@ fn standard_committed_muldiv_verifier_proof_is_accepted() {
             case.preprocessing.program.bytecode_len(),
         )
         .unwrap();
-    let header = case.proof.header::<JoltSponge>().unwrap();
     assert!(
         bytecode_vars
-            > header.trace_length.ilog2() as usize + header.one_hot_config.committed_chunk_bits()
+            > case.proof.trace_length.ilog2() as usize
+                + case.proof.one_hot_config.committed_chunk_bits()
     );
     let config = bincode::config::standard();
     let encoded = bincode::serde::encode_to_vec(&case.preprocessing, config).unwrap();

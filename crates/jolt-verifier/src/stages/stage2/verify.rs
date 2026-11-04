@@ -9,11 +9,11 @@ use jolt_claims::protocols::jolt::{
     JoltRelationId,
 };
 use jolt_claims::NoChallenges;
+use jolt_crypto::VectorCommitment;
+use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_transcript::FieldTranscript;
 use jolt_zk::masking::CommittedPadsView;
-
-use crate::sites::STAGE2;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_claim_reduction::{
@@ -34,7 +34,9 @@ use super::{
     ram_read_write_checking::{ram_read_write_input_values_from_upstream, RamReadWriteChecking},
 };
 use crate::{
+    proof::JoltProof,
     stages::{
+        pow::{check_pow, PowSite},
         relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
         uniskip::{self, UniskipMasked},
@@ -56,7 +58,7 @@ struct ProductUniskipStep<F: JoltField> {
 }
 
 enum ProductUniskipVerified<F: JoltField> {
-    Clear { output_claim: F },
+    Clear,
     Zk(UniskipMasked<F>),
 }
 
@@ -84,17 +86,19 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
     }
 }
 
-pub fn verify<F, H, P>(
+#[jolt_verifier_derive::fs_scope(Stage2)]
+pub fn verify<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
-    transcript: &mut VerifierTranscript<'_, H>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    transcript: &mut T,
     mut pads: Option<&mut CommittedPadsView<P>>,
-    stage1: &Stage1Output<F>,
-) -> Result<Stage2Output<F>, VerifierError>
+    stage1: &Stage1Output<PCS::Field>,
+) -> Result<Stage2Output<PCS::Field>, VerifierError>
 where
-    F: JoltField,
-    H: Sponge,
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
-    transcript.site(STAGE2);
     match (checked.zk.is_masked(), stage1) {
         (true, Stage1Output::Clear(_)) => {
             return Err(VerifierError::ExpectedMaskedProof { field: "stage1" });
@@ -108,7 +112,7 @@ where
     let log_t = crate::num::ilog2(checked.trace_length);
     let log_k = crate::num::ilog2(checked.ram_K);
     let trace_dimensions = TraceDimensions::new(log_t);
-    let read_write_dimensions = checked.rw_config.ram_dimensions(log_t, log_k);
+    let read_write_dimensions = proof.rw_config.ram_dimensions(log_t, log_k);
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let raf_dimensions =
         RamRafEvaluationDimensions::try_from(read_write_dimensions).map_err(|error| {
@@ -118,7 +122,13 @@ where
             }
         })?;
 
-    let uniskip = verify_product_uniskip(checked, transcript, pads.as_deref_mut(), stage1)?;
+    let uniskip = verify_product_uniskip::<PCS, VC, T, ZkProof, P>(
+        checked,
+        proof,
+        transcript,
+        pads.as_deref_mut(),
+        stage1,
+    )?;
 
     // Build the batch relations once, pre-branch; each owns its input/output
     // claim algebra (single-sourced with its jolt-claims formula and the BlindFold
@@ -163,10 +173,11 @@ where
 
     // Draw each relation's challenges in declaration order: the RAM read-write gamma, the
     // instruction claim-reduction gamma, under `field-inline` the field-inline claim-reduction
-    // gamma (each a single exact `challenge()`), then the RAM output-check address reference
-    // point (the last member's `draw_challenges` override — one `challenge_small()` per RAM
-    // address variable, landing after the gammas). The drawn challenges
+    // gamma (each a single `challenge()`), then the RAM output-check address reference
+    // point (the last member's `draw_challenges` override — one raw `challenge()` per RAM
+    // address variable, landing after the gammas as the inline draw did). The drawn challenges
     // feed the input/output claims and populate the stage aggregate carried downstream.
+    check_pow(PowSite::Stage2, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
     let input_points = sumchecks.empty_input_points();
@@ -193,24 +204,32 @@ where
         }));
     }
 
-    let ProductUniskipVerified::Clear {
-        output_claim: product_uniskip_output_claim,
-    } = uniskip.verified
-    else {
+    let ProductUniskipVerified::Clear = uniskip.verified else {
         return Err(VerifierError::ExpectedClearProof {
             field: "stage2_uni_skip_first_round_proof",
         });
     };
     let stage1 = stage1.clear()?;
+    let claims = &proof.clear_claims()?.stage2;
+    sumchecks.validate_output_claims(&claims.batch_outputs)?;
 
     let input_values =
-        stage2_batch_input_values_from_upstream(stage1, product_uniskip_output_claim);
+        stage2_batch_input_values_from_upstream(stage1, claims.product_uniskip_output_claim);
 
-    let (output_points, output_values) =
-        sumchecks.verify_clear(&input_values, &input_points, &challenges, transcript, 2)?;
+    let output_points = sumchecks.verify_clear(
+        &input_values,
+        &input_points,
+        &challenges,
+        &claims.batch_outputs,
+        &proof.stages.stage2_sumcheck_proof,
+        transcript,
+        2,
+    )?;
+
+    sumchecks.append_output_claims(transcript, &claims.batch_outputs);
 
     Ok(Stage2Output::Clear(Stage2ClearOutput {
-        output_values,
+        output_values: claims.batch_outputs.clone(),
         output_points,
         product_tau_low: uniskip.tau_low,
     }))
@@ -243,37 +262,45 @@ pub fn product_tau_low<F: JoltField>(
     Ok(tau_low)
 }
 
-fn verify_product_uniskip<F, H, P>(
+fn verify_product_uniskip<PCS, VC, T, ZkProof, P>(
     checked: &CheckedInputs,
-    transcript: &mut VerifierTranscript<'_, H>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
+    transcript: &mut T,
     pads: Option<&mut CommittedPadsView<P>>,
-    stage1: &Stage1Output<F>,
-) -> Result<ProductUniskipStep<F>, VerifierError>
+    stage1: &Stage1Output<PCS::Field>,
+) -> Result<ProductUniskipStep<PCS::Field>, VerifierError>
 where
-    F: JoltField,
-    H: Sponge,
+    PCS: CommitmentScheme,
+    VC: VectorCommitment<Field = PCS::Field>,
+    T: FieldTranscript<PCS::Field>,
 {
     let log_t = crate::num::ilog2(checked.trace_length);
     let product_dimensions = SpartanProductDimensions::new(log_t);
     let tau_low = product_tau_low(&stage1.remainder_point(), log_t)?;
 
-    let tau_high = uniskip::draw_spartan_product_tau_high(transcript);
+    check_pow(PowSite::Stage2TauHigh, &proof.stages.pow_nonces, transcript)?;
+    let tau_high = uniskip::draw_spartan_product_tau_high(transcript)?;
     let uniskip_params = uniskip::UniskipParams::spartan_product();
     match stage1 {
         Stage1Output::Clear(stage1) => {
+            let claims = &proof.clear_claims()?.stage2;
             let uniskip_relation = ProductUniskip::new(product_dimensions, tau_high);
             let uniskip_input_values = product_uniskip_input_values_from_stage1(stage1);
             let uniskip_input_claim =
                 uniskip_relation.input_claim(&uniskip_input_values, &NoChallenges::default())?;
 
-            let verified = uniskip::verify_clear(&uniskip_params, uniskip_input_claim, transcript)?;
+            let challenge = uniskip::verify_clear(
+                &proof.stages.stage2_uni_skip_first_round_proof,
+                &uniskip_params,
+                uniskip_input_claim,
+                claims.product_uniskip_output_claim,
+                transcript,
+            )?;
             Ok(ProductUniskipStep {
                 tau_low,
                 tau_high,
-                challenge: verified.challenge,
-                verified: ProductUniskipVerified::Clear {
-                    output_claim: verified.output_claim,
-                },
+                challenge,
+                verified: ProductUniskipVerified::Clear,
             })
         }
         Stage1Output::Zk(_) => {

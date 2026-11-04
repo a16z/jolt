@@ -7,13 +7,15 @@ use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening}
 use super::OneHotTraceCommitmentMetadata;
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
-use crate::proof::ProofCommitments;
+#[cfg(not(feature = "akita"))]
+use crate::stages::pow::PowSite;
 #[cfg(feature = "akita")]
 use crate::stages::stage4::Stage4Output;
 #[cfg(not(feature = "akita"))]
 use crate::stages::{stage6b::outputs::Stage6bOutputClaims, stage7::outputs::Stage7OutputClaims};
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
+    proof::JoltProof,
     stages::{stage6b::Stage6bOutput, stage7::Stage7Output},
     verifier::CheckedInputs,
     VerifierError,
@@ -46,10 +48,9 @@ use jolt_openings::{
 };
 #[cfg(not(feature = "akita"))]
 use jolt_poly::Point;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
-
-use crate::sites::STAGE8;
-
+#[cfg(feature = "akita")]
+use jolt_transcript::Encoding;
+use jolt_transcript::FieldTranscript;
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
@@ -71,13 +72,14 @@ pub struct Stage8BatchEntry<'a, F: JoltField, C> {
     reason = "Stage 8 takes the shared formula dimensions, trusted-advice commitment, and the two upstream stage outputs it batches; bundling them would add indirection."
 )]
 #[cfg(not(feature = "akita"))]
-pub fn verify<F, PCS, VC, H>(
+#[jolt_verifier_derive::fs_scope(Stage8)]
+pub fn verify<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    commitments: &ProofCommitments<PCS::Output>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
-    transcript: &mut VerifierTranscript<'_, H>,
+    transcript: &mut T,
     stage6: &Stage6bOutput<F>,
     stage7: &Stage7Output<F>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
@@ -88,9 +90,11 @@ where
         + ZkOpeningScheme<HidingCommitment = VC::Output>,
     PCS::Output: Clone + HomomorphicCommitment<F>,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    T: FieldTranscript<F>,
 {
-    transcript.site(STAGE8);
+    // The homomorphic opening draws no selector point, so the stage-8 slot
+    // must stay empty.
+    proof.stages.pow_nonces.require_absent(PowSite::Stage8)?;
     let log_t = formula_dimensions.trace.log_t();
     let layout = formula_dimensions.ra_layout;
 
@@ -115,6 +119,7 @@ where
     let inc_opening_point = stage6_points.inc_opening_point();
     // `batch_entries` reads the clear claims in (stage6, stage7) order.
     let clear_claims = clear.map(|(stage7_values, stage6_values)| (stage6_values, stage7_values));
+    require_commitment_layout(&proof.commitments, layout)?;
 
     let hamming_opening_point = stage7_points
         .hamming_weight_opening_point()
@@ -132,8 +137,8 @@ where
         .collect();
     let opening_point = final_opening_point(FinalOpeningPointInputs {
         log_t,
-        log_k_chunk: checked.one_hot_config.committed_chunk_bits(),
-        trace_order: checked.trace_polynomial_order,
+        log_k_chunk: proof.one_hot_config.committed_chunk_bits(),
+        trace_order: proof.trace_polynomial_order,
         hamming_weight_opening_point: hamming_opening_point.as_slice(),
         inc_claim_reduction_opening_point: inc_opening_point,
         precommitted_anchor_points: &anchor_points,
@@ -145,10 +150,10 @@ where
 
     let entries = batch_entries(
         preprocessing,
-        &commitments.trace,
-        commitments.untrusted_advice.as_ref(),
+        &proof.commitments,
+        proof.untrusted_advice_commitment.as_ref(),
         layout,
-        checked.trace_polynomial_order,
+        proof.trace_polynomial_order,
         trusted_advice_commitment,
         &opening_point,
         hamming_opening_point.as_slice(),
@@ -161,8 +166,8 @@ where
         let mut entries = entries;
         super::field_inline::splice_final_opening(
             &mut entries,
-            &commitments.trace,
-            checked.trace_polynomial_order,
+            &proof.commitments,
+            proof.trace_polynomial_order,
             &opening_point,
             stage6_points.field_registers_inc_opening_point(),
             clear_claims.map(|(stage6, _)| stage6.field_registers_inc_claim_reduction.rd_inc),
@@ -172,7 +177,7 @@ where
     let opening_ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
     if checked.zk.is_masked() {
-        let gamma_powers = transcript.challenge_powers(entries.len());
+        let gamma_powers = transcript.challenge_powers(entries.len())?;
         let commitments: Vec<PCS::Output> = entries
             .iter()
             .map(|entry| entry.commitment.clone())
@@ -187,14 +192,17 @@ where
         let hiding_evaluation_commitment = PCS::verify_zk(
             &joint_commitment,
             pcs_opening_point.as_slice(),
+            &proof.joint_opening_proof,
             &preprocessing.pcs_setup,
             transcript,
         )
         .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
             reason: error.to_string(),
         })?;
-        ZkEvaluationClaim::new(pcs_opening_point.as_slice(), &hiding_evaluation_commitment)
-            .absorb(transcript);
+        transcript.append(&ZkEvaluationClaim::new(
+            pcs_opening_point.as_slice(),
+            &hiding_evaluation_commitment,
+        ));
 
         return Ok(Stage8Output::Zk(Stage8ZkOutput {
             opening_ids,
@@ -224,15 +232,11 @@ where
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    // The transcript sequence of `HomomorphicBatch::verify_batch`, which the
-    // prover runs: the scaled claim values, the batching challenge, the opening,
-    // then the joint evaluation claim.
-    let scaled_values: Vec<F> = opening_claims
-        .iter()
-        .map(|claim| claim.evaluation.value)
-        .collect();
-    transcript.public_all(&scaled_values);
-    let gamma_powers = transcript.challenge_powers(opening_claims.len());
+    // The verifier builds `opening_claims`, so its length needs no word.
+    for claim in &opening_claims {
+        transcript.append(&claim.evaluation.value);
+    }
+    let gamma_powers = transcript.challenge_powers(opening_claims.len())?;
 
     let joint_claim = gamma_powers
         .iter()
@@ -255,14 +259,17 @@ where
         &joint_commitment,
         pcs_opening_point.as_slice(),
         joint_claim,
+        &proof.joint_opening_proof,
         &preprocessing.pcs_setup,
         transcript,
     )
     .map_err(|error| VerifierError::FinalOpeningVerificationFailed {
         reason: error.to_string(),
     })?;
-    transcript.public_all(pcs_opening_point.as_slice());
-    transcript.public(&joint_claim);
+    transcript.append(&EvaluationClaim::new(
+        pcs_opening_point.clone(),
+        joint_claim,
+    ));
 
     Ok(Stage8Output::Clear(Stage8ClearOutput {
         opening_claims,
@@ -429,17 +436,9 @@ where
                     polynomial,
                     id,
                 )?,
-                JoltCommittedPolynomial::Reserved4(retired) => match retired {},
-                JoltCommittedPolynomial::BalancedIncDigit(_)
-                | JoltCommittedPolynomial::BalancedIncCarry => {
-                    // Lattice-mode polynomials open through the fixed-prefix
-                    // path in `stage8::akita`, never the homomorphic RLC batch.
-                    return Err(VerifierError::FinalOpeningBatchFailed {
-                        reason: format!(
-                            "polynomial {polynomial:?} is not part of the stage 8 prover order"
-                        ),
-                    });
-                }
+                JoltCommittedPolynomial::Reserved4(retired)
+                | JoltCommittedPolynomial::Reserved9(retired)
+                | JoltCommittedPolynomial::Reserved10(retired) => match retired {},
             };
         let embedding = match polynomial {
             JoltCommittedPolynomial::RamInc
@@ -454,13 +453,9 @@ where
             | JoltCommittedPolynomial::UntrustedAdvice
             | JoltCommittedPolynomial::ProgramBytecode
             | JoltCommittedPolynomial::ProgramImageInit => CommitmentEmbedding::Precommitted,
-            JoltCommittedPolynomial::Reserved4(retired) => match retired {},
-            JoltCommittedPolynomial::BalancedIncDigit(_)
-            | JoltCommittedPolynomial::BalancedIncCarry => {
-                return Err(VerifierError::FinalOpeningBatchFailed {
-                    reason: "Akita objects have no homomorphic embedding".to_string(),
-                });
-            }
+            JoltCommittedPolynomial::Reserved4(retired)
+            | JoltCommittedPolynomial::Reserved9(retired)
+            | JoltCommittedPolynomial::Reserved10(retired) => match retired {},
         };
         entries.push(Stage8BatchEntry {
             id: id.into(),
@@ -477,6 +472,50 @@ where
         });
     }
     Ok(entries)
+}
+
+#[cfg(not(feature = "akita"))]
+fn require_commitment_layout<C>(
+    commitments: &JoltCommitments<C>,
+    layout: JoltRaPolynomialLayout,
+) -> Result<(), VerifierError> {
+    // The field-inline commitment payload is part of the expected layout: the composed final
+    // opening cannot assemble without the `FieldRdInc` commitment.
+    #[cfg(feature = "field-inline")]
+    super::field_inline::require_commitment(commitments)?;
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "layout totals are small per-polynomial chunk counts; the sum cannot overflow usize"
+    )]
+    let expected = 2 + layout.total();
+    #[expect(
+        clippy::arithmetic_side_effects,
+        reason = "a sum of in-memory commitment counts and a small constant cannot overflow usize"
+    )]
+    let got = 2
+        + commitments.instruction_ra.len()
+        + commitments.bytecode_ra.len()
+        + commitments.ram_ra.len();
+    if got != expected {
+        return Err(VerifierError::InvalidCommitmentCount { expected, got });
+    }
+    if commitments.instruction_ra.len() != layout.instruction()
+        || commitments.bytecode_ra.len() != layout.bytecode()
+        || commitments.ram_ra.len() != layout.ram()
+    {
+        return Err(VerifierError::FinalOpeningBatchFailed {
+            reason: format!(
+                "commitment layout mismatch: expected instruction={}, bytecode={}, ram={}; got instruction={}, bytecode={}, ram={}",
+                layout.instruction(),
+                layout.bytecode(),
+                layout.ram(),
+                commitments.instruction_ra.len(),
+                commitments.bytecode_ra.len(),
+                commitments.ram_ra.len()
+            ),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(all(test, not(feature = "akita"), feature = "field-inline"))]
@@ -520,16 +559,10 @@ mod tests {
         use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
         use jolt_claims::protocols::field_inline::geometry::claim_reductions::increments::field_rd_inc_reduced;
 
-        let commitments = JoltCommitments {
-            rd_inc: (),
-            ram_inc: (),
-            instruction_ra: vec![(), ()],
-            ram_ra: vec![(), ()],
-            bytecode_ra: vec![()],
-            field_inline: FieldInlineCommitments {
+        let commitments = JoltCommitments::new((), (), vec![(), ()], vec![(), ()], vec![()])
+            .with_field_inline(FieldInlineCommitments {
                 field_registers: FieldRegistersCommitments { rd_inc: () },
-            },
-        };
+            });
         let opening_point = [2u64, 3, 5].map(Fr::from_u64);
         let field_point = [3u64, 5].map(Fr::from_u64);
 
@@ -585,20 +618,29 @@ mod tests {
     }
 
     #[test]
-    fn field_inline_splice_fails_closed_without_anchor() {
+    fn field_inline_splice_fails_closed() {
         use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
 
         let opening_point = [2u64, 3].map(Fr::from_u64);
-        let commitments = JoltCommitments {
-            rd_inc: (),
-            ram_inc: (),
-            instruction_ra: Vec::new(),
-            ram_ra: Vec::new(),
-            bytecode_ra: Vec::new(),
-            field_inline: FieldInlineCommitments {
+        let without_payload = JoltCommitments::new((), (), Vec::new(), Vec::new(), Vec::new());
+        assert!(matches!(
+            crate::stages::stage8::field_inline::splice_final_opening(
+                &mut base_entries(false),
+                &without_payload,
+                TracePolynomialOrder::CycleMajor,
+                &opening_point,
+                &opening_point,
+                None,
+            ),
+            Err(VerifierError::MissingProofPayload {
+                field: "commitments.field_inline"
+            })
+        ));
+
+        let commitments = JoltCommitments::new((), (), Vec::new(), Vec::new(), Vec::new())
+            .with_field_inline(FieldInlineCommitments {
                 field_registers: FieldRegistersCommitments { rd_inc: () },
-            },
-        };
+            });
         let mut anchorless: Vec<Stage8BatchEntry<'_, Fr, ()>> = Vec::new();
         assert!(matches!(
             crate::stages::stage8::field_inline::splice_final_opening(
@@ -619,13 +661,14 @@ mod tests {
     clippy::too_many_arguments,
     reason = "same signature as the homomorphic build's verify"
 )]
-pub fn verify<F, PCS, VC, H>(
+#[jolt_verifier_derive::fs_scope(Stage8)]
+pub fn verify<F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    commitments: &ProofCommitments<PCS::Output>,
+    proof: &JoltProof<PCS, VC, ZkProof>,
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
-    transcript: &mut VerifierTranscript<'_, H>,
+    transcript: &mut T,
     stage4: &Stage4Output<F>,
     stage6: &Stage6bOutput<F>,
     stage7: &Stage7Output<F>,
@@ -633,22 +676,23 @@ pub fn verify<F, PCS, VC, H>(
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
-    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
-    H: Sponge,
+    T: FieldTranscript<F>,
 {
-    transcript.site(STAGE8);
     super::akita::verify(
         formula_dimensions,
-        checked.one_hot_config,
+        proof.one_hot_config,
         preprocessing,
-        &commitments.one_hot_trace,
-        &commitments.fused_inc,
-        commitments.untrusted_advice.as_ref(),
+        &proof.commitments,
+        proof.fused_inc_commitment.as_ref(),
+        proof.untrusted_advice_commitment.as_ref(),
         trusted_advice_commitment,
         #[cfg(feature = "field-inline")]
-        &commitments.field_inc,
+        proof.field_inc_commitment.as_ref(),
+        &proof.joint_opening_proof,
+        &proof.stages.pow_nonces,
         transcript,
         &checked.precommitted,
         stage4.clear()?,

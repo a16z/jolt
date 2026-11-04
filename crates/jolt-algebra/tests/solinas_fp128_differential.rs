@@ -11,7 +11,7 @@ use jolt_algebra as two;
 
 use rand::{Rng, RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
-use two::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
+use two::{CanonicalBytes, CanonicalEncoding, Field as _, PseudoMersenne, Ring};
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::seed_from_u64(0xf128_a5a5)
@@ -184,16 +184,6 @@ macro_rules! check_prime128 {
             let challenge: [u8; 32] = $rng.gen();
             for len in [8usize, 16, 32] {
                 let ours = <$two as CanonicalEncoding>::from_bytes_le_reduced(&challenge[..len]);
-                assert_eq!(
-                    <$two as CanonicalEncoding>::from_challenge_bytes(&challenge[..len]),
-                    ours,
-                    "challenge derivation defaults to the reducing decode"
-                );
-                assert_eq!(
-                    <$two as CanonicalEncoding>::from_scalar_challenge_bytes(&challenge[..len]),
-                    ours,
-                    "scalar challenge derivation defaults to the reducing decode"
-                );
                 let mut padded = [0u8; 32];
                 padded[..len].copy_from_slice(&challenge[..len]);
                 let limbs: [u64; 4] = std::array::from_fn(|i| {
@@ -262,6 +252,14 @@ macro_rules! check_prime128 {
             let len = $rng.gen_range(0..=10);
             limb_cases.push((0..len).map(|_| $rng.gen()).collect());
         }
+        // Exercise the C^2 fold with independent long division, including
+        // carries from every combination of zero and maximal limbs.
+        for mask in 0..32 {
+            limb_cases.push((0..5).map(|i| if mask & (1 << i) == 0 { 0 } else { u64::MAX }).collect());
+        }
+        for _ in 0..200 {
+            limb_cases.push((0..5).map(|_| $rng.gen()).collect());
+        }
         for limbs in &limb_cases {
             let got = <$two>::solinas_reduce(limbs).to_u128_checked().unwrap();
             assert_eq!(got, oracle_mod(limbs, p), "solinas_reduce vs oracle: {limbs:?}");
@@ -283,16 +281,16 @@ macro_rules! check_prime128 {
 
         let p_bytes = p.to_le_bytes();
         assert_eq!(
-            <$two as CanonicalDecode>::from_bytes_le_checked(&p_bytes),
+            <$two as CanonicalEncoding>::from_bytes_le_checked(&p_bytes),
             None
         );
         assert_eq!(
-            <$two as CanonicalDecode>::from_bytes_le_checked(&p_bytes[..15]),
+            <$two as CanonicalEncoding>::from_bytes_le_checked(&p_bytes[..15]),
             None,
             "wrong length rejected"
         );
         assert_eq!(
-            <$two as CanonicalDecode>::from_bytes_le_checked(&[0u8; 17]),
+            <$two as CanonicalEncoding>::from_bytes_le_checked(&[0u8; 17]),
             None,
             "over-length rejected"
         );
@@ -389,4 +387,25 @@ fn fp128_canonical_constructor_is_const_usable() {
     // SAFETY: one is below every supported prime modulus.
     const ONE: two::Prime128OffsetA7F7 = unsafe { two::Prime128OffsetA7F7::from_canonical_u128(1) };
     assert_eq!(ONE.to_u128_checked(), Some(1));
+}
+
+#[test]
+fn five_limb_reduction_extreme_offsets_match_long_division() {
+    fn check<const P: u128>() {
+        let mut rng = rng();
+        let cases = (0..32).map(|mask| {
+            std::array::from_fn::<_, 5, _>(|i| if mask & (1 << i) == 0 { 0 } else { u64::MAX })
+        });
+        for limbs in cases.chain((0..1000).map(|_| rng.gen::<[u64; 5]>())) {
+            assert_eq!(
+                two::Fp128::<P>::solinas_reduce(&limbs).to_canonical_u128(),
+                oracle_mod(&limbs, P),
+                "five-limb reduction vs long division: {limbs:?}"
+            );
+        }
+    }
+    // Ring reduction does not require these moduli to be prime.
+    check::<{ u128::MAX }>();
+    check::<{ u128::MAX - 2 }>();
+    check::<{ u128::MAX - (u32::MAX as u128 - 1) }>();
 }

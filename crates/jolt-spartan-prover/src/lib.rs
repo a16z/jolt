@@ -5,32 +5,38 @@
 
 mod rounds;
 
-use jolt_algebra::{CanonicalDecode, JoltField, One, Zero};
+use jolt_algebra::{JoltField, One, Zero};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{EqPolynomial, Polynomial};
-use jolt_spartan_verifier::{inner_relation, SpartanError, SpartanKey, INNER_DEGREE, OUTER_DEGREE};
-use jolt_sumcheck::{
-    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, DegreeSchedule, ProveRounds,
-    SequentialRounds, SumcheckRecorder,
+use jolt_spartan_verifier::{
+    inner_relation, SpartanError, SpartanKey, SpartanProof, INNER_DEGREE, OUTER_DEGREE,
 };
-use jolt_transcript::{ProverTranscript, Sponge};
+use jolt_sumcheck::{
+    prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, CompressedSumcheckProof,
+    DegreeSchedule, ProveRounds, SequentialRounds, SumcheckRecorder,
+};
+use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 
 use rounds::{InnerRounds, OuterRounds};
 
-/// Proves `A z * B z = C z` for `z = [1, public_inputs, witness]` into
-/// `transcript`, in the message order [`SpartanKey::verify`] reads.
+/// Proves `A z * B z = C z` for `z = [1, public_inputs, witness]`.
 ///
 /// This is a clear argument; it reveals sumcheck coefficients and evaluations.
 /// The caller must not interpret it as a zero-knowledge wrapper.
-pub fn prove<PCS: CommitmentScheme, H: Sponge>(
+#[expect(
+    clippy::type_complexity,
+    reason = "the PCS determines field, commitment, and opening proof types"
+)]
+pub fn prove<PCS: CommitmentScheme>(
     key: &SpartanKey<PCS::Field>,
     public_inputs: &[PCS::Field],
     witness: &[PCS::Field],
     pcs_setup: &PCS::ProverSetup,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<(), SpartanError<PCS::Field>>
+    transcript: &mut (impl FieldTranscript<PCS::Field> + ProverTranscript),
+) -> Result<SpartanProof<PCS::Field, PCS::Output, PCS::Proof>, SpartanError<PCS::Field>>
 where
-    PCS::Field: CanonicalDecode,
+    PCS::Field: Encoding,
+    PCS::Output: Encoding,
 {
     key.validate_public_inputs(public_inputs)?;
     if witness.len() != key.witness_len() {
@@ -44,25 +50,19 @@ where
     witness.resize(key.padded_witness_len(), PCS::Field::zero());
     let witness_poly = Polynomial::new(witness.clone());
     let (witness_commitment, hint) = PCS::commit(&witness_poly, pcs_setup)?;
-    key.bind_statement(public_inputs, transcript)?;
-    PCS::send_commitment(&witness_commitment, transcript);
-    let tau = key.draw_tau(transcript);
+    let tau = key.begin(public_inputs, &witness_commitment, transcript)?;
     let mut outer_rounds = OuterRounds::new(key, &assignment, &tau)?;
-    let (rx, outer_claim) = prove_rounds(
+    let (outer, rx, outer_claim) = prove_rounds(
         &mut outer_rounds,
         OUTER_DEGREE,
         PCS::Field::zero(),
         transcript,
     )?;
-    let mut outer_evaluations = outer_rounds.evaluations()?;
+    let outer_evaluations = outer_rounds.evaluations()?;
     key.check_outer(&tau, &rx, outer_claim, outer_evaluations)?;
     let row_weights = EqPolynomial::new(rx).evaluations();
-    let (weights, inner_claim) = key.begin_inner(
-        &row_weights,
-        public_inputs,
-        &mut outer_evaluations,
-        transcript,
-    )?;
+    let (weights, inner_claim) =
+        key.begin_inner(&row_weights, public_inputs, outer_evaluations, transcript)?;
     let mut linear = key.matrices().project_column_range(
         &row_weights,
         key.public_columns(),
@@ -71,13 +71,14 @@ where
     )?;
     linear.resize(key.padded_witness_len(), PCS::Field::zero());
     let mut inner_rounds = InnerRounds::new(linear, witness, key.witness_vars());
-    let (ry, final_claim) = prove_rounds(&mut inner_rounds, INNER_DEGREE, inner_claim, transcript)?;
-    let [linear_evaluation, mut witness_evaluation] = inner_rounds.evaluations()?;
+    let (inner, ry, final_claim) =
+        prove_rounds(&mut inner_rounds, INNER_DEGREE, inner_claim, transcript)?;
+    let [linear_evaluation, witness_evaluation] = inner_rounds.evaluations()?;
     if final_claim != inner_relation(linear_evaluation, witness_evaluation) {
         return Err(SpartanError::InnerClaim);
     }
-    SpartanKey::exchange_witness_evaluation(&mut witness_evaluation, transcript)?;
-    PCS::open(
+    SpartanKey::append_witness_evaluation(witness_evaluation, transcript);
+    let opening = PCS::open(
         &witness_poly,
         &ry,
         witness_evaluation,
@@ -85,16 +86,22 @@ where
         Some(hint),
         transcript,
     )?;
-    Ok(())
+    Ok(SpartanProof {
+        witness_commitment,
+        outer,
+        outer_evaluations,
+        inner,
+        witness_evaluation,
+        opening,
+    })
 }
 
-/// Sends one compressed sumcheck and returns its point and final claim.
-fn prove_rounds<F: JoltField, H: Sponge>(
+fn prove_rounds<F: JoltField + Encoding>(
     member: &mut dyn ProveRounds<F>,
     degree: usize,
     claim: F,
-    transcript: &mut ProverTranscript<H>,
-) -> Result<(Vec<F>, F), SpartanError<F>> {
+    transcript: &mut (impl FieldTranscript<F> + ProverTranscript),
+) -> Result<(CompressedSumcheckProof<F>, Vec<F>, F), SpartanError<F>> {
     let prelude = BatchPrelude::try_new(
         vec![BatchMember {
             input_claim: claim,
@@ -112,6 +119,6 @@ fn prove_rounds<F: JoltField, H: Sponge>(
         &mut recorder,
         transcript,
     )?;
-    recorder.finish(&[], transcript)?;
-    Ok((result.challenges, result.final_claim))
+    let recorded = recorder.finish(&[], transcript)?;
+    Ok((recorded.proof, result.challenges, result.final_claim))
 }

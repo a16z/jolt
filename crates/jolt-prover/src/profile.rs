@@ -41,7 +41,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
-use common::jolt_device::{MemoryConfig, MemoryLayout};
 #[cfg(feature = "akita")]
 use jolt_akita::AkitaChunkProfile;
 #[cfg(not(feature = "akita"))]
@@ -58,10 +57,10 @@ use jolt_inlines_keccak256 as _;
 use jolt_inlines_sha2 as _;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
-    format_memory_size, report_stage_memory, setup_tracing_with_trace_path, PeakMemory,
+    format_memory_size, report_stage_boundaries, setup_tracing_with_trace_path, PeakMemory,
     TracingFormat, BYTES_PER_GIB,
 };
-use jolt_program::execution::{ExecutionBackend, JoltProgram, TraceInputs, TraceOutput};
+use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
@@ -69,7 +68,8 @@ use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 type FieldInlineField = Fr;
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 type FieldInlineField = AkitaField;
-use jolt_verifier::JoltSponge;
+#[cfg(not(feature = "akita"))]
+use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 #[cfg(not(feature = "akita"))]
 use rayon::ThreadPoolBuilder;
@@ -488,7 +488,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     drop(guards);
 
     if args.format != OutputFormat::Chrome {
-        report_stage_memory();
+        report_stage_boundaries();
         update_latest_link(&trace_name, &run_dir);
         return ProfileArtifacts::default();
     }
@@ -502,8 +502,11 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         finalize_trace(&trace_path, &ctx, peak).expect("finalize chrome trace");
 
     if let Some(root) = &summary.root {
+        let instructions = root.instructions.map_or_else(String::new, |count| {
+            format!(", {:.3}G instructions", count as f64 / 1e9)
+        });
         println!(
-            "modular {} (2^{scale}): root span {:.2}s, dark time {:.1}%",
+            "modular {} (2^{scale}): root span {:.2}s, dark time {:.1}%{instructions}",
             args.name.as_str(),
             root.wall_time_ns as f64 / 1e9,
             root.dark_time_fraction * 100.0,
@@ -736,13 +739,18 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     }
     #[cfg(feature = "field-inline")]
     program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
-    let (_, sizing_trace, _, io_device) = program.trace(&input, &[], &[]);
+    // Reuse the execution trace for sizing, memory layout, and proving. A
+    // preliminary legacy trace duplicates execution and can leave large
+    // allocator-retained buffers in the measured process.
+    let trace_output = program
+        .trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
+        .expect("modular trace");
+    let trace_length = trace_output.trace.proof_len();
     assert!(
-        sizing_trace.len().next_power_of_two() <= max_trace_length,
+        trace_length.next_power_of_two() <= max_trace_length,
         "Trace is longer than expected"
     );
-    jolt_kernels::mem::drop_in_background_thread(sizing_trace);
-    let memory_layout = io_device.memory_layout.clone();
+    let memory_layout = trace_output.device.memory_layout.clone();
     let jolt_program = Arc::new(program.build_jolt_program().expect("build Jolt program"));
     let program_preprocessing = JoltProgramPreprocessing::new(
         jolt_program.expanded_bytecode.clone(),
@@ -753,9 +761,6 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         program.instruction_profile(),
     )
     .expect("program preprocessing");
-
-    let trace_output = trace_modular(&jolt_program, &memory_layout, &input);
-    let trace_length = trace_output.trace.proof_len();
 
     let run = prove_workload(
         &jolt_program,
@@ -903,7 +908,7 @@ fn prove_workload(
     // `jolt_prover::prove` root span covers exactly this interval; the
     // Instant is the `--format none` no-subscriber baseline.
     let now = Instant::now();
-    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+    let proof = crate::dory::prove::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -929,7 +934,7 @@ fn prove_workload(
         .build()
         .expect("single-threaded verifier pool must build");
     let verify = || {
-        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        jolt_verifier::verify::<Fr, DoryScheme, Pedersen<Bn254G1>, VerifierState<'_, Keccak>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,
@@ -964,6 +969,7 @@ fn prove_workload(
     use crate::JoltProverPreprocessing;
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::CommitmentScheme;
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
     let backend = match backend {
@@ -1029,7 +1035,7 @@ fn prove_workload(
     // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
-    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         backend.with_witness(&witness),
         &prover_preprocessing,
         &config,
@@ -1039,17 +1045,23 @@ fn prove_workload(
     .expect("modular Akita prove");
     let duration = now.elapsed();
 
+    let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
+    let akita_opening_unframed_size = proof
+        .joint_opening_proof
+        .unframed_payload_size()
+        .expect("Akita opening component lengths must fit usize");
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize Akita proof")
         .len();
     tracing::info!(
-        argument_string_size = proof.narg.len(),
+        akita_proof_body_size,
+        akita_opening_unframed_size,
         jolt_proof_wire_size = proof_size,
         "Akita proof sizes"
     );
 
     let verify = || {
-        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &prover_preprocessing.verifier,
             &public_io,
             &proof,
@@ -1116,26 +1128,6 @@ fn prove_workload(
         verifier_transported: Some(verifier_transported),
         proof_size,
     }
-}
-
-fn trace_modular(
-    program: &JoltProgram,
-    memory_layout: &MemoryLayout,
-    inputs: &[u8],
-) -> TraceOutput {
-    let memory_config = MemoryConfig {
-        max_untrusted_advice_size: memory_layout.max_untrusted_advice_size,
-        max_trusted_advice_size: memory_layout.max_trusted_advice_size,
-        max_input_size: memory_layout.max_input_size,
-        max_output_size: memory_layout.max_output_size,
-        stack_size: memory_layout.stack_size,
-        heap_size: memory_layout.heap_size,
-        program_size: Some(memory_layout.program_size),
-    };
-    let trace_inputs = TraceInputs::new(inputs.to_vec(), Vec::new(), Vec::new(), memory_config);
-    TracerBackend::new()
-        .trace(program, trace_inputs)
-        .expect("modular trace")
 }
 
 fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> TraceBackend {

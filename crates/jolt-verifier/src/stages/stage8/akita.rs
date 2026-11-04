@@ -4,6 +4,8 @@
 //! RV64 increments, field-register increments, and direct committed-program objects
 //! join it as auxiliary Akita groups and are discharged by one joint opening.
 
+#[cfg(feature = "akita")]
+use jolt_claims::protocols::jolt::lattice::increments::{fused_inc_group_role, FusedIncLayout};
 use std::collections::BTreeMap;
 
 use jolt_algebra::JoltField;
@@ -23,10 +25,11 @@ use jolt_openings::{
     CommitmentScheme, EvaluationClaim, GroupOpeningClaim, TaggedGroupOpeningClaim,
 };
 use jolt_poly::Point;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_transcript::{Encoding, FieldTranscript};
 
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 use crate::preprocessing::JoltVerifierPreprocessing;
+use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
 #[cfg(all(feature = "akita", feature = "zk"))]
@@ -168,14 +171,14 @@ struct ResolvedObject<'a, PCS: CommitmentScheme> {
     commitment: &'a PCS::Output,
 }
 
-fn reduce_object<PCS, C>(
+fn reduce_object<PCS, T>(
     object: &ResolvedObject<'_, PCS>,
     leaves: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<PCS::Field>>,
-    transcript: &mut C,
+    transcript: &mut T,
 ) -> Result<EvaluationClaim<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
-    C: Channel,
+    T: FieldTranscript<PCS::Field>,
 {
     let claims = object_leaf_claims(&object.plan, leaves)?;
     let semantic = object.plan.packed_claims(&claims).map_err(batch_failed)?;
@@ -184,6 +187,14 @@ where
         .packing()
         .reduce_claims(&semantic, transcript)
         .map_err(batch_failed)
+}
+
+/// Whether any of `plans` draws a selector point, so that stage 8 has a
+/// challenge burst for proof of work to protect.
+pub fn has_selectors<'a>(plans: impl IntoIterator<Item = &'a PrefixPackedObjectPlan>) -> bool {
+    plans
+        .into_iter()
+        .any(|plan| plan.packing().selector_num_vars() > 0)
 }
 
 fn advice_object<'a, PCS: CommitmentScheme>(
@@ -238,6 +249,7 @@ pub fn field_inc_claim<F: JoltField, C: Clone>(
 }
 
 /// The ReadRAF reduction already produces the increment claim at a cycle point.
+#[cfg(feature = "akita")]
 pub fn fused_inc_claim<F: JoltField, C: Clone>(
     commitment: &C,
     stage6b: &Stage6bClearOutput<F>,
@@ -259,16 +271,18 @@ pub fn fused_inc_claim<F: JoltField, C: Clone>(
     clippy::too_many_arguments,
     reason = "the stage inputs are passed separately by the verifier driver"
 )]
-pub fn verify<PCS, VC, H>(
+pub fn verify<PCS, VC, T>(
     formula_dimensions: &JoltFormulaDimensions,
     one_hot_config: JoltOneHotConfig,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     one_hot_trace_commitment: &PCS::Output,
-    fused_inc_commitment: &PCS::Output,
+    #[cfg(feature = "akita")] fused_inc_commitment: Option<&PCS::Output>,
     untrusted_advice_commitment: Option<&PCS::Output>,
     trusted_advice_commitment: Option<&PCS::Output>,
-    #[cfg(feature = "field-inline")] field_inc_commitment: &PCS::Output,
-    transcript: &mut VerifierTranscript<'_, H>,
+    #[cfg(feature = "field-inline")] field_inc_commitment: Option<&PCS::Output>,
+    proof: &PCS::Proof,
+    pow_nonces: &StagePowNonces,
+    transcript: &mut T,
     schedule: &PrecommittedSchedule,
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
@@ -276,10 +290,10 @@ pub fn verify<PCS, VC, H>(
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
-    PCS::Output: Clone + OneHotTraceCommitmentMetadata,
+    PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = PCS::Field>,
-    H: Sponge,
+    T: FieldTranscript<PCS::Field>,
 {
     // Auxiliary objects precede the OneHotTrace group in canonical role order: advice,
     // (field-inline) the always-present field-increment commitment, then the direct
@@ -321,19 +335,6 @@ where
         JoltAdviceKind::Trusted,
     )?;
 
-    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-    let trusted_claim = if let Some(object) = trusted.as_ref() {
-        validate_packed_object_metadata(object.commitment, &object.plan)?;
-        Some(reduce_object(object, &leaves, transcript)?)
-    } else {
-        None
-    };
-
     let program = preprocessing
         .program
         .committed()
@@ -347,6 +348,40 @@ where
             .map_err(batch_failed)
         })
         .transpose()?;
+
+    // One nonce covers every object's selector point: the reductions absorb
+    // only claims fixed by earlier messages, so no prover message falls
+    // between the draws. With no selector there is no burst and no nonce.
+    let selectors = has_selectors(
+        [untrusted.as_ref(), trusted.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|object| &object.plan)
+            .chain(
+                program
+                    .iter()
+                    .flat_map(|(_, plan)| [&plan.bytecode, &plan.program_image]),
+            ),
+    );
+    if selectors {
+        check_pow(PowSite::Stage8, pow_nonces, transcript)?;
+    } else {
+        pow_nonces.require_absent(PowSite::Stage8)?;
+    }
+
+    let untrusted_claim = if let Some(object) = untrusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+    let trusted_claim = if let Some(object) = trusted.as_ref() {
+        validate_packed_object_metadata(object.commitment, &object.plan)?;
+        Some(reduce_object(object, &leaves, transcript)?)
+    } else {
+        None
+    };
+
     let mut auxiliary_groups = Vec::with_capacity(5);
     for (object, claim) in [
         (untrusted.as_ref(), untrusted_claim.as_ref()),
@@ -365,7 +400,9 @@ where
     }
     #[cfg(feature = "field-inline")]
     {
-        let commitment = field_inc_commitment;
+        let commitment = field_inc_commitment.ok_or(VerifierError::MissingProofPayload {
+            field: "field_inc_commitment",
+        })?;
         let layout = FieldIncLayout::new(formula_dimensions.trace.log_t());
         validate_group_commitment_metadata(commitment, layout.layout_digest(), layout.num_vars())?;
         auxiliary_groups.push(field_inc_claim(commitment, stage6b)?);
@@ -390,20 +427,21 @@ where
         }
     }
 
+    #[cfg(feature = "akita")]
     {
+        let commitment = fused_inc_commitment.ok_or(VerifierError::MissingProofPayload {
+            field: "fused_inc_commitment",
+        })?;
         let layout = FusedIncLayout::new(formula_dimensions.trace.log_t());
-        validate_group_commitment_metadata(
-            fused_inc_commitment,
-            layout.layout_digest(),
-            layout.num_vars(),
-        )?;
-        auxiliary_groups.push(fused_inc_claim(fused_inc_commitment, stage6b)?);
+        validate_group_commitment_metadata(commitment, layout.layout_digest(), layout.num_vars())?;
+        auxiliary_groups.push(fused_inc_claim(commitment, stage6b)?);
     }
 
     PCS::verify_batch(
         &preprocessing.pcs_setup,
         &auxiliary_groups,
         &main_group,
+        proof,
         transcript,
     )
     .map_err(opening_failed)?;

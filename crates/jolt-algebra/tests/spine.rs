@@ -7,20 +7,26 @@
 #![expect(clippy::unwrap_used, reason = "test code")]
 
 use jolt_algebra::{
-    impl_ring_ops, impl_serde_bytes, Accumulator, CanonicalBytes, CanonicalDecode,
-    CanonicalEncoding, Field, JoltField, NaiveAccumulator, One, Ring, WithAccumulator, Zero,
+    impl_ring_ops, impl_serde_bytes, Accumulator, CanonicalBytes, CanonicalEncoding, Field,
+    JoltField, NaiveAccumulator, One, Ring, WithAccumulator, Zero,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+#[cfg(feature = "spongefish")]
 use spongefish::Encoding;
-use spongefish::NargDeserialize;
-use spongefish::VerificationResult;
 
 const P: u64 = (1 << 61) - 1;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 struct M61(u64);
+
+#[cfg(feature = "spongefish")]
+impl Encoding for M61 {
+    fn encode(&self) -> impl AsRef<[u8]> {
+        self.0.to_le_bytes()
+    }
+}
 
 fn reduce128(v: u128) -> u64 {
     (v % P as u128) as u64
@@ -91,33 +97,19 @@ impl CanonicalBytes for M61 {
     }
 }
 
-impl Encoding<[u8]> for M61 {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        jolt_algebra::narg::encode(self)
-    }
-}
-
-impl CanonicalDecode for M61 {
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        let arr: [u8; 8] = bytes.try_into().ok()?;
-        Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
-    }
-}
-
-impl NargDeserialize for M61 {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        jolt_algebra::narg::deserialize(buf)
-    }
-}
-
 impl CanonicalEncoding for M61 {
     const MODULUS_BITS: u32 = 61;
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [P, 0, 0, 0];
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let base = M61::from_u64(256);
         bytes
             .iter()
             .rev()
             .fold(M61(0), |acc, &b| acc * base + M61::from_u64(b as u64))
+    }
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        let arr: [u8; 8] = bytes.try_into().ok()?;
+        Self::from_u128_checked(u64::from_le_bytes(arr) as u128)
     }
     fn to_u128_checked(&self) -> Option<u128> {
         Some(self.0 as u128)
@@ -131,14 +123,12 @@ impl CanonicalEncoding for M61 {
     fn num_bits(&self) -> u32 {
         64 - self.0.leading_zeros()
     }
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl_serde_bytes!(impl[] M61, 8);
 
 impl WithAccumulator for M61 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = NaiveAccumulator<M61>;
     type SmallScalarAccumulator = NaiveAccumulator<M61>;
     type SignedProductAccumulator = NaiveAccumulator<M61>;
@@ -187,6 +177,11 @@ fn assign_sum_product_forms() {
     assert_eq!(xs.into_iter().sum::<M61>(), a + b + c);
     assert_eq!(xs.iter().product::<M61>(), a * b * c);
     assert_eq!(xs.into_iter().product::<M61>(), a * b * c);
+    let empty: [M61; 0] = [];
+    assert_eq!(empty.iter().sum::<M61>(), M61::zero());
+    assert_eq!(empty.into_iter().sum::<M61>(), M61::zero());
+    assert_eq!(empty.iter().product::<M61>(), M61::one());
+    assert_eq!(empty.into_iter().product::<M61>(), M61::one());
 }
 
 #[test]
@@ -246,14 +241,6 @@ fn canonical_surface() {
     assert_eq!(
         M61::from_bytes_le_reduced(&wide),
         M61::from_u128_reduced(u128::from_le_bytes(wide))
-    );
-    assert_eq!(
-        M61::from_challenge_bytes(&wide),
-        M61::from_bytes_le_reduced(&wide)
-    );
-    assert_eq!(
-        M61::from_scalar_challenge_bytes(&wide),
-        M61::from_challenge_bytes(&wide)
     );
     assert_eq!(M61::zero().num_bits(), 0);
     assert_eq!(M61(0b1011).num_bits(), 4);
@@ -327,7 +314,8 @@ fn inner_product<F: JoltField>(xs: &[F], ys: &[F]) -> F {
 #[test]
 fn jolt_algebra_blanket() {
     // M61 satisfies the JoltField bundle from the component traits alone —
-    // the derive above is the `allocative` feature's supertrait, not a JoltField impl.
+    // the derive and the `Encoding` impl above are the `allocative` and
+    // `spongefish` features' supertraits, not a JoltField impl.
     let xs = [M61(2), M61(3)];
     let ys = [M61(5), M61(7)];
     assert_eq!(inner_product(&xs, &ys), M61(31));

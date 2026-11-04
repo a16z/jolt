@@ -1,10 +1,9 @@
 use super::accumulator::F128Accumulator;
 use super::{arithmetic, inverse};
-use crate::{CanonicalBytes, CanonicalDecode, CanonicalEncoding, Field, Ring, WithAccumulator};
+use crate::{CanonicalBytes, CanonicalEncoding, Field, Ring, WithAccumulator};
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
 use rand_core::RngCore;
-use spongefish::{Encoding, NargDeserialize, VerificationResult};
 use std::fmt::{Display, Formatter, Result as FmtResult};
 
 /// `F_2[x]/(x^128 + x^7 + x^2 + x + 1)`, with bit i the coefficient of x^i.
@@ -86,26 +85,10 @@ impl CanonicalBytes for F128 {
     }
 }
 
-impl Encoding<[u8]> for F128 {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        crate::narg::encode(self)
-    }
-}
-
-impl CanonicalDecode for F128 {
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        Some(Self(u128::from_le_bytes(bytes.try_into().ok()?)))
-    }
-}
-
-impl NargDeserialize for F128 {
-    fn deserialize_from_narg(buf: &mut &[u8]) -> VerificationResult<Self> {
-        crate::narg::deserialize(buf)
-    }
-}
-
 impl CanonicalEncoding for F128 {
     const MODULUS_BITS: u32 = 129;
+    /// The canonical encoding: a bijection onto the field.
+    const CHALLENGE_SET_LIMBS: [u64; 4] = [0, 0, 1, 0];
 
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self {
         let mut word = [0; 16];
@@ -113,6 +96,10 @@ impl CanonicalEncoding for F128 {
             *dest = *src;
         }
         Self(u128::from_le_bytes(word))
+    }
+
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
+        Some(Self(u128::from_le_bytes(bytes.try_into().ok()?)))
     }
 
     fn to_u128_checked(&self) -> Option<u128> {
@@ -130,13 +117,10 @@ impl CanonicalEncoding for F128 {
     fn num_bits(&self) -> u32 {
         u128::BITS - self.0.leading_zeros()
     }
-
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
 }
 
 impl WithAccumulator for F128 {
+    type SumAccumulator = Self::Accumulator;
     type Accumulator = F128Accumulator;
     type SmallScalarAccumulator = F128Accumulator;
     type SignedProductAccumulator = F128Accumulator;

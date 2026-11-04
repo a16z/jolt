@@ -38,7 +38,7 @@ pub struct BatchMember<F> {
 ///
 /// # Padding rules
 ///
-/// Write `n = max_num_vars` and `W = [offset, offset + rounds)` for a member's
+/// Write `n = max_num_vars()` and `W = [offset, offset + rounds)` for a member's
 /// active window. The field selects the rule: invertible `F::from_u64(2)` gives
 /// constant extension; otherwise the summand is zero-extended.
 ///
@@ -130,7 +130,7 @@ impl<F: Field> BatchPrelude<F> {
     /// Validates dimensions as [`crate::prove_batch`] does, including the
     /// padding-exponent limit. Then returns
     /// [`SumcheckError::RoundMemberIndexOutOfRange`] for an absent member or
-    /// [`SumcheckError::WrongNumberOfChallenges`] for an incorrect challenge count.
+    /// [`SumcheckError::WrongNumberOfRounds`] for an incorrect challenge count.
     pub fn member_output_scale(
         &self,
         member: usize,
@@ -145,7 +145,7 @@ impl<F: Field> BatchPrelude<F> {
                     members: self.members.len(),
                 })?;
         if challenges.len() != self.max_num_vars() {
-            return Err(SumcheckError::WrongNumberOfChallenges {
+            return Err(SumcheckError::WrongNumberOfRounds {
                 expected: self.max_num_vars(),
                 got: challenges.len(),
             });
@@ -167,7 +167,13 @@ impl<F: Field> BatchPrelude<F> {
 }
 
 pub(crate) enum PaddingRule<F> {
-    ConstantExtension { two_inv: F },
+    ConstantExtension {
+        #[cfg_attr(
+            not(feature = "prover"),
+            expect(dead_code, reason = "only the prover halves inactive rounds")
+        )]
+        two_inv: F,
+    },
     ZeroExtension,
 }
 

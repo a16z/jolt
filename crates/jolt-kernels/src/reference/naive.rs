@@ -64,7 +64,8 @@ pub(crate) fn sample_dense_round<F: JoltField>(
             .map(|y| term(y, point))
             .try_reduce(F::zero, |a, b| Ok(a + b))?;
         #[cfg(not(feature = "parallel"))]
-        let sum = (0..half).try_fold(F::zero(), |acc, y| Ok(acc + term(y, point)?))?;
+        let sum =
+            (0..half).try_fold(F::zero(), |acc, y| term(y, point).map(|value| acc + value))?;
         evals.push(sum);
     }
     let actual = evals[0] + evals[1];
@@ -450,9 +451,9 @@ mod tests {
     use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
     use jolt_sumcheck::{
         prove_batch, BatchMember, BatchPrelude, ClearSumcheckRecorder, DegreeSchedule, ProveRounds,
-        SequentialRounds, SumcheckClaim, SumcheckRecorder, SumcheckVerifier,
+        SequentialRounds, SumcheckProof, SumcheckRecorder,
     };
-    use jolt_transcript::{Blake2b512, Channel, ProtocolId, ProverTranscript, VerifierTranscript};
+    use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript, Transcript};
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_verifier::VerifierError;
 
@@ -641,9 +642,9 @@ mod tests {
             symbolic: ToySymbolic::new(ROUNDS),
             reference_point: reference_point(),
         };
-        let protocol = ProtocolId::new::<Blake2b512>("naive-toy");
-        let mut prover_transcript = ProverTranscript::<Blake2b512>::new(&protocol, b"");
-        let challenges = relation.draw_challenges(&mut prover_transcript).unwrap();
+        let mut prover_state =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"naive-toy"), b"");
+        let challenges = relation.draw_challenges(&mut prover_state).unwrap();
         let gamma = challenges.gamma;
 
         let opening_tables = opening_tables();
@@ -662,10 +663,8 @@ mod tests {
         let input_claim = relation.input_claim(&inputs, &challenges).unwrap();
         assert_eq!(input_claim, claimed_sum);
         let mut recorder = ClearSumcheckRecorder::<Fr>::new();
-        recorder
-            .absorb_input_claims(&[input_claim], &mut prover_transcript)
-            .unwrap();
-        let coefficient: Fr = prover_transcript.challenge();
+        recorder.absorb_input_claims(&[input_claim], &mut prover_state);
+        let coefficient: Fr = prover_state.challenge().unwrap();
         let prelude = BatchPrelude::new(
             vec![BatchMember {
                 input_claim,
@@ -694,7 +693,7 @@ mod tests {
             &mut members,
             &mut SequentialRounds,
             &mut recorder,
-            &mut prover_transcript,
+            &mut prover_state,
         )
         .unwrap();
 
@@ -725,45 +724,41 @@ mod tests {
         assert_eq!(coefficient * expected, proved.final_claim);
         assert_eq!(proved.member_claims, vec![expected]);
 
-        // Clear-verifier twin: the verifier reads the argument string to EOF.
-        recorder
-            .finish(&output_claims.opening_values(), &mut prover_transcript)
+        let recorded = recorder
+            .finish(&output_claims.opening_values(), &mut prover_state)
             .unwrap();
         let verifier_relation = ToyRelation {
             symbolic: ToySymbolic::new(ROUNDS),
             reference_point: reference_point(),
         };
-        let narg = prover_transcript.narg().to_vec();
-        let mut verifier_transcript = VerifierTranscript::<Blake2b512>::new(&protocol, b"", &narg);
+        let mut verifier_transcript =
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"naive-toy"), b"");
         let verifier_challenges = verifier_relation
             .draw_challenges(&mut verifier_transcript)
             .unwrap();
         let verifier_input_claim = verifier_relation
             .input_claim(&inputs, &verifier_challenges)
             .unwrap();
-        verifier_transcript.public(&verifier_input_claim);
-        let verifier_coefficient: Fr = verifier_transcript.challenge();
-        let reduction = SumcheckVerifier::verify_compressed(
-            &SumcheckClaim::new(
+        verifier_transcript.append(&verifier_input_claim);
+        let verifier_coefficient: Fr = verifier_transcript.challenge().unwrap();
+        let reduction = SumcheckProof::<Fr, Fr>::from(recorded.proof)
+            .verify_compressed_boolean(
                 ROUNDS,
                 verifier_relation.degree(),
                 verifier_coefficient * verifier_input_claim,
-            ),
-            &mut verifier_transcript,
-        )
-        .unwrap();
-        let received: Vec<Fr> = verifier_transcript
-            .receive_n(output_claims.opening_values().len())
+                &mut verifier_transcript,
+            )
             .unwrap();
+        for value in output_claims.opening_values() {
+            verifier_transcript.append(&value);
+        }
 
         assert_eq!(reduction.value, proved.final_claim);
         assert_eq!(reduction.point.as_slice(), proved.challenges.as_slice());
-        assert_eq!(received, output_claims.opening_values());
         assert_eq!(
-            verifier_transcript.challenge_bytes::<32>(),
-            prover_transcript.challenge_bytes::<32>()
+            prover_state.verifier_message::<[u8; 32]>(),
+            verifier_transcript.verifier_message::<[u8; 32]>()
         );
-        verifier_transcript.finish().unwrap();
     }
 
     /// A derived table materialized at the wrong point survives the sumcheck
@@ -777,7 +772,7 @@ mod tests {
             reference_point: reference_point(),
         };
         let mut transcript =
-            ProverTranscript::<Blake2b512>::new(&ProtocolId::new::<Blake2b512>("naive-drift"), b"");
+            prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"naive-drift"), b"");
         let challenges = relation.draw_challenges(&mut transcript).unwrap();
         let gamma = challenges.gamma;
 
@@ -786,7 +781,7 @@ mod tests {
         let derived_tables = derived_tables(&drifted_point);
         let claimed_sum = brute_force_sum(&opening_tables, &derived_tables, gamma);
 
-        let coefficient: Fr = transcript.challenge();
+        let coefficient: Fr = transcript.challenge().unwrap();
         let prelude = BatchPrelude::new(
             vec![BatchMember {
                 input_claim: claimed_sum,

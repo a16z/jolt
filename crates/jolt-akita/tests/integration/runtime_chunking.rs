@@ -15,6 +15,7 @@ use jolt_akita::{
     AkitaSetupParams, AkitaVerifierSetup,
 };
 use jolt_openings::CommitmentScheme;
+use jolt_transcript::{prover_transcript, Blake2b512};
 use serde_json::Value;
 use std::{fs, sync::Arc};
 
@@ -272,31 +273,28 @@ fn dense_geometry_survives_verifier_transport() {
     let point: Vec<_> = (0..14).map(|i| support::f(i + 2)).collect();
     let evaluation = polynomial.evaluate(&point);
     let (commitment, hint) = AkitaScheme::commit(&polynomial, &prover).unwrap();
-    let mut transcript = support::new_prover_transcript(DOMAIN);
-    AkitaScheme::open(
+    let proof = AkitaScheme::open(
         &polynomial,
         &point,
         evaluation,
         &prover,
         Some(hint),
-        &mut transcript,
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap();
-    let proof = transcript.finish();
     let mut encoded = serde_json::to_value(&verifier).unwrap();
     drop(verifier);
     drop(prover);
     let transported: AkitaVerifierSetup = serde_json::from_value(encoded.clone()).unwrap();
-    let mut transcript = support::new_verifier_transcript(DOMAIN, &proof);
     AkitaScheme::verify(
         &commitment,
         &point,
         evaluation,
+        &proof,
         &transported,
-        &mut transcript,
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap();
-    transcript.finish().unwrap();
     let mut tampered = encoded.clone();
     let catalog = tampered
         .pointer_mut("/schedule_artifacts/dense/dense")
@@ -310,8 +308,9 @@ fn dense_geometry_survives_verifier_transport() {
         &commitment,
         &point,
         evaluation,
+        &proof,
         &tampered,
-        &mut support::new_verifier_transcript(DOMAIN, &proof),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b""),
     )
     .unwrap_err();
     assert!(
@@ -325,8 +324,9 @@ fn dense_geometry_survives_verifier_transport() {
         &commitment,
         &point,
         evaluation,
+        &proof,
         &wrong,
-        &mut support::new_verifier_transcript(DOMAIN, &proof),
+        &mut prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(DOMAIN), b"")
     )
     .is_err());
 }

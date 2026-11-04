@@ -14,6 +14,8 @@ use allocative::Allocative;
 use num_traits::{One, Zero};
 use rand_core::RngCore;
 use serde::{de::DeserializeOwned, Serialize};
+#[cfg(feature = "spongefish")]
+use spongefish::Encoding;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 use std::iter::{Product, Sum};
@@ -21,8 +23,6 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 use crate::signed::S256;
 use crate::Ext2Config;
-use spongefish::Encoding;
-use spongefish::NargDeserialize;
 
 pub trait AdditiveGroup:
     Sized
@@ -159,11 +159,41 @@ pub trait Ring:
     }
 }
 
+/// The software fold behind [`Field::signed_sum`].
+#[inline]
+pub(crate) fn signed_sum_fold<'a, F: Ring + 'a>(
+    terms: impl IntoIterator<Item = (&'a F, bool)>,
+) -> F {
+    terms
+        .into_iter()
+        .fold(<F as Zero>::zero(), |acc, (term, negative)| {
+            if negative {
+                acc - *term
+            } else {
+                acc + *term
+            }
+        })
+}
+
+/// The software fold behind [`Field::sum_of_products`].
+#[inline]
+pub(crate) fn sum_of_products_fold<F: Ring, const K: usize>(terms: &[[F; K]]) -> F {
+    terms.iter().fold(<F as Zero>::zero(), |acc, factors| {
+        acc + match factors.split_first() {
+            Some((first, rest)) => rest
+                .iter()
+                .fold(*first, |product, factor| product * *factor),
+            None => <F as One>::one(),
+        }
+    })
+}
+
 pub trait Field: Ring {
     /// Multiplicative inverse, or `None` for the zero element.
     fn inverse(&self) -> Option<Self>;
 
-    /// `Σ a[i]·b[i]` over the shorter of the two slices.
+    /// `Σ a[i]·b[i]` over the shorter of the two slices. Fields with a batched
+    /// guest path (register-resident field-inline accumulation) override this.
     #[inline]
     fn dot_product(a: &[Self], b: &[Self]) -> Self {
         a.iter()
@@ -172,34 +202,21 @@ pub trait Field: Ring {
     }
 
     /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
-    /// otherwise.
+    /// otherwise. Fields with a batched guest path (a register-resident sum
+    /// read out once) override this.
     #[inline]
     fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
     where
         Self: 'a,
     {
-        terms
-            .into_iter()
-            .fold(<Self as Zero>::zero(), |acc, (term, negative)| {
-                if negative {
-                    acc - *term
-                } else {
-                    acc + *term
-                }
-            })
+        signed_sum_fold(terms)
     }
 
-    /// `Σ_i Π_k terms[i][k]`, an empty product being one.
+    /// `Σ_i Π_k terms[i][k]`, an empty product being one. Fields with a
+    /// batched guest path (register-resident products and sum) override this.
     #[inline]
     fn sum_of_products<const K: usize>(terms: &[[Self; K]]) -> Self {
-        terms.iter().fold(<Self as Zero>::zero(), |acc, factors| {
-            acc + match factors.split_first() {
-                Some((first, rest)) => rest
-                    .iter()
-                    .fold(*first, |product, factor| product * *factor),
-                None => <Self as One>::one(),
-            }
-        })
+        sum_of_products_fold(terms)
     }
 
     /// Multiplicative inverse with zero mapped to zero.
@@ -251,6 +268,34 @@ pub trait Field: Ring {
 pub trait PseudoMersenne: Field + CanonicalEncoding {
     /// Offset `c` in `2^k − c`.
     const OFFSET: u128;
+
+    /// `Σ a[i]·b[i]` on a field-inline guest, with the sum register-resident
+    /// and one readout for the result; `None` where no such path exists (the
+    /// caller then folds in software). Fields the field-inline unit computes
+    /// in override this.
+    #[inline]
+    fn inline_dot(a: &[Self], b: &[Self]) -> Option<Self> {
+        let _ = (a, b);
+        None
+    }
+
+    /// `Σ_i weights[i] · Σ_j rows[i][j]·pows[j]` on a field-inline guest with
+    /// the powers loaded once per block of rows and one hint for the total;
+    /// `None` where no such path exists.
+    #[inline]
+    fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
+        let _ = (rows, weights, pows);
+        None
+    }
+
+    /// `out[i] = Σ_j rows[i][j]·shared[j]` on a field-inline guest with each
+    /// shared element loaded once per block of rows; `false` (and `out`
+    /// untouched) where no such path exists.
+    #[inline]
+    fn inline_dot_rows(rows: &[&[Self]], shared: &[Self], out: &mut [Self]) -> bool {
+        let _ = (rows, shared, out);
+        false
+    }
 
     /// Quadratic extension multiply kernel in `Self[u]/(u² − NR)`, basis
     /// `[1, u]`.
@@ -313,9 +358,7 @@ pub trait PseudoMersenne: Field + CanonicalEncoding {
 ///   produce equal bytes, distinct values produce distinct bytes.
 /// - [`to_bytes_le`](Self::to_bytes_le) always writes exactly
 ///   [`NUM_BYTES`](Self::NUM_BYTES) bytes of the unique representative.
-/// - The spongefish [`Encoding`](spongefish::Encoding) is this encoding;
-///   implement it with [`narg::encode`].
-pub trait CanonicalBytes: Encoding<[u8]> {
+pub trait CanonicalBytes {
     /// Byte length of the fixed-size canonical encoding.
     const NUM_BYTES: usize;
 
@@ -331,119 +374,33 @@ pub trait CanonicalBytes: Encoding<[u8]> {
     }
 }
 
-/// Checked decoding half of a fixed-width canonical codec.
-///
-/// Proof transport and wire serialization decode through this trait, so a
-/// verifier accepts exactly one byte string per value.
-///
-/// # Invariants
-///
-/// - `from_bytes_le_checked(&x.to_bytes_le_vec()) == Some(x)` for every `x`.
-/// - Every other input, including any input whose length is not
-///   [`CanonicalBytes::NUM_BYTES`], decodes to `None`.
-/// - The spongefish [`NargDeserialize`](spongefish::NargDeserialize) reads
-///   exactly this decoding; implement it with [`narg::deserialize`].
-pub trait CanonicalDecode: CanonicalBytes + NargDeserialize + Sized {
-    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
-    /// `None` on wrong length or a non-canonical value.
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
-}
-
-/// The spongefish codec of a fixed-width canonical type, shared by every
-/// implementing crate so each type's `Encoding` and `NargDeserialize` are its
-/// [`CanonicalBytes`]/[`CanonicalDecode`] codec and nothing else.
-pub mod narg {
-    use spongefish::{VerificationError, VerificationResult};
-
-    use super::{CanonicalBytes, CanonicalDecode};
-
-    /// The `Encoding::encode` body: the canonical little-endian bytes.
-    #[inline]
-    pub fn encode<T: CanonicalBytes + ?Sized>(value: &T) -> Vec<u8> {
-        let mut out = vec![0u8; T::NUM_BYTES];
-        value.to_bytes_le(&mut out);
-        out
-    }
-
-    /// The `NargDeserialize::deserialize_from_narg` body: decodes exactly
-    /// `NUM_BYTES` canonical bytes and advances `buf` only on success.
-    ///
-    /// # Errors
-    ///
-    /// When `buf` is shorter than `NUM_BYTES` or the bytes are not canonical.
-    #[inline]
-    pub fn deserialize<T: CanonicalDecode>(buf: &mut &[u8]) -> VerificationResult<T> {
-        let (head, tail) = buf
-            .split_at_checked(T::NUM_BYTES)
-            .ok_or(VerificationError)?;
-        let value = T::from_bytes_le_checked(head).ok_or(VerificationError)?;
-        *buf = tail;
-        Ok(value)
-    }
-}
-
-/// Fixed-width little-endian codecs for unsigned integers, so protocol
-/// counters and nonces travel as transcript atoms like field elements do.
-/// spongefish owns their `Encoding`; only `u32` also has its
-/// `NargDeserialize`, so only `u32` is a [`CanonicalDecode`] atom. Wider
-/// header fields travel inside their message type's own codec.
-macro_rules! impl_uint_codec {
-    ($($t:ty),*) => {$(
-        impl CanonicalBytes for $t {
-            const NUM_BYTES: usize = <$t>::BITS as usize / 8;
-
-            #[inline]
-            fn to_bytes_le(&self, out: &mut [u8]) {
-                out.copy_from_slice(&self.to_le_bytes());
-            }
-        }
-    )*};
-}
-
-impl_uint_codec!(u8, u16, u32, u64, u128);
-
-impl CanonicalDecode for u32 {
-    #[inline]
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        bytes.try_into().ok().map(Self::from_le_bytes)
-    }
-}
-
-/// Raw bytes are their own canonical encoding.
-impl<const N: usize> CanonicalBytes for [u8; N] {
-    const NUM_BYTES: usize = N;
-
-    #[inline]
-    fn to_bytes_le(&self, out: &mut [u8]) {
-        out.copy_from_slice(self);
-    }
-}
-
-impl<const N: usize> CanonicalDecode for [u8; N] {
-    #[inline]
-    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self> {
-        bytes.try_into().ok()
-    }
-}
-
 /// Canonical decode-and-introspect surface of a field element, on top of the
-/// [`CanonicalBytes`]/[`CanonicalDecode`] codec: the single source of
-/// canonicity for wire serialization.
+/// [`CanonicalBytes`] encoding: the single source of canonicity for wire
+/// serialization.
 ///
 /// Transcript absorption and challenge derivation use the explicit
 /// [`CanonicalBytes`] encoding so the hashed byte stream is specified
 /// independently of any serialization library. Proof/wire serialization goes
 /// through serde + bincode, reusing
-/// [`from_bytes_le_checked`](CanonicalDecode::from_bytes_le_checked) so
-/// non-canonical encodings are rejected uniformly.
+/// [`from_bytes_le_checked`](Self::from_bytes_le_checked) so non-canonical
+/// encodings are rejected uniformly.
 pub trait CanonicalEncoding:
-    CanonicalDecode + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
+    CanonicalBytes + Sized + Copy + Default + PartialEq + Eq + Debug + Hash + Send + Sync + 'static
 {
     /// Bit length of the field order `|F|` (for prime fields, the modulus).
     const MODULUS_BITS: u32;
 
+    /// The field order, as little-endian 64-bit limbs: the size of the set
+    /// a challenge codec draws from. Proof-of-work difficulty is priced from
+    /// it.
+    const CHALLENGE_SET_LIMBS: [u64; 4];
+
     /// Decodes little-endian bytes of any length by reducing into the field.
     fn from_bytes_le_reduced(bytes: &[u8]) -> Self;
+
+    /// Decodes exactly [`CanonicalBytes::NUM_BYTES`] canonical bytes;
+    /// `None` on wrong length or a non-canonical value.
+    fn from_bytes_le_checked(bytes: &[u8]) -> Option<Self>;
 
     /// Returns the canonical representative if it fits in a `u128`.
     ///
@@ -487,16 +444,6 @@ pub trait CanonicalEncoding:
     ///
     /// Zero is considered to have zero significant bits.
     fn num_bits(&self) -> u32;
-
-    #[inline]
-    fn from_challenge_bytes(bytes: &[u8]) -> Self {
-        Self::from_bytes_le_reduced(bytes)
-    }
-
-    /// Constructs a non-optimized scalar challenge from transcript bytes.
-    ///
-    /// Implementations must choose the protocol's byte order explicitly.
-    fn from_scalar_challenge_bytes(bytes: &[u8]) -> Self;
 }
 
 /// Accumulates sums and products with potentially deferred modular reduction.
@@ -597,6 +544,9 @@ pub trait Accumulator: Default + Copy + Send + Sync {
 }
 
 pub trait WithAccumulator: Ring {
+    /// Accumulator for sums of field elements without scalar products.
+    type SumAccumulator: Accumulator<Element = Self>;
+
     /// General field-product accumulator.
     type Accumulator: Accumulator<Element = Self>;
 
@@ -661,14 +611,37 @@ pub trait MaybeAllocative {}
 #[cfg(not(feature = "allocative"))]
 impl<T: ?Sized> MaybeAllocative for T {}
 
+/// spongefish's [`Encoding`](spongefish::Encoding) when the `spongefish`
+/// feature is on, vacuous otherwise.
+///
+/// Every field in this crate encodes as its canonical little-endian bytes, so
+/// `F: JoltField` can be absorbed into a transcript without a bound of its own.
+#[cfg(feature = "spongefish")]
+pub trait MaybeEncoding: Encoding {}
+#[cfg(feature = "spongefish")]
+impl<T: Encoding + ?Sized> MaybeEncoding for T {}
+/// spongefish's `Encoding` when the `spongefish` feature is on, vacuous
+/// otherwise.
+#[cfg(not(feature = "spongefish"))]
+pub trait MaybeEncoding {}
+#[cfg(not(feature = "spongefish"))]
+impl<T: ?Sized> MaybeEncoding for T {}
+
 /// Everything Jolt's protocol stack requires of a scalar field: field
-/// algebra, a canonical transcript encoding, an accumulator, serde wire
-/// serialization (canonical-checked, via [`impl_serde_bytes!`]), and heap
-/// visitation under the `allocative` feature.
+/// algebra, a canonical encoding, an accumulator, serde wire serialization
+/// (canonical-checked, via [`impl_serde_bytes!`]), the transcript encoding
+/// under the `spongefish` feature, and heap visitation under the `allocative`
+/// feature.
 ///
 /// Blanket-implemented — implement the component traits and this follows.
 pub trait JoltField:
-    Field + CanonicalEncoding + WithAccumulator + Serialize + DeserializeOwned + MaybeAllocative
+    Field
+    + CanonicalEncoding
+    + WithAccumulator
+    + Serialize
+    + DeserializeOwned
+    + MaybeAllocative
+    + MaybeEncoding
 {
 }
 
@@ -678,7 +651,8 @@ impl<
             + WithAccumulator
             + Serialize
             + DeserializeOwned
-            + MaybeAllocative,
+            + MaybeAllocative
+            + MaybeEncoding,
     > JoltField for T
 {
 }

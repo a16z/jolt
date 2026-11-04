@@ -91,7 +91,9 @@ impl<F: JoltField> ConcreteSumcheck<F> for InstructionInput<F> {
             right_operand_is_rs2: opening_point.clone(),
             rs2_value: opening_point.clone(),
             right_operand_is_imm: opening_point.clone(),
-            imm: opening_point,
+            imm: opening_point.clone(),
+            right_operand_is_rd_write_value: opening_point.clone(),
+            rd_write_value: opening_point,
         })
     }
 

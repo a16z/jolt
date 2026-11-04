@@ -1,252 +1,50 @@
-//! The private-message seam: witness-dependent field messages, which masked
-//! mode hides behind pads and clear mode exchanges as they are, and the
-//! claim domains the checks on those messages are written over.
+//! The private-message seam: witness-dependent field messages, which a
+//! masked mode hides behind pads and clear mode absorbs as they are.
+//!
+//! Protocol code that absorbs a value derived from the witness, such as a
+//! sumcheck round coefficient or a claimed evaluation, absorbs it through
+//! [`PrivateChannel`] instead of [`Transcript::append_values`]. Clear
+//! transcripts implement the seam as plain public messages, so routing a
+//! value through it changes no transcript byte; a masked channel implements
+//! it by absorbing `value + pad` and recording where the pads sit.
 
-use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
+use jolt_algebra::Field;
+use spongefish::Encoding;
 
-use crate::{Channel, ProverTranscript, Sponge, TranscriptError, VerifierTranscript};
+use crate::Transcript;
 
-/// Where a private message's pads sit in the pad schedule: `len` base-field
-/// pads from `start`, `E::DEGREE` per extension element. Empty in clear mode.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PadSlots {
-    /// Index of the first pad.
-    pub start: usize,
-    /// Number of pads.
-    pub len: usize,
-}
-
-/// One role's end of the private-message seam, written once for both roles.
+/// Either role's end of the private-message seam.
 ///
-/// The prover sends values (clear) or values plus their next pads (masked);
-/// the verifier receives them and, in masked mode, the pad slots the prover
-/// used, so both sides index pads identically.
+/// Both roles hold the values a message carries: the prover computed them,
+/// the verifier read them from the proof. So one method serves both, and
+/// code written over this trait runs unchanged on the prover and verifier
+/// transcripts.
 pub trait PrivateChannel {
-    /// Why an exchange failed: a rejected proof, or an exhausted pad schedule.
-    type Error;
+    /// Absorbs `values`, in order, as one private message.
+    fn append_private<F: Field + Encoding>(&mut self, values: &[F]);
 
-    /// Exchanges `values` in place: the prover sends them and leaves `values`
-    /// unchanged; the verifier fills them from the proof.
+    /// Binds a claim the verifier can already derive from earlier messages.
+    /// A clear transcript absorbs it as a public value; a masked channel
+    /// binds nothing, since the masked messages it derives from already do.
     ///
-    /// # Errors
-    ///
-    /// The verifier fails as [`Channel::exchange_all`] does.
-    fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, Self::Error>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode;
-
-    /// Binds a claim the verifier can already derive. Clear mode absorbs it as
-    /// a public value; masked mode binds nothing, since the masked messages it
-    /// derives from already do.
-    ///
-    /// # Errors
-    ///
-    /// Clear mode never fails.
-    fn bind_derived<F, E>(&mut self, claim: &E) -> Result<(), Self::Error>
-    where
-        F: Field + CanonicalEncoding,
-        E: ExtField<F> + CanonicalDecode;
-
-    /// [`exchange_private`](Self::exchange_private) for elements of the pad
-    /// field itself, one pad each. Separate because not every field
-    /// implements `ExtField` over itself.
-    ///
-    /// # Errors
-    ///
-    /// As [`exchange_private`](Self::exchange_private).
-    fn exchange_private_base<F>(&mut self, values: &mut [F]) -> Result<PadSlots, Self::Error>
-    where
-        F: Field + CanonicalEncoding;
-
-    /// [`bind_derived`](Self::bind_derived) for an element of the pad field.
-    ///
-    /// # Errors
-    ///
-    /// As [`bind_derived`](Self::bind_derived).
-    fn bind_derived_base<F>(&mut self, claim: &F) -> Result<(), Self::Error>
-    where
-        F: Field + CanonicalEncoding;
+    /// The claim must be a function of values already absorbed: under a
+    /// masked channel this call adds nothing to the transcript.
+    fn bind_derived<F: Field + Encoding>(&mut self, claim: &F);
 }
 
-/// Clear mode: private values are ordinary prover messages, derived claims
-/// ordinary public values, and no pads are used.
-macro_rules! clear_private_channel {
-    ($($transcript:tt)*) => {
-        impl<H: Sponge> PrivateChannel for $($transcript)* {
-            type Error = TranscriptError;
-
-            fn exchange_private<F, E>(&mut self, values: &mut [E]) -> Result<PadSlots, TranscriptError>
-            where
-                F: Field + CanonicalEncoding,
-                E: ExtField<F> + CanonicalDecode,
-            {
-                self.exchange_all(values)?;
-                Ok(PadSlots::default())
-            }
-
-            fn bind_derived<F, E>(&mut self, claim: &E) -> Result<(), TranscriptError>
-            where
-                F: Field + CanonicalEncoding,
-                E: ExtField<F> + CanonicalDecode,
-            {
-                self.public(claim);
-                Ok(())
-            }
-
-            fn exchange_private_base<F>(&mut self, values: &mut [F]) -> Result<PadSlots, TranscriptError>
-            where
-                F: Field + CanonicalEncoding,
-            {
-                self.exchange_all(values)?;
-                Ok(PadSlots::default())
-            }
-
-            fn bind_derived_base<F>(&mut self, claim: &F) -> Result<(), TranscriptError>
-            where
-                F: Field + CanonicalEncoding,
-            {
-                self.public(claim);
-                Ok(())
-            }
-        }
-    };
-}
-
-clear_private_channel!(ProverTranscript<H>);
-clear_private_channel!(VerifierTranscript<'_, H>);
-
-/// The values a verifier check is written over, so one formula serves the
-/// clear verifier ([`ClearDomain`]), the masked verifier (affine forms over
-/// the pads, whose checks become residual rows) and the pad layout (symbolic
-/// shape). Akita writes its masked-level stage checks once over this trait
-/// (Akita `specs/whiteout-akita.md` §4.4); Jolt's residual lowering
-/// implements it in `jolt-zk`.
+/// Clear mode: a private message is a public message of the same values,
+/// and a derived claim is a public value.
 ///
-/// Auxiliary slots are allocated from a formula's structure alone, never from
-/// values, so every domain allocates the same slots in the same order.
-pub trait ClaimDomain<F> {
-    /// One value of the domain.
-    type Value: Clone;
-    /// Why a check or an allocation failed.
-    type Error;
-
-    /// The public constant `value`.
-    fn constant(&self, value: F) -> Self::Value;
-
-    /// `lhs + rhs`.
-    fn add(&self, lhs: &Self::Value, rhs: &Self::Value) -> Self::Value;
-
-    /// `value · scale` for a public `scale`.
-    fn scale(&self, value: &Self::Value, scale: F) -> Self::Value;
-
-    /// A new auxiliary slot defined by the affine `value`; returns the slot.
-    ///
-    /// # Errors
-    ///
-    /// The domain's error if no slot is left.
-    fn define_auxiliary(&mut self, value: Self::Value) -> Result<Self::Value, Self::Error>;
-
-    /// A new auxiliary slot holding `x · y`, where `x` is a single masked or
-    /// auxiliary slot; returns the slot.
-    ///
-    /// # Errors
-    ///
-    /// The domain's error if `x` is not a single slot or no slot is left.
-    fn product(&mut self, x: Self::Value, y: Self::Value) -> Result<Self::Value, Self::Error>;
-
-    /// The check `x · y = target`, with no new slot: the product lands on an
-    /// existing value, such as a sumcheck's running claim. `x` is as for
-    /// [`product`](Self::product). One pair of
-    /// [`products_into`](Self::products_into).
-    ///
-    /// # Errors
-    ///
-    /// As [`products_into`](Self::products_into).
-    fn product_into(
-        &mut self,
-        x: Self::Value,
-        y: Self::Value,
-        target: Self::Value,
-    ) -> Result<(), Self::Error> {
-        self.products_into((x, y), Vec::new(), target)
+/// [`append_private`](PrivateChannel::append_private) absorbs one
+/// [`append_values`](Transcript::append_values) message. For values whose
+/// encodings are whole words, such as every production field, the sponge
+/// absorbs the bytes one [`append`](Transcript::append) per value would.
+impl<T: Transcript + ?Sized> PrivateChannel for T {
+    fn append_private<F: Field + Encoding>(&mut self, values: &[F]) {
+        self.append_values(values);
     }
 
-    /// The check `Σ_k x_k · y_k = target` over the pairs `first` and
-    /// `rest`, with no new slot: several products land on one existing
-    /// value, such as a stage's running claim. Each `x_k` is as for
-    /// [`product`](Self::product).
-    ///
-    /// # Errors
-    ///
-    /// The domain's error if the check fails where it is evaluated or an
-    /// `x_k` is not a single slot.
-    fn products_into(
-        &mut self,
-        first: (Self::Value, Self::Value),
-        rest: Vec<(Self::Value, Self::Value)>,
-        target: Self::Value,
-    ) -> Result<(), Self::Error>;
-
-    /// The check `value = 0`.
-    ///
-    /// # Errors
-    ///
-    /// The domain's error if the check fails where it is evaluated.
-    fn check_zero(&mut self, value: Self::Value) -> Result<(), Self::Error>;
-}
-
-/// A clear check failed: the values it compares differ.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error("a clear claim check failed")]
-pub struct ClaimMismatch;
-
-/// The clear verifier's domain: values are field elements, auxiliary slots
-/// are the values themselves, and checks compare.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ClearDomain;
-
-impl<F: Field> ClaimDomain<F> for ClearDomain {
-    type Value = F;
-    type Error = ClaimMismatch;
-
-    fn constant(&self, value: F) -> F {
-        value
-    }
-
-    fn add(&self, lhs: &F, rhs: &F) -> F {
-        *lhs + *rhs
-    }
-
-    fn scale(&self, value: &F, scale: F) -> F {
-        *value * scale
-    }
-
-    fn define_auxiliary(&mut self, value: F) -> Result<F, ClaimMismatch> {
-        Ok(value)
-    }
-
-    fn product(&mut self, x: F, y: F) -> Result<F, ClaimMismatch> {
-        Ok(x * y)
-    }
-
-    fn products_into(
-        &mut self,
-        first: (F, F),
-        rest: Vec<(F, F)>,
-        target: F,
-    ) -> Result<(), ClaimMismatch> {
-        let sum = rest
-            .iter()
-            .fold(first.0 * first.1, |sum, (x, y)| sum + *x * *y);
-        self.check_zero(sum - target)
-    }
-
-    fn check_zero(&mut self, value: F) -> Result<(), ClaimMismatch> {
-        if value.is_zero() {
-            Ok(())
-        } else {
-            Err(ClaimMismatch)
-        }
+    fn bind_derived<F: Field + Encoding>(&mut self, claim: &F) {
+        self.append_values(std::slice::from_ref(claim));
     }
 }
