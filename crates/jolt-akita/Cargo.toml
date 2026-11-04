@@ -19,7 +19,10 @@ profiling = ["parallel"]
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
 # catalogs do not cover this adapter's complete production and test grids.
-akita-algebra = { workspace = true, features = ["tensor-no-carry", "tensor-eq-runs"] }
+akita-algebra = { workspace = true, features = [
+  "tensor-no-carry",
+  "tensor-eq-runs",
+] }
 akita-config.workspace = true
 akita-error.workspace = true
 akita-pcs = { workspace = true, default-features = false, features = [
