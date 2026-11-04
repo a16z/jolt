@@ -44,6 +44,7 @@ mod sigma;
     feature = "whiteout-test-support"
 ))]
 pub mod test_support;
+mod transport;
 mod weights;
 
 pub use challenge::DenseChallenge;

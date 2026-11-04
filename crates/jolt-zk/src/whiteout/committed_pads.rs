@@ -10,7 +10,7 @@ use jolt_algebra::JoltField;
 use jolt_crypto::lattice::{sample_box_digits, CHALLENGE_RING_DIM};
 #[cfg(feature = "whiteout-prover")]
 use jolt_transcript::ProverTranscript;
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::VerifierTranscript;
 #[cfg(feature = "whiteout-prover")]
 use rand_core::{CryptoRng, RngCore};
 
@@ -18,6 +18,9 @@ use rand_core::{CryptoRng, RngCore};
 use super::pad_commitment::{LatticePadOpening, RANDOMNESS_LOG_BASIS};
 #[cfg(feature = "whiteout-prover")]
 use super::sample::sample_zero_constant_term;
+use super::transport::receive_values;
+#[cfg(feature = "whiteout-prover")]
+use super::transport::send_values;
 #[cfg(feature = "whiteout-prover")]
 use super::WhiteoutError;
 use super::{ImageCompression, LatticePadCommitment};
@@ -86,16 +89,16 @@ impl<F: JoltField> WhiteoutPadOpening<F> {
 ///
 /// [`ZkError`] if `layout` does not fit `commitment` or compression fails.
 #[cfg(feature = "whiteout-prover")]
-pub fn commit_lattice_pads<F, const D: usize, H, R>(
+pub fn commit_lattice_pads<F, const D: usize, T, R>(
     commitment: &LatticePadCommitment<F, D>,
     compression: &dyn ImageCompression<F>,
     layout: PadLayout,
-    transcript: &mut ProverTranscript<H>,
+    transcript: &mut T,
     rng: &mut R,
 ) -> Result<CommittedPads<F, WhiteoutPadOpening<F>>, ZkError>
 where
     F: JoltField,
-    H: Sponge,
+    T: ProverTranscript + ?Sized,
     R: RngCore + CryptoRng,
 {
     let pads: Vec<F> = (0..layout.num_pads).map(|_| F::random(rng)).collect();
@@ -112,7 +115,7 @@ where
         .flat_map(|ring| ring.coefficients().iter().copied())
         .collect();
     let compressed = compression.compress(&image)?;
-    transcript.send_all(&compressed.payload);
+    send_values(transcript, &compressed.payload);
     CommittedPads::new(
         layout,
         pads,
@@ -130,17 +133,17 @@ where
 /// # Errors
 ///
 /// [`ZkError`] on a truncated payload.
-pub fn receive_lattice_pads<F, const D: usize, H>(
+pub fn receive_lattice_pads<F, const D: usize, T>(
     commitment: &LatticePadCommitment<F, D>,
     compression: &dyn ImageCompression<F>,
     layout: PadLayout,
-    transcript: &mut VerifierTranscript<'_, H>,
+    transcript: &mut T,
 ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError>
 where
     F: JoltField,
-    H: Sponge,
+    T: VerifierTranscript + ?Sized,
 {
-    let payload = transcript.receive_n(compression.payload_len(commitment.image_len())?)?;
+    let payload = receive_values(transcript, compression.payload_len(commitment.image_len())?)?;
     Ok(CommittedPadsView::new(
         layout,
         LatticePadPayload { payload },

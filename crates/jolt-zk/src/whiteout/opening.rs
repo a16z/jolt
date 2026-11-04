@@ -5,7 +5,8 @@
 //! so the seam lives here.
 
 use jolt_algebra::JoltField;
-use jolt_transcript::{Sponge, VerifierTranscript};
+use jolt_transcript::VerifierState;
+use spongefish::DuplexSpongeInterface;
 
 use super::LatticePadPayload;
 use crate::masking::{
@@ -54,7 +55,13 @@ pub struct MaskedOpeningShape {
 }
 
 /// The verifier side of a masked group opening.
+///
+/// Akita's opening runs in the proof's NARG string, so every transcript
+/// argument is the concrete spongefish verifier state of [`Self::Sponge`],
+/// as in `jolt_openings::GroupBatchOpening`.
 pub trait MaskedGroupOpening<F: JoltField> {
+    /// The transcript sponge the opening runs on.
+    type Sponge: DuplexSpongeInterface<U = u8>;
     type Setup;
     type GroupCommitment;
     /// The public setup of one opening shape, derived from the verifier
@@ -79,10 +86,10 @@ pub trait MaskedGroupOpening<F: JoltField> {
     /// # Errors
     ///
     /// [`ZkError`] on a malformed commitment.
-    fn receive_pads<H: Sponge>(
+    fn receive_pads(
         shape: &Self::Shape,
         layout: PadLayout,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError>;
 
     /// Replays the masked levels of the opening of `groups` on `pads`. The
@@ -91,11 +98,11 @@ pub trait MaskedGroupOpening<F: JoltField> {
     /// # Errors
     ///
     /// [`ZkError`] if a masked level rejects.
-    fn verify_masked<H: Sponge, P>(
+    fn verify_masked<P>(
         shape: &Self::Shape,
         groups: Vec<MaskedGroupClaim<F, Self::GroupCommitment>>,
         pads: &mut CommittedPadsView<P>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
     ) -> Result<Self::Prefix, ZkError>;
 
     /// The pad-layout replay of [`Self::verify_masked`], over a counting
@@ -104,11 +111,11 @@ pub trait MaskedGroupOpening<F: JoltField> {
     /// # Errors
     ///
     /// [`ZkError`] if the replay cannot run the shape.
-    fn count_masked<H: Sponge>(
+    fn count_masked(
         shape: &Self::Shape,
         groups: Vec<MaskedGroupClaim<F, Self::GroupCommitment>>,
         view: &mut CommittedPadsView<()>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
     ) -> Result<Self::Prefix, ZkError>;
 
     /// Allocates the masked levels' auxiliary slots and records their
@@ -141,11 +148,11 @@ pub trait MaskedGroupOpening<F: JoltField> {
     /// # Errors
     ///
     /// [`ZkError`] if either rejects.
-    fn verify_tail<H: Sponge>(
+    fn verify_tail(
         shape: &Self::Shape,
         prefix: &Self::Prefix,
         relation: &ResidualRelation<F>,
         pads: &CommittedPadsView<LatticePadPayload<F>>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
     ) -> Result<(), ZkError>;
 }

@@ -29,7 +29,8 @@ use std::ops::Range;
 use jolt_algebra::{lift_ct, CyclotomicRing, JoltField};
 use jolt_crypto::challenge::SparseChallenge;
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
-use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{ProverState, VerifierState};
+use spongefish::DuplexSpongeInterface;
 
 use super::challenge::{challenge_ring, challenge_times_ring, challenge_times_ring_transpose};
 use super::compression::ImageCompression;
@@ -461,21 +462,38 @@ pub struct CompressedTarget<'a, F> {
 /// Proves the response statement. Akita implements it (W5). The Σ-protocol
 /// absorbed the statement's compressed targets of `N` before `ρ`
 /// ([`super::verify_sigma`]); the response proof does not absorb them again.
+///
+/// The response proof runs in the proof's NARG string, on the concrete
+/// spongefish states of the implementor's sponge, as Akita's opening does.
 pub trait ResponseProver<F: JoltField, const D: usize> {
+    /// The transcript sponge the response proof runs on.
+    type Sponge: DuplexSpongeInterface<U = u8>;
+
     /// The compression map of the statement's images.
     fn compression(&self) -> &dyn ImageCompression<F>;
 
-    fn prove_response<H: Sponge>(
+    /// Proves `statement` for `witness`, writing the proof to `transcript`.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError`] if the prover fails.
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<Self::Sponge>,
     ) -> Result<(), ZkError>;
 
-    fn verify_response<H: Sponge>(
+    /// Verifies the response proof of `statement`, reading it from
+    /// `transcript`.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError`] if the proof is rejected.
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
     ) -> Result<(), ZkError>;
 }
 

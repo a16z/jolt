@@ -20,6 +20,7 @@ whiteout = [
   "dep:tracing",
   "jolt-algebra/solinas",
   "jolt-crypto/lattice",
+  "jolt-transcript/solinas",
 ]
 # Whiteout's prover-only pieces (the zero-constant-term mask sampler, the
 # witness alphabet check, the rejection rule). A verifier that enables only

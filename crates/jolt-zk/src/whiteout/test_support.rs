@@ -5,9 +5,13 @@
 //! synthetic instance of the crate's own tests. Test support only.
 
 use jolt_algebra::One;
-use jolt_transcript::{Blake2b512, ProtocolId, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{
+    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, BytesMsg, ProverState,
+    UniformBytes, VerifierState, VerifierTranscript, TAG_BYTES,
+};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
+use spongefish::DuplexSpongeInit;
 
 use super::compression::ImageCompression;
 use super::fixture::Instance;
@@ -15,36 +19,39 @@ pub use super::fixture::RawImages;
 pub use super::fixture::F;
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
 use super::sigma::{prove_sigma_with, SelfChecks};
+use super::transport::{receive_bytes, receive_values, send_bytes, send_values};
 use super::{verify_sigma, BlockTarget, LiftedRelation, SigmaSetup};
 use crate::masking::{ResidualRelation, ZkError};
 
-pub(crate) const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-sigma");
+pub(crate) const PROTOCOL: [u8; TAG_BYTES] = protocol_tag(b"jolt-zk/whiteout-sigma");
 pub(crate) const LABEL: &[u8] = b"whiteout-sigma";
 
 /// Sends `e` in the clear; the verifier checks the statement directly.
 pub struct CheckingResponseProver;
 
 impl<const D: usize> ResponseProver<F, D> for CheckingResponseProver {
+    type Sponge = Blake2b512;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         &RawImages
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<Blake2b512>,
     ) -> Result<(), ZkError> {
         statement.check_witness(witness)?;
         SendingResponseProver.prove_response(statement, witness, transcript)
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Blake2b512>,
     ) -> Result<(), ZkError> {
-        let bytes = transcript.receive_bytes(statement.layout()?.len())?;
+        let bytes = receive_bytes(transcript, statement.layout()?.len())?;
         let witness = ResponseWitness {
             digits: bytes.iter().map(|&byte| byte as i8).collect(),
         };
@@ -56,25 +63,27 @@ impl<const D: usize> ResponseProver<F, D> for CheckingResponseProver {
 pub(crate) struct SendingResponseProver;
 
 impl<const D: usize> ResponseProver<F, D> for SendingResponseProver {
+    type Sponge = Blake2b512;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         &RawImages
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         _statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<Blake2b512>,
     ) -> Result<(), ZkError> {
         let bytes: Vec<u8> = witness.digits.iter().map(|&digit| digit as u8).collect();
-        transcript.send_bytes(&bytes);
+        send_bytes(transcript, &bytes);
         Ok(())
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Blake2b512>,
     ) -> Result<(), ZkError> {
         CheckingResponseProver.verify_response(statement, transcript)
     }
@@ -125,11 +134,11 @@ impl<const D: usize> SyntheticSigma<D> {
 
     /// The images, then the Σ-protocol with `response` proving the
     /// response statement; `seed` drives the prover's randomness.
-    pub fn prove<P: ResponseProver<F, D> + Sync>(
-        &self,
-        response: &P,
-        seed: u64,
-    ) -> Result<Vec<u8>, ZkError> {
+    pub fn prove<P>(&self, response: &P, seed: u64) -> Result<Vec<u8>, ZkError>
+    where
+        P: ResponseProver<F, D> + Sync,
+        P::Sponge: UniformBytes + DuplexSpongeInit<U = u8> + Send,
+    {
         let setup = self
             .instance
             .setup_with(self.instance.targets(response.compression()));
@@ -140,28 +149,32 @@ impl<const D: usize> SyntheticSigma<D> {
 
     /// Verifies `proof`, reading the images from it, with `response`
     /// verifying the response statement.
-    pub fn verify<P: ResponseProver<F, D>>(
-        &self,
-        proof: &[u8],
-        response: &P,
-    ) -> Result<(), ZkError> {
+    pub fn verify<P>(&self, proof: &[u8], response: &P) -> Result<(), ZkError>
+    where
+        P: ResponseProver<F, D>,
+        P::Sponge: UniformBytes + DuplexSpongeInit<U = u8>,
+    {
         verify_instance(&self.instance, &self.instance.relation, proof, response)
     }
 }
 
 /// Proves `instance` under `setup`, sending the images first; returns the
 /// proof and the attempt count.
-pub(crate) fn prove_instance<const D: usize, P: ResponseProver<F, D> + Sync>(
+pub(crate) fn prove_instance<const D: usize, P>(
     instance: &Instance<D>,
     setup: &SigmaSetup<F, D>,
     lifted: &LiftedRelation<F>,
     response: &P,
     checks: SelfChecks,
     seed: u64,
-) -> Result<(Vec<u8>, usize), ZkError> {
-    let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, LABEL);
+) -> Result<(Vec<u8>, usize), ZkError>
+where
+    P: ResponseProver<F, D> + Sync,
+    P::Sponge: UniformBytes + DuplexSpongeInit<U = u8> + Send,
+{
+    let mut transcript = prover_transcript::<P::Sponge>(&PROTOCOL, &BytesMsg(LABEL));
     for (_, payload) in setup.compressed_targets() {
-        transcript.send_all(payload);
+        send_values(&mut transcript, payload);
     }
     let mut rng = ChaCha20Rng::seed_from_u64(seed);
     let attempts = prove_sigma_with(
@@ -173,21 +186,25 @@ pub(crate) fn prove_instance<const D: usize, P: ResponseProver<F, D> + Sync>(
         response,
         checks,
     )?;
-    Ok((transcript.finish(), attempts))
+    Ok((transcript.narg_string().to_vec(), attempts))
 }
 
 /// Verifies a proof of `relation`, reading the images from the proof.
-pub(crate) fn verify_instance<const D: usize, P: ResponseProver<F, D>>(
+pub(crate) fn verify_instance<const D: usize, P>(
     instance: &Instance<D>,
     relation: &ResidualRelation<F>,
     proof: &[u8],
     response: &P,
-) -> Result<(), ZkError> {
-    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, proof);
+) -> Result<(), ZkError>
+where
+    P: ResponseProver<F, D>,
+    P::Sponge: UniformBytes + DuplexSpongeInit<U = u8>,
+{
+    let mut transcript = verifier_transcript::<P::Sponge>(&PROTOCOL, &BytesMsg(LABEL), proof);
     let compression = response.compression();
     let mut receive = |rings: usize| -> Result<BlockTarget<F, D>, ZkError> {
         Ok(BlockTarget::Compressed {
-            payload: transcript.receive_n::<F>(compression.payload_len(rings * D)?)?,
+            payload: receive_values::<F, _>(&mut transcript, compression.payload_len(rings * D)?)?,
             image: None,
         })
     };
@@ -195,5 +212,5 @@ pub(crate) fn verify_instance<const D: usize, P: ResponseProver<F, D>>(
     let setup = instance.setup_with(targets);
     let lifted = setup.lift(relation, &instance.claims)?;
     verify_sigma(&setup, &lifted, &mut transcript, response)?;
-    Ok(transcript.finish()?)
+    Ok(VerifierTranscript::check_eof(transcript)?)
 }

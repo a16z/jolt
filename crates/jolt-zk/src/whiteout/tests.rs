@@ -15,7 +15,7 @@ use jolt_algebra::{CyclotomicRing, Field, One, Ring, Zero};
 use jolt_crypto::lattice::{MatrixShape, MatrixView, CHALLENGE_RING_DIM};
 use jolt_crypto::sample::GaussianWidth;
 use jolt_poly::EqPolynomial;
-use jolt_transcript::{Blake2b512, ProverTranscript, Sponge, VerifierTranscript};
+use jolt_transcript::{verifier_transcript, Blake2b512, BytesMsg, ProverState, VerifierState};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
@@ -36,6 +36,7 @@ use super::test_support::{
     prove_instance as prove, verify_instance, CheckingResponseProver, SendingResponseProver, LABEL,
     PROTOCOL,
 };
+use super::transport::receive_values;
 use super::verify_sigma;
 use super::{
     BlockTarget, ImageCompression, ResidualBlock, ResponseSegment, SegmentTable, SigmaParams,
@@ -76,15 +77,17 @@ struct CapturingResponseProver {
 }
 
 impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
+    type Sponge = Blake2b512;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         &RawImages
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<Blake2b512>,
     ) -> Result<(), ZkError> {
         let mut z = Vec::new();
         let mut rest = witness.digits.as_slice();
@@ -110,10 +113,10 @@ impl<const D: usize> ResponseProver<F, D> for CapturingResponseProver {
         SendingResponseProver.prove_response(statement, witness, transcript)
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Blake2b512>,
     ) -> Result<(), ZkError> {
         CheckingResponseProver.verify_response(statement, transcript)
     }
@@ -679,10 +682,10 @@ fn payloads_of_the_wrong_length_are_rejected() {
         (|payload: &mut Vec<F>| payload.truncate(payload.len() - 1)) as fn(&mut Vec<F>),
         |payload| payload.push(F::zero()),
     ] {
-        let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, &proof);
+        let mut transcript = verifier_transcript::<Blake2b512>(&PROTOCOL, &BytesMsg(LABEL), &proof);
         let mut targets =
             [instance.u.len(), instance.t_p.len()].map(|rings| BlockTarget::Compressed {
-                payload: transcript.receive_n::<F>(rings * 64).unwrap(),
+                payload: receive_values::<F, _>(&mut transcript, rings * 64).unwrap(),
                 image: None,
             });
         if let BlockTarget::Compressed { payload, .. } = &mut targets[0] {
@@ -706,23 +709,25 @@ fn payloads_of_the_wrong_length_are_rejected() {
 struct RhoCapture(Mutex<Vec<F>>);
 
 impl<const D: usize> ResponseProver<F, D> for RhoCapture {
+    type Sponge = Blake2b512;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         &RawImages
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         _: &ResponseStatement<'_, F, D>,
         _: &ResponseWitness,
-        _: &mut ProverTranscript<H>,
+        _: &mut ProverState<Blake2b512>,
     ) -> Result<(), ZkError> {
         unreachable!("verifier only")
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        _: &mut VerifierTranscript<'_, H>,
+        _: &mut VerifierState<'_, Blake2b512>,
     ) -> Result<(), ZkError> {
         *self.0.lock().unwrap() = statement.rho().to_vec();
         Ok(())
@@ -738,10 +743,10 @@ fn rho_binds_the_compressed_targets() {
     let instance = Instance::<64>::new(74);
     let proof = prove_checked(&instance, 75).unwrap();
     let rho = |edit: fn(&mut [BlockTarget<F, 64>; 2])| -> Vec<F> {
-        let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, &proof);
+        let mut transcript = verifier_transcript::<Blake2b512>(&PROTOCOL, &BytesMsg(LABEL), &proof);
         let mut targets =
             [instance.u.len(), instance.t_p.len()].map(|rings| BlockTarget::Compressed {
-                payload: transcript.receive_n::<F>(rings * 64).unwrap(),
+                payload: receive_values::<F, _>(&mut transcript, rings * 64).unwrap(),
                 image: None,
             });
         edit(&mut targets);
@@ -768,7 +773,9 @@ fn rho_binds_the_compressed_targets() {
 #[test]
 fn rejected_attempts_cannot_be_substituted() {
     let instance = Instance::<64>::new(80);
-    let images = (instance.u.len() + instance.t_p.len()) * 64 * 16;
+    // Each NARG message is an 8-byte length, then its bytes: the two
+    // images, then `t_D`, then the nonce.
+    let images = 2 * 8 + (instance.u.len() + instance.t_p.len()) * 64 * 16;
     let mut seed = 81;
     let (proof, rejected) = loop {
         let _ = take_rejected();
@@ -790,8 +797,10 @@ fn rejected_attempts_cannot_be_substituted() {
     };
     let (t_d, nonce) = rejected;
     let mut substituted = proof.clone();
-    substituted[images..images + t_d.len()].copy_from_slice(&t_d);
-    substituted[images + t_d.len()..images + t_d.len() + 32].copy_from_slice(&nonce);
+    let t_d_at = images + 8;
+    let nonce_at = t_d_at + t_d.len() + 8;
+    substituted[t_d_at..t_d_at + t_d.len()].copy_from_slice(&t_d);
+    substituted[nonce_at..nonce_at + 32].copy_from_slice(&nonce);
     assert_ne!(substituted, proof);
     assert!(verify(&instance, &instance.relation, &substituted).is_err());
 }
@@ -819,16 +828,18 @@ fn widths_past_every_digit_count_are_rejected() {
 struct RowCheckingResponseProver;
 
 impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
+    type Sponge = Blake2b512;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         &RawImages
     }
 
     #[expect(clippy::panic_in_result_fn, reason = "the checks are the test")]
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<Blake2b512>,
     ) -> Result<(), ZkError> {
         let mut rng = ChaCha20Rng::seed_from_u64(41);
         let alpha = F::random(&mut rng);
@@ -939,10 +950,10 @@ impl<const D: usize> ResponseProver<F, D> for RowCheckingResponseProver {
         SendingResponseProver.prove_response(statement, witness, transcript)
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, Blake2b512>,
     ) -> Result<(), ZkError> {
         CheckingResponseProver.verify_response(statement, transcript)
     }

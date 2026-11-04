@@ -9,8 +9,7 @@ use jolt_algebra::Ring;
 use jolt_crypto::lattice::{commit, CHALLENGE_RING_DIM};
 use jolt_crypto::sample::GaussianWidth;
 use jolt_transcript::{
-    Blake2b512, ProtocolId, ProverTranscript, Sponge, VerifierTranscript, ATTEMPT_NONCE_LEN,
-    FORK_SEED_LEN,
+    protocol_tag, prover_transcript, Blake2b512, BytesMsg, ProverState, VerifierState,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
@@ -22,6 +21,7 @@ use super::fixture::{Instance, RawImages, F};
 use super::lift::{AggregatedRelation, ChallengeRing, ClaimTables, LiftedRelation, LinearParts};
 use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
 use super::sigma::{attempt_seed, prove_sigma_with, SelfChecks};
+use super::transport::{send_values, FORK_SEED_LEN};
 use super::{SigmaSetup, WhiteoutError};
 use crate::masking::ZkError;
 
@@ -98,10 +98,12 @@ impl<const D: usize> AttemptHarness<D> {
     /// One whole Σ-protocol proof, the prover's self-checks included and
     /// the response proof (W5) left out; returns the attempt count.
     pub fn prove(&self, seed: u64) -> Result<usize, ZkError> {
-        let protocol = ProtocolId::new::<Blake2b512>("jolt-zk/whiteout-diagnostics");
-        let mut transcript = ProverTranscript::<Blake2b512>::new(&protocol, b"sigma");
+        let mut transcript = prover_transcript::<Blake2b512>(
+            &protocol_tag(b"jolt-zk/whiteout-diagnostics"),
+            &BytesMsg(b"sigma".as_slice()),
+        );
         for (_, payload) in self.setup.compressed_targets() {
-            transcript.send_all(payload);
+            send_values(&mut transcript, payload);
         }
         prove_sigma_with(
             &self.setup,
@@ -167,7 +169,7 @@ impl<const D: usize> AttemptSteps<'_, D> {
     }
 
     /// The attempt fork's seed for `(σ, n, cm(t_D))`, with raw images.
-    pub fn seed(&self, nonce: &[u8; ATTEMPT_NONCE_LEN], t_d: &[ChallengeRing<F>]) -> [u8; 32] {
+    pub fn seed(&self, nonce: &[u8; 32], t_d: &[ChallengeRing<F>]) -> [u8; 32] {
         let payload: Vec<F> = t_d
             .iter()
             .flat_map(|ring| ring.coefficients().iter().copied())
@@ -209,23 +211,25 @@ impl<const D: usize> AttemptSteps<'_, D> {
 struct NoResponse;
 
 impl<const D: usize> ResponseProver<F, D> for NoResponse {
+    type Sponge = Blake2b512;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         &RawImages
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         _statement: &ResponseStatement<'_, F, D>,
         _witness: &ResponseWitness,
-        _transcript: &mut ProverTranscript<H>,
+        _transcript: &mut ProverState<Blake2b512>,
     ) -> Result<(), ZkError> {
         Ok(())
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         _statement: &ResponseStatement<'_, F, D>,
-        _transcript: &mut VerifierTranscript<'_, H>,
+        _transcript: &mut VerifierState<'_, Blake2b512>,
     ) -> Result<(), ZkError> {
         Err(WhiteoutError::ResponseRejected("diagnostics prove only").into())
     }

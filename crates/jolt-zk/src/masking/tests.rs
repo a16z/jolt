@@ -2,6 +2,7 @@
 //! closed by the product of the two output claims, plus a uni-skip round.
 //! The honest masked transcript satisfies its residual rows, and on this
 //! instance changing any one masked value breaks some row.
+#![cfg(feature = "prover")]
 
 use jolt_algebra::{Field, Fr, Ring};
 use jolt_claims::{challenge, constant, opening, Expr, FactoredExpr, Source};
@@ -11,14 +12,15 @@ use jolt_sumcheck::{
     SumcheckDomainSpec, SumcheckRecorder,
 };
 use jolt_transcript::{
-    Blake2b512, ClaimDomain, PrivateChannel, ProtocolId, ProverTranscript, VerifierTranscript,
+    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, BytesMsg, ClaimDomain,
+    TAG_BYTES,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 use super::*;
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/masking-tests");
+const PROTOCOL: [u8; TAG_BYTES] = protocol_tag(b"jolt-zk/masking-tests");
 const LABEL: &[u8] = b"masking";
 const NUM_VARS: usize = 3;
 const DEGREE: usize = 2;
@@ -102,7 +104,7 @@ fn layout() -> PadLayout {
 }
 
 struct Proof {
-    narg: Vec<u8>,
+    tape: MaskedMessages<Fr>,
     pads: Vec<Fr>,
     claimed_sum: Fr,
 }
@@ -114,17 +116,21 @@ fn prove() -> Proof {
     let layout = layout();
     let pads: Vec<Fr> = (0..layout.num_pads).map(|i| fr(1000 + i as u64)).collect();
     let mut committed = CommittedPads::new(layout, pads.clone(), ()).unwrap();
-    let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, LABEL);
+    let mut tape = MaskedMessages::default();
+    let mut transcript = prover_transcript::<Blake2b512>(&PROTOCOL, &BytesMsg(LABEL));
 
-    let mut uniskip = MaskingRecorder::new(&mut committed);
-    let r0 = uniskip
-        .absorb_full_round(&uniskip_poly(), DEGREE, &mut transcript)
-        .unwrap();
-    uniskip
-        .finish(&[uniskip_poly().evaluate(r0)], &mut transcript)
-        .unwrap();
+    let _ = prove_uniskip_masked(
+        &mut committed,
+        &mut tape,
+        &uniskip_poly(),
+        uniskip_input(),
+        DEGREE,
+        UNISKIP_DOMAIN,
+        &mut transcript,
+    )
+    .unwrap();
 
-    let mut recorder = MaskingRecorder::new(&mut committed);
+    let mut recorder = MaskingRecorder::new(&mut committed, &mut tape);
     let (mut a, mut b) = (a, b);
     for _ in 0..NUM_VARS {
         let r = recorder
@@ -133,7 +139,7 @@ fn prove() -> Proof {
         a = fold(&a, r);
         b = fold(&b, r);
     }
-    recorder.finish(&[a[0], b[0]], &mut transcript).unwrap();
+    let _ = recorder.finish(&[a[0], b[0]], &mut transcript).unwrap();
 
     let mut values = ValuesDomain::default();
     let _ = lower_factored(
@@ -150,11 +156,13 @@ fn prove() -> Proof {
         &mut |_: &Source<Opening, (), ()>| -> Result<Fr, ZkError> { unreachable!() },
     )
     .unwrap();
-    let _ = committed.send(&values.auxiliary, &mut transcript).unwrap();
+    let _ = committed
+        .send(&values.auxiliary, &mut tape, &mut transcript)
+        .unwrap();
     committed.finish().unwrap();
 
     Proof {
-        narg: transcript.finish(),
+        tape,
         pads,
         claimed_sum,
     }
@@ -169,30 +177,29 @@ struct Received {
     auxiliary: Vec<Fr>,
 }
 
-fn receive(narg: &[u8]) -> Received {
-    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, narg);
+fn receive(tape: &MaskedMessages<Fr>) -> Received {
+    let mut transcript = verifier_transcript::<Blake2b512>(&PROTOCOL, &BytesMsg(LABEL), &[]);
     let layout = layout();
     let auxiliary_len = layout.auxiliary.len();
     let mut view = CommittedPadsView::new(layout, ());
-    let mut channel = view.channel(&mut transcript);
+    let mut reader = MaskedReader::new(tape);
+    let mut channel = view.channel(&mut reader, &mut transcript);
     let uniskip = receive_masked_rounds::<Fr, _>(
         &DegreeSchedule::uniform(1, DEGREE),
         RoundWire::Full,
         &mut channel,
     )
     .unwrap();
-    let mut uniskip_claim = [Fr::from_u64(0)];
-    let uniskip_slot = channel.exchange_private_base(&mut uniskip_claim).unwrap();
+    let (uniskip_claim, uniskip_slot) = channel.receive_private(1).unwrap();
     let rounds = receive_masked_rounds::<Fr, _>(
         &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundWire::Compressed,
         &mut channel,
     )
     .unwrap();
-    let mut claims = [Fr::from_u64(0); 2];
-    let slots = channel.exchange_private_base(&mut claims).unwrap();
-    let mut auxiliary = vec![Fr::from_u64(0); auxiliary_len];
-    let _ = channel.exchange_private_base(&mut auxiliary).unwrap();
+    let (claims, slots) = channel.receive_private(2).unwrap();
+    let (auxiliary, _) = channel.receive_private(auxiliary_len).unwrap();
+    reader.finish().unwrap();
     view.finish().unwrap();
     Received {
         uniskip,
@@ -252,7 +259,7 @@ fn relation(received: &Received, claimed_sum: Fr) -> ResidualRelation<Fr> {
 #[test]
 fn honest_masked_transcript_satisfies_its_rows() {
     let proof = prove();
-    let received = receive(&proof.narg);
+    let received = receive(&proof.tape);
     let relation = relation(&received, proof.claimed_sum);
     assert_eq!(relation.products.len(), 1);
     assert_eq!(relation.first_violation(&proof.pads, &[]).unwrap(), None);
@@ -268,7 +275,7 @@ type Perturbation = Box<dyn Fn(&mut Received)>;
 #[test]
 fn changing_any_masked_value_breaks_a_row() {
     let proof = prove();
-    let honest = receive(&proof.narg);
+    let honest = receive(&proof.tape);
     let one = Fr::from_u64(1);
     let mut perturbations: Vec<Perturbation> = Vec::new();
     for round in 0..NUM_VARS {
@@ -286,7 +293,7 @@ fn changing_any_masked_value_breaks_a_row() {
         perturbations.push(Box::new(move |r| r.auxiliary[index] += one));
     }
     for perturb in &perturbations {
-        let mut received = receive(&proof.narg);
+        let mut received = receive(&proof.tape);
         perturb(&mut received);
         let relation = relation(&received, proof.claimed_sum);
         assert!(relation
@@ -302,13 +309,14 @@ fn changing_any_masked_value_breaks_a_row() {
 #[test]
 fn rounds_off_their_degree_schedule_are_rejected() {
     let proof = prove();
-    let received = receive(&proof.narg);
+    let received = receive(&proof.tape);
     let mut relation = ResidualRelation::new(layout(), 0);
     let input = AffineRow::constant(proof.claimed_sum);
     let schedule = DegreeSchedule::batched::<Fr>(
         NUM_VARS,
         [MemberDegrees {
             offset: 0,
+            degree: DEGREE + 1,
             round_degrees: vec![DEGREE, DEGREE + 1, DEGREE],
         }],
     )
@@ -345,7 +353,7 @@ fn rounds_off_their_degree_schedule_are_rejected() {
 #[test]
 fn a_wrong_claimed_sum_breaks_a_row() {
     let proof = prove();
-    let received = receive(&proof.narg);
+    let received = receive(&proof.tape);
     let relation = relation(&received, proof.claimed_sum + Fr::from_u64(1));
     assert!(relation
         .first_violation(&proof.pads, &[])
@@ -643,9 +651,8 @@ fn product_rows_check_the_sum_of_their_pairs() {
 fn pad_exhaustion_is_an_error() {
     let layout = PadLayout::new(1, 0).unwrap();
     let mut committed = CommittedPads::new(layout, vec![fr(1)], ()).unwrap();
-    let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, LABEL);
     assert!(matches!(
-        committed.send(&[fr(1), fr(2)], &mut transcript),
+        committed.mask(&[fr(1), fr(2)]),
         Err(ZkError::PadsExhausted { .. })
     ));
 }
@@ -726,20 +733,16 @@ mod claim_checks {
 }
 
 mod single_instance {
-    //! A masked single-instance sumcheck as Akita's masked levels run one
-    //! (Akita `specs/whiteout-akita.md` §4.5): `prove_single` over the
-    //! prover's masked channel, `receive_masked_single` over the verifier's,
-    //! each challenge drawn through the round context, and the rounds lowered
-    //! by `sumcheck_rows`. The output claims a(r), b(r) are masked messages
-    //! whose product lands on the running claim.
+    //! Masked single-instance rounds as Akita's masked levels lower them
+    //! (Akita `specs/whiteout-akita.md` §4.5): the clear `prove_single`
+    //! fixes each round's wire and challenge, the wires and the output
+    //! claims a(r), b(r) go out masked, and `sumcheck_rows` lowers the
+    //! rounds. The product of the output claims lands on the running claim.
 
     use jolt_algebra::{Ext2, ExtField, Prime128Offset275 as Fp};
     use jolt_poly::{Point, UnivariatePoly};
-    use jolt_sumcheck::{
-        prove_single, receive_masked_single, verify_single, ProveRounds, ProverRoundContext,
-        SingleFormat, SingleInstance, SumcheckError, SumcheckSite, VerifierRoundContext,
-    };
-    use jolt_transcript::{Channel, ClaimDomain, SiteId, TranscriptError};
+    use jolt_sumcheck::{prove_single, ProveRounds, SingleFormat, SingleInstance, SumcheckError};
+    use jolt_transcript::ClaimDomain;
 
     use super::*;
 
@@ -749,55 +752,6 @@ mod single_instance {
 
     fn fp(value: u64) -> Fp {
         Fp::from_u64(value)
-    }
-
-    fn site(site: SumcheckSite) -> SiteId {
-        let mut id = [0u8; 32];
-        id[..4].copy_from_slice(&site.round.to_le_bytes());
-        id[4..8].copy_from_slice(&(site.role as u32).to_le_bytes());
-        SiteId(id)
-    }
-
-    /// Draws exactly uniform challenges, which `receive_masked_rounds`'
-    /// `challenge_small` would not reproduce.
-    struct Prover<'a>(MaskedProver<'a, Fp, (), H>);
-
-    impl<'a> ProverRoundContext<Fp> for Prover<'a> {
-        type Channel = MaskedProver<'a, Fp, (), H>;
-        type Error = SumcheckError<Fp>;
-
-        fn channel_mut(&mut self) -> &mut Self::Channel {
-            &mut self.0
-        }
-
-        fn site(&self, sumcheck_site: SumcheckSite) -> Option<SiteId> {
-            Some(site(sumcheck_site))
-        }
-
-        fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<Fp, SumcheckError<Fp>> {
-            self.0.site(site(sumcheck_site));
-            Ok(self.0.challenge())
-        }
-    }
-
-    struct Verifier<'a, 'p>(MaskedVerifier<'a, 'p, H>);
-
-    impl<'a, 'p> VerifierRoundContext<Fp> for Verifier<'a, 'p> {
-        type Channel = MaskedVerifier<'a, 'p, H>;
-        type Error = SumcheckError<Fp>;
-
-        fn channel_mut(&mut self) -> &mut Self::Channel {
-            &mut self.0
-        }
-
-        fn site(&self, sumcheck_site: SumcheckSite) -> Option<SiteId> {
-            Some(site(sumcheck_site))
-        }
-
-        fn challenge(&mut self, sumcheck_site: SumcheckSite) -> Result<Fp, SumcheckError<Fp>> {
-            self.0.site(site(sumcheck_site));
-            Ok(self.0.challenge())
-        }
     }
 
     /// `Σ_x w(x) a(x) b(x)`, binding the lowest bit first; with `tau`,
@@ -846,7 +800,6 @@ mod single_instance {
                         equality_point: Point::low_to_high(tau),
                     }
                 }),
-                invocation: 0,
             }
         }
     }
@@ -898,34 +851,43 @@ mod single_instance {
             .collect()
     }
 
-    fn prove(eq_factored: bool) -> Vec<u8> {
+    /// The masked rounds and the masked output claims with their slots.
+    fn prove(eq_factored: bool) -> (Vec<MaskedRound<Fp>>, [(Fp, usize); 2]) {
         let mut kernel = Kernel::new(eq_factored);
         let instance = kernel.instance();
+        let mut transcript = prover_transcript::<H>(&PROTOCOL, &BytesMsg(LABEL));
+        let (proof, reduction) =
+            prove_single::<Fp, _, SumcheckError<Fp>>(&mut kernel, &instance, &mut transcript)
+                .unwrap();
         let mut committed = CommittedPads::new(layout(), pads(), ()).unwrap();
-        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
-        let mut context = Prover(committed.channel(&mut transcript));
-        let _ = prove_single::<Fp, Fp, _, _>(&mut kernel, &instance, &mut context).unwrap();
-        let mut claims = [kernel.a[0], kernel.b[0]];
-        let _ = context.0.exchange_private_base(&mut claims).unwrap();
+        let rounds = proof
+            .rounds
+            .iter()
+            .zip(&reduction.challenges)
+            .map(|(wire, &challenge)| {
+                let (slots, wire) = committed.mask(wire).unwrap();
+                MaskedRound {
+                    wire,
+                    slots,
+                    challenge,
+                }
+            })
+            .collect();
+        let (slots, claims) = committed.mask(&[kernel.a[0], kernel.b[0]]).unwrap();
         ValuesDomain::default()
-            .product_into(claims[0], claims[1], claims[0] * claims[1])
+            .product_into(kernel.a[0], kernel.b[0], kernel.a[0] * kernel.b[0])
             .unwrap();
         committed.finish().unwrap();
-        transcript.finish()
+        (
+            rounds,
+            [(claims[0], slots.start), (claims[1], slots.start + 1)],
+        )
     }
 
-    /// The relation over the received transcript, from the clear input claim.
-    fn relation(narg: &[u8], eq_factored: bool, input_claim: Fp) -> ResidualRelation<Fp> {
+    /// The relation over the masked rounds, from the clear input claim.
+    fn relation(eq_factored: bool, input_claim: Fp) -> ResidualRelation<Fp> {
         let instance = Kernel::new(eq_factored).instance();
-        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, narg);
-        let mut view = CommittedPadsView::new(layout(), ());
-        let mut context = Verifier(view.channel(&mut transcript));
-        let rounds = receive_masked_single::<Fp, Fp, _, _>(&instance, &mut context).unwrap();
-        let mut claims = [fp(0); 2];
-        let slots = context.0.exchange_private_base(&mut claims).unwrap();
-        view.finish().unwrap();
-        transcript.finish().unwrap();
-
+        let (rounds, [(a, slot_a), (b, slot_b)]) = prove(eq_factored);
         let format = match instance.format {
             SingleFormat::Compressed => RoundFormat::Compressed,
             SingleFormat::EqFactored { equality_point } => {
@@ -943,8 +905,8 @@ mod single_instance {
         .unwrap();
         let mut rows = RowsDomain::new(&mut relation, &[]);
         rows.product_into(
-            AffineRow::masked(claims[0], PadIndex(slots.start)),
-            AffineRow::masked(claims[1], PadIndex(slots.start + 1)),
+            AffineRow::masked(a, PadIndex(slot_a)),
+            AffineRow::masked(b, PadIndex(slot_b)),
             running,
         )
         .unwrap();
@@ -955,32 +917,17 @@ mod single_instance {
     #[test]
     fn masked_single_instance_satisfies_its_rows() {
         for eq_factored in [false, true] {
-            let narg = prove(eq_factored);
             let claim = Kernel::new(eq_factored).instance().input_claim;
-            let honest = relation(&narg, eq_factored, claim);
+            let honest = relation(eq_factored, claim);
             assert_eq!((honest.affine.len(), honest.products.len()), (0, 1));
             assert_eq!(honest.first_violation(&pads(), &[]).unwrap(), None);
-            let wrong = relation(&narg, eq_factored, claim + fp(1));
+            let wrong = relation(eq_factored, claim + fp(1));
             assert!(wrong.first_violation(&pads(), &[]).unwrap().is_some());
         }
     }
 
-    /// A clear replay over a masked channel would fold m̂ as clear values;
-    /// `verify_single` rejects the first masked round instead.
-    #[test]
-    fn verify_single_rejects_a_masked_channel() {
-        let narg = prove(false);
-        let instance = Kernel::new(false).instance();
-        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
-        let mut view = CommittedPadsView::new(layout(), ());
-        assert!(matches!(
-            verify_single::<Fp, Fp, _, _>(&instance, &mut Verifier(view.channel(&mut transcript))),
-            Err(SumcheckError::MaskedRoundInClearReplay { round: 0 })
-        ));
-    }
-
     /// An extension element takes one pad per base coordinate, in the order
-    /// the verifier's channel takes them.
+    /// the verifier's view takes them.
     #[test]
     fn extension_messages_mask_each_coordinate() {
         type E = Ext2<Fp>;
@@ -988,85 +935,24 @@ mod single_instance {
         let layout = PadLayout::new(2, 0).unwrap();
         let pads = vec![fp(11), fp(13)];
         let mut committed = CommittedPads::new(layout.clone(), pads.clone(), ()).unwrap();
-        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
-        let slots = committed
-            .channel(&mut transcript)
-            .exchange_private::<Fp, E>(&mut [value])
-            .unwrap();
+        let (slots, masked) = committed.mask_ext::<E>(&[value]).unwrap();
         committed.finish().unwrap();
-        let narg = transcript.finish();
 
-        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
         let mut view = CommittedPadsView::new(layout, ());
-        let mut received = [E::default()];
-        assert_eq!(
-            view.channel(&mut transcript)
-                .exchange_private::<Fp, E>(&mut received)
-                .unwrap(),
-            slots
-        );
+        assert_eq!(view.take_ext(1, E::DEGREE).unwrap(), slots);
         view.finish().unwrap();
         for (index, pad) in pads.iter().enumerate() {
             assert_eq!(
-                received[0].base_coefficient(index) - *pad,
+                masked[0].base_coefficient(index) - *pad,
                 value.base_coefficient(index)
             );
         }
     }
 
     #[test]
-    fn messages_of_another_field_are_rejected() {
-        let mut committed = CommittedPads::new(layout(), pads(), ()).unwrap();
-        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
-        assert!(matches!(
-            committed
-                .channel(&mut transcript)
-                .exchange_private_base(&mut [fr(1)]),
-            Err(ZkError::MessageFieldMismatch)
-        ));
-    }
-
-    /// A masked channel sends nothing for a clear message, and an explicitly
-    /// public one as the clear transcript would.
-    #[test]
-    fn masked_channels_refuse_clear_messages() {
-        let mut committed = CommittedPads::new(layout(), pads(), ()).unwrap();
-        let mut transcript = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
-        let mut channel = committed.channel(&mut transcript);
-        assert_eq!(
-            channel.exchange_all(&mut [fp(5)]),
-            Err(TranscriptError::ClearMessageOnMaskedChannel)
-        );
-        assert_eq!(channel.narg_len(), 0);
-        channel.exchange_public_all(&mut [fp(7)]).unwrap();
-        let narg = transcript.finish();
-        let mut clear = ProverTranscript::<H>::new(&PROTOCOL, LABEL);
-        clear.send(&fp(7));
-        assert_eq!(narg, clear.finish());
-
-        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
-        let mut view = CommittedPadsView::new(layout(), ());
-        let mut channel = view.channel(&mut transcript);
-        assert_eq!(
-            channel.exchange(&mut Fp::default()),
-            Err(TranscriptError::ClearMessageOnMaskedChannel)
-        );
-        let mut received = Fp::default();
-        channel.exchange_public(&mut received).unwrap();
-        assert_eq!(received, fp(7));
-    }
-
-    #[test]
     fn eq_factored_rounds_need_one_coordinate_each() {
-        let narg = prove(true);
         let instance = Kernel::new(true).instance();
-        let mut transcript = VerifierTranscript::<H>::new(&PROTOCOL, LABEL, &narg);
-        let mut view = CommittedPadsView::new(layout(), ());
-        let rounds = receive_masked_single::<Fp, Fp, _, _>(
-            &instance,
-            &mut Verifier(view.channel(&mut transcript)),
-        )
-        .unwrap();
+        let (rounds, _) = prove(true);
         assert!(matches!(
             sumcheck_rows(
                 &mut ResidualRelation::new(layout(), 0),

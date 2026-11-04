@@ -32,9 +32,8 @@ use jolt_crypto::challenge::{
 use jolt_crypto::lattice::{
     AjtaiLevel, GadgetDigits, MatrixShape, MatrixView, PreparedMatrix, CHALLENGE_RING_DIM,
 };
-use jolt_transcript::{
-    Channel, Fork, Sponge, VerifierTranscript, ATTEMPT_NONCE_LEN, FORK_SEED_LEN,
-};
+use jolt_transcript::{ChallengeCodec, FieldTranscript, Transcript, UniformBytes, VerifierState};
+use spongefish::DuplexSpongeInit;
 
 use super::compression::ImageCompression;
 use super::lift::{EvaluationClaims, LiftedRelation};
@@ -48,6 +47,9 @@ use super::response::{
     ResponseLayout, ResponseProver, ResponseSegment, ResponseStatement, FIELD_LEVELS,
 };
 use super::segments::{Segment, SegmentRole, SegmentTable};
+use super::transport::{
+    receive_bytes, receive_values, AttemptFork, ATTEMPT_NONCE_LEN, FORK_SEED_LEN,
+};
 use super::WhiteoutError;
 use crate::masking::{ResidualRelation, ZkError};
 #[cfg(feature = "whiteout-prover")]
@@ -343,9 +345,9 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
     /// Absorbs every compressed target's payload, in block order, as a public
     /// value: the first transcript operation of both roles, so `ρ` and every
     /// later challenge bind the payloads.
-    fn absorb_targets<C: Channel>(&self, channel: &mut C) {
+    fn absorb_targets<T: Transcript + ?Sized>(&self, transcript: &mut T) {
         for (_, payload) in self.compressed_targets() {
-            channel.public_all(payload);
+            transcript.append_values(payload);
         }
     }
 
@@ -441,12 +443,12 @@ pub(crate) fn response_num_vars(len: usize) -> Result<u32, WhiteoutError> {
 }
 
 /// The attempt seed: `(σ, n, cm(t_D))` through the attempt fork.
-pub(crate) fn attempt_seed<H: Sponge, F: JoltField>(
+pub(crate) fn attempt_seed<H: DuplexSpongeInit<U = u8>, F: JoltField>(
     sigma: &[u8; FORK_SEED_LEN],
     nonce: &[u8; ATTEMPT_NONCE_LEN],
     t_d: &[F],
 ) -> [u8; 32] {
-    let mut fork = Fork::<H>::attempt(sigma, nonce);
+    let mut fork = AttemptFork::<H>::new(sigma, nonce);
     let mut bytes = vec![0u8; F::NUM_BYTES];
     for coefficient in t_d {
         coefficient.to_bytes_le(&mut bytes);
@@ -455,28 +457,43 @@ pub(crate) fn attempt_seed<H: Sponge, F: JoltField>(
     fork.squeeze()
 }
 
+/// The fork seed `σ`: [`FORK_SEED_LEN`] uniform bytes squeezed from the
+/// transcript. Both roles squeeze it at the same position.
+pub(crate) fn fork_seed(squeezed: &[u8]) -> [u8; FORK_SEED_LEN] {
+    let mut seed = [0u8; FORK_SEED_LEN];
+    for (dst, &byte) in seed.iter_mut().zip(squeezed) {
+        *dst = byte;
+    }
+    seed
+}
+
 /// Verifies the Σ-protocol: absorbs the compressed targets' payloads,
 /// squeezes `ρ` and `σ`, reads `cm(t_D)` and the nonce, rebuilds `c`, and
 /// has `response` verify the response statement.
-pub fn verify_sigma<F: JoltField, const D: usize, H: Sponge, P: ResponseProver<F, D>>(
+pub fn verify_sigma<F, const D: usize, P>(
     setup: &SigmaSetup<F, D>,
     relation: &LiftedRelation<F>,
-    transcript: &mut VerifierTranscript<'_, H>,
+    transcript: &mut VerifierState<'_, P::Sponge>,
     response: &P,
-) -> Result<(), ZkError> {
+) -> Result<(), ZkError>
+where
+    F: JoltField + ChallengeCodec,
+    P: ResponseProver<F, D>,
+    P::Sponge: UniformBytes + DuplexSpongeInit<U = u8>,
+{
     setup.check_relation(relation)?;
     setup.absorb_targets(transcript);
-    let rho: Vec<F> = (0..relation.labels().num_challenges())
-        .map(|_| transcript.challenge::<F>())
-        .collect();
-    let sigma: [u8; FORK_SEED_LEN] = transcript.challenge_bytes();
+    let rho: Vec<F> =
+        FieldTranscript::<F>::challenge_vector(transcript, relation.labels().num_challenges())?;
+    let sigma = transcript.verifier_message_as(FORK_SEED_LEN, fork_seed);
     let compression = response.compression();
-    let v_payload: Vec<F> = transcript.receive_n(compression.payload_len(setup.v_image_len())?)?;
-    let nonce: [u8; ATTEMPT_NONCE_LEN] = transcript
-        .receive_bytes(ATTEMPT_NONCE_LEN)?
-        .try_into()
-        .map_err(|_| WhiteoutError::ResponseRejected("nonce length"))?;
-    let seed = attempt_seed::<H, F>(&sigma, &nonce, &v_payload);
+    let v_payload: Vec<F> =
+        receive_values(transcript, compression.payload_len(setup.v_image_len())?)?;
+    let nonce: [u8; ATTEMPT_NONCE_LEN] =
+        receive_bytes(transcript, ATTEMPT_NONCE_LEN)?
+            .try_into()
+            .map_err(|_| WhiteoutError::ResponseRejected("nonce length"))?;
+    let seed = attempt_seed::<P::Sponge, F>(&sigma, &nonce, &v_payload);
     let challenge = sample_indexed_challenges_from_seed(
         &seed,
         CHALLENGE_RING_DIM,
@@ -520,8 +537,9 @@ mod prover {
     use jolt_crypto::challenge::{sample_challenge_ct, SparseChallenge};
     use jolt_crypto::lattice::{commit, CHALLENGE_RING_DIM};
     use jolt_crypto::sample::{GaussianSampler, GaussianWidth, JointRejection, SampleError};
-    use jolt_transcript::{Channel, ProverTranscript, Sponge, ATTEMPT_NONCE_LEN, FORK_SEED_LEN};
+    use jolt_transcript::{ChallengeCodec, FieldTranscript, ProverState, UniformBytes};
     use rand_core::{CryptoRng, RngCore};
+    use spongefish::DuplexSpongeInit;
     use zeroize::Zeroize;
 
     use super::super::challenge::{challenge_ring, challenge_times_i64_into};
@@ -532,8 +550,9 @@ mod prover {
     };
     use super::super::pad_commitment::LatticePadOpening;
     use super::super::response::{ResponseProver, ResponseStatement, ResponseWitness};
+    use super::super::transport::{send_bytes, send_values, ATTEMPT_NONCE_LEN, FORK_SEED_LEN};
     use super::super::WhiteoutError;
-    use super::{attempt_seed, SigmaSetup};
+    use super::{attempt_seed, fork_seed, SigmaSetup};
     use crate::masking::ZkError;
     use crate::secret::SecretVec;
 
@@ -616,20 +635,20 @@ mod prover {
     /// Runs on a fresh rayon pool whose workers all have DIT set (A11).
     /// The compressed targets' payloads are absorbed first, as
     /// [`verify_sigma`] does.
-    pub fn prove_sigma<F, const D: usize, H, R, P>(
+    pub fn prove_sigma<F, const D: usize, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
         residual: &[i64],
         pads: &LatticePadOpening,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<P::Sponge>,
         rng: &mut R,
         response: &P,
     ) -> Result<usize, ZkError>
     where
-        F: JoltField,
-        H: Sponge,
+        F: JoltField + ChallengeCodec,
         R: RngCore + CryptoRng + Send,
         P: ResponseProver<F, D> + Sync,
+        P::Sponge: UniformBytes + DuplexSpongeInit<U = u8> + Send,
     {
         with_dit(|| {
             let s = setup.private_vector(residual, pads)?;
@@ -651,20 +670,20 @@ mod prover {
     /// consistent-cheat tests, `specs/whiteout-akita.md` §5.5 HT4). Test
     /// support only.
     #[cfg(feature = "whiteout-test-support")]
-    pub fn prove_sigma_unchecked<F, const D: usize, H, R, P>(
+    pub fn prove_sigma_unchecked<F, const D: usize, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
         residual: &[i64],
         pads: &LatticePadOpening,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<P::Sponge>,
         rng: &mut R,
         response: &P,
     ) -> Result<usize, ZkError>
     where
-        F: JoltField,
-        H: Sponge,
+        F: JoltField + ChallengeCodec,
         R: RngCore + CryptoRng + Send,
         P: ResponseProver<F, D> + Sync,
+        P::Sponge: UniformBytes + DuplexSpongeInit<U = u8> + Send,
     {
         with_dit(|| {
             let s = setup.private_vector(residual, pads)?;
@@ -685,20 +704,20 @@ mod prover {
         feature = "whiteout-diagnostics",
         feature = "whiteout-test-support"
     ))]
-    pub(crate) fn prove_sigma_with<F, const D: usize, H, R, P>(
+    pub(crate) fn prove_sigma_with<F, const D: usize, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
         s: &[i64],
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<P::Sponge>,
         rng: &mut R,
         response: &P,
         checks: SelfChecks,
     ) -> Result<usize, ZkError>
     where
-        F: JoltField,
-        H: Sponge,
+        F: JoltField + ChallengeCodec,
         R: RngCore + CryptoRng + Send,
         P: ResponseProver<F, D> + Sync,
+        P::Sponge: UniformBytes + DuplexSpongeInit<U = u8> + Send,
     {
         #[cfg(test)]
         let caller = std::thread::current().id();
@@ -709,20 +728,20 @@ mod prover {
         })?
     }
 
-    fn prove_under_dit<F, const D: usize, H, R, P>(
+    fn prove_under_dit<F, const D: usize, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
         s: &[i64],
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut ProverState<P::Sponge>,
         rng: &mut R,
         response: &P,
         checks: SelfChecks,
     ) -> Result<usize, ZkError>
     where
-        F: JoltField,
-        H: Sponge,
+        F: JoltField + ChallengeCodec,
         R: RngCore + CryptoRng,
         P: ResponseProver<F, D>,
+        P::Sponge: UniformBytes + DuplexSpongeInit<U = u8>,
     {
         setup.check_relation(relation)?;
         setup.absorb_targets(transcript);
@@ -751,9 +770,8 @@ mod prover {
             table.check_private_vector(s)?;
         }
 
-        let rho: Vec<F> = (0..relation.labels().num_challenges())
-            .map(|_| transcript.challenge::<F>())
-            .collect();
+        let rho: Vec<F> =
+            FieldTranscript::<F>::challenge_vector(transcript, relation.labels().num_challenges())?;
         let aggregated = relation.aggregate(&rho)?;
         let parts_s = aggregated.linear_parts(&tables, s, false)?;
         // ct(h) = Σ μ_row · row(s) + ct(g), so the per-row check above
@@ -786,7 +804,7 @@ mod prover {
             blocks,
             sampler: GaussianSampler::new(width),
             tail_bound: width.tail_bound(),
-            sigma: transcript.challenge_bytes(),
+            sigma: transcript.verifier_message_as(FORK_SEED_LEN, fork_seed),
             y: SecretVec::from(vec![0i64; table.num_coefficients()]),
             z_gaussian: SecretVec::from(vec![0i64; gaussian_len]),
             v_gaussian: SecretVec::from(vec![0i64; gaussian_len]),
@@ -795,11 +813,11 @@ mod prover {
         let max_attempts = setup.params().max_attempts()?;
 
         for attempt in 1..=max_attempts {
-            let Some(accepted) = prover.attempt::<H, R>(&rejection, rng)? else {
+            let Some(accepted) = prover.attempt::<P::Sponge, R>(&rejection, rng)? else {
                 continue;
             };
-            transcript.send_all(&accepted.t_d.payload);
-            transcript.send_bytes(&accepted.nonce);
+            send_values(transcript, &accepted.t_d.payload);
+            send_bytes(transcript, &accepted.nonce);
             let witness = prover.witness(&accepted)?;
             // The attempt's buffers are wiped and freed before the response
             // proof, the prover's largest step.
@@ -825,7 +843,7 @@ mod prover {
         /// coordinates are never touched: y is zero there and their shift
         /// does not enter the rejection rule.
         #[inline(never)]
-        fn attempt<H: Sponge, R: RngCore + CryptoRng>(
+        fn attempt<H: DuplexSpongeInit<U = u8>, R: RngCore + CryptoRng>(
             &mut self,
             rejection: &JointRejection,
             rng: &mut R,
