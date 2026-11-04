@@ -157,7 +157,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for TrustedAdviceCyclePhase<F> {
             trusted: opening_point,
         })
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method())]
     fn expected_output(
         &self,
         _input_points: &TrustedAdviceCyclePhaseInputClaims<Vec<F>>,
@@ -244,7 +244,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for UntrustedAdviceCyclePhase<F> {
             untrusted: opening_point,
         })
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method())]
     fn expected_output(
         &self,
         _input_points: &UntrustedAdviceCyclePhaseInputClaims<Vec<F>>,
@@ -353,7 +353,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for ProgramImageReductionCyclePhase<F> {
             program_image: opening_point,
         })
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method())]
     fn expected_output(
         &self,
         _input_points: &ProgramImageReductionCyclePhaseInputClaims<Vec<F>>,
@@ -471,7 +471,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReductionCyclePhase<F> {
             )
         })
     }
-
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method())]
     fn expected_output(
         &self,
         _input_points: &BytecodeReductionCyclePhaseInputClaims<Vec<F>>,
