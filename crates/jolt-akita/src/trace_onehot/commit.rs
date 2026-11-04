@@ -6,7 +6,7 @@ use jolt_field::{Fp128x8i32, Zero};
 use rayon::prelude::*;
 
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
-use super::ntt_commit::PreparedNttCommit;
+use super::ntt_commit::{PreparedNttCommit, MAX_NTT_POSITIONS};
 use super::source::TraceOneHotColumn;
 use super::traversal::{
     flush_deferred_rank, flush_wide, row_is_committed, trace_block_task_schedule,
@@ -76,7 +76,9 @@ pub(super) fn commit_columns<const D: usize>(
             .first()
             .and_then(|row| PreparedNttCommit::new(source, plan, row));
         if ntt_commit.is_some() {
-            schedule = PreparedNttCommit::<D>::align_task_schedule(schedule);
+            // Splitting inside a reconstruction batch repeats inverse transforms
+            // and leaves each task with a separately reduced partial commitment.
+            schedule = schedule.with_ring_alignment(MAX_NTT_POSITIONS);
         }
         let _accumulate_span = tracing::info_span!(
             "trace_onehot_commit_accumulate",

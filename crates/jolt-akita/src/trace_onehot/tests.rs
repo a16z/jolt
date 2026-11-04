@@ -23,7 +23,7 @@ use rayon::ThreadPoolBuilder;
 
 use super::commit::commit_columns;
 use super::digit_windows::{flush_digit_accumulators, DigitWindows};
-use super::ntt_commit::PreparedNttCommit;
+use super::ntt_commit::{PreparedNttCommit, MAX_NTT_POSITIONS};
 use super::source::TraceOneHotColumnBatchView;
 use super::traversal::trace_block_task_schedule;
 use crate::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams};
@@ -1003,13 +1003,14 @@ fn ntt_task_ranges_cover_every_ring_once() {
                 let schedule =
                     trace_block_task_schedule::<512>(16, positions, live_blocks, tasks_per_worker);
                 let original_parts = schedule.parts;
-                let schedule = PreparedNttCommit::<512>::align_task_schedule(schedule);
+                let schedule = schedule.with_ring_alignment(MAX_NTT_POSITIONS);
                 assert!(schedule.parts <= original_parts);
                 let mut covered = 0;
                 for part in 0..schedule.parts {
                     let (start, end) = schedule.part_range(part);
                     assert_eq!(start, covered);
-                    assert!(start < end && end <= positions);
+                    assert_eq!(start % MAX_NTT_POSITIONS, 0);
+                    assert!(end <= positions && end - start >= MAX_NTT_POSITIONS.min(positions));
                     covered = end;
                 }
                 assert_eq!(covered, positions);

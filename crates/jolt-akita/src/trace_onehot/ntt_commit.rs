@@ -11,13 +11,13 @@ use rayon::prelude::*;
 use super::digit_windows::{flush_digit_accumulators, DigitAccumulator, DigitWindows};
 use super::one_hot_ntt::OneHotNtt;
 use super::source::TraceOneHotColumn;
-use super::traversal::{row_is_committed, visit_segment_ring_row_range, TraceBlockTaskSchedule};
+use super::traversal::{row_is_committed, visit_segment_ring_row_range};
 use super::MAX_WIDE_ACCUMULATIONS;
 use crate::AkitaField;
 
 const DIGIT_LIMBS: usize = 8;
 const DIGIT_BITS: usize = 16;
-const MAX_NTT_POSITIONS: usize = 252;
+pub(super) const MAX_NTT_POSITIONS: usize = 252;
 const DOT_BATCH: usize = 6;
 const COLUMN_TILE: usize = 4;
 const COMMIT_RING_DIMENSION: usize = 512;
@@ -39,12 +39,6 @@ pub(super) struct PreparedNttCommit<'a, const D: usize> {
 }
 
 impl<'a, const D: usize> PreparedNttCommit<'a, D> {
-    pub(super) fn align_task_schedule(schedule: TraceBlockTaskSchedule) -> TraceBlockTaskSchedule {
-        // Splitting inside a reconstruction batch repeats inverse transforms
-        // and leaves each task with a separately reduced partial commitment.
-        schedule.with_minimum_ring_alignment(MAX_NTT_POSITIONS)
-    }
-
     pub(super) fn new(
         source: &TraceOneHotColumn,
         plan: CommitInnerPlan,
