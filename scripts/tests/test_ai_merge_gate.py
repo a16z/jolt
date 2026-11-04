@@ -979,6 +979,18 @@ class AiMergeGateTests(unittest.TestCase):
                     self.assertEqual(apis.gate()[0], expected)
                     self.assertEqual(apis.approved(), [])
 
+    def test_cached_low_risk_never_waives_an_outsiders_current_maintainer_approval(self) -> None:
+        for risk in (1, 2, 3):
+            for approver, sha, expected in (("maintainer", HEAD, "neutral"),
+                                            ("core-b", OLD, "neutral"), ("core-b", HEAD, "success")):
+                with self.subTest(risk=risk, approver=approver, sha=sha):
+                    apis = evaluate(FakeApis(author="outsider", risk=risk, records=[record(GATE.CLASSIFIER)],
+                                             reviews=[review(approver, "APPROVED", sha=sha)]))
+                    self.assertEqual(apis.gate()[0], expected)
+                    self.assertEqual(GATE.MERGE_ELIGIBLE in apis.labels, expected == "success")
+                    self.assertEqual(set(apis.labels) & GATE.RISK_LABELS, set())
+                    self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
+
     def test_conversion_to_draft_as_the_gate_approves_withdraws_approval_and_labels(self) -> None:
         apis = FakeApis(records=[record(GATE.CLASSIFIER)], labels=["keep"],
                         comments=[comment("core-a", attestation())])
@@ -1158,11 +1170,12 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_human_review_path_follows_latest_review_state(self) -> None:
         cases = [
-            ("writer approved head", [review("maintainer", "APPROVED")], ("success", "Approved by maintainer")),
+            ("writer approved head", [review("maintainer", "APPROVED")],
+             ("neutral", "Risk 4: current-head maintainer approval required")),
             ("approval of an earlier commit, not dismissed", [review("maintainer", "APPROVED", sha=OLD)],
-             ("success", "Approved by maintainer")),
+             ("neutral", "Risk 4: current-head maintainer approval required")),
             ("approval then comment", [review("maintainer", "APPROVED"), review("maintainer", "COMMENTED")],
-             ("success", "Approved by maintainer")),
+             ("neutral", "Risk 4: current-head maintainer approval required")),
             ("changes requested", [review("maintainer", "APPROVED"), review("core-b", "CHANGES_REQUESTED", sha=OLD)],
              ("neutral", "Changes requested by core-b")),
             ("dismissed approval", [review("maintainer", "DISMISSED")], ("neutral", "Human approval required")),

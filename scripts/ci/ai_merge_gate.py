@@ -655,7 +655,7 @@ class Gate:
                 for path in self.pinned(pull).changed()}
 
     def risk_level(self, pull: dict) -> int:
-        if any(path.startswith(GATE_INPUTS) for path in self.pinned(pull).changed()):
+        if not self.authorized(pull) or any(path.startswith(GATE_INPUTS) for path in self.pinned(pull).changed()):
             return 4
         if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
             return record.risk
@@ -858,7 +858,7 @@ class Gate:
                                "maintainer must approve the current head: " + ", ".join(f"`{path}`" for path in protected),
                                human=True)
         # `self.records` holds this run's classification or its refusal: one paid attempt per run.
-        if authorized and not current and not pull["draft"] and not protected and not self.records \
+        if authorized and not current and not protected and not self.records \
                 and self.recorded(head, CLASSIFIER) is None:
             if not pay:
                 return UNSETTLED
@@ -874,7 +874,7 @@ class Gate:
                            "never approves risk-4 itself.", human=True)
         attested_by = self.attester(pull)
         classified = self.recorded(head, CLASSIFIER) is not None
-        approve = attested_by is not None and classified and authorized and not pull["draft"] and not protected
+        approve = attested_by is not None and classified and authorized and not protected
         if approvers:
             return Outcome("success", "Approved by " + ", ".join(approvers),
                            "A writer other than the author approved the pull request, and GitHub has not "
