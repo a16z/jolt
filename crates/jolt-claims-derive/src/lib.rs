@@ -862,3 +862,12 @@ fn expand_challenges(input: DeriveInput) -> Result<TokenStream2> {
         }
     })
 }
+
+mod recipe_items;
+
+#[proc_macro]
+pub fn immutable_recipe_items(input: TokenStream) -> TokenStream {
+    recipe_items::expand(input.into())
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}

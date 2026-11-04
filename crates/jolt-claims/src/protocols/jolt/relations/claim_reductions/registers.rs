@@ -79,3 +79,8 @@ twist::instantiate_value_reduction! {
     gamma = RegistersClaimReductionChallenge::Gamma,
     eq_spartan = RegistersClaimReductionPublic::EqSpartan,
 }
+
+macro_rules! immutable_twist_recipe {
+    (ClaimReduction) => { crate::immutable_symbolic_recipe!(10, JOLT, Jolt; shape); };
+}
+pub(crate) use immutable_twist_recipe;

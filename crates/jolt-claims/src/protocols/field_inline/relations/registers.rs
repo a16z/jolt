@@ -136,6 +136,12 @@ twist::instantiate_val_evaluation! {
     lt_cycle = FieldRegistersValEvaluationPublic::LtCycle,
 }
 
+macro_rules! immutable_twist_recipe {
+    (ReadWriteChecking) => { crate::immutable_symbolic_recipe!(12, FIELD, Field; shape); };
+    (ValEvaluation) => { crate::immutable_symbolic_recipe!(17, FIELD, Field; shape); };
+}
+pub(crate) use immutable_twist_recipe;
+
 #[cfg(test)]
 mod tests {
     use super::*;
