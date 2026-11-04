@@ -963,11 +963,11 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual((approval["commit"]["oid"], approval["state"]), (HEAD, "APPROVED"))
         self.assertTrue(approval["body"].startswith(GATE.APPROVAL))
 
-    def test_changed_files_reach_the_model_whole(self) -> None:
+    def test_changed_file_context_is_read_on_demand_not_inlined(self) -> None:
         # A one-line edit inside an existing verifier test, shaped like the one in
         # crates/jolt-verifier/src/config.rs: the diff's context reaches neither attribute.
         path = "crates/jolt-verifier/src/config.rs"
-        old = "\n".join(["pub struct JoltProtocolConfig;", "", "#[cfg(test)]", "mod tests {", "    #[test]",
+        old = "\n".join(["// " + "x" * 200_000, "pub struct JoltProtocolConfig;", "", "#[cfg(test)]", "mod tests {", "    #[test]",
                          "    fn protocol_config_wire_format() {",
                          *[f"        let step{index} = {index};" for index in range(8)],
                          "        assert_eq!(bytes, [0, 1, 0, 4, 0]);", "    }", "}", ""])
@@ -975,10 +975,16 @@ class AiMergeGateTests(unittest.TestCase):
         diff = unified_diff(path, old, new)
         self.assertNotIn("#[test]", diff)
         apis = evaluate(FakeApis(files=[path], diff=diff, trees={BASE: {path: old}, HEAD: {path: new}},
+                                 tool_calls=[("read_file", {"revision": "head", "path": path,
+                                                            "start_line": 3, "end_line": 6})],
                                  comments=[comment("core-a", attestation())]))
-        [request] = apis.model_requests
-        self.assertIn(f"## {path} at the head\n\n1\tpub struct JoltProtocolConfig;\n2\t\n3\t#[cfg(test)]\n"
-                      "4\tmod tests {\n5\t    #[test]\n", request["input"])
+        self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
+        request, continuation = apis.model_requests
+        self.assertIn(diff, request["input"])
+        self.assertNotIn("#[cfg(test)]", request["input"])
+        self.assertLess(len(json.dumps(request).encode()), 30_000)
+        self.assertEqual(continuation["input"][0]["output"],
+                         "3\t\n4\t#[cfg(test)]\n5\tmod tests {\n6\t    #[test]\n")
         self.assertIn(f"Head, revision `head` for the tools: {HEAD}", request["input"])
         self.assertIn(("GET", f"https://api.github.com/repos/{REPO}/tarball/{HEAD}"), apis.requests)
 
@@ -1268,7 +1274,7 @@ class AiMergeGateTests(unittest.TestCase):
                 inputs = [request["input"] for request in apis.model_requests]
                 self.assertEqual(len(inputs), expected[0] == "success")
                 for material in inputs:
-                    self.assertIn("## crates/jolt-prover/src/lib.rs at the head", material)
+                    self.assertIn("crates/jolt-prover/src/lib.rs", material)
                     self.assertNotIn("CONTRIBUTING.md", material)
                 trees = {urlsplit(url).path.rsplit("/", 1)[1] for _, url in apis.requests if "/git/trees/" in url}
                 self.assertEqual(trees, {BASE, HEAD})
