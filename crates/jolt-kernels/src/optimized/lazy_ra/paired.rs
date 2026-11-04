@@ -78,8 +78,7 @@ impl<F: JoltField> PairedBranchTables<F> {
                         .unwrap_or(PAIR_ADDRESSES);
                     table[pair * STATES + lo * RADIX + hi]
                 })
-                .reduce(|a, b| a + b)
-                .unwrap_or_else(F::zero);
+                .sum();
             visit(column, sum);
         }
     }
@@ -117,8 +116,7 @@ impl<F: JoltField> PairedBranchTables<F> {
                         indices[1] >>= 4;
                         value
                     })
-                    .reduce(|a, b| a + b)
-                    .unwrap_or_else(F::zero);
+                    .sum();
                 visit(column, sum);
             }
         }

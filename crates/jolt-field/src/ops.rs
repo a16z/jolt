@@ -132,28 +132,32 @@ macro_rules! impl_ring_ops {
                 $one
             }
         }
+        // Seed from the first item, not the identity: the optimizer cannot
+        // prove a stored value canonical, so `zero + x` still runs a full
+        // reduction and `one * x` a full multiplication, which is measurable
+        // on the two-to-four-term sums in prover kernels.
         impl<$($g)*> ::core::iter::Sum for $ty {
             #[inline]
             fn sum<I: Iterator<Item = Self>>(iter: I) -> Self {
-                iter.fold($zero, |acc, x| acc + x)
+                iter.reduce(|acc, x| acc + x).unwrap_or_else(|| $zero)
             }
         }
         impl<'a, $($g)*> ::core::iter::Sum<&'a $ty> for $ty {
             #[inline]
             fn sum<I: Iterator<Item = &'a $ty>>(iter: I) -> Self {
-                iter.fold($zero, |acc, x| acc + *x)
+                iter.copied().sum()
             }
         }
         impl<$($g)*> ::core::iter::Product for $ty {
             #[inline]
             fn product<I: Iterator<Item = Self>>(iter: I) -> Self {
-                iter.fold($one, |acc, x| acc * x)
+                iter.reduce(|acc, x| acc * x).unwrap_or_else(|| $one)
             }
         }
         impl<'a, $($g)*> ::core::iter::Product<&'a $ty> for $ty {
             #[inline]
             fn product<I: Iterator<Item = &'a $ty>>(iter: I) -> Self {
-                iter.fold($one, |acc, x| acc * *x)
+                iter.copied().product()
             }
         }
     };
