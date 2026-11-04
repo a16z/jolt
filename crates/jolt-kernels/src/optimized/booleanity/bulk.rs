@@ -14,13 +14,15 @@ impl BooleanityChunks {
         row: usize,
         radix: usize,
         columns: usize,
-        mut visit: impl FnMut(usize, usize, usize),
+        mut visit: impl FnMut(usize, usize, usize, usize),
     ) {
         let width = if WIDTH == 0 { width } else { WIDTH };
         let chunk_bits = if BITS == 0 { self.chunk_bits } else { BITS };
         debug_assert!(width == 1 || width == 2);
         let instruction = columns.min(self.instruction_chunks);
         if instruction != 0 {
+            let radix = radix - 1;
+            let states = radix.pow(width as u32);
             let skip = (self.instruction_chunks - instruction) * chunk_bits;
             let mask = (1u128 << chunk_bits) - 1;
             let mut lo0 = self.rows[2 * row * width].lookup_index() >> skip;
@@ -38,7 +40,7 @@ impl BooleanityChunks {
             for column in (0..instruction).rev() {
                 let lo = (lo0 & mask) as usize + radix * (lo1 & mask) as usize;
                 let hi = (hi0 & mask) as usize + radix * (hi1 & mask) as usize;
-                visit(column, lo, hi);
+                visit(column, lo, hi, states);
                 lo0 >>= chunk_bits;
                 hi0 >>= chunk_bits;
                 lo1 >>= chunk_bits;
@@ -57,12 +59,16 @@ impl BooleanityChunks {
                 }
                 weight *= radix;
             }
-            visit(column, states[0], states[1]);
+            visit(column, states[0], states[1], weight);
         }
     }
 }
 
 impl ChunkIndexSource for BooleanityChunks {
+    fn dense_category_prefix(&self) -> usize {
+        self.instruction_chunks
+    }
+
     fn constant_suffix_start(&self) -> usize {
         self.prefix_len
     }
@@ -85,7 +91,7 @@ impl ChunkIndexSource for BooleanityChunks {
         row: usize,
         radix: usize,
         columns: usize,
-        visit: impl FnMut(usize, usize, usize),
+        visit: impl FnMut(usize, usize, usize, usize),
     ) {
         match (self.chunk_bits, width) {
             (4, 1) => self.visit_category_pairs::<1, 4>(width, row, radix, columns, visit),
@@ -287,9 +293,14 @@ mod tests {
                                     row,
                                     radix,
                                     columns,
-                                    |column, lo, hi| {
+                                    |column, lo, hi, _states| {
                                         assert!(!seen[column]);
                                         seen[column] = true;
+                                        let radix = if column < instruction {
+                                            addresses
+                                        } else {
+                                            addresses + 1
+                                        };
                                         let expected: [usize; 2] = std::array::from_fn(|side| {
                                             (0..width)
                                                 .map(|branch| {

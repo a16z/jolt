@@ -487,7 +487,7 @@ struct CategoricalProducts<'a, F: JoltField, S> {
     source: &'a S,
     width: usize,
     radix: usize,
-    states: usize,
+    dense_columns: usize,
     products: Vec<(Vec<F>, Vec<F>)>,
 }
 
@@ -511,12 +511,15 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
     fn new(tables: &'a [Vec<F>], width: usize, source: &'a S, rho: &[F]) -> Self {
         let addresses = tables[0].len() / width;
         let radix = addresses + 1;
-        let states = radix.pow(width as u32);
+        let dense_columns = source.dense_category_prefix();
         let products = tables
             .iter()
             .zip(rho)
             .take_while(|(_, rho)| !rho.is_zero())
-            .map(|(table, rho)| {
+            .enumerate()
+            .map(|(family, (table, rho))| {
+                let radix = radix - usize::from(family < dense_columns);
+                let states = radix.pow(width as u32);
                 let values: Vec<F> = (0..states)
                     .map(|mut state| {
                         let mut value = F::zero();
@@ -542,26 +545,27 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
             source,
             width,
             radix,
-            states,
+            dense_columns,
             products,
         }
     }
 
     #[inline]
     fn state(&self, family: usize, row: usize) -> usize {
+        let radix = self.radix - usize::from(family < self.dense_columns);
         let first = self
             .source
             .index(family, row * self.width)
-            .unwrap_or(self.radix - 1);
+            .unwrap_or(radix - 1);
         if self.width == 1 {
             first
         } else {
             first
-                + self.radix
+                + radix
                     * self
                         .source
                         .index(family, row * self.width + 1)
-                        .unwrap_or(self.radix - 1)
+                        .unwrap_or(radix - 1)
         }
     }
 
@@ -586,10 +590,10 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                     row,
                     self.radix,
                     self.products.len(),
-                    |family, lo, hi| {
+                    |family, lo, hi, states| {
                         let (constants, squares) = &self.products[family];
                         constant.add(constants[lo]);
-                        leading.add(squares[lo * self.states + hi]);
+                        leading.add(squares[lo * states + hi]);
                     },
                 );
                 lanes[0].fmadd(weight, constant.reduce());
@@ -1548,9 +1552,12 @@ mod categorical_tests {
     use super::{CategoricalProducts, ChunkIndexSource, LazyFoldedRa};
     use crate::reference::views::eq_table;
 
-    struct Source(Vec<Vec<Option<usize>>>, usize);
+    struct Source(Vec<Vec<Option<usize>>>, usize, usize);
 
     impl ChunkIndexSource for Source {
+        fn dense_category_prefix(&self) -> usize {
+            self.2
+        }
         fn constant_suffix_start(&self) -> usize {
             self.1
         }
@@ -1567,9 +1574,11 @@ mod categorical_tests {
 
     fn check_categorical_cubics<F: JoltField>(gamma: F) {
         for prefix in [0, 1, 7, 9, 17, 31, 32, 127, 128] {
-            check_categorical_case(gamma, None, prefix);
-            for case in ExceptionalEq::ALL {
-                check_categorical_case(gamma, Some(case), prefix);
+            for dense_prefix in [0, 1] {
+                check_categorical_case(gamma, None, prefix, dense_prefix);
+                for case in ExceptionalEq::ALL {
+                    check_categorical_case(gamma, Some(case), prefix, dense_prefix);
+                }
             }
         }
     }
@@ -1578,6 +1587,7 @@ mod categorical_tests {
         gamma: F,
         exceptional: Option<ExceptionalEq>,
         prefix_len: usize,
+        dense_prefix: usize,
     ) {
         // Keep the 16-address fixture lazy through its first bind.
         let log_t = 7;
@@ -1588,7 +1598,8 @@ mod categorical_tests {
                 // can have only its low or only its high branch cold.
                 let source = Source(
                     (0..3)
-                        .map(|family| {
+                        .map(|offset| {
+                            let family = (offset + 2 * dense_prefix) % 3;
                             (0..1 << log_t)
                                 .map(|row| {
                                     if row >= prefix_len {
@@ -1603,6 +1614,7 @@ mod categorical_tests {
                         })
                         .collect(),
                     prefix_len,
+                    dense_prefix,
                 );
                 let rho: Vec<F> = [F::one(), gamma, gamma * gamma].to_vec();
                 let unscaled: Vec<Vec<F>> = (0..3)

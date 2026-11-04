@@ -77,20 +77,28 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     /// `j`; `None` when the cycle is cold for that column.
     fn index(&self, i: usize, j: usize) -> Option<usize>;
 
+    /// Leading columns whose indices are present on every row, including padding.
+    fn dense_category_prefix(&self) -> usize {
+        0
+    }
+
     /// Visit paired categorical states for the first one or two cycle binds.
-    /// Cold rows occupy the final radix digit, distinct from hot address zero.
+    /// The visitor receives the family, two states, and the family state count.
+    /// Dense-prefix columns omit the final cold digit from the supplied radix.
+    /// Other columns keep that digit distinct from hot address zero.
     fn for_each_category_pair(
         &self,
         width: usize,
         row: usize,
         radix: usize,
         columns: usize,
-        mut visit: impl FnMut(usize, usize, usize),
+        mut visit: impl FnMut(usize, usize, usize, usize),
     ) where
         Self: Sized,
     {
         debug_assert!(width == 1 || width == 2);
         for column in 0..columns {
+            let radix = radix - usize::from(column < self.dense_category_prefix());
             let mut states = [0; 2];
             let mut weight = 1;
             for branch in 0..width {
@@ -102,7 +110,7 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
                 }
                 weight *= radix;
             }
-            visit(column, states[0], states[1]);
+            visit(column, states[0], states[1], weight);
         }
     }
 
