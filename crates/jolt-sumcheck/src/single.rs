@@ -7,8 +7,9 @@
 //! `s(0) + s(1) = claim`. [`SingleFormat::EqFactored`] factors round `i` as
 //! `eq(τ_i, X) · q(X)`, sends `q` without its constant coefficient, and checks
 //! `(1 − τ_i) q(0) + τ_i q(1) = claim` ([`EqFactoredRound`]); its running claim
-//! is normalized to `q(r_i)`, and the caller applies `Π eq(τ_i, r_i)` at the
-//! terminal check. Both formats send `degree` coefficients per round.
+//! is normalized to `q(r_i)`, so the final claim is `g(r)` without the eq
+//! factors, and the unnormalized claim is `Π eq(τ_i, r_i) · g(r)`. Both
+//! formats send `degree` coefficients per round.
 
 use jolt_algebra::{CanonicalDecode, CanonicalEncoding, ExtField, Field};
 use jolt_poly::{CompressedPoly, OmittedConstantPoly, Point, UnivariatePoly, LOW_TO_HIGH};
@@ -98,10 +99,10 @@ pub struct SingleInstance<E> {
 }
 
 /// The reduction a single instance proves or replays: the round challenges
-/// and the final running claim, normalized for eq-factored instances. The
-/// verifier gets it before any oracle check; the caller checks
-/// `output_claim` against the oracle at `challenges`, after applying the eq
-/// factors `Π eq(τ_i, r_i)` for eq-factored instances.
+/// and the final running claim. The verifier gets it before any oracle
+/// check; the caller checks `output_claim = g(r)` against the oracle. For
+/// eq-factored instances the claim is normalized: `output_claim = g(r)`, and
+/// the unnormalized claim is `Π eq(τ_i, r_i) · output_claim`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SingleReduction<E> {
     pub challenges: Vec<E>,
