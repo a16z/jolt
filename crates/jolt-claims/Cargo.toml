@@ -25,7 +25,6 @@ immutable-recipes = [
 ]
 # Bytecode fold (default off): direct flag-class index in the
 # stage 6b bytecode read-RAF fold. Same values.
-bytecode-fold = []
 
 [dependencies]
 allocative = { workspace = true, optional = true }
