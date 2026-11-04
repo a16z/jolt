@@ -211,6 +211,11 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         &opt_flag,
         // Disable MachineOutliner: generates broken call patterns on RISC-V (infinite loops).
         "-Cllvm-args=-enable-machine-outliner=never",
+        // Inline constant-size copies and fills up to 32 stores. LLVM's RISC-V
+        // defaults call libc instead, whose routines move data in sub-word
+        // accesses that each cost a multi-row sequence in the trace.
+        "-Cllvm-args=-max-store-memcpy=32",
+        "-Cllvm-args=-max-store-memset=32",
         "--cfg=getrandom_backend=\"custom\"",
     ];
 

@@ -149,9 +149,9 @@ product_accum! {
     /// `2^64` terms.
     Fp64ProductAccum: 2;
     /// Accumulator for `Fp128 × u64` products (3 result limbs of
-    /// `mul_wide_u64`, one per slot). Slot 0 grows by `< 2^64` per term and
-    /// slots 1–2 by `< 2^65` (`Fp128SignedAccumulator::fmadd_i128` folds its
-    /// top limb into them); headroom `2^62` terms (the reduction's carry
+    /// `mul_wide_u64`, one per slot). Deferred signed products also use these
+    /// slots, growing them by `< 2·2^64`, `< 3·2^64`, and `< 2·2^64` per term.
+    /// Headroom: `2^62` terms (the reduction's carry
     /// chain needs `sᵢ + carry < 2^128`, see `Fp128::reduce_small_product`).
     Fp128MulU64Accum: 3;
     /// Accumulator for `Fp128 × Fp128` products (4 result limbs of
@@ -344,8 +344,8 @@ impl<const P: u128> Unreduced for Fp128<P> {
     }
 
     /// Same carry chain as [`reduce_product`](Self::reduce_product), one
-    /// limb shorter. With `k ≤ 2^62` terms slot 0 is `< k·2^64`, slots 1–2
-    /// are `< k·2^65 ≤ 2^127` and each carry is `< 2^64`, so
+    /// limb shorter. With `k ≤ 2^62` terms each slot is `< 3·2^126`
+    /// and each carry is `< 2^64`, so
     /// `sᵢ + carry < 2^128`.
     #[inline]
     fn reduce_small_product(accum: Fp128MulU64Accum) -> Self {

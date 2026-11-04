@@ -55,3 +55,6 @@ jobs:
           firebaseServiceAccount: "${{ secrets.GCP_SA_KEY }}"
           projectId: "${{ secrets.FIREBASE_PROJECT_ID }}"
           channelId: live
+          # 15.34.1+ checks the Hosting API via serviceusage.services.get, which the
+          # deploy service account lacks; unpin once it has roles/serviceusage.serviceUsageViewer
+          firebaseToolsVersion: 15.34.0
