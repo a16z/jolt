@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 import tarfile
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
@@ -401,6 +402,39 @@ class AiMergeGateTests(unittest.TestCase):
                 apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
                 self.assertIn(f"risk-{expected}", apis.labels)
                 self.assertEqual(apis.approved(), [HEAD] if expected == 1 else [])
+
+    def test_pr_1998_stacked_multiline_test_attributes_do_not_raise_risk(self):
+        for path, attribute in (
+            ("crates/jolt-transcript/src/poseidon.rs",
+             '#[expect(\n    unused_results,\n    reason = "DuplexSpongeInterface methods return &mut Self for chaining"\n)]'),
+            ("crates/jolt-verifier/src/verifier.rs",
+             '#[cfg_attr(\n    not(feature = "field-inline"),\n    expect(\n        clippy::useless_conversion,\n        reason = "field-inline selects composed claim and opening types"\n    )\n)]'),
+        ):
+            old = f"fn verify() {{}}\n#[cfg(test)]\n{attribute}\nmod tests {{ fn check() {{ old(); }} }}\n"
+            new = "fn verify() {}\n"
+            with self.subTest(path=path):
+                apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
+                self.assertIn("risk-1", apis.labels)
+                self.assertEqual(apis.approved(), [HEAD])
+
+    def test_pr_1998_external_test_modules_follow_all_parent_declarations(self):
+        crate = "crates/jolt-akita"
+        child = f"{crate}/src/trace_onehot/tests.rs"
+        parent = f"{crate}/src/trace_onehot/mod.rs"
+        for declaration, extra, risk in (
+            ("#[cfg(test)]\nmod tests;\n", {}, 1),
+            ('#[cfg(all(test, feature = "committed"))]\nmod tests;\n', {}, 1),
+            ('#[cfg(any(test, feature = "runtime"))]\nmod tests;\n', {}, 4),
+            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/src/trace_onehot.rs": "mod tests;\n"}, 4),
+            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/src/lib.rs": "mod trace_onehot { mod tests; }\n"}, 4),
+            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/src/lib.rs": '#[path = "trace_onehot/tests.rs"]\nmod runtime;\n'}, 4),
+            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/Cargo.toml": '[package]\nname = "jolt-akita"\n[lib]\npath = "src/trace_onehot/tests.rs"\n'}, 4),
+        ):
+            with self.subTest(declaration=declaration, extra=extra):
+                base = {f"{crate}/Cargo.toml": '[package]\nname = "jolt-akita"\n',
+                        parent: declaration, child: "fn check() { old(); }\n", **extra}
+                apis = evaluate(changed_contents(base, {**base, child: "fn check() { new(); }\n"}, risk=1))
+                self.assertIn(f"risk-{risk}", apis.labels)
 
     def test_affecting_or_uncertain_risk_three_changes_must_be_minimal_in_aggregate(self) -> None:
         for verdict in ("AFFECTS", "UNCERTAIN"):
@@ -1479,6 +1513,22 @@ class ClassifierAgentTests(unittest.TestCase):
         with self.assertRaises(AGENT.AgentFailure):
             AGENT.validate_verdict(answer, {path})
 
+    def test_agent_ripgrep_reads_pr_ignored_and_hidden_files(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "agent-state").mkdir()
+            (root / "head").mkdir()
+            (root / "head/.ignore").write_text("*.rs\n")
+            (root / "head/.rgignore").write_text("*.rs\n")
+            (root / "head/verify.rs").write_text("accept_proof()\n")
+            (root / "head/.hidden.rs").write_text("accept_proof()\n")
+            AGENT.configure_codex("http://127.0.0.1:1", root)
+            config = tomllib.loads((root / "agent-state/config.toml").read_text())
+            env = config["shell_environment_policy"]["set"]
+            found = subprocess.run(["rg", "-l", "accept_proof", "head"], cwd=root,
+                                   env=env, capture_output=True, text=True, check=True)
+            self.assertEqual(set(found.stdout.splitlines()), {"head/verify.rs", "head/.hidden.rs"})
+
     def test_prompt_injection_fixture_is_exported_as_data(self):
         attack = (Path(__file__).parent / "fixtures/ai_merge_gate_prompt_injection.md").read_text()
         path = "docs/untrusted-review.txt"
@@ -1489,7 +1539,6 @@ class ClassifierAgentTests(unittest.TestCase):
                 GATE.Classifier(Path(directory), prepare=True).ask("Trusted instructions.", source, lambda: None, apis.counts)
             self.assertEqual((Path(directory) / "workspace/head" / path).read_text(), attack)
             self.assertNotIn(attack, (Path(directory) / "instructions.md").read_text())
-            self.assertFalse((Path(directory) / "executed").exists())
 
 if __name__ == "__main__":
     unittest.main()

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from pathlib import Path
 
-from diff_classifier import analyze_rust, parse_diff
+from diff_classifier import analyze_rust, parse_diff, test_only_rust_files
 from classifier_agent import AgentFailure, EFFORT, MODEL, validate_verdict
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -173,6 +173,7 @@ class Source:
         self.github, self.shas = github, {"base": base, "head": head}
         self.listings: dict[str, dict[str, dict]] = {}
         self.trees: dict[str, dict[str, str | None]] = {}
+        self.test_files: dict[str, set[str]] = {}
 
     def listing(self, revision: str) -> dict[str, dict]:
         """The commit's files, links and submodules by path, from its complete tree listing."""
@@ -243,6 +244,11 @@ class Source:
                 return MAX_TREE_BYTES
             lines = text.split("\n")
             if path.endswith(".rs"):
+                if revision not in self.test_files:
+                    self.test_files[revision] = test_only_rust_files(self.tree(revision))
+                if path in self.test_files[revision]:
+                    revisions.append([])
+                    continue
                 regions = analyze_rust(text, cfg_test_only=True)
                 runtime_lines = regions.code_lines - regions.test_lines
                 lines = [line for number, line in enumerate(lines, 1)

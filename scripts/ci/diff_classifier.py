@@ -37,8 +37,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import posixpath
 import re
+from pathlib import PurePosixPath
 import subprocess
+import tomllib
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -495,6 +498,7 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
 
     pending_cfg: _CfgAttr | None = None
     await_item = False  # a test-only attribute was seen; consume attrs then item
+    stacked_attr: _CfgAttr | None = None
     item: _Item | None = None
     rest_of_file_is_test = False
     scope_depth = 0
@@ -533,6 +537,15 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
                 item = None
             continue
 
+        if stacked_attr is not None:
+            stacked_attr.push(scan, lineno)
+            test_lines.add(lineno)
+            if stacked_attr.is_complete():
+                ambiguous_test |= not (stacked_attr.code.count("[") == stacked_attr.code.count("]") == 1
+                                       and stacked_attr.code.rstrip().endswith("]"))
+                stacked_attr = None
+            continue
+
         if pending_cfg is not None:
             pending_cfg.push(scan, lineno)
             if pending_cfg.is_complete():
@@ -549,8 +562,13 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
 
         if await_item:
             if code.startswith("#"):
-                ambiguous_test |= not (code.count("[") == code.count("]") == 1 and code.endswith("]"))
-                test_lines.add(lineno)  # stacked attribute on the test item
+                attribute = _CfgAttr()
+                attribute.push(scan, lineno)
+                if attribute.is_complete():
+                    ambiguous_test |= not (code.count("[") == code.count("]") == 1 and code.endswith("]"))
+                else:
+                    stacked_attr = attribute
+                test_lines.add(lineno)
                 continue
             if scan.has_code:
                 test_lines.add(lineno)
@@ -584,6 +602,70 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
 
     return RustRegions(test_lines=set() if cfg_test_only and ambiguous_test else test_lines,
                        doc_lines=doc_lines, code_lines=code_lines)
+
+
+def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
+    """Resolve ordinary mod declarations; unknown path/include expansion keeps its crate conservative."""
+    def crate(path: str) -> str:
+        return next((str(parent) for parent in PurePosixPath(path).parents
+                     if str(parent / "Cargo.toml") in files), "")
+
+    incoming: dict[str, list[tuple[str, bool]]] = {}
+    roots = set()
+    blocked = set()
+    for manifest, text in files.items():
+        if not manifest.endswith("Cargo.toml") or text is None:
+            continue
+        owner = str(PurePosixPath(manifest).parent)
+        try:
+            cargo = tomllib.loads(text)
+        except tomllib.TOMLDecodeError:
+            blocked.add(owner)
+            continue
+        for target in [cargo.get("lib", {}), *cargo.get("bin", []), *cargo.get("example", [])]:
+            if isinstance(target, dict) and isinstance(target.get("path"), str):
+                roots.add(posixpath.normpath(str(PurePosixPath(owner) / target["path"])))
+    for path, text in files.items():
+        if not path.endswith(".rs") or text is None or not re.search(r"\bmod\b|\bpath\b|\binclude\b", text):
+            continue
+        scanner = _Scanner()
+        code = "\n".join(scanner.scan_line(line).code for line in text.split("\n"))
+        owner = crate(path)
+        if re.search(r"#\s*!?\[[^]]*\bpath\s*=|\binclude\s*!", code):
+            blocked.add(owner)
+        regions = analyze_rust(text, cfg_test_only=True)
+        source = PurePosixPath(path)
+        base = source.parent if path in roots or source.stem in ("lib", "main", "mod") or "/src/bin/" in "/" + path else source.with_suffix("")
+        depth = 0
+        modules = []
+        for match in re.finditer(r"\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*([;{])|[{}]", code):
+            name, delimiter = match.groups()
+            if name is not None:
+                if delimiter == "{":
+                    depth += 1
+                    modules.append((depth, name))
+                    continue
+                target = base.joinpath(*(name for _, name in modules), name)
+                for candidate in (str(target) + ".rs", str(target / "mod.rs")):
+                    if candidate in files:
+                        line = code.count("\n", 0, match.start()) + 1
+                        incoming.setdefault(candidate, []).append((path, line in regions.test_lines))
+            elif match.group() == "{":
+                depth += 1
+            else:
+                depth -= 1
+                while modules and modules[-1][0] > depth:
+                    modules.pop()
+    tests: set[str] = set()
+    while True:
+        found = {path for path, parents in incoming.items() if path not in tests
+                 and crate(path) and crate(path) not in blocked and path not in roots
+                 and PurePosixPath(path).name not in ("lib.rs", "main.rs")
+                 and "/src/bin/" not in "/" + path
+                 and all(test or parent in tests for parent, test in parents)}
+        if not found:
+            return tests
+        tests.update(found)
 
 
 # --- Diff parsing ---------------------------------------------------------

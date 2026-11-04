@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Probe the production Codex sandbox using only fake credentials; makes no model requests.
 
-    python3 scripts/ci/probe_classifier_sandbox.py DIRECTORY
+    uv run --no-project python scripts/ci/probe_classifier_sandbox.py DIRECTORY
 """
 
 import json
@@ -13,7 +13,9 @@ import socket
 import subprocess
 import sys
 
-from classifier_agent import ModelBroker, codex_config
+from classifier_agent import ModelBroker, configure_codex
+
+FAKE_KEY = "FAKE_PROBE_KEY_NOT_A_SECRET"
 
 PROBE = r'''
 #define _GNU_SOURCE
@@ -87,12 +89,15 @@ def main(directory: Path) -> None:
     (workspace / "base/a.rs").write_text("fn before() {}\n")
     (workspace / "head/a.rs").write_text("fn after() {}\n")
     (directory / "instructions.md").write_text("Read only; never execute repository code.")
-    broker = ModelBroker("FAKE_PROBE_KEY_NOT_A_SECRET")
+    parent_has_key = ("OPENAI_API_KEY=" + FAKE_KEY).encode() in Path("/proc/self/environ").read_bytes()
+    if not parent_has_key:
+        raise RuntimeError("probe parent environment lacks its fake-key positive control")
+    broker = ModelBroker(FAKE_KEY)
     (directory / "probe.c").write_text(PROBE)
     binary = directory / "probe"
     subprocess.run(["cc", "-static", "-O2", "-o", str(binary), str(directory / "probe.c")], check=True)
     config = state / "config.toml"
-    config.write_text(codex_config("http://127.0.0.1:1", directory))
+    configure_codex("http://127.0.0.1:1", directory)
     env = {"PATH": os.environ["PATH"], "HOME": str(state), "CODEX_HOME": str(state),
            "OPENAI_API_KEY": "FAKE_CLASSIFIER_KEY"}
     prefix = [shutil.which("codex"), "sandbox", "-P", ":read-only", "-C", str(workspace), "--"]
@@ -124,6 +129,7 @@ def main(directory: Path) -> None:
     report = json.loads(native.stdout)
     report["version"] = subprocess.check_output([shutil.which("codex"), "--version"], text=True).strip()
     report["ancestor_pids_tested"] = ancestors
+    report["parent_environment_has_fake_key"] = parent_has_key
     read = subprocess.run([*prefix, "/bin/bash", "-c",
                            "git diff --no-index --no-ext-diff --no-textconv --stat -- base head"],
                           env=env, capture_output=True, text=True)
@@ -142,4 +148,6 @@ def main(directory: Path) -> None:
 
 
 if __name__ == "__main__":
+    if os.environ.get("OPENAI_API_KEY") != FAKE_KEY:
+        os.execve(sys.executable, [sys.executable, *sys.argv], {**os.environ, "OPENAI_API_KEY": FAKE_KEY})
     main(Path(sys.argv[1]).resolve())

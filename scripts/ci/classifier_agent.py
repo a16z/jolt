@@ -184,8 +184,11 @@ class ModelBroker:
             thread.join()
 
 
-def codex_config(endpoint: str, directory: Path) -> str:
+def configure_codex(endpoint: str, directory: Path) -> None:
+    ripgrep = directory / "ripgrep.conf"
+    ripgrep.write_text("--no-ignore\n--hidden\n")
     environment = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(directory / "agent-state"),
+        "RIPGREP_CONFIG_PATH": str(ripgrep),
         "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
         "GIT_ATTR_NOSYSTEM": "1", "GIT_CONFIG_COUNT": "4",
         "GIT_CONFIG_KEY_0": "core.fsmonitor", "GIT_CONFIG_VALUE_0": "false",
@@ -193,7 +196,7 @@ def codex_config(endpoint: str, directory: Path) -> str:
         "GIT_CONFIG_KEY_2": "diff.external", "GIT_CONFIG_VALUE_2": "/dev/null",
         "GIT_CONFIG_KEY_3": "core.attributesFile", "GIT_CONFIG_VALUE_3": "/dev/null"}
     toml_env = ",".join(f"{json.dumps(key)}={json.dumps(value)}" for key, value in environment.items())
-    return f'''
+    config = f'''
 model = "{MODEL}"
 model_reasoning_effort = "{EFFORT}"
 model_provider = "gate"
@@ -220,6 +223,7 @@ multi_agent = false
 view_image = false
 enable_request_compression = false
 '''
+    (directory / "agent-state/config.toml").write_text(config)
 
 
 def run_agent(directory: Path, key: str, prompt: str | None = None) -> tuple[dict | None, dict]:
@@ -238,7 +242,7 @@ def run_agent(directory: Path, key: str, prompt: str | None = None) -> tuple[dic
         schema = state / "schema.json"
         schema.write_text(json.dumps(CLASSIFICATION_SCHEMA))
         with broker.serve() as endpoint:
-            (state / "config.toml").write_text(codex_config(endpoint, directory))
+            configure_codex(endpoint, directory)
             command = [shutil.which("codex") or "/missing-codex", "exec", "--sandbox", "read-only", "--strict-config",
                 "--ephemeral", "--skip-git-repo-check", "--cd", str(directory / "workspace"),
                 "--json", "--output-schema", str(schema),

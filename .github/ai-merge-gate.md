@@ -80,7 +80,8 @@ exception does not apply to direct verifier, transcript, protocol or wire-format
 A level-1 answer still cannot waive level-3/4 runtime-code defaults, subject to the accepted
 scanner limits below. The gate compares both complete source files after excluding whole comments,
 blank lines and syntactically recognized top-level Rust items compiled only under `cfg(test)`
-(or a file-inner `#![cfg(test)]`). Nested cfg-like tokens are not treated as test code, since
+(or a file-inner `#![cfg(test)]`), including stacked multiline attributes and ordinary
+external modules whose declarations are all test-only. Nested cfg-like tokens are not treated as test code, since
 they can be macro input rather than Rust attributes. This also
 detects runtime code exposed by removing a cfg or block-comment delimiter. A test-only or
 comment/blank-only change may go below the default. `cfg(all(test, ...))` implies test-only;
@@ -376,7 +377,8 @@ commands from reading the broker's or runner ancestors' environment. The shell h
 including access to the local broker. `project_doc_max_bytes = 0`, a private `CODEX_HOME`, and
 disabled hooks, plugins, apps and web search keep PR-local agent instructions from becoming
 trusted configuration. Exported files are non-executable data, `.git` path components are
-rejected, system/global Git config is disabled, and hooks/fsmonitor are disabled. Read diffs
+rejected, system/global Git config is disabled, and hooks/fsmonitor are disabled. A trusted `RIPGREP_CONFIG_PATH` supplies `--no-ignore --hidden`, so PR-controlled
+`.ignore` and `.rgignore` files cannot hide source. Read diffs
 with `--no-ext-diff --no-textconv`; never invoke filters or PR Git configuration.
 
 Never build or execute PR code: no Cargo, rustc, make, build.rs, scripts, hooks or direnv.
@@ -388,6 +390,8 @@ untrusted text, caps lengths, escapes HTML/Markdown and suppresses mentions befo
 
 The manual security diagnostic uses a fake key and no model requests:
 `uv run --no-project python scripts/ci/probe_classifier_sandbox.py "$RUNNER_TEMP/probe"`.
+It installs a fake key in its own initial process environment and verifies that positive
+control before testing that the shell cannot read it. No caller-supplied key is needed.
 Run it on the same Ubuntu image and Codex pin as the classifier. It checks writes, network,
 shell environment, every visible `/proc/*/environ`, explicit ancestor environments, Codex
 state/auth/config files and runner environment files. Local classification previews must stub
@@ -621,10 +625,9 @@ if retiring them. Keep the separate Pika App and local review skill.
 - Crafted `#[cfg(test)]` attributes inside multiline generic lists can make the source scanner
   misread the rest of a runtime function as test code. The scanner is not a Rust parser.
 - Submodule gitlinks on floor paths count zero code lines. None exist on those paths today.
-- The syntactic risk-1 exception does not resolve out-of-line test modules, including
-  `crates/jolt-akita/src/verifier_resources/tests.rs` and
-  `crates/jolt-akita/src/trace_onehot/tests.rs`. A level-1 answer for these files can be raised to
-  risk-4; a semantically established prover-only level 2 is honored.
+- Out-of-file test modules use ordinary Rust module paths and all parent declarations. A crate
+  with custom `#[path]` or `include!` expansion keeps the conservative file-level floor; the
+  scanner does not expand macros or resolve generated module paths.
 - The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
   Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.
 - Event delivery delays withdrawal. The gate cannot withdraw its approval after a dismissed
