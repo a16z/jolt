@@ -82,7 +82,7 @@ use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
-use jolt_riscv::{CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
+use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -94,9 +94,9 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
     lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
-    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
-    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
-    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
+    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, Pc, Product, RamAddress,
+    RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value,
+    Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
@@ -182,40 +182,7 @@ struct SpartanOuterRow {
     next_is_first_in_sequence: NextIsFirstInSequence,
     lookup_output: LookupOutput,
     should_jump: ShouldJump,
-    add_operands: OpFlag,
-    subtract_operands: OpFlag,
-    multiply_operands: OpFlag,
-    load: OpFlag,
-    store: OpFlag,
-    jump: OpFlag,
-    write_lookup_output_to_rd: OpFlag,
-    virtual_instruction: OpFlag,
-    assert_flag: OpFlag,
-    do_not_update_unexpanded_pc: OpFlag,
-    advice: OpFlag,
-    is_compressed: OpFlag,
-    is_first_in_sequence: OpFlag,
-    is_last_in_sequence: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_add: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_sub: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_mul: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_inv: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_assert_eq: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_load_accumulate_from_register: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_assert_zero: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_load_imm: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_load_accumulate_from_memory: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_advice_limb: OpFlag,
+    circuit_flags: CircuitFlagSet,
 }
 
 impl SpartanOuterRow {
@@ -246,7 +213,6 @@ impl WitnessBundle for SpartanOuterRow {
             lookup_output,
         ) = lookup_values(row);
         let next_flags = next.map(TraceRow::circuit_flags);
-        let flag = |flag| OpFlag(circuit_flags[flag]);
 
         Ok(Self {
             left_instruction_input: LeftInstructionInput(left_instruction_input),
@@ -281,42 +247,7 @@ impl WitnessBundle for SpartanOuterRow {
             should_jump: ShouldJump(
                 circuit_flags[CircuitFlags::Jump] && !next.is_some_and(|row| row.is_noop()),
             ),
-            add_operands: flag(CircuitFlags::AddOperands),
-            subtract_operands: flag(CircuitFlags::SubtractOperands),
-            multiply_operands: flag(CircuitFlags::MultiplyOperands),
-            load: flag(CircuitFlags::Load),
-            store: flag(CircuitFlags::Store),
-            jump: flag(CircuitFlags::Jump),
-            write_lookup_output_to_rd: flag(CircuitFlags::WriteLookupOutputToRD),
-            virtual_instruction: flag(CircuitFlags::VirtualInstruction),
-            assert_flag: flag(CircuitFlags::Assert),
-            do_not_update_unexpanded_pc: flag(CircuitFlags::DoNotUpdateUnexpandedPC),
-            advice: flag(CircuitFlags::Advice),
-            is_compressed: flag(CircuitFlags::IsCompressed),
-            is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
-            is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
-            #[cfg(feature = "field-inline")]
-            field_add: flag(CircuitFlags::FieldAdd),
-            #[cfg(feature = "field-inline")]
-            field_sub: flag(CircuitFlags::FieldSub),
-            #[cfg(feature = "field-inline")]
-            field_mul: flag(CircuitFlags::FieldMul),
-            #[cfg(feature = "field-inline")]
-            field_inv: flag(CircuitFlags::FieldInv),
-            #[cfg(feature = "field-inline")]
-            field_assert_eq: flag(CircuitFlags::FieldAssertEq),
-            #[cfg(feature = "field-inline")]
-            field_load_accumulate_from_register: flag(
-                CircuitFlags::FieldLoadAccumulateFromRegister,
-            ),
-            #[cfg(feature = "field-inline")]
-            field_assert_zero: flag(CircuitFlags::FieldAssertZero),
-            #[cfg(feature = "field-inline")]
-            field_load_imm: flag(CircuitFlags::FieldLoadImm),
-            #[cfg(feature = "field-inline")]
-            field_load_accumulate_from_memory: flag(CircuitFlags::FieldLoadAccumulateFromMemory),
-            #[cfg(feature = "field-inline")]
-            field_advice_limb: flag(CircuitFlags::FieldAdviceLimb),
+            circuit_flags,
         })
     }
 
@@ -471,12 +402,12 @@ impl SpartanOuterRow {
     /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
     fn group_values(&self) -> RowGroupValues {
         let flag = |value: bool| i64::from(value);
-        let load = flag(self.load.0);
-        let store = flag(self.store.0);
-        let add = flag(self.add_operands.0);
-        let sub = flag(self.subtract_operands.0);
-        let mul = flag(self.multiply_operands.0);
-        let jump = flag(self.jump.0);
+        let load = flag(self.circuit_flags[CircuitFlags::Load]);
+        let store = flag(self.circuit_flags[CircuitFlags::Store]);
+        let add = flag(self.circuit_flags[CircuitFlags::AddOperands]);
+        let sub = flag(self.circuit_flags[CircuitFlags::SubtractOperands]);
+        let mul = flag(self.circuit_flags[CircuitFlags::MultiplyOperands]);
+        let jump = flag(self.circuit_flags[CircuitFlags::Jump]);
         let should_branch = flag(self.should_branch.0);
 
         // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18.
@@ -487,9 +418,10 @@ impl SpartanOuterRow {
             store,
             add + sub + mul,
             1 - add - sub - mul,
-            flag(self.assert_flag.0),
+            flag(self.circuit_flags[CircuitFlags::Assert]),
             flag(self.should_jump.0),
-            flag(self.virtual_instruction.0) - flag(self.is_last_in_sequence.0),
+            flag(self.circuit_flags[CircuitFlags::VirtualInstruction])
+                - flag(self.circuit_flags[CircuitFlags::IsLastInSequence]),
             flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
         ];
         // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
@@ -498,8 +430,8 @@ impl SpartanOuterRow {
             add,
             sub,
             mul,
-            1 - add - sub - mul - flag(self.advice.0),
-            flag(self.write_lookup_output_to_rd.0),
+            1 - add - sub - mul - flag(self.circuit_flags[CircuitFlags::Advice]),
+            flag(self.circuit_flags[CircuitFlags::WriteLookupOutputToRD]),
             jump,
             should_branch,
             1 - should_branch - jump,
@@ -517,7 +449,7 @@ impl SpartanOuterRow {
             word(self.lookup_output.0) - 1,
             diff(self.next_unexpanded_pc.0, self.lookup_output.0),
             diff(self.next_pc.0, self.pc.0) - 1,
-            i128::from(1 - flag(self.do_not_update_unexpanded_pc.0)),
+            i128::from(1 - flag(self.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC])),
         ];
 
         let halves = |value: i128| (value >> 64, word(value as u64));
@@ -533,7 +465,7 @@ impl SpartanOuterRow {
             product_sign * word(product_lo),
         );
         let left_input = word(self.left_instruction_input.0);
-        let compressed = 2 * i128::from(self.is_compressed.0);
+        let compressed = 2 * i128::from(self.circuit_flags[CircuitFlags::IsCompressed]);
         let pc_step = diff(self.next_unexpanded_pc.0, self.unexpanded_pc.0);
         let rv64_b_second_lo = [
             diff(self.ram_address.0, self.rs1_value.0) - imm_lo + word(self.lookup_output.0),
@@ -544,7 +476,9 @@ impl SpartanOuterRow {
             diff(self.rd_write_value.0, self.lookup_output.0),
             diff(self.rd_write_value.0, self.unexpanded_pc.0) - 4 + compressed,
             pc_step - imm_lo,
-            pc_step - 4 + 4 * i128::from(self.do_not_update_unexpanded_pc.0) + compressed,
+            pc_step - 4
+                + 4 * i128::from(self.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC])
+                + compressed,
         ];
         let rv64_b_second_hi = [
             -imm_hi,
@@ -576,18 +510,18 @@ impl SpartanOuterRow {
         #[cfg(feature = "field-inline")]
         {
             values.a_first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
-                flag(self.field_add.0),
-                flag(self.field_sub.0),
-                flag(self.field_mul.0),
-                flag(self.field_inv.0),
-                flag(self.field_load_accumulate_from_memory.0),
+                flag(self.circuit_flags[CircuitFlags::FieldAdd]),
+                flag(self.circuit_flags[CircuitFlags::FieldSub]),
+                flag(self.circuit_flags[CircuitFlags::FieldMul]),
+                flag(self.circuit_flags[CircuitFlags::FieldInv]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory]),
             ]);
             values.a_second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
-                flag(self.field_assert_eq.0),
-                flag(self.field_load_accumulate_from_register.0),
-                flag(self.field_assert_zero.0),
-                flag(self.field_load_imm.0),
-                flag(self.field_advice_limb.0),
+                flag(self.circuit_flags[CircuitFlags::FieldAssertEq]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister]),
+                flag(self.circuit_flags[CircuitFlags::FieldAssertZero]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadImm]),
+                flag(self.circuit_flags[CircuitFlags::FieldAdviceLimb]),
             ]);
             let rd_write_value = word(self.rd_write_value.0);
             values.b_first[RV64_FIRST_GROUP_LEN + 3] = -1;
@@ -1411,32 +1345,38 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(17, row.next_is_virtual.0);
         flag(18, row.next_is_first_in_sequence.0);
         flag(20, row.should_jump.0);
-        flag(21, row.add_operands.0);
-        flag(22, row.subtract_operands.0);
-        flag(23, row.multiply_operands.0);
-        flag(24, row.load.0);
-        flag(25, row.store.0);
-        flag(26, row.jump.0);
-        flag(27, row.write_lookup_output_to_rd.0);
-        flag(28, row.virtual_instruction.0);
-        flag(29, row.assert_flag.0);
-        flag(30, row.do_not_update_unexpanded_pc.0);
-        flag(31, row.advice.0);
-        flag(32, row.is_compressed.0);
-        flag(33, row.is_first_in_sequence.0);
-        flag(34, row.is_last_in_sequence.0);
+        flag(21, row.circuit_flags[CircuitFlags::AddOperands]);
+        flag(22, row.circuit_flags[CircuitFlags::SubtractOperands]);
+        flag(23, row.circuit_flags[CircuitFlags::MultiplyOperands]);
+        flag(24, row.circuit_flags[CircuitFlags::Load]);
+        flag(25, row.circuit_flags[CircuitFlags::Store]);
+        flag(26, row.circuit_flags[CircuitFlags::Jump]);
+        flag(27, row.circuit_flags[CircuitFlags::WriteLookupOutputToRD]);
+        flag(28, row.circuit_flags[CircuitFlags::VirtualInstruction]);
+        flag(29, row.circuit_flags[CircuitFlags::Assert]);
+        flag(30, row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC]);
+        flag(31, row.circuit_flags[CircuitFlags::Advice]);
+        flag(32, row.circuit_flags[CircuitFlags::IsCompressed]);
+        flag(33, row.circuit_flags[CircuitFlags::IsFirstInSequence]);
+        flag(34, row.circuit_flags[CircuitFlags::IsLastInSequence]);
         #[cfg(feature = "field-inline")]
         {
-            flag(35, row.field_add.0);
-            flag(36, row.field_sub.0);
-            flag(37, row.field_mul.0);
-            flag(38, row.field_inv.0);
-            flag(39, row.field_assert_eq.0);
-            flag(40, row.field_load_accumulate_from_register.0);
-            flag(41, row.field_assert_zero.0);
-            flag(42, row.field_load_imm.0);
-            flag(43, row.field_load_accumulate_from_memory.0);
-            flag(44, row.field_advice_limb.0);
+            flag(35, row.circuit_flags[CircuitFlags::FieldAdd]);
+            flag(36, row.circuit_flags[CircuitFlags::FieldSub]);
+            flag(37, row.circuit_flags[CircuitFlags::FieldMul]);
+            flag(38, row.circuit_flags[CircuitFlags::FieldInv]);
+            flag(39, row.circuit_flags[CircuitFlags::FieldAssertEq]);
+            flag(
+                40,
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
+            );
+            flag(41, row.circuit_flags[CircuitFlags::FieldAssertZero]);
+            flag(42, row.circuit_flags[CircuitFlags::FieldLoadImm]);
+            flag(
+                43,
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
+            );
+            flag(44, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
         }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {
@@ -1643,6 +1583,7 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::signed::S128;
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::CIRCUIT_FLAGS;
     use jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
@@ -1678,40 +1619,52 @@ mod tests {
             18 => row.next_is_first_in_sequence.to_field(),
             19 => row.lookup_output.to_field(),
             20 => row.should_jump.to_field(),
-            21 => row.add_operands.to_field(),
-            22 => row.subtract_operands.to_field(),
-            23 => row.multiply_operands.to_field(),
-            24 => row.load.to_field(),
-            25 => row.store.to_field(),
-            26 => row.jump.to_field(),
-            27 => row.write_lookup_output_to_rd.to_field(),
-            28 => row.virtual_instruction.to_field(),
-            29 => row.assert_flag.to_field(),
-            30 => row.do_not_update_unexpanded_pc.to_field(),
-            31 => row.advice.to_field(),
-            32 => row.is_compressed.to_field(),
-            33 => row.is_first_in_sequence.to_field(),
-            34 => row.is_last_in_sequence.to_field(),
+            21 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::AddOperands])),
+            22 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::SubtractOperands])),
+            23 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::MultiplyOperands])),
+            24 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Load])),
+            25 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Store])),
+            26 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Jump])),
+            27 => Fr::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::WriteLookupOutputToRD],
+            )),
+            28 => Fr::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::VirtualInstruction],
+            )),
+            29 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Assert])),
+            30 => Fr::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC],
+            )),
+            31 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Advice])),
+            32 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsCompressed])),
+            33 => Fr::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::IsFirstInSequence],
+            )),
+            34 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsLastInSequence])),
             #[cfg(feature = "field-inline")]
-            35 => row.field_add.to_field(),
+            35 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdd])),
             #[cfg(feature = "field-inline")]
-            36 => row.field_sub.to_field(),
+            36 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldSub])),
             #[cfg(feature = "field-inline")]
-            37 => row.field_mul.to_field(),
+            37 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldMul])),
             #[cfg(feature = "field-inline")]
-            38 => row.field_inv.to_field(),
+            38 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldInv])),
             #[cfg(feature = "field-inline")]
-            39 => row.field_assert_eq.to_field(),
+            39 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertEq])),
             #[cfg(feature = "field-inline")]
-            40 => row.field_load_accumulate_from_register.to_field(),
+            40 => Fr::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
+            )),
             #[cfg(feature = "field-inline")]
-            41 => row.field_assert_zero.to_field(),
+            41 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertZero])),
             #[cfg(feature = "field-inline")]
-            42 => row.field_load_imm.to_field(),
+            42 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldLoadImm])),
             #[cfg(feature = "field-inline")]
-            43 => row.field_load_accumulate_from_memory.to_field(),
+            43 => Fr::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
+            )),
             #[cfg(feature = "field-inline")]
-            44 => row.field_advice_limb.to_field(),
+            44 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdviceLimb])),
             _ => unreachable!("canonical R1CS inputs"),
         }
     }
@@ -1767,40 +1720,10 @@ mod tests {
                     next_is_first_in_sequence: NextIsFirstInSequence(bit()),
                     lookup_output: LookupOutput(next()),
                     should_jump: ShouldJump(bit()),
-                    add_operands: OpFlag(bit()),
-                    subtract_operands: OpFlag(bit()),
-                    multiply_operands: OpFlag(bit()),
-                    load: OpFlag(bit()),
-                    store: OpFlag(bit()),
-                    jump: OpFlag(bit()),
-                    write_lookup_output_to_rd: OpFlag(bit()),
-                    virtual_instruction: OpFlag(bit()),
-                    assert_flag: OpFlag(bit()),
-                    do_not_update_unexpanded_pc: OpFlag(bit()),
-                    advice: OpFlag(bit()),
-                    is_compressed: OpFlag(bit()),
-                    is_first_in_sequence: OpFlag(bit()),
-                    is_last_in_sequence: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_add: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_sub: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_mul: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_inv: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_assert_eq: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_load_accumulate_from_register: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_assert_zero: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_load_imm: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_load_accumulate_from_memory: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_advice_limb: OpFlag(bit()),
+                    circuit_flags: CIRCUIT_FLAGS.into_iter().fold(
+                        CircuitFlagSet::default(),
+                        |flags, flag| if bit() { flags.set(flag) } else { flags },
+                    ),
                 }
             })
             .collect()
