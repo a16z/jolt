@@ -177,6 +177,11 @@ fn assign_sum_product_forms() {
     assert_eq!(xs.into_iter().sum::<M61>(), a + b + c);
     assert_eq!(xs.iter().product::<M61>(), a * b * c);
     assert_eq!(xs.into_iter().product::<M61>(), a * b * c);
+    let empty: [M61; 0] = [];
+    assert_eq!(empty.iter().sum::<M61>(), M61::zero());
+    assert_eq!(empty.into_iter().sum::<M61>(), M61::zero());
+    assert_eq!(empty.iter().product::<M61>(), M61::one());
+    assert_eq!(empty.into_iter().product::<M61>(), M61::one());
 }
 
 #[test]

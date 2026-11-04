@@ -11,6 +11,7 @@ use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_opening_columns,
 };
 use jolt_field::{signed::S256, Accumulator as _, JoltField, WithAccumulator};
+use jolt_riscv::CircuitFlags;
 
 const FIRST_COLUMNS: [usize; 11] = [
     V_RAM_ADDRESS,
@@ -99,8 +100,8 @@ impl<F: JoltField> PreparedBFolds<F> {
     }
     #[inline(never)]
     pub(super) fn fold(&self, row: &SpartanOuterRow) -> [F; 2] {
-        let d = usize::from(row.do_not_update_unexpanded_pc.0);
-        let c = usize::from(row.is_compressed.0);
+        let d = usize::from(row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC]);
+        let c = usize::from(row.circuit_flags[CircuitFlags::IsCompressed]);
         let first_values = [
             row.ram_address.0,
             row.ram_read_value.0,
