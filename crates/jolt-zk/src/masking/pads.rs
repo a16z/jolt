@@ -458,7 +458,7 @@ pub struct MaskedVerifier<'a, 'm, F, C, T> {
 
 impl<F, C, T> MaskedVerifier<'_, '_, F, C, T>
 where
-    F: Field + Encoding,
+    F: Field + Encoding + 'static,
     T: FieldTranscript<F>,
 {
     /// Reads, absorbs and places one private message of `len` values.
@@ -554,7 +554,7 @@ where
 #[cfg(feature = "prover")]
 impl<F, O, T> MaskedProver<'_, F, O, T>
 where
-    F: Field + Encoding,
+    F: Field + Encoding + 'static,
     T: FieldTranscript<F> + ProverTranscript,
 {
     /// Grinds one round's proof of work at degree bound `degree` and records
