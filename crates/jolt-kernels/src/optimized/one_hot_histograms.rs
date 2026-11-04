@@ -96,7 +96,7 @@ pub(crate) fn pushforward_access<F: JoltField>(
         block: vec![vec![F::Accumulator::default(); k_chunk]; total],
         sums: vec![vec![F::Accumulator::default(); k_chunk]; total],
     };
-    let add_row = |buckets: &mut [Vec<F::Accumulator>], row: &HistogramRow, weight: F| {
+    let add_row = move |buckets: &mut [Vec<F::Accumulator>], row: &HistogramRow, weight: F| {
         let (instruction_buckets, other) = buckets.split_at_mut(instruction);
         let (bytecode_buckets, ram_buckets) = other.split_at_mut(bytecode);
         let index = row.lookup_index.0;

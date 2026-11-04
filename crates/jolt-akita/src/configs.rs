@@ -190,4 +190,32 @@ mod tests {
             JoltOneHotK256::schedule_family_name()
         );
     }
+
+    fn unit_one_hot_chunk_size(class: CommittedSourceClass) -> Option<usize> {
+        match class {
+            CommittedSourceClass::UnitOneHot { source_chunk_size } => Some(source_chunk_size),
+            CommittedSourceClass::BalancedSignedDigit => None,
+        }
+    }
+
+    #[test]
+    fn one_hot_presets_pin_their_chunk_size() {
+        // Independent of the base OneHot config's default chunk size.
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK16Direct::committed_source_class()),
+            Some(16)
+        );
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK256Direct::committed_source_class()),
+            Some(256)
+        );
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK16::committed_source_class()),
+            Some(16)
+        );
+        assert_eq!(
+            unit_one_hot_chunk_size(JoltOneHotK256::committed_source_class()),
+            Some(256)
+        );
+    }
 }
