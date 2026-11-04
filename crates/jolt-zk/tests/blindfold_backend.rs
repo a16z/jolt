@@ -296,47 +296,46 @@ fn tampers(proof: &Proof) -> Vec<(String, Proof)> {
     };
     for i in 0..proof.pad_commitment.len() {
         push(format!("pad commitment {i}"), &|p| {
-            p.pad_commitment[i] = p.pad_commitment[i] + g
+            p.pad_commitment[i] += g;
         });
     }
     for i in 0..proof.masked.values.len() {
         push(format!("masked value {i}"), &|p| {
-            p.masked.values[i] += fr(1)
+            p.masked.values[i] += fr(1);
         });
     }
     let bf = &proof.blindfold;
     for i in 0..bf.folding.auxiliary_rows.len() {
         push(format!("auxiliary row {i}"), &|p| {
-            p.blindfold.folding.auxiliary_rows[i] = p.blindfold.folding.auxiliary_rows[i] + g;
+            p.blindfold.folding.auxiliary_rows[i] += g;
         });
     }
     push("random u".into(), &|p| {
-        p.blindfold.folding.random_u += fr(1)
+        p.blindfold.folding.random_u += fr(1);
     });
     for i in 0..bf.folding.random_pad_rows.len() {
         push(format!("random pad row {i}"), &|p| {
-            p.blindfold.folding.random_pad_rows[i] = p.blindfold.folding.random_pad_rows[i] + g;
+            p.blindfold.folding.random_pad_rows[i] += g;
         });
     }
     for i in 0..bf.folding.random_error_rows.len() {
         push(format!("random error row {i}"), &|p| {
-            p.blindfold.folding.random_error_rows[i] = p.blindfold.folding.random_error_rows[i] + g;
+            p.blindfold.folding.random_error_rows[i] += g;
         });
     }
     push("random eval".into(), &|p| {
-        p.blindfold.folding.random_eval = p.blindfold.folding.random_eval + g;
+        p.blindfold.folding.random_eval += g;
     });
     for i in 0..bf.folding.cross_term_error_rows.len() {
         push(format!("cross-term row {i}"), &|p| {
-            p.blindfold.folding.cross_term_error_rows[i] =
-                p.blindfold.folding.cross_term_error_rows[i] + g;
+            p.blindfold.folding.cross_term_error_rows[i] += g;
         });
     }
     push("folded output".into(), &|p| {
-        p.blindfold.folded_evaluation.output += fr(1)
+        p.blindfold.folded_evaluation.output += fr(1);
     });
     push("folded blinding".into(), &|p| {
-        p.blindfold.folded_evaluation.blinding += fr(1)
+        p.blindfold.folded_evaluation.blinding += fr(1);
     });
     push("folded output opening".into(), &|p| {
         p.blindfold
@@ -360,7 +359,7 @@ fn tampers(proof: &Proof) -> Vec<(String, Proof)> {
     }
     for k in 0..3 {
         push(format!("outer claim {k}"), &|p| {
-            p.blindfold.outer_claims.abc[k] += fr(1)
+            p.blindfold.outer_claims.abc[k] += fr(1);
         });
     }
     push("error opening".into(), &|p| {
@@ -378,7 +377,7 @@ fn tampers(proof: &Proof) -> Vec<(String, Proof)> {
         p.blindfold.witness_opening.combined_vector[0] += fr(1);
     });
     push("extra masked value".into(), &|p| {
-        p.masked.values.push(fr(0))
+        p.masked.values.push(fr(0));
     });
     push("short witness opening".into(), &|p| {
         let _ = p.blindfold.witness_opening.combined_vector.pop();
