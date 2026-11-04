@@ -1,7 +1,6 @@
     /// Canonical Fp128 weights and signed integer coefficients. Only the
     /// magnitude enters register B; subtraction carries the sign. The unit
     /// uses existing load, multiply and add/subtract instructions.
-    #[cfg(feature = "terminal-contraction")]
     pub fn signed_i16_dot(
         weights: &[[u64; 2]],
         coefficients: impl IntoIterator<Item = i16>,
