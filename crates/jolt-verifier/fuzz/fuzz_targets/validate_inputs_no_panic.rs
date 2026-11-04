@@ -7,7 +7,7 @@
 //!
 //! The honest preprocessing and proof metadata come from the checked-in
 //! fixture; the fuzzer drives the scalar dimensions (trace length, RAM size,
-//! advice presence, ZK flag) and the public I/O buffer sizes.
+//! advice presence, ZK mode) and the public I/O buffer sizes.
 //!
 //! `one_hot_config` is held at its fixture value; `rw_config` is not a
 //! parameter of `validate_inputs_from_parts`. Configuration mutations and
@@ -18,7 +18,7 @@ use std::sync::OnceLock;
 use common::jolt_device::JoltDevice;
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::{DoryCommitment, DoryScheme};
-use jolt_verifier::{validate_inputs_from_parts, JoltProof, JoltVerifierPreprocessing};
+use jolt_verifier::{validate_inputs_from_parts, JoltProof, JoltVerifierPreprocessing, ZkConfig};
 use libfuzzer_sys::fuzz_target;
 
 type Preprocessing = JoltVerifierPreprocessing<DoryScheme, Pedersen<Bn254G1>>;
@@ -47,7 +47,11 @@ fuzz_target!(|data: &[u8]| {
     let ram_k = u64::from_le_bytes(data[8..16].try_into().unwrap()) as usize;
     let trusted_present = data[16] & 1 == 1;
     let untrusted_present = data[16] & 2 == 2;
-    let zk = data[16] & 4 == 4;
+    let zk = match (data[16] >> 2) % 3 {
+        0 => ZkConfig::Transparent,
+        1 => ZkConfig::BlindFold,
+        _ => ZkConfig::Whiteout,
+    };
 
     // Fuzzer-chosen public I/O sizes, bounded so the harness itself does not
     // allocate unreasonably; the validator enforces the real limits.
