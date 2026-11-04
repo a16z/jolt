@@ -43,6 +43,7 @@ use jolt_verifier::{CheckedInputs, VerifierError};
 
 use crate::recorder::ProofMode;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError, StageProver as _};
+#[cfg(feature = "zk")]
 use jolt_claims::OutputClaims;
 
 /// Stage 4's outputs: the wire proof, the wire claims, and the verifier-typed

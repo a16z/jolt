@@ -18,7 +18,7 @@
 //! - **Eval-at-1 recovery** and **rayon walks** (module docs on
 //!   [`crate::optimized`]).
 
-use jolt_algebra::{Accumulator, JoltField};
+use jolt_algebra::JoltField;
 #[cfg(feature = "akita")]
 use jolt_claims::protocols::jolt::geometry::ra::JoltRaPolynomial;
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
@@ -385,8 +385,8 @@ mod akita_tests {
     use crate::optimized::instruction_read_raf::{
         SharedInstructionRows, SharedInstructionRowsWeak,
     };
-    use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_algebra::{Fr, Ring};
+    use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::HammingWeightClaimReductionDimensions;
     use jolt_verifier::stages::stage7::hamming_weight_claim_reduction::{
         HammingWeightClaimReductionChallenges, HammingWeightClaimReductionInputClaims,
     };

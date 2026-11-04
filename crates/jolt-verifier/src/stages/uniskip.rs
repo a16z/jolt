@@ -22,7 +22,7 @@ use jolt_claims::protocols::jolt::geometry::spartan::{
 use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_sumcheck::{
     receive_masked_rounds, CenteredIntegerDomain, DegreeSchedule, MaskedRound, RoundWire,
-    SumcheckClaim, SumcheckError, SumcheckProof,
+    SumcheckClaim, SumcheckProof,
 };
 use jolt_transcript::{FieldTranscript, PrivateChannel};
 
@@ -44,7 +44,6 @@ pub struct UniskipParams {
     stage_number: usize,
     degree: usize,
     domain_size: usize,
-    proof_field: &'static str,
 }
 
 impl UniskipParams {
@@ -56,7 +55,6 @@ impl UniskipParams {
             stage_number: 1,
             degree: SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
-            proof_field: "stage1_uni_skip_first_round_proof",
         }
     }
 
@@ -68,7 +66,6 @@ impl UniskipParams {
             stage_number: 2,
             degree: SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            proof_field: "stage2_uni_skip_first_round_proof",
         }
     }
 

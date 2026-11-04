@@ -1140,10 +1140,6 @@ pub(crate) struct StageOutputs<F: JoltField> {
 
 /// Runs stages 1–7; `masked` is the masked session exactly when the proof is
 /// masked.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the stage spine threads the proof, the shared inputs and the pad view once"
-)]
 pub(crate) fn verify_stages_1_to_7<F, PCS, VC, T, ZkProof, O, P>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof, O>,
@@ -1336,10 +1332,6 @@ where
 ///
 /// [`VerifierError`] if any stage rejects.
 #[cfg(not(feature = "akita"))]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the stage spine threads the proof, the shared inputs and the pad commitment once"
-)]
 pub fn verify_stages_on<'m, F, PCS, VC, T, ZkProof>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &'m JoltProof<PCS, VC, ZkProof>,

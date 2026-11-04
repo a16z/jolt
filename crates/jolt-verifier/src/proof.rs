@@ -248,13 +248,6 @@ impl<C> JoltCommitments<C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(
-    not(feature = "akita"),
-    expect(
-        clippy::large_enum_variant,
-        reason = "clear claims stay inline on the standard verifier's common path"
-    )
-)]
 #[serde(bound(
     serialize = "F: Serialize, ZkProof: Serialize",
     deserialize = "F: for<'a> Deserialize<'a>, ZkProof: serde::de::DeserializeOwned"

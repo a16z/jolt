@@ -817,6 +817,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         derive_cycle_opening_points(&self.r_address, self.committed_chunk_bits, r_cycle)
     }
 
+    #[expect(
+        clippy::wildcard_enum_match_arm,
+        reason = "fail-closed: publics other than the challenge powers resolve through committed_public_value"
+    )]
     fn expected_output(
         &self,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,

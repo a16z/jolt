@@ -13,7 +13,7 @@
 
 use common::jolt_device::JoltDevice;
 use jolt_algebra::JoltField;
-use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
+use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{ChallengeCodec, Encoding, FieldTranscript, PadSlots, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
@@ -38,6 +38,12 @@ pub(crate) struct ZkFinalOpening<F> {
     pub joint_evaluation: F,
     pub evaluation_blind: F,
 }
+
+/// A masked proof's tail: its finished masked tape and BlindFold payload.
+pub(crate) type ZkTail<F, VC> = (
+    MaskedMessages<F>,
+    BlindFoldZkProof<F, <VC as Commitment>::Output>,
+);
 
 /// The pads committed after stage 0 and what the proof keeps of them.
 pub(crate) struct CommittedMode<VC: VectorCommitment> {
@@ -109,10 +115,6 @@ where
 /// land on the forward transcript's exact state. Returns the finished masked
 /// tape and the BlindFold payload.
 #[tracing::instrument(skip_all, name = "prove_blindfold")]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the tail threads the shell, the pads and their commitment, and the opening secrets once"
-)]
 pub(crate) fn prove_blindfold<F, PCS, VC, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -121,7 +123,7 @@ pub(crate) fn prove_blindfold<F, PCS, VC, T>(
     committed: CommittedMode<VC>,
     final_opening: &ZkFinalOpening<F>,
     transcript: &mut T,
-) -> Result<(MaskedMessages<F>, BlindFoldZkProof<F, VC::Output>), ProverError<F>>
+) -> Result<ZkTail<F, VC>, ProverError<F>>
 where
     F: JoltField + Encoding + ChallengeCodec,
     PCS: CommitmentScheme<Field = F>
