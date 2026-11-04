@@ -921,3 +921,14 @@ crate::recipe_id! { crate::protocols::jolt; JoltDerivedId {
     #[cfg(any(test, feature = "test-utils"))]
     Test = 24,
 } }
+
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+use crate::immutable_recipes::record::RenderId;
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+use std::fmt::{Result as FmtResult, Write};
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+impl RenderId for RetiredIdentifier {
+    fn render(&self, _writer: &mut dyn Write) -> FmtResult {
+        match *self {}
+    }
+}

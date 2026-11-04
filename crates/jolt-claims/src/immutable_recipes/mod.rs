@@ -2,6 +2,8 @@
 
 mod flags;
 mod key;
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+pub mod record;
 pub use key::{KeySink, KeyVisit};
 /// Exact source-owned base eligibility for generic composed relations.
 pub struct BasePermit<S> {
@@ -484,6 +486,30 @@ macro_rules! immutable_symbolic_recipe {
                         && $crate::immutable_recipe_key!(self, sink; $($key)+)
                 },
             )
+        }
+        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        fn immutable_record_expression<F: ::jolt_field::Ring>(
+            &self, phase: $crate::immutable_recipes::Phase,
+            expression: &$crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
+        ) {
+            if F::immutable_recipe_native_field().is_none() { return; }
+            if ($tag == 21 && phase != $crate::immutable_recipes::Phase::Input)
+                || !$crate::immutable_recipe_admitted!(self; $($key)+) { return; }
+            $crate::immutable_recipes::record::expression(phase, |sink| {
+                sink.word(1) && sink.word($tag)
+                    && $crate::immutable_recipe_key!(self, sink; $($key)+)
+            }, expression, $crate::immutable_recipes::record::Captured::$native);
+        }
+        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        fn immutable_record_support<F: ::jolt_field::Ring>(
+            &self, openings: &::std::collections::BTreeSet<Self::OpeningId>,
+        ) {
+            if F::immutable_recipe_native_field().is_none() { return; }
+            if $tag == 21 || !$crate::immutable_recipe_admitted!(self; $($key)+) { return; }
+            $crate::immutable_recipes::record::support::<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>(|sink| {
+                sink.word(1) && sink.word($tag)
+                    && $crate::immutable_recipe_key!(self, sink; $($key)+)
+            }, openings, $crate::immutable_recipes::record::Captured::$native);
         }
     };
 }

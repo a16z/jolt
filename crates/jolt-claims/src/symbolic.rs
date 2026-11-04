@@ -137,6 +137,19 @@ macro_rules! immutable_symbolic_defaults {
         > {
             Ok(None)
         }
+        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        fn immutable_record_expression<F: ::jolt_field::Ring>(
+            &self,
+            _phase: $crate::immutable_recipes::Phase,
+            _expression: &$crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
+        ) {
+        }
+        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        fn immutable_record_support<F: ::jolt_field::Ring>(
+            &self,
+            _openings: &::std::collections::BTreeSet<Self::OpeningId>,
+        ) {
+        }
     };
 }
 

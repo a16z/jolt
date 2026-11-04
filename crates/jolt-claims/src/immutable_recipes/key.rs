@@ -78,6 +78,29 @@ macro_rules! recipe_id {
                 }
             }
         }
+        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        impl $crate::immutable_recipes::record::RenderId for $ty {
+            fn render(&self, writer: &mut dyn ::std::fmt::Write) -> ::std::fmt::Result {
+                match self {
+                    $( $(#[$attr])* Self::$variant $( ($($value),*) )? $( { $($field),* } )? => {
+                        writer.write_str(concat!(stringify!($module), "::", stringify!($ty), "::", stringify!($variant)))?;
+                        $(
+                            writer.write_char('(')?;
+                            $( $crate::immutable_recipes::record::RenderId::render($value, writer)?; writer.write_char(',')?; )*
+                            writer.write_char(')')?;
+                        )?
+                        $(
+                            writer.write_char('{')?;
+                            $( writer.write_str(concat!(stringify!($field), ":"))?;
+                               $crate::immutable_recipes::record::RenderId::render($field, writer)?;
+                               writer.write_char(',')?; )*
+                            writer.write_char('}')?;
+                        )?
+                        Ok(())
+                    }, )*
+                }
+            }
+        }
 
     };
 }
