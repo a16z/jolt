@@ -7,6 +7,8 @@
 //! [`ProverTranscript`] and [`VerifierTranscript`] add the NARG string.
 //! [`PrivateChannel`] absorbs witness-dependent values, which a masked mode
 //! hides behind pads; on a clear transcript they are public messages.
+//! [`ClaimDomain`] is what a verifier check on witness-dependent values is
+//! written over, so every verifier that runs the check evaluates one formula.
 //! `prover_transcript` (under `prover-entropy`) and [`verifier_transcript`] bind
 //! the session and public statement before the first message.
 //!
@@ -38,6 +40,7 @@
 )]
 
 mod challenge;
+mod claim_domain;
 mod codec;
 mod digest_hash;
 mod grind_bits;
@@ -54,6 +57,7 @@ mod transcript;
 mod verifier;
 
 pub use challenge::{ChallengeCodec, UniformBytes, MAX_CHALLENGE_BYTES};
+pub use claim_domain::{ClaimDomain, ClaimMismatch, ClearDomain};
 pub use codec::{protocol_tag, word_padding, BytesMsg, NargMessage, TAG_BYTES, WORD_BYTES};
 pub use digest_hash::{DigestHash, DigestHasher, DIGEST_HASH};
 pub use grind_bits::{
