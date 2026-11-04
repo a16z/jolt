@@ -10,6 +10,7 @@
 mod backend;
 mod lowering;
 mod pads;
+#[cfg(feature = "prover")]
 mod recorder;
 mod residual;
 #[cfg(test)]
@@ -20,6 +21,8 @@ mod residual;
 )]
 mod tests;
 
+#[cfg(feature = "prover")]
+pub use backend::CommittedPadsWith;
 pub use backend::{ErasedSource, ZkBackend, ZkError};
 pub use lowering::{
     lower_factored, sumcheck_rows, LoweringDomain, OperandShapeDomain, ProductMemo, ProductSum,
@@ -30,8 +33,7 @@ pub use pads::{
     MaskedVerifier, PadIndex, PadLayout,
 };
 #[cfg(feature = "prover")]
-pub use recorder::{prove_uniskip_masked, MaskedUniskip};
-pub use recorder::MaskingRecorder;
+pub use recorder::{prove_uniskip_masked, MaskedUniskip, MaskingRecorder};
 pub use residual::{
     AffineRow, MaskedOperand, OperandRule, ProductOperand, ProductPair, ProductRow,
     ResidualRelation, ResidualRows, ResidualVar, Row,

@@ -8,6 +8,7 @@ use jolt_sumcheck::SumcheckError;
 #[cfg(feature = "prover")]
 use jolt_transcript::ProverTranscript;
 use jolt_transcript::{ClaimMismatch, FieldTranscript, Transcript, VerificationError};
+#[cfg(feature = "prover")]
 use rand_core::{CryptoRng, RngCore};
 use thiserror::Error as ThisError;
 
@@ -15,7 +16,17 @@ use crate::blindfold::RelaxedError;
 #[cfg(feature = "whiteout")]
 use crate::whiteout::WhiteoutError;
 
-use super::{CommittedPads, CommittedPadsView, PadLayout, ResidualRelation};
+#[cfg(feature = "prover")]
+use super::CommittedPads;
+use super::{CommittedPadsView, PadLayout, ResidualRelation};
+
+/// What [`ZkBackend::commit_pads`] returns: the prover's pads and the
+/// commitment the proof carries.
+#[cfg(feature = "prover")]
+pub type CommittedPadsWith<F, B> = (
+    CommittedPads<F, <B as ZkBackend<F>>::PadOpening>,
+    <B as ZkBackend<F>>::PadCommitment,
+);
 
 /// A field-generic source error (a sumcheck or BlindFold error), erased so
 /// that [`ZkError`] stays field-independent like the verifier's error type.
@@ -187,7 +198,9 @@ pub trait ZkBackend<F> {
         layout: &PadLayout,
         transcript: &mut T,
         rng: &mut R,
-    ) -> Result<(CommittedPads<F, Self::PadOpening>, Self::PadCommitment), ZkError>;
+    ) -> Result<CommittedPadsWith<F, Self>, ZkError>
+    where
+        Self: Sized;
 
     /// Checks the proof's pad commitment against `layout` and absorbs it,
     /// at the position [`commit_pads`](Self::commit_pads) absorbed it.

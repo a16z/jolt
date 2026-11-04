@@ -120,6 +120,10 @@ pub struct CommittedPads<F, O> {
 }
 
 impl<F: Field, O> CommittedPads<F, O> {
+    #[cfg_attr(
+        not(any(feature = "prover", feature = "test-support")),
+        expect(dead_code, reason = "only a prover's commit_pads builds pads")
+    )]
     pub(crate) fn new(layout: PadLayout, pads: Vec<F>, opening: O) -> Result<Self, ZkError> {
         if pads.len() != layout.num_pads {
             return Err(ZkError::InvalidLayout {
@@ -172,7 +176,10 @@ impl<F: Field, O> CommittedPads<F, O> {
     ///
     /// As [`mask`](Self::mask), and [`ZkError::InvalidLayout`] if the pad
     /// count overflows.
-    pub fn mask_ext<E: ExtField<F>>(&mut self, values: &[E]) -> Result<(PadSlots, Vec<E>), ZkError> {
+    pub fn mask_ext<E: ExtField<F>>(
+        &mut self,
+        values: &[E],
+    ) -> Result<(PadSlots, Vec<E>), ZkError> {
         let coordinates: Vec<F> = values
             .iter()
             .flat_map(|value| (0..E::DEGREE).map(|index| value.base_coefficient(index)))
@@ -513,7 +520,10 @@ where
     ) -> Result<MaskedRound<F>, ZkError> {
         let (wire, slots) = self.receive_private(width)?;
         self.check_round_pow(round, degree)?;
-        let challenge = self.transcript.challenge().map_err(|_| ZkError::ChallengeRejected)?;
+        let challenge = self
+            .transcript
+            .challenge()
+            .map_err(|_| ZkError::ChallengeRejected)?;
         Ok(MaskedRound {
             wire,
             slots,

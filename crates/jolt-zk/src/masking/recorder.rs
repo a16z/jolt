@@ -1,16 +1,16 @@
 //! The prover's masking sumcheck recorder.
 
 use jolt_algebra::Field;
-#[cfg(feature = "prover")]
+
 use jolt_poly::UnivariatePoly;
-#[cfg(feature = "prover")]
+
 use jolt_sumcheck::{
     check_uniskip_round, compressed_wire, padded_coefficients, RecordedSumcheck, SumcheckError,
 };
 use jolt_sumcheck::{CompressedSumcheckProof, SumcheckRecorder};
-#[cfg(feature = "prover")]
+use jolt_transcript::{Encoding, PadSlots, Transcript};
+
 use jolt_transcript::{FieldTranscript, ProverTranscript};
-use jolt_transcript::{Encoding, Transcript};
 
 use super::{CommittedPads, MaskedMessages};
 
@@ -41,7 +41,6 @@ impl<F: Field + Encoding + 'static, O> SumcheckRecorder<F> for MaskingRecorder<'
 
     fn absorb_input_claims<T: Transcript>(&mut self, _input_claims: &[F], _transcript: &mut T) {}
 
-    #[cfg(feature = "prover")]
     fn absorb_round<T>(
         &mut self,
         round_poly: &UnivariatePoly<F>,
@@ -54,7 +53,7 @@ impl<F: Field + Encoding + 'static, O> SumcheckRecorder<F> for MaskingRecorder<'
         let round = self.rounds;
         let wire = compressed_wire(round_poly, degree_bound)?;
         let mut channel = self.pads.channel(self.tape, transcript);
-        channel.send_private(&wire).map_err(SumcheckError::from)?;
+        let _: PadSlots = channel.send_private(&wire).map_err(SumcheckError::from)?;
         channel
             .grind_round(round, degree_bound)
             .map_err(SumcheckError::from)?;
@@ -62,7 +61,6 @@ impl<F: Field + Encoding + 'static, O> SumcheckRecorder<F> for MaskingRecorder<'
         Ok(transcript.challenge()?)
     }
 
-    #[cfg(feature = "prover")]
     fn finish<T>(
         self,
         output_claim_values: &[F],
@@ -71,7 +69,8 @@ impl<F: Field + Encoding + 'static, O> SumcheckRecorder<F> for MaskingRecorder<'
     where
         T: FieldTranscript<F> + ProverTranscript,
     {
-        self.pads
+        let _: PadSlots = self
+            .pads
             .send(output_claim_values, self.tape, transcript)
             .map_err(SumcheckError::from)?;
         Ok(RecordedSumcheck {
@@ -83,7 +82,6 @@ impl<F: Field + Encoding + 'static, O> SumcheckRecorder<F> for MaskingRecorder<'
 
 /// A masked uni-skip first round: its challenge and the output claim, which
 /// went out masked.
-#[cfg(feature = "prover")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MaskedUniskip<F> {
     pub challenge: F,
@@ -99,7 +97,6 @@ pub struct MaskedUniskip<F> {
 ///
 /// A round that fails its self-check, exhausted pads, or a failed nonce
 /// search.
-#[cfg(feature = "prover")]
 pub fn prove_uniskip_masked<F, O, T>(
     pads: &mut CommittedPads<F, O>,
     tape: &mut MaskedMessages<F>,
@@ -116,13 +113,16 @@ where
     check_uniskip_round(round_poly, input_claim, degree, domain_size)?;
     let coefficients = padded_coefficients(round_poly, degree)?;
     let mut channel = pads.channel(tape, transcript);
-    channel
+    let _: PadSlots = channel
         .send_private(&coefficients)
         .map_err(SumcheckError::from)?;
-    channel.grind_round(0, degree).map_err(SumcheckError::from)?;
+    channel
+        .grind_round(0, degree)
+        .map_err(SumcheckError::from)?;
     let challenge = transcript.challenge()?;
     let output_claim = round_poly.evaluate(challenge);
-    pads.send(&[output_claim], tape, transcript)
+    let _: PadSlots = pads
+        .send(&[output_claim], tape, transcript)
         .map_err(SumcheckError::from)?;
     Ok(MaskedUniskip {
         challenge,
