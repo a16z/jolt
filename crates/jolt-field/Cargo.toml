@@ -31,7 +31,6 @@ thiserror = { workspace = true }
 [features]
 setup-weight-tiles = []
 signed-byte-sum = []
-terminal-contraction = []
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []
@@ -53,17 +52,8 @@ fp64-proof-linkage = []
 field-inline-guest = ["dep:jolt-riscv"]
 field-inline-guest-bn254 = ["field-inline-guest"]
 field-inline-guest-fp128 = ["field-inline-guest"]
-# Row pointers (default off): hold the weighted-dot row base pointers in registers.
-field-inline-rowptr = ["field-inline-guest"]
-field-inline-horner = ["field-inline-guest"]
-field-inline-horner-triplet = ["field-inline-horner"]
 
-# Byte-preserving recursion experiments, default off.
-word-decode = []
 immutable-recipes = []
-# Fill ingress (default off): `Field::scale_slice_into`, with a
-# field-inline Fp128 kernel that loads the scale once per slice. Same values.
-fill-ingress = []
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires
