@@ -483,7 +483,7 @@ impl<F: JoltField> OptimizedBooleanityCycleKernel<F> {
 /// Cache the two nonlinear coefficients over that alphabet, retaining the
 /// existing exact split-equality fold. The extra category is a cold RAM row;
 /// it must remain distinct from hot address zero, including after a bind.
-struct CategoricalProducts<'a, F: JoltField, S> {
+struct CategoricalProducts<'a, F: JoltField, S, const TRIANGULAR: bool> {
     source: &'a S,
     width: usize,
     radix: usize,
@@ -491,7 +491,26 @@ struct CategoricalProducts<'a, F: JoltField, S> {
     products: Vec<(Vec<F>, Vec<F>)>,
 }
 
-impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
+impl<'a, F: JoltField, S: ChunkIndexSource, const TRIANGULAR: bool>
+    CategoricalProducts<'a, F, S, TRIANGULAR>
+{
+    fn square_entries(states: usize) -> usize {
+        if TRIANGULAR {
+            states * (states + 1) / 2
+        } else {
+            states * states
+        }
+    }
+
+    #[inline]
+    fn square_index(&self, lo: usize, hi: usize) -> usize {
+        if TRIANGULAR {
+            Self::square_entries(lo.max(hi)) + lo.min(hi)
+        } else {
+            lo * self.states + hi
+        }
+    }
+
     fn fits_budget(width: usize, addresses: usize, cycles: usize) -> bool {
         if width != 1 && width != 2 {
             return false;
@@ -505,7 +524,7 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
         };
         // Cached products, construction temporary and lazy branches fit
         // within the existing T/16 dense allocation budget per family.
-        states * (states + 2) + width * addresses <= cycles / 16
+        Self::square_entries(states) + 2 * states + width * addresses <= cycles / 16
     }
 
     fn new(tables: &'a [Vec<F>], width: usize, source: &'a S, rho: &[F]) -> Self {
@@ -531,9 +550,11 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                     })
                     .collect();
                 let constants = values.iter().map(|v| *v * (*v - *rho)).collect();
-                let mut squares = Vec::with_capacity(states * states);
-                for lo in &values {
-                    squares.extend(values.iter().map(|hi| (*hi - *lo).square()));
+                let mut squares = Vec::with_capacity(Self::square_entries(states));
+                for (row, lo) in values.iter().enumerate() {
+                    // (hi - lo)^2 = (lo - hi)^2, including cold RAM categories.
+                    let columns = if TRIANGULAR { row + 1 } else { states };
+                    squares.extend(values[..columns].iter().map(|hi| (*hi - *lo).square()));
                 }
                 (constants, squares)
             })
@@ -589,7 +610,7 @@ impl<'a, F: JoltField, S: ChunkIndexSource> CategoricalProducts<'a, F, S> {
                     |family, lo, hi| {
                         let (constants, squares) = &self.products[family];
                         constant.add(constants[lo]);
-                        leading.add(squares[lo * self.states + hi]);
+                        leading.add(squares[self.square_index(lo, hi)]);
                     },
                 );
                 lanes[0].fmadd(weight, constant.reduce());
@@ -667,13 +688,35 @@ impl<F: JoltField> ProveRounds<F> for OptimizedBooleanityCycleKernel<F> {
         } = &self.tables
         {
             if !tables.is_empty()
-                && CategoricalProducts::<F, BooleanityChunks>::fits_budget(
+                && CategoricalProducts::<F, BooleanityChunks, false>::fits_budget(
                     *width,
                     tables[0].len() / width,
                     source.cycles(),
                 )
             {
-                let products = CategoricalProducts::new(tables, *width, source, &self.gamma_powers);
+                let products = CategoricalProducts::<F, _, false>::new(
+                    tables,
+                    *width,
+                    source,
+                    &self.gamma_powers,
+                );
+                return products.lookup(&self.eq, round, previous_claim, prefix_pairs, tail_mass);
+            }
+            // Retain direct indexing whenever the full table fits. The
+            // compact table enables caching without increasing its budget.
+            if !tables.is_empty()
+                && CategoricalProducts::<F, BooleanityChunks, true>::fits_budget(
+                    *width,
+                    tables[0].len() / width,
+                    source.cycles(),
+                )
+            {
+                let products = CategoricalProducts::<F, _, true>::new(
+                    tables,
+                    *width,
+                    source,
+                    &self.gamma_powers,
+                );
                 return products.lookup(&self.eq, round, previous_claim, prefix_pairs, tail_mass);
             }
         }
@@ -1675,7 +1718,6 @@ mod categorical_tests {
                     else {
                         unreachable!()
                     };
-                    let products = CategoricalProducts::new(tables, *width, source, &rho);
                     let prefix_pairs = prefix_len.div_ceil(1 << (round + 1));
                     let tail_value: F = dense
                         .iter()
@@ -1686,11 +1728,18 @@ mod categorical_tests {
                         })
                         .sum();
                     let tail_mass = suffix[prefix_pairs..].iter().copied().sum::<F>() * tail_value;
-                    let polynomial = products
-                        .lookup(&eq, round, direct[0] + direct[1], prefix_pairs, tail_mass)
-                        .unwrap();
-                    for (x, value) in direct.iter().enumerate() {
-                        assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
+                    let polynomials = [
+                        CategoricalProducts::<F, _, false>::new(tables, *width, source, &rho)
+                            .lookup(&eq, round, direct[0] + direct[1], prefix_pairs, tail_mass)
+                            .unwrap(),
+                        CategoricalProducts::<F, _, true>::new(tables, *width, source, &rho)
+                            .lookup(&eq, round, direct[0] + direct[1], prefix_pairs, tail_mass)
+                            .unwrap(),
+                    ];
+                    for polynomial in polynomials {
+                        for (x, value) in direct.iter().enumerate() {
+                            assert_eq!(polynomial.evaluate(F::from_u64(x as u64)), *value);
+                        }
                     }
                     for column in &mut dense {
                         for row in 0..column.len() / 2 {
