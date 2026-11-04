@@ -472,7 +472,7 @@ fn preprocess_guest_prover(
 ) -> JoltProverPreprocessing {
     jolt_sdk::preprocess_program(guest_prog, memory_config, max_trace_length, mode).unwrap()
 }
-
+#[cfg_attr(feature = "immutable-recipes-record", jolt_claims::record_generate)]
 /// The packed (Akita) inner proofs use the modular prover over fp128 and the
 /// packed verifier preprocessing from
 /// the host's own verification of each proof.
@@ -972,7 +972,7 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
     program.set_memory_config(memory_config);
-    program
+    self::immutable_recursion_program!(program)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1403,6 +1403,11 @@ fn verify_proofs(
         "Input size is too large"
     );
 
+    // Immutable recipes: tables from a native verification of this stream,
+    // or empty tables (canonical path) when any proof does not verify.
+    #[cfg(feature = "immutable-recipes")]
+    let recipe_tables =
+        immutable_recipe_tables::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
     run_recursion_proof(
         guest,
         run_config,
@@ -1410,6 +1415,8 @@ fn verify_proofs(
         memory_config,
         guest.get_max_trace_length(use_embed),
     );
+    #[cfg(feature = "immutable-recipes")]
+    immutable_recipe_tables::release(recipe_tables);
 }
 
 fn main() {
@@ -1544,6 +1551,26 @@ fn main() {
         }
     }
 }
+
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+mod immutable_recipe_generation;
+#[cfg(feature = "immutable-recipes")]
+mod immutable_recipe_tables;
+
+#[cfg(not(feature = "immutable-recipes"))]
+macro_rules! immutable_recursion_program {
+    ($program:ident) => {
+        $program
+    };
+}
+#[cfg(feature = "immutable-recipes")]
+macro_rules! immutable_recursion_program {
+    ($program:ident) => {{
+        $program.add_guest_feature("immutable-recipes");
+        $program
+    }};
+}
+pub(crate) use immutable_recursion_program;
 
 #[cfg(test)]
 mod tests {

@@ -5495,7 +5495,9 @@ version = "0.1.0"
 dependencies = [
  "bincode 2.0.1",
  "clap",
+ "hex",
  "jolt-akita",
+ "jolt-claims",
  "jolt-field",
  "jolt-inlines-blake2",
  "jolt-inlines-keccak256",
@@ -5508,6 +5510,8 @@ dependencies = [
  "jolt-witness",
  "postcard",
  "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "tracer",
  "tracing",
  "tracing-subscriber",

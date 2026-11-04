@@ -58,3 +58,6 @@ macro_rules! immutable_recipe_items {
 macro_rules! immutable_recipe_items {
     ($($item:item)*) => { ::jolt_claims_derive::immutable_recipe_items! { $($item)* } };
 }
+
+#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+pub use jolt_claims_derive::record_generate;
