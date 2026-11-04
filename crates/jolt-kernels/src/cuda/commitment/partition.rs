@@ -6,6 +6,8 @@
 //! by row count and groups ready columns of equal height for finalization.
 //! The caller prepares trace windows sequentially while device workers commit
 //! each ready window. Preparation never shares the row source across threads.
+//! Tier-one work stays with its resident window to avoid cross-device copies
+//! of hot and increment columns while other windows are still being prepared.
 
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
