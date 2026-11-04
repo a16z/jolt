@@ -1,4 +1,4 @@
-use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut, MontCoeff};
+use jolt_algebra::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut, MontCoeff};
 
 /// Coefficients per committed row window of a `K = 16` one-hot ring.
 pub(super) const WINDOW: usize = 16;
@@ -258,7 +258,7 @@ mod tests {
     #![expect(clippy::unwrap_used, reason = "test parameters are valid")]
 
     use super::*;
-    use akita_algebra::tables::q128_primes;
+    use jolt_algebra::tables::q128_primes;
 
     const D: usize = WINDOW * ROWS;
 

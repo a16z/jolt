@@ -4,10 +4,10 @@
 //! transcript order of `specs/whiteout-jolt-integration.md` §2. The claims
 //! are sent masked here; in Jolt they are affine forms of stage messages.
 
+use akita_transcript::TranscriptSponge;
 use jolt_algebra::Ring;
 use jolt_poly::{MultilinearPoly, OneHotPolynomial};
-use jolt_transcript::Blake2b512;
-use jolt_transcript::PrivateChannel;
+use jolt_transcript::{protocol_tag, prover_transcript, verifier_transcript, Transcript};
 use jolt_zk::masking::{
     AffineRow, CommittedPadsView, OperandShapeDomain, PadIndex, PadLayout, ResidualRelation,
     ResidualRows,
@@ -17,13 +17,29 @@ use rand::SeedableRng;
 
 use super::*;
 use crate::adapters::{one_hot_polynomial, reverse_point};
-use crate::test_transcripts::{new_prover_transcript, new_verifier_transcript};
 use crate::AKITA_ONE_HOT_K16;
 
 const NUM_VARS: usize = 16;
 /// Muldiv's trace group shape.
 const NUM_POLYS: usize = 56;
-const SESSION: &[u8] = b"whiteout-opening";
+const SESSION: [u8; 32] = protocol_tag(b"jolt-akita/whiteout-opening");
+
+/// A standalone Whiteout opening: the argument string, and the masked claims
+/// and auxiliary block the Jolt proof struct would carry.
+#[derive(Clone)]
+struct Proof {
+    narg: Vec<u8>,
+    claims: Vec<F>,
+    auxiliary: Vec<F>,
+}
+
+fn new_prover_transcript() -> AkitaProverTranscript {
+    prover_transcript::<TranscriptSponge>(&SESSION, &0u64)
+}
+
+fn new_verifier_transcript(narg: &[u8]) -> AkitaVerifierTranscript<'_> {
+    verifier_transcript::<TranscriptSponge>(&SESSION, &0u64, narg)
+}
 
 struct Fixture {
     shape: Arc<WhiteoutShape>,
@@ -124,13 +140,11 @@ fn own_pads(masked: &[F], first: usize) -> Vec<AffineRow<F>> {
 /// slots, Akita's masked messages, then its auxiliary slots.
 fn layout(fixture: &Fixture) -> PadLayout {
     let zeros = vec![0u8; 1 << 22];
-    let mut transcript = new_verifier_transcript(SESSION, &zeros);
+    let mut transcript = new_verifier_transcript(&zeros);
     let mut view = CommittedPadsView::counting();
-    let mut claims = vec![F::default(); NUM_POLYS];
-    let slots = view
-        .channel(&mut transcript)
-        .exchange_private_base(&mut claims)
-        .unwrap();
+    let claims = vec![F::default(); NUM_POLYS];
+    transcript.append_values(&claims);
+    let slots = view.take(NUM_POLYS).unwrap();
     let prefix = fixture
         .shape
         .row()
@@ -151,7 +165,8 @@ fn layout(fixture: &Fixture) -> PadLayout {
 fn replay(
     fixture: &Fixture,
     layout: &PadLayout,
-    transcript: &mut VerifierTranscript<'_, Blake2b512>,
+    proof: &Proof,
+    transcript: &mut AkitaVerifierTranscript<'_>,
 ) -> (
     MaskedPrefix<F, F>,
     CommittedPadsView<LatticePadPayload<F>>,
@@ -162,11 +177,10 @@ fn replay(
         .tail()
         .receive_pads(layout.clone(), transcript)
         .unwrap();
-    let mut claims = vec![F::default(); NUM_POLYS];
-    let slots = pads
-        .channel(transcript)
-        .exchange_private_base(&mut claims)
-        .unwrap();
+    let claims = proof.claims.clone();
+    assert_eq!(claims.len(), NUM_POLYS);
+    transcript.append_values(&claims);
+    let slots = pads.take(NUM_POLYS).unwrap();
     let prefix = fixture
         .shape
         .row()
@@ -177,27 +191,27 @@ fn replay(
             transcript,
         )
         .unwrap();
-    let mut auxiliary = vec![F::default(); layout.auxiliary.len()];
-    let _ = pads
-        .channel(transcript)
-        .exchange_private_base(&mut auxiliary)
-        .unwrap();
+    let auxiliary = proof.auxiliary.clone();
+    assert_eq!(auxiliary.len(), layout.auxiliary.len());
+    transcript.append_values(&auxiliary);
+    let _ = pads.take(auxiliary.len()).unwrap();
     pads.finish().unwrap();
     let mut relation = ResidualRelation::new(layout.clone(), 1);
     prefix.rows(&auxiliary).append_rows(&mut relation).unwrap();
     (prefix, pads, relation)
 }
 
-fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
+fn prove(fixture: &Fixture, seed: u64) -> Proof {
     let layout = layout(fixture);
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut transcript = new_prover_transcript(SESSION);
+    let mut transcript = new_prover_transcript();
     let mut pads = fixture
         .shape
         .tail()
         .commit_pads(layout.clone(), &mut transcript, &mut rng)
         .unwrap();
-    let masked = pads.send(&fixture.evaluations, &mut transcript).unwrap();
+    let (_, masked) = pads.mask(&fixture.evaluations).unwrap();
+    transcript.append_values(&masked);
     let forms = own_pads(&masked, 0);
     let compression = fixture.shape.tail().compression(&layout).unwrap();
     let (residual, auxiliary) = fixture
@@ -216,28 +230,34 @@ fn prove(fixture: &Fixture, seed: u64) -> Vec<u8> {
             compression.as_ref(),
         )
         .unwrap();
-    let _ = pads.send(&auxiliary, &mut transcript).unwrap();
+    let (_, masked_auxiliary) = pads.mask(&auxiliary).unwrap();
+    transcript.append_values(&masked_auxiliary);
     pads.finish().unwrap();
-    let narg = transcript.narg().to_vec();
-    let mut replayed = new_verifier_transcript(SESSION, &narg);
-    let (_, _, relation) = replay(fixture, &layout, &mut replayed);
+    let mut proof = Proof {
+        narg: transcript.narg_string().to_vec(),
+        claims: masked,
+        auxiliary: masked_auxiliary,
+    };
+    let mut replayed = new_verifier_transcript(&proof.narg);
+    let (_, _, relation) = replay(fixture, &layout, &proof, &mut replayed);
     fixture
         .shape
         .tail()
         .prove(&relation, &residual, &pads, &mut transcript, &mut rng)
         .unwrap();
-    transcript.finish()
+    proof.narg = transcript.narg_string().to_vec();
+    proof
 }
 
-fn verify(fixture: &Fixture, proof: &[u8]) -> Result<(), ZkError> {
+fn verify(fixture: &Fixture, proof: &Proof) -> Result<(), ZkError> {
     let layout = layout(fixture);
-    let mut transcript = new_verifier_transcript(SESSION, proof);
-    let (prefix, pads, relation) = replay(fixture, &layout, &mut transcript);
+    let mut transcript = new_verifier_transcript(&proof.narg);
+    let (prefix, pads, relation) = replay(fixture, &layout, proof, &mut transcript);
     fixture
         .shape
         .tail()
         .verify(&relation, &prefix, &pads, &mut transcript)?;
-    transcript.finish()?;
+    transcript.check_eof()?;
     Ok(())
 }
 
@@ -247,8 +267,8 @@ fn whiteout_opening_verifies_and_rejects_a_flipped_response_byte() {
     let proof = prove(&fixture, 7);
     verify(&fixture, &proof).unwrap();
     let mut tampered = proof;
-    let last = tampered.len() - 1;
-    tampered[last] ^= 1;
+    let last = tampered.narg.len() - 1;
+    tampered.narg[last] ^= 1;
     assert!(verify(&fixture, &tampered).is_err());
 }
 
@@ -467,8 +487,8 @@ fn whiteout_persisted_catalog_is_validated_on_load() {
 }
 
 /// The error the pads of `fixture`'s proof are refused with.
-fn pads_refusal(fixture: &Fixture, proof: &[u8]) -> ZkError {
-    let mut transcript = new_verifier_transcript(SESSION, proof);
+fn pads_refusal(fixture: &Fixture, proof: &Proof) -> ZkError {
+    let mut transcript = new_verifier_transcript(&proof.narg);
     fixture
         .shape
         .tail()

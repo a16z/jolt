@@ -1,6 +1,8 @@
 //! [`AkitaScheme`]'s masked group opening: the verifier seam of jolt-zk and
 //! the prover's counterpart on [`TraceOneHotCommitment`].
 
+use akita_transcript::TranscriptSponge;
+use jolt_transcript::VerifierState;
 use jolt_zk::masking::{OperandShapeDomain, ResidualRows};
 use jolt_zk::whiteout::{MaskedGroupClaim, MaskedGroupOpening};
 
@@ -94,6 +96,7 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
     type GroupCommitment = AkitaCommitment;
     type Shape = Arc<WhiteoutShape>;
     type Prefix = MaskedPrefix<F, F>;
+    type Sponge = TranscriptSponge;
 
     fn shape(
         setup: &AkitaVerifierSetup,
@@ -102,19 +105,19 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         opening_shape(setup, groups)
     }
 
-    fn receive_pads<H: Sponge>(
+    fn receive_pads(
         shape: &Arc<WhiteoutShape>,
         layout: PadLayout,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, TranscriptSponge>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
         shape.tail.receive_pads(layout, transcript)
     }
 
-    fn verify_masked<H: Sponge, P>(
+    fn verify_masked<P>(
         shape: &Arc<WhiteoutShape>,
         groups: Vec<MaskedGroupClaim<F, AkitaCommitment>>,
         pads: &mut CommittedPadsView<P>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, TranscriptSponge>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
         let (groups, forms) = decode(shape, groups)?;
         Ok(shape
@@ -122,11 +125,11 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
             .verify_masked(&groups, forms, pads, transcript)?)
     }
 
-    fn count_masked<H: Sponge>(
+    fn count_masked(
         shape: &Arc<WhiteoutShape>,
         groups: Vec<MaskedGroupClaim<F, AkitaCommitment>>,
         view: &mut CommittedPadsView<()>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, TranscriptSponge>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
         let (groups, forms) = decode(shape, groups)?;
         Ok(shape.row().count_masked(&groups, forms, view, transcript)?)
@@ -147,12 +150,12 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         prefix.rows(masked_auxiliary).append_rows(relation)
     }
 
-    fn verify_tail<H: Sponge>(
+    fn verify_tail(
         shape: &Arc<WhiteoutShape>,
         prefix: &MaskedPrefix<F, F>,
         relation: &ResidualRelation<F>,
         pads: &CommittedPadsView<LatticePadPayload<F>>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut VerifierState<'_, TranscriptSponge>,
     ) -> Result<(), ZkError> {
         shape.tail.verify(relation, prefix, pads, transcript)
     }

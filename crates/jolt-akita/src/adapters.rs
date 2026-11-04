@@ -23,8 +23,8 @@ use akita_types::{
     AkitaVerifierSetup as BackendVerifierSetup, Commitment as AkitaBackendRingCommitment,
     CommittedGroup as AkitaBackendCommittedGroup,
 };
-use jolt_algebra::{CanonicalBytes, Zero};
-use jolt_openings::{OpeningsError, VerifierOpeningClaim};
+use jolt_algebra::Zero;
+use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{BytesMsg, Encoding};
 #[cfg(feature = "parallel")]
@@ -637,7 +637,7 @@ impl AkitaVerifierSetup {
     /// Whiteout: the masked opening's parameters; `None` for a clear setup.
     #[cfg(feature = "zk")]
     pub(crate) fn whiteout(&self) -> Option<&WhiteoutSetup> {
-        match &self.schedule_artifacts {
+        match &*self.schedule_artifacts {
             AkitaVerifierScheduleArtifacts::OneHotWhiteout { whiteout, .. } => Some(whiteout),
             AkitaVerifierScheduleArtifacts::Dense { .. }
             | AkitaVerifierScheduleArtifacts::OneHot { .. }

@@ -6,7 +6,6 @@ use akita_pcs::HidingRandomness;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
 use akita_transcript::TranscriptSponge;
 use akita_types::PendingEof;
-use jolt_algebra::CanonicalBytes;
 use jolt_crypto::Commitment;
 use jolt_openings::{
     BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme, EvaluationClaim, GroupBatchOpening,
@@ -132,11 +131,11 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     /// Whiteout: samples, commits and sends the pads of `layout` for the
     /// masked opening of `shape` (spec §2, row 2).
     #[cfg(feature = "zk-prover")]
-    fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
+    fn whiteout_commit_pads<R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         layout: PadLayout,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut AkitaProverTranscript,
         rng: &mut R,
     ) -> Result<WhiteoutPads<Self::Field>, ZkError>;
 
@@ -150,7 +149,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         clippy::too_many_arguments,
         reason = "the opening's groups, their forms, and the pads"
     )]
-    fn whiteout_prove_masked<H: Sponge>(
+    fn whiteout_prove_masked(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         precommitted: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
@@ -158,19 +157,19 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
         hint: Self::OpeningHint,
         forms: &[AffineRow<Self::Field>],
         pads: &mut WhiteoutPads<Self::Field>,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut AkitaProverTranscript,
     ) -> Result<(WhiteoutResidual, Vec<Self::Field>), ZkError>;
 
     /// Whiteout: proves `relation` by the Σ-protocol and the response proof
     /// (spec §2, rows 7 and 8).
     #[cfg(feature = "zk-prover")]
-    fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
+    fn whiteout_prove_tail<R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         relation: &ResidualRelation<Self::Field>,
         residual: &WhiteoutResidual,
         pads: &WhiteoutPads<Self::Field>,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut AkitaProverTranscript,
         rng: &mut R,
     ) -> Result<(), ZkError>;
 }
@@ -669,11 +668,11 @@ impl TraceOneHotCommitment for AkitaScheme {
     }
 
     #[cfg(feature = "zk-prover")]
-    fn whiteout_commit_pads<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng>(
+    fn whiteout_commit_pads<R: rand_core::RngCore + rand_core::CryptoRng>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         layout: PadLayout,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut AkitaProverTranscript,
         rng: &mut R,
     ) -> Result<WhiteoutPads<AkitaField>, ZkError> {
         let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;
@@ -681,7 +680,7 @@ impl TraceOneHotCommitment for AkitaScheme {
     }
 
     #[cfg(feature = "zk-prover")]
-    fn whiteout_prove_masked<H: Sponge>(
+    fn whiteout_prove_masked(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         precommitted: Vec<GroupOpeningWithHint<AkitaField, AkitaCommitment, AkitaProverHint>>,
@@ -689,7 +688,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         hint: AkitaProverHint,
         forms: &[AffineRow<AkitaField>],
         pads: &mut WhiteoutPads<AkitaField>,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut AkitaProverTranscript,
     ) -> Result<(WhiteoutResidual, Vec<AkitaField>), ZkError> {
         if precommitted.len() != shape.precommitted.len() {
             return Err(AkitaError::InvalidInput(
@@ -738,13 +737,13 @@ impl TraceOneHotCommitment for AkitaScheme {
     }
 
     #[cfg(feature = "zk-prover")]
-    fn whiteout_prove_tail<H: Sponge, R: rand_core::RngCore + rand_core::CryptoRng + Send>(
+    fn whiteout_prove_tail<R: rand_core::RngCore + rand_core::CryptoRng + Send>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         relation: &ResidualRelation<AkitaField>,
         residual: &WhiteoutResidual,
         pads: &WhiteoutPads<AkitaField>,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut AkitaProverTranscript,
         rng: &mut R,
     ) -> Result<(), ZkError> {
         let shape = crate::whiteout::opening_shape(&setup.verifier, shape)?;

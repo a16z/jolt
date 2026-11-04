@@ -56,9 +56,7 @@ use akita_types::{
 use jolt_crypto::lattice::{
     derive_public_matrix_prefix, PreparedMatrix, PublicMatrixSeed, CHALLENGE_RING_DIM,
 };
-#[cfg(feature = "zk-prover")]
-use jolt_transcript::ProverTranscript;
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_transcript::Transcript;
 #[cfg(feature = "zk-prover")]
 use jolt_zk::masking::CommittedPads;
 use jolt_zk::masking::{AffineRow, CommittedPadsView, PadLayout, ResidualRelation, ZkError};
@@ -82,6 +80,11 @@ use crate::adapters::{
 };
 use crate::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
 use crate::schedule_registry::GroupedScheduleParams;
+#[cfg(feature = "zk-prover")]
+use crate::scheme::AkitaProverTranscript;
+use crate::scheme::AkitaVerifierTranscript;
+#[cfg(feature = "zk-prover")]
+use akita_transcript::TranscriptSponge;
 
 type F = AkitaField;
 
@@ -689,6 +692,7 @@ fn row_key(
         .collect::<Result<Vec<_>, _>>()?;
     Ok((
         ScheduleLookupKey {
+            root_accumulated_setup_prefix_len: 0,
             final_group,
             precommitteds: rows.iter().map(|row| row.profile).collect(),
         },
@@ -815,12 +819,12 @@ impl WhiteoutRow {
     /// [`AkitaError::FoldOverflow`] on a one-shot fold overflow (the caller
     /// reruns), and the masked prover's errors.
     #[cfg(feature = "zk-prover")]
-    pub fn prove_masked<S: Sponge>(
+    pub fn prove_masked(
         &self,
         groups: Vec<ProverGroup>,
         forms: &[AffineRow<F>],
         pads: &mut CommittedPads<F, WhiteoutPadOpening<F>>,
-        transcript: &mut ProverTranscript<S>,
+        transcript: &mut AkitaProverTranscript,
         compression: &dyn ImageCompression<F>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
         let backend = self.catalog.backend()?;
@@ -846,15 +850,15 @@ impl WhiteoutRow {
             ));
         }
         let schedules = self.catalog.scheme.schedules();
-        transcript.public(&schedules.catalog_digest());
-        transcript.public(opening.selection().row_digest.as_bytes());
+        transcript.append(&schedules.catalog_digest());
+        transcript.append(opening.selection().row_digest.as_bytes());
         let resolved = schedules.resolve_selection(opening.selection())?;
         let prefix_ids = akita_config::required_setup_prefix_slot_ids_for_schedule(
             resolved.schedule(),
             opening.opening_layout(),
         )?;
         let prefixes = backend.import_setup_prefixes(&setup.prefix_slots, &prefix_ids)?;
-        prove_masked_prefix::<WhiteoutOneHot, _, _, _>(
+        prove_masked_prefix::<WhiteoutOneHot, _, _>(
             setup.expanded.descriptor(),
             schedules,
             backend,
@@ -875,12 +879,12 @@ impl WhiteoutRow {
     /// # Errors
     ///
     /// The masked verifier's errors, or a row other than this shape's.
-    pub fn verify_masked<S: Sponge, C>(
+    pub fn verify_masked<C>(
         &self,
         groups: &[(CommittedGroup<F>, Vec<F>)],
         forms: Vec<AffineRow<F>>,
         pads: &mut CommittedPadsView<C>,
-        transcript: &mut VerifierTranscript<'_, S>,
+        transcript: &mut AkitaVerifierTranscript<'_>,
     ) -> Result<MaskedPrefix<F, F>, AkitaError> {
         let selection = self.absorb_selection(transcript)?;
         self.catalog.verifier.verify_masked_prefix(
@@ -899,12 +903,12 @@ impl WhiteoutRow {
     /// # Errors
     ///
     /// The counting verifier's errors.
-    pub fn count_masked<S: Sponge>(
+    pub fn count_masked(
         &self,
         groups: &[(CommittedGroup<F>, Vec<F>)],
         forms: Vec<AffineRow<F>>,
         view: &mut CommittedPadsView<()>,
-        transcript: &mut VerifierTranscript<'_, S>,
+        transcript: &mut AkitaVerifierTranscript<'_>,
     ) -> Result<MaskedPrefix<F, F>, AkitaError> {
         let selection = self.absorb_selection(transcript)?;
         self.catalog.verifier.count_masked_prefix(
@@ -919,13 +923,13 @@ impl WhiteoutRow {
 
     /// Absorbs the catalog and the selected row, both derived from the
     /// statement: the prover sends no selection.
-    fn absorb_selection<S: Sponge>(
+    fn absorb_selection(
         &self,
-        transcript: &mut VerifierTranscript<'_, S>,
+        transcript: &mut AkitaVerifierTranscript<'_>,
     ) -> Result<OpeningScheduleSelection, AkitaError> {
         let selection = self.selection()?;
-        transcript.public(&self.catalog.scheme.schedules().catalog_digest());
-        transcript.public(selection.row_digest.as_bytes());
+        transcript.append(&self.catalog.scheme.schedules().catalog_digest());
+        transcript.append(selection.row_digest.as_bytes());
         Ok(selection)
     }
 
@@ -989,7 +993,7 @@ fn masked_statement(
         .map(|(commitment, point)| {
             PolynomialGroupClaims::new(
                 point.clone(),
-                vec![F::default(); commitment.profile.group.num_polynomials()],
+                vec![F::default(); commitment.profile().group.num_polynomials()],
                 commitment,
             )
         })
@@ -1233,17 +1237,17 @@ impl WhiteoutTail {
     /// # Errors
     ///
     /// [`ZkError`] if the layout does not fit or a rank is not priced.
-    pub fn commit_pads<S: Sponge, R: RngCore + CryptoRng>(
+    pub fn commit_pads<R: RngCore + CryptoRng>(
         &self,
         layout: PadLayout,
-        transcript: &mut ProverTranscript<S>,
+        transcript: &mut AkitaProverTranscript,
         rng: &mut R,
     ) -> Result<CommittedPads<F, WhiteoutPadOpening<F>>, ZkError> {
         with_ring_dim!(self.row.ring_dim(), D, {
             let ([catalog, selected, response_digest], state) = self.pad_statement::<D>(&layout)?;
-            transcript.public(&catalog);
-            transcript.public(&selected);
-            transcript.public(&response_digest);
+            transcript.append(&catalog);
+            transcript.append(&selected);
+            transcript.append(&response_digest);
             commit_lattice_pads(
                 &state.pads,
                 state.response.prover.as_ref() as &dyn ImageCompression<F>,
@@ -1262,17 +1266,17 @@ impl WhiteoutTail {
     /// # Errors
     ///
     /// As [`Self::commit_pads`], or a truncated payload.
-    pub fn receive_pads<S: Sponge>(
+    pub fn receive_pads(
         &self,
         layout: PadLayout,
-        transcript: &mut VerifierTranscript<'_, S>,
+        transcript: &mut AkitaVerifierTranscript<'_>,
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
         let _span = tracing::info_span!("whiteout_receive_pads").entered();
         with_ring_dim!(self.row.ring_dim(), D, {
             let ([catalog, selected, response], state) = self.pad_statement::<D>(&layout)?;
-            transcript.public(&catalog);
-            transcript.public(&selected);
-            transcript.public(&response);
+            transcript.append(&catalog);
+            transcript.append(&selected);
+            transcript.append(&response);
             receive_lattice_pads(
                 &state.pads,
                 &CompressionShape::<WhiteoutResponse>::default(),
@@ -1290,12 +1294,12 @@ impl WhiteoutTail {
     ///
     /// [`ZkError`] if the relation does not hold, or the Σ attempts are
     /// exhausted (the caller reruns).
-    pub fn prove<S: Sponge, R: RngCore + CryptoRng + Send>(
+    pub fn prove<R: RngCore + CryptoRng + Send>(
         &self,
         relation: &ResidualRelation<F>,
         residual: &ResidualOpening<F, F>,
         pads: &CommittedPads<F, WhiteoutPadOpening<F>>,
-        transcript: &mut ProverTranscript<S>,
+        transcript: &mut AkitaProverTranscript,
         rng: &mut R,
     ) -> Result<(), ZkError> {
         let layout = pads.layout().clone();
@@ -1333,12 +1337,12 @@ impl WhiteoutTail {
     /// # Errors
     ///
     /// [`ZkError`] if either rejects.
-    pub fn verify<S: Sponge>(
+    pub fn verify(
         &self,
         relation: &ResidualRelation<F>,
         prefix: &MaskedPrefix<F, F>,
         pads: &CommittedPadsView<LatticePadPayload<F>>,
-        transcript: &mut VerifierTranscript<'_, S>,
+        transcript: &mut AkitaVerifierTranscript<'_>,
     ) -> Result<(), ZkError> {
         let _span = tracing::info_span!("whiteout_verify_tail").entered();
         let layout = pads.layout().clone();
@@ -1708,30 +1712,32 @@ struct ProfiledResponse<'a>(&'a AkitaResponseProver<WhiteoutResponse>);
 
 #[cfg(feature = "zk-prover")]
 impl<const D: usize> ResponseProver<F, D> for ProfiledResponse<'_> {
+    type Sponge = TranscriptSponge;
+
     fn compression(&self) -> &dyn ImageCompression<F> {
         self.0
     }
 
-    fn prove_response<H: Sponge>(
+    fn prove_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
         witness: &ResponseWitness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut AkitaProverTranscript,
     ) -> Result<(), ZkError> {
         let _span = tracing::info_span!("whiteout_prove_response").entered();
-        let before = transcript.narg().len();
+        let before = transcript.narg_string().len();
         ResponseProver::<F, D>::prove_response(self.0, statement, witness, transcript)?;
         tracing::info!(
-            response_bytes = transcript.narg().len().saturating_sub(before),
+            response_bytes = transcript.narg_string().len().saturating_sub(before),
             "Whiteout response proof"
         );
         Ok(())
     }
 
-    fn verify_response<H: Sponge>(
+    fn verify_response(
         &self,
         statement: &ResponseStatement<'_, F, D>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut AkitaVerifierTranscript<'_>,
     ) -> Result<(), ZkError> {
         ResponseProver::<F, D>::verify_response(self.0, statement, transcript)
     }
