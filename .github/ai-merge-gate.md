@@ -9,7 +9,7 @@ request has merged.
 - A maintainer wrote the pull request.
 - The Pika App bot or a maintainer attests a clean review of that head in a PR comment.
 - A verifier classifier result for that head puts it at risk-1, risk-2 or risk-3.
-- The pull request changes none of the gate's own inputs.
+- The pull request changes none of the protected inputs listed in the decision table below.
 - No maintainer or writer has a standing change request.
 - The pull request is open, targets `main` and is not a draft.
 
@@ -23,7 +23,7 @@ reasoning effort `xhigh`, through the Responses API, within the spend limits bel
 pull request's merge base and head through two read-only tools. Code review happens outside CI,
 and the attestation records it.
 
-The gate also keeps four kinds of labels on each pull request and publishes an `ai-merge-gate`
+The gate also manages labels on each pull request and publishes an `ai-merge-gate`
 check run that explains its decision. Neither is required for merging. This pull request enables
 nothing: no setting, label, ruleset or secret changed.
 
@@ -47,9 +47,10 @@ asks for an approval of the current head from a maintainer other than the author
 for a writer's approval of any change to the gate's inputs or from a non-maintainer author.
 GitHub cannot check maintainer-list membership or risk levels, so a human approval
 from any writer satisfies the ruleset whatever the policy asks. For human approvals the policy
-is advisory: the `risk-4`, `no-reviewer-assigned` and `merge-eligible` labels and the
-`ai-merge-gate` check tell reviewers what it wants, and nothing blocks the merge. The gate
-enforces the policy only through its own approval, which it gives and withdraws as above.
+is advisory: the managed labels and the `ai-merge-gate` check tell reviewers what it wants;
+the check adds no merge requirement. GitHub's required-approval rule still blocks merging
+without an approval. The gate enforces the policy only through its own approval, which it
+gives and withdraws as above.
 
 ## Risk labels set the review threshold
 
@@ -61,22 +62,37 @@ the following levels and path globs; the classifier supplies semantic evidence f
 | `risk-1` | Tests, scripts, CI or documentation only | An attestation or a writer's approval |
 | `risk-2` | Prover or other non-verifier code; dependency bumps outside the verifier dependency closure | An attestation or a writer's approval |
 | `risk-3` | Dependency bumps in the verifier dependency closure; scoped shared-code changes under the rule below | An attestation or a writer's approval |
-| `risk-4` | Runtime-code changes on level-4 paths; non-minimal affecting or uncertain shared-code changes; protocol changes or otherwise unclassified changes | A current-head maintainer approval |
+| `risk-4` | Verifier/preprocessing, proof encoding/format, transcript/Fiat–Shamir or protocol changes; non-minimal affecting or uncertain shared-code changes; otherwise unclassified changes | A current-head maintainer approval |
 
-On level-4 paths, every non-test, non-comment code change stays risk-4, even when the classifier
-returns level 1, subject to the accepted scanner limits below. The gate compares both complete source files after excluding whole comments,
+**Prover-only changes are risk-2 in any crate.** The classifier must trace the changed items
+through callers in both revisions, including shared helpers, trait implementations, generated
+code and feature gates, and cite why no changed behavior reaches verifier logic, verifier
+preprocessing, proof (de)serialization or format, transcript/Fiat–Shamir operations, sumcheck
+order/expressions or PCS/commitment parameters. The policy's path lists are hints, not production
+risk floors for traced prover-only code. Traced prover-only code is level 2, even when
+another file makes the overall verdict `AFFECTS`; its size does not raise it to risk-3 or risk-4.
+The gate trusts the classifier's reachability evidence, not a second deterministic call-graph
+analysis. Direct changes to the acceptance surfaces above stay risk-4, including in prover code.
+Unresolved reachability is risk-4 unless the bounded shared-code exception below applies outside
+the risk-4 path hints. On risk-4-hint paths, model level 3 becomes 4; level 2 stays 2. That
+exception does not apply to direct verifier, transcript, protocol or wire-format edits.
+
+A level-1 answer still cannot waive level-3/4 runtime-code defaults, subject to the accepted
+scanner limits below. The gate compares both complete source files after excluding whole comments,
 blank lines and syntactically recognized top-level Rust items compiled only under `cfg(test)`
 (or a file-inner `#![cfg(test)]`). Nested cfg-like tokens are not treated as test code, since
 they can be macro input rather than Rust attributes. This also
 detects runtime code exposed by removing a cfg or block-comment delimiter. A test-only or
-comment/blank-only change may go below the floor. `cfg(all(test, ...))` implies test-only;
+comment/blank-only change may go below the default. `cfg(all(test, ...))` implies test-only;
 `cfg(any(test, feature = "prover-fixtures"))` does not. Standalone `#[test]` or custom test
 attributes alone do not qualify for this exception. Inline comment edits on lines containing
 code are conservatively counted as code changes.
 
 For paths at effective risk-3, `AFFECTS` or `UNCERTAIN` can stay risk-3 only if the change is minimal.
-The effective level includes the classifier's rating, path floor and deterministic exceptions;
-this count includes lower-floor paths that the classifier raises to level 3. Pika's
+The effective level is the classifier's rating, except for deterministic dependency bumps,
+the scanner guard on level-1 answers and level 3 becoming 4 on risk-4-hint paths.
+The bounded shared-code exception applies only outside the risk-4 hints. This count includes paths outside the risk-3 hints
+that the classifier rates 3. Pika's
 chosen threshold is at most **20 added plus removed non-test, non-comment, non-blank lines**
 across all effective level-3 paths, configured by `risk-3.max_changed_lines` in the risk JSON. For example,
 replacing ten code lines counts as twenty changed lines. For non-Rust files, the count
@@ -89,8 +105,9 @@ size escalation. The classifier can still raise any path's risk for semantic eff
 
 Dependency bumps are deterministic: a `Cargo.toml` edit must change only dependency versions,
 git revs or tags; a `Cargo.lock` edit must change only package entries. Adding a dependency,
-changing features or changing workspace settings is not a bump and retains the level-3 floor
-and minimality rule. Bumps get risk-3 if any changed package belongs to the verifier dependency
+changing features or changing workspace settings is not a bump and requires semantic classification;
+the level-3 hint and minimality rule apply unless the classifier establishes another level.
+Bumps get risk-3 if any changed package belongs to the verifier dependency
 closure, and risk-2 otherwise. The roots are the 20 runtime crates from the October 6 addendum
 in `specs/verifier-closure-lints.md`, stored in `risk-3.dependency_roots`. The gate follows every
 Cargo.lock dependency edge from those roots in **both** revisions. It matches package names
@@ -99,14 +116,16 @@ pull requests need no model call; in mixed changes, the classifier cannot escala
 
 Every changed path must appear exactly once in a model result, including removed files and
 both names of a rename. The pull request takes the highest effective level. An incomplete or
-invalid result fails the evaluation and receives risk-4 when GitHub is reachable. `UNCERTAIN`
+invalid result fails the evaluation and a maintainer-authored pull request receives risk-4
+when GitHub is reachable. `UNCERTAIN`
 or `AFFECTS` with no non-bump path at risk-3 or above becomes risk-4. The classifier still asks about verifier acceptance;
 this does not add a witness-confidentiality check for prover-only code.
 
-Without a cached or new classification, a change wholly within level-1 paths receives risk-1;
-other changes receive risk-4 until they can be classified. This gives unauthorized and draft
-pull requests a conservative label without running a model. This path rule only labels: the gate
-approves only a head that has a classifier result, because a level-1 path such as a script under
+Without a cached or new classification, a change wholly within level-1 paths has internal risk-1;
+other changes have internal risk-4 until they can be classified. Maintainer-authored drafts
+receive the corresponding label without running a model; non-maintainer pull requests receive
+no risk label. Internal risk still sets their approval threshold. This path rule cannot earn the
+gate's approval: the gate approves only a head that has a classifier result, because a level-1 path such as a script under
 `scripts/` can still be a build input. A current-head maintainer approval already satisfies the
 highest level, so the gate starts no model work for it and keeps an existing classification or
 this fallback.
@@ -115,9 +134,12 @@ this fallback.
 
 Each evaluation sets exactly these labels and leaves every other label alone:
 
-- `risk-1` through `risk-4`: one risk label, as above.
+- `risk-1` through `risk-4`: one risk label for a maintainer-authored pull request, as above.
+  Non-maintainer pull requests get none; the next evaluation removes any existing risk labels.
 - `needs-maintainer-review`: the author is not a maintainer. It stays even when a writer's
-  approval satisfies the policy; the gate never approves non-maintainer pull requests.
+  approval satisfies the policy; the gate never approves non-maintainer pull requests. Without
+  an approval, these pull requests get only this label and, when the existing rule below applies,
+  `no-reviewer-assigned`.
 - `merge-eligible`: the gate's review policy is satisfied for the current head, as the table
   below decides, and the pull request is open and not a draft. It does not show that CI passed,
   that GitHub would allow the merge, or that auto-merge is enabled. Closing or merging the pull
@@ -143,17 +165,23 @@ that is still standing.
 | # | Condition | Policy | Gate's approval | Paid model work |
 |---|---|---|---|---|
 | 1 | The pull request is closed, or its base is not `main` | Not evaluated; `merge-eligible` removed | Withdrawn, unless the pull request merged | None |
-| 2 | A maintainer or writer has requested changes, on any commit, and has not since approved or had that review dismissed | Fail | Withdrawn | None |
-| 3 | No writer approved and the author is not a maintainer | Fail: human approval required | Withdrawn | None |
-| 4 | No writer approved and the pull request is a draft | Fail | Withdrawn | None |
-| 5 | No writer approved and the pull request changes a gate input: `.github/workflows/`, `scripts/ci/`, the classifier skill, closure spec or risk policy | Fail: human approval required | Withdrawn | None |
+| 2 | A maintainer or writer has requested changes, on any commit, and has not since approved or had that review dismissed | `neutral`: changes requested | Withdrawn | None |
+| 3 | No writer approved and the author is not a maintainer | `neutral`: human approval required | Withdrawn | None |
+| 4 | No writer approved and the pull request is a draft | `neutral`: draft | Withdrawn | None |
+| 5 | No writer approved and the pull request changes a protected input: `.github/workflows/ai-merge-gate.yml`, `.github/workflows/ai-merge-gate-events.yml`, `.claude/skills/verifier-classifier/`, `specs/verifier-closure-lints.md` or `.github/ai-merge-gate-risk.json` | `neutral`: human approval required | Withdrawn | None |
 | 6 | Maintainer-authored, ready, no gate-input changes, no current-head maintainer approval, and no cached classification | Classify dependency-only bumps deterministically; otherwise run the classifier within its attempt limits, then continue | — | Classifier unless bump-only |
-| 7 | Risk-4 with an undismissed current-head approval by a maintainer with write access, other than the author | Pass | Withdrawn | None |
-| 8 | Risk-4 without that approval | Fail: current-head maintainer approval required | Withdrawn | None |
-| 9 | Risk-1 through risk-3, and a writer other than the author approved without a later dismissal or change request | Pass | Given if the next row's classification, attestation, maintainer authorship, readiness and gate-input conditions also hold; otherwise withdrawn | None |
-| 10 | A classifier result for the head puts it at risk-1 through risk-3, and the Pika App bot or a maintainer posted the exact current-head attestation below | Pass | Given | None |
-| 11 | Risk-1 by the path rule alone: the head has no classifier result because its attempts are spent | Fail: human approval required | Withdrawn | None |
-| 12 | Otherwise | Fail: needs an approval or a current-head review attestation | Withdrawn | None |
+| 7 | Risk-4 with an undismissed current-head approval by a maintainer with write access, other than the author | `success` | Withdrawn | None |
+| 8 | Risk-4 without that approval | `neutral`: current-head maintainer approval required | Withdrawn | None |
+| 9 | Risk-1 through risk-3, and a writer other than the author approved without a later dismissal or change request | `success` | Given if the next row's classification, attestation, maintainer authorship, readiness and gate-input conditions also hold; otherwise withdrawn | None |
+| 10 | A classifier result for the head puts it at risk-1 through risk-3, and the Pika App bot or a maintainer posted the exact current-head attestation below | `success` | Given | None |
+| 11 | Risk-1 by the path rule alone: the head has no classifier result because its attempts are spent | `neutral`: human approval required | Withdrawn | None |
+| 12 | Otherwise | `neutral`: needs an approval or a current-head review attestation | Withdrawn | None |
+
+A policy wait publishes a gray, non-failing `neutral` check with its reason in the title and
+summary. Only a satisfied policy publishes `success` and can earn `merge-eligible`; `neutral`
+never grants an approval. The evaluator exits successfully for both conclusions, so a human
+requirement does not fail the workflow job. Only a gate execution error publishes `failure`
+and exits nonzero.
 
 Rows 3 through 5 apply only without a writer's approval. The gate's own approval additionally
 requires a maintainer author, a ready pull request and no changes to gate inputs.
@@ -185,9 +213,10 @@ unchanged keeps the approval, which the gate's evaluation of the new head then d
 A pass rests on state read after the label writes: before it approves, the gate reads the pull
 request, its comments and reviews, and permissions again and evaluates the table once more,
 reusing the model results it already has. When the new state needs a classifier result the run
-does not have, for example after an approval was dismissed, it fails with "The pull request
-changed while the gate ran", and the next event runs the gate again. After submitting an
-approval, the gate reads the head once more. GitHub dismisses stale approvals when a push
+does not have, for example after an approval was dismissed, it returns `neutral` with "The pull
+request changed while the gate ran", and the next event runs the gate again. A head change
+during label or approval publication likewise returns `neutral` with "Superseded while the
+gate ran". After submitting an approval, the gate reads the head once more. GitHub dismisses stale approvals when a push
 arrives, which misses an approval of the old head submitted just after it, so when the head
 moved the gate dismisses the approval it just submitted.
 
@@ -195,7 +224,10 @@ An evaluation that fails at any step after the script starts, a failed write of 
 run included, removes `merge-eligible` and dismisses the gate's standing approvals before it
 reports the error. It attempts each of these writes even if another fails. If GitHub refuses
 them too, the approval stays until a later evaluation withdraws it, and the failed run shows the
-error. Reviews, dismissals, labels and comments made with `GITHUB_TOKEN`
+error. Error cleanup also omits risk labels when the author is known not to be a maintainer.
+If author authorization cannot be determined, cleanup retains the risk-4 fallback and preserves
+any existing `needs-maintainer-review` label. Reviews, dismissals, labels and comments made
+with `GITHUB_TOKEN`
 start no workflow run ([GitHub's token documentation](https://docs.github.com/en/actions/concepts/security/github_token)),
 so the gate's own writes never trigger another evaluation, and each evaluation finishes its own
 reconciliation.
@@ -329,15 +361,24 @@ answers would take the next request over the input bound, the gate withholds the
 model must answer from what it has read; the classifier skill tells it to answer `UNCERTAIN`
 when that is not enough.
 
-Row 5 keeps the gate from approving changes to itself. Any workflow merged into the default
-branch can use the gate's secret and token. Python looks up the gate's imports in `scripts/ci`
-first, so any file merged there, such as a `json.py` that shadows the standard library or a
-`__pycache__` entry, would run with the gate's credentials. The classifier skill, risk policy
-and closure spec are the model's instructions. The gate also protects the review skill, its
-comment/test-policy skills, `CLAUDE.md`, the `AGENTS.md` link, `CONTRIBUTING.md` and this guide:
-these define the review procedure and approval policy. Other files under `.github/`, such as
-issue templates, go to the classifier like any other change. A qualifying human approval still
-satisfies the policy; the gate does not add its own approval of protected-input changes.
+Row 5 keeps the classifier skill, closure spec, risk policy and the two AI gate workflows
+human-reviewed. The paid classifier runs in `ai-merge-gate.yml`; `ai-merge-gate-events.yml`
+signals pull request and review events to it. Changes to `scripts/ci/`, other workflows,
+`CLAUDE.md`, the `AGENTS.md` link, `CONTRIBUTING.md`, this guide and the
+ci-code-review/comment-policy/test-policy skills go to the classifier like any other change
+on an eligible maintainer-authored pull request. Their existing risk globs still apply. A
+qualifying human approval still satisfies the policy; the gate does not add its own approval
+of protected-input changes.
+
+Both credentialed gate jobs check out the default branch, not the pull request head. The gate
+reads the proposed files through GitHub's API into memory as data; it does not execute the
+pull request's `scripts/ci/` code with the gate's credentials before merge. After merge, changed
+scripts become default-branch code and can run with those credentials on later evaluations.
+The separate `diff-classifier.yml` workflow is a deterministic diff summary, not the AI gate's
+verifier classifier. It already checks out the pull request head and runs that revision's
+`scripts/ci/diff_classifier.py` with its own workflow token, whose declared permissions are
+Contents read and Pull requests write. It does not receive the AI gate's OpenAI key. That
+workflow remains outside row 5; this change does not alter its checkout or permissions.
 
 The gate stores each classifier verdict and risk level as a check run on the head, whose
 external ID names the workflow run that created it. Later evaluations reuse a verdict instead of
@@ -630,9 +671,10 @@ if retiring them. Keep the separate Pika App and local review skill.
 - Crafted `#[cfg(test)]` attributes inside multiline generic lists can make the source scanner
   misread the rest of a runtime function as test code. The scanner is not a Rust parser.
 - Submodule gitlinks on floor paths count zero code lines. None exist on those paths today.
-- Out-of-line test edits in `crates/jolt-akita/src/verifier_resources/tests.rs` and
-  `crates/jolt-akita/src/trace_onehot/tests.rs` still receive risk-4; the test-only exception
-  does not meet the intended behavior for these files.
+- The syntactic risk-1 exception does not resolve out-of-line test modules, including
+  `crates/jolt-akita/src/verifier_resources/tests.rs` and
+  `crates/jolt-akita/src/trace_onehot/tests.rs`. A level-1 answer for these files can be raised to
+  risk-4; a semantically established prover-only level 2 is honored.
 - The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
   Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.
 - Event delivery delays withdrawal. The gate cannot withdraw its approval after a dismissed

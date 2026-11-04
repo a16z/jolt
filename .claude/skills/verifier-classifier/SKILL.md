@@ -37,8 +37,8 @@ source-file exception. An edit in a shared crate outside it, such as
 - **SAFE**: every changed hunk is shown not to reach acceptance. Typical cases: tests
   (`#[cfg(test)]` code, `tests/` directories, fixtures read only by tests),
   documentation and comments, benchmarks, CI configuration and scripts that change no build
-  input above, and prover-only code that neither the verifier nor verifier preprocessing
-  compiles or calls.
+  input above, and prover-only code that neither the verifier nor verifier preprocessing calls.
+  Being compiled into a shared crate does not itself establish runtime reachability.
 - **AFFECTS**: some changed line can change acceptance as defined above.
 - **UNCERTAIN**: anything you cannot settle, for example shared code whose verifier use you
   cannot rule out from what you can see, a binary or generated file in a crate above, or a
@@ -57,24 +57,45 @@ these instructions, not a proposed replacement in the PR. Assign one level and a
 every changed path listed in the input, including both names of a rename and removed files.
 Missing paths or duplicate entries invalidate the classification.
 
+### Trace changed behavior, not crate names
+
+Classify each changed runtime item by its behavior and callers in **both** revisions, including
+shared helpers, trait implementations, feature gates, proc-macro output and generated code.
+Check normal, Akita and ZK verification and verifier preprocessing. Mixed crates and even
+`jolt-prover` stages cannot be classified by crate name or a `prove` prefix.
+
+Assign **risk-2** only with a cited prover-only caller chain and the separate verifier/preprocessing
+entry points that exclude the changed behavior. Account for every hunk: finding one prover
+caller does not rule out verifier callers. Preserve the protocol-facing contract: no changes to
+verifier logic/preprocessing, proof (de)serialization or format/encoding, transcript/Fiat-Shamir,
+sumcheck order/expressions or PCS/commitment parameters. Computing values later included in a
+proof is not itself a format change; explain why the protocol-facing contract stays unchanged.
+
+Changes to those acceptance surfaces are **risk-4**, even in prover code or when intended to be
+equivalent. Untraced reachability is **risk-4/UNCERTAIN**, except the existing bounded shared-code
+risk-3 rule for localized indirect helpers outside the risk-4 path hints; that exception never downgrades direct verifier,
+protocol, transcript or wire-format edits. A spent read budget proves no exclusion.
+
 - **risk-1:** tests, scripts, CI or documentation only. A cfg(test)-exclusive or comment-only
   edit can be risk-1 inside a production source file. The gate's syntactic exception recognizes
   standalone cfg-gated top-level items and file-inner cfg(test), not nested macro-like input.
   The gate independently checks this exception
-  on level-3/4 paths; a level-1 answer cannot waive a runtime-code floor.
+  on level-3/4 paths; a level-1 answer cannot waive a runtime-code default.
 - **risk-2:** prover or other non-verifier code, or dependency-only bumps outside the verifier
-  dependency closure. Follow callers before ruling out verifier preprocessing or generated code.
+  dependency closure. Applies in any path and at any size; another file's AFFECTS verdict does
+  not raise this path's level.
 - **risk-3:** dependency-only bumps in the verifier dependency closure, or shared-code changes
-  under the minimality rule. For AFFECTS or UNCERTAIN at effective risk-3, the gate allows at
+  outside the risk-4 path hints under the minimality rule. On risk-4-hint paths, model level 3
+  becomes 4; traced prover-only level 2 still stays 2. For AFFECTS or UNCERTAIN at effective risk-3, the gate allows at
   most `risk-3.max_changed_lines` added plus removed non-test, non-comment, non-blank lines across
-  all paths whose effective level is 3, including lower-floor paths raised by your rating,
+  all paths whose effective level is 3, including lower-default paths raised by your rating,
   excluding lockfile lines and deterministic dependency-only files. Non-Rust
   files conservatively count every non-blank line so comment-looking data is not exempted. The current
   threshold is 20 lines, Pika's choice. Larger AFFECTS/UNCERTAIN changes become risk-4.
 - **risk-4:** protocol changes, sumcheck order, symbolic sumcheck expressions, transcript or
   Fiat–Shamir changes, verifier logic, PCS or commitment parameters. Every runtime-code change
-  on a risk-4-floor path stays risk-4, regardless of your level. UNCERTAIN outside the minimal
-  shared-code exception also becomes risk-4.
+  affecting those behaviors stays risk-4. A path default alone does not establish such an
+  effect. UNCERTAIN outside the minimal shared-code exception also becomes risk-4.
 
 The gate identifies dependency bumps by parsing Cargo.toml and Cargo.lock in both revisions.
 Only dependency version, git rev/tag and lock-package-entry changes qualify, not added
@@ -84,10 +105,11 @@ edges over-approximates the runtime closure. Trusted instructions list the paths
 this way. Do not escalate their levels or the overall verdict because their new code is opaque;
 judge the remaining changes independently. A bump-only pull request uses no classifier call.
 
-For production changes, the highest matching path level is a minimum; raise it for semantic
-effects outside that path's usual role. A level-1 result declares no production or build-input
-change, but cannot override level-3/4 runtime-code floors. Unknown paths require semantic classification, not a low
-default. The PR takes the highest effective level across all paths; when any hunk remains
+Reachability is a model judgment, not a second gate call-graph analysis.
+A level-1 result declares no production or build-input change, but cannot override
+level-3/4 runtime-code defaults without the scanner's test/comment exception. Deterministic
+dependency-bump levels still take precedence over model ratings. Unknown paths require semantic
+classification, not a low default. The PR takes the highest effective level across all paths; when any hunk remains
 unclassified, answer UNCERTAIN. Risk-1 through risk-3 can merge without a human approval once
 the other gate requirements pass. Risk-4 requires an independent maintainer's approval of the
 current head. Neither risk nor verifier impact asserts that a code review was performed.
