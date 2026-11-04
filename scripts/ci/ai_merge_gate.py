@@ -714,10 +714,6 @@ class Gate:
         number, head = pull["number"], pull["head"]["sha"]
         self.ledger = self.attempts()
         paths = self.path_risks(pull)
-        if any(path.startswith(GATE_INPUTS) for path in paths):
-            self.records.append(Record(CLASSIFIER, "success", "Protected gate inputs: risk-4",
-                                       "Gate-input changes require a current-head maintainer approval.", 4))
-            return
         source = self.pinned(pull)
         bumps = source.dependency_bumps(set(paths), self.policy["risk-3"]["dependency_roots"])
         if bumps.keys() == paths.keys() and bumps:
@@ -894,8 +890,6 @@ class Gate:
     def labels(self, pull: dict, policy: Outcome) -> set[str]:
         """The managed labels for a policy result. needs-maintainer-review reports a missing maintainer
         authorization of the agent path even when a human approval satisfies the policy."""
-        if pull["draft"]:
-            return set()
         labels = set()
         if not self.authorized(pull):
             labels.add(NEEDS_MAINTAINER)

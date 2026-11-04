@@ -1328,7 +1328,7 @@ class AiMergeGateTests(unittest.TestCase):
                 trees = {urlsplit(url).path.rsplit("/", 1)[1] for _, url in apis.requests if "/git/trees/" in url}
                 self.assertEqual(trees, {BASE, HEAD})
 
-    def test_gate_inputs_are_risk_four_before_and_after_classification(self) -> None:
+    def test_gate_inputs_are_risk_four_with_or_without_a_cached_classification(self) -> None:
         for path in (GATE.WORKFLOW, ".github/workflows/ai-merge-gate-events.yml",
                      ".claude/skills/verifier-classifier/SKILL.md",
                      "specs/verifier-closure-lints.md", GATE.RISK_POLICY):
@@ -1338,11 +1338,7 @@ class AiMergeGateTests(unittest.TestCase):
                 github = GATE.GitHub(apis, "token", REPO)
                 gate = GATE.Gate(github, GATE.Model(apis, "sk-test"), "main", MAINTAINERS, RUN_ID)
                 pull = github.get(f"/repos/{REPO}/pulls/7")
-                with self.subTest(path=path, cached=cached, source="fallback or cache"):
-                    self.assertEqual(gate.risk_level(pull), 4)
-                gate.classify(pull)
-                with self.subTest(path=path, cached=cached, source="classification"):
-                    self.assertEqual(gate.records[-1].risk, 4)
+                with self.subTest(path=path, cached=cached):
                     self.assertEqual(gate.risk_level(pull), 4)
 
     def test_changes_to_gate_inputs_never_get_the_gates_approval(self) -> None:

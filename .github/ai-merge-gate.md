@@ -42,9 +42,9 @@ an approval counts when it comes from someone with write permission, and a revie
 changes must approve before the pull request can merge. GitHub dismisses an approval as stale
 when a push changes the pull request's diff.
 
-The gate's policy asks for more than one approval from anyone with write access. At risk-4, including gate-input changes, it
-asks for an approval of the current head from a maintainer other than the author, and it asks
-for a writer's approval of changes from a non-maintainer author.
+The gate's policy asks for more than an approval from anyone with write access. At risk-4 or
+without a classification, including gate-input changes and non-maintainer authors, it asks
+for an approval of the current head from a maintainer other than the author.
 GitHub cannot check maintainer-list membership or risk levels, so a human approval
 from any writer satisfies the ruleset whatever the policy asks. For human approvals the policy
 is advisory: the managed labels and the `ai-merge-gate` check tell reviewers what it wants;
@@ -144,15 +144,15 @@ Each evaluation sets exactly these labels and leaves every other label alone:
 
 - `risk-1` through `risk-4`: one risk label for a ready, maintainer-authored pull request with a
   valid classification and no gate-input changes. Otherwise the next evaluation removes existing risk labels.
-- `needs-maintainer-review`: the author is not a maintainer. It stays even when a writer's
-  approval satisfies the policy; the gate never approves non-maintainer pull requests. Without
+- `needs-maintainer-review`: the author is not a maintainer. It stays even when an independent
+  maintainer's current-head approval satisfies the policy; the gate never approves non-maintainer pull requests. Without
   an approval, these pull requests get only this label and, when the existing rule below applies,
   `no-reviewer-assigned`.
 - `merge-eligible`: the gate's review policy is satisfied for the current head, as the table
   below decides, and the pull request is open and not a draft. It does not show that CI passed,
   that GitHub would allow the merge, or that auto-merge is enabled. Closing or merging the pull
   request, or retargeting it away from `main`, removes it.
-- `no-reviewer-assigned`: the policy waits for a person (table rows 3, 5, 8 and 11, or a gate
+- `no-reviewer-assigned`: the policy waits for a person (table rows 4, 5 and 8, or a gate
   error), and the pull request has no requested reviewer, no requested team and no assignee.
 
 Requesting a reviewer or team, assigning someone, or satisfying the requirement removes
@@ -190,7 +190,7 @@ never grants an approval. The evaluator exits successfully for both conclusions,
 requirement does not fail the workflow job. Only a gate execution error publishes `failure`
 and exits nonzero.
 
-Rows 3 through 5 apply only without a writer's approval. The gate's own approval additionally
+Rows 4 and 5 apply only without a writer's approval. The gate's own approval additionally
 requires a maintainer author, a ready pull request and no changes to gate inputs.
 
 Human approvals follow GitHub's own review state for risk-1 through risk-3: an approval of an
@@ -352,7 +352,7 @@ it describe another commit with the same number of files.
 
 The model's input is the pull request's diff from its merge base with `main`, followed by every
 changed file in full, with line numbers, as the head has it. The gate reads the diff only after
-rows 2 through 5 have passed. Two tools let the model read the rest of the repository:
+rows 1 through 5 have passed. Two tools let the model read the rest of the repository:
 `read_file` returns a file with line numbers or lists a directory, and `search` returns the
 lines that contain a literal string. Each reads either the merge base or the head. The gate
 answers them from GitHub's archive of each commit, which it holds in memory and checks against
