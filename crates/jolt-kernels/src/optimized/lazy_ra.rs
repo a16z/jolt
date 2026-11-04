@@ -156,11 +156,11 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     ) where
         Self: Sized,
     {
-        gather_pairs(self, tables, width, row, out);
+        gather_pairs_by_index(self, tables, width, row, out);
     }
 }
 
-pub(super) fn gather_pairs<F: JoltField, S: ChunkIndexSource>(
+pub(super) fn gather_pairs_by_index<F: JoltField, S: ChunkIndexSource>(
     source: &S,
     tables: &[Vec<F>],
     width: usize,

@@ -125,20 +125,11 @@ impl ChunkIndexSource for RamAddressChunks {
         out: &mut [(F, F)],
     ) {
         let start = 2 * row * width;
-        let end = start + 2 * width;
-        assert!(end <= self.addresses.len());
-        let prefix = self.addresses.prefix();
-        // All committed RAM selectors vanish on a no-access cycle, including
-        // the implicit suffix. Check the shared address range once per pair.
-        if prefix[start.min(prefix.len())..end.min(prefix.len())]
-            .iter()
-            .all(|&address| address == NO_ACCESS)
-        {
-            for (out, _) in out.iter_mut().zip(tables) {
-                *out = (F::zero(), F::zero());
-            }
+        // Every committed selector vanishes on a no-access cycle.
+        if self.addresses.no_access_in(start..start + 2 * width) {
+            out.fill((F::zero(), F::zero()));
         } else {
-            super::lazy_ra::gather_pairs(self, tables, width, row, out);
+            super::lazy_ra::gather_pairs_by_index(self, tables, width, row, out);
         }
     }
 
