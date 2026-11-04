@@ -198,10 +198,10 @@ impl CollectRegisterEntries {
                     match access.window::<RegisterCycleRow>(base + offset) {
                         Ok(cycle) => {
                             count += cycle.entry_count();
-                            let _ = rs1[offset]
-                                .write(cycle.rs1.map_or(ABSENT_REGISTER, |(k, _)| k));
-                            let _ = rs2[offset]
-                                .write(cycle.rs2.map_or(ABSENT_REGISTER, |(k, _)| k));
+                            let _ =
+                                rs1[offset].write(cycle.rs1.map_or(ABSENT_REGISTER, |(k, _)| k));
+                            let _ =
+                                rs2[offset].write(cycle.rs2.map_or(ABSENT_REGISTER, |(k, _)| k));
                             let _ = rd[offset].write(cycle.rd.map(|(k, ..)| k));
                             let _ = inc[offset].write(raw_rd_inc(&cycle));
                         }
