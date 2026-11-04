@@ -342,7 +342,8 @@ request's file list, which follows the branch: a push and a revert during an eva
 it describe another commit with the same number of files.
 
 The model's first input is the complete pull request diff from its merge base with `main` and
-the changed paths. It does not inline complete files or the closure reference specification.
+the changed paths. It does not inline complete changed files. The closure reference specification
+is supplied with the trusted instructions so fetching it does not consume the read budget.
 The gate reads the diff only after rows 2 through 5 have passed. Two tools let the model read
 surrounding definitions, callers and reference files on demand:
 `read_file` returns a file with line numbers, optionally an inclusive `start_line`/`end_line`
@@ -355,10 +356,10 @@ the gate. Nothing from the pull request is checked out, written to disk or run.
 
 The gate refuses rather than truncates. It fails, without calling the model, on a diff whose
 parsed file, addition and deletion counts differ from the pull request's, on a truncated tree
-listing, on a commit holding more than 500,000,000 bytes of files, and on a request over the
-input bound below. A tool answer over 60,000 characters, a search with more than 200 matching
+listing or on a commit holding more than 500,000,000 bytes of files. An oversized first request
+instead stays unclassified and requires human approval. A tool answer over 60,000 characters, a search with more than 200 matching
 lines, and a binary file or one over 1,000,000 bytes come back to the model as errors, not as
-partial text. After 100,000 characters of answers or 4 tool turns for one question, or when the
+partial text. After 500,000 characters of answers or 4 tool turns for one question, or when the
 answers would take the next request over the input bound, the gate withholds the tools and the
 model must answer from what it has read; the classifier skill tells it to answer `UNCERTAIN`
 when that is not enough.
@@ -420,12 +421,16 @@ local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gat
   previous input tokens for responses in the chain" as input
   ([conversation state](https://developers.openai.com/api/docs/guides/conversation-state)).
   OpenAI's own framing of the request, such as its message and tool wrappers, is not counted, so
-  the count is the gate's estimate, not OpenAI's. A first request over the bound fails the
-  evaluation before any paid call and counts no attempt.
+  the count is the gate's estimate, not OpenAI's. A first request over the bound records a
+  skipped classifier with no verdict and counts no paid attempt. The head stays unclassified
+  and follows the neutral risk-4/current-head-maintainer approval path, rather than a gate error.
   This is a spend limit, not the model's documented 1,050,000-token context window. Keeping it
   below the 272,000-token long-context threshold avoids the higher rates below rather than
   increasing the budget to accommodate automatically inlined files. Large complete diffs can
-  still exceed it and fail closed; unchanged file contents no longer consume the first request.
+  still exceed it and require human approval; unchanged file contents no longer consume the first request.
+  The 500,000-character read budget permits caller tracing after changed-file reads. It can
+  increase actual paid input and tool use, but the per-request input, output, turn and attempt
+  caps are unchanged, so the nominal maximum cost below does not increase.
 - **Calls per attempt.** An attempt is one question with at most 4 tool turns, so at most 5
   paid requests.
 - **Attempts.** At most 2 attempts per head and 3 per pull request, across all its heads,

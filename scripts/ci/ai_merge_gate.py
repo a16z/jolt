@@ -87,7 +87,7 @@ MAX_HEAD_ATTEMPTS = 2
 MAX_PR_ATTEMPTS = 3
 # Tool answers: one answer, all answers to one question, and matching lines per search.
 MAX_ANSWER_CHARS = 60_000
-MAX_SOURCE_CHARS = 100_000
+MAX_SOURCE_CHARS = 500_000
 MAX_MATCHES = 200
 # A commit's files as read from its archive: larger files are unreadable, larger trees refused.
 MAX_FILE_BYTES = 1_000_000
@@ -454,12 +454,13 @@ class Model:
         log(f"{MODEL} response {response.get('id')} {response.get('status')}, tokens: " + ", ".join(
             f"{name} {count if type(count) is int else 'not reported'}" for name, count in counts))
 
-    def ask(self, instructions: str, material: str, name: str, schema: dict, tool, admit, key: str) -> dict:
+    def ask(self, instructions: str, material: str, name: str, schema: dict, tool, admit, key: str) -> dict | None:
         """Ask one question, answering the model's tool calls with `tool(name, arguments)` until
         it answers. After MAX_TOOL_ROUNDS turns, once the answers reach MAX_SOURCE_CHARS, or when the
         answers would take the next request past MAX_CALL_INPUT_TOKENS, the next turn withholds the
         tools, so the model must answer from what it has read: at most MAX_TOOL_ROUNDS + 1 paid calls.
-        Every turn sends `key` as its prompt cache key."""
+        Every turn sends `key` as its prompt cache key. An oversized first request returns None
+        without admitting a paid attempt."""
         if not self.key:
             raise GateError("OPENAI_API_KEY is not set")
         # previous_response_id carries the conversation, reasoning included, but not the
@@ -482,8 +483,11 @@ class Model:
             "background": True,
             "store": True,
         }
+        first = dict(request, input=material)
+        if len(json.dumps(first).encode()) > MAX_CALL_INPUT_TOKENS:
+            return None
         deadline = self.clock() + MODEL_DEADLINE_SECONDS
-        response = self.run(dict(request, input=material), deadline, admit=admit)
+        response = self.run(first, deadline, admit=admit)
         rounds = served = 0
         withheld = False
         while calls := [item for item in response.get("output", []) if item.get("type") == "function_call"]:
@@ -591,6 +595,7 @@ class Gate:
         self.posted = 0
         self.source: Source | None = None
         self.input: str | None = None
+        self.oversized = False
         self.policy = json.loads((ROOT / RISK_POLICY).read_text())
 
     def is_maintainer(self, login: str) -> bool:
@@ -655,6 +660,8 @@ class Gate:
                 for path in self.pinned(pull).changed()}
 
     def risk_level(self, pull: dict) -> int:
+        if self.oversized:
+            return 4
         if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
             return record.risk
         paths = self.path_risks(pull)
@@ -749,14 +756,22 @@ class Gate:
                          "this text; without one, the attempt failed and the head has no classifier result.")
 
         skill = (ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text()
+        closure = (ROOT / "specs/verifier-closure-lints.md").read_text()
         policy = (ROOT / RISK_POLICY).read_text()
         material = self.material(pull)
         answer = self.model.ask(f"{skill}\n\n## Trusted risk policy: {RISK_POLICY}\n\n{policy}"
                                 f"\n\nDeterministic dependency-bump risks: {json.dumps(bumps, sort_keys=True)}. "
                                 "These paths cannot raise the verdict or risk; judge other changes independently."
-                                "\n\nRead specs/verifier-closure-lints.md through read_file if needed.",
+                                f"\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
                                 material, "verifier_classification", CLASSIFICATION_SCHEMA, self.source.call, admit,
                                 f"{self.repo}#{number}")
+        if answer is None:
+            self.oversized = True
+            self.records.append(Record(CLASSIFIER, "skipped", "Verifier classifier: input too large",
+                                       f"The first request exceeds the {MAX_CALL_INPUT_TOKENS} input bound. "
+                                       "No paid attempt or classifier verdict was recorded. The head stays "
+                                       "unclassified and requires a current-head maintainer approval.", None))
+            return
         risks = {}
         for item in answer["risks"]:
             if not isinstance(item, dict) or item.get("path") not in paths or item["path"] in risks \
