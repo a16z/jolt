@@ -71,8 +71,8 @@ impl<F: Field> CompressedPoly<F> {
 
     /// Evaluates the polynomial at `point` using the hint `h = f(0) + f(1)`.
     ///
-    /// Recovers the linear term, then evaluates via ascending-power accumulation
-    /// in O(d) multiplications.
+    /// Recovers the linear term and evaluates in O(d) multiplications, using
+    /// Horner's rule when `compressed-poly-horner` is enabled.
     ///
     /// # Panics
     /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
@@ -86,6 +86,7 @@ impl<F: Field> CompressedPoly<F> {
     ///
     /// # Panics
     /// Panics if the polynomial is empty ([`is_empty`](Self::is_empty)).
+    #[cfg(not(feature = "compressed-poly-horner"))]
     #[inline]
     pub fn eval_from_hint(&self, hint: &F, point: &F) -> F {
         let linear_term = self.recover_linear_term(*hint);
@@ -113,6 +114,10 @@ impl<F: Field> CompressedPoly<F> {
         UnivariatePoly::new(coeffs)
     }
 }
+
+#[cfg(feature = "compressed-poly-horner")]
+#[path = "compressed_horner.rs"]
+mod compressed_horner;
 
 #[cfg(test)]
 #[expect(clippy::unwrap_used)]
