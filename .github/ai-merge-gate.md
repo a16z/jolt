@@ -620,9 +620,10 @@ if retiring them. Keep the separate Pika App and local review skill.
   misread the rest of a runtime function as test code. The scanner is not a Rust parser.
 - Submodule gitlinks on floor paths count zero code lines. None exist on those paths today.
 - Out-of-file test modules use ordinary Rust module paths and all parent declarations.
-  `#[path]`/`include!` targets and Cargo build/target roots keep their normal floor. Literal
-  references conservatively block every file with the referenced basename. Custom references
-  and macro-generated module declarations also block their declaring crate's exemption.
+  Literal `#[path]`/`include!` targets and Cargo build/target roots keep their normal floor.
+  Literal references resolve relative to the declaring file and inline-module directory.
+  Non-literal includes and macro-generated module declarations conservatively block only
+  their runtime-reachable compilation targets, not unrelated library or integration-test targets.
   The scanner does not expand macros or resolve generated module paths.
 - The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
   Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.

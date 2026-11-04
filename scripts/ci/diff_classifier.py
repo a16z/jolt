@@ -363,7 +363,8 @@ def _is_test_only_cfg_expr(expr: str) -> bool:
 class _Scanner:
     """Cross-line lexical state: block comments, strings, raw strings."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, preserve_strings: bool = False) -> None:
+        self.preserve_strings = preserve_strings
         self.block_comment_depth = 0
         self.in_string = False
         self.in_raw_string = False
@@ -392,11 +393,17 @@ class _Scanner:
             if self.in_string:
                 scan.has_code = True
                 if c == "\\":
+                    if self.preserve_strings:
+                        scan.code += chars[i:i + 2]
                     i += 2
                 elif c == '"':
+                    if self.preserve_strings:
+                        scan.code += c
                     self.in_string = False
                     i += 1
                 else:
+                    if self.preserve_strings:
+                        scan.code += c
                     i += 1
                 continue
 
@@ -409,11 +416,17 @@ class _Scanner:
                     ):
                         closing += 1
                     if closing >= self.raw_hash_count:
+                        if self.preserve_strings:
+                            scan.code += chars[i:i + 1 + self.raw_hash_count]
                         self.in_raw_string = False
                         i += 1 + self.raw_hash_count
                     else:
+                        if self.preserve_strings:
+                            scan.code += c
                         i += 1
                 else:
+                    if self.preserve_strings:
+                        scan.code += c
                     i += 1
                 continue
 
@@ -431,6 +444,8 @@ class _Scanner:
                     hashes += 1
                     j += 1
                 if j < length and chars[j] == '"':
+                    if self.preserve_strings:
+                        scan.code += chars[i + 1:j + 1]
                     self.in_raw_string = True
                     self.raw_hash_count = hashes
                     i = j + 1
@@ -612,8 +627,9 @@ def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
 
     incoming: dict[str, list[tuple[str, bool]]] = {}
     roots = set()
-    blocked = set()
-    referenced_names = set()
+    invalid_crates = set()
+    referenced = set()
+    ambiguous = set()
     for manifest, text in files.items():
         if not manifest.endswith("Cargo.toml") or text is None:
             continue
@@ -621,7 +637,7 @@ def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
         try:
             cargo = tomllib.loads(text)
         except tomllib.TOMLDecodeError:
-            blocked.add(owner)
+            invalid_crates.add(owner)
             continue
         for target in [cargo.get("lib", {}), *cargo.get("bin", []), *cargo.get("example", []),
                        *cargo.get("bench", []), *cargo.get("test", [])]:
@@ -630,50 +646,93 @@ def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
         build = cargo.get("package", {}).get("build")
         if isinstance(build, str):
             roots.add(posixpath.normpath(str(PurePosixPath(owner) / build)))
-    for path, text in files.items():
+    for path in files:
         owner = crate(path)
         relative = posixpath.relpath(path, owner) if owner else path
         if relative in ("build.rs", "src/lib.rs", "src/main.rs") \
                 or relative.startswith(("src/bin/", "examples/", "benches/", "tests/")):
             roots.add(path)
+    literal = r'r(?P<hashes>\#*)"[\s\S]*?"(?P=hashes)|"(?:\\[\s\S]|[^"\\])*"'
+    events = re.compile(r'(?P<path>#\s*!?\[\s*path\s*=\s*)|(?P<include>\binclude\s*!\s*\(\s*)|'
+                        f'(?P<string>{literal})|' + r'(?P<generated>\bmod\s+\$)|'
+                        r'\bmod\s+(?:r#)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<delimiter>[;{])|[{}]')
+    for path, text in files.items():
         if not path.endswith(".rs") or text is None or not re.search(r"\bmod\b|\bpath\b|\binclude\b", text):
             continue
-        scanner = _Scanner()
+        scanner = _Scanner(preserve_strings=True)
         code = "\n".join(scanner.scan_line(line).code for line in text.split("\n"))
-        if re.search(r"#\s*!?\[[^]]*\bpath\s*=|\binclude\s*!", code):
-            blocked.add(owner)
-            referenced_names.update(PurePosixPath(value).name for value in re.findall(r'"([^"\n]*)"', text))
-        if re.search(r"\bmod\s+\$", code):
-            blocked.add(owner)
         regions = analyze_rust(text, cfg_test_only=True)
         source = PurePosixPath(path)
         base = source.parent if path in roots or source.stem in ("lib", "main", "mod") or "/src/bin/" in "/" + path else source.with_suffix("")
         depth = 0
         modules = []
-        for match in re.finditer(r"\bmod\s+(?:r#)?([A-Za-z_][A-Za-z0-9_]*)\s*([;{])|[{}]", code):
-            name, delimiter = match.groups()
+        custom_path = None
+        for match in events.finditer(code):
+            line = code.count("\n", 0, match.start()) + 1
+            directory = modules[-1][1] if modules else base
+            if match.group("path") or match.group("include"):
+                value = re.match(literal, code[match.end():])
+                target = None
+                if value:
+                    token = value.group()
+                    try:
+                        name = token[token.index('"') + 1:token.rindex('"')] if token.startswith("r") else json.loads(token)
+                        parent = directory if match.group("path") and modules else source.parent
+                        target = posixpath.normpath(str(parent / name))
+                        referenced.add(target)
+                        incoming.setdefault(target, []).append((path, False))
+                    except ValueError:
+                        pass
+                if target is None and line not in regions.test_lines:
+                    ambiguous.add(path)
+                if match.group("path"):
+                    custom_path = target
+                continue
+            if match.group("string"):
+                continue
+            if match.group("generated"):
+                if line not in regions.test_lines:
+                    ambiguous.add(path)
+                continue
+            name, delimiter = match.group("name"), match.group("delimiter")
             if name is not None:
                 if delimiter == "{":
                     depth += 1
-                    modules.append((depth, name))
-                    continue
-                target = base.joinpath(*(name for _, name in modules), name)
-                for candidate in (str(target) + ".rs", str(target / "mod.rs")):
-                    if candidate in files:
-                        line = code.count("\n", 0, match.start()) + 1
-                        incoming.setdefault(candidate, []).append((path, line in regions.test_lines))
+                    modules.append((depth, PurePosixPath(custom_path) if custom_path else directory / name))
+                elif custom_path is None:
+                    target = directory / name
+                    for candidate in (str(target) + ".rs", str(target / "mod.rs")):
+                        if candidate in files:
+                            incoming.setdefault(candidate, []).append((path, line in regions.test_lines))
+                custom_path = None
             elif match.group() == "{":
                 depth += 1
             else:
                 depth -= 1
                 while modules and modules[-1][0] > depth:
                     modules.pop()
+    units = {root: {root} for root in roots}
+    runtime_units = {root: {root} for root in roots}
+    while True:
+        changed = False
+        for child, parents in incoming.items():
+            for memberships, test_edges in ((units, True), (runtime_units, False)):
+                inherited = {unit for parent, test in parents if test_edges or not test
+                             for unit in memberships.get(parent, ())}
+                current = memberships.setdefault(child, set())
+                if not inherited <= current:
+                    current.update(inherited)
+                    changed = True
+        if not changed:
+            break
+    # Runtime macros can name test modules; macros reachable only through test cfgs cannot.
+    blocked_units = {unit for path in ambiguous for unit in runtime_units.get(path, ())}
     tests: set[str] = set()
     while True:
         found = {path for path, parents in incoming.items() if path not in tests
-                 and crate(path) and crate(path) not in blocked and path not in roots
+                 and crate(path) and crate(path) not in invalid_crates and path not in roots
                  and PurePosixPath(path).name not in ("lib.rs", "main.rs")
-                 and PurePosixPath(path).name not in referenced_names
+                 and path not in referenced and not units.get(path, set()) & blocked_units
                  and all(test or parent in tests for parent, test in parents)}
         if not found:
             return tests

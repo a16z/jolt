@@ -446,6 +446,8 @@ class AiMergeGateTests(unittest.TestCase):
                       "crates/other/src/lib.rs": '#[path = "../../jolt-verifier/src/helper.rs"]\npub mod helper;\n'}),
             (helper, {"crates/other/Cargo.toml": '[package]\nname = "other"\n',
                       "crates/other/src/lib.rs": 'include!("../../jolt-verifier/src/helper.rs");\n'}),
+            (helper, {f"{crate}/src/outer.rs": 'mod inline { #[path = "../../helper.rs"] mod runtime; }\n'}),
+            (helper, {f"{crate}/src/outer.rs": 'mod inline { include!(r"helper.rs"); }\n'}),
             (helper, {f"{crate}/src/lib.rs": "macro_rules! declare { ($n:ident) => { pub mod $n; }; }\n"
                       "#[cfg(not(test))]\ndeclare!(helper);\n#[cfg(test)]\nmod helper;\n"}),
             (f"{crate}/build.rs", {f"{crate}/mod.rs": "#[cfg(test)]\nmod build;\n"}),
@@ -460,6 +462,37 @@ class AiMergeGateTests(unittest.TestCase):
                 apis = changed_contents(old, {**old, child: "fn main() { accept(); }\n"}, risk=1)
                 source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
                 self.assertEqual(source.code_changes(child), 2)
+
+    def test_current_sumcheck_test_removal_is_not_runtime_code(self):
+        child = "crates/jolt-sumcheck/src/tests.rs"
+        files = {path: (GATE.ROOT / path).read_text() for path in (
+            "crates/jolt-sumcheck/Cargo.toml", "crates/jolt-sumcheck/src/lib.rs", child,
+            "crates/jolt-sumcheck/tests/f8_domain.rs", "crates/jolt-prover/Cargo.toml",
+            "crates/jolt-prover/src/profile.rs",
+        )}
+        first = files[child].index("#[test]")
+        second = files[child].index("#[test]", first + 1)
+        head = {**files, child: files[child][:first] + files[child][second:]}
+        apis = changed_contents(files, head, risk=1)
+        source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
+        self.assertEqual(source.code_changes(child), 0)
+        self.assertIn("risk-1", evaluate(apis).labels)
+
+    def test_non_library_macro_targets_do_not_block_library_tests(self):
+        crate = "crates/jolt-sumcheck"
+        child = f"{crate}/src/checks.rs"
+        macro = "macro_rules! declare { ($n:ident) => { mod $n; }; }\n"
+        for target in ("tests/integration.rs", "benches/bench.rs", "examples/demo.rs", "build.rs", "src/bin/tool.rs", "tooling/build.rs"):
+            with self.subTest(target=target):
+                manifest = '[package]\nname = "jolt-sumcheck"\n'
+                if target == "tooling/build.rs":
+                    manifest += f'build = "{target}"\n'
+                files = {f"{crate}/Cargo.toml": manifest,
+                         f"{crate}/src/lib.rs": "#[cfg(test)]\nmod checks;\n",
+                         child: "fn check() { old(); }\n", f"{crate}/{target}": macro}
+                apis = changed_contents(files, {**files, child: "fn check() { new(); }\n"}, risk=1)
+                source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
+                self.assertEqual(source.code_changes(child), 0)
 
     def test_affecting_or_uncertain_risk_three_changes_must_be_minimal_in_aggregate(self) -> None:
         for verdict in ("AFFECTS", "UNCERTAIN"):
