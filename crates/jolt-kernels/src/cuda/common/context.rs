@@ -112,6 +112,8 @@ pub struct CudaKernelContext {
     reg_count: CudaFunction,
     reg_scatter: CudaFunction,
     cr_quotient: CudaFunction,
+    cr_bind_prefix: CudaFunction,
+    cr_eq_prefix: CudaFunction,
     irv_eq_double: CudaFunction,
     irv_tables_split: CudaFunction,
     irv_gather: CudaFunction,
@@ -351,6 +353,8 @@ impl CudaKernelContext {
             reg_count: module.load_function("reg_count_kernel")?,
             reg_scatter: module.load_function("reg_scatter_kernel")?,
             cr_quotient: module.load_function("cr_quotient_kernel")?,
+            cr_bind_prefix: module.load_function("cr_bind_prefix_kernel")?,
+            cr_eq_prefix: module.load_function("cr_eq_prefix_kernel")?,
             irv_eq_double: module.load_function("irv_eq_double_kernel")?,
             irv_tables_split: module.load_function("irv_tables_split_kernel")?,
             irv_gather: module.load_function("irv_gather_kernel")?,
@@ -1326,6 +1330,14 @@ impl CudaKernelContext {
 
     pub(crate) const fn cr_quotient(&self) -> &CudaFunction {
         &self.cr_quotient
+    }
+
+    pub(crate) const fn cr_bind_prefix(&self) -> &CudaFunction {
+        &self.cr_bind_prefix
+    }
+
+    pub(crate) const fn cr_eq_prefix(&self) -> &CudaFunction {
+        &self.cr_eq_prefix
     }
 
     pub(crate) const fn rwm_segment_flags(&self) -> &CudaFunction {

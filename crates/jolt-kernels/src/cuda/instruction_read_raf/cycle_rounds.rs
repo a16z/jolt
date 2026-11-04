@@ -3,7 +3,9 @@ use jolt_field::{Fr, JoltField};
 use jolt_poly::{BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
-use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec, LIMBS};
+use crate::cuda::common::device::{
+    fr_into, fr_limbs, require_fr, require_fr_slice, DeviceFrVec, LIMBS,
+};
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
@@ -18,6 +20,8 @@ const MAX_FACTORS: usize = 9;
 
 pub struct CycleShard {
     pub ordinal: usize,
+    /// The last stored value repeats through the logical window's end.
+    /// `assemble` checks nonempty, equal lengths within that window.
     pub factors: Vec<DeviceFrVec>,
 }
 
@@ -63,6 +67,11 @@ impl DeviceCycleRounds {
                 reason: "the CUDA cycle rounds need at least one window",
             },
         )?;
+        if lanes == 0 {
+            return Err(CudaError::InvariantViolation {
+                reason: "the CUDA cycle rounds need at least one factor",
+            });
+        }
         if lanes > MAX_FACTORS {
             return Err(CudaError::NotImplemented {
                 kernel: "the CUDA cycle-round quotient supports at most 8 virtual ra polynomials",
@@ -76,10 +85,17 @@ impl DeviceCycleRounds {
                     got: shard.factors.len(),
                 });
             }
+            let retained = shard.factors[0].len();
+            if retained == 0 || retained > expected {
+                return Err(CudaError::LengthMismatch {
+                    expected,
+                    got: retained,
+                });
+            }
             for table in &shard.factors {
-                if table.len() != expected {
+                if table.len() != retained {
                     return Err(CudaError::LengthMismatch {
-                        expected,
+                        expected: retained,
                         got: table.len(),
                     });
                 }
@@ -104,6 +120,7 @@ impl DeviceCycleRounds {
                 self.eq.e_in_current(),
                 self.eq.e_out_current(),
                 half,
+                Fr::from(0u64),
             );
         }
         let count = self.shards.len();
@@ -121,6 +138,10 @@ impl DeviceCycleRounds {
             .iter()
             .enumerate()
             .map(|(index, shard)| {
+                let prefix_pairs = (shard.factors[0].len() - 1).div_ceil(2);
+                let start = index * (half / count);
+                let tail_weight = self.eq.suffix_weight(start + prefix_pairs)
+                    - self.eq.suffix_weight(start + half / count);
                 let task: DeviceTask<'_, Vec<Fr>, CudaError> = Box::new(move || {
                     let device = context_for(shard.ordinal).ok_or(absent())?;
                     let window = e_out.get(index * stride..(index + 1) * stride).ok_or(
@@ -128,7 +149,14 @@ impl DeviceCycleRounds {
                             reason: "a cycle-round window lies outside the outer eq factor",
                         },
                     )?;
-                    Self::window_quotient(device, &shard.factors, e_in, window, half / count)
+                    Self::window_quotient(
+                        device,
+                        &shard.factors,
+                        e_in,
+                        window,
+                        half / count,
+                        tail_weight,
+                    )
                 });
                 task
             })
@@ -158,9 +186,14 @@ impl DeviceCycleRounds {
         host_in: &[Fr],
         host_out: &[Fr],
         half: usize,
+        tail_weight: Fr,
     ) -> Result<Vec<Fr>, CudaError> {
         let lanes = CudaKernelContext::count_of(factors.len())?;
-        let half_count = CudaKernelContext::count_of(half)?;
+        let prefix = factors[0].len() - 1;
+        let prefix_count = CudaKernelContext::count_of(prefix)?;
+        let half_count =
+            CudaKernelContext::count_of(prefix.div_ceil(2).saturating_add(1).min(half))?;
+        let tail_weight = fr_limbs(tail_weight);
 
         let e_in = context.upload(host_in)?;
         let e_out = context.upload(host_out)?;
@@ -187,15 +220,17 @@ impl DeviceCycleRounds {
         let _ = builder.arg(e_out.limbs());
         let _ = builder.arg(&out_len);
         let _ = builder.arg(&in_bits);
+        let _ = builder.arg(&prefix_count);
         let _ = builder.arg(&half_count);
+        for limb in &tail_weight {
+            let _ = builder.arg(limb);
+        }
         let _ = builder.arg(partials.limbs_mut());
-        // SAFETY: thread `y < half` reads `table[2y]`/`table[2y+1]` for each of
-        // `lanes` tables holding `2 * half` elements, plus `e_in[y & (in_len-1)]`
-        // and `e_out[y >> in_bits]` — in range because `in_len * out_len == half`
-        // is checked in `assemble`. Writes go to
-        // `partials[lane * gridDim.x + blockIdx.x]`, one slot per (lane, block)
-        // of `lanes * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
-        // `shared_mem_bytes`. Every buffer outlives the launch.
+        // SAFETY: assemble checks equal nonempty factor lengths. Pair reads clamp
+        // to their last element, representing the constant tail. Active pairs
+        // lie within the checked equality tensor; one extra thread accounts for
+        // its remaining mass. Each block writes `lanes + 1` disjoint partials.
+        // Shared memory holds BLOCK field elements; all buffers outlive the launch.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
@@ -242,11 +277,13 @@ impl DeviceCycleRounds {
         challenge: F,
     ) -> Result<(), CudaError> {
         let challenge = require_fr(challenge)?;
+        let half = 1usize << (self.rounds - self.rounds_bound - 1);
         if let Some(factors) = &mut self.collapsed {
             for table in factors.iter_mut() {
-                *table = context.bind(table, challenge, BindingOrder::LowToHigh)?;
+                *table = Self::bind_prefix(context, table, challenge, half)?;
             }
         } else {
+            let half = half / self.shards.len();
             let tasks: Vec<DeviceTask<'_, (), CudaError>> = self
                 .shards
                 .iter_mut()
@@ -254,7 +291,7 @@ impl DeviceCycleRounds {
                     let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
                         let device = context_for(shard.ordinal).ok_or(absent())?;
                         for table in &mut shard.factors {
-                            *table = device.bind(table, challenge, BindingOrder::LowToHigh)?;
+                            *table = Self::bind_prefix(device, table, challenge, half)?;
                         }
                         Ok(())
                     });
@@ -272,6 +309,34 @@ impl DeviceCycleRounds {
             self.collapse(context)?;
         }
         Ok(())
+    }
+
+    fn bind_prefix(
+        context: &CudaKernelContext,
+        table: &DeviceFrVec,
+        challenge: Fr,
+        half: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let prefix = table.len() - 1;
+        let retained = (prefix.div_ceil(2) + 1).min(half);
+        let mut output = context.alloc_fr_unset(retained)?;
+        let prefix = CudaKernelContext::count_of(prefix)?;
+        let count = CudaKernelContext::count_of(retained)?;
+        let challenge = fr_limbs(challenge);
+        let mut builder = context.stream().launch_builder(context.cr_bind_prefix());
+        let _ = builder.arg(table.limbs());
+        let _ = builder.arg(&prefix);
+        let _ = builder.arg(&count);
+        for limb in &challenge {
+            let _ = builder.arg(limb);
+        }
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: each thread writes one of `retained` outputs. Both input indices
+        // clamp to `prefix`, the checked nonempty table's last element. Output is
+        // a distinct allocation and every element is written before it is read.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        context.stream().synchronize()?;
+        Ok(output)
     }
 
     fn collapse(&mut self, context: &CudaKernelContext) -> Result<(), CudaError> {

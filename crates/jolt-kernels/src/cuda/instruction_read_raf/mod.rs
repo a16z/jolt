@@ -7,22 +7,27 @@
 //!
 //! At the address/cycle boundary, CUDA materializes the combined value and
 //! every virtual RA factor on each device. Optimized keeps RA factors lazy
-//! through its early cycle rounds. Both use split-eq cycle reductions and
-//! evaluate final table/RAF flags from the original rows; CUDA reads those
-//! flags from the resident packed columns.
+//! through its early cycle rounds. CUDA and optimized use split-eq cycle
+//! reductions and evaluate final table/RAF flags from the original rows;
+//! CUDA reads those flags from the resident packed columns.
 //!
-//! CUDA scans and binds the padded cycle domain. Optimized condenses identical
-//! trailing rows into one weighted representative during address phases and
-//! retains implicit constant tails during cycle rounds. Its cycle evaluator
-//! also caches constant-factor products and aggregates low-degree rows before
-//! extending the evaluation grid; CUDA multiplies the factors per cycle and
-//! evaluation point.
+//! Like optimized, CUDA condenses the witness's constant padding into one
+//! weighted representative per resident window during address phases and keeps
+//! that tail implicit during cycle rounds. The shared bundle suffix check
+//! preserves a differing terminal lookahead row. Sources without random access
+//! retain their full windows. Optimized's cycle evaluator also caches constant
+//! factor products and aggregates low-degree rows before extending the
+//! evaluation grid; CUDA multiplies the explicit prefix's factors per cycle
+//! and evaluation point.
 
 pub(super) mod address_driver;
 pub(super) mod address_phase;
 mod combine;
 mod cycle_handoff;
 mod cycle_rounds;
+mod padding;
+#[cfg(test)]
+mod padding_tests;
 mod prefixes;
 #[cfg(test)]
 mod suffixes;
@@ -61,9 +66,11 @@ use super::{require_context, CudaBackend};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::device_columns::device_trace_columns;
-use crate::cuda::common::devices::{fan_out, witness_windows, DeviceTask};
+use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
 use crate::cuda::common::error::backend;
 use crate::cuda::common::error::CudaError;
+use crate::optimized::support::BundleAccess;
+use crate::reference::instruction_read_raf::InstructionReadRafWitness;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -84,7 +91,7 @@ fn raf_initial_checkpoints<F: JoltField>() -> [F; RAF_CHECKPOINTS] {
 pub(crate) struct RowShard {
     pub(crate) ordinal: usize,
     pub(crate) rows: Arc<DeviceRows>,
-    pub(crate) cycles: usize,
+    pub(crate) window: CycleWindow,
 }
 
 type PreparedWindow = (
@@ -136,22 +143,21 @@ impl<F: JoltField> DeviceInstructionReadRaf<F> {
     }
 
     fn window_flag_claims(&self, r_cycle: &[Fr]) -> Result<(Vec<Fr>, Fr), CudaError> {
-        let count = self.row_shards.len();
         let tasks: Vec<DeviceTask<'_, (Vec<Fr>, Fr), CudaError>> = self
             .row_shards
             .iter()
-            .enumerate()
-            .map(|(index, shard)| {
+            .map(|shard| {
                 let task: DeviceTask<'_, (Vec<Fr>, Fr), CudaError> = Box::new(move || {
                     let device =
                         context_for(shard.ordinal).ok_or(CudaError::InvariantViolation {
                             reason: "an instruction read-RAF flag window names an absent device",
                         })?;
-                    let eq = device.eq_evals_shard(r_cycle, index, count)?;
+                    let eq =
+                        padding::eq_weights(device, r_cycle, &shard.window, shard.rows.cycles())?;
                     flag_claims(
                         device,
                         &shard.rows,
-                        shard.cycles,
+                        shard.rows.cycles(),
                         &eq,
                         LookupTableKind::<RISCV_XLEN>::COUNT,
                     )
@@ -273,7 +279,7 @@ impl<F: JoltField> DeviceInstructionReadRaf<F> {
                         device,
                         &HandoffInputs {
                             rows: &shard.rows,
-                            cycles: shard.cycles,
+                            cycles: shard.rows.cycles(),
                             v_tables: &v_tables,
                             table_values,
                             raf_interleaved,
@@ -322,6 +328,13 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
         }
         let cycles = 1usize << dimensions.log_t();
         let r_reduction = require_fr_slice(&inputs.points.lookup_output)?.to_vec();
+        let prefix = match witness.random_access() {
+            Some(view) if cycles <= view.cycles() => {
+                BundleAccess::<InstructionReadRafWitness>::View(&view)
+                    .constant_suffix_start(cycles)?
+            }
+            _ => cycles,
+        };
 
         let windows = witness_windows(cycles);
         let shards = windows.len();
@@ -344,11 +357,15 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
             .map(|((ordinal, shard, trace, atoms, limbs), window)| {
                 let task: DeviceTask<'_, PreparedWindow, KernelError<F>> =
                     Box::new(move || {
+                        let retained = prefix
+                            .saturating_sub(window.start)
+                            .saturating_add(1)
+                            .min(window.len);
                         let flags = trace.flag_bit_bytes(&atoms.flags, FLAG_BIT_RAF)?;
                         let table_index = shard.download_u32(&atoms.table_index)?;
                         let mut used = [false; LookupTableKind::<RISCV_XLEN>::COUNT];
                         for &index in table_index
-                            .get(..window.len)
+                            .get(..retained)
                             .ok_or(KernelError::InvariantViolation {
                             reason:
                                 "an instruction read-RAF window has fewer table slots than cycles",
@@ -365,18 +382,21 @@ impl<F: JoltField> PrepareKernel<F, InstructionReadRaf<F>> for CudaBackend {
                             limbs,
                             shard.clone_u32(&atoms.table_index)?,
                             flags,
-                            window.len,
+                            retained,
                         )?);
                         Ok((
                             RowShard {
                                 ordinal,
                                 rows: Arc::clone(&rows),
-                                cycles: window.len,
+                                window: CycleWindow {
+                                    start: window.start,
+                                    len: window.len,
+                                },
                             },
                             AddressShard {
                                 ordinal,
                                 rows,
-                                u_evals: shard.eq_evals_shard(reduction, ordinal, shards)?,
+                                u_evals: padding::eq_weights(shard, reduction, window, retained)?,
                             },
                             used,
                         ))
