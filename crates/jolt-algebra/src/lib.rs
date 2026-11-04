@@ -50,7 +50,7 @@
 //!
 //! - `bn254` (default) — the arkworks-backed BN254 backend.
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
-//!   packed), and the ring and FFT modules built on it.
+//!   packed), and the ring, NTT, and FFT modules built on it.
 //! - `binary` — the binary-field backend, off by default.
 //! - `asm` — opts into architecture-specific Fp128 assembly kernels on
 //!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
@@ -116,6 +116,8 @@ pub mod fft;
 mod fp128_accumulators;
 mod limbs;
 pub mod narrowing;
+#[cfg(feature = "solinas")]
+pub mod ntt;
 mod ops;
 mod packed;
 pub mod parallel;
@@ -135,9 +137,16 @@ pub use algebra::{
 #[cfg(feature = "solinas")]
 pub use fft::SmoothFftField;
 #[cfg(feature = "solinas")]
+pub use ntt::{
+    tables, CrtCapacity, GarnerData, LimbQ, MontCoeff, NttKernelPlan, NttPrime, PrimeWidth,
+    RADIX_BITS,
+};
+#[cfg(feature = "solinas")]
 pub use ring::{
-    balanced_decompose_coefficients_pow2_i8_into, residue_kernel, terminal_residue_kernel,
-    CyclotomicRing, ResidueKernelPoint,
+    balanced_decompose_coefficients_pow2_i8_into, cyclic_ntt_with_i16_tail_to_ring,
+    mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, residue_kernel, terminal_residue_kernel,
+    CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
+    DigitMontLut, I16TailParams, ResidueKernelPoint,
 };
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 mod field_inline;
@@ -194,14 +203,18 @@ pub use solinas::{
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
-/// Errors from fallible field and ring operations.
+/// Errors from fallible field, ring, NTT, and FFT operations.
 ///
 /// Every variant reports a rejected argument; none signals a failed internal
-/// invariant.
+/// invariant. `InvalidSetup` marks a parameter that only setup or
+/// preprocessing supplies (an NTT prime, a CRT basis), `InvalidInput` and
+/// `InvalidSize` a per-call operand.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AlgebraError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
+    #[error("invalid setup: {0}")]
+    InvalidSetup(String),
 }
