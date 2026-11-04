@@ -1,5 +1,6 @@
 //! Fold B's constraint coefficients once, before applying them to each native row.
 use super::{DerivedWeights, SpartanOuterRow};
+use crate::KernelError;
 use jolt_claims::protocols::composed::r1cs::{
     rv64::{
         V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC, V_FLAG_IS_COMPRESSED, V_IMM, V_LEFT_INSTRUCTION_INPUT,
@@ -26,46 +27,61 @@ const FIRST_COLUMNS: [usize; 11] = [
     V_NEXT_PC,
     V_PC,
 ];
-const SECOND_COLUMNS: [usize; 11] = [
+// Second-group columns whose native values fit in a `u64`.
+const SECOND_WORD_COLUMNS: [usize; 7] = [
     V_RAM_ADDRESS,
     V_RS1_VALUE,
     V_LOOKUP_OUTPUT,
-    V_RIGHT_LOOKUP_OPERAND,
     V_LEFT_INSTRUCTION_INPUT,
-    V_RIGHT_INSTRUCTION_INPUT,
-    V_PRODUCT,
     V_RD_WRITE_VALUE,
     V_UNEXPANDED_PC,
     V_NEXT_UNEXPANDED_PC,
+];
+// Second-group columns with signed or 128-bit native values.
+const SECOND_WIDE_COLUMNS: [usize; 4] = [
+    V_RIGHT_LOOKUP_OPERAND,
+    V_RIGHT_INSTRUCTION_INPUT,
+    V_PRODUCT,
     V_IMM,
 ];
+const UNSUPPORTED_COLUMN: &str =
+    "Spartan outer B matrix uses a column the native fold does not read";
 
 pub(super) struct PreparedBFolds<F: JoltField> {
     first: [F; 11],
-    second: [F; 11],
-    negative: [F; 11],
+    second_word: [F; 7],
+    second_wide: [F; 4],
+    negative_wide: [F; 4],
     first_constant: [F; 2],
     second_constant: [F; 4],
 }
 impl<F: JoltField> PreparedBFolds<F> {
-    pub(super) fn new(derived: &DerivedWeights<F>) -> Option<Self> {
+    pub(super) fn new(derived: &DerivedWeights<F>) -> Result<Self, KernelError<F>> {
         // Reuse the canonical matrix's already-combined coefficients. No second
         // list of constraint formulas or assumptions about satisfying rows.
+        let unsupported = || KernelError::InvariantViolation {
+            reason: UNSUPPORTED_COLUMN,
+        };
         let columns = spartan_outer_opening_columns();
         if derived
             .bz_weights
             .iter()
             .any(|weights| weights.len() != columns.len())
         {
-            return None;
+            return Err(unsupported());
         }
-        for (stream, selected) in [&FIRST_COLUMNS, &SECOND_COLUMNS].into_iter().enumerate() {
-            for (&column, &weight) in columns.iter().zip(&derived.bz_weights[stream]) {
-                let supported = selected.contains(&column)
-                    || column == V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC
-                    || (stream == 1 && column == V_FLAG_IS_COMPRESSED);
+        for (stream, weights) in derived.bz_weights.iter().enumerate() {
+            for (&column, &weight) in columns.iter().zip(weights) {
+                let supported = column == V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC
+                    || if stream == 0 {
+                        FIRST_COLUMNS.contains(&column)
+                    } else {
+                        SECOND_WORD_COLUMNS.contains(&column)
+                            || SECOND_WIDE_COLUMNS.contains(&column)
+                            || column == V_FLAG_IS_COMPRESSED
+                    };
                 if !supported && weight != F::zero() {
-                    return None;
+                    return Err(unsupported());
                 }
             }
         }
@@ -74,22 +90,28 @@ impl<F: JoltField> PreparedBFolds<F> {
                 .iter()
                 .position(|&candidate| candidate == column)
                 .map(|index| derived.bz_weights[stream][index])
+                .ok_or_else(unsupported)
         };
         let mut first = [F::zero(); 11];
-        let mut second = [F::zero(); 11];
+        let mut second_word = [F::zero(); 7];
+        let mut second_wide = [F::zero(); 4];
         for (slot, &column) in first.iter_mut().zip(&FIRST_COLUMNS) {
             *slot = weight(0, column)?;
         }
-        for (slot, &column) in second.iter_mut().zip(&SECOND_COLUMNS) {
+        for (slot, &column) in second_word.iter_mut().zip(&SECOND_WORD_COLUMNS) {
+            *slot = weight(1, column)?;
+        }
+        for (slot, &column) in second_wide.iter_mut().zip(&SECOND_WIDE_COLUMNS) {
             *slot = weight(1, column)?;
         }
         let first_d = weight(0, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
         let second_d = weight(1, V_FLAG_DO_NOT_UPDATE_UNEXPANDED_PC)?;
         let second_c = weight(1, V_FLAG_IS_COMPRESSED)?;
-        Some(Self {
+        Ok(Self {
             first,
-            negative: second.map(|value| -value),
-            second,
+            second_word,
+            negative_wide: second_wide.map(|value| -value),
+            second_wide,
             first_constant: [derived.bz_constant[0], derived.bz_constant[0] + first_d],
             second_constant: std::array::from_fn(|index| {
                 derived.bz_constant[1]
@@ -126,42 +148,43 @@ impl<F: JoltField> PreparedBFolds<F> {
         }
         let mut second = <F as WithAccumulator>::SignedProductAccumulator::default();
         second.add(self.second_constant[d + 2 * c]);
-        for (i, v) in [
-            (0, row.ram_address.0),
-            (1, row.rs1_value.0),
-            (2, row.lookup_output.0),
-            (4, row.left_instruction_input.0),
-            (7, row.rd_write_value.0),
-            (8, row.unexpanded_pc.0),
-            (9, row.next_unexpanded_pc.0),
-        ] {
+        let second_word_values = [
+            row.ram_address.0,
+            row.rs1_value.0,
+            row.lookup_output.0,
+            row.left_instruction_input.0,
+            row.rd_write_value.0,
+            row.unexpanded_pc.0,
+            row.next_unexpanded_pc.0,
+        ];
+        for (&w, &v) in self.second_word.iter().zip(&second_word_values) {
             if v != 0 {
-                second.fmadd_u64(self.second[i], v);
+                second.fmadd_u64(w, v);
             }
         }
         let [lo, hi] = row.product.0.magnitude_limbs();
-        for (i, v, negative) in [
-            (3, row.right_lookup_operand.0, false),
+        let second_wide_values = [
+            (row.right_lookup_operand.0, false),
             (
-                5,
                 row.right_instruction_input.0.unsigned_abs(),
                 row.right_instruction_input.0 < 0,
             ),
             (
-                6,
                 u128::from(lo) + (u128::from(hi) << 64),
                 !row.product.0.is_positive,
             ),
-            (10, row.imm.0.unsigned_abs(), row.imm.0 < 0),
-        ] {
+            (row.imm.0.unsigned_abs(), row.imm.0 < 0),
+        ];
+        for ((w_positive, w_negative), (v, negative)) in self
+            .second_wide
+            .iter()
+            .zip(&self.negative_wide)
+            .zip(second_wide_values)
+        {
             if v == 0 {
                 continue;
             }
-            let w = if negative {
-                self.negative[i]
-            } else {
-                self.second[i]
-            };
+            let w = if negative { *w_negative } else { *w_positive };
             if v <= u128::from(u64::MAX) {
                 second.fmadd_u64(w, v as u64);
             } else {

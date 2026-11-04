@@ -1109,7 +1109,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
         #[cfg(not(feature = "field-inline"))]
-        let b_folds = PreparedBFolds::new(&derived);
+        let b_folds = PreparedBFolds::new(&derived)?;
 
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
@@ -1153,13 +1153,9 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 #[cfg(feature = "field-inline")]
                 let (a_first, a_second) = (values.a_first, values.a_second);
                 #[cfg(not(feature = "field-inline"))]
-                let (a_first, a_second, [bz_zero, bz_one]) = if let Some(folds) = &b_folds {
-                    let (a_first, a_second) = row.guard_values();
-                    (a_first, a_second, folds.fold(&row))
-                } else {
-                    let values = row.group_values();
-                    (values.a_first, values.a_second, values.fold_b(lagrange))
-                };
+                let (a_first, a_second) = row.guard_values();
+                #[cfg(not(feature = "field-inline"))]
+                let [bz_zero, bz_one] = b_folds.fold(&row);
                 let [az_zero, az_one] =
                     guard_endpoints.add(&a_first, &a_second, [bz_zero, bz_one], e_in[x_in]);
                 az_chunk[2 * x_in] = az_zero;
@@ -2294,6 +2290,23 @@ mod tests {
                 row.ram_write_value.0 = u64::MAX;
                 rows.push(row);
             }
+            // Wide columns at the zero, `u64` and two-limb boundaries.
+            for (right_lookup, right_input, product) in [
+                (0u128, -1i128, S128::new([1, 0], false)),
+                (
+                    u128::from(u64::MAX),
+                    i128::from(u64::MAX),
+                    S128::new([u64::MAX, 0], true),
+                ),
+                (1u128 << 64, -(1i128 << 64), S128::new([0, 1], false)),
+            ] {
+                let mut row = rows[0];
+                row.right_lookup_operand.0 = right_lookup;
+                row.right_instruction_input.0 = right_input;
+                row.imm.0 = right_input;
+                row.product.0 = product;
+                rows.push(row);
+            }
             let large = F::from_u128(u128::MAX) * F::from_u128(u128::MAX - 0x1234_5678);
             for challenge in [F::zero(), F::one(), F::from_u64(19), -F::one(), large] {
                 let derived = OuterRemainderKernel::<F>::derived_weights(challenge).unwrap();
@@ -2311,11 +2324,11 @@ mod tests {
                     });
                     assert_eq!(folds.fold(row), expected);
                 }
-                // A future matrix can use the existing general path rather
-                // than silently dropping an unsupported first-group column.
+                // A matrix that reads a column the fold does not support fails
+                // loudly instead of silently dropping it.
                 let mut changed = derived;
                 changed.bz_weights[0][1] = F::one();
-                assert!(PreparedBFolds::new(&changed).is_none());
+                assert!(PreparedBFolds::new(&changed).is_err());
             }
         }
         check::<Fr>();
