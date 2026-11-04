@@ -21,6 +21,7 @@ macro_rules! field_methods {
 }
 pub(crate) use field_methods;
 
+#[cfg(feature = "solinas")]
 macro_rules! fp128_methods {
     () => {
         #[inline(always)]
@@ -43,4 +44,5 @@ macro_rules! fp128_methods {
         }
     };
 }
+#[cfg(feature = "solinas")]
 pub(crate) use fp128_methods;

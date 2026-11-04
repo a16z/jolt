@@ -203,7 +203,8 @@ mod tests {
     use proc_macro2::TokenStream;
 
     #[test]
-    fn changed_canonical_collection_seams_are_rejected() -> Result<(), proc_macro2::LexError> {
+    #[expect(clippy::expect_used, reason = "tests should fail loudly on parse errors")]
+    fn changed_canonical_collection_seams_are_rejected() {
         let canonical = r#"
             fn collect_guest_proofs() {
                 let inputs = guest.inputs(proofs);
@@ -217,7 +218,8 @@ mod tests {
                 all_groups_data
             }
         "#;
-        assert!(expand(canonical.parse::<TokenStream>()?).is_ok());
+        let canonical_tokens: TokenStream = canonical.parse().expect("canonical source parses");
+        assert!(expand(canonical_tokens).is_ok());
         for (old, new) in [
             ("collect_guest_proofs", "other_collection"),
             ("guest.inputs(proofs)", "guest.inputs(other)"),
@@ -232,8 +234,8 @@ mod tests {
             ("all_groups_data", "other_stream"),
         ] {
             let changed = canonical.replace(old, new);
-            assert!(expand(changed.parse::<TokenStream>()?).is_err());
+            let changed_tokens: TokenStream = changed.parse().expect("changed source parses");
+            assert!(expand(changed_tokens).is_err());
         }
-        Ok(())
     }
 }
