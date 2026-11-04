@@ -160,7 +160,7 @@ const _: () = {
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct SpartanOuterRow {
+pub(crate) struct SpartanOuterRow {
     left_instruction_input: LeftInstructionInput,
     right_instruction_input: RightInstructionInput,
     product: Product,

@@ -217,6 +217,11 @@ impl<F: JoltField> DeviceSplitEq<F> {
         self.host.e_in_current().len()
     }
 
+    #[cfg(not(feature = "field-inline"))]
+    pub fn suffix_weight(&self, start: usize) -> F {
+        self.host.suffix_weight(start)
+    }
+
     pub fn current_scalar(&self) -> F {
         self.host.current_scalar()
     }

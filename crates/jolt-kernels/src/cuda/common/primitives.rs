@@ -194,6 +194,39 @@ impl CudaKernelContext {
         Ok(output)
     }
 
+    /// Enqueues a low-to-high bind of a table whose final stored value repeats to `2 * half`.
+    pub(crate) fn bind_prefix(
+        &self,
+        table: &DeviceFrVec,
+        challenge: Fr,
+        half: usize,
+    ) -> Result<DeviceFrVec, CudaError> {
+        if !half.is_power_of_two() || table.is_empty() || table.len() > half.saturating_mul(2) {
+            return Err(CudaError::InvariantViolation {
+                reason: "a constant-prefix bind needs a nonempty table within its logical domain",
+            });
+        }
+        let prefix = table.len() - 1;
+        let retained = (prefix.div_ceil(2) + 1).min(half);
+        let mut output = self.alloc_fr_unset(retained)?;
+        let prefix = CudaKernelContext::count_of(prefix)?;
+        let count = CudaKernelContext::count_of(retained)?;
+        let challenge = super::device::fr_limbs(challenge);
+        let mut builder = self.stream().launch_builder(self.cr_bind_prefix());
+        let _ = builder.arg(table.limbs());
+        let _ = builder.arg(&prefix);
+        let _ = builder.arg(&count);
+        for limb in &challenge {
+            let _ = builder.arg(limb);
+        }
+        let _ = builder.arg(output.limbs_mut());
+        // SAFETY: each thread writes one of `retained` outputs. Both input indices
+        // clamp to `prefix`, the checked nonempty table's last element. Output is
+        // a distinct allocation and every element is written before it is read.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        Ok(output)
+    }
+
     pub fn bind_rows(
         &self,
         values: &DeviceFrVec,

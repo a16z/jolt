@@ -19,7 +19,7 @@ use super::columns::{DeviceR1csInputs, LinearForms};
 use super::uniskip::push_forms;
 use super::witness::VARIABLES;
 use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
-use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec, LIMBS};
+use crate::cuda::common::device::{fr_into, fr_limbs, require_fr, DeviceFrVec, LIMBS};
 use crate::cuda::common::devices::{fan_out, CycleWindow, DeviceTask};
 use crate::cuda::common::error::backend;
 use crate::cuda::common::error::CudaError;
@@ -58,6 +58,7 @@ impl<F: JoltField> DeviceRemainder<F> {
         matrices: &ConstraintMatrices<F>,
         tau: &[F],
         log_t: usize,
+        prefix_cycles: usize,
         uniskip_challenge: F,
     ) -> Result<Self, CudaError> {
         let count = windows.len();
@@ -91,7 +92,11 @@ impl<F: JoltField> DeviceRemainder<F> {
                     got: inputs.cycles(),
                 });
             }
-            let (az, bz) = Self::factors(device, &forms, &inputs, window.len)?;
+            let retained = prefix_cycles
+                .saturating_sub(window.start)
+                .saturating_add(1)
+                .min(window.len);
+            let (az, bz) = Self::factors(device, &forms, &inputs, retained)?;
             shards.push(RemainderShard {
                 ordinal,
                 inputs,
@@ -128,8 +133,8 @@ impl<F: JoltField> DeviceRemainder<F> {
         cycles: usize,
     ) -> Result<(DeviceFrVec, DeviceFrVec), CudaError> {
         let device_forms = forms.upload(context)?;
-        let mut az = context.alloc(2 * cycles)?;
-        let mut bz = context.alloc(2 * cycles)?;
+        let mut az = context.alloc_fr_unset(2 * cycles)?;
+        let mut bz = context.alloc_fr_unset(2 * cycles)?;
         let count = CudaKernelContext::count_of(cycles)?;
         let mut builder = context.stream().launch_builder(context.so_factors());
         let _ = builder.arg(inputs.narrow());
@@ -170,8 +175,14 @@ impl<F: JoltField> DeviceRemainder<F> {
             .map(|shard| {
                 let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
-                    shard.az = context.bind_rows(&shard.az, shard.az.len(), scalar)?;
-                    shard.bz = context.bind_rows(&shard.bz, shard.bz.len(), scalar)?;
+                    if bound == 0 {
+                        shard.az = context.bind_rows(&shard.az, 2, scalar)?;
+                        shard.bz = context.bind_rows(&shard.bz, 2, scalar)?;
+                    } else {
+                        let half = shard.cycles >> bound;
+                        shard.az = context.bind_prefix(&shard.az, scalar, half)?;
+                        shard.bz = context.bind_prefix(&shard.bz, scalar, half)?;
+                    }
                     shard.eq.bind(challenge);
                     Ok(())
                 });
@@ -210,15 +221,37 @@ impl<F: JoltField> DeviceRemainder<F> {
     fn endpoints(&self) -> Result<[F; 3], CudaError> {
         if let Some((az, bz)) = &self.collapsed {
             let context = context_for(0).ok_or(absent())?;
-            return Self::window_endpoints(context, az, bz, &self.eq);
+            return Self::window_endpoints(
+                context,
+                az,
+                bz,
+                &self.eq,
+                CycleWindow {
+                    start: 0,
+                    len: az.len() / 2,
+                },
+                false,
+            );
         }
+        let bound = self.challenges.len();
         let tasks: Vec<DeviceTask<'_, [F; 3], CudaError>> = self
             .shards
             .iter()
             .map(|shard| {
                 let task: DeviceTask<'_, [F; 3], CudaError> = Box::new(move || {
                     let context = context_for(shard.ordinal).ok_or(absent())?;
-                    Self::window_endpoints(context, &shard.az, &shard.bz, &shard.eq)
+                    let half = shard.cycles >> bound;
+                    Self::window_endpoints(
+                        context,
+                        &shard.az,
+                        &shard.bz,
+                        &shard.eq,
+                        CycleWindow {
+                            start: shard.ordinal * half,
+                            len: half,
+                        },
+                        bound == 0,
+                    )
                 });
                 task
             })
@@ -237,16 +270,30 @@ impl<F: JoltField> DeviceRemainder<F> {
         az: &DeviceFrVec,
         bz: &DeviceFrVec,
         eq: &DeviceSplitEq<F>,
+        window: CycleWindow,
+        stream_round: bool,
     ) -> Result<[F; 3], CudaError> {
-        let half = az.len() / 2;
-        if half == 0 {
+        let half = window.len;
+        let tail_width = if stream_round { 2 } else { 1 };
+        if half == 0
+            || az.len() < tail_width
+            || az.len() != bz.len()
+            || az.len() > 2 * half
+            || !az.len().is_multiple_of(tail_width)
+        {
             return Err(CudaError::InvariantViolation {
-                reason: "the Spartan outer remainder has no pairs left to reduce",
+                reason: "the Spartan outer remainder tables do not fit their logical window",
             });
         }
         let e_in_len = eq.e_in_len();
         let in_bits = e_in_len.max(1).ilog2();
-        let threads = half.div_ceil(MESSAGE_STRIP);
+        let prefix = az.len() - tail_width;
+        let prefix_pairs = prefix.div_ceil(2);
+        let tail_weight = fr_limbs(require_fr(
+            eq.suffix_weight(window.start + prefix_pairs) - eq.suffix_weight(window.end()),
+        )?);
+        let retained_pairs = (prefix_pairs + 1).min(half);
+        let threads = retained_pairs.div_ceil(MESSAGE_STRIP);
         let blocks = u32::try_from(threads.div_ceil(BLOCK as usize).max(1)).map_err(|_| {
             CudaError::InvariantViolation {
                 reason: "the Spartan outer message launch exceeds a u32 block count",
@@ -256,11 +303,13 @@ impl<F: JoltField> DeviceRemainder<F> {
 
         let inner_len = CudaKernelContext::count_of(e_in_len)?;
         let bits = CudaKernelContext::count_of(in_bits as usize)?;
-        let count = CudaKernelContext::count_of(half)?;
+        let count = CudaKernelContext::count_of(retained_pairs)?;
+        let prefix = CudaKernelContext::count_of(prefix)?;
+        let tail_width = CudaKernelContext::count_of(tail_width)?;
         let strip = CudaKernelContext::count_of(MESSAGE_STRIP)?;
         let mut builder = context
             .stream()
-            .launch_builder(context.gruen_pair_message());
+            .launch_builder(context.gruen_prefix_pair_message());
         let _ = builder.arg(az.limbs());
         let _ = builder.arg(bz.limbs());
         let _ = builder.arg(eq.e_in_current().limbs());
@@ -269,16 +318,17 @@ impl<F: JoltField> DeviceRemainder<F> {
         let _ = builder.arg(&bits);
         let _ = builder.arg(&count);
         let _ = builder.arg(&strip);
+        let _ = builder.arg(&prefix);
+        let _ = builder.arg(&tail_width);
+        for limb in &tail_weight {
+            let _ = builder.arg(limb);
+        }
         let _ = builder.arg(partials.limbs_mut());
-        // SAFETY: thread covers pairs `base .. base + MESSAGE_STRIP` and breaks at
-        // `half`, so it reads only `az[2p]`, `az[2p + 1]`, `bz[2p]`, `bz[2p + 1]`
-        // for `p < half`, inside both `2 * half`-element tables. The eq lookup
-        // reads `e_out[p]` when `e_in_len <= 1` and otherwise
-        // `e_in[p & mask]` / `e_out[p >> in_bits]`, bounded because `in_bits` is
-        // `e_in`'s log length and `e_in_len * e_out_len == half` for the split-eq
-        // at this round. It writes only `partials[lane * blocks + blockIdx.x]` of
-        // `2 * blocks`. Shared memory is `BLOCK * LIMBS` u64s, matching
-        // `shared_mem_bytes`, and the reduction is outside every early exit.
+        // SAFETY: prefix pairs read stored entries, clamping the odd boundary
+        // to the final representative. One additional pair reads the one- or
+        // two-element tail and its aggregate equality mass. Ordinary eq indices
+        // stay below the logical half; each block writes three disjoint partials.
+        // Every thread reaches the reduction over BLOCK field-element slots.
         let _ = unsafe {
             builder.launch(LaunchConfig {
                 grid_dim: (blocks, 1, 1),
@@ -531,3 +581,7 @@ const fn absent() -> CudaError {
         reason: "a Spartan outer remainder window names an absent device",
     }
 }
+
+#[cfg(test)]
+#[path = "padding_tests.rs"]
+mod padding_tests;

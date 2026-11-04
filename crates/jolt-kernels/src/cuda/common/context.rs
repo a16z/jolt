@@ -150,6 +150,8 @@ pub struct CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     gruen_pair_message: CudaFunction,
     #[cfg(not(feature = "field-inline"))]
+    gruen_prefix_pair_message: CudaFunction,
+    #[cfg(not(feature = "field-inline"))]
     so_claims: CudaFunction,
     sop_round: CudaFunction,
     msm_fq_add: CudaFunction,
@@ -390,6 +392,8 @@ impl CudaKernelContext {
             so_factors: module.load_function("so_factors_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             gruen_pair_message: module.load_function("gruen_pair_message_kernel")?,
+            #[cfg(not(feature = "field-inline"))]
+            gruen_prefix_pair_message: module.load_function("gruen_prefix_pair_message_kernel")?,
             #[cfg(not(feature = "field-inline"))]
             so_claims: module.load_function("so_claims_kernel")?,
             sop_round: module.load_function("sop_round_kernel")?,
@@ -856,6 +860,11 @@ impl CudaKernelContext {
     #[cfg(not(feature = "field-inline"))]
     pub(crate) const fn gruen_pair_message(&self) -> &CudaFunction {
         &self.gruen_pair_message
+    }
+
+    #[cfg(not(feature = "field-inline"))]
+    pub(crate) const fn gruen_prefix_pair_message(&self) -> &CudaFunction {
+        &self.gruen_prefix_pair_message
     }
 
     #[cfg(not(feature = "field-inline"))]

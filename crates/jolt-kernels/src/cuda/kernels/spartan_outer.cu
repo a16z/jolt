@@ -568,6 +568,45 @@ extern "C" __global__ void gruen_pair_message_kernel(const u64 *__restrict__ az,
     so_block_reduce(scratch, 3, acc, partials);
 }
 
+extern "C" __global__ void gruen_prefix_pair_message_kernel(
+    const u64 *__restrict__ az, const u64 *__restrict__ bz,
+    const u64 *__restrict__ e_in, const u64 *__restrict__ e_out,
+    unsigned int e_in_len, unsigned int in_bits, unsigned int count,
+    unsigned int strip, unsigned int prefix, unsigned int tail_width,
+    u64 tail0, u64 tail1, u64 tail2, u64 tail3, u64 *__restrict__ partials) {
+    extern __shared__ u64 scratch[];
+    unsigned long long base =
+        ((unsigned long long)blockIdx.x * blockDim.x + threadIdx.x) * strip;
+    unsigned int prefix_pairs = (prefix + 1) / 2;
+    u64 acc[3][LIMBS] = {};
+    for (unsigned int step = 0; step < strip; step++) {
+        unsigned long long pair = base + step;
+        if (pair >= count) break;
+        unsigned long long lo, hi;
+        u64 weight[LIMBS];
+        if (pair == prefix_pairs) {
+            lo = prefix;
+            hi = prefix + tail_width - 1;
+            weight[0] = tail0;
+            weight[1] = tail1;
+            weight[2] = tail2;
+            weight[3] = tail3;
+        } else {
+            lo = min(2 * pair, (unsigned long long)prefix + tail_width - 1);
+            hi = min(2 * pair + 1, (unsigned long long)prefix + tail_width - 1);
+            if (e_in_len <= 1) load4(e_out + pair * LIMBS, weight);
+            else so_split_eq(e_in, e_out, in_bits, pair, weight);
+        }
+        u64 az0[LIMBS], az1[LIMBS], bz0[LIMBS], bz1[LIMBS];
+        load4(az + lo * LIMBS, az0);
+        load4(az + hi * LIMBS, az1);
+        load4(bz + lo * LIMBS, bz0);
+        load4(bz + hi * LIMBS, bz1);
+        gruen_pair_accumulate(az0, az1, bz0, bz1, weight, acc);
+    }
+    so_block_reduce(scratch, 3, acc, partials);
+}
+
 extern "C" __global__ void so_claims_kernel(
     const u64 *__restrict__ narrow, const u64 *__restrict__ wide,
     const unsigned int *__restrict__ flags, const unsigned int *__restrict__ layout,

@@ -280,7 +280,7 @@ impl DeviceCycleRounds {
         let half = 1usize << (self.rounds - self.rounds_bound - 1);
         if let Some(factors) = &mut self.collapsed {
             for table in factors.iter_mut() {
-                *table = Self::bind_prefix(context, table, challenge, half)?;
+                *table = context.bind_prefix(table, challenge, half)?;
             }
         } else {
             let half = half / self.shards.len();
@@ -291,7 +291,7 @@ impl DeviceCycleRounds {
                     let task: DeviceTask<'_, (), CudaError> = Box::new(move || {
                         let device = context_for(shard.ordinal).ok_or(absent())?;
                         for table in &mut shard.factors {
-                            *table = Self::bind_prefix(device, table, challenge, half)?;
+                            *table = device.bind_prefix(table, challenge, half)?;
                         }
                         Ok(())
                     });
@@ -309,34 +309,6 @@ impl DeviceCycleRounds {
             self.collapse(context)?;
         }
         Ok(())
-    }
-
-    fn bind_prefix(
-        context: &CudaKernelContext,
-        table: &DeviceFrVec,
-        challenge: Fr,
-        half: usize,
-    ) -> Result<DeviceFrVec, CudaError> {
-        let prefix = table.len() - 1;
-        let retained = (prefix.div_ceil(2) + 1).min(half);
-        let mut output = context.alloc_fr_unset(retained)?;
-        let prefix = CudaKernelContext::count_of(prefix)?;
-        let count = CudaKernelContext::count_of(retained)?;
-        let challenge = fr_limbs(challenge);
-        let mut builder = context.stream().launch_builder(context.cr_bind_prefix());
-        let _ = builder.arg(table.limbs());
-        let _ = builder.arg(&prefix);
-        let _ = builder.arg(&count);
-        for limb in &challenge {
-            let _ = builder.arg(limb);
-        }
-        let _ = builder.arg(output.limbs_mut());
-        // SAFETY: each thread writes one of `retained` outputs. Both input indices
-        // clamp to `prefix`, the checked nonempty table's last element. Output is
-        // a distinct allocation and every element is written before it is read.
-        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
-        context.stream().synchronize()?;
-        Ok(output)
     }
 
     fn collapse(&mut self, context: &CudaKernelContext) -> Result<(), CudaError> {

@@ -15,8 +15,10 @@
 //! with round zero. Remainder rounds use split-eq reductions over cycle windows,
 //! then gather the remaining factors onto GPU 0. Original input columns remain
 //! available for the final witness claims.
-//! Padding remains explicit in CUDA's input and remainder tables; optimized
-//! retains a nonconstant prefix and accounts for its stream tails analytically.
+//! Like optimized, the remainder retains a nonconstant prefix, accounts for its
+//! two stream tails analytically, and binds them to one constant tail after
+//! round zero. The shared row-boundary check preserves terminal lookahead.
+//! CUDA's original input columns and uni-skip still process explicit padding.
 
 #[cfg(feature = "allocative")]
 use allocative::Allocative;
@@ -46,6 +48,8 @@ use crate::cuda::witness::{
 
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::{require_context, CudaBackend};
+use crate::optimized::spartan_outer::SpartanOuterRow;
+use crate::optimized::support::BundleAccess;
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
@@ -66,6 +70,7 @@ pub struct SpartanOuterState<F: JoltField> {
     matrices: ConstraintMatrices<F>,
     tau: Vec<F>,
     log_t: usize,
+    prefix_cycles: usize,
     extended: Vec<F>,
 }
 
@@ -170,6 +175,12 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
                 reason: "the CUDA Spartan outer kernels cover the 19-row RV64 constraint system                          over its 35 inputs; the field-inline system appends rows and columns",
             });
         }
+        let prefix_cycles = match witness.random_access() {
+            Some(view) if cycles <= view.cycles() => {
+                BundleAccess::<SpartanOuterRow>::View(&view).constant_suffix_start(cycles)?
+            }
+            _ => cycles,
+        };
         let windows = witness_windows(cycles);
         let mut inputs = Vec::with_capacity(windows.len());
         for (ordinal, window) in windows.iter().enumerate() {
@@ -202,6 +213,7 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for CudaBackend {
             matrices,
             tau: tau.to_vec(),
             log_t,
+            prefix_cycles,
             extended,
         });
         Ok(())
@@ -254,6 +266,7 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for CudaBackend {
             &state.matrices,
             &state.tau,
             state.log_t,
+            state.prefix_cycles,
             inputs.relation.uniskip_challenge(),
         )?;
         Ok(Box::new(SpartanOuterRemainderKernel::new(
