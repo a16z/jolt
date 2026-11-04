@@ -135,7 +135,10 @@ pub use algebra::{
 #[cfg(feature = "solinas")]
 pub use fft::SmoothFftField;
 #[cfg(feature = "solinas")]
-pub use ring::{balanced_decompose_coefficients_pow2_i8_into, CyclotomicRing};
+pub use ring::{
+    balanced_decompose_coefficients_pow2_i8_into, residue_kernel, terminal_residue_kernel,
+    CyclotomicRing, ResidueKernelPoint,
+};
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 mod field_inline;
 
