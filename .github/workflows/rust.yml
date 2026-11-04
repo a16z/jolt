@@ -124,10 +124,10 @@ jobs:
         run: cargo clippy -p jolt-transcript --all-targets --features bn254,solinas,binary,prover-grinding
       # The workspace-wide invocations above unify jolt-prover's `prover`
       # features into every crate, so lint the verifier-only graph on its own:
-      # jolt-sumcheck and jolt-blindfold without `prover`, and jolt-verifier's
+      # jolt-sumcheck and jolt-zk without `prover`, and jolt-verifier's
       # library without the dev-dependency on jolt-prover.
       - name: cargo clippy verifier-only sumcheck and BlindFold
-        run: cargo clippy -p jolt-sumcheck -p jolt-blindfold --all-targets
+        run: cargo clippy -p jolt-sumcheck -p jolt-zk --all-targets
       - name: cargo clippy -p jolt-verifier --lib
         run: cargo clippy -p jolt-verifier --lib
       - name: Check the verifier graph leaves out the prover's grinding
@@ -857,11 +857,11 @@ jobs:
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed,prover --cargo-quiet
-      # The shard loop above tests jolt-blindfold without its prover, which
+      # The shard loop above tests jolt-zk without its prover, which
       # skips the proof pipelines.
-      - name: Test jolt-blindfold with its prover
+      - name: Test jolt-zk with its prover
         if: matrix.shard == 0
-        run: cargo nextest run -p jolt-blindfold --features prover --cargo-quiet
+        run: cargo nextest run -p jolt-zk --features prover --cargo-quiet
       - name: Test jolt-poly and jolt-sumcheck with binary fields
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-poly -p jolt-sumcheck --features jolt-poly/binary,jolt-sumcheck/binary,jolt-sumcheck/prover --cargo-quiet
