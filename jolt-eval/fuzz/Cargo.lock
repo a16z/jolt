@@ -1124,6 +1124,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "jolt-algebra"
+version = "0.1.0"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
+ "ark-serialize",
+ "cc",
+ "num-traits",
+ "rand_core",
+ "rayon",
+ "serde",
+ "spongefish",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "jolt-blindfold"
 version = "0.1.0"
 dependencies = [
@@ -1269,16 +1285,7 @@ dependencies = [
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
- "ark-bn254",
- "ark-ff",
- "ark-serialize",
- "cc",
- "num-traits",
- "rand_core",
- "rayon",
- "serde",
- "spongefish",
- "thiserror 2.0.18",
+ "jolt-algebra",
 ]
 
 [[package]]

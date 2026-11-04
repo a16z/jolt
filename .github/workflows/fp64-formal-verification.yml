@@ -6,7 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/fp64-formal-verification.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "proofs/hol-light/fp64-certified-builds.json"
       - "proofs/hol-light/fp64_*"
       - "proofs/hol-light/check-fp64.sh"
@@ -25,7 +25,7 @@ on:
     branches: ["**", main]
     paths:
       - ".github/workflows/fp64-formal-verification.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "proofs/hol-light/fp64-certified-builds.json"
       - "proofs/hol-light/fp64_*"
       - "proofs/hol-light/check-fp64.sh"
@@ -63,7 +63,7 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: Compare field operations with the integer oracle
-        working-directory: crates/jolt-field
+        working-directory: crates/jolt-algebra
         run: cargo +nightly fuzz run --target aarch64-unknown-linux-gnu fp64_scalar_differential -- -max_total_time=120
 
   fp64-fuzz-x86-64-bmi2:
@@ -82,7 +82,7 @@ jobs:
       - name: Require BMI2
         run: grep -Eq '(^|[[:space:]])bmi2([[:space:]]|$)' /proc/cpuinfo
       - name: Compare field operations with the integer oracle
-        working-directory: crates/jolt-field
+        working-directory: crates/jolt-algebra
         env:
           RUSTFLAGS: -C target-feature=+bmi2
         run: cargo +nightly fuzz run --target x86_64-unknown-linux-gnu fp64_scalar_differential -- -max_total_time=120
@@ -119,7 +119,7 @@ jobs:
       - name: Confirm that proof linkage rejects profile drift
         run: |
           if cargo --config 'profile.release.lto="off"' check --locked \
-            -p jolt-field --release --target x86_64-unknown-linux-gnu \
+            -p jolt-algebra --release --target x86_64-unknown-linux-gnu \
             --no-default-features --features solinas,fp64-proof-linkage \
             --example fp64_production_witness; then
             echo "release profile override was accepted" >&2

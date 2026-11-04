@@ -57,20 +57,20 @@ if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
   ELF_OBJECT_DIR="$TARGET_DIR/x86_64-elf"
   mkdir -p "$ELF_OBJECT_DIR"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_add.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_add.S" \
     -o "$ELF_OBJECT_DIR/fp128_add.o"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_sub.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_sub.S" \
     -o "$ELF_OBJECT_DIR/fp128_sub.o"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_mul.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_mul.S" \
     -o "$ELF_OBJECT_DIR/fp128_mul.o"
   clang --target=x86_64-unknown-linux-gnu \
-    -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-    "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp128_mul_bmi2_adx.S" \
+    -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+    "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp128_mul_bmi2_adx.S" \
     -o "$ELF_OBJECT_DIR/fp128_mul_bmi2_adx.o"
   ADD_OBJECT="$ELF_OBJECT_DIR/fp128_add.o"
   SUB_OBJECT="$ELF_OBJECT_DIR/fp128_sub.o"

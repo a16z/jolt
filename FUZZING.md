@@ -81,9 +81,9 @@ python3 scripts/fuzz.py --workspace jolt-dory --sanitizer none replay
 Single-artifact triage commands (both require `--workspace` and `--target`):
 
 ```bash
-python3 scripts/fuzz.py --workspace jolt-field --target from_bytes \
+python3 scripts/fuzz.py --workspace jolt-algebra --target from_bytes \
     reproduce fuzz/artifacts/from_bytes/crash-<hash>
-python3 scripts/fuzz.py --workspace jolt-field --target from_bytes \
+python3 scripts/fuzz.py --workspace jolt-algebra --target from_bytes \
     tmin fuzz/artifacts/from_bytes/crash-<hash>
 ```
 

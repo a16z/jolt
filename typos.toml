@@ -3,7 +3,7 @@
 # trigger false positives ("ede", "ba").
 extend-exclude = [
   "patches/*.patch",
-  "crates/jolt-field/tests/golden_bytes.rs",
+  "crates/jolt-algebra/tests/golden_bytes.rs",
   "**/fuzz/artifacts/**",
   "**/fuzz/corpus/**",
   "**/fuzz/fixtures/**",

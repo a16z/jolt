@@ -1,0 +1,30 @@
+#![no_main]
+use jolt_algebra::{Accumulator, Fr, CanonicalEncoding, WideAccumulator};
+use libfuzzer_sys::fuzz_target;
+use num_traits::Zero;
+
+fuzz_target!(|data: &[u8]| {
+    if data.len() < 64 {
+        return;
+    }
+
+    let mut acc = WideAccumulator::default();
+    let mut naive_sum = Fr::zero();
+
+    let pairs = data.len() / 64;
+    for i in 0..pairs {
+        let offset = i * 64;
+        let a = <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[offset..offset + 32]);
+        let b =
+            <Fr as CanonicalEncoding>::from_bytes_le_reduced(&data[offset + 32..offset + 64]);
+
+        acc.fmadd(a, b);
+        naive_sum += a * b;
+    }
+
+    assert_eq!(
+        acc.reduce(),
+        naive_sum,
+        "WideAccumulator diverged from naive field arithmetic after {pairs} fmadd calls"
+    );
+});
