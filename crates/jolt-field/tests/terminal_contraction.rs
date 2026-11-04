@@ -1,4 +1,4 @@
-#![cfg(all(feature = "terminal-contraction", feature = "solinas"))]
+#![cfg(feature = "solinas")]
 
 use jolt_field::{Field, Prime128Offset275, Prime128OffsetA7F7, Ring, Zero};
 
