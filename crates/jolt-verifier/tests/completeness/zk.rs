@@ -16,10 +16,10 @@ use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_dory::DoryScheme;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_transcript::VerifierTranscript;
+use jolt_transcript::{Keccak, VerifierInit, VerifierState};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::{
-    jolt_protocol_id, verify_stages, JoltSponge, MaskedStages, ProofHeader, VerifiedStages,
+    validate_and_seed_transcript, verify_stages_on, JoltProofClaims, MaskedStages, VerifiedStages,
     JOLT_SESSION,
 };
 
@@ -45,33 +45,25 @@ fn zk_committed_muldiv_verifier_proof_is_accepted() {
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn zk_muldiv_masked_shape_matches_golden() {
     let case = crate::support::verifier_fixtures::zk_muldiv_case();
-    let mut transcript = VerifierTranscript::<JoltSponge>::new(
-        &jolt_protocol_id::<JoltSponge>(),
-        JOLT_SESSION,
-        &case.proof.narg,
-    );
-    let header = ProofHeader::receive(&mut transcript).expect("decode proof header");
-    assert_eq!(header.trace_length, 512);
-    assert_eq!(header.ram_K, 8192);
+    assert_eq!(case.proof.trace_length, 512);
+    assert_eq!(case.proof.ram_K, 8192);
 
-    let mut transcript = VerifierTranscript::<JoltSponge>::new(
-        &jolt_protocol_id::<JoltSponge>(),
-        JOLT_SESSION,
-        &case.proof.narg,
-    );
-    let mut masked = masked_stages(&case, &mut transcript);
+    let (mut masked, mut transcript) = masked_stages(&case);
     let auxiliary = masked
         .receive_auxiliary(&mut transcript)
         .expect("auxiliary block");
     let relation = masked.relation(&auxiliary).expect("residual relation");
-    let layout = masked.pads.layout();
+    let layout = masked.session.pads.layout();
     // Auxiliary slots: one per distinct intermediate product that is not a
     // term's last (26; this layout repeats none). BlindFold takes affine operands, so Spartan's outer and
     // product remainders need no defining slot. Each term's last product is
     // a pair of its stage's check row: stage 1's single pair, then the
     // multi-pair rows of stages 2–6, after the 26 single-pair rows of the
     // slots.
-    assert_eq!(layout.num_pads, 940);
+    // 941 since main's #2190 (direct RAM loads range-checked): stage 3's
+    // instruction-input virtualization gained the `RightOperandIsRdWriteValue`
+    // flag opening, one masked value and one pair of its check row.
+    assert_eq!(layout.num_pads, 941);
     assert_eq!(layout.auxiliary.len(), 26);
     assert_eq!(relation.affine.len(), 8);
     assert_eq!(relation.products.len(), 32);
@@ -80,10 +72,10 @@ fn zk_muldiv_masked_shape_matches_golden() {
         .iter()
         .map(|row| row.pairs().count())
         .collect();
-    assert_eq!(pairs.iter().sum::<usize>(), 92);
+    assert_eq!(pairs.iter().sum::<usize>(), 93);
     // Stages 2–6 land their output products on one row each.
     assert_eq!(pairs[..27], [1; 27]);
-    assert_eq!(pairs[27..], [4, 4, 5, 2, 50]);
+    assert_eq!(pairs[27..], [4, 5, 5, 2, 50]);
 }
 
 /// Every pad slot of the muldiv fixture's layout, base and auxiliary, has a
@@ -101,12 +93,7 @@ fn zk_muldiv_every_masked_value_is_constrained() {
     use std::collections::BTreeSet;
 
     let case = crate::support::verifier_fixtures::zk_muldiv_case();
-    let mut transcript = VerifierTranscript::<JoltSponge>::new(
-        &jolt_protocol_id::<JoltSponge>(),
-        JOLT_SESSION,
-        &case.proof.narg,
-    );
-    let mut masked = masked_stages(&case, &mut transcript);
+    let (mut masked, mut transcript) = masked_stages(&case);
     let auxiliary = masked
         .receive_auxiliary(&mut transcript)
         .expect("auxiliary block");
@@ -149,31 +136,39 @@ fn zk_muldiv_every_masked_value_is_constrained() {
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn zk_committed_muldiv_auxiliary_slots_match_golden() {
     let case = crate::support::verifier_fixtures::zk_committed_muldiv_case();
-    let mut transcript = VerifierTranscript::<JoltSponge>::new(
-        &jolt_protocol_id::<JoltSponge>(),
-        JOLT_SESSION,
-        &case.proof.narg,
-    );
-    let masked = masked_stages(&case, &mut transcript);
-    assert_eq!(masked.pads.layout().auxiliary.len(), 27);
+    let (masked, _) = masked_stages(&case);
+    assert_eq!(masked.session.pads.layout().auxiliary.len(), 27);
 }
 
-/// Replays the stage spine over the fixture's argument string and returns
-/// the masked stage outputs.
+/// Replays the stage spine over the fixture and returns the masked stage
+/// outputs with the transcript after stage 8.
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn masked_stages(
     case: &ZkVerifierFixtureCase,
-    transcript: &mut VerifierTranscript<'_, JoltSponge>,
-) -> MaskedStages<Fr, Bn254G1> {
-    let stages = verify_stages::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+) -> (MaskedStages<'_, Fr, Bn254G1>, VerifierState<'_, Keccak>) {
+    let (checked, mut transcript) = validate_and_seed_transcript(
         &case.preprocessing,
         &case.public_io,
+        &case.proof,
         case.trusted_advice_commitment.as_ref(),
-        transcript,
+        |statement| VerifierState::<Keccak>::init(&JOLT_SESSION, statement, &case.proof.narg),
+    )
+    .expect("seed the honest ZK fixture");
+    let JoltProofClaims::Zk { zk_proof, .. } = &case.proof.claims else {
+        panic!("ZK verifier fixture must carry a masked payload");
+    };
+    let stages = verify_stages_on::<Fr, DoryScheme, Pedersen<Bn254G1>, _, _>(
+        &case.preprocessing,
+        &case.proof,
+        case.trusted_advice_commitment.as_ref(),
+        &checked,
+        &mut transcript,
+        Some(zk_proof.pad_commitment.clone()),
+        None,
     )
     .expect("stage spine accepts the honest ZK fixture");
     let VerifiedStages::Zk(masked) = stages else {
         panic!("ZK verifier fixture must produce masked stage outputs");
     };
-    *masked
+    (*masked, transcript)
 }

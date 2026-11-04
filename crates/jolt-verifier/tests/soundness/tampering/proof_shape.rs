@@ -9,9 +9,11 @@ use jolt_verifier::proof::JoltProofClaims;
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use {
     jolt_algebra::{Fr, Ring},
-    jolt_blindfold::BlindFoldProof,
     jolt_crypto::VectorCommitmentOpening,
     jolt_sumcheck::CompressedSumcheckProof,
+    jolt_verifier::BlindFoldZkProof,
+    jolt_zk::blindfold::{BlindFoldProof, FoldedEvaluation, FoldingCommitments, OuterClaims},
+    jolt_zk::masking::MaskedMessages,
 };
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
@@ -38,7 +40,11 @@ fn zk_claim_payload_in_clear_mode_rejects_now() {
         &base,
         |case| {
             case.proof.claims = JoltProofClaims::Zk {
-                blindfold_proof: empty_blindfold_proof(),
+                masked: MaskedMessages::default(),
+                zk_proof: BlindFoldZkProof {
+                    pad_commitment: Vec::new(),
+                    blindfold: empty_blindfold_proof(),
+                },
             };
         },
     );
@@ -59,8 +65,15 @@ fn unexpected_zk_opening_claims_reject_now() {
 fn clear_stage_in_zk_proof_rejects_now() {
     tamper_manifest::assert_zk_target_active("proof.stages.clear_vs_committed");
     let mut case = crate::support::verifier_fixtures::zk_muldiv_case();
+    // A masked proof carries its rounds on the masked tape; clear rounds in a
+    // stage proof are the other mode's shape.
     case.proof.stages.stage3_sumcheck_proof = jolt_sumcheck::SumcheckProof::Clear(
-        jolt_sumcheck::ClearProof::Compressed(jolt_sumcheck::CompressedSumcheckProof::default()),
+        jolt_sumcheck::ClearProof::Compressed(jolt_sumcheck::CompressedSumcheckProof {
+            round_polynomials: vec![jolt_poly::CompressedPoly::new(vec![
+                <jolt_algebra::Fr as jolt_algebra::Ring>::from_u64(1),
+            ])],
+            pow_nonces: Vec::new(),
+        }),
     );
 
     support::assert_zk_rejects(case.verify());
@@ -69,30 +82,33 @@ fn clear_stage_in_zk_proof_rejects_now() {
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn empty_blindfold_proof() -> BlindFoldProof<Fr, jolt_crypto::Bn254G1> {
     let zero = Fr::from_u64(0);
-    let opening = VectorCommitmentOpening {
+    let opening = || VectorCommitmentOpening {
         combined_vector: Vec::new(),
         combined_blinding: zero,
     };
     BlindFoldProof {
-        auxiliary_row_commitments: Vec::new(),
-        random_round_commitments: Vec::new(),
-        random_output_claim_row_commitments: Vec::new(),
-        random_auxiliary_row_commitments: Vec::new(),
-        random_error_row_commitments: Vec::new(),
-        random_eval_commitments: Vec::new(),
-        random_u: zero,
-        cross_term_error_row_commitments: Vec::new(),
+        folding: FoldingCommitments {
+            auxiliary_rows: Vec::new(),
+            random_u: zero,
+            random_pad_rows: Vec::new(),
+            random_auxiliary_rows: Vec::new(),
+            random_error_rows: Vec::new(),
+            random_eval: jolt_crypto::Bn254G1::default(),
+            cross_term_error_rows: Vec::new(),
+        },
+        folded_evaluation: FoldedEvaluation {
+            output: zero,
+            blinding: zero,
+            output_opening: opening(),
+            blinding_opening: opening(),
+        },
         outer_sumcheck: CompressedSumcheckProof::default(),
-        az_rx: zero,
-        bz_rx: zero,
-        cz_rx: zero,
+        outer_claims: OuterClaims {
+            abc: [zero; 3],
+            error_opening: opening(),
+        },
         inner_sumcheck: CompressedSumcheckProof::default(),
-        witness_opening: opening.clone(),
-        error_opening: opening.clone(),
-        folded_eval_outputs: Vec::new(),
-        folded_eval_blindings: Vec::new(),
-        folded_eval_output_openings: Vec::new(),
-        folded_eval_blinding_openings: Vec::new(),
+        witness_opening: opening(),
     }
 }
 

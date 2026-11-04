@@ -44,6 +44,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
+use jolt_algebra::{Accumulator, JoltField};
 use jolt_claims::protocols::jolt::geometry::bytecode::{
     self, read_raf_stage_values, BytecodeReadRafStageValueInputs,
 };
@@ -53,7 +54,6 @@ use jolt_claims::protocols::jolt::geometry::dimensions::{
 };
 use jolt_claims::protocols::jolt::JoltOpeningId;
 use jolt_claims::OutputClaims;
-use jolt_algebra::{Accumulator, JoltField};
 #[cfg(feature = "akita")]
 use jolt_poly::bind_prefix_in_place;
 use jolt_poly::{

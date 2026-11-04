@@ -1031,11 +1031,11 @@ pub(crate) mod testing {
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod tests {
     use crate::optimized::parity::ExceptionalEq;
-    use jolt_claims::protocols::jolt::JoltChallengeId;
-    use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
     #[cfg(feature = "akita")]
     use jolt_algebra::Prime128OffsetA7F7;
     use jolt_algebra::{Fr, Ring, Zero};
+    use jolt_claims::protocols::jolt::JoltChallengeId;
+    use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
     use jolt_poly::EqPolynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheckChallenges;
     use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;

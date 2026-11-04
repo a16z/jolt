@@ -1237,7 +1237,6 @@ mod sumcheck_batch_derive_tests {
     use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
     use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
-    use jolt_claims::protocols::jolt::geometry::instruction::InstructionReadRafDimensions;
 
     fn instruction_read_raf() -> InstructionReadRaf<Fr> {
         InstructionReadRaf::new(InstructionReadRafDimensions::try_from((5, 128, 3)).unwrap())
@@ -1592,7 +1591,10 @@ mod begin_batch_tests {
             1,
         );
         assert_eq!(batch.members.len(), 1);
-        assert_eq!(batch.max_num_vars, sumchecks.instruction_read_raf.rounds());
+        assert_eq!(
+            batch.max_num_vars(),
+            sumchecks.instruction_read_raf.rounds()
+        );
         assert_eq!(coefficients.registers_val_evaluation, None);
     }
 

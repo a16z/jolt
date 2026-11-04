@@ -2036,13 +2036,13 @@ mod tests {
     use std::num::NonZeroUsize;
     use std::sync::Arc;
 
+    #[cfg(feature = "akita")]
+    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::instruction::{
         InstructionReadRafDimensions, CANONICAL_INSTRUCTION_ADDRESS,
     };
     use jolt_claims::protocols::jolt::relations::instruction::InstructionReadRafInputClaims;
-    #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
-    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_lookup_tables::{LookupBits, LookupTableKind, XLEN as RISCV_XLEN};
     use jolt_sumcheck::ProveRounds;
     #[cfg(feature = "akita")]

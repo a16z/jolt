@@ -14,8 +14,8 @@
 use std::collections::BTreeMap;
 
 use crate::ProverInputs;
-use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 use jolt_algebra::JoltField;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 use jolt_claims::protocols::jolt::{
     HammingWeightClaimReductionPublic, JoltCommittedPolynomial, JoltDerivedId, JoltPolynomialId,
     JoltRelationId,

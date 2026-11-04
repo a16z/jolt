@@ -1099,11 +1099,33 @@ pub const FUTURE_STAGE_TARGETS: &[TamperTarget] = &[
     ),
     zk_target(
         "zk.blindfold_proof",
-        "proof.claims.Zk.blindfold_proof",
+        "proof.claims.Zk.zk_proof.blindfold",
         MutationStrategy::ReplaceProofPayload,
         TamperCoverage::Active,
         "verifier-native ZK fixture mutates the imported BlindFold proof payload ",
     ),
+    zk_target(
+        "zk.pad_commitment",
+        "proof.claims.Zk.zk_proof.pad_commitment",
+        MutationStrategy::RemoveItem,
+        TamperCoverage::Active,
+        "the pad row count is checked against the layout, and a changed row moves every challenge and breaks BlindFold",
+    ),
+    zk_target(
+        "zk.masked_values",
+        "proof.claims.Zk.masked.values",
+        MutationStrategy::OffsetScalar,
+        TamperCoverage::Active,
+        "an offset masked value decodes to another value, which the residual relation BlindFold proves rejects",
+    ),
+    zk_target(
+        "zk.masked_tape_length",
+        "proof.claims.Zk.masked.values",
+        MutationStrategy::TruncateVector,
+        TamperCoverage::Active,
+        "the masked verifier reads exactly its schedule and requires the tape used to its end",
+    ),
+
     zk_target(
         "zk.vector_commitment_setup",
         "preprocessing.vc_setup",
@@ -1368,7 +1390,7 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
     match error {
         VerifierError::ProtocolConfigMismatch { .. }
         | VerifierError::ExpectedClearProof { .. }
-        | VerifierError::ExpectedCommittedProof { .. }
+        | VerifierError::ExpectedMaskedProof { .. }
         | VerifierError::UnexpectedBlindFoldProof
         | VerifierError::MissingBlindFoldProof
         | VerifierError::UnexpectedOpeningClaims
@@ -1440,8 +1462,9 @@ pub fn observed_rejection_phase(error: &VerifierError) -> Option<VerifierPhase> 
         | VerifierError::FinalOpeningVerificationFailed { .. } => {
             Some(VerifierPhase::Stage8Openings)
         }
-        VerifierError::BlindFoldConstructionFailed { .. }
-        | VerifierError::BlindFoldVerificationFailed { .. } => Some(VerifierPhase::Zk),
+        VerifierError::Masking(_) | VerifierError::ResidualConstructionFailed { .. } => {
+            Some(VerifierPhase::Zk)
+        }
         VerifierError::ProtocolAxisUnimplemented { .. }
         | VerifierError::MissingOpeningClaim { .. }
         | VerifierError::UnexpectedOpeningClaim { .. }

@@ -1017,6 +1017,7 @@ where
     VC::Output: Copy + HomomorphicCommitment<F> + Encoding,
     T: FieldTranscript<F>,
 {
+    jolt_verifier_derive::fs_scope_guard!(BlindFold);
     let masked_auxiliary = masked.receive_auxiliary(transcript)?;
     masked.session.finish()?;
     let relation = masked.relation(&masked_auxiliary)?;
@@ -1533,7 +1534,7 @@ mod tests {
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
-    type TestClaims = JoltProofClaims<Fr, jolt_zk::blindfold::BlindFoldProof<Fr, Bn254G1>>;
+    type TestClaims = JoltProofClaims<Fr, crate::proof::BlindFoldZkProof<Fr, Bn254G1>>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -1596,14 +1597,14 @@ mod tests {
             Err(VerifierError::ProtocolConfigMismatch { .. })
         ));
         proof.protocol = JOLT_VERIFIER_CONFIG;
-        proof.stages.stage1_sumcheck_proof = sumcheck_proof(!is_zk);
+        proof.stages.stage1_sumcheck_proof = mismatched_sumcheck_proof(is_zk);
         assert!(matches!(
             validate_and_seed_transcript(&preprocessing, &public_io, &proof, None, |statement| {
                 verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &[])
             }),
             Err(VerifierError::ExpectedClearProof {
                 field: "stage1_sumcheck_proof"
-            } | VerifierError::ExpectedCommittedProof {
+            } | VerifierError::ExpectedMaskedProof {
                 field: "stage1_sumcheck_proof"
             })
         ));
@@ -1964,7 +1965,7 @@ mod tests {
                 proof.one_hot_config,
                 false,
                 false,
-                false,
+                ZkConfig::Transparent,
             ),
             Err(VerifierError::InvalidTraceLength { got, .. }) if got == undersized
         ));
@@ -2278,38 +2279,39 @@ mod tests {
     }
 
     fn zk_claims() -> TestClaims {
+        let opening = || VectorCommitmentOpening {
+            combined_vector: Vec::new(),
+            combined_blinding: Fr::zero(),
+        };
         JoltProofClaims::Zk {
-            blindfold_proof: empty_blindfold_proof(),
-        }
-    }
-
-    fn empty_blindfold_proof() -> jolt_zk::blindfold::BlindFoldProof<Fr, Bn254G1> {
-        jolt_zk::blindfold::BlindFoldProof {
-            auxiliary_row_commitments: Vec::new(),
-            random_round_commitments: Vec::new(),
-            random_output_claim_row_commitments: Vec::new(),
-            random_auxiliary_row_commitments: Vec::new(),
-            random_error_row_commitments: Vec::new(),
-            random_eval_commitments: Vec::new(),
-            random_u: Fr::zero(),
-            cross_term_error_row_commitments: Vec::new(),
-            outer_sumcheck: CompressedSumcheckProof::default(),
-            az_rx: Fr::zero(),
-            bz_rx: Fr::zero(),
-            cz_rx: Fr::zero(),
-            inner_sumcheck: CompressedSumcheckProof::default(),
-            witness_opening: VectorCommitmentOpening {
-                combined_vector: Vec::new(),
-                combined_blinding: Fr::zero(),
+            masked: jolt_zk::masking::MaskedMessages::default(),
+            zk_proof: crate::proof::BlindFoldZkProof {
+                pad_commitment: Vec::new(),
+                blindfold: jolt_zk::blindfold::BlindFoldProof {
+                    folding: jolt_zk::blindfold::FoldingCommitments {
+                        auxiliary_rows: Vec::new(),
+                        random_u: Fr::zero(),
+                        random_pad_rows: Vec::new(),
+                        random_auxiliary_rows: Vec::new(),
+                        random_error_rows: Vec::new(),
+                        random_eval: Bn254G1::default(),
+                        cross_term_error_rows: Vec::new(),
+                    },
+                    folded_evaluation: jolt_zk::blindfold::FoldedEvaluation {
+                        output: Fr::zero(),
+                        blinding: Fr::zero(),
+                        output_opening: opening(),
+                        blinding_opening: opening(),
+                    },
+                    outer_sumcheck: CompressedSumcheckProof::default(),
+                    outer_claims: jolt_zk::blindfold::OuterClaims {
+                        abc: [Fr::zero(); 3],
+                        error_opening: opening(),
+                    },
+                    inner_sumcheck: CompressedSumcheckProof::default(),
+                    witness_opening: opening(),
+                },
             },
-            error_opening: VectorCommitmentOpening {
-                combined_vector: Vec::new(),
-                combined_blinding: Fr::zero(),
-            },
-            folded_eval_outputs: Vec::new(),
-            folded_eval_blindings: Vec::new(),
-            folded_eval_output_openings: Vec::new(),
-            folded_eval_blinding_openings: Vec::new(),
         }
     }
 
@@ -2329,19 +2331,24 @@ mod tests {
         }
     }
 
-    fn uniskip_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
-        if is_zk {
-            SumcheckProof::Committed(CommittedSumcheckProof::default())
-        } else {
-            SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default()))
-        }
+    fn uniskip_proof(_is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
+        SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default()))
     }
 
-    fn sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
+    fn sumcheck_proof(_is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
+        SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()))
+    }
+
+    /// A stage proof the other mode's proof shape rejects: clear rounds in a
+    /// masked proof, committed rounds in a clear one.
+    fn mismatched_sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
         if is_zk {
-            SumcheckProof::Committed(CommittedSumcheckProof::default())
+            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof {
+                round_polynomials: vec![jolt_poly::CompressedPoly::new(vec![Fr::zero()])],
+                pow_nonces: Vec::new(),
+            }))
         } else {
-            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()))
+            SumcheckProof::Committed(CommittedSumcheckProof::default())
         }
     }
 

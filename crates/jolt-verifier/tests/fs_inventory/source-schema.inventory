@@ -41,6 +41,7 @@ jolt-verifier::config.rs::JoltProtocolConfig.field_inline
 jolt-verifier::config.rs::JoltProtocolConfig.zk
 jolt-verifier::config.rs::ZkConfig::BlindFold
 jolt-verifier::config.rs::ZkConfig::Transparent
+jolt-verifier::config.rs::ZkConfig::Whiteout
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.bytecode_commitment
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.max_padded_trace_length
 jolt-verifier::preprocessing.rs::CommittedProgramPreprocessing.memory_layout
@@ -82,7 +83,8 @@ jolt-verifier::proof.rs::JoltProof.trace_length
 jolt-verifier::proof.rs::JoltProof.trace_polynomial_order
 jolt-verifier::proof.rs::JoltProof.untrusted_advice_commitment
 jolt-verifier::proof.rs::JoltProofClaims::Clear.0
-jolt-verifier::proof.rs::JoltProofClaims::Zk.blindfold_proof
+jolt-verifier::proof.rs::JoltProofClaims::Zk.masked
+jolt-verifier::proof.rs::JoltProofClaims::Zk.zk_proof
 jolt-verifier::proof.rs::JoltStageProofs.pow_nonces
 jolt-verifier::proof.rs::JoltStageProofs.stage1_sumcheck_proof
 jolt-verifier::proof.rs::JoltStageProofs.stage1_uni_skip_first_round_proof

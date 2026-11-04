@@ -383,6 +383,9 @@ impl<F: JoltField> SumcheckKernel<F> for OptimizedInstructionClaimReductionKerne
 mod tests {
     use std::collections::BTreeMap;
 
+    #[cfg(feature = "akita")]
+    use jolt_algebra::Prime128OffsetA7F7;
+    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_claims::protocols::jolt::geometry::claim_reductions::instruction::{
         left_instruction_input_reduced, left_lookup_operand_reduced, lookup_output_reduced,
         right_instruction_input_reduced, right_lookup_operand_reduced,
@@ -393,9 +396,6 @@ mod tests {
     use jolt_claims::protocols::jolt::{
         InstructionClaimReductionPublic, JoltDerivedId, TraceDimensions,
     };
-    #[cfg(feature = "akita")]
-    use jolt_algebra::Prime128OffsetA7F7;
-    use jolt_algebra::{Fr, JoltField, Ring};
     use jolt_poly::{BindingOrder, Polynomial};
     use jolt_sumcheck::ProveRounds;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
