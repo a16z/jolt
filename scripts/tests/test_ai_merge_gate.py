@@ -1050,7 +1050,6 @@ class AiMergeGateTests(unittest.TestCase):
         request, continuation = apis.model_requests
         self.assertIn(diff, request["input"])
         self.assertNotIn("#[cfg(test)]", request["input"])
-        self.assertLess(len(json.dumps(request).encode()), 30_000)
         self.assertEqual(continuation["input"][0]["output"],
                          "3\t\n4\t#[cfg(test)]\n5\tmod tests {\n6\t    #[test]\n")
         self.assertIn(f"Head, revision `head` for the tools: {HEAD}", request["input"])
@@ -1197,22 +1196,34 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(apis.gate(), ("neutral", "Needs an approval or a current-head review attestation"))
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
 
-    def test_incomplete_or_oversized_input_fails_closed_before_the_model(self) -> None:
+    def test_incomplete_input_fails_closed_before_the_model(self) -> None:
         two_files = ("crates/jolt-prover/src/lib.rs", "crates/jolt-prover/src/stages.rs")
         truncated = FakeApis()
         truncated.truncated = True
-        for case, apis, limit in [
-            ("diff misses a file", FakeApis(counts=(2, 1, 1), files=two_files), GATE.MAX_CALL_INPUT_TOKENS),
-            ("tree listing truncated", truncated, GATE.MAX_CALL_INPUT_TOKENS),
-            ("request over the input bound", FakeApis(), 100),
+        for case, apis in [
+            ("diff misses a file", FakeApis(counts=(2, 1, 1), files=two_files)),
+            ("tree listing truncated", truncated),
         ]:
-            with self.subTest(case=case), mock.patch.object(GATE, "MAX_CALL_INPUT_TOKENS", limit):
+            with self.subTest(case=case):
                 with self.assertRaises(GATE.GateError):
                     evaluate(apis)
                 self.assertEqual(apis.gate(), ("failure", "Gate error: human approval required"))
                 self.assertEqual(apis.model_requests, [])
                 self.assertEqual(apis.posted, [], "no paid attempt is counted")
                 self.assertEqual(set(apis.labels), {"no-reviewer-assigned"})
+
+    def test_oversized_diff_is_unclassified_risk_four_without_a_paid_attempt(self) -> None:
+        path = "scripts/large.py"
+        apis = changed_contents({path: "x" * 160_000 + "\n"}, {path: "y" * 160_000 + "\n"})
+        evaluate(apis)
+        self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
+        self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
+        self.assertEqual(apis.record(GATE.CLASSIFIER), ["skipped"])
+        refusal = next(run for run in apis.created if run["name"] == GATE.CLASSIFIER)
+        self.assertNotIn("text", refusal["output"])
+        self.assertEqual(set(apis.labels), {"no-reviewer-assigned"})
+        counts = GATE.LEDGER.fullmatch(apis.posted[-1].splitlines()[-1]).group(1)
+        self.assertEqual(json.loads(counts), {})
 
     def test_classifier_attempts_are_capped_per_head_and_per_pull_request(self) -> None:
         attested = comment("core-a", attestation())

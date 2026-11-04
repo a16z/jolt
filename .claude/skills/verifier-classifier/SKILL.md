@@ -130,10 +130,11 @@ change from SAFE.
 ## In CI
 
 The AI merge gate (`scripts/ci/ai_merge_gate.py`, `.github/ai-merge-gate.md`) sends this skill
-and the trusted risk policy as instructions, and runs GPT-6.1 Sol
+and the trusted risk policy and default branch's `specs/verifier-closure-lints.md` as instructions, and runs GPT-6.1 Sol
 at reasoning effort `xhigh`. The input holds the pull request's complete diff from its merge base
-with `main` and its changed paths, not complete files. Read `specs/verifier-closure-lints.md`
-as needed through the tools. Two tools read either commit, `base` (the merge base) or `head`:
+with `main` and its changed paths, not complete files. The closure specification is already
+included in the instructions; do not spend the read budget fetching it again.
+Two tools read either commit, `base` (the merge base) or `head`:
 
 - `read_file` returns a file with line numbers, optionally an inclusive `start_line`/`end_line`
   range, or lists a directory. Null bounds read the whole file; use ranges for large files.
