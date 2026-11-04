@@ -322,6 +322,46 @@ impl<const K: usize> GarnerData<K> {
         result
     }
 
+    /// [`Self::centered_mixed_radix`] with every value-dependent correction
+    /// computed by a mask, so neither control flow nor addresses depend on the
+    /// residues.
+    pub(crate) fn centered_mixed_radix_ct<const D: usize>(&self, limbs: &mut [[i64; D]; K]) {
+        for index in 0..K {
+            let modulus = self.moduli[index];
+            let half = (modulus / 2) as i64;
+            let (prior_limbs, rest) = limbs.split_at_mut(index);
+            let Some(column) = rest.first_mut() else {
+                return;
+            };
+            for value in column.iter_mut() {
+                *value += (*value >> 63) & modulus as i64;
+            }
+            for (prior, prior_digits) in prior_limbs.iter().enumerate() {
+                let (gamma, gamma_shoup) =
+                    (self.gamma[index][prior], self.gamma_shoup[index][prior]);
+                let lift = self.lift[index][prior];
+                for (value, &prior_digit) in column.iter_mut().zip(prior_digits) {
+                    // As in `centered_mixed_radix`: the sum is in [0, 2^64),
+                    // and the Shoup product leaves `digit` in [0, 2 p_i).
+                    let shifted = (*value as u64 + lift).wrapping_add_signed(-prior_digit);
+                    let quotient = ((u128::from(shifted) * u128::from(gamma_shoup)) >> 64) as u64;
+                    let digit = shifted
+                        .wrapping_mul(gamma)
+                        .wrapping_sub(quotient.wrapping_mul(modulus));
+                    // `p_i < 2^62`, so the top bit of `digit - p_i` is set
+                    // exactly when `digit < p_i`.
+                    let reduced = digit.wrapping_sub(modulus);
+                    let below = 0u64.wrapping_sub(reduced >> 63);
+                    *value = reduced.wrapping_add(modulus & below) as i64;
+                }
+            }
+            for value in column.iter_mut() {
+                let above_half = ((half - *value) >> 63) as u64;
+                *value -= (modulus & above_half) as i64;
+            }
+        }
+    }
+
     /// Replace each column of residues with its centered mixed-radix digits.
     ///
     /// On entry `limbs[i][c]` is the residue of coefficient `c` modulo `p_i`,
@@ -361,6 +401,26 @@ impl<const K: usize> GarnerData<K> {
             }
         }
     }
+}
+
+/// The field image of `Σ_i digits[i] · weights[i]`, with no branch on the
+/// digits: each digit is lifted into `F` from its magnitude and sign by
+/// arithmetic, never by `F::from_i128`, which branches on sign. With the
+/// radix weights of `GarnerData::field_weights` this is the constant-time
+/// counterpart of `GarnerData::digits_to_field`.
+pub(crate) fn digits_to_field_ct<F: Field, const K: usize>(
+    digits: &[i64; K],
+    weights: &[F; K],
+) -> F {
+    digits
+        .iter()
+        .zip(weights)
+        .fold(F::zero(), |acc, (&digit, &weight)| {
+            let sign = digit >> 63;
+            let magnitude = F::from_u64(((digit ^ sign) - sign) as u64) * weight;
+            let negative = F::from_u64((sign & 1) as u64);
+            acc + magnitude - (magnitude + magnitude) * negative
+        })
 }
 
 pub(crate) fn modular_inverse(value: u64, modulus: u64) -> Result<u64, AlgebraError> {
