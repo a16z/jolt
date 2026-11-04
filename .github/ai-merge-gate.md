@@ -19,9 +19,9 @@ neither repeats nor converts it. A maintainer is a login in the repository varia
 write, maintain or admin access.
 
 Only the verifier-impact classifier calls a model in this gate: OpenAI's `gpt-6.1-sol` at
-reasoning effort `xhigh`, through the Responses API, within the spend limits below. It reads the
-pull request's merge base and head through two read-only tools. Code review happens outside CI,
-and the attestation records it.
+reasoning effort `xhigh`, through Codex and the Responses API, within the spend limits below.
+The agent reads verified merge-base and head snapshots in a read-only sandbox. Code review happens
+outside CI, and the attestation records it.
 
 For ready pull requests, the gate also manages labels and publishes an `ai-merge-gate`
 check run that explains its decision. Neither is required for merging. This pull request enables
@@ -80,7 +80,8 @@ exception does not apply to direct verifier, transcript, protocol or wire-format
 A level-1 answer still cannot waive level-3/4 runtime-code defaults, subject to the accepted
 scanner limits below. The gate compares both complete source files after excluding whole comments,
 blank lines and syntactically recognized top-level Rust items compiled only under `cfg(test)`
-(or a file-inner `#![cfg(test)]`). Nested cfg-like tokens are not treated as test code, since
+(or a file-inner `#![cfg(test)]`), including stacked multiline attributes and ordinary
+external modules whose declarations are all test-only. Nested cfg-like tokens are not treated as test code, since
 they can be macro input rather than Rust attributes. This also
 detects runtime code exposed by removing a cfg or block-comment delimiter. A test-only or
 comment/blank-only change may go below the default. `cfg(all(test, ...))` implies test-only;
@@ -116,8 +117,7 @@ pull requests need no model call; in mixed changes, the classifier cannot escala
 
 Every changed path must appear exactly once in a model result, including removed files and
 both names of a rename. The pull request takes the highest effective level. An incomplete or
-invalid result fails the evaluation and a maintainer-authored pull request receives risk-4
-when GitHub is reachable. `UNCERTAIN`
+invalid result leaves the head unclassified at neutral risk-4 without a risk label. `UNCERTAIN`
 or `AFFECTS` with no non-bump path at risk-3 or above becomes risk-4. The classifier still asks about verifier acceptance;
 this does not add a witness-confidentiality check for prover-only code.
 
@@ -176,7 +176,7 @@ that is still standing.
 | 2 | The pull request is closed, or its base is not `main` | Not evaluated; `merge-eligible` removed | Withdrawn, unless the pull request merged | None |
 | 3 | A maintainer or writer has requested changes, on any commit, and has not since approved or had that review dismissed | `neutral`: changes requested | Withdrawn | None |
 | 4 | No writer approved and the author is not a maintainer | `neutral`: human approval required | Withdrawn | None |
-| 5 | No writer approved and the pull request changes a protected input: `.github/workflows/ai-merge-gate.yml`, `.github/workflows/ai-merge-gate-events.yml`, `.claude/skills/verifier-classifier/`, `specs/verifier-closure-lints.md` or `.github/ai-merge-gate-risk.json` | `neutral`: human approval required | Withdrawn | None |
+| 5 | No writer approved and the pull request changes a protected input: `.github/workflows/ai-merge-gate.yml`, `.github/workflows/ai-merge-gate-events.yml`, `.github/workflows/ai-merge-gate-evaluate.yml`, `scripts/ci/classifier_agent.py`, `.claude/skills/verifier-classifier/`, `specs/verifier-closure-lints.md` or `.github/ai-merge-gate-risk.json` | `neutral`: human approval required | Withdrawn | None |
 | 6 | Maintainer-authored, ready, no gate-input changes, no current-head maintainer approval, and no cached classification | Classify dependency-only bumps deterministically; otherwise run the classifier within its attempt limits, then continue | — | Classifier unless bump-only |
 | 7 | Risk-4 or unclassified, with an undismissed current-head approval by a maintainer with write access, other than the author | `success` | Withdrawn | None |
 | 8 | Risk-4 or unclassified, without that approval | `neutral`: current-head maintainer approval required | Withdrawn | None |
@@ -292,8 +292,8 @@ who is not a maintainer. A writer's approval can satisfy GitHub's review require
 
 **Verifier and gate changes.** Risk-3 can include a verifier-reaching dependency bump or a minimal
 shared-code change and still gets the gate's approval on the maintainer-authored path. At risk-4 and for changes to the gate's
-inputs, the gate never approves; a person's approval is needed, and the policy asks for a
-current-head maintainer approval at risk-4.
+inputs, the gate never approves; the policy asks for an independent current-head maintainer
+approval in both cases.
 
 **Re-running the gate.** Creating, editing or deleting a personal-account or Pika-bot PR comment
 re-runs the gate, including an edit that removes the line. Comments from other bots are ignored.
@@ -350,47 +350,62 @@ gate's approval and the model's input all use that set. The gate does not use th
 request's file list, which follows the branch: a push and a revert during an evaluation could make
 it describe another commit with the same number of files.
 
-The model's first input is the complete pull request diff from its merge base with `main` and
-the changed paths. It does not inline complete changed files. The closure reference specification
-is supplied with the trusted instructions so fetching it does not consume the read budget.
-The gate reads the diff only after rows 1 through 5 have passed. Two tools let the model read
-surrounding definitions, callers and reference files on demand:
-`read_file` returns a file with line numbers, optionally an inclusive `start_line`/`end_line`
-range, or lists a directory; `search` returns the
-lines that contain a literal string. Each reads either the merge base or the head. The gate
-answers them from GitHub's archive of each commit, which it holds in memory and checks against
-the commit's tree: every file must hash to its blob in that tree, so `export-ignore` or
-`export-subst` attributes in the pull request cannot hide or alter a file, and a mismatch fails
-the gate. Nothing from the pull request is checked out, written to disk or run.
+The reusable `.github/workflows/ai-merge-gate-evaluate.yml` separates three jobs:
 
-The gate refuses rather than truncates. It fails, without calling the model, on a diff whose
-parsed file, addition and deletion counts differ from the pull request's, on a truncated tree
-listing or on a commit holding more than 500,000,000 bytes of files. An oversized first request
-instead stays unclassified and requires human approval. A tool answer over 60,000 characters, a search with more than 200 matching
-lines, and a binary file or one over 1,000,000 bytes come back to the model as errors, not as
-partial text. After 500,000 characters of answers or 4 tool turns for one question, or when the
-answers would take the next request over the input bound, the gate withholds the tools and the
-model must answer from what it has read; the classifier skill tells it to answer `UNCERTAIN`
-when that is not enough.
+- **Prepare:** trusted default-branch code reads GitHub's complete tree listings and archives,
+  verifies every blob, and exports base/head snapshots, `diff.patch`, and a changed-path manifest.
+  It records the paid attempt before handing off. No PR code, hooks, filters or build scripts run.
+- **Classify:** a fresh Ubuntu runner has Contents read only and no GitHub write credential.
+  Every checkout uses `persist-credentials: false`. Only this job receives `OPENAI_API_KEY`.
+  Pinned Codex 0.162.0 runs GPT-6.1 Sol at `xhigh` with `codex exec --sandbox read-only`.
+  Its ordinary Bash commands have no network access and inherit an explicit non-secret environment.
+- **Publish:** another fresh trusted checkout receives only the plan and verdict artifacts, not
+  the PR snapshots or model key. It binds the result to the repository, base/head, changed paths
+  and trusted-input fingerprint, validates the verdict schema and lengths, applies the existing
+  risk policy, then publishes with Checks write and Pull requests write.
 
-Row 5 keeps the classifier skill, closure spec, risk policy and the two AI gate workflows
-human-reviewed. The paid classifier runs in `ai-merge-gate.yml`; `ai-merge-gate-events.yml`
-signals pull request and review events to it. Changes to `scripts/ci/`, other workflows,
-`CLAUDE.md`, the `AGENTS.md` link, `CONTRIBUTING.md`, this guide and the
-ci-code-review/comment-policy/test-policy skills go to the classifier like any other change
-on an eligible maintainer-authored pull request. Their existing risk globs still apply. A
-qualifying human approval still satisfies the policy; the gate does not add its own approval
-of protected-input changes.
+No diff or complete changed file is inlined in the first model request. The agent starts with
+`git diff --no-index --no-ext-diff --no-textconv --stat -- base head` and triages every changed
+path. Test-only, documentation and fixture hunks get cheap path/cfg checks; production hunks
+that could reach verifier acceptance, preprocessing, transcript, proof format or PCS parameters
+get caller tracing in both revisions. Total diff size does not trigger a skip. The agent reads
+with Git, `rg` and `sed` ranges; the old custom read/search tool loop is gone.
 
-Both credentialed gate jobs check out the default branch, not the pull request head. The gate
-reads the proposed files through GitHub's API into memory as data; it does not execute the
-pull request's `scripts/ci/` code with the gate's credentials before merge. After merge, changed
-scripts become default-branch code and can run with those credentials on later evaluations.
-The separate `diff-classifier.yml` workflow is a deterministic diff summary, not the AI gate's
-verifier classifier. It already checks out the pull request head and runs that revision's
-`scripts/ci/diff_classifier.py` with its own workflow token, whose declared permissions are
-Contents read and Pull requests write. It does not receive the AI gate's OpenAI key. That
-workflow remains outside row 5; this change does not alter its checkout or permissions.
+The preparation job checks archive contents against tree blob hashes: `export-ignore` and
+`export-subst` cannot hide or rewrite files. An incomplete diff, truncated tree listing or archive
+mismatch fails closed before payment. A snapshot over 500,000,000 bytes, agent failure, timeout,
+invalid verdict or exhausted token/spend cap leaves the head unclassified at neutral risk-4,
+without a risk label; a current-head maintainer approval is required. Nothing is silently truncated.
+Binary files are marked as unreadable data for semantic classification rather than interpreted as source.
+
+The model API key stays in a separate non-dumpable credential/budget broker process. Codex
+receives only a placeholder key and talks to that broker; the real key is never written to
+Codex auth, config or logs. Native sandbox PID isolation and environment scrubbing prevent
+commands from reading the broker's or runner ancestors' environment. The shell has no network,
+including access to the local broker. `project_doc_max_bytes = 0`, a private `CODEX_HOME`, and
+disabled hooks, plugins, apps and web search keep PR-local agent instructions from becoming
+trusted configuration. Exported files are non-executable data, `.git` path components are
+rejected, system/global Git config is disabled, and hooks/fsmonitor are disabled. A trusted `RIPGREP_CONFIG_PATH` supplies `--no-ignore --hidden`, so PR-controlled
+`.ignore` and `.rgignore` files cannot hide source. Read diffs
+with `--no-ext-diff --no-textconv`; never invoke filters or PR Git configuration.
+
+Never build or execute PR code: no Cargo, rustc, make, build.rs, scripts, hooks or direnv.
+A small native Codex execution rule forbids common build tools. This rule and the skill are
+not a general execution-proof boundary: ordinary Bash can interpret source text. The enforced
+security boundary is read-only filesystem access, no network and no readable real credentials;
+PR text can still attempt to mislead a verdict. The publisher treats every verdict field as
+untrusted text, caps lengths, escapes HTML/Markdown and suppresses mentions before publication.
+
+Local classification previews must stub and count all GitHub writes; they are not permission
+to publish or approve anything.
+
+Row 5 protects the classifier skill, closure spec, risk policy, both gate entry workflows,
+the new reusable evaluation workflow and `scripts/ci/classifier_agent.py`. Proposed replacements
+are untrusted input, not instructions for the current run. Other `scripts/ci/` files, workflows,
+`CLAUDE.md`, `AGENTS.md`, this guide and review skills still go through classification with
+their existing risk globs. A qualifying human approval still satisfies policy; the gate never
+adds its own approval for protected-input changes. The independent `diff-classifier.yml` is
+unchanged and does not receive the model key.
 
 The gate stores each classifier verdict and risk level as a check run on the head, whose
 external ID names the workflow run that created it. Later evaluations reuse a verdict instead of
@@ -403,8 +418,8 @@ far-future completion time that wins the cache lookup. The gate trusts those fie
 publicly computable inputs fingerprint below. This is a known limit; there is no HMAC or
 dedicated App binding.
 Cached results must also carry risk metadata and a SHA-256 fingerprint of the trusted classifier
-inputs: the gate script, its diff-parser helper, the gate workflow, the classifier skill, the
-closure spec and the risk policy. The conclusion must be successful or neutral. Legacy, failed
+inputs: the gate script, agent runner, diff-parser helper, gate and evaluation workflows, classifier
+skill, closure spec and risk policy. The conclusion must be successful or neutral. Legacy, failed
 or mismatched-input results are classified again when authorized and attempts remain. Changing
 these inputs does not reset the paid-attempt ledger. A failed model call is not stored, so the
 next event may retry it within the attempt limits. Attestations are always read from current comments, never from check
@@ -416,119 +431,40 @@ gate does not need it.
 
 ## Classifier spend limits
 
-These limits bound what the classifier can spend; they apply to the CI classifier only, not to
-local reviews. They are this gate's own choices, set in `scripts/ci/ai_merge_gate.py`.
+The credential broker in `scripts/ci/classifier_agent.py` applies these caps before forwarding
+paid model requests. Codex, not the broker, owns the agent/tool loop.
 
-- **Output.** Each request sets `max_output_tokens` to 20,000, which the
-  [Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)
-  defines as "an upper bound for the number of tokens that can be generated for a response,
-  including visible output tokens and reasoning tokens". A response that reaches it ends
-  incomplete, and that attempt fails.
-- **Input.** No request goes out whose counted input exceeds 150,000 tokens. The gate counts a
-  request by its JSON size in bytes, since no text token covers less than one byte, plus the
-  input and output tokens the API reported for the response it continues: OpenAI bills "all
-  previous input tokens for responses in the chain" as input
-  ([conversation state](https://developers.openai.com/api/docs/guides/conversation-state)).
-  OpenAI's own framing of the request, such as its message and tool wrappers, is not counted, so
-  the count is the gate's estimate, not OpenAI's. A first request over the bound records a
-  skipped classifier with no verdict and counts no paid attempt. The head stays unclassified
-  without a risk label and follows the neutral risk-4/current-head-maintainer approval path, rather than a gate error.
-  This is a spend limit, not the model's documented 1,050,000-token context window. Keeping it
-  below the 272,000-token long-context threshold avoids the higher rates below rather than
-  increasing the budget to accommodate automatically inlined files. Large complete diffs can
-  still exceed it and require human approval; unchanged file contents no longer consume the first request.
-  The 500,000-character read budget permits caller tracing after changed-file reads. It can
-  increase actual paid input and tool use, but the per-request input, output, turn and attempt
-  caps are unchanged, so the nominal maximum cost below does not increase.
-- **Calls per attempt.** An attempt is one question with at most 4 tool turns, so at most 5
-  paid requests.
-- **Attempts.** At most 2 attempts per head and 3 per pull request, across all its heads,
-  retries and re-runs. The gate's classifier comment ends with a ledger line counting attempts
-  per head; a new attempt is written there before its first paid request, so a timeout, crash or
-  cancelled run still counts. One evaluation per pull request runs at a time, so two
-  evaluations never admit attempts at once. These counts hold only while the ledger stands:
-  writers, people with repository write access, can edit or delete the comment and so reset
-  them (see [Trust](#trust)). When the attempts are spent, the head stays
-  unclassified: the gate does not approve it or add a risk label; it needs an independent
-  current-head maintainer approval. A cached verdict costs no attempt.
-- **Time.** Each request is cancelled after 15 minutes and each question after 40. Cancelling
-  ends the wait, not necessarily the billing: the tokens a response generated before the
-  cancellation, at most its output limit, can still be charged.
-- **Tier.** Requests set `service_tier` to `default`, which the API documents as "standard
-  pricing and performance for the selected model", rather than inheriting the project's tier.
+- **Tokens:** OpenAI's `/v1/responses/input_tokens` endpoint counts each complete proposed
+  request. At most 150,000 input and 20,000 output tokens per request; at most 750,000 cumulative
+  input and 100,000 cumulative output tokens per attempt. Reasoning tokens count as output.
+  Input includes repeated conversation context; cached input remains part of the token cap.
+- **Spend and turns:** at most 32 model requests and $2.875 per attempt. Before each call the
+  broker reserves its counted input at $2.50/M plus maximum output at $10/M, in addition to
+  observed cost so far. It forces standard tier. Rates used for receipts are $2/M fresh input,
+  $0.10/M cache reads, $2.50/M cache writes and $10/M output. These are list-price calculations,
+  not invoices; model pricing changes require updating the broker.
+- **Attempts:** unchanged: at most 2 paid attempts per head and 3 per PR, across retries and
+  heads. The trusted preparation job records an attempt before the model job starts. Publication
+  consumes that reserved attempt, never a second one. One evaluation per PR runs at a time.
+  Writers can reset counts by editing/deleting the comment; see [Trust](#trust). Cached verdicts
+  cost no attempt. The nominal PR spend cap remains $8.625 while that ledger stands.
+- **Time:** at most 40 minutes per agent run, with at most 15 minutes waiting on one API call.
+  The owned agent process group is killed on timeout. The workflow job has a 45-minute cap.
+  Cancelling a wait does not guarantee cancellation of provider billing; an interrupted receipt
+  marks usage incomplete rather than claiming zero cost.
 
-[OpenAI's price list for gpt-6.1-sol](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
-charges, per million tokens, $2 for input, $0.10 for cached input, $2.50 for cache writes and $10
-for output. Prompts over 272,000 input tokens "are priced at 2x input and cache rates and 1.5x
-output for the full request". Each input token is billed once, at the input, cached-input or
-cache-write rate ([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)).
-Two figures follow, both at list price; [Prompt caching](#prompt-caching) below gives measured
-use on one pull request.
+A response that reaches its output cap fails classification. Available usage on incomplete
+responses is still recorded. If a response is lost, the reserved request budget bounds that
+attempt, but its exact billed usage is unknown. All predictable limits use neutral, unclassified
+risk-4 without a risk label, rather than a red gate error or an automatic approval.
 
-- **The gate's nominal figure: $8.625 per pull request.** Charging each counted input token at
-  the cache-write rate, the highest standard input rate, one request costs at most 150,000 ×
-  $2.50/M + 20,000 × $10/M = $0.575, one attempt 5 × $0.575 = $2.875, and one pull request
-  3 × $2.875 = $8.625. The gate's count leaves out OpenAI's framing, so this figure is an
-  estimate, not a proven ceiling.
-- **A bound on the cost of accepted requests: $83.25 per pull request.** The model's context
-  window is 1,050,000 tokens, and under the default `truncation` setting, which the gate keeps,
-  "if the input size will exceed the context window size for a model, the request will fail with
-  a 400 error" ([Responses API](https://developers.openai.com/api/reference/resources/responses/methods/create)).
-  A request that runs therefore carries at most 1,050,000 input tokens and generates at most
-  20,000. The model page also lists 922,000 maximum input tokens; the bound uses the context
-  window, the limit the rejection rule names. At the long-context rates, $5/M for cache writes
-  and $15/M for output, that is 1,050,000 × $5/M + 20,000 × $15/M = $5.55 per request, $27.75 per
-  attempt and $83.25 per pull request. This bound holds under two assumptions: OpenAI does not
-  bill a request it rejects for exceeding the context window, which its documentation does not
-  say, and the attempt ledger above stands, which writers can reset.
+### Usage receipts
 
-The limits above are enforced by the gate's code. As a second cap, give the key its own OpenAI
-project and set a monthly hard spend limit on that project. OpenAI's
-[spend-limit guide](https://developers.openai.com/api/docs/guides/spend-limits) distinguishes
-the two controls: a spend alert "sends a notification; API traffic continues", while a hard
-spend limit makes affected requests return HTTP 429 with `project_spend_limit_exceeded`.
-"Enforcement is not instantaneous, so recorded spend can slightly exceed the configured amount."
-When the limit is reached, classifier attempts fail and the gate approves nothing until the
-limit resets or is raised.
-
-### Prompt caching
-
-OpenAI caches the gate's prompt up to its last user message or tool result. For at least 30
-minutes after a request writes or reads that prefix, a request that starts with the same prefix
-can read it at the cached-input rate instead of the input rate
-([prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching)). Every
-classifier request starts with the trusted instructions and the two tool definitions, which are
-byte-identical across turns and across evaluations from the same default branch, then the pull
-request's material, then the earlier turns, which `previous_response_id` carries. The turn that
-withholds the tools sets `tool_choice` to `none` and keeps their definitions, as the caching
-guide recommends for keeping a prefix reusable. Each request also sets `prompt_cache_key` to the
-repository and pull request number, such as `a16z/jolt#2231`, for every turn, head and re-run.
-For this model the guide describes the key as optional, keeping cache reuse and cache accounting
-separate per key; it does not promise a cache hit.
-
-The evaluate job's log records, for each request, the input, cache-read (`cached_tokens`),
-cache-write (`cache_write_tokens`) and output token counts OpenAI reports, and names a count a
-response leaves out rather than logging zero. The counts do not overlap: a request's uncached
-input is its input minus its cache reads and cache writes. This cache is OpenAI's. It is separate
-from the gate's reuse of a recorded classifier verdict for the same head, which makes no model
-call at all.
-
-On November 2, 2026, the gate's classifier code (`Gate.classify` and the `Model` request loop,
-with its one GitHub write, the classifier comment, redirected to a local file) ran twice from a
-local machine on [pull request #2231](https://github.com/a16z/jolt/pull/2231), a one-file prover
-change, at head `9e2e8397c1afbaf0956177878323cff3a4570a37`. Each run started its own
-conversation:
-
-| Run | Requests | Input tokens | Cache reads | Cache writes | Output tokens | Cost at list price |
-|---|---:|---:|---:|---:|---:|---:|
-| 1 | 3 | 68,113 | 35,646 (52%) | 32,458 | 1,153 | $0.096 |
-| 2 | 4 | 98,556 | 75,177 (76%) | 23,367 | 1,337 | $0.079 |
-
-Every request after a run's first read from the cache all but the last 3 tokens of the previous
-request's prompt. Run 2's first request, sent 46 seconds after run 1's first, read 14,165 of its
-14,168 input tokens from the cache entry that run 1's first request wrote. Both runs answered
-SAFE at risk-2. One small prover change does not predict other pull requests' use, and no request
-in either run withheld the tools.
+Each run records wall time and the API's per-request input, cache-read, cache-write and output
+counts in a separate receipt. Fresh input is input minus cache reads and cache writes. Codex
+manages its own conversation and provider cache key; the gate does not claim a cache hit from
+elapsed time. Reusing a validated classifier check on an unchanged head is a separate cache
+that makes no model request.
 
 ## Trust
 
@@ -691,10 +627,14 @@ if retiring them. Keep the separate Pika App and local review skill.
 - Crafted `#[cfg(test)]` attributes inside multiline generic lists can make the source scanner
   misread the rest of a runtime function as test code. The scanner is not a Rust parser.
 - Submodule gitlinks on floor paths count zero code lines. None exist on those paths today.
-- The syntactic risk-1 exception does not resolve out-of-line test modules, including
-  `crates/jolt-akita/src/verifier_resources/tests.rs` and
-  `crates/jolt-akita/src/trace_onehot/tests.rs`. A level-1 answer for these files can be raised to
-  risk-4; a semantically established prover-only level 2 is honored.
+- Out-of-file test modules use ordinary Rust module paths and all parent declarations.
+  Literal `#[path]`/`include!` targets and Cargo build/target roots keep their normal floor.
+  Literal references resolve relative to the declaring file and inline-module directory.
+  Non-literal includes and local `mod $...` macro declarations conservatively block only
+  their runtime-reachable compilation targets, not unrelated library or integration-test targets.
+  The scanner does not detect module declarations emitted by another crate's `macro_export`
+  macro or by a procedural macro at the invocation site. Such output can defeat the syntactic
+  test-only projection; the agent must trace it. This is accepted debt, not an expansion guarantee.
 - The configured dependency roots are a hand copy of `specs/verifier-closure-lints.md`.
   Drift changes risk-2 versus risk-3 on dependency-bump paths; both levels are gate-eligible.
 - Event delivery delays withdrawal. The gate cannot withdraw its approval after a dismissed
