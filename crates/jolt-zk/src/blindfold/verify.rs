@@ -1,43 +1,51 @@
-use jolt_algebra::{CanonicalDecode, JoltField};
+use jolt_algebra::JoltField;
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment, VectorCommitmentOpening};
 use jolt_poly::EqPolynomial;
 use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
-use jolt_sumcheck::{SumcheckClaim, SumcheckVerifier};
-use jolt_transcript::{Channel, Sponge, VerifierTranscript};
+use jolt_sumcheck::{BooleanHypercube, SumcheckClaim, SumcheckVerifier};
+use jolt_transcript::{require_no_pow, Encoding, FieldTranscript};
 
-use super::prove::{INNER_SUMCHECK_DEGREE, OUTER_SUMCHECK_DEGREE};
-use super::wire::{receive_opening, FoldedEvaluation, FoldingCommitments, OuterClaims};
+use super::proof::{
+    append_opening, check_opening_len, INNER_SUMCHECK_DEGREE, OUTER_SUMCHECK_DEGREE,
+};
 use super::{
-    BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError, WitnessCoordinate,
+    BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError,
+    WitnessCoordinate,
 };
 
 impl<F, Com> BlindFoldProtocol<F, Com>
 where
-    F: JoltField,
-    Com: Copy + HomomorphicCommitment<F> + CanonicalDecode,
+    F: JoltField + Encoding,
+    Com: Copy + HomomorphicCommitment<F> + Encoding,
 {
-    /// Verifies the BlindFold proof read from `transcript`.
-    pub fn verify<VC, H>(
+    /// Verifies `proof`, absorbing its messages into `transcript` where the
+    /// prover absorbed them.
+    pub fn verify<VC, T>(
         &self,
         vc_setup: &VC::Setup,
-        transcript: &mut VerifierTranscript<'_, H>,
+        proof: &BlindFoldProof<F, Com>,
+        transcript: &mut T,
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        H: Sponge,
+        T: FieldTranscript<F>,
     {
-        let folded = self.folded_instance(transcript)?;
-        self.verify_folded_eval_witness_bindings::<VC, H>(vc_setup, &folded, transcript)?;
-        let outer = self.verify_outer_folded_r1cs::<VC, H>(vc_setup, &folded, transcript)?;
-        self.verify_inner_folded_r1cs::<VC, H>(vc_setup, &folded, &outer, transcript)?;
+        // BlindFold runs over wide challenge sets only; no draw here grinds.
+        require_no_pow(T::CHALLENGE_SET).map_err(|_| VerificationError::NeedsProofOfWork)?;
+        let folded = self.folded_instance(proof, transcript)?;
+        self.verify_folded_eval_witness_bindings::<VC, T>(vc_setup, proof, &folded, transcript)?;
+        let outer = self.verify_outer_folded_r1cs::<VC, T>(vc_setup, proof, &folded, transcript)?;
+        self.verify_inner_folded_r1cs::<VC, T>(vc_setup, proof, &folded, &outer, transcript)?;
         Ok(())
     }
 
-    fn folded_instance<H: Sponge>(
+    fn folded_instance<T: FieldTranscript<F>>(
         &self,
-        transcript: &mut VerifierTranscript<'_, H>,
+        proof: &BlindFoldProof<F, Com>,
+        transcript: &mut T,
     ) -> Result<RelaxedInstance<F, Com>, VerificationError<F>> {
-        let sent = FoldingCommitments::receive(&self.dimensions, transcript)?;
+        let sent = &proof.folding;
+        sent.check_shape(&self.dimensions)?;
         let committed = self.committed_relaxed_instance(&sent.auxiliary_rows)?;
         let random = self.random_relaxed_instance(
             &sent.random_pad_rows,
@@ -48,19 +56,21 @@ where
         )?;
         self.validate_cross_term_error_rows(&sent.cross_term_error_rows)?;
 
-        let folding_challenge = transcript.challenge_small();
+        sent.append(transcript);
+        let folding_challenge = transcript.challenge()?;
         Ok(committed.fold(&random, &sent.cross_term_error_rows, folding_challenge)?)
     }
 
-    fn verify_outer_folded_r1cs<VC, H>(
+    fn verify_outer_folded_r1cs<VC, T>(
         &self,
         vc_setup: &VC::Setup,
+        proof: &BlindFoldProof<F, Com>,
         folded: &RelaxedInstance<F, Com>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut T,
     ) -> Result<OuterCheck<F>, VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        H: Sponge,
+        T: FieldTranscript<F>,
     {
         let error_row_count = self.dimensions.error.row_count;
         if error_row_count == 0 || !error_row_count.is_power_of_two() {
@@ -92,15 +102,21 @@ where
             });
         }
 
-        let tau = transcript.challenges_small(num_vars);
+        let tau = transcript.challenge_vector(num_vars)?;
         let claim = SumcheckClaim::new(num_vars, OUTER_SUMCHECK_DEGREE, F::zero());
-        let outer = SumcheckVerifier::verify_compressed(&claim, transcript)
-            .map_err(|source| VerificationError::OuterSumcheck { source })?;
+        let outer = SumcheckVerifier::verify_compressed(
+            &claim,
+            &proof.outer_sumcheck,
+            BooleanHypercube,
+            transcript,
+        )
+        .map_err(|source| VerificationError::OuterSumcheck { source })?;
 
-        let OuterClaims {
-            abc: [az_rx, bz_rx, cz_rx],
-            error_opening,
-        } = OuterClaims::receive(error_row_len, transcript)?;
+        let outer_claims = &proof.outer_claims;
+        check_opening_len("error opening", error_row_len, &outer_claims.error_opening)?;
+        outer_claims.append(transcript);
+        let [az_rx, bz_rx, cz_rx] = outer_claims.abc;
+        let error_opening = &outer_claims.error_opening;
 
         let (row_point, entry_point) = outer.point.split_at(row_vars);
         let e_rx = VC::verify_committed_rows(
@@ -108,7 +124,7 @@ where
             &folded.error_row_commitments,
             row_point,
             entry_point,
-            &error_opening,
+            error_opening,
         )?;
 
         let eq_tau_rx = EqPolynomial::<F>::mle(&tau, &outer.point);
@@ -128,17 +144,22 @@ where
         })
     }
 
-    fn verify_folded_eval_witness_bindings<VC, H>(
+    fn verify_folded_eval_witness_bindings<VC, T>(
         &self,
         vc_setup: &VC::Setup,
+        proof: &BlindFoldProof<F, Com>,
         folded: &RelaxedInstance<F, Com>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut T,
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        H: Sponge,
+        T: FieldTranscript<F>,
     {
-        let FoldedEvaluation { output, blinding } = FoldedEvaluation::receive(transcript)?;
+        let evaluation = &proof.folded_evaluation;
+        let witness_row_len = self.dimensions.witness.row_len;
+        evaluation.check_shape(witness_row_len)?;
+        evaluation.append(transcript);
+        let (output, blinding) = (evaluation.output, evaluation.blinding);
         let [eval_commitment] = folded.eval_commitments.as_slice() else {
             return Err(RelaxedError::LengthMismatch {
                 name: "folded eval commitments",
@@ -151,37 +172,46 @@ where
             return Err(VerificationError::EvalCommitmentMismatch { index: 0 });
         }
 
-        let witness_row_len = self.dimensions.witness.row_len;
         let coordinates = self.final_opening;
-        for (coordinate, expected, kind) in [
-            (coordinates.evaluation, output, "output"),
-            (coordinates.blinding, blinding, "blinding"),
+        for (coordinate, expected, kind, opening) in [
+            (
+                coordinates.evaluation,
+                output,
+                "output",
+                &evaluation.output_opening,
+            ),
+            (
+                coordinates.blinding,
+                blinding,
+                "blinding",
+                &evaluation.blinding_opening,
+            ),
         ] {
-            let opening = receive_opening(witness_row_len, transcript)?;
-            let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, &opening)?;
+            let opened = coordinate.verify_opening::<F, VC>(vc_setup, folded, opening)?;
             if opened != expected {
                 return Err(VerificationError::EvalWitnessMismatch { kind, index: 0 });
             }
-            coordinate.require_dedicated_row(&opening, kind, 0)?;
+            coordinate.require_dedicated_row(opening, kind, 0)?;
         }
 
         Ok(())
     }
 
-    fn verify_inner_folded_r1cs<VC, H>(
+    fn verify_inner_folded_r1cs<VC, T>(
         &self,
         vc_setup: &VC::Setup,
+        proof: &BlindFoldProof<F, Com>,
         folded: &RelaxedInstance<F, Com>,
         outer: &OuterCheck<F>,
-        transcript: &mut VerifierTranscript<'_, H>,
+        transcript: &mut T,
     ) -> Result<(), VerificationError<F>>
     where
         VC: VectorCommitment<Field = F, Output = Com>,
-        H: Sponge,
+        T: FieldTranscript<F>,
     {
-        let ra: F = transcript.challenge_small();
-        let rb: F = transcript.challenge_small();
-        let rc: F = transcript.challenge_small();
+        let ra = transcript.challenge()?;
+        let rb = transcript.challenge()?;
+        let rc = transcript.challenge()?;
         let public = public_contributions(&self.r1cs, &outer.point, folded.u)?;
         let claim = ra * (outer.az_rx - public.a)
             + rb * (outer.bz_rx - public.b)
@@ -217,9 +247,16 @@ where
             });
         }
         let inner_claim = SumcheckClaim::new(num_vars, INNER_SUMCHECK_DEGREE, claim);
-        let inner = SumcheckVerifier::verify_compressed(&inner_claim, transcript)
-            .map_err(|source| VerificationError::InnerSumcheck { source })?;
-        let witness_opening = receive_opening(witness_row_len, transcript)?;
+        let inner = SumcheckVerifier::verify_compressed(
+            &inner_claim,
+            &proof.inner_sumcheck,
+            BooleanHypercube,
+            transcript,
+        )
+        .map_err(|source| VerificationError::InnerSumcheck { source })?;
+        let witness_opening = &proof.witness_opening;
+        check_opening_len("witness opening", witness_row_len, witness_opening)?;
+        append_opening(transcript, witness_opening);
 
         let (row_point, entry_point) = inner.point.split_at(row_vars);
         let w_ry = VC::verify_committed_rows(
@@ -227,7 +264,7 @@ where
             &folded.witness_row_commitments,
             row_point,
             entry_point,
-            &witness_opening,
+            witness_opening,
         )?;
 
         let l_w_at_ry = compute_l_w_at_ry(&self.r1cs, &outer.point, &inner.point, ra, rb, rc)?;

@@ -3,15 +3,25 @@
 
 use std::marker::PhantomData;
 
-use jolt_algebra::{CanonicalDecode, Field, Zero};
+#[cfg(feature = "prover")]
+use jolt_algebra::{Field, Zero};
 use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
-use jolt_transcript::{ProverTranscript, Sponge, VerifierTranscript};
+#[cfg(feature = "prover")]
+use jolt_transcript::ProverTranscript;
+use jolt_transcript::{Encoding, FieldTranscript, Transcript};
+#[cfg(feature = "prover")]
 use rand_core::{CryptoRng, RngCore};
 
-use super::protocol::{pad_row_count, product_intermediates};
-use super::{prove, BlindFoldProtocol, BlindFoldWitness};
+use super::protocol::pad_row_count;
+#[cfg(feature = "prover")]
+use super::protocol::product_intermediates;
+#[cfg(feature = "prover")]
+use super::{prove, BlindFoldWitness};
+use super::{BlindFoldProof, BlindFoldProtocol, RelaxedError};
+#[cfg(feature = "prover")]
+use crate::masking::CommittedPads;
 use crate::masking::{
-    CommittedPads, CommittedPadsView, OperandRule, PadLayout, ResidualRelation, ZkBackend, ZkError,
+    CommittedPadsView, OperandRule, PadLayout, ResidualRelation, ZkBackend, ZkError,
 };
 use crate::secret::SecretVec;
 
@@ -23,6 +33,10 @@ pub struct BlindFold<VC>(PhantomData<VC>);
 /// the row commitments the instance reuses. The blinds are zeroed when it is
 /// dropped.
 pub struct BlindFoldPadOpening<F, Com> {
+    #[cfg_attr(
+        not(feature = "prover"),
+        expect(dead_code, reason = "only the prover builds and opens the pad rows")
+    )]
     row_blinds: SecretVec<F>,
     pub row_commitments: Vec<Com>,
 }
@@ -58,20 +72,23 @@ impl<VC: VectorCommitment> BlindFold<VC> {
 impl<VC> ZkBackend<VC::Field> for BlindFold<VC>
 where
     VC: VectorCommitment,
-    VC::Output: Copy + HomomorphicCommitment<VC::Field> + CanonicalDecode,
+    VC::Field: Encoding,
+    VC::Output: Copy + HomomorphicCommitment<VC::Field> + Encoding,
 {
     type Setup = VC::Setup;
     type PadCommitment = Vec<VC::Output>;
     type PadOpening = BlindFoldPadOpening<VC::Field, VC::Output>;
     type ResidualCommitment = VC::Output;
     type Witness = BlindFoldResidualWitness<VC::Field>;
+    type Proof = BlindFoldProof<VC::Field, VC::Output>;
 
-    fn commit_pads<H: Sponge, R: RngCore + CryptoRng>(
+    #[cfg(feature = "prover")]
+    fn commit_pads<T: Transcript, R: RngCore + CryptoRng>(
         setup: &VC::Setup,
         layout: &PadLayout,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut T,
         rng: &mut R,
-    ) -> Result<CommittedPads<VC::Field, Self::PadOpening>, ZkError> {
+    ) -> Result<(CommittedPads<VC::Field, Self::PadOpening>, Vec<VC::Output>), ZkError> {
         let row_len = Self::row_len(setup)?;
         let pads: Vec<VC::Field> = (0..layout.num_pads)
             .map(|_| VC::Field::random(rng))
@@ -84,36 +101,47 @@ where
             .zip(&row_blinds)
             .map(|(row, blind)| VC::commit(setup, row, blind))
             .collect();
-        transcript.send_all(&row_commitments);
-        CommittedPads::new(
+        transcript.append_values(&row_commitments);
+        let pads = CommittedPads::new(
             layout.clone(),
             pads,
             BlindFoldPadOpening {
                 row_blinds: row_blinds.into(),
-                row_commitments,
+                row_commitments: row_commitments.clone(),
             },
-        )
+        )?;
+        Ok((pads, row_commitments))
     }
 
-    fn receive_pad_commitment<H: Sponge>(
+    fn receive_pad_commitment<T: Transcript>(
         setup: &VC::Setup,
         layout: &PadLayout,
-        transcript: &mut VerifierTranscript<'_, H>,
+        commitment: Vec<VC::Output>,
+        transcript: &mut T,
     ) -> Result<CommittedPadsView<Vec<VC::Output>>, ZkError> {
         let row_len = Self::row_len(setup)?;
-        let commitments = transcript.receive_n(pad_row_count(layout.num_pads, row_len))?;
-        Ok(CommittedPadsView::new(layout.clone(), commitments))
+        let expected = pad_row_count(layout.num_pads, row_len);
+        if commitment.len() != expected {
+            return Err(ZkError::BlindFoldShape(RelaxedError::LengthMismatch {
+                name: "pad row commitments",
+                expected,
+                actual: commitment.len(),
+            }));
+        }
+        transcript.append_values(&commitment);
+        Ok(CommittedPadsView::new(layout.clone(), commitment))
     }
 
-    fn prove<H: Sponge, R: RngCore + CryptoRng>(
+    #[cfg(feature = "prover")]
+    fn prove<T: FieldTranscript<VC::Field> + ProverTranscript, R: RngCore + CryptoRng>(
         setup: &VC::Setup,
         relation: &ResidualRelation<VC::Field>,
         pads: CommittedPads<VC::Field, Self::PadOpening>,
         residual: &VC::Output,
         witness: &Self::Witness,
-        transcript: &mut ProverTranscript<H>,
+        transcript: &mut T,
         rng: &mut R,
-    ) -> Result<(), ZkError> {
+    ) -> Result<Self::Proof, ZkError> {
         pads.finish()?;
         if relation
             .first_violation(pads.pads(), &[witness.evaluation])?
@@ -169,7 +197,7 @@ where
         );
         blindings.resize(dimensions.witness.row_count, VC::Field::zero());
 
-        prove::<VC::Field, VC, H, R>(
+        prove::<VC::Field, VC, T, R>(
             setup,
             &protocol,
             transcript,
@@ -184,12 +212,13 @@ where
         .map_err(ZkError::from)
     }
 
-    fn verify<H: Sponge>(
+    fn verify<T: FieldTranscript<VC::Field>>(
         setup: &VC::Setup,
         relation: &ResidualRelation<VC::Field>,
         pads: &CommittedPadsView<Vec<VC::Output>>,
         residual: &VC::Output,
-        transcript: &mut VerifierTranscript<'_, H>,
+        proof: &Self::Proof,
+        transcript: &mut T,
     ) -> Result<(), ZkError> {
         pads.finish()?;
         let protocol = BlindFoldProtocol::new(
@@ -199,7 +228,7 @@ where
             *residual,
         )?;
         protocol
-            .verify::<VC, H>(setup, transcript)
+            .verify::<VC, T>(setup, proof, transcript)
             .map_err(ZkError::from)
     }
 }

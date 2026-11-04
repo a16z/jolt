@@ -8,18 +8,21 @@
 
 mod backend;
 mod error;
+mod proof;
 mod protocol;
+#[cfg(feature = "prover")]
 mod prove;
 mod relaxed;
 mod verify;
-mod wire;
 
 pub use backend::{BlindFold, BlindFoldPadOpening, BlindFoldResidualWitness};
 pub use error::{ProverError, RelaxedError, VerificationError};
+pub use proof::{BlindFoldProof, FoldedEvaluation, FoldingCommitments, OuterClaims};
 pub use protocol::{
     pad_row_count, BlindFoldDimensions, BlindFoldProtocol, FinalOpeningWitnessCoordinates,
     RowDimensions, WitnessCoordinate, WitnessRowLayout,
 };
+#[cfg(feature = "prover")]
 pub use prove::{
     prove, prove_with_row_committer, BlindFoldRowCommitter, BlindFoldWitness,
     DirectBlindFoldRowCommitter,

@@ -2,6 +2,7 @@
 //! Σ_x a(x)·b(x) = C closed by a·b at the output point, plus a residual
 //! evaluation y = a(r) + b(r) inside a hiding evaluation commitment.
 
+#![cfg(feature = "prover")]
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -14,21 +15,29 @@ use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorComm
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{receive_masked_rounds, DegreeSchedule, RoundWire, SumcheckRecorder};
 use jolt_transcript::{
-    Blake2b512, PrivateChannel, ProtocolId, ProverTranscript, VerifierTranscript,
+    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, TAG_BYTES,
 };
-use jolt_zk::blindfold::{BlindFold, BlindFoldResidualWitness};
+use jolt_zk::blindfold::{BlindFold, BlindFoldProof, BlindFoldResidualWitness};
 use jolt_zk::masking::{
-    lower_factored, sumcheck_rows, AffineRow, CommittedPadsView, MaskingRecorder,
-    OperandShapeDomain, PadIndex, PadLayout, ProductMemo, ProductOperand, ResidualRelation,
-    ResidualVar, RoundFormat, RowsDomain, ValuesDomain, ZkBackend, ZkError,
+    lower_factored, sumcheck_rows, AffineRow, CommittedPadsView, MaskedMessages, MaskedReader,
+    MaskingRecorder, OperandShapeDomain, PadIndex, PadLayout, ProductMemo, ProductOperand,
+    ResidualRelation, ResidualVar, RoundFormat, RowsDomain, ValuesDomain, ZkBackend, ZkError,
 };
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 type Backend = BlindFold<Pedersen<Bn254G1>>;
 
-const PROTOCOL: ProtocolId = ProtocolId::new::<Blake2b512>("jolt-zk/blindfold-backend");
-const LABEL: &[u8] = b"blindfold-backend";
+const SESSION: [u8; TAG_BYTES] = protocol_tag(b"jolt-zk/blindfold-backend");
+const STATEMENT: [u8; 8] = *b"bfbacknd";
+
+/// Everything the synthetic statement's proof carries.
+#[derive(Clone, Debug)]
+struct Proof {
+    pad_commitment: Vec<Bn254G1>,
+    masked: MaskedMessages<Fr>,
+    blindfold: BlindFoldProof<Fr, Bn254G1>,
+}
 const NUM_VARS: usize = 3;
 const DEGREE: usize = 2;
 
@@ -105,23 +114,21 @@ fn tables() -> (Vec<Fr>, Vec<Fr>, Fr) {
 
 /// The verifier's half: reads the masked transcript after the pad
 /// commitment and lowers its checks; leaves the transcript at the tail.
-fn residual(
+fn residual<T: jolt_transcript::FieldTranscript<Fr>>(
     claimed_sum: Fr,
     view: &mut CommittedPadsView<Vec<Bn254G1>>,
-    transcript: &mut VerifierTranscript<'_, Blake2b512>,
-) -> ResidualRelation<Fr> {
+    tape: &mut MaskedReader<'_, Fr>,
+    transcript: &mut T,
+) -> Result<ResidualRelation<Fr>, ZkError> {
     let auxiliary_len = view.layout().auxiliary.len();
-    let mut channel = view.channel(transcript);
+    let mut channel = view.channel(tape, transcript);
     let rounds = receive_masked_rounds::<Fr, _>(
         &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundWire::Compressed,
         &mut channel,
-    )
-    .unwrap();
-    let mut claims = [fr(0); 2];
-    let slots = channel.exchange_private_base(&mut claims).unwrap();
-    let mut auxiliary = vec![fr(0); auxiliary_len];
-    let _ = channel.exchange_private_base(&mut auxiliary).unwrap();
+    )?;
+    let (claims, slots) = channel.receive_private(2)?;
+    let (auxiliary, _) = channel.receive_private(auxiliary_len)?;
 
     let mut relation = ResidualRelation::new(view.layout().clone(), 1);
     let running = sumcheck_rows(
@@ -159,19 +166,21 @@ fn residual(
             .add_scaled(&a, -fr(1))
             .add_scaled(&b, -fr(1)),
     );
-    relation
+    Ok(relation)
 }
 
 /// Proves the synthetic statement; `y_offset` shifts the residual evaluation
 /// away from its claimed relation.
-fn prove(y_offset: Fr) -> Result<Vec<u8>, ZkError> {
+fn prove(y_offset: Fr) -> Result<Proof, ZkError> {
     let setup = setup();
     let (mut a, mut b, claimed_sum) = tables();
     let mut rng = ChaCha20Rng::from_seed([7; 32]);
-    let mut transcript = ProverTranscript::<Blake2b512>::new(&PROTOCOL, LABEL);
-    let mut pads = Backend::commit_pads(&setup, &layout(), &mut transcript, &mut rng)?;
+    let mut transcript = prover_transcript::<Blake2b512>(&SESSION, &STATEMENT);
+    let (mut pads, pad_commitment) =
+        Backend::commit_pads(&setup, &layout(), &mut transcript, &mut rng)?;
+    let mut masked = MaskedMessages::default();
 
-    let mut recorder = MaskingRecorder::new(&mut pads);
+    let mut recorder = MaskingRecorder::new(&mut pads, &mut masked);
     for _ in 0..NUM_VARS {
         let r = recorder
             .absorb_round(&round_poly(&a, &b), DEGREE, &mut transcript)
@@ -179,7 +188,7 @@ fn prove(y_offset: Fr) -> Result<Vec<u8>, ZkError> {
         a = fold(&a, r);
         b = fold(&b, r);
     }
-    recorder.finish(&[a[0], b[0]], &mut transcript).unwrap();
+    let _ = recorder.finish(&[a[0], b[0]], &mut transcript).unwrap();
     let mut values = ValuesDomain::with_operands(Backend::OPERANDS);
     let _ = lower_factored(
         &product(),
@@ -193,7 +202,7 @@ fn prove(y_offset: Fr) -> Result<Vec<u8>, ZkError> {
         },
         &mut |_: &Source<Opening, (), ()>| -> Result<Fr, ZkError> { unreachable!() },
     )?;
-    let _ = pads.send(&values.auxiliary, &mut transcript)?;
+    let _ = pads.send(&values.auxiliary, &mut masked, &mut transcript)?;
 
     let witness = BlindFoldResidualWitness {
         evaluation: a[0] + b[0] + y_offset,
@@ -202,13 +211,14 @@ fn prove(y_offset: Fr) -> Result<Vec<u8>, ZkError> {
     let residual_commitment =
         Pedersen::<Bn254G1>::commit(&setup, &[witness.evaluation], &witness.blind);
 
-    // The prover's verifier replay over its own argument string.
-    let narg = transcript.narg().to_vec();
-    let mut replay = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, &narg);
-    let mut view = Backend::receive_pad_commitment(&setup, &layout(), &mut replay)?;
-    let relation = residual(claimed_sum, &mut view, &mut replay);
+    // The prover's verifier replay over its own messages.
+    let mut replay = verifier_transcript::<Blake2b512>(&SESSION, &STATEMENT, &[]);
+    let mut view =
+        Backend::receive_pad_commitment(&setup, &layout(), pad_commitment.clone(), &mut replay)?;
+    let mut tape = MaskedReader::new(&masked);
+    let relation = residual(claimed_sum, &mut view, &mut tape, &mut replay)?;
 
-    Backend::prove(
+    let blindfold = Backend::prove(
         &setup,
         &relation,
         pads,
@@ -217,33 +227,50 @@ fn prove(y_offset: Fr) -> Result<Vec<u8>, ZkError> {
         &mut transcript,
         &mut rng,
     )?;
-    Ok(transcript.finish())
+    Ok(Proof {
+        pad_commitment,
+        masked,
+        blindfold,
+    })
 }
 
-fn verify(narg: &[u8], residual_commitment: Bn254G1) -> Result<(), ZkError> {
+fn verify(proof: &Proof, residual_commitment: Bn254G1) -> Result<(), ZkError> {
     let setup = setup();
     let (_, _, claimed_sum) = tables();
-    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, narg);
-    let mut view = Backend::receive_pad_commitment(&setup, &layout(), &mut transcript)?;
-    let relation = residual(claimed_sum, &mut view, &mut transcript);
+    let mut transcript = verifier_transcript::<Blake2b512>(&SESSION, &STATEMENT, &[]);
+    let mut view = Backend::receive_pad_commitment(
+        &setup,
+        &layout(),
+        proof.pad_commitment.clone(),
+        &mut transcript,
+    )?;
+    let mut tape = MaskedReader::new(&proof.masked);
+    let relation = residual(claimed_sum, &mut view, &mut tape, &mut transcript)?;
+    tape.finish()?;
     Backend::verify(
         &setup,
         &relation,
         &view,
         &residual_commitment,
+        &proof.blindfold,
         &mut transcript,
-    )?;
-    transcript.finish().map_err(ZkError::from)
+    )
 }
 
-fn honest_residual_commitment() -> Bn254G1 {
+fn honest_residual_commitment(proof: &Proof) -> Bn254G1 {
     let (mut a, mut b, _) = tables();
     // Replay the honest challenges to recover a(r) + b(r).
-    let narg = prove(fr(0)).unwrap();
     let setup = setup();
-    let mut transcript = VerifierTranscript::<Blake2b512>::new(&PROTOCOL, LABEL, &narg);
-    let mut view = Backend::receive_pad_commitment(&setup, &layout(), &mut transcript).unwrap();
-    let mut channel = view.channel(&mut transcript);
+    let mut transcript = verifier_transcript::<Blake2b512>(&SESSION, &STATEMENT, &[]);
+    let mut view = Backend::receive_pad_commitment(
+        &setup,
+        &layout(),
+        proof.pad_commitment.clone(),
+        &mut transcript,
+    )
+    .unwrap();
+    let mut tape = MaskedReader::new(&proof.masked);
+    let mut channel = view.channel(&mut tape, &mut transcript);
     let rounds = receive_masked_rounds::<Fr, _>(
         &DegreeSchedule::uniform(NUM_VARS, DEGREE),
         RoundWire::Compressed,
@@ -257,10 +284,112 @@ fn honest_residual_commitment() -> Bn254G1 {
     Pedersen::<Bn254G1>::commit(&setup, &[a[0] + b[0]], &fr(41))
 }
 
+/// Every single-element change to the proof: each field value shifted by
+/// one, each commitment moved by the generator.
+fn tampers(proof: &Proof) -> Vec<(String, Proof)> {
+    let g = Bn254::g1_generator();
+    let mut out = Vec::new();
+    let mut push = |name: String, edit: &dyn Fn(&mut Proof)| {
+        let mut tampered = proof.clone();
+        edit(&mut tampered);
+        out.push((name, tampered));
+    };
+    for i in 0..proof.pad_commitment.len() {
+        push(format!("pad commitment {i}"), &|p| {
+            p.pad_commitment[i] = p.pad_commitment[i] + g
+        });
+    }
+    for i in 0..proof.masked.values.len() {
+        push(format!("masked value {i}"), &|p| {
+            p.masked.values[i] += fr(1)
+        });
+    }
+    let bf = &proof.blindfold;
+    for i in 0..bf.folding.auxiliary_rows.len() {
+        push(format!("auxiliary row {i}"), &|p| {
+            p.blindfold.folding.auxiliary_rows[i] = p.blindfold.folding.auxiliary_rows[i] + g;
+        });
+    }
+    push("random u".into(), &|p| {
+        p.blindfold.folding.random_u += fr(1)
+    });
+    for i in 0..bf.folding.random_pad_rows.len() {
+        push(format!("random pad row {i}"), &|p| {
+            p.blindfold.folding.random_pad_rows[i] = p.blindfold.folding.random_pad_rows[i] + g;
+        });
+    }
+    for i in 0..bf.folding.random_error_rows.len() {
+        push(format!("random error row {i}"), &|p| {
+            p.blindfold.folding.random_error_rows[i] = p.blindfold.folding.random_error_rows[i] + g;
+        });
+    }
+    push("random eval".into(), &|p| {
+        p.blindfold.folding.random_eval = p.blindfold.folding.random_eval + g;
+    });
+    for i in 0..bf.folding.cross_term_error_rows.len() {
+        push(format!("cross-term row {i}"), &|p| {
+            p.blindfold.folding.cross_term_error_rows[i] =
+                p.blindfold.folding.cross_term_error_rows[i] + g;
+        });
+    }
+    push("folded output".into(), &|p| {
+        p.blindfold.folded_evaluation.output += fr(1)
+    });
+    push("folded blinding".into(), &|p| {
+        p.blindfold.folded_evaluation.blinding += fr(1)
+    });
+    push("folded output opening".into(), &|p| {
+        p.blindfold
+            .folded_evaluation
+            .output_opening
+            .combined_blinding += fr(1);
+    });
+    push("folded blinding opening".into(), &|p| {
+        p.blindfold
+            .folded_evaluation
+            .blinding_opening
+            .combined_vector[0] += fr(1);
+    });
+    for round in 0..bf.outer_sumcheck.round_polynomials.len() {
+        push(format!("outer round {round}"), &|p| {
+            let poly = &mut p.blindfold.outer_sumcheck.round_polynomials[round];
+            let mut coeffs = poly.coeffs_except_linear_term().to_vec();
+            coeffs[0] += fr(1);
+            *poly = jolt_poly::CompressedPoly::new(coeffs);
+        });
+    }
+    for k in 0..3 {
+        push(format!("outer claim {k}"), &|p| {
+            p.blindfold.outer_claims.abc[k] += fr(1)
+        });
+    }
+    push("error opening".into(), &|p| {
+        p.blindfold.outer_claims.error_opening.combined_blinding += fr(1);
+    });
+    for round in 0..bf.inner_sumcheck.round_polynomials.len() {
+        push(format!("inner round {round}"), &|p| {
+            let poly = &mut p.blindfold.inner_sumcheck.round_polynomials[round];
+            let mut coeffs = poly.coeffs_except_linear_term().to_vec();
+            coeffs[0] += fr(1);
+            *poly = jolt_poly::CompressedPoly::new(coeffs);
+        });
+    }
+    push("witness opening".into(), &|p| {
+        p.blindfold.witness_opening.combined_vector[0] += fr(1);
+    });
+    push("extra masked value".into(), &|p| {
+        p.masked.values.push(fr(0))
+    });
+    push("short witness opening".into(), &|p| {
+        let _ = p.blindfold.witness_opening.combined_vector.pop();
+    });
+    out
+}
+
 #[test]
 fn honest_proof_verifies() {
-    let narg = prove(fr(0)).unwrap();
-    verify(&narg, honest_residual_commitment()).unwrap();
+    let proof = prove(fr(0)).unwrap();
+    verify(&proof, honest_residual_commitment(&proof)).unwrap();
 }
 
 #[test]
@@ -270,24 +399,21 @@ fn prover_rejects_a_relation_its_witness_violates() {
 
 #[test]
 fn verifier_rejects_a_wrong_residual_commitment() {
-    let narg = prove(fr(0)).unwrap();
+    let proof = prove(fr(0)).unwrap();
     let wrong = Pedersen::<Bn254G1>::commit(&setup(), &[fr(5)], &fr(41));
-    assert!(verify(&narg, wrong).is_err());
+    assert!(verify(&proof, wrong).is_err());
 }
 
 #[test]
-fn verifier_rejects_any_tampered_byte() {
-    let narg = prove(fr(0)).unwrap();
-    let commitment = honest_residual_commitment();
-    // Every 97th byte keeps the sweep short while touching the pad
-    // commitment, the masked messages and the BlindFold tail.
-    for index in (0..narg.len()).step_by(97) {
-        let mut tampered = narg.clone();
-        tampered[index] ^= 1;
+fn verifier_rejects_every_tampered_message() {
+    let proof = prove(fr(0)).unwrap();
+    let commitment = honest_residual_commitment(&proof);
+    // The pad commitment, every masked value and every BlindFold message.
+    for (name, tampered) in tampers(&proof) {
         let result = std::panic::catch_unwind(|| verify(&tampered, commitment));
         assert!(
             !matches!(result, Ok(Ok(()))),
-            "flipping byte {index} was accepted"
+            "tampering {name} was accepted"
         );
     }
 }

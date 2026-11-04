@@ -2,7 +2,7 @@ use jolt_algebra::JoltField;
 use jolt_crypto::VectorOpeningError;
 use jolt_r1cs::ConstraintMatrixEvalError;
 use jolt_sumcheck::SumcheckError;
-use jolt_transcript::TranscriptError;
+use jolt_transcript::VerificationError as TranscriptVerificationError;
 use thiserror::Error as ThisError;
 
 use crate::masking::ZkError;
@@ -78,12 +78,32 @@ pub enum ProverError<F: JoltField> {
     DegenerateSumcheck { name: &'static str },
     #[error("BlindFold sumcheck: {0}")]
     Sumcheck(#[from] SumcheckError<F>),
+    /// The transcript's challenges would need proof of work, which
+    /// BlindFold proofs do not carry.
+    #[error("BlindFold challenges need proof of work, which BlindFold proofs omit")]
+    NeedsProofOfWork,
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+}
+
+impl<F: JoltField> From<TranscriptVerificationError> for ProverError<F> {
+    fn from(_: TranscriptVerificationError) -> Self {
+        Self::TranscriptRejected
+    }
 }
 
 #[derive(Debug, ThisError)]
 pub enum VerificationError<F: JoltField> {
-    #[error("BlindFold proof transcript: {0}")]
-    Transcript(#[from] TranscriptError),
+    /// The transcript refused a challenge draw: the challenge codec does not
+    /// support the request, or its rejection pool ran out.
+    #[error("transcript rejected a challenge draw")]
+    TranscriptRejected,
+    /// The transcript's challenges would need proof of work, which
+    /// BlindFold proofs do not carry.
+    #[error("BlindFold challenges need proof of work, which BlindFold proofs omit")]
+    NeedsProofOfWork,
     #[error("outer folded R1CS sumcheck: {source}")]
     OuterSumcheck { source: SumcheckError<F> },
     #[error("inner folded R1CS sumcheck: {source}")]
@@ -110,25 +130,24 @@ pub enum VerificationError<F: JoltField> {
     InnerFinalClaimMismatch { expected: F, actual: F },
 }
 
+impl<F: JoltField> From<TranscriptVerificationError> for VerificationError<F> {
+    fn from(_: TranscriptVerificationError) -> Self {
+        Self::TranscriptRejected
+    }
+}
+
 impl<F: JoltField + 'static> From<ProverError<F>> for ZkError {
     fn from(error: ProverError<F>) -> Self {
         Self::BlindFoldProver(Box::new(error))
     }
 }
 
-/// Truncation inside the BlindFold proof surfaces as
-/// [`ZkError::Transcript`], as it does everywhere else in a proof.
+/// A transcript rejection inside the BlindFold proof surfaces as
+/// [`ZkError::TranscriptRejected`], as it does everywhere else in a proof.
 impl<F: JoltField + 'static> From<VerificationError<F>> for ZkError {
     fn from(error: VerificationError<F>) -> Self {
-        if let VerificationError::Transcript(error)
-        | VerificationError::OuterSumcheck {
-            source: SumcheckError::Transcript(error),
-        }
-        | VerificationError::InnerSumcheck {
-            source: SumcheckError::Transcript(error),
-        } = error
-        {
-            return Self::Transcript(error);
+        if matches!(error, VerificationError::TranscriptRejected) {
+            return Self::TranscriptRejected;
         }
         Self::BlindFoldRejected(Box::new(error))
     }

@@ -25,9 +25,9 @@ use jolt_crypto::HomomorphicCommitment;
 use jolt_r1cs::{ConstraintMatrices, LinearCombination, Variable};
 
 use super::{RelaxedError, RelaxedInstance};
-use crate::masking::{
-    AffineRow, ProductPair, ProductRow, ResidualRelation, ResidualVar, Row, ZkError,
-};
+#[cfg(feature = "prover")]
+use crate::masking::ZkError;
+use crate::masking::{AffineRow, ProductPair, ProductRow, ResidualRelation, ResidualVar, Row};
 
 #[derive(Clone, Debug)]
 pub struct BlindFoldProtocol<F: JoltField, Com> {
@@ -92,6 +92,7 @@ fn intermediates<F>(row: &ProductRow<F>) -> impl Iterator<Item = &ProductPair<F>
 /// # Errors
 ///
 /// [`ZkError`] if a row names a variable outside the assignment.
+#[cfg(feature = "prover")]
 pub(super) fn product_intermediates<F: JoltField>(
     relation: &ResidualRelation<F>,
     pads: &[F],
