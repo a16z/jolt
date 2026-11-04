@@ -89,7 +89,9 @@ protocol, transcript or wire-format edits. A spent read budget proves no exclusi
   on level-3/4 paths; a level-1 answer cannot waive a runtime-code default.
 - **risk-2:** prover or other non-verifier code, or dependency-only bumps outside the verifier
   dependency closure. Applies in any path and at any size; another file's AFFECTS verdict does
-  not raise this path's level.
+  not raise this path's level. An edit that leaves every binding and compiled behavior unchanged
+  in each feature configuration (for example, import/use reorganization or formatting) is risk-2
+  even in verifier-reachable code; cite the unchanged bindings.
 - **risk-3:** dependency-only bumps in the verifier dependency closure, or shared-code changes
   outside the risk-4 path hints under the minimality rule. On risk-4-hint paths, model level 3
   becomes 4; traced prover-only level 2 still stays 2. For AFFECTS or UNCERTAIN at effective risk-3, the gate allows at
