@@ -31,7 +31,13 @@ bn254 = [
   "dep:num-traits",
   "jolt-algebra/bn254",
 ]
-parallel = ["dep:rayon", "jolt-poly/parallel"]
+parallel = ["dep:rayon", "jolt-algebra/parallel", "jolt-poly/parallel"]
+# Lattice primitives: sparse ring challenges. Off by default so curve-only
+# builds, including the Dory verifier, do not compile them.
+lattice = ["dep:smallvec", "dep:thiserror", "jolt-algebra/solinas"]
+# The D64 selective-L2 operator-norm table reads its base tables from
+# generated static data (the same entries) instead of building them.
+ont-static-base = ["lattice"]
 
 [dependencies]
 jolt-algebra = { path = "../jolt-algebra", default-features = false }
@@ -39,6 +45,10 @@ jolt-poly = { path = "../jolt-poly", default-features = false }
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }
 rand_core = { workspace = true }
+thiserror = { workspace = true, optional = true }
+smallvec = { version = "1.15.2", features = [
+  "const_generics",
+], optional = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -53,6 +63,10 @@ rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 ark-std = { workspace = true }
+# The lattice tests instantiate Solinas fields.
+jolt-algebra = { path = "../jolt-algebra", default-features = false, features = [
+  "solinas",
+] }
 rand_chacha = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
