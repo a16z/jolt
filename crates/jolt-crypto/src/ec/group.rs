@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::ops::{Add, AddAssign, Neg, Sub, SubAssign};
 
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 use jolt_transcript::Encoding;
 use serde::{Deserialize, Serialize};
 

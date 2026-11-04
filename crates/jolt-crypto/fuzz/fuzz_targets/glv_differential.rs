@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 use jolt_crypto::ec::bn254::glv;
 use jolt_crypto::{Bn254, Bn254G1, Bn254G2, JoltGroup};
-use jolt_field::{CanonicalEncoding, Field, Fr};
+use jolt_algebra::{CanonicalEncoding, Field, Fr};
 use libfuzzer_sys::fuzz_target;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;

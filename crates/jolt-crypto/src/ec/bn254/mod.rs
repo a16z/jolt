@@ -190,12 +190,12 @@ macro_rules! impl_jolt_group_wrapper {
             }
 
             #[inline]
-            fn scalar_mul<F: ::jolt_field::JoltField>(&self, scalar: &F) -> Self {
+            fn scalar_mul<F: ::jolt_algebra::JoltField>(&self, scalar: &F) -> Self {
                 Self(self.0 * super::field_to_fr(scalar))
             }
 
             #[inline]
-            fn msm<F: ::jolt_field::JoltField>(bases: &[Self], scalars: &[F]) -> Self {
+            fn msm<F: ::jolt_algebra::JoltField>(bases: &[Self], scalars: &[F]) -> Self {
                 use ::ark_ec::{CurveGroup, VariableBaseMSM};
                 use ::ark_ff::PrimeField;
                 // Arkworks' msm_bigint silently truncates to the shorter slice,
@@ -236,7 +236,7 @@ use ark_bn254::Bn254 as ArkBn254;
 use ark_ec::pairing::Pairing;
 use ark_ec::CurveGroup;
 use ark_ff::PrimeField as _;
-use jolt_field::JoltField;
+use jolt_algebra::{Fr, JoltField};
 
 use crate::PairingGroup;
 
@@ -264,7 +264,7 @@ impl Bn254 {
 }
 
 impl PairingGroup for Bn254 {
-    type ScalarField = jolt_field::Fr;
+    type ScalarField = Fr;
     type G1 = Bn254G1;
     type G2 = Bn254G2;
     type GT = Bn254GT;
@@ -288,14 +288,14 @@ impl PairingGroup for Bn254 {
 
 /// Converts a generic `JoltField` element to an arkworks `Fr` via serialization.
 ///
-/// This is the bridge between jolt-field's backend-agnostic `JoltField` trait and
+/// This is the bridge between jolt-algebra's backend-agnostic `JoltField` trait and
 /// arkworks' concrete scalar type. The conversion goes through little-endian
 /// byte serialization.
 ///
 /// WARNING: in release builds, values `>= Fr::MODULUS` are silently reduced
 /// mod r (`from_le_bytes_mod_order`). Callers must pass scalars from a field
-/// with modulus <= BN254 Fr — in practice jolt-field's `Fr` itself. Notably
-/// `jolt_field::Fq` (BN254 base field, larger modulus) implements `Field` and
+/// with modulus <= BN254 Fr — in practice jolt-algebra's `Fr` itself. Notably
+/// `jolt_algebra::Fq` (BN254 base field, larger modulus) implements `Field` and
 /// must NOT be used as a scalar here. A release-mode range check is
 /// deliberately omitted: this function sits in per-element MSM/GLV hot loops,
 /// and the scalar type is fixed at compile time by internal callers, not by

@@ -1,5 +1,5 @@
+use jolt_algebra::{Field, Fr, Ring};
 use jolt_crypto::{Bn254, Bn254G2, Bn254GT, JoltGroup, PairingGroup};
-use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
