@@ -1,6 +1,5 @@
-use super::outputs::Stage8Output;
 #[cfg(not(feature = "akita"))]
-use super::outputs::{Stage8ClearOutput, Stage8ZkOutput};
+use super::outputs::{Stage8ClearOutput, Stage8Output, Stage8ZkOutput};
 #[cfg(not(feature = "akita"))]
 use super::precommitted::{precommitted_final_openings, PrecommittedFinalOpening};
 #[cfg(feature = "akita")]
@@ -41,6 +40,8 @@ use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
+#[cfg(feature = "akita")]
+use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{
     AdditivelyHomomorphic, EvaluationClaim, VerifierOpeningClaim, ZkEvaluationClaim,
@@ -48,9 +49,12 @@ use jolt_openings::{
 };
 #[cfg(not(feature = "akita"))]
 use jolt_poly::Point;
-#[cfg(feature = "akita")]
-use jolt_transcript::Encoding;
 use jolt_transcript::FieldTranscript;
+#[cfg(feature = "akita")]
+use jolt_transcript::{Encoding, VerifierState};
+#[cfg(feature = "akita")]
+use std::borrow::BorrowMut;
+
 #[cfg(not(feature = "akita"))]
 /// One assembled final-opening batch entry. Public because the prover's
 /// stage-8 recipe assembles its PCS batch statement through the same
@@ -656,13 +660,16 @@ mod tests {
     }
 }
 
+/// Runs the Akita opening on the caller's transcript. `Ok` does not mean the
+/// opening was accepted: the caller must pass the returned token and its
+/// transcript to [`GroupBatchOpening::check_eof`] after its own last message.
 #[cfg(feature = "akita")]
 #[expect(
     clippy::too_many_arguments,
     reason = "same signature as the homomorphic build's verify"
 )]
 #[jolt_verifier_derive::fs_scope(Stage8)]
-pub fn verify<F, PCS, VC, T, ZkProof>(
+pub fn verify<'a, F, PCS, VC, T, ZkProof>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     proof: &JoltProof<PCS, VC, ZkProof>,
@@ -673,14 +680,14 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
     context: &mut PCS::VerificationContext<'_>,
-) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
+) -> Result<PCS::PendingEof, VerifierError>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F>,
+    PCS: CommitmentScheme<Field = F> + GroupBatchOpening,
     PCS::Output: Clone + Encoding + OneHotTraceCommitmentMetadata,
     PCS::VerifierSetup: super::OneHotTraceSetupMetadata,
     VC: VectorCommitment<Field = F>,
-    T: FieldTranscript<F>,
+    T: FieldTranscript<F> + BorrowMut<VerifierState<'a, PCS::Sponge>>,
 {
     super::akita::verify(
         formula_dimensions,
@@ -700,7 +707,5 @@ where
         stage6.clear()?,
         stage7.clear()?,
         context,
-    )?;
-
-    Ok(Stage8Output::Clear)
+    )
 }

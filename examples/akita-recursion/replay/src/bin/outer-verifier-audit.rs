@@ -2,11 +2,10 @@
 use akita_types::setup_claims::SetupBatchStatement;
 use anyhow::{anyhow, ensure, Result};
 use jolt_akita::deferred::SetupMode;
-use jolt_akita::{AkitaField, AkitaScheme, AkitaVerifierResources};
+use jolt_akita::{AkitaField, AkitaScheme, AkitaVerifierResources, AkitaVerifierTranscript};
 use jolt_akita_external::pair_api::{ProofPair, Vc};
 use jolt_akita_external::{ExternalInput, OuterAdvice, PairAdvice, Tape};
 use jolt_field::Ring;
-use jolt_transcript::{Blake2b512, VerifierState};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -55,7 +54,7 @@ fn main() -> Result<()> {
     let _resources = AkitaVerifierResources::prepare([Ok(input.preprocessing.pcs_setup.clone())])?;
     let preparation = start.elapsed().as_secs_f64();
     ensure!(
-        jolt_verifier::verify::<AkitaField, AkitaScheme, Vc, VerifierState<Blake2b512>>(
+        jolt_verifier::verify::<AkitaField, AkitaScheme, Vc, AkitaVerifierTranscript<'_>>(
             &input.preprocessing,
             &input.outer.io,
             &input.outer.proof,

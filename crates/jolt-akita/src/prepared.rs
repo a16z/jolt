@@ -10,9 +10,11 @@
 //! The payloads are trusted setup data, not proof data. The backend key is
 //! taken as seed-derived without re-deriving it, and an attached terminal NTT
 //! cache's residues are used without a range pass. The catalog view repeats
-//! the catalog's semantic audit and reproduces the complete catalog digest
-//! the transcript binds. Callers must bind the payload bytes to the verifier
-//! program identity, for example by embedding them in the guest image.
+//! the catalog's semantic audit and reproduces the complete catalog digest a
+//! standalone session binds; an embedded opening binds only the selected row,
+//! through Akita's instance descriptor. Callers must bind the payload bytes to
+//! the verifier program identity, for example by embedding them in the guest
+//! image.
 
 use std::sync::Arc;
 
