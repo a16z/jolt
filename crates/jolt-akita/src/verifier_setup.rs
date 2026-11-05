@@ -6,6 +6,8 @@ use crate::adapters::{
     BackendVerifierCache,
 };
 use crate::one_hot_family::OneHotFamily;
+#[cfg(feature = "zk")]
+use crate::whiteout::WhiteoutSetup;
 use crate::{AkitaChunkProfile, AkitaScheme, AkitaSetupParams, AkitaVerifierSetup};
 
 impl AkitaScheme {
@@ -90,6 +92,37 @@ impl AkitaScheme {
                 dense_profile: artifacts.dense_profile(),
                 dense: dense_schedule_artifact()?.into(),
             },
+        };
+        #[cfg(feature = "zk")]
+        let schedule_artifacts = match (schedule_artifacts, params.whiteout.clone()) {
+            (schedule_artifacts, None) => schedule_artifacts,
+            (AkitaVerifierScheduleArtifacts::OneHot { profile, one_hot }, Some(source))
+                if profile == AkitaChunkProfile::default() =>
+            {
+                AkitaVerifierScheduleArtifacts::OneHotWhiteout {
+                    one_hot,
+                    whiteout: WhiteoutSetup::new(
+                        params.grouped_schedule.clone(),
+                        source,
+                        crate::whiteout::opens_whiteout(params.one_hot_k, profile).then_some((
+                            params.max_num_vars,
+                            params.max_num_polys_per_commitment_group,
+                        )),
+                    )
+                    .map_err(invalid_setup)?,
+                }
+            }
+            (
+                AkitaVerifierScheduleArtifacts::Dense { .. }
+                | AkitaVerifierScheduleArtifacts::OneHot { .. }
+                | AkitaVerifierScheduleArtifacts::Both { .. }
+                | AkitaVerifierScheduleArtifacts::OneHotWhiteout { .. },
+                Some(_),
+            ) => {
+                return Err(invalid_setup(
+                    "Whiteout commits one single-chunk one-hot trace group",
+                ))
+            }
         };
         Ok(AkitaVerifierSetup {
             max_num_vars: params.max_num_vars,
