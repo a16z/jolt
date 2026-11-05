@@ -5,7 +5,7 @@
 | Author(s)   | Alberto Centelles              |
 | Created     | 2026-11-05                     |
 | Status      | proposed                       |
-| PR          |                                |
+| PR          | [#2307](https://github.com/a16z/jolt/pull/2307) |
 
 ## Summary
 
