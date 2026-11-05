@@ -1036,7 +1036,7 @@ class AiMergeGateTests(unittest.TestCase):
             evaluate(FakeApis(comments=[corrupt, attested]))
 
     def test_spent_classifier_attempts_never_earn_the_gates_approval(self) -> None:
-        # crates/jolt-field/build.rs runs this script; its directory cannot establish verifier safety.
+        # crates/jolt-algebra/build.rs runs this script; its directory cannot establish verifier safety.
         for case, reviews, expected, labels in [
             ("attested", [], ("neutral", "Risk 4: current-head maintainer approval required"),
              {"no-reviewer-assigned"}),
