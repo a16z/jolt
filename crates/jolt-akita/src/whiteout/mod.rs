@@ -5,10 +5,11 @@
 //! Akita's response proof.
 //!
 //! PROTOTYPE (port map in the spec's prototype deltas):
-//! - Zero-knowledge rows and response schedules are planned on first use
-//!   for the exact shape, in either role, and persisted with the setup
-//!   ([`WhiteoutPlans`]); a setup that carries them validates and loads them
-//!   instead of planning.
+//! - Zero-knowledge rows are planned on first use for the exact shape, in
+//!   either role. Response schedules come from the packaged response catalog
+//!   and are planned only for a length it lacks. Both are persisted with the
+//!   setup ([`WhiteoutPlans`]); a setup that carries them validates and
+//!   loads them instead of planning.
 //! - One trace group under `JoltOneHotK16`, beside the precommitted dense
 //!   groups its setup admits (advice, field increments, committed programs),
 //!   each committed hiding under the profile of its own shape's
@@ -31,7 +32,7 @@ use akita_params::zk::{
     ZK_CUT_LEVEL,
 };
 use akita_params::{
-    BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, GroupCommitPhaseParams,
+    BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
     PrecommittedGroupProfiles, ScheduleLookupKey,
 };
@@ -1407,6 +1408,9 @@ pub struct WhiteoutSetup {
     grouped: Option<GroupedScheduleParams>,
     /// The persisted plans the setup was constructed with.
     persisted: Option<WhiteoutPlans>,
+    /// The packaged response catalog ([`ResponsePlans`]), unless persisted
+    /// plans carry the response set.
+    response_catalog: Option<Arc<Vec<u8>>>,
     planned: Arc<OnceLock<PlannedSetup>>,
 }
 
@@ -1416,6 +1420,7 @@ pub struct WhiteoutSetup {
 struct WhiteoutSetupWire {
     grouped: Option<GroupedScheduleParams>,
     plans: Option<WhiteoutPlans>,
+    response_catalog: Option<Vec<u8>>,
 }
 
 impl From<WhiteoutSetup> for WhiteoutSetupWire {
@@ -1424,6 +1429,7 @@ impl From<WhiteoutSetup> for WhiteoutSetupWire {
         Self {
             grouped: setup.grouped,
             plans,
+            response_catalog: setup.response_catalog.map(Arc::unwrap_or_clone),
         }
     }
 }
@@ -1433,6 +1439,7 @@ impl From<WhiteoutSetupWire> for WhiteoutSetup {
         Self {
             grouped: wire.grouped,
             persisted: wire.plans,
+            response_catalog: wire.response_catalog.map(Arc::new),
             planned: Arc::default(),
         }
     }
@@ -1493,7 +1500,9 @@ impl Debug for WhiteoutSetup {
 /// Setups are equal when they admit the same shapes under the same plans.
 impl PartialEq for WhiteoutSetup {
     fn eq(&self, other: &Self) -> bool {
-        self.grouped == other.grouped && self.plans() == other.plans()
+        self.grouped == other.grouped
+            && self.plans() == other.plans()
+            && self.response_catalog == other.response_catalog
     }
 }
 
@@ -1513,6 +1522,7 @@ impl WhiteoutSetup {
         grouped: Option<GroupedScheduleParams>,
         source: WhiteoutSource,
         trace: Option<(usize, usize)>,
+        response_catalog: Option<Vec<u8>>,
     ) -> Result<Self, ZkError> {
         let persisted = match source {
             WhiteoutSource::Plan => None,
@@ -1521,6 +1531,7 @@ impl WhiteoutSetup {
         let setup = Self {
             grouped,
             persisted,
+            response_catalog: response_catalog.map(Arc::new),
             planned: Arc::default(),
         };
         if let (None, Some((num_vars, num_polys))) = (&setup.persisted, trace) {
@@ -1592,13 +1603,18 @@ impl WhiteoutSetup {
                 catalog,
                 residuals,
                 plans.catalog.clone(),
-                ResponsePlans::new(plans.responses.clone()),
+                ResponsePlans::new(plans.responses.clone(), self.response_catalog.clone()),
             )
         } else {
             let _span = tracing::info_span!("whiteout_plan_catalog").entered();
             let (catalog, residuals) = WhiteoutCatalog::plan(num_vars, num_polys, &admitted)?;
             let plan = catalog.plan_of()?;
-            PlannedSetup::new(catalog, residuals, plan, ResponsePlans::new(None))
+            PlannedSetup::new(
+                catalog,
+                residuals,
+                plan,
+                ResponsePlans::new(None, self.response_catalog.clone()),
+            )
         };
         Ok(self.planned.get_or_init(|| planned))
     }
@@ -1642,18 +1658,56 @@ impl WhiteoutSetup {
 
 /// A setup's response provers, shared by its shapes, by `e`'s variable
 /// count. With a persisted set, each is loaded from its plan and a length
-/// the set lacks is refused; without one, each is planned on first use.
+/// the set lacks is refused. Without one, each is taken from the packaged
+/// response catalog's row for its length, and planned on first use only for
+/// a length the catalog lacks; the packaged row and the planned one are the
+/// same row, so either gives the same one-row plan and digest.
 struct ResponsePlans {
     persisted: Option<BTreeMap<usize, Vec<u8>>>,
+    packaged: Option<Arc<Vec<u8>>>,
+    /// `packaged`, decoded and admitted on first use.
+    catalog: OnceLock<TrustedScheduleCatalog<WhiteoutResponse>>,
     derived: Mutex<BTreeMap<usize, Arc<PlannedResponse>>>,
 }
 
 impl ResponsePlans {
-    fn new(persisted: Option<BTreeMap<usize, Vec<u8>>>) -> Self {
+    fn new(persisted: Option<BTreeMap<usize, Vec<u8>>>, packaged: Option<Arc<Vec<u8>>>) -> Self {
         Self {
             persisted,
+            packaged,
+            catalog: OnceLock::new(),
             derived: Mutex::default(),
         }
+    }
+
+    /// The packaged catalog's row for `e` of `num_vars` variables, if the
+    /// setup carries a catalog with that row. A catalog that fails
+    /// admission is refused, never replaced by planning.
+    fn packaged_row(
+        &self,
+        num_vars: usize,
+    ) -> Result<Option<(CommittedGroupBatchProfile, FoldSchedule)>, ZkError> {
+        let Some(bytes) = &self.packaged else {
+            return Ok(None);
+        };
+        let catalog = if let Some(catalog) = self.catalog.get() {
+            catalog
+        } else {
+            let _span = tracing::info_span!("whiteout_load_response_catalog").entered();
+            let catalog = TrustedScheduleCatalog::<WhiteoutResponse>::from_artifact_bytes(
+                bytes,
+                ChunkedWitnessCfg::default_non_chunked(),
+            )
+            .map_err(WhiteoutPlanError::Inadmissible)?;
+            self.catalog.get_or_init(|| catalog)
+        };
+        let group = PolynomialGroupLayout::singleton(num_vars);
+        Ok(catalog
+            .rows()
+            .find(|row| {
+                row.profiles().final_group.group == group && row.profiles().precommitteds.is_empty()
+            })
+            .map(|row| (row.profiles().clone(), row.schedule().clone())))
     }
 
     /// The response prover of `e` with `num_vars` variables.
@@ -1679,7 +1733,12 @@ impl ResponsePlans {
                 })?;
                 PlannedResponse::load(num_vars, artifact)?
             }
-            None => PlannedResponse::plan(num_vars)?,
+            None => match self.packaged_row(num_vars)? {
+                Some((profile, schedule)) => {
+                    PlannedResponse::from_row(num_vars, profile, schedule)?
+                }
+                None => PlannedResponse::plan(num_vars)?,
+            },
         });
         Ok(Arc::clone(
             self.derived
@@ -1777,8 +1836,20 @@ impl PlannedResponse {
             )?,
             precommitteds: Vec::new(),
         };
-        let catalog =
-            TrustedScheduleCatalog::try_from_rows([(profile, planned.schedule)], chunking)?;
+        Self::from_row(num_vars, profile, planned.schedule)
+    }
+
+    /// The response row of `e` with `num_vars` variables as its one-row
+    /// catalog, admitted as [`Self::plan`] admits a planned row.
+    fn from_row(
+        num_vars: usize,
+        profile: CommittedGroupBatchProfile,
+        schedule: FoldSchedule,
+    ) -> Result<Self, ZkError> {
+        let catalog = TrustedScheduleCatalog::try_from_rows(
+            [(profile, schedule)],
+            ChunkedWitnessCfg::default_non_chunked(),
+        )?;
         let plan = catalog.to_artifact_bytes()?;
         Ok(Self::new(num_vars, catalog, plan)?)
     }

@@ -17,7 +17,9 @@ use rand::SeedableRng;
 
 use super::*;
 use crate::adapters::{one_hot_polynomial, reverse_point};
-use crate::AKITA_ONE_HOT_K16;
+use crate::schedule_artifacts::RESPONSE_CATALOG_FILE;
+use crate::schedules::emit::RESPONSE_NUM_VARS;
+use crate::{AkitaScheduleArtifacts, AKITA_ONE_HOT_K16};
 
 const NUM_VARS: usize = 16;
 /// Muldiv's trace group shape.
@@ -59,9 +61,21 @@ fn opening() -> MaskedOpeningShape {
     }
 }
 
-/// A fresh setup of the trace group alone, which plans its catalog.
+/// The packaged response catalog, as a host's schedule bundle carries it.
+fn response_catalog() -> Vec<u8> {
+    std::fs::read(AkitaScheduleArtifacts::packaged_directory().join(RESPONSE_CATALOG_FILE)).unwrap()
+}
+
+/// A fresh setup of the trace group alone, which plans its catalog and takes
+/// its response rows from the packaged catalog.
 fn fresh() -> WhiteoutSetup {
-    WhiteoutSetup::new(None, WhiteoutSource::Plan, Some((NUM_VARS, NUM_POLYS))).unwrap()
+    WhiteoutSetup::new(
+        None,
+        WhiteoutSource::Plan,
+        Some((NUM_VARS, NUM_POLYS)),
+        Some(response_catalog()),
+    )
+    .unwrap()
 }
 
 impl Fixture {
@@ -339,6 +353,7 @@ fn loading(plans: WhiteoutPlans) -> WhiteoutSetup {
     WhiteoutSetup::from(WhiteoutSetupWire {
         grouped: None,
         plans: Some(plans),
+        response_catalog: None,
     })
 }
 
@@ -543,4 +558,24 @@ fn whiteout_persisted_response_plan_verifies_and_is_validated() {
         plan_error(&error),
         Some(WhiteoutPlanError::Inadmissible(_))
     ));
+}
+
+/// The packaged response catalog covers every length Jolt's workloads reach,
+/// and its row is the planner's: a setup that takes it derives the plan and
+/// digest a planning setup derives.
+#[test]
+fn packaged_response_rows_are_the_planned_rows() {
+    let plans = ResponsePlans::new(None, Some(Arc::new(response_catalog())));
+    for num_vars in RESPONSE_NUM_VARS.0..=RESPONSE_NUM_VARS.1 {
+        assert!(
+            plans.packaged_row(num_vars).unwrap().is_some(),
+            "ν = {num_vars}"
+        );
+    }
+    let num_vars = RESPONSE_NUM_VARS.0;
+    let (profile, schedule) = plans.packaged_row(num_vars).unwrap().unwrap();
+    let packaged = PlannedResponse::from_row(num_vars, profile, schedule).unwrap();
+    let planned = PlannedResponse::plan(num_vars).unwrap();
+    assert_eq!(packaged.plan, planned.plan);
+    assert_eq!(packaged.digest, planned.digest);
 }

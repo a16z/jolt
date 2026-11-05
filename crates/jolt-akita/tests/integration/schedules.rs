@@ -7,6 +7,8 @@ use jolt_akita::schedule_registry::GroupedScheduleParams;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+#[cfg(feature = "zk")]
+use akita_config::proof_optimized::fp128::ResponseDigits;
 use akita_config::{CommitmentConfig, SetupRequirements, TrustedScheduleCatalog};
 use akita_params::{
     commit_only_setup_field_elements, setup_matrix_capacity_for_schedule, ChunkedWitnessCfg,
@@ -50,6 +52,21 @@ fn full_dense_catalog() -> ValidatedScheduleCatalog {
     artifacts()
         .full_dense_catalog()
         .expect("full-width dense catalog")
+}
+
+#[cfg(feature = "zk")]
+fn response_catalog() -> ValidatedScheduleCatalog {
+    let bytes = artifacts()
+        .response_catalog()
+        .expect("packaged response catalog")
+        .to_vec();
+    TrustedScheduleCatalog::<ResponseDigits>::from_artifact_bytes(
+        &bytes,
+        ChunkedWitnessCfg::default_non_chunked(),
+    )
+    .expect("response catalog")
+    .catalog()
+    .clone()
 }
 
 fn one_hot_catalog(one_hot_k: usize, profile: AkitaChunkProfile) -> ValidatedScheduleCatalog {
@@ -516,13 +533,14 @@ fn catalogs_have_exact_emitted_keys() {
         ("jolt-fp128-dense-bounded", dense_catalog()),
         ("jolt-fp128-dense-full", full_dense_catalog()),
     ];
+    #[cfg(feature = "zk")]
+    let cases: Vec<_> = cases
+        .into_iter()
+        .chain([("fp128_response_digits", response_catalog())])
+        .collect();
     assert_eq!(specs.len(), cases.len());
     assert_eq!(
-        specs
-            .get(specs.len() - 2)
-            .expect("dense emit spec")
-            .spec
-            .family_name,
+        specs.get(4).expect("dense emit spec").spec.family_name,
         JoltDenseBounded::schedule_family_name()
     );
     for (fixture, (family_name, catalog)) in specs.iter().zip(cases) {

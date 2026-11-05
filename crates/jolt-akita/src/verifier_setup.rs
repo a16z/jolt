@@ -108,6 +108,7 @@ impl AkitaScheme {
                             params.max_num_vars,
                             params.max_num_polys_per_commitment_group,
                         )),
+                        artifacts.response_catalog().map(<[u8]>::to_vec),
                     )
                     .map_err(invalid_setup)?,
                 }
