@@ -9,10 +9,11 @@ use std::borrow::BorrowMut;
 use common::jolt_device::JoltDevice;
 use jolt_akita::{AkitaProverTranscript, TraceOneHotCommitment};
 use jolt_algebra::{CanonicalBytes, JoltField};
+use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_crypto::VectorCommitment;
 use jolt_openings::{
-    GroupCommitmentMetadata, GroupOpeningClaim, GroupSetupMetadata, TaggedGroupOpeningClaim,
-    TransparentObjectSetup,
+    CommitmentScheme, GroupCommitmentMetadata, GroupOpeningClaim, GroupSetupMetadata,
+    TaggedGroupOpeningClaim, TransparentObjectSetup,
 };
 use jolt_transcript::{
     verifier_transcript, ChallengeCodec, Encoding, FieldTranscript, ProverInit, ProverTranscript,
@@ -33,6 +34,8 @@ use jolt_zk::masking::ZkError;
 use jolt_zk::whiteout::MaskedGroupOpening;
 use rand_core::{CryptoRng, OsRng, RngCore};
 
+#[cfg(feature = "prover-fixtures")]
+use self::faults::Aborted;
 use super::stage0::prove_stage0;
 use super::witness::AdviceObject;
 use crate::boundary::finish_stage;
@@ -132,7 +135,7 @@ fn shell<PCS, VC>(
     narg: Vec<u8>,
 ) -> WhiteoutProof<PCS, VC>
 where
-    PCS: jolt_openings::CommitmentScheme,
+    PCS: CommitmentScheme,
     PCS::Output: Clone,
     VC: VectorCommitment<Field = PCS::Field>,
 {
@@ -447,7 +450,7 @@ where
         })?;
     mark_region("akita_masked_prefix", &transcript, tape.values.len());
     #[cfg(feature = "prover-fixtures")]
-    if faults::abort(faults::Aborted {
+    if faults::abort(Aborted {
         narg: transcript.borrow().narg_string().to_vec(),
         tape: tape
             .values
@@ -535,7 +538,7 @@ where
 }
 
 /// The one-hot configuration stage 0 wrote to the proof.
-fn checked_one_hot(config: &ProverConfig) -> jolt_claims::protocols::jolt::JoltOneHotConfig {
+fn checked_one_hot(config: &ProverConfig) -> JoltOneHotConfig {
     config.one_hot_config
 }
 

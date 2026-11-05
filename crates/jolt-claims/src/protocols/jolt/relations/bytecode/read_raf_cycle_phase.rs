@@ -95,6 +95,11 @@ mod tests {
                 Fr::from_u64(23)
             }
             JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::Entry) => Fr::from_u64(29),
+            // γ^k for k ≥ 2 is one derived leaf; the verifier registers its value.
+            JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+                challenge: BytecodeReadRafChallenge::Gamma,
+                exponent,
+            }) => (0..exponent).fold(Fr::from_u64(1), |power, _| power * gamma),
             _ => Fr::from_u64(0),
         };
         let output = relation.output_expression::<Fr>().evaluate(

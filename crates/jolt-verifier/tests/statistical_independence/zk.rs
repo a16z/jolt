@@ -21,6 +21,8 @@ use std::collections::BTreeSet;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_algebra::{CanonicalBytes, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_crypto::Bn254G1;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -97,7 +99,7 @@ fn zk_proofs_are_independent_over_hiding_messages() {
 
 /// A ZK proof's masked tape values and its pad row commitments.
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn hiding_payload(case: &ZkVerifierFixtureCase) -> (Vec<Fr>, Vec<jolt_crypto::Bn254G1>) {
+fn hiding_payload(case: &ZkVerifierFixtureCase) -> (Vec<Fr>, Vec<Bn254G1>) {
     let JoltProofClaims::Zk { masked, zk_proof } = &case.proof.claims else {
         panic!("a ZK fixture carries a masked payload");
     };

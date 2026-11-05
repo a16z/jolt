@@ -17,7 +17,7 @@ use jolt_crypto::{Commitment, HomomorphicCommitment, VectorCommitment};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
 use jolt_transcript::{ChallengeCodec, Encoding, FieldTranscript, PadSlots, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
-use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
+use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs, ProofCommitments};
 use jolt_verifier::stages::pow::StagePowNonces;
 use jolt_verifier::{
     pad_layout, validate_and_seed_transcript, verify_stages_on, BlindFoldZkProof, CheckedInputs,
@@ -61,7 +61,7 @@ pub(crate) fn commit_pads<F, PCS, VC, T>(
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
     config: &ProverConfig,
     checked: &CheckedInputs,
-    commitments: &jolt_verifier::proof::ProofCommitments<PCS>,
+    commitments: &ProofCommitments<PCS>,
     untrusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
 ) -> Result<CommittedMode<VC>, ProverError<F>>

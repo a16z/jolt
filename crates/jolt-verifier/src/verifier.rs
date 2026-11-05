@@ -1441,7 +1441,7 @@ mod tests {
     use super::*;
     #[cfg(not(feature = "akita"))]
     use crate::proof::JoltCommitments;
-    use crate::proof::{ClearProofClaims, JoltProofClaims, JoltStageProofs};
+    use crate::proof::{BlindFoldZkProof, ClearProofClaims, JoltProofClaims, JoltStageProofs};
     #[cfg(all(not(feature = "akita"), feature = "field-inline"))]
     use crate::proof::{FieldInlineCommitments, FieldRegistersCommitments};
     use crate::stages::pow::StagePowNonces;
@@ -1464,12 +1464,14 @@ mod tests {
     use jolt_crypto::PedersenSetup;
     use jolt_crypto::{Bn254G1, Commitment, Pedersen, VectorCommitmentOpening};
     use jolt_openings::{CommitmentScheme, OpeningsError};
-    use jolt_poly::MultilinearPoly;
+    use jolt_poly::{CompressedPoly, MultilinearPoly};
     use jolt_program::preprocess::JoltProgramPreprocessing;
     use jolt_sumcheck::{
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
     use jolt_transcript::FieldTranscript;
+    use jolt_zk::blindfold::{BlindFoldProof, FoldedEvaluation, FoldingCommitments, OuterClaims};
+    use jolt_zk::masking::MaskedMessages;
     use num_traits::Zero;
 
     use crate::preprocessing::ProgramPreprocessing;
@@ -1537,7 +1539,7 @@ mod tests {
     }
 
     type TestProof = JoltProof<TestPcs, Pedersen<Bn254G1>>;
-    type TestClaims = JoltProofClaims<Fr, crate::proof::BlindFoldZkProof<Fr, Bn254G1>>;
+    type TestClaims = JoltProofClaims<Fr, BlindFoldZkProof<Fr, Bn254G1>>;
 
     #[test]
     fn proof_wrapper_uses_modular_trait_bounds() {
@@ -2036,7 +2038,7 @@ mod tests {
 
     fn proof_with_zk(is_zk: bool, claims: TestClaims) -> TestProof {
         JoltProof {
-            protocol: crate::config::JoltProtocolConfig::for_zk(if claims.is_zk() {
+            protocol: JoltProtocolConfig::for_zk(if claims.is_zk() {
                 ZkConfig::BlindFold
             } else {
                 ZkConfig::Transparent
@@ -2292,11 +2294,11 @@ mod tests {
             combined_blinding: Fr::zero(),
         };
         JoltProofClaims::Zk {
-            masked: jolt_zk::masking::MaskedMessages::default(),
-            zk_proof: crate::proof::BlindFoldZkProof {
+            masked: MaskedMessages::default(),
+            zk_proof: BlindFoldZkProof {
                 pad_commitment: Vec::new(),
-                blindfold: jolt_zk::blindfold::BlindFoldProof {
-                    folding: jolt_zk::blindfold::FoldingCommitments {
+                blindfold: BlindFoldProof {
+                    folding: FoldingCommitments {
                         auxiliary_rows: Vec::new(),
                         random_u: Fr::zero(),
                         random_pad_rows: Vec::new(),
@@ -2305,14 +2307,14 @@ mod tests {
                         random_eval: Bn254G1::default(),
                         cross_term_error_rows: Vec::new(),
                     },
-                    folded_evaluation: jolt_zk::blindfold::FoldedEvaluation {
+                    folded_evaluation: FoldedEvaluation {
                         output: Fr::zero(),
                         blinding: Fr::zero(),
                         output_opening: opening(),
                         blinding_opening: opening(),
                     },
                     outer_sumcheck: CompressedSumcheckProof::default(),
-                    outer_claims: jolt_zk::blindfold::OuterClaims {
+                    outer_claims: OuterClaims {
                         abc: [Fr::zero(); 3],
                         error_opening: opening(),
                     },
@@ -2352,7 +2354,7 @@ mod tests {
     fn mismatched_sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
         if is_zk {
             SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof {
-                round_polynomials: vec![jolt_poly::CompressedPoly::new(vec![Fr::zero()])],
+                round_polynomials: vec![CompressedPoly::new(vec![Fr::zero()])],
                 pow_nonces: Vec::new(),
             }))
         } else {

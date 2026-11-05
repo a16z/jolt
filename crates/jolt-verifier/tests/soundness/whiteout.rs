@@ -31,7 +31,7 @@ use jolt_poly::CompressedPoly;
 use jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_sumcheck::{ClearProof, CompressedSumcheckProof, SumcheckProof};
 use jolt_transcript::{verifier_transcript, Keccak, Script, ScriptedTranscript, VerifierState};
-use jolt_verifier::proof::JoltProofClaims;
+use jolt_verifier::proof::{JoltProofClaims, JoltStageProofs};
 use jolt_verifier::stages::pow::PowSite;
 use jolt_verifier::stages::stage8::akita::WhiteoutObject;
 use jolt_verifier::whiteout::{pad_layout, verify_transcript, whiteout_frame};
@@ -568,7 +568,7 @@ fn assert_census(case: &'static AkitaFixtureCase) {
     // empty.
     assert_eq!(
         case.proof.stages,
-        jolt_verifier::proof::JoltStageProofs::masked(case.proof.stages.pow_nonces)
+        JoltStageProofs::masked(case.proof.stages.pow_nonces)
     );
 }
 

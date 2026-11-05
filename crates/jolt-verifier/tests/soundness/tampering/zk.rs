@@ -19,7 +19,11 @@ use crate::support::tamper_manifest;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_algebra::{Fr, Ring as _};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_verifier::JoltProofClaims;
+use jolt_crypto::Bn254G1;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_verifier::{BlindFoldZkProof, JoltProofClaims};
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_zk::masking::MaskedMessages;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 #[test]
@@ -140,10 +144,10 @@ fn with_zk_verifier_stack(test: impl FnOnce() + Send + 'static) {
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-type ZkClaims = JoltProofClaims<Fr, jolt_verifier::BlindFoldZkProof<Fr, jolt_crypto::Bn254G1>>;
+type ZkClaims = JoltProofClaims<Fr, BlindFoldZkProof<Fr, Bn254G1>>;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn masked(claims: &ZkClaims) -> &jolt_zk::masking::MaskedMessages<Fr> {
+fn masked(claims: &ZkClaims) -> &MaskedMessages<Fr> {
     let JoltProofClaims::Zk { masked, .. } = claims else {
         panic!("ZK fixture must carry a masked payload");
     };
@@ -151,7 +155,7 @@ fn masked(claims: &ZkClaims) -> &jolt_zk::masking::MaskedMessages<Fr> {
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn masked_mut(claims: &mut ZkClaims) -> &mut jolt_zk::masking::MaskedMessages<Fr> {
+fn masked_mut(claims: &mut ZkClaims) -> &mut MaskedMessages<Fr> {
     let JoltProofClaims::Zk { masked, .. } = claims else {
         panic!("ZK fixture must carry a masked payload");
     };
@@ -159,9 +163,7 @@ fn masked_mut(claims: &mut ZkClaims) -> &mut jolt_zk::masking::MaskedMessages<Fr
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn zk_payload_mut(
-    claims: &mut ZkClaims,
-) -> &mut jolt_verifier::BlindFoldZkProof<Fr, jolt_crypto::Bn254G1> {
+fn zk_payload_mut(claims: &mut ZkClaims) -> &mut BlindFoldZkProof<Fr, Bn254G1> {
     let JoltProofClaims::Zk { zk_proof, .. } = claims else {
         panic!("ZK fixture must carry a masked payload");
     };

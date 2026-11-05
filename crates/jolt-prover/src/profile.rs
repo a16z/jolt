@@ -970,6 +970,8 @@ fn prove_workload(
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::CommitmentScheme;
     use jolt_transcript::{Keccak, ProverState, VerifierState};
+    #[cfg(feature = "zk")]
+    use jolt_verifier::JoltProofClaims;
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
     let backend = match backend {
@@ -1045,20 +1047,39 @@ fn prove_workload(
     .expect("modular Akita prove");
     let duration = now.elapsed();
 
-    let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
-    let akita_opening_unframed_size = proof
-        .joint_opening_proof
-        .unframed_payload_size()
-        .expect("Akita opening component lengths must fit usize");
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize Akita proof")
         .len();
-    tracing::info!(
-        akita_proof_body_size,
-        akita_opening_unframed_size,
-        jolt_proof_wire_size = proof_size,
-        "Akita proof sizes"
-    );
+    #[cfg(not(feature = "zk"))]
+    {
+        let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
+        let akita_opening_unframed_size = proof
+            .joint_opening_proof
+            .unframed_payload_size()
+            .expect("Akita opening component lengths must fit usize");
+        tracing::info!(
+            akita_proof_body_size,
+            akita_opening_unframed_size,
+            jolt_proof_wire_size = proof_size,
+            "Akita proof sizes"
+        );
+    }
+    // A Whiteout proof's opening is its argument string (the pad commitment,
+    // Akita's masked levels, Σ and the response proof); Jolt's stage messages
+    // are its masked tape.
+    #[cfg(feature = "zk")]
+    {
+        let masked_tape_values = match &proof.claims {
+            JoltProofClaims::Zk { masked, .. } => masked.values.len(),
+            JoltProofClaims::Clear(_) => 0,
+        };
+        tracing::info!(
+            argument_string_size = proof.narg.len(),
+            masked_tape_values,
+            jolt_proof_wire_size = proof_size,
+            "Akita proof sizes"
+        );
+    }
 
     let verify = || {
         jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
@@ -1110,7 +1131,7 @@ fn prove_workload(
             .0;
     let verifier_transported = jolt_akita::with_host_parallel_verifier_backend(|| {
         measure_verifier(VerificationMode::Transported, parallel_threads, || {
-            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &transported,
                 &public_io,
                 &proof,

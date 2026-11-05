@@ -17,7 +17,7 @@ use std::borrow::BorrowMut;
 use common::jolt_device::JoltDevice;
 use jolt_algebra::JoltField;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{
@@ -149,7 +149,7 @@ where
 #[expect(clippy::too_many_arguments, reason = "the stage outputs and the frame")]
 fn stage8_claims<F, C, T>(
     checked: &CheckedInputs,
-    proof_one_hot: jolt_claims::protocols::jolt::JoltOneHotConfig,
+    proof_one_hot: JoltOneHotConfig,
     pow_nonces: &StagePowNonces,
     trace_commitment: &C,
     plan: &WhiteoutOpeningPlan<C>,

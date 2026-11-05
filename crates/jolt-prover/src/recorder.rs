@@ -12,7 +12,7 @@
 #[cfg(not(feature = "zk"))]
 use core::marker::PhantomData;
 
-use jolt_algebra::JoltField;
+use jolt_algebra::{Field, JoltField};
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
@@ -67,7 +67,7 @@ pub trait ClaimRecorder {
     fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes;
 }
 
-impl<F: jolt_algebra::Field> ClaimRecorder for ClearSumcheckRecorder<F> {
+impl<F: Field> ClaimRecorder for ClearSumcheckRecorder<F> {
     const MASKED: bool = false;
 
     fn wire_routes(routes: ClaimRoutes) -> ClaimRoutes {

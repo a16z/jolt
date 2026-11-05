@@ -5,6 +5,8 @@
 
 use std::sync::OnceLock;
 
+#[cfg(all(feature = "zk", feature = "logging"))]
+use akita_transcript::ProofMessageRange;
 use common::jolt_device::JoltDevice;
 use jolt_akita::{
     AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
@@ -12,6 +14,8 @@ use jolt_akita::{
 use jolt_host::Program;
 use jolt_prover::akita;
 use jolt_prover::akita::preprocessing::{self, AkitaProverPreprocessing, AkitaVc};
+#[cfg(feature = "zk")]
+use jolt_prover::akita::whiteout_faults::Aborted;
 use jolt_prover::JoltBackend;
 use jolt_prover::ProverConfig;
 use jolt_transcript::{Keccak, ProverState, VerifierState};
@@ -41,7 +45,7 @@ pub struct AkitaFixtureCase {
     /// Whiteout: Akita's record of the argument string's message ranges, from
     /// the proving thread (`logging`).
     #[cfg(all(feature = "zk", feature = "logging"))]
-    pub narg_ranges: Vec<akita_transcript::ProofMessageRange>,
+    pub narg_ranges: Vec<ProofMessageRange>,
     /// Whiteout: the argument string's length at the end of each prover
     /// region (`jolt_prover::akita::whiteout_regions`).
     #[cfg(all(feature = "zk", feature = "logging"))]
@@ -163,7 +167,7 @@ pub fn whiteout_committed_case() -> &'static AkitaFixtureCase {
 /// Whiteout's muldiv case proved with its first attempt aborted after the
 /// masked levels (HT3), and what that attempt had produced.
 #[cfg(feature = "zk")]
-pub fn whiteout_rerun_case() -> (AkitaFixtureCase, akita::whiteout_faults::Aborted) {
+pub fn whiteout_rerun_case() -> (AkitaFixtureCase, Aborted) {
     akita::whiteout_faults::abort_next_attempt();
     let case = generate_whiteout_muldiv();
     let aborted = akita::whiteout_faults::take_aborted().expect("the first attempt aborted");
@@ -188,7 +192,7 @@ fn generate_whiteout_muldiv() -> AkitaFixtureCase {
 /// attempt writes a fresh string, so a rerun's ranges restart at offset 0:
 /// the last attempt's are the suffix after the last backwards step.
 #[cfg(all(feature = "zk", feature = "logging"))]
-pub fn final_attempt_ranges() -> Vec<akita_transcript::ProofMessageRange> {
+pub fn final_attempt_ranges() -> Vec<ProofMessageRange> {
     let ranges = akita_transcript::thread_proof_ranges();
     let first = ranges
         .windows(2)

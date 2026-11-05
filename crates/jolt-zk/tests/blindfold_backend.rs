@@ -15,7 +15,7 @@ use jolt_crypto::{Bn254, Bn254G1, JoltGroup, Pedersen, PedersenSetup, VectorComm
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{receive_masked_rounds, DegreeSchedule, RoundWire, SumcheckRecorder};
 use jolt_transcript::{
-    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, TAG_BYTES,
+    protocol_tag, prover_transcript, verifier_transcript, Blake2b512, FieldTranscript, TAG_BYTES,
 };
 use jolt_zk::blindfold::{BlindFold, BlindFoldProof, BlindFoldResidualWitness};
 use jolt_zk::masking::{
@@ -114,7 +114,7 @@ fn tables() -> (Vec<Fr>, Vec<Fr>, Fr) {
 
 /// The verifier's half: reads the masked transcript after the pad
 /// commitment and lowers its checks; leaves the transcript at the tail.
-fn residual<T: jolt_transcript::FieldTranscript<Fr>>(
+fn residual<T: FieldTranscript<Fr>>(
     claimed_sum: Fr,
     view: &mut CommittedPadsView<Vec<Bn254G1>>,
     tape: &mut MaskedReader<'_, Fr>,
