@@ -1,5 +1,14 @@
 //! Whiteout (zero knowledge over Akita): the masked-site census (HT1,
-//! `specs/whiteout-jolt-integration.md` §7) and the tamper suite (V5).
+//! `specs/whiteout-jolt-integration.md` §7), the tamper suite (V5), HT3, the
+//! pad layout's counting equality (V4) and the compensating-shift probe.
+//!
+//! A Whiteout proof has two parts. Jolt's stage messages are the proof's
+//! masked tape: every value is m̂ = m + p, absorbed where the clear protocol
+//! absorbs m. The pad commitment, Akita's masked levels, the Σ-protocol and
+//! the response proof are the argument string. The census classifies both:
+//! Jolt's absorbs from an audit transcript over the verifier, and the
+//! argument string from Akita's prover-side record of its message ranges
+//! (`akita_transcript::thread_proof_ranges`, kept by the fixture).
 
 #![expect(
     clippy::expect_used,
@@ -11,35 +20,35 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use akita_params::transcript_site::{
-    SITE_FAMILY_FOLD_BINDING, SITE_FAMILY_NEXT_WITNESS, SITE_FAMILY_OPENING_PAYLOAD,
-    SITE_FAMILY_ROOT_STATEMENT, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_SUMCHECK,
-};
 use akita_params::zk::ZK_CUT_LEVEL;
-use akita_params::{GrindingSite, ProtocolSiteId};
-use jolt_akita::AkitaField;
-use jolt_akita::AkitaScheme;
-use jolt_algebra::CanonicalBytes;
-use jolt_prover::akita::preprocessing::AkitaVc;
-use jolt_transcript::{SiteId, TranscriptEvent, TranscriptOp, VerifierTranscript};
-use jolt_verifier::sites::{PADS, STAGE8, WHITEOUT, WHITEOUT_SIGMA};
-use jolt_verifier::stages::stage8::akita::WhiteoutObject;
-use jolt_verifier::whiteout::{pad_layout, whiteout_stages};
-use jolt_verifier::{
-    jolt_protocol_id, JoltProtocolConfig, JoltSponge, VerifierError, ZkConfig, JOLT_SESSION,
+use akita_transcript::{
+    ProofMessageRange, ProtocolMessageKind, ProtocolSiteId, SITE_FAMILY_NEXT_WITNESS,
+    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_RESPONSE, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
+    SITE_FAMILY_SUMCHECK,
 };
+use jolt_akita::{AkitaField, AkitaScheme};
+use jolt_algebra::{CanonicalBytes, Ring};
+use jolt_poly::CompressedPoly;
+use jolt_prover::akita::preprocessing::AkitaVc;
+use jolt_sumcheck::{ClearProof, CompressedSumcheckProof, SumcheckProof};
+use jolt_transcript::{verifier_transcript, Keccak, Script, ScriptedTranscript, VerifierState};
+use jolt_verifier::proof::JoltProofClaims;
+use jolt_verifier::stages::pow::PowSite;
+use jolt_verifier::stages::stage8::akita::WhiteoutObject;
+use jolt_verifier::whiteout::{pad_layout, verify_transcript, whiteout_frame};
+use jolt_verifier::{
+    validate_and_seed_transcript, JoltProtocolConfig, VerifierError, ZkConfig, JOLT_SESSION,
+};
+use jolt_zk::masking::MaskedMessages;
 
-use super::checks;
 use crate::support::akita_fixtures::{
     whiteout_advice_case, whiteout_committed_case, whiteout_muldiv_case, whiteout_rerun_case,
-    AkitaFixtureCase,
+    AkitaFixtureCase, AkitaJoltProof,
 };
-use crate::support::narg::{assert_coverage_closure, Region, Trace, TracedCase};
 
-const FIELD_BYTES: usize = <AkitaField as CanonicalBytes>::NUM_BYTES;
+type F = AkitaField;
 
-/// Akita's response prover's site (`akita_pcs::zk::RESPONSE_SITE`).
-const RESPONSE_SITE: SiteId = SiteId::label("whiteout/response");
+const FIELD_BYTES: usize = <F as CanonicalBytes>::NUM_BYTES;
 
 /// The census classes (§7). `clear-only` absorbs never run here, so the
 /// runtime census has no such class.
@@ -54,10 +63,10 @@ enum Class {
     Response,
 }
 
-/// How a transcript operation reaches the sponge.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// How an operation reaches the sponge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Kind {
-    /// A prover message sent masked over its pads.
+    /// A private value sent masked over its pads.
     Masked,
     /// A prover message absorbed as sent.
     Clear,
@@ -65,282 +74,427 @@ enum Kind {
     Public,
 }
 
-/// Who set an event's site.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Site {
-    Jolt(SiteId),
-    Response,
-    Akita(ProtocolSiteId),
-}
-
-impl Site {
-    fn of(site: SiteId) -> Self {
-        if site.0.starts_with(b"jolt/") {
-            return Self::Jolt(site);
-        }
-        if site == RESPONSE_SITE {
-            return Self::Response;
-        }
-        Self::Akita(ProtocolSiteId::from_bytes(site.0))
-    }
-
-    /// The Akita family, if Akita set the site.
-    fn akita_family(self) -> Option<u32> {
-        match self {
-            Self::Akita(site) => Some(site.family),
-            Self::Jolt(_) | Self::Response => None,
-        }
-    }
-}
-
-/// An Akita grinding nonce: a grinding site (`GrindingSite`, whose families
-/// start at the evaluation batch's) with a nonce width in its detail.
-fn is_grinding_nonce(site: Site) -> bool {
-    let first = GrindingSite::EvaluationBatch { level: 0 }.site_id(0).family;
-    matches!(site, Site::Akita(site) if site.family >= first && site.detail != 0)
-}
-
-/// Where an operation sits: its region, and whether Akita's response proof
-/// has begun (its first event carries the response site).
-#[derive(Clone, Copy, Debug)]
-struct Position {
-    region: Region,
-    in_response: bool,
-}
-
-/// The class of a `kind` operation at `site` and `at`, if the protocol has
-/// one there. Akita's masked-level rows follow
-/// `akita:specs/whiteout-akita.md` §4.2: rounds and their claims masked
-/// (sumcheck, stage 2, stage 1), the D image and u_a public but hidden by
-/// their randomness, the root statement and fold bindings public, grinding
-/// nonces public.
-fn class(at: Position, site: Site, kind: Kind) -> Option<Class> {
-    use Class as C;
-    use Kind as K;
-    use Region as R;
-    let family = site.akita_family();
-    match (at.region, site, kind) {
-        (R::Preamble, Site::Jolt(_), K::Clear | K::Public) => Some(C::Statement),
-        // The proof's commitments, then the statement-fixed ones (trusted
-        // advice, a committed program) absorbed as public.
-        (R::Commitments, Site::Jolt(_), K::Clear | K::Public) => Some(C::Commitment),
-        (R::Pads, Site::Jolt(_), K::Clear) => Some(C::Pads),
-        // The plans' digests, absorbed before the pads (`PADS_DIGESTS` pins
-        // their count and size).
-        (R::Pads, Site::Jolt(site), K::Public) if site == PADS => Some(C::Statement),
-        (
-            R::Stage1
-            | R::Stage2
-            | R::Stage3
-            | R::Stage4
-            | R::Stage5
-            | R::Stage6a
-            | R::Stage6b
-            | R::Stage7,
-            Site::Jolt(_),
-            K::Masked,
-        ) => Some(C::MaskedSlot),
-        // The catalog digest and the selected row's digest, absorbed only
-        // (`stage8_digests` pins their count and size).
-        (R::Stage8, Site::Jolt(site), K::Public) if site == STAGE8 => Some(C::Statement),
-        (R::Stage8, Site::Akita(_), K::Masked)
-            if matches!(
-                family,
-                Some(SITE_FAMILY_SUMCHECK | SITE_FAMILY_STAGE2 | SITE_FAMILY_STAGE1)
-            ) =>
-        {
-            Some(C::MaskedSlot)
-        }
-        (R::Stage8, Site::Akita(_), K::Clear)
-            if matches!(
-                family,
-                Some(SITE_FAMILY_OPENING_PAYLOAD | SITE_FAMILY_NEXT_WITNESS)
-            ) =>
-        {
-            Some(C::Commitment)
-        }
-        (R::Stage8, Site::Akita(_), K::Public) if family == Some(SITE_FAMILY_ROOT_STATEMENT) => {
-            Some(C::Statement)
-        }
-        (R::Stage8, Site::Akita(_), K::Public) if family == Some(SITE_FAMILY_FOLD_BINDING) => {
-            Some(C::ChallengeDerived)
-        }
-        (R::Stage8, _, K::Clear) if is_grinding_nonce(site) => Some(C::ChallengeDerived),
-        // The auxiliary block, then the Σ-protocol's messages and targets.
-        (R::Whiteout, Site::Jolt(site), K::Masked) if site == WHITEOUT && !at.in_response => {
-            Some(C::MaskedSlot)
-        }
-        (R::Whiteout, Site::Jolt(site), K::Clear | K::Public)
-            if site == WHITEOUT_SIGMA && !at.in_response =>
-        {
-            Some(C::Sigma)
-        }
-        // The response proof: a clear Akita proof of the Σ response, after
-        // its first site.
-        (R::Whiteout, Site::Response | Site::Akita(_), K::Clear | K::Public) if at.in_response => {
-            Some(C::Response)
-        }
-        _ => None,
-    }
+/// Where an operation is: a Jolt absorb (its index among the audit's
+/// absorbs after seeding, or during seeding), or a range of the argument
+/// string.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Origin {
+    Seed(usize),
+    Absorb(usize),
+    Narg(Range<usize>),
 }
 
 /// One classified operation.
-#[derive(Debug)]
-struct Classified {
-    index: usize,
-    region: Region,
+#[derive(Clone, Debug)]
+struct Item {
+    origin: Origin,
     kind: Kind,
     bytes: usize,
+    /// For masked tape absorbs, the tape values they carry.
+    tape: Option<Range<usize>>,
+    /// For argument-string ranges, Akita's site, if Akita sent it.
+    site: Option<ProtocolSiteId>,
     class: Option<Class>,
 }
 
-/// Classifies every message and public absorb of `trace`. A message is
-/// masked when the next event marks it masked over exactly its own width.
-fn classify(trace: &Trace) -> Vec<Classified> {
-    let regions = trace.regions();
-    let events: &[TranscriptEvent] = &trace.events;
-    let mut out = Vec::new();
-    let mut in_response = false;
-    for (index, event) in events.iter().enumerate() {
-        in_response |= event.site == RESPONSE_SITE;
-        let kind = match event.op {
-            TranscriptOp::Message => match events.get(index + 1).map(|next| next.op) {
-                Some(TranscriptOp::Masked { .. })
-                    if events[index + 1].len * FIELD_BYTES == event.len =>
-                {
-                    Kind::Masked
-                }
-                _ => Kind::Clear,
-            },
-            TranscriptOp::Public => Kind::Public,
-            TranscriptOp::Challenge
-            | TranscriptOp::ForkAbsorb
-            | TranscriptOp::ForkSqueeze
-            | TranscriptOp::Masked { .. } => continue,
-        };
-        out.push(Classified {
-            index,
-            region: regions[index],
-            kind,
-            bytes: event.len,
-            class: class(
-                Position {
-                    region: regions[index],
-                    in_response,
-                },
-                Site::of(event.site),
-                kind,
-            ),
-        });
-    }
-    out
+/// The verifier's own challenges, priced as the proof field's challenge set,
+/// so the audit transcript checks every proof of work.
+#[derive(Default)]
+struct Passthrough;
+
+impl Script<F> for Passthrough {
+    const UNPRICED: bool = false;
+
+    fn draw(&mut self, _challenges: &mut [F]) {}
 }
 
-/// The catalog digest and the selected row's digest, 32 bytes each.
-const STAGE8_DIGESTS: [usize; 2] = [32, 32];
+type Audit<'a> = ScriptedTranscript<VerifierState<'a, Keccak>, F, Passthrough>;
 
-/// The pads' own absorbs: the masked catalog's digest, the selected row's
-/// digest and the response schedule's catalog digest.
-const PADS_DIGESTS: [usize; 3] = [32, 32, 32];
-
-/// The absorbs a proof's statement fixes outside the message stream.
-struct Expected {
-    /// Stage 8's own absorbs: each packed precommitted object's reduction
-    /// binds its two layout words, its digest and its point, and never an
-    /// evaluation (the clear reduction's `clear-only` absorb); then the two
-    /// digests. Nothing else is absorbed at Stage 8's site.
-    stage8: Vec<usize>,
-    /// Public absorbs in the commitments region: two (header, image) per
-    /// statement-fixed commitment, trusted advice and each committed-program
-    /// object.
-    public_commitments: usize,
+/// Jolt's absorbs over one verification of a Whiteout proof: those made
+/// while binding the commitments, then every later one. Akita's own absorbs
+/// go to its state directly and are classified from the argument string.
+#[derive(Clone, Debug)]
+struct JoltTrace {
+    seed: Vec<Vec<u8>>,
+    after: Vec<Vec<u8>>,
+    result: Result<(), String>,
 }
 
-/// [`Expected`] of `case`'s proof, from the statement's opening plan.
-fn expected_absorbs(case: &AkitaFixtureCase) -> Expected {
-    let mut transcript = VerifierTranscript::<JoltSponge>::new(
-        &jolt_protocol_id::<JoltSponge>(),
-        JOLT_SESSION,
-        &case.proof().narg,
-    );
-    let stages = whiteout_stages::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+/// Verifies `proof` against `case`'s statement on an audit transcript.
+fn jolt_trace(case: &AkitaFixtureCase, proof: &AkitaJoltProof) -> JoltTrace {
+    let seeded = validate_and_seed_transcript(
         &case.preprocessing,
         &case.public_io,
+        proof,
+        case.trusted_advice_commitment.as_ref(),
+        |statement| {
+            Audit::scripted_by(
+                verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &proof.narg),
+                Passthrough,
+            )
+        },
+    );
+    let (checked, mut transcript) = match seeded {
+        Ok(seeded) => seeded,
+        Err(error) => {
+            return JoltTrace {
+                seed: Vec::new(),
+                after: Vec::new(),
+                result: Err(format!("{error:?}")),
+            }
+        }
+    };
+    let seed: Vec<Vec<u8>> = transcript.absorbed().iter().map(|b| b.to_vec()).collect();
+    let verified = verify_transcript::<F, AkitaScheme, AkitaVc, _>(
+        &case.preprocessing,
+        proof,
+        &checked,
         case.trusted_advice_commitment.as_ref(),
         &mut transcript,
         None,
+    );
+    let all: Vec<Vec<u8>> = transcript.absorbed().iter().map(|b| b.to_vec()).collect();
+    let after = all[seed.len()..].to_vec();
+    let result = verified
+        .map_err(|error| format!("{error:?}"))
+        .and_then(|()| {
+            transcript
+                .into_inner()
+                .check_eof()
+                .map_err(|error| format!("{error:?}"))
+        });
+    JoltTrace {
+        seed,
+        after,
+        result,
+    }
+}
+
+fn tape_of(proof: &AkitaJoltProof) -> &MaskedMessages<F> {
+    match &proof.claims {
+        JoltProofClaims::Zk { masked, .. } => masked,
+        JoltProofClaims::Clear(_) => panic!("a Whiteout proof carries a masked tape"),
+    }
+}
+
+fn tape_mut(proof: &mut AkitaJoltProof) -> &mut MaskedMessages<F> {
+    match &mut proof.claims {
+        JoltProofClaims::Zk { masked, .. } => masked,
+        JoltProofClaims::Clear(_) => panic!("a Whiteout proof carries a masked tape"),
+    }
+}
+
+fn encode(values: &[F]) -> Vec<u8> {
+    values
+        .iter()
+        .flat_map(CanonicalBytes::to_bytes_le_vec)
+        .collect()
+}
+
+/// The absorbs a proof's statement fixes outside the message stream.
+struct Expected {
+    /// The commitments' absorbs, from an honest seeding.
+    seed: Vec<Vec<u8>>,
+    /// Stage 8's own absorbs: each packed precommitted object's reduction
+    /// binds its two layout words, its digest and its point, and never an
+    /// evaluation (the clear reduction's `clear-only` absorb).
+    stage8: Vec<usize>,
+    /// The stage proof-of-work nonces the proof carries.
+    stage_nonces: Vec<u64>,
+}
+
+/// [`Expected`] of `case`'s honest proof, from the statement's opening plan.
+fn expected_absorbs(case: &AkitaFixtureCase) -> Expected {
+    let (checked, _) = validate_and_seed_transcript(
+        &case.preprocessing,
+        &case.public_io,
+        &case.proof,
+        case.trusted_advice_commitment.as_ref(),
+        |statement| verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &case.proof.narg),
     )
-    .expect("the masked stages");
-    let mut absorbs = Vec::new();
-    for object in &stages.plan.objects {
+    .expect("the honest proof seeds");
+    let frame = whiteout_frame(
+        &case.preprocessing,
+        &case.proof,
+        &checked,
+        case.trusted_advice_commitment.as_ref(),
+    )
+    .expect("the Whiteout frame");
+    let mut stage8 = Vec::new();
+    for object in &frame.plan.objects {
         match object {
             WhiteoutObject::Packed { plan, .. } => {
-                absorbs.extend([8, 8, 32, plan.packing().logical_num_vars() * FIELD_BYTES]);
+                stage8.extend([8, 8, 32, plan.packing().logical_num_vars() * FIELD_BYTES]);
             }
             #[cfg(feature = "field-inline")]
             WhiteoutObject::FieldInc { .. } => {}
             WhiteoutObject::FusedInc { .. } => {}
         }
     }
-    absorbs.extend(STAGE8_DIGESTS);
-    let statement_fixed = usize::from(case.trusted_advice_commitment.is_some())
-        + 2 * usize::from(case.preprocessing.program.committed().is_some());
+    let stage_nonces = PowSite::ALL
+        .iter()
+        .filter_map(|&site| case.proof.stages.pow_nonces.get(site))
+        .collect();
     Expected {
-        stage8: absorbs,
-        public_commitments: 2 * statement_fixed,
+        seed: jolt_trace(case, &case.proof).seed,
+        stage8,
+        stage_nonces,
     }
 }
 
-/// The census: bytes per class, or every unclassified operation.
-/// `expected` is [`expected_absorbs`] of the proof.
-fn census(trace: &Trace, expected: &Expected) -> Result<BTreeMap<Class, usize>, Vec<String>> {
-    let mut totals = BTreeMap::new();
+/// Classifies Jolt's absorbs. During seeding they must be exactly the honest
+/// commitments' absorbs. Afterwards each is the next run of masked tape
+/// values (a masked slot), a proof-of-work nonce of the tape or of a stage
+/// (challenge-derived), or one of Stage 8's own statement-derived absorbs;
+/// the tape must be absorbed whole and in order, and Stage 8's absorbs must
+/// be exactly the statement's.
+fn jolt_items(
+    trace: &JoltTrace,
+    tape: &MaskedMessages<F>,
+    expected: &Expected,
+) -> (Vec<Item>, Vec<String>) {
+    let mut items = Vec::new();
     let mut failures = Vec::new();
-    let absorbed: Vec<usize> = trace
-        .events
-        .iter()
-        .filter(|event| event.site == STAGE8 && event.op != TranscriptOp::Challenge)
-        .map(|event| event.len)
-        .collect();
-    if absorbed != expected.stage8 {
+    if trace.seed != expected.seed {
         failures.push(format!(
-            "Stage 8's own absorbs are {absorbed:?}, not {:?}",
+            "the commitments' absorbs ({} of them) are not the statement's ({})",
+            trace.seed.len(),
+            expected.seed.len()
+        ));
+    }
+    for (index, bytes) in trace.seed.iter().enumerate() {
+        items.push(Item {
+            origin: Origin::Seed(index),
+            kind: Kind::Public,
+            bytes: bytes.len(),
+            tape: None,
+            site: None,
+            class: Some(Class::Commitment),
+        });
+    }
+    let mut value = 0;
+    let mut nonce = 0;
+    let mut stage_nonces = expected.stage_nonces.clone();
+    let mut stage8 = Vec::new();
+    for (index, bytes) in trace.after.iter().enumerate() {
+        let width = bytes.len() / FIELD_BYTES;
+        let tape_run = (bytes.len().is_multiple_of(FIELD_BYTES)
+            && width > 0
+            && value + width <= tape.values.len()
+            && *bytes == encode(&tape.values[value..value + width]))
+        .then(|| value..value + width);
+        let item = |kind, class, tape| Item {
+            origin: Origin::Absorb(index),
+            kind,
+            bytes: bytes.len(),
+            tape,
+            site: None,
+            class,
+        };
+        if let Some(run) = tape_run {
+            value = run.end;
+            items.push(item(Kind::Masked, Some(Class::MaskedSlot), Some(run)));
+            continue;
+        }
+        if bytes.len() == 8 {
+            let word = u64::from_le_bytes(bytes[..].try_into().expect("8 bytes"));
+            if tape.nonces.get(nonce) == Some(&word) {
+                nonce += 1;
+                items.push(item(Kind::Public, Some(Class::ChallengeDerived), None));
+                continue;
+            }
+            if let Some(position) = stage_nonces.iter().position(|&n| n == word) {
+                let _ = stage_nonces.remove(position);
+                items.push(item(Kind::Public, Some(Class::ChallengeDerived), None));
+                continue;
+            }
+        }
+        stage8.push(bytes.len());
+        items.push(item(Kind::Public, Some(Class::Statement), None));
+    }
+    if stage8 != expected.stage8 {
+        failures.push(format!(
+            "the absorbs outside the tape and nonces are {stage8:?}, not Stage 8's {:?}",
             expected.stage8
         ));
     }
-    let pads: Vec<usize> = trace
-        .events
-        .iter()
-        .filter(|event| event.site == PADS && event.op == TranscriptOp::Public)
-        .map(|event| event.len)
-        .collect();
-    if pads != PADS_DIGESTS {
+    if value != tape.values.len() || nonce != tape.nonces.len() {
         failures.push(format!(
-            "the pads' public absorbs are {pads:?}, not {PADS_DIGESTS:?}"
+            "the masked tape was absorbed to value {value} of {} and nonce {nonce} of {}",
+            tape.values.len(),
+            tape.nonces.len()
         ));
     }
-    let classified = classify(trace);
-    let public_commitments = classified
-        .iter()
-        .filter(|item| item.region == Region::Commitments && item.kind == Kind::Public)
-        .count();
-    if public_commitments != expected.public_commitments {
+    if !stage_nonces.is_empty() {
+        failures.push(format!("stage nonces {stage_nonces:?} were never absorbed"));
+    }
+    (items, failures)
+}
+
+/// A site identity from its eight little-endian words.
+fn site_of(bytes: [u8; 32]) -> ProtocolSiteId {
+    let word = |index: usize| {
+        u32::from_le_bytes(bytes[4 * index..4 * index + 4].try_into().expect("4 bytes"))
+    };
+    ProtocolSiteId {
+        family: word(0),
+        invocation: word(1),
+        level: word(2),
+        stage: word(3),
+        round: word(4),
+        group: word(5),
+        limb: word(6),
+        detail: word(7),
+    }
+}
+
+/// The class of one of Akita's argument-string ranges at its masked levels
+/// (`akita:specs/whiteout-akita.md` §4.2): rounds and their claims masked
+/// (sumcheck, stage 2, stage 1), the D image and u_a sent clear but hidden
+/// by their own randomness, grinding and fold-response nonces public.
+fn prefix_class(range: &ProofMessageRange, len: usize) -> (Kind, Option<Class>) {
+    let site = site_of(range.context.site_id);
+    let kind = range.context.kind;
+    let nonce = kind == ProtocolMessageKind::GrindingNonce as u32
+        || kind == ProtocolMessageKind::FoldResponseNonce as u32;
+    match range.pads {
+        Some((_, count)) => {
+            let masked_family = matches!(
+                site.family,
+                SITE_FAMILY_SUMCHECK | SITE_FAMILY_STAGE2 | SITE_FAMILY_STAGE1
+            );
+            let whole = count * FIELD_BYTES == len;
+            (
+                Kind::Masked,
+                (masked_family && whole).then_some(Class::MaskedSlot),
+            )
+        }
+        None if nonce => (Kind::Clear, Some(Class::ChallengeDerived)),
+        None => (
+            Kind::Clear,
+            matches!(
+                site.family,
+                SITE_FAMILY_OPENING_PAYLOAD | SITE_FAMILY_NEXT_WITNESS
+            )
+            .then_some(Class::Commitment),
+        ),
+    }
+}
+
+/// Classifies the argument string. The prover's region marks split it into
+/// the pad commitment (Jolt's, after stage 0), Akita's masked levels, Σ
+/// (Jolt's) and the response proof (Akita's, from its recorded start to the
+/// end); stages 1–7 write none of it. Akita's record of its messages
+/// classifies the masked levels, which it must tile.
+fn narg_items(
+    ranges: &[ProofMessageRange],
+    regions: &[(&str, usize)],
+    narg_len: usize,
+) -> (Vec<Item>, Vec<String>) {
+    let mut items = Vec::new();
+    let mut failures = Vec::new();
+    let mark = |name: &str| {
+        regions
+            .iter()
+            .find(|(region, _)| *region == name)
+            .map(|(_, at)| *at)
+    };
+    let (Some(stage0), Some(pads), Some(stage7), Some(prefix), Some(response), Some(end)) = (
+        mark("stage0"),
+        mark("pads"),
+        mark("stage7"),
+        mark("akita_masked_prefix"),
+        mark("response"),
+        mark("sigma_response"),
+    ) else {
+        return (items, vec![format!("missing region marks: {regions:?}")]);
+    };
+    if stage7 != pads {
         failures.push(format!(
-            "{public_commitments} public absorbs in the commitments region, not {}",
-            expected.public_commitments
+            "stages 1-7 wrote {} argument-string bytes",
+            stage7 - pads
         ));
     }
-    for item in classified {
+    if end != narg_len {
+        failures.push(format!(
+            "the argument string is {narg_len} bytes, the prover's {end}"
+        ));
+    }
+    let gap = |range: Range<usize>, class: Option<Class>, items: &mut Vec<Item>| {
+        if !range.is_empty() {
+            items.push(Item {
+                bytes: range.len(),
+                origin: Origin::Narg(range),
+                kind: Kind::Clear,
+                tape: None,
+                site: None,
+                class,
+            });
+        }
+    };
+    gap(0..stage0, Some(Class::Commitment), &mut items);
+    for (part, range, class) in [
+        ("pad commitment", stage0..pads, Class::Pads),
+        ("Σ-protocol", prefix..response, Class::Sigma),
+        ("response proof", response..narg_len, Class::Response),
+    ] {
+        if range.is_empty() {
+            failures.push(format!("no {part} bytes"));
+        }
+        gap(range, Some(class), &mut items);
+    }
+
+    let mut ranges = ranges.to_vec();
+    ranges.sort_by_key(|range| range.start);
+    let mut cursor = pads;
+    for range in &ranges {
+        let stop = range.start + range.len;
+        let (kind, class) = if range.start == cursor && stop <= prefix {
+            prefix_class(range, range.len)
+        } else {
+            failures.push(format!(
+                "Akita's message at {}..{stop} is outside its masked levels or overlaps",
+                range.start
+            ));
+            (Kind::Clear, None)
+        };
+        items.push(Item {
+            origin: Origin::Narg(range.start..stop),
+            kind,
+            bytes: range.len,
+            tape: None,
+            site: Some(site_of(range.context.site_id)),
+            class,
+        });
+        cursor = cursor.max(stop);
+    }
+    if cursor != prefix {
+        failures.push(format!(
+            "Akita's record covers its masked levels to {cursor}, not {prefix}"
+        ));
+        gap(cursor.min(prefix)..prefix, None, &mut items);
+    }
+    (items, failures)
+}
+
+/// The census: bytes per class, or every unclassified operation.
+fn census(
+    trace: &JoltTrace,
+    tape: &MaskedMessages<F>,
+    ranges: &[ProofMessageRange],
+    regions: &[(&str, usize)],
+    narg_len: usize,
+    expected: &Expected,
+) -> Result<BTreeMap<Class, usize>, Vec<String>> {
+    let (mut items, mut failures) = jolt_items(trace, tape, expected);
+    let (narg, narg_failures) = narg_items(ranges, regions, narg_len);
+    items.extend(narg);
+    failures.extend(narg_failures);
+    let mut totals = BTreeMap::new();
+    for item in items {
         match item.class {
             Some(class) => *totals.entry(class).or_default() += item.bytes,
-            None => failures.push(format!(
-                "event {} ({:?} {:?}, {} bytes, site {:?}) has no class",
-                item.index,
-                item.region,
-                item.kind,
-                item.bytes,
-                Site::of(trace.events[item.index].site),
-            )),
+            None => failures.push(format!("{item:?} has no class")),
         }
     }
     if failures.is_empty() {
@@ -350,14 +504,25 @@ fn census(trace: &Trace, expected: &Expected) -> Result<BTreeMap<Class, usize>, 
     }
 }
 
-fn honest() -> (&'static AkitaFixtureCase, Trace) {
-    honest_of(whiteout_muldiv_case())
+fn classify(case: &AkitaFixtureCase, trace: &JoltTrace) -> Vec<Item> {
+    let expected = expected_absorbs(case);
+    let (mut items, _) = jolt_items(trace, tape_of(&case.proof), &expected);
+    items.extend(narg_items(&case.narg_ranges, &case.narg_regions, case.proof.narg.len()).0);
+    items
 }
 
-fn honest_of(case: &'static AkitaFixtureCase) -> (&'static AkitaFixtureCase, Trace) {
-    let trace = case.honest_trace();
-    assert_coverage_closure(&trace, case.proof().narg.len());
+fn honest_of(case: &'static AkitaFixtureCase) -> (&'static AkitaFixtureCase, JoltTrace) {
+    let trace = jolt_trace(case, &case.proof);
+    trace.result.clone().expect("the honest proof verifies");
+    assert!(
+        !case.narg_ranges.is_empty(),
+        "the fixture kept Akita's record of the argument string"
+    );
     (case, trace)
+}
+
+fn honest() -> (&'static AkitaFixtureCase, JoltTrace) {
+    honest_of(whiteout_muldiv_case())
 }
 
 /// The Whiteout cases with precommitted groups: both advice kinds, and a
@@ -371,22 +536,23 @@ fn precommitted_cases() -> Vec<&'static AkitaFixtureCase> {
     cases
 }
 
-/// HT1 over one case: every received byte and public absorb belongs to
-/// exactly one class, Stage 8 absorbs exactly its statement's
-/// [`Expected::stage8`], and the message bytes tile the argument string
-/// (coverage closure), so no private value reaches the sponge clear.
+/// HT1 over one case: every Jolt absorb and every argument-string byte
+/// belongs to exactly one class, the commitments and Stage 8 absorb exactly
+/// their statement's, the masked tape is absorbed whole and in order, and the
+/// argument string's parts tile it, so no private value reaches the sponge
+/// clear.
 fn assert_census(case: &'static AkitaFixtureCase) {
     let (case, trace) = honest_of(case);
-    let totals = census(&trace, &expected_absorbs(case))
-        .unwrap_or_else(|failures| panic!("unclassified operations:\n{}", failures.join("\n")));
-    let message_bytes: usize = classify(&trace)
-        .iter()
-        .filter(|item| item.kind != Kind::Public)
-        .map(|item| item.bytes)
-        .sum();
-    assert_eq!(message_bytes, case.proof().narg.len());
+    let totals = census(
+        &trace,
+        tape_of(&case.proof),
+        &case.narg_ranges,
+        &case.narg_regions,
+        case.proof.narg.len(),
+        &expected_absorbs(case),
+    )
+    .unwrap_or_else(|failures| panic!("unclassified operations:\n{}", failures.join("\n")));
     for class in [
-        Class::Statement,
         Class::Commitment,
         Class::Pads,
         Class::MaskedSlot,
@@ -399,6 +565,12 @@ fn assert_census(case: &'static AkitaFixtureCase) {
             "no {class:?} bytes: {totals:?}"
         );
     }
+    // Every Jolt stage message is on the tape: the clear proof fields stay
+    // empty.
+    assert_eq!(
+        case.proof.stages,
+        jolt_verifier::proof::JoltStageProofs::masked(case.proof.stages.pow_nonces)
+    );
 }
 
 /// HT1 on muldiv: the trace group alone.
@@ -416,191 +588,260 @@ fn whiteout_masked_site_census_with_precommitted_groups() {
     }
 }
 
-/// `trace` with the masked marker of event `message` removed: its value
-/// routed clear.
-fn routed_clear(trace: &Trace, message: usize) -> Trace {
-    let mut events = trace.events.clone();
-    assert!(matches!(
-        events[message + 1].op,
-        TranscriptOp::Masked { .. }
-    ));
-    let _ = events.remove(message + 1);
-    Trace {
-        events,
-        result: Ok(()),
-    }
+/// `trace` with the masked tape absorb `item` replaced by its clear values
+/// (m̂ − p): a Jolt private value routed clear.
+fn jolt_routed_clear(case: &AkitaFixtureCase, trace: &JoltTrace, item: &Item) -> JoltTrace {
+    let (Origin::Absorb(index), Some(run)) = (&item.origin, &item.tape) else {
+        panic!("a masked tape absorb");
+    };
+    let tape = tape_of(&case.proof);
+    let clear: Vec<F> = run
+        .clone()
+        .map(|slot| tape.values[slot] - case.pads[slot])
+        .collect();
+    let mut routed = trace.clone();
+    routed.after[*index] = encode(&clear);
+    routed
 }
 
-fn masked_messages(trace: &Trace) -> Vec<Classified> {
-    classify(trace)
-        .into_iter()
-        .filter(|item| item.kind == Kind::Masked)
-        .collect()
+/// `ranges` with the masked marker of `range` removed: an Akita private
+/// value routed clear.
+fn akita_routed_clear(
+    ranges: &[ProofMessageRange],
+    range: &Range<usize>,
+) -> Vec<ProofMessageRange> {
+    let mut ranges = ranges.to_vec();
+    let target = ranges
+        .iter_mut()
+        .find(|candidate| candidate.start == range.start)
+        .expect("the range");
+    assert!(target.pads.is_some(), "a masked range");
+    target.pads = None;
+    ranges
 }
 
-/// Positive control (§7): one Jolt claim and one Akita stage-1 value
-/// routed clear are each flagged.
+/// Positive control (§7): one Jolt claim and one Akita stage-1 value routed
+/// clear are each flagged.
 #[test]
 fn whiteout_census_flags_a_jolt_claim_and_an_akita_value_routed_clear() {
-    let (_, trace) = honest();
-    let masked = masked_messages(&trace);
-    let jolt_claim = masked
+    let (case, trace) = honest();
+    let expected = expected_absorbs(case);
+    let items = classify(case, &trace);
+    let tape = tape_of(&case.proof);
+    let narg_len = case.proof.narg.len();
+    // The last stage message before the auxiliary block is a stage-7 claim
+    // run; the auxiliary block is the tape's last absorb.
+    let masked: Vec<&Item> = items
         .iter()
-        .rfind(|item| item.region == Region::Stage3)
-        .expect("Stage 3 sends masked claims");
-    let akita_stage1 = masked
+        .filter(|item| item.kind == Kind::Masked && item.tape.is_some())
+        .collect();
+    let jolt_claim = masked[masked.len() - 2];
+    assert!(
+        census(
+            &jolt_routed_clear(case, &trace, jolt_claim),
+            tape,
+            &case.narg_ranges,
+            &case.narg_regions,
+            narg_len,
+            &expected
+        )
+        .is_err(),
+        "a Jolt claim routed clear is not flagged"
+    );
+    let akita_stage1 = items
         .iter()
         .find(|item| {
-            matches!(
-                Site::of(trace.events[item.index].site),
-                Site::Akita(ProtocolSiteId {
-                    family: SITE_FAMILY_STAGE1,
-                    ..
-                })
-            )
+            item.kind == Kind::Masked
+                && item
+                    .site
+                    .is_some_and(|site| site.family == SITE_FAMILY_STAGE1)
         })
         .expect("Akita's stage 1 sends masked values");
-    let stage8 = expected_absorbs(whiteout_muldiv_case());
-    for item in [jolt_claim, akita_stage1] {
-        assert!(
-            census(&routed_clear(&trace, item.index), &stage8).is_err(),
-            "{item:?} routed clear is not flagged"
-        );
-    }
+    let Origin::Narg(range) = &akita_stage1.origin else {
+        unreachable!("Akita's values are in the argument string");
+    };
+    assert!(
+        census(
+            &trace,
+            tape,
+            &akita_routed_clear(&case.narg_ranges, range),
+            &case.narg_regions,
+            narg_len,
+            &expected
+        )
+        .is_err(),
+        "an Akita stage-1 value routed clear is not flagged"
+    );
 }
 
-/// Mutation check of the census: removing any masked marker, masking only
-/// part of a message, or adding a public absorb inside a masked stage is
-/// flagged.
+/// Mutation check of the census: routing any masked message clear, masking
+/// an Akita message but for its last element, an extra absorb inside the
+/// stages or at Stage 8, an extra commitment absorb, and an unrecorded byte
+/// of the argument string are each flagged.
 #[test]
 fn whiteout_census_flags_every_unmasked_message() {
     let (case, trace) = honest();
-    let stage8 = expected_absorbs(case);
-    let masked = masked_messages(&trace);
-    assert!(masked.len() > 100);
-    let missed: Vec<usize> = masked
+    let expected = expected_absorbs(case);
+    let tape = tape_of(&case.proof);
+    let narg_len = case.proof.narg.len();
+    let items = classify(case, &trace);
+    let flagged = |trace: &JoltTrace, ranges: &[ProofMessageRange], narg_len: usize| {
+        census(trace, tape, ranges, &case.narg_regions, narg_len, &expected).is_err()
+    };
+    assert!(!flagged(&trace, &case.narg_ranges, narg_len));
+
+    let masked: Vec<&Item> = items
         .iter()
-        .filter(|item| census(&routed_clear(&trace, item.index), &stage8).is_ok())
-        .map(|item| item.index)
+        .filter(|item| item.kind == Kind::Masked)
+        .collect();
+    assert!(masked.len() > 100, "{} masked messages", masked.len());
+    let missed: Vec<&Origin> = masked
+        .iter()
+        .filter(|item| match &item.origin {
+            Origin::Absorb(_) => !flagged(
+                &jolt_routed_clear(case, &trace, item),
+                &case.narg_ranges,
+                narg_len,
+            ),
+            Origin::Narg(range) => !flagged(
+                &trace,
+                &akita_routed_clear(&case.narg_ranges, range),
+                narg_len,
+            ),
+            Origin::Seed(_) => unreachable!("seeding absorbs are public"),
+        })
+        .map(|item| &item.origin)
         .collect();
     assert!(missed.is_empty(), "unflagged clear routings: {missed:?}");
 
-    let wide = masked
+    let wide = case
+        .narg_ranges
         .iter()
-        .find(|item| item.bytes > FIELD_BYTES)
-        .expect("a masked message of several elements");
-    let mut events = trace.events.clone();
-    events[wide.index + 1].len -= 1;
+        .find(|range| range.pads.is_some_and(|(_, count)| count > 1))
+        .expect("an Akita message of several masked elements");
+    let mut partial = case.narg_ranges.clone();
+    for range in &mut partial {
+        if range.start == wide.start {
+            range.pads = range.pads.map(|(first, count)| (first, count - 1));
+        }
+    }
     assert!(
-        census(
-            &Trace {
-                events,
-                result: Ok(())
-            },
-            &stage8
-        )
-        .is_err(),
-        "a message masked but for its last element is not flagged"
+        flagged(&trace, &partial, narg_len),
+        "an Akita message masked but for its last element is not flagged"
     );
 
-    // A clear-only absorb at Stage 8's site (an evaluation, as the clear
-    // build's reduction absorbs): a public absorb, then a clear message.
-    let digest = trace
-        .events
+    let first_tape = trace
+        .after
         .iter()
-        .position(|event| event.site == STAGE8)
-        .expect("Stage 8's digests");
-    for op in [TranscriptOp::Public, TranscriptOp::Message] {
-        let mut events = trace.events.clone();
-        let mut extra = events[digest].clone();
-        extra.op = op;
-        extra.len = FIELD_BYTES;
-        events.insert(digest + 1, extra);
+        .position(|bytes| *bytes == encode(&tape.values[..bytes.len() / FIELD_BYTES]))
+        .expect("the first tape absorb");
+    for (label, at, bytes) in [
+        (
+            "a field element absorbed clear inside the stages",
+            first_tape + 1,
+            vec![0u8; FIELD_BYTES],
+        ),
+        (
+            "an evaluation absorbed at Stage 8",
+            trace.after.len(),
+            vec![0u8; FIELD_BYTES],
+        ),
+    ] {
+        let mut extra = trace.clone();
+        extra.after.insert(at, bytes);
         assert!(
-            census(
-                &Trace {
-                    events,
-                    result: Ok(())
-                },
-                &stage8
-            )
-            .is_err(),
-            "a clear {op:?} at Stage 8's site is not flagged"
+            flagged(&extra, &case.narg_ranges, narg_len),
+            "{label} is not flagged"
         );
     }
-
-    // An extra public absorb in the commitments region (muldiv has no
-    // statement-fixed commitment).
-    let commitment = trace
-        .regions()
-        .iter()
-        .position(|region| *region == Region::Commitments)
-        .expect("the commitments");
-    let mut events = trace.events.clone();
-    let public = TranscriptEvent {
-        op: TranscriptOp::Public,
-        narg: None,
-        ..events[commitment].clone()
-    };
-    events.insert(commitment, public);
+    let mut extra = trace.clone();
+    extra.seed.push(vec![0u8; 32]);
     assert!(
-        census(
-            &Trace {
-                events,
-                result: Ok(())
-            },
-            &stage8
-        )
-        .is_err(),
-        "an extra public absorb among the commitments is not flagged"
+        flagged(&extra, &case.narg_ranges, narg_len),
+        "an extra absorb among the commitments is not flagged"
     );
-
-    let stage5 = masked
-        .iter()
-        .find(|item| item.region == Region::Stage5)
-        .expect("Stage 5 sends masked messages");
-    let mut events = trace.events.clone();
-    let public = TranscriptEvent {
-        op: TranscriptOp::Public,
-        narg: None,
-        ..events[stage5.index].clone()
-    };
-    events.insert(stage5.index, public);
     assert!(
-        census(
-            &Trace {
-                events,
-                result: Ok(())
-            },
-            &stage8
-        )
-        .is_err(),
-        "a public absorb inside Stage 5 is not flagged"
+        flagged(&trace, &case.narg_ranges, narg_len + 1),
+        "a byte past Akita's last range is not flagged"
     );
 }
 
-/// V5: the single-byte sweep (each region's first and last tamper kept)
-/// rejects by Whiteout's deadline, plus truncation, a trailing byte, an
-/// empty string and wrong protocol words.
-#[test]
-fn whiteout_muldiv_message_sweep() {
-    let case = whiteout_muldiv_case();
-    checks::message_sweep(case, Some(512));
-    checks::structural_tampers(case, Some(64));
+/// Every proof `tamper` makes from `case`'s proof must reject.
+fn assert_rejects(case: &AkitaFixtureCase, label: &str, tamper: impl FnOnce(&mut AkitaJoltProof)) {
+    let mut proof = case.proof.clone();
+    tamper(&mut proof);
+    assert!(case.verify_proof(&proof).is_err(), "{label} is accepted");
 }
 
-/// V5: one tamper at the first, middle and last message of every (region,
-/// class) the census finds, so each class (masked stage values, t_p, the
-/// hiding commitment, Akita's masked and public messages, both parts of the
-/// auxiliary block, Σ and the response proof) is exercised.
+/// The tamper of one item: a flipped byte at `offset` of an argument-string
+/// range, or `+1` on a tape value of a masked absorb, or `+1` on a Jolt
+/// nonce, else `None` (a statement-derived absorb has no wire form).
+fn tamper_item(
+    case: &AkitaFixtureCase,
+    item: &Item,
+    pick: usize,
+) -> Option<(String, AkitaJoltProof)> {
+    let mut proof = case.proof.clone();
+    match (&item.origin, &item.tape) {
+        (Origin::Narg(range), _) if !range.is_empty() => {
+            let at = range.start + pick.min(range.len() - 1);
+            proof.narg[at] ^= 1;
+            Some((format!("narg byte {at} ({:?})", item.class), proof))
+        }
+        (Origin::Absorb(_), Some(run)) => {
+            let at = run.start + pick.min(run.len() - 1);
+            tape_mut(&mut proof).values[at] += F::from_u64(1);
+            Some((format!("tape value {at} ({:?})", item.class), proof))
+        }
+        _ => None,
+    }
+}
+
+/// V5: one tamper at the first, middle and last element of the first,
+/// middle and last item of every (class, kind) the census finds, so each
+/// class (masked stage values, t_p, Akita's masked and clear messages, the
+/// auxiliary block, Σ and the response proof) is exercised; then every tape
+/// nonce.
+fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
+    let (case, trace) = honest_of(case);
+    let mut groups: BTreeMap<(Class, Kind), Vec<Item>> = BTreeMap::new();
+    for item in classify(case, &trace) {
+        if let Some(class) = item.class {
+            groups.entry((class, item.kind)).or_default().push(item);
+        }
+    }
+    let mut failures = Vec::new();
+    let mut tried = 0;
+    for (key, items) in &groups {
+        for item in [0, items.len() / 2, items.len() - 1].map(|pick| &items[pick]) {
+            for pick in [0, item.bytes / 2, usize::MAX] {
+                if let Some((label, proof)) = tamper_item(case, item, pick) {
+                    tried += 1;
+                    if case.verify_proof(&proof).is_ok() {
+                        failures.push(format!("{key:?}: {label}"));
+                    }
+                }
+            }
+        }
+    }
+    for at in 0..tape_of(&case.proof).nonces.len() {
+        let mut proof = case.proof.clone();
+        tape_mut(&mut proof).nonces[at] ^= 1;
+        tried += 1;
+        if case.verify_proof(&proof).is_ok() {
+            failures.push(format!("tape nonce {at}"));
+        }
+    }
+    assert!(tried > 20, "{tried} tampers");
+    assert!(failures.is_empty(), "accepted tampers: {failures:#?}");
+}
+
 #[test]
 fn whiteout_tamper_per_census_class() {
     assert_tamper_per_census_class(whiteout_muldiv_case());
 }
 
-/// [`whiteout_tamper_per_census_class`] with precommitted groups (W6f):
-/// the untrusted advice commitment, and every region and class the opening
-/// of advice or a committed program reaches.
+/// [`whiteout_tamper_per_census_class`] with precommitted groups (W6f).
 #[test]
 fn whiteout_tamper_per_census_class_with_precommitted_groups() {
     for case in precommitted_cases() {
@@ -608,109 +849,118 @@ fn whiteout_tamper_per_census_class_with_precommitted_groups() {
     }
 }
 
-fn assert_tamper_per_census_class(case: &'static AkitaFixtureCase) {
-    let (case, trace) = honest_of(case);
-    let mut groups: BTreeMap<(Region, Class, bool), Vec<Range<usize>>> = BTreeMap::new();
-    for item in classify(&trace) {
-        if let (Some(class), Some(range)) = (item.class, trace.events[item.index].narg.clone()) {
-            groups
-                .entry((item.region, class, item.kind == Kind::Masked))
-                .or_default()
-                .push(range);
-        }
-    }
+/// V5: the message sweep, budgeted: flipped bytes spread over every
+/// argument-string message and `+1` on values spread over the whole tape,
+/// plus the structural tampers (truncations, a trailing byte, an empty
+/// string, a dropped or extra tape value or nonce).
+#[test]
+fn whiteout_muldiv_message_sweep() {
+    let (case, trace) = honest();
+    let items = classify(case, &trace);
     let mut failures = Vec::new();
-    for (key, ranges) in &groups {
-        let picks = [0, ranges.len() / 2, ranges.len() - 1];
-        for range in picks.iter().map(|&pick| &ranges[pick]) {
-            if range.is_empty() {
-                continue;
-            }
-            let mut tampered = case.proof().clone();
-            tampered.narg[range.start + range.len() / 2] ^= 1;
-            if case.verify_proof(&tampered).is_ok() {
-                failures.push(format!("{key:?} at {range:?}"));
+    let mut tried = 0;
+    for item in items
+        .iter()
+        .filter(|item| matches!(item.origin, Origin::Narg(_)))
+    {
+        for pick in [0, item.bytes / 3, 2 * item.bytes / 3, usize::MAX] {
+            if let Some((label, proof)) = tamper_item(case, item, pick) {
+                tried += 1;
+                if case.verify_proof(&proof).is_ok() {
+                    failures.push(label);
+                }
             }
         }
     }
-    // The auxiliary block is one message: Akita's part leads, Jolt's follows.
-    let aux = groups
-        .get(&(Region::Whiteout, Class::MaskedSlot, true))
-        .and_then(|ranges| ranges.first())
-        .expect("the auxiliary block");
-    for offset in [0, aux.len() - 1] {
-        let mut tampered = case.proof().clone();
-        tampered.narg[aux.start + offset] ^= 1;
-        if case.verify_proof(&tampered).is_ok() {
-            failures.push(format!("auxiliary block byte {offset}"));
+    let values = tape_of(&case.proof).values.len();
+    let step = (values / 256).max(1);
+    for at in (0..values).step_by(step).chain([values - 1]) {
+        let mut proof = case.proof.clone();
+        tape_mut(&mut proof).values[at] += F::from_u64(1);
+        tried += 1;
+        if case.verify_proof(&proof).is_ok() {
+            failures.push(format!("tape value {at}"));
         }
     }
+    assert!(tried > 300, "{tried} tampers");
     assert!(failures.is_empty(), "accepted tampers: {failures:#?}");
+
+    let narg = case.proof.narg.len();
+    for len in [0, 1, narg / 4, narg / 2, narg - 1] {
+        assert_rejects(case, &format!("the string truncated to {len}"), |proof| {
+            proof.narg.truncate(len);
+        });
+    }
+    assert_rejects(case, "a trailing byte", |proof| proof.narg.push(0));
+    assert_rejects(case, "a dropped tape value", |proof| {
+        let _ = tape_mut(proof).values.pop();
+    });
+    assert_rejects(case, "an extra tape value", |proof| {
+        tape_mut(proof).values.push(F::from_u64(0));
+    });
+    assert_rejects(case, "an extra tape nonce", |proof| {
+        tape_mut(proof).nonces.push(0);
+    });
+    if !tape_of(&case.proof).nonces.is_empty() {
+        assert_rejects(case, "a dropped tape nonce", |proof| {
+            let _ = tape_mut(proof).nonces.pop();
+        });
+    }
 }
 
 /// A47: the cut sends u_a compressed, one 16-coefficient payload per chunk
 /// of Whiteout's split chain, whose chunks hold up to 15,115 coefficients
-/// at the 169-bit SIS tables (O5, D34): muldiv's u_a is 19 × `R_64`, 1,216
-/// coefficients, so one chunk payload (byte tampers are the census sweep's).
+/// at the 169-bit SIS tables (O5, D34): muldiv's u_a is one chunk payload.
 #[test]
 fn whiteout_compressed_residual_commitment_is_one_chunk_payload() {
-    let (_, trace) = honest();
-    let cut = classify(&trace)
-        .into_iter()
-        .find(|item| {
-            item.region == Region::Stage8
-                && matches!(
-                    Site::of(trace.events[item.index].site),
-                    Site::Akita(site)
-                        if site.family == SITE_FAMILY_NEXT_WITNESS && site.level == ZK_CUT_LEVEL
-                )
+    let (case, _) = honest();
+    let cut = case
+        .narg_ranges
+        .iter()
+        .find(|range| {
+            let site = site_of(range.context.site_id);
+            site.family == SITE_FAMILY_NEXT_WITNESS && site.level == ZK_CUT_LEVEL
         })
         .expect("the cut level's successor payload");
     assert_eq!(
-        cut.bytes,
-        16 * FIELD_BYTES,
+        cut.context.atom_count, 16,
         "the cut sends one chunk payload"
     );
 }
 
-/// N4: one byte of an Akita masked-level message, and one in each part of
-/// the auxiliary block (Akita's first, Jolt's last), each reject. Byte
-/// tampers re-randomize every later challenge, so they are load-bearing for
-/// the Σ check, not for the rows; Akita's rows are pinned by
-/// `shifts::whiteout_final_openings_meet_akita_through_the_batch_challenges`.
+/// N4: one byte of an Akita masked-level message, and a value in each part
+/// of the auxiliary block (Akita's first, Jolt's last), each reject. Akita's
+/// rows are pinned by `shifts`.
 #[test]
 fn whiteout_masked_level_and_auxiliary_block_tampers() {
     let (case, trace) = honest();
-    let masked = masked_messages(&trace);
-    let akita_level = masked
+    let items = classify(case, &trace);
+    let akita_level = items
         .iter()
-        .find(|item| {
-            item.region == Region::Stage8
-                && matches!(Site::of(trace.events[item.index].site), Site::Akita(_))
-        })
+        .find(|item| item.kind == Kind::Masked && matches!(item.origin, Origin::Narg(_)))
         .expect("Akita's masked levels send masked values");
-    let aux = masked
-        .iter()
-        .find(|item| item.region == Region::Whiteout)
-        .expect("the auxiliary block");
-    let range = |item: &Classified| {
-        trace.events[item.index]
-            .narg
-            .clone()
-            .expect("a message has a range")
+    let Origin::Narg(level) = &akita_level.origin else {
+        unreachable!("an argument-string range");
     };
-    let (level, block) = (range(akita_level), range(aux));
-    for (label, position) in [
-        ("an Akita masked-level value", level.start),
+    assert_rejects(
+        case,
+        "a flipped byte of an Akita masked-level value",
+        |proof| {
+            proof.narg[level.start] ^= 1;
+        },
+    );
+    let block = items
+        .iter()
+        .rev()
+        .find_map(|item| item.tape.clone())
+        .expect("the auxiliary block is the tape's last message");
+    for (label, at) in [
         ("the auxiliary block's Akita part", block.start),
         ("the auxiliary block's Jolt part", block.end - 1),
     ] {
-        let mut tampered = case.proof().clone();
-        tampered.narg[position] ^= 1;
-        assert!(
-            case.verify_proof(&tampered).is_err(),
-            "a flipped byte in {label} is accepted"
-        );
+        assert_rejects(case, label, |proof| {
+            tape_mut(proof).values[at] += F::from_u64(1);
+        });
     }
 }
 
@@ -719,96 +969,109 @@ fn whiteout_masked_level_and_auxiliary_block_tampers() {
 #[test]
 fn whiteout_rerun_reuses_nothing_from_the_aborted_attempt() {
     let (case, aborted) = whiteout_rerun_case();
-    let trace = case.honest_trace();
-    // Each commitment is two messages: its header (layout digest and sizes,
-    // public metadata) and then its image. The trace commitment's comes
-    // first, then the RV64 increments'.
-    let commitments: Vec<_> = trace
-        .messages()
-        .into_iter()
-        .filter(|message| message.region == Region::Commitments)
-        .map(|message| message.range)
-        .collect();
-    assert!(
-        commitments.len() >= 4 && commitments.len().is_multiple_of(2),
-        "the commitments are (header, image) pairs: {commitments:?}"
+    jolt_trace(&case, &case.proof)
+        .result
+        .expect("the rerun's proof verifies");
+    use jolt_transcript::Encoding as _;
+    assert_ne!(
+        case.proof.commitments.encode().as_ref(),
+        aborted.commitment.as_slice(),
+        "the trace commitment repeats the aborted attempt"
     );
-    let headers: Vec<_> = commitments.into_iter().step_by(2).collect();
+    let tape = encode(&tape_of(&case.proof).values);
+    let shared = tape.len().min(aborted.tape.len()) / FIELD_BYTES;
+    assert!(
+        shared > 100,
+        "the attempts share a long tape prefix to compare"
+    );
+    for value in 0..shared {
+        let range = value * FIELD_BYTES..(value + 1) * FIELD_BYTES;
+        assert_ne!(
+            tape[range.clone()],
+            aborted.tape[range],
+            "masked tape value {value} repeats the aborted attempt"
+        );
+    }
     let mut compared = 0;
-    for item in classify(&trace) {
+    for item in narg_items(&case.narg_ranges, &case.narg_regions, case.proof.narg.len()).0 {
+        let Origin::Narg(range) = item.origin else {
+            continue;
+        };
         let fresh = matches!(
             item.class,
             Some(Class::Commitment | Class::Pads | Class::MaskedSlot)
         );
-        let Some(range) = trace.events[item.index].narg.clone() else {
-            continue;
-        };
-        if fresh
-            && !headers.contains(&range)
-            && range.end <= aborted.len()
-            && range.len() >= FIELD_BYTES
-        {
+        if fresh && range.end <= aborted.narg.len() && range.len() >= FIELD_BYTES {
             assert_ne!(
-                case.proof().narg[range.clone()],
-                aborted[range.clone()],
+                case.proof.narg[range.clone()],
+                aborted.narg[range.clone()],
                 "{:?} at {range:?} repeats the aborted attempt",
-                item.region
+                item.class
             );
             compared += 1;
         }
     }
     assert!(
-        compared > 100,
-        "the attempts share a long prefix to compare"
+        compared > 10,
+        "{compared} argument-string messages compared"
     );
 }
 
-/// V4 counting equality: the pad layout the verifier derives over zero
-/// bytes equals the one over the proof's own bytes and over random bytes,
-/// and fills exactly the prover's pads.
+/// V4 counting equality: the pad layout depends on the proof's shape only:
+/// the honest proof, its tape zeroed, and its tape and argument string
+/// randomized give the same layout, which fills exactly the prover's pads.
 #[test]
 fn whiteout_pad_layout_counts_the_same_on_any_bytes() {
-    let (case, trace) = honest();
-    let narg = &case.proof().narg;
-    let layout = |prefix: &[u8]| {
-        pad_layout::<AkitaField, AkitaScheme, AkitaVc, JoltSponge>(
+    let (case, _) = honest();
+    let layout = |proof: &AkitaJoltProof| {
+        let (checked, _) = validate_and_seed_transcript(
             &case.preprocessing,
             &case.public_io,
-            None,
-            prefix,
+            proof,
+            case.trusted_advice_commitment.as_ref(),
+            |statement| verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &proof.narg),
         )
-        .expect("pad layout")
+        .expect("the statement seeds");
+        let frame = whiteout_frame(
+            &case.preprocessing,
+            proof,
+            &checked,
+            case.trusted_advice_commitment.as_ref(),
+        )
+        .expect("the frame");
+        pad_layout(&case.preprocessing, proof, &checked, &frame).expect("pad layout")
     };
-    let seeded = trace
-        .messages()
-        .into_iter()
-        .find(|message| message.region == Region::Pads)
-        .expect("the pad commitment")
-        .range
-        .start;
-    let zeros = layout(&narg[..seeded]);
-    assert_eq!(zeros.layout().num_pads, case.pads.len());
-    assert_eq!(layout(narg), zeros);
-    let mut random = narg[..seeded].to_vec();
+    let honest = layout(&case.proof);
+    assert_eq!(honest.layout().num_pads, case.pads.len());
+    let mut zeroed = case.proof.clone();
+    for value in &mut tape_mut(&mut zeroed).values {
+        *value = F::from_u64(0);
+    }
+    assert_eq!(layout(&zeroed), honest);
+    let mut random = case.proof.clone();
     let mut state = 0x9e37_79b9_7f4a_7c15_u64;
-    random.extend((seeded..narg.len()).map(|_| {
+    let mut next = || {
         state ^= state << 13;
         state ^= state >> 7;
         state ^= state << 17;
-        state.to_le_bytes()[0]
-    }));
-    assert_eq!(layout(&random), zeros);
+        state
+    };
+    for value in &mut tape_mut(&mut random).values {
+        *value = F::from_u64(next());
+    }
+    for byte in &mut random.narg {
+        *byte = next().to_le_bytes()[0];
+    }
+    assert_eq!(layout(&random), honest);
 }
 
-/// V5: the statement and header tampers, and the Whiteout proof declared
-/// as a clear or BlindFold proof.
+/// V5: the statement and proof-shape tampers, and the Whiteout proof
+/// declared as a clear or BlindFold proof.
 #[test]
 fn whiteout_statement_and_mode_tampers() {
     let case = whiteout_muldiv_case();
-    checks::statement_tampers(case);
-    checks::header_equivocations(case);
     for zk in [ZkConfig::Transparent, ZkConfig::BlindFold] {
-        let mut proof = case.proof().clone();
+        let mut proof = case.proof.clone();
         proof.protocol = JoltProtocolConfig {
             zk,
             ..proof.protocol
@@ -818,34 +1081,72 @@ fn whiteout_statement_and_mode_tampers() {
             Err(VerifierError::ProtocolConfigMismatch { .. })
         ));
     }
+    assert_rejects(case, "a doubled trace length", |proof| {
+        proof.trace_length *= 2;
+    });
+    assert_rejects(case, "a halved trace length", |proof| {
+        proof.trace_length /= 2;
+    });
+    assert_rejects(case, "a doubled RAM size", |proof| proof.ram_K *= 2);
+    assert_rejects(case, "a missing RV64 increment commitment", |proof| {
+        proof.fused_inc_commitment = None;
+    });
+    assert_rejects(
+        case,
+        "the trace commitment in the increments' place",
+        |proof| {
+            proof.fused_inc_commitment = Some(proof.commitments.clone());
+        },
+    );
+    assert_rejects(
+        case,
+        "an untrusted advice commitment the statement lacks",
+        |proof| {
+            proof.untrusted_advice_commitment = Some(proof.commitments.clone());
+        },
+    );
+    assert_rejects(case, "a clear round beside the masked tape", |proof| {
+        proof.stages.stage3_sumcheck_proof =
+            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof {
+                round_polynomials: vec![CompressedPoly::new(vec![F::from_u64(1)])],
+                pow_nonces: Vec::new(),
+            }));
+    });
+    let mut io = case.public_io.clone();
+    if let Some(byte) = io.outputs.first_mut() {
+        *byte ^= 1;
+    } else {
+        io.outputs.push(1);
+    }
+    assert!(
+        jolt_verifier::whiteout::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+            &case.preprocessing,
+            &io,
+            &case.proof,
+            case.trusted_advice_commitment.as_ref(),
+        )
+        .is_err(),
+        "a proof verifies against other outputs"
+    );
 }
-
-#[path = "../support/fs_transcript.rs"]
-#[expect(dead_code, reason = "the audit sponge's replay half is unused here")]
-mod fs_transcript;
 
 /// Shifts of the final-opening claims, with every auxiliary value
 /// recomputed as a consistent cheater would: the honest pads, the relation,
-/// the residual witness (bound to the trace commitment), and the
-/// EvaluationBatch challenges the run drew.
+/// and the residual witness (bound to the trace commitment).
 mod shifts {
     use jolt_akita::{AkitaField, AkitaScheme};
     use jolt_algebra::{Field, One, Zero};
     use jolt_prover::akita::preprocessing::AkitaVc;
-    use jolt_transcript::{ClaimDomain, TranscriptOp, VerifierTranscript};
+    use jolt_transcript::{verifier_transcript, ClaimDomain, Keccak};
     use jolt_verifier::whiteout::{
-        pad_layout, whiteout_prefix, whiteout_relation, whiteout_stages,
+        pad_layout, whiteout_frame, whiteout_prefix, whiteout_relation, whiteout_stages,
     };
-    use jolt_verifier::{jolt_protocol_id, JoltSponge, JOLT_SESSION};
+    use jolt_verifier::{validate_and_seed_transcript, JOLT_SESSION};
     use jolt_zk::masking::{ResidualRelation, ResidualVar, ZkError};
     use jolt_zk::whiteout::MaskedGroupOpening;
 
-    use super::fs_transcript::{decode_small_challenge, record, AuditSponge};
-    use akita_params::GrindingSite;
-
-    use super::Site;
     use crate::support::akita_fixtures::{
-        whiteout_advice_case, whiteout_muldiv_case, AkitaFixtureCase,
+        whiteout_advice_case, whiteout_muldiv_case, whiteout_rerun_case, AkitaFixtureCase,
     };
 
     type F = AkitaField;
@@ -940,16 +1241,22 @@ mod shifts {
     /// spec's prototype deltas with the new argument, then this test.
     ///
     /// N1: a shift of the final-opening claims that Jolt's rows cannot see
-    /// meets Akita's rows only through one functional, whose coefficients
-    /// are the EvaluationBatch challenges (drawn after t_p and every masked
-    /// value). So a shift in that functional's kernel passes every row under
-    /// these challenges: the binding is Schwartz–Zippel over the challenges,
-    /// not a row the shift could not satisfy. Jolt's rows see two
-    /// combinations: the trace group's claims and the RV64 increments' claim,
-    /// which the read-RAF increment opening pins.
+    /// meets Akita's rows only through one functional, drawn by Akita's
+    /// EvaluationBatch after t_p and every masked value. So a shift in that
+    /// functional's kernel passes every row: the binding is Schwartz–Zippel
+    /// over the batch challenges, not a row the shift could not satisfy.
+    /// The functional weights every claim and is fresh per proof: a rerun of
+    /// the same statement draws another one.
     #[test]
     fn whiteout_final_openings_meet_akita_through_the_batch_challenges() {
-        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_muldiv_case(), 2);
+        let first = assert_shifts_meet_akita_through_one_functional(whiteout_muldiv_case(), 2);
+        let (rerun, _) = whiteout_rerun_case();
+        let second = assert_shifts_meet_akita_through_one_functional(&rerun, 2);
+        assert_eq!(first.len(), second.len());
+        assert_ne!(
+            first, second,
+            "the functional is drawn afresh for each proof"
+        );
     }
 
     /// The same with precommitted groups (W6f): untrusted and trusted
@@ -958,79 +1265,53 @@ mod shifts {
     /// rows see one more combination of the claims.
     #[test]
     fn whiteout_advice_final_openings_meet_akita_through_the_batch_challenges() {
-        assert_shifts_meet_akita_through_the_batch_challenges(whiteout_advice_case(), 3);
+        let _ = assert_shifts_meet_akita_through_one_functional(whiteout_advice_case(), 3);
     }
 
     /// `jolt_seen` is the rank of Jolt's rows on the final-opening claims.
-    fn assert_shifts_meet_akita_through_the_batch_challenges(
+    /// Returns Akita's functional on the claims, normalized to its first
+    /// coefficient.
+    fn assert_shifts_meet_akita_through_one_functional(
         case: &AkitaFixtureCase,
         jolt_seen: usize,
-    ) {
+    ) -> Vec<F> {
         let pads = &case.pads;
-        let derived = pad_layout::<F, AkitaScheme, AkitaVc, JoltSponge>(
+        let proof = &case.proof;
+        let (checked, mut transcript) = validate_and_seed_transcript(
             &case.preprocessing,
             &case.public_io,
+            proof,
             case.trusted_advice_commitment.as_ref(),
-            &case.proof.narg,
+            |statement| verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &proof.narg),
         )
-        .expect("pad layout");
+        .expect("the statement seeds");
+        let frame = whiteout_frame(
+            &case.preprocessing,
+            proof,
+            &checked,
+            case.trusted_advice_commitment.as_ref(),
+        )
+        .expect("the frame");
+        let derived = pad_layout(&case.preprocessing, proof, &checked, &frame).expect("pad layout");
         let layout = derived.layout().clone();
-        let ((stages, prefix, relation, events), tape) = record(|| {
-            let mut transcript = VerifierTranscript::<AuditSponge>::new(
-                &jolt_protocol_id::<AuditSponge>(),
-                JOLT_SESSION,
-                &case.proof.narg,
-            );
-            let mut stages = whiteout_stages::<F, AkitaScheme, AkitaVc, AuditSponge>(
-                &case.preprocessing,
-                &case.public_io,
-                case.trusted_advice_commitment.as_ref(),
-                &mut transcript,
-                Some(&derived),
-            )
-            .expect("masked stages");
-            let (prefix, _) = whiteout_prefix(&mut stages, &mut transcript).expect("prefix");
-            let relation =
-                whiteout_relation(&mut stages, &prefix, &mut transcript).expect("relation");
-            let events = transcript.events().to_vec();
-            (stages, prefix, relation, events)
-        });
+        let mut stages = whiteout_stages::<F, AkitaScheme, AkitaVc, _, _>(
+            &case.preprocessing,
+            proof,
+            &checked,
+            case.trusted_advice_commitment.as_ref(),
+            &mut transcript,
+            Some(&derived),
+        )
+        .expect("masked stages");
+        let prefix =
+            whiteout_prefix::<F, AkitaScheme, _>(&mut stages, &mut transcript).expect("prefix");
+        let relation = whiteout_relation(&mut stages, &prefix, &mut transcript).expect("relation");
 
-        // The EvaluationBatch challenges, one per claim, from the tape: the
-        // batch's draws (detail 0, not its grinding nonce's).
-        let evaluation_batch = GrindingSite::EvaluationBatch { level: 0 }.site_id(0);
-        let mut offset = 0;
-        let mut batch = Vec::new();
-        for event in &events {
-            if event.op != TranscriptOp::Challenge {
-                continue;
-            }
-            if matches!(
-                Site::of(event.site),
-                Site::Akita(site) if site.family == evaluation_batch.family && site.detail == 0
-            ) {
-                batch.push(decode_small_challenge::<F>(
-                    &tape.bytes[offset..offset + event.len],
-                ));
-            }
-            offset += event.len;
-        }
-        assert_eq!(
-            offset,
-            tape.bytes.len(),
-            "every challenge byte is on the tape"
-        );
         let claims: Vec<_> = stages
             .claims
             .iter()
             .flat_map(|group| &group.evaluations)
             .collect();
-        assert_eq!(
-            batch.len(),
-            claims.len(),
-            "one EvaluationBatch challenge per claim"
-        );
-
         let witness = [prefix
             .residual_claim()
             .witness_eval()
@@ -1145,30 +1426,23 @@ mod shifts {
             "Akita's rows apply one functional to the claims"
         );
 
-        // That functional is the batch challenges, up to one scale.
+        // The functional φ on the claims, read off one row Akita's rows move.
         let row = (0..akita[0].len())
-            .find(|&row| !akita[0][row].is_zero())
+            .find(|&row| akita.iter().any(|column| !column[row].is_zero()))
             .expect("a claim shift moves an Akita row");
-        let scale = akita[0][row] * (gains[0] * batch[0]).inverse().expect("nonzero challenge");
-        for (claim, challenge) in batch.iter().enumerate() {
-            assert_eq!(
-                akita[claim][row],
-                scale * gains[claim] * *challenge,
-                "claim {claim}"
-            );
-        }
-
-        // Two Jolt-invisible shifts combined into the functional's kernel
-        // pass every row under these challenges.
+        let phi_of: Vec<F> = akita.iter().map(|column| column[row]).collect();
+        assert!(
+            phi_of.iter().all(|coefficient| !coefficient.is_zero()),
+            "Akita's functional weights every claim"
+        );
         let phi = |delta: &[F]| -> F {
             delta
                 .iter()
-                .zip(&batch)
-                .zip(&gains)
-                .fold(F::zero(), |sum, ((by, challenge), gain)| {
-                    sum + *by * *gain * *challenge
-                })
+                .zip(&phi_of)
+                .fold(F::zero(), |sum, (by, coefficient)| sum + *by * *coefficient)
         };
+
+        // Two Jolt-invisible shifts combined into φ's kernel pass every row.
         let (first, second) = {
             let mut moving = jolt_null.iter().filter(|vector| !phi(vector).is_zero());
             (
@@ -1196,5 +1470,11 @@ mod shifts {
             None,
             "a shift in the batch functional's kernel passes under fixed challenges"
         );
+        let normalizer = (phi_of[0] * gains[0]).inverse().expect("nonzero");
+        phi_of
+            .iter()
+            .zip(&gains)
+            .map(|(coefficient, gain)| *coefficient * normalizer * *gain)
+            .collect()
     }
 }

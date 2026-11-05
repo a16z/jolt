@@ -78,6 +78,8 @@ pub use scheme::{
     AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript, TraceOneHotCommitment,
 };
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
+#[cfg(all(feature = "zk-prover", feature = "logging"))]
+pub use whiteout::census as whiteout_census;
 #[cfg(feature = "zk-prover")]
 pub use whiteout::WhiteoutResidual;
 #[cfg(feature = "zk")]

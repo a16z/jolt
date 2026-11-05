@@ -23,7 +23,7 @@ prover-fixtures = ["jolt-prover/prover-fixtures"]
 fs-audit = []
 # Whiteout's census: Akita's prover-side record of the argument string's
 # message ranges, which the census classifies beside the masked tape.
-logging = ["akita-transcript/logging-transcript"]
+logging = ["akita-transcript/logging-transcript", "jolt-akita/logging"]
 fuzzing = []
 field-inline = [
   "common/field-inline",

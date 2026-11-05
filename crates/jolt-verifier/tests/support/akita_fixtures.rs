@@ -22,7 +22,12 @@ use super::guest_fixtures::{fixture_witness, prepare_guest, PreparedGuest};
 
 const MAX_PADDED_TRACE_LENGTH: usize = 1 << 16;
 
+#[cfg(not(feature = "zk"))]
 pub type AkitaJoltProof = JoltProof<AkitaScheme, AkitaVc>;
+/// A Whiteout proof carries no clear opening proof and no ZK payload outside
+/// its masked tape and argument string.
+#[cfg(feature = "zk")]
+pub type AkitaJoltProof = JoltProof<AkitaScheme, AkitaVc, (), ()>;
 
 pub struct AkitaFixtureCase {
     pub preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,
@@ -33,6 +38,14 @@ pub struct AkitaFixtureCase {
     /// relation as a cheating prover would.
     #[cfg(feature = "zk")]
     pub pads: Vec<AkitaField>,
+    /// Whiteout: Akita's record of the argument string's message ranges, from
+    /// the proving thread (`logging`).
+    #[cfg(all(feature = "zk", feature = "logging"))]
+    pub narg_ranges: Vec<akita_transcript::ProofMessageRange>,
+    /// Whiteout: the argument string's length at the end of each prover
+    /// region (`jolt_prover::akita::whiteout_regions`).
+    #[cfg(all(feature = "zk", feature = "logging"))]
+    pub narg_regions: Vec<(&'static str, usize)>,
 }
 
 impl AkitaFixtureCase {
@@ -148,9 +161,9 @@ pub fn whiteout_committed_case() -> &'static AkitaFixtureCase {
 }
 
 /// Whiteout's muldiv case proved with its first attempt aborted after the
-/// masked levels (HT3), and that attempt's argument string.
+/// masked levels (HT3), and what that attempt had produced.
 #[cfg(feature = "zk")]
-pub fn whiteout_rerun_case() -> (AkitaFixtureCase, Vec<u8>) {
+pub fn whiteout_rerun_case() -> (AkitaFixtureCase, akita::whiteout_faults::Aborted) {
     akita::whiteout_faults::abort_next_attempt();
     let case = generate_whiteout_muldiv();
     let aborted = akita::whiteout_faults::take_aborted().expect("the first attempt aborted");
@@ -169,6 +182,30 @@ fn generate_whiteout_muldiv() -> AkitaFixtureCase {
     )
     .expect("Whiteout preprocessing");
     prove_prepared(run, config, preprocessing, &[])
+}
+
+/// Akita's record of the last proof's argument string on this thread. Every
+/// attempt writes a fresh string, so a rerun's ranges restart at offset 0:
+/// the last attempt's are the suffix after the last backwards step.
+#[cfg(all(feature = "zk", feature = "logging"))]
+pub fn final_attempt_ranges() -> Vec<akita_transcript::ProofMessageRange> {
+    let ranges = akita_transcript::thread_proof_ranges();
+    let first = ranges
+        .windows(2)
+        .rposition(|pair| pair[1].start < pair[0].start)
+        .map_or(0, |step| step + 1);
+    ranges[first..].to_vec()
+}
+
+/// The last Whiteout proof's region marks on this thread, with where its
+/// response proof began (`response`).
+#[cfg(all(feature = "zk", feature = "logging"))]
+pub fn whiteout_regions() -> Vec<(&'static str, usize)> {
+    let mut regions = akita::whiteout_regions::take();
+    if let Some(start) = jolt_akita::whiteout_census::take_response_start() {
+        regions.push(("response", start));
+    }
+    regions
 }
 
 fn derive_config(run: &PreparedGuest) -> ProverConfig {
@@ -204,6 +241,8 @@ fn prove_prepared(
         preprocessing::commit_trusted_advice(&preprocessing, trusted_advice)
             .expect("trusted advice commitment")
     });
+    #[cfg(all(feature = "zk", feature = "logging"))]
+    akita_transcript::clear_thread_events();
     let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
         JoltBackend::optimized().with_witness(&witness),
         &preprocessing,
@@ -219,6 +258,10 @@ fn prove_prepared(
         trusted_advice_commitment: trusted.map(|object| object.commitment),
         #[cfg(feature = "zk")]
         pads: akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
+        #[cfg(all(feature = "zk", feature = "logging"))]
+        narg_ranges: final_attempt_ranges(),
+        #[cfg(all(feature = "zk", feature = "logging"))]
+        narg_regions: whiteout_regions(),
     }
 }
 
@@ -346,6 +389,8 @@ mod field_inline {
         .expect("trace witness")
         .with_field_inline()
         .expect("field-inline witness view");
+        #[cfg(all(feature = "zk", feature = "logging"))]
+        akita_transcript::clear_thread_events();
         let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
@@ -361,6 +406,10 @@ mod field_inline {
             trusted_advice_commitment: None,
             #[cfg(feature = "zk")]
             pads: akita::whiteout_secrets::take().expect("the Whiteout proof's pads"),
+            #[cfg(all(feature = "zk", feature = "logging"))]
+            narg_ranges: super::final_attempt_ranges(),
+            #[cfg(all(feature = "zk", feature = "logging"))]
+            narg_regions: super::whiteout_regions(),
         }
     }
 }

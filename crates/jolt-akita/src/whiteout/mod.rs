@@ -858,7 +858,7 @@ impl WhiteoutRow {
             opening.opening_layout(),
         )?;
         let prefixes = backend.import_setup_prefixes(&setup.prefix_slots, &prefix_ids)?;
-        prove_masked_prefix::<WhiteoutOneHot, _, _>(
+        let prefix = prove_masked_prefix::<WhiteoutOneHot, _, _>(
             setup.expanded.descriptor(),
             schedules,
             backend,
@@ -869,7 +869,12 @@ impl WhiteoutRow {
             transcript,
             compression,
             BasisMode::Lagrange,
-        )
+        )?;
+        // The record closes a message where the next begins; Jolt writes Σ
+        // next, so close the cut's last message here.
+        #[cfg(feature = "logging")]
+        akita_transcript::finish_proof_ranges(transcript);
+        Ok(prefix)
     }
 
     /// Replays the masked levels through the cut on `pads`; `groups` are the
@@ -1726,6 +1731,12 @@ impl<const D: usize> ResponseProver<F, D> for ProfiledResponse<'_> {
     ) -> Result<(), ZkError> {
         let _span = tracing::info_span!("whiteout_prove_response").entered();
         let before = transcript.narg_string().len();
+        #[cfg(feature = "logging")]
+        {
+            *census::RESPONSE_START
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(before);
+        }
         ResponseProver::<F, D>::prove_response(self.0, statement, witness, transcript)?;
         tracing::info!(
             response_bytes = transcript.narg_string().len().saturating_sub(before),
@@ -1812,3 +1823,23 @@ pub(crate) use opening::{opening_shape, opens_whiteout, whiteout};
     reason = "tests fail loudly"
 )]
 mod tests;
+
+/// The Whiteout census's seam (`logging`): where the last response proof
+/// began, which splits Σ from the response proof (Akita's response prover
+/// writes no message record). Process-wide: Akita's pool may run the
+/// response prover off the proving thread.
+#[cfg(all(feature = "zk-prover", feature = "logging"))]
+pub mod census {
+    use std::sync::{Mutex, PoisonError};
+
+    pub(super) static RESPONSE_START: Mutex<Option<usize>> = Mutex::new(None);
+
+    /// Takes the argument-string offset at which the last response proof
+    /// began.
+    pub fn take_response_start() -> Option<usize> {
+        RESPONSE_START
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+    }
+}

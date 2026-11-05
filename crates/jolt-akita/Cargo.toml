@@ -41,6 +41,9 @@ zk-prover = [
   "akita-pcs/zk-prover",
 ]
 profiling = ["parallel"]
+# Akita's prover-side record of its argument-string messages, with the masked
+# channels' pad marks (the Whiteout census's input).
+logging = ["akita-pcs/logging-transcript", "akita-transcript/logging-transcript"]
 
 [dependencies]
 # Jolt keeps its own catalogs for Jolt-specific trace shapes; Akita's shipped
