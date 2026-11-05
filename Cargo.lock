@@ -3412,6 +3412,7 @@ dependencies = [
  "bytemuck",
  "cc",
  "criterion",
+ "jolt-inlines-ntt",
  "jolt-riscv",
  "num-bigint",
  "num-traits",

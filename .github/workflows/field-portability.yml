@@ -107,6 +107,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          target: riscv64gc-unknown-linux-gnu
       - name: Install nextest
         uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
         with:
@@ -121,6 +123,12 @@ jobs:
         env:
           RUSTFLAGS: -D warnings -C target-feature=+avx2
         run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+      # Host tests register jolt-inlines-ntt's portable fallbacks as the backend.
+      - name: Run NTT64 backend seam tests
+        run: cargo nextest run -p jolt-algebra --no-default-features --features solinas,ntt64-backend --cargo-quiet --lib -E 'test(/ntt64_backend/)'
+      # The backend is selected only on riscv64, so its dispatch compiles only there.
+      - name: Clippy NTT64 backend on riscv64
+        run: cargo clippy -p jolt-algebra --no-default-features --features solinas,ntt64-backend --target riscv64gc-unknown-linux-gnu -- -D warnings
 
   aarch64-neon:
     name: AArch64 NEON field kernels

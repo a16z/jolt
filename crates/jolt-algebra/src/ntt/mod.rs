@@ -7,11 +7,15 @@ mod batched_four_point_policy;
 pub mod butterfly;
 pub mod crt;
 mod digit_validation;
+#[cfg(all(feature = "ntt64-backend", any(target_arch = "riscv64", test)))]
+pub(crate) mod external;
 pub(crate) mod field_limbs;
 pub mod ifma52;
 pub(crate) mod montgomery;
 #[cfg(target_arch = "aarch64")]
 pub mod neon;
+#[cfg(feature = "ntt64-backend")]
+pub mod ntt64;
 mod plan;
 pub mod prime;
 pub mod tables;

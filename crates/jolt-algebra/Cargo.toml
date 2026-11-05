@@ -50,6 +50,9 @@ fp64-proof-linkage = []
 field-inline-guest = ["dep:jolt-riscv"]
 field-inline-guest-bn254 = ["field-inline-guest"]
 field-inline-guest-fp128 = ["field-inline-guest"]
+# A guest 64-point `i32` forward NTT and lazy pointwise dot supplied at link
+# time through `ntt64_backend!`; selected only on riscv64 (see `ntt::ntt64`).
+ntt64-backend = ["solinas"]
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires
@@ -63,6 +66,8 @@ criterion = { workspace = true }
 num-bigint = { workspace = true }
 rand = { workspace = true, features = ["std_rng"] }
 rand_chacha = { workspace = true }
+# Registers its portable fallbacks as the `ntt64-backend` provider in unit tests.
+jolt-inlines-ntt = { workspace = true }
 
 [build-dependencies]
 cc = "1.2"

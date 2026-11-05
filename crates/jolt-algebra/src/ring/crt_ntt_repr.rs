@@ -80,10 +80,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     }
 
     #[cfg_attr(
-        not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+        not(any(
+            target_arch = "aarch64",
+            target_arch = "x86",
+            target_arch = "x86_64",
+            all(feature = "ntt64-backend", target_arch = "riscv64")
+        )),
         expect(
             clippy::unused_self,
-            reason = "no lazy i32 dot kernel exists off SIMD targets"
+            reason = "no lazy i32 dot kernel exists off SIMD and external-backend targets"
         )
     )]
     pub(crate) const fn uses_lazy_i32_dot(&self) -> bool {
@@ -96,7 +101,16 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
         {
             core::mem::size_of::<W>() == core::mem::size_of::<i32>() && self.kernel_plan.uses_neon()
         }
-        #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+        #[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+        {
+            crate::ntt::external::selected::<W, D>(self.kernel_plan)
+        }
+        #[cfg(not(any(
+            target_arch = "aarch64",
+            target_arch = "x86",
+            target_arch = "x86_64",
+            all(feature = "ntt64-backend", target_arch = "riscv64")
+        )))]
         {
             false
         }
