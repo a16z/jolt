@@ -34,11 +34,15 @@ use jolt_transcript::{verifier_transcript, Keccak, Script, ScriptedTranscript, V
 use jolt_verifier::proof::{JoltProofClaims, JoltStageProofs};
 use jolt_verifier::stages::pow::PowSite;
 use jolt_verifier::stages::stage8::akita::WhiteoutObject;
-use jolt_verifier::whiteout::{pad_layout, verify_transcript, whiteout_frame};
+use jolt_verifier::whiteout::{
+    pad_layout, verify_transcript, whiteout_frame, whiteout_prefix, whiteout_relation,
+    whiteout_stages,
+};
 use jolt_verifier::{
     validate_and_seed_transcript, JoltProtocolConfig, VerifierError, ZkConfig, JOLT_SESSION,
 };
 use jolt_zk::masking::MaskedMessages;
+use jolt_zk::whiteout::MaskedGroupOpening;
 
 use crate::support::akita_fixtures::{
     whiteout_advice_case, whiteout_committed_case, whiteout_muldiv_case, whiteout_rerun_case,
@@ -848,63 +852,210 @@ fn whiteout_tamper_per_census_class_with_precommitted_groups() {
     }
 }
 
-/// V5: the message sweep, budgeted: flipped bytes spread over every
-/// argument-string message and `+1` on values spread over the whole tape,
-/// plus the structural tampers (truncations, a trailing byte, an empty
-/// string, a dropped or extra tape value or nonce).
+/// The step of a Whiteout verification that rejected a proof, in
+/// verification order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Phase {
+    /// Input validation and the statement and commitment absorbs.
+    Seed,
+    /// The pad commitment, stages 1–7 and stage 8's masked claims.
+    Stages,
+    /// Akita's masked levels through the cut.
+    Prefix,
+    /// The auxiliary block and the residual relation.
+    Relation,
+    /// The Σ-protocol and the response proof: the first step that checks a
+    /// masked value.
+    Tail,
+    /// The end-of-string check after an accepted tail.
+    Eof,
+}
+
+/// The phase in which `proof` rejects against `case`'s statement, or `None`
+/// if it verifies; [`whiteout::verify`](jolt_verifier::whiteout::verify)
+/// run one step at a time.
+fn rejecting_phase(case: &AkitaFixtureCase, proof: &AkitaJoltProof) -> Option<Phase> {
+    let Ok((checked, mut transcript)) = validate_and_seed_transcript(
+        &case.preprocessing,
+        &case.public_io,
+        proof,
+        case.trusted_advice_commitment.as_ref(),
+        |statement| verifier_transcript::<Keccak>(&JOLT_SESSION, statement, &proof.narg),
+    ) else {
+        return Some(Phase::Seed);
+    };
+    let Ok(mut stages) = whiteout_stages::<F, AkitaScheme, AkitaVc, _, _>(
+        &case.preprocessing,
+        proof,
+        &checked,
+        case.trusted_advice_commitment.as_ref(),
+        &mut transcript,
+        None,
+    ) else {
+        return Some(Phase::Stages);
+    };
+    let Ok(prefix) = whiteout_prefix::<F, AkitaScheme, _>(&mut stages, &mut transcript) else {
+        return Some(Phase::Prefix);
+    };
+    let Ok(relation) = whiteout_relation(&mut stages, &prefix, &mut transcript) else {
+        return Some(Phase::Relation);
+    };
+    if AkitaScheme::verify_tail(
+        &stages.frame.shape,
+        &prefix,
+        &relation,
+        &stages.session.pads,
+        &mut transcript,
+    )
+    .is_err()
+    {
+        return Some(Phase::Tail);
+    }
+    transcript.check_eof().is_err().then_some(Phase::Eof)
+}
+
+/// Requires `proof` to reject no later than `deadline`.
+fn assert_rejects_by(
+    case: &AkitaFixtureCase,
+    label: &str,
+    proof: &AkitaJoltProof,
+    deadline: Phase,
+    failures: &mut Vec<String>,
+) {
+    match rejecting_phase(case, proof) {
+        None => failures.push(format!("accepted: {label}")),
+        Some(phase) if phase > deadline => {
+            failures.push(format!(
+                "rejected in {phase:?}, after {deadline:?}: {label}"
+            ));
+        }
+        Some(_) => {}
+    }
+}
+
+/// Flips budgeted per sweep, as dev's census sweep.
+const SWEEP_FLIPS: usize = 512;
+
+/// V5: the message sweep. Flipped bytes at the first, middle and last byte
+/// of every argument-string message, stride-sampled to [`SWEEP_FLIPS`]
+/// while keeping each class's first and last, and `+1` on values spread
+/// over the whole tape. Every tamper must reject by the Whiteout tail (Σ
+/// and the response proof), the first step that checks a masked value: a
+/// tamper caught only by the end-of-string check would be a byte nothing
+/// read. Then the structural tampers (truncations, a trailing byte, a
+/// dropped or extra tape value or nonce).
 #[test]
 fn whiteout_muldiv_message_sweep() {
     let (case, trace) = honest();
+    assert_eq!(rejecting_phase(case, &case.proof), None, "the honest proof");
     let items = classify(case, &trace);
-    let mut failures = Vec::new();
-    let mut tried = 0;
-    for item in items
-        .iter()
-        .filter(|item| matches!(item.origin, Origin::Narg(_)))
-    {
-        for pick in [0, item.bytes / 3, 2 * item.bytes / 3, usize::MAX] {
-            if let Some((label, proof)) = tamper_item(case, item, pick) {
-                tried += 1;
-                if case.verify_proof(&proof).is_ok() {
-                    failures.push(label);
-                }
-            }
+    let mut flips: Vec<(Option<Class>, usize)> = Vec::new();
+    for item in &items {
+        let Origin::Narg(range) = &item.origin else {
+            continue;
+        };
+        if range.is_empty() {
+            continue;
         }
+        let mut offsets = vec![0, range.len() / 2, range.len() - 1];
+        offsets.dedup();
+        flips.extend(
+            offsets
+                .into_iter()
+                .map(|offset| (item.class, range.start + offset)),
+        );
+    }
+    let stride = flips.len().div_ceil(SWEEP_FLIPS).max(1);
+    let selected: Vec<usize> = flips
+        .iter()
+        .enumerate()
+        .filter(|&(index, (class, _))| {
+            index % stride == 0
+                || index.checked_sub(1).map(|previous| flips[previous].0) != Some(*class)
+                || flips.get(index + 1).map(|next| next.0) != Some(*class)
+        })
+        .map(|(_, &(_, at))| at)
+        .collect();
+    let mut failures = Vec::new();
+    for &at in &selected {
+        let mut proof = case.proof.clone();
+        proof.narg[at] ^= 1;
+        assert_rejects_by(
+            case,
+            &format!("narg byte {at}"),
+            &proof,
+            Phase::Tail,
+            &mut failures,
+        );
     }
     let values = tape_of(&case.proof).values.len();
     let step = (values / 256).max(1);
+    let mut tape_tampers = 0;
     for at in (0..values).step_by(step).chain([values - 1]) {
         let mut proof = case.proof.clone();
         tape_mut(&mut proof).values[at] += F::from_u64(1);
-        tried += 1;
-        if case.verify_proof(&proof).is_ok() {
-            failures.push(format!("tape value {at}"));
-        }
+        tape_tampers += 1;
+        assert_rejects_by(
+            case,
+            &format!("tape value {at}"),
+            &proof,
+            Phase::Tail,
+            &mut failures,
+        );
     }
-    assert!(tried > 300, "{tried} tampers");
-    assert!(failures.is_empty(), "accepted tampers: {failures:#?}");
+    assert!(
+        selected.len() >= SWEEP_FLIPS.min(flips.len()) && tape_tampers > 200,
+        "{} flips of {}, {tape_tampers} tape tampers",
+        selected.len(),
+        flips.len()
+    );
 
+    type Tamper = fn(&mut AkitaJoltProof);
+    let mut structural: Vec<(&str, Tamper)> = vec![
+        ("a dropped tape value", |proof| {
+            let _ = tape_mut(proof).values.pop();
+        }),
+        ("an extra tape value", |proof| {
+            tape_mut(proof).values.push(F::from_u64(0));
+        }),
+        ("an extra tape nonce", |proof| {
+            tape_mut(proof).nonces.push(0);
+        }),
+    ];
+    if !tape_of(&case.proof).nonces.is_empty() {
+        structural.push(("a dropped tape nonce", |proof| {
+            let _ = tape_mut(proof).nonces.pop();
+        }));
+    }
+    for (label, tamper) in structural {
+        let mut proof = case.proof.clone();
+        tamper(&mut proof);
+        assert_rejects_by(case, label, &proof, Phase::Tail, &mut failures);
+    }
     let narg = case.proof.narg.len();
     for len in [0, 1, narg / 4, narg / 2, narg - 1] {
-        assert_rejects(case, &format!("the string truncated to {len}"), |proof| {
-            proof.narg.truncate(len);
-        });
+        let mut proof = case.proof.clone();
+        proof.narg.truncate(len);
+        assert_rejects_by(
+            case,
+            &format!("the string truncated to {len}"),
+            &proof,
+            Phase::Tail,
+            &mut failures,
+        );
     }
-    assert_rejects(case, "a trailing byte", |proof| proof.narg.push(0));
-    assert_rejects(case, "a dropped tape value", |proof| {
-        let _ = tape_mut(proof).values.pop();
-    });
-    assert_rejects(case, "an extra tape value", |proof| {
-        tape_mut(proof).values.push(F::from_u64(0));
-    });
-    assert_rejects(case, "an extra tape nonce", |proof| {
-        tape_mut(proof).nonces.push(0);
-    });
-    if !tape_of(&case.proof).nonces.is_empty() {
-        assert_rejects(case, "a dropped tape nonce", |proof| {
-            let _ = tape_mut(proof).nonces.pop();
-        });
-    }
+    assert!(
+        failures.is_empty(),
+        "tampers that broke their deadline: {failures:#?}"
+    );
+
+    let mut trailing = case.proof.clone();
+    trailing.narg.push(0);
+    assert_eq!(
+        rejecting_phase(case, &trailing),
+        Some(Phase::Eof),
+        "a trailing byte fails only the end-of-string check"
+    );
 }
 
 /// A47: the cut sends u_a compressed, one 16-coefficient payload per chunk
