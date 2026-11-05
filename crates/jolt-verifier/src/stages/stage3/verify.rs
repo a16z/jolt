@@ -1,8 +1,9 @@
-use jolt_claims::protocols::jolt::{geometry::dimensions::TraceDimensions, JoltRelationId};
+use jolt_claims::protocols::jolt::geometry::dimensions::TraceDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
+use jolt_zk::masking::MaskedSession;
 
 use super::{
     instruction_input::{instruction_input_input_values_from_upstream, InstructionInput},
@@ -20,7 +21,7 @@ use crate::{
         pow::{check_pow, PowSite},
         stage1::{Stage1BatchOutputClaims, Stage1Output},
         stage2::{Stage2BatchOutputClaims, Stage2Output},
-        zk::committed,
+        zk::masked_channel,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -42,13 +43,14 @@ pub fn stage3_input_values_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage3)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-) -> Result<Stage3Output<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage1: &Stage1Output<PCS::Field>,
+    stage2: &Stage2Output<PCS::Field>,
+) -> Result<Stage3Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -79,7 +81,7 @@ where
     check_pow(PowSite::Stage3, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if !checked.zk {
+    if !checked.zk.is_masked() {
         let claims = &proof.clear_claims()?.stage3;
         let stage1 = stage1.clear()?;
         let stage2 = stage2.clear()?;
@@ -108,22 +110,16 @@ where
     }
 
     {
-        let consistency = sumchecks.verify_zk(&proof.stages.stage3_sumcheck_proof, transcript)?;
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage3_sumcheck_proof,
-            "stage3_sumcheck_proof",
-            sumchecks.output_claim_count(),
-            JoltRelationId::SpartanShift,
+        let batch = sumchecks.verify_masked(
+            &sumchecks.empty_input_points(),
+            &mut masked_channel(masked, transcript)?,
         )?;
-        let output_points = sumchecks
-            .derive_opening_points(&consistency.challenges(), &sumchecks.empty_input_points())?;
 
         Ok(Stage3Output::Zk(Stage3ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_rounds: batch.rounds,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }))
     }
 }

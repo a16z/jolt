@@ -1,6 +1,7 @@
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltRelationId};
 use jolt_riscv::JoltInstructionKind;
 use jolt_transcript::VerificationError;
+use jolt_zk::masking::ZkError;
 
 use crate::config::JoltProtocolConfig;
 use crate::stages::ids::{VerifierChallengeId, VerifierDerivedId};
@@ -33,8 +34,11 @@ pub enum VerifierError {
     #[error("proof field {field} must be clear for non-ZK verification")]
     ExpectedClearProof { field: &'static str },
 
-    #[error("proof field {field} must be committed for ZK verification")]
-    ExpectedCommittedProof { field: &'static str },
+    #[error("proof field {field} must be masked for ZK verification")]
+    ExpectedMaskedProof { field: &'static str },
+
+    #[error("masked transcript: {0}")]
+    Masking(ZkError),
 
     #[error("clear proof unexpectedly includes a BlindFold proof")]
     UnexpectedBlindFoldProof,
@@ -121,11 +125,8 @@ pub enum VerifierError {
     #[error("final opening proof verification failed: {reason}")]
     FinalOpeningVerificationFailed { reason: String },
 
-    #[error("BlindFold protocol construction failed: {reason}")]
-    BlindFoldConstructionFailed { reason: String },
-
-    #[error("BlindFold proof verification failed: {reason}")]
-    BlindFoldVerificationFailed { reason: String },
+    #[error("residual relation construction failed: {reason}")]
+    ResidualConstructionFailed { reason: String },
 
     #[error("bytecode carries {kind:?}, which this verifier build has no constraints for")]
     UnsupportedInstruction { kind: JoltInstructionKind },
@@ -155,5 +156,32 @@ pub enum VerifierError {
 impl From<VerificationError> for VerifierError {
     fn from(_: VerificationError) -> Self {
         Self::TranscriptRejected
+    }
+}
+
+/// A masked channel's transcript failure is the same rejection as a clear
+/// one's, so it maps to the transcript rejection; every other masking failure is
+/// [`VerifierError::Masking`].
+impl From<ZkError> for VerifierError {
+    fn from(error: ZkError) -> Self {
+        match error {
+            ZkError::TranscriptRejected | ZkError::ChallengeRejected => Self::TranscriptRejected,
+            ZkError::PadsExhausted { .. }
+            | ZkError::PadCountMismatch { .. }
+            | ZkError::OperandPadsMismatch
+            | ZkError::InvalidLayout { .. }
+            | ZkError::InvalidRelation { .. }
+            | ZkError::ClaimMismatch(_)
+            | ZkError::RoundWidthMismatch { .. }
+            | ZkError::RoundCountMismatch { .. }
+            | ZkError::Sumcheck(_)
+            | ZkError::BlindFoldShape(_)
+            | ZkError::BlindFoldProver(_)
+            | ZkError::BlindFoldRejected(_)
+            | ZkError::Whiteout(_)
+            | ZkError::MaskedTapeExhausted
+            | ZkError::MaskedTapeTrailing
+            | ZkError::FoldOverflow { .. } => Self::Masking(error),
+        }
     }
 }

@@ -18,8 +18,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::pow::PowSite;
@@ -51,8 +49,6 @@ pub struct Stage5ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage5OutputClaims<F>,
     pub clear_output: Stage5ClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 5 on `transcript` (positioned at the stage-4 boundary).
@@ -60,7 +56,7 @@ pub struct Stage5ProverOutput<F: JoltField, C> {
 #[tracing::instrument(skip_all)]
 pub fn prove_stage5<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -109,12 +105,9 @@ where
         &inputs,
         &input_points,
         &challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     let instruction_r_address = proved.output_points.instruction_r_address();
@@ -128,8 +121,6 @@ where
             output_points: proved.output_points,
             instruction_r_address,
         },
-        #[cfg(feature = "zk")]
-        committed_witness,
     })
 }
 
@@ -161,9 +152,8 @@ mod field_inline_round_trip {
     use jolt_witness::JoltWitnessOracle as _;
 
     use super::*;
-    use crate::recorder::ProofMode;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs,
+        field_arithmetic_backend, field_arithmetic_preprocessing, test_checked_inputs, test_mode,
         test_prover_config, test_public_io, twins, LOG_T,
     };
 
@@ -172,7 +162,7 @@ mod field_inline_round_trip {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
@@ -184,7 +174,7 @@ mod field_inline_round_trip {
         );
         let ((stage1, stage2, stage3), stage4) = FixtureProver {
             backend: &mut context,
-            mode: &mode,
+            mode: &mut mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
@@ -194,7 +184,7 @@ mod field_inline_round_trip {
         .through_stage4();
         let out = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             &checked,
             &config,
             &preprocessing,

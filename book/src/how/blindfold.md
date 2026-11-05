@@ -4,65 +4,34 @@ BlindFold is available with Jolt's [Dory](./dory.md) backend by enabling the `zk
 
 Jolt achieves zero-knowledge natively via the **[BlindFold](https://eprint.iacr.org/2025/2094)** protocol — a folding-based scheme that makes all sumcheck proofs ZK without SNARK composition. Unlike approaches that require per-round sigma protocols or expensive homomorphic operations on commitments, BlindFold defers all verification to a single small R1CS instance proved via Nova folding + Spartan, keeping most of the work in the field arithmetic layer.
 
-The core idea: instead of the prover sending sumcheck round polynomial coefficients in the clear, it sends **Pedersen commitments** to them. The sumcheck verifier's algebraic consistency checks are encoded into a small **verifier R1CS** circuit, and a single Nova fold + Spartan proof over this R1CS proves all rounds were executed correctly without revealing the witness.
+The core idea: the prover never sends a private value in the clear. Before the first challenge it commits a vector of random **pads**; every private message of the sumcheck stages (round coefficients, output claims, uni-skip rounds) goes out as $\hat m = m + p$, masked by its own pad. The verifier cannot check a round on masked values, so it states every check it would have run as a row of a **residual relation** over the pads, and a single Nova fold + Spartan proof over a small relaxed R1CS shows that the pads satisfy all of them.
 
 ## Background
 
-In standard (non-ZK) Jolt, each sumcheck round reveals the round polynomial's coefficients — typically 4 field elements per round for degree-3 sumchecks. The verifier checks:
+In standard (non-ZK) Jolt, each sumcheck round reveals the round polynomial's coefficients. The verifier checks:
 
 1. **Round consistency**: $g_j(0) + g_j(1) = \text{claim}_j$
 2. **Chaining**: $\text{claim}_{j+1} = g_j(r_j)$
-3. **Final binding**: the last round's evaluation matches a claimed polynomial opening
+3. **Final binding**: the last round's evaluation matches the relation's output formula over the claimed openings
 
-These checks are purely algebraic — linear and quadratic relations over field elements. This makes them amenable to R1CS encoding.
-
-The ZK challenge is: how do we let the verifier perform these checks without seeing the coefficients?
+These checks are affine or low-degree polynomial relations over field elements. Substituting $m = \hat m - p$ turns each one into a relation over the pads with public coefficients, which R1CS can express.
 
 ## Protocol overview
 
-BlindFold proceeds in six phases, executed after all of Jolt's sumcheck stages (Spartan, instruction lookups, RAM/register checking, bytecode, claim reductions) complete.
+### Phase 1: Pad layout and pad commitment
 
-### Phase 1: ZK sumcheck rounds
+Both roles derive the **pad layout** from the proof's public shape alone: they replay the masked stage verifiers over a shape-correct proof on a transcript that skips every proof of work (`pad_layout`), counting one pad per private value plus one auxiliary slot per intermediate product of the claim formulas. The prover samples the pads, commits them row by row with Pedersen, and absorbs the row commitments right after the trace commitments, before the first stage challenge.
 
-During each of the 7 sumcheck stages, `prove_zk` replaces the standard sumcheck prover:
+### Phase 2: Masked stages and the residual relation
 
-**Per round**, the prover:
-1. Computes the batched univariate polynomial as usual
-2. Commits to all coefficients via Pedersen: $C_j = \sum_i c_{j,i} \cdot G_i + \rho_j \cdot H$
-3. Appends $C_j$ (not the coefficients) to the Fiat-Shamir transcript
-4. Derives the challenge $r_j$ from the transcript
-5. Saves coefficients $c_{j,i}$, blinding $\rho_j$, and commitment $C_j$ for later R1CS witness construction
+During each of the 7 sumcheck stages the prover records through a masking recorder: each round is sent at the fixed width of its scheduled degree (so its length never depends on the witness), and each value goes onto the proof's masked tape and into the transcript as $\hat m$. Challenges are drawn exactly as in the clear protocol.
 
-The verifier receives only commitments. It derives the same challenges (since it hashes the same commitments) but cannot check round consistency without knowing the coefficients. That verification is deferred to BlindFold.
+The verifier reads the tape in the same order and records each masked value with its pad. It then builds the residual relation: per stage, sumcheck rows chain the masked rounds from the batched input claim to a running claim, and one row equates that claim with the batched output formula, lowered from its factored form (`jolt-claims`' `output_factored`) with one auxiliary slot per intermediate product. BlindFold lowers the relation to relaxed R1CS over a witness laid out in rows:
 
-Uni-skip first rounds (used in Spartan outer and product sumchecks) follow the same pattern: commit, derive challenge, cache.
-
-### Phase 2: Verifier R1CS construction
-
-Both prover and verifier deterministically construct a sparse R1CS that encodes the sumcheck verifier's checks. The R1CS operates over a witness vector $Z$ with a Hyrax grid layout:
-
-$$Z = [u, W_0, W_1, \ldots]$$
-
-where $u$ is the relaxation scalar (1 for non-relaxed instances) and $W$ is the witness arranged as an $R' \times C$ grid:
-
-- **Rows $0 \ldots R_{\text{coeff}}$**: coefficient rows (one per sumcheck round, zero-padded to $C$ columns)
-- **Rows $R_{\text{coeff}} \ldots R'$**: non-coefficient values (next claims, Horner intermediates, opening evaluations)
-
-**Constraints encoded per sumcheck round:**
-
-For standard sumcheck ($g$ of degree $d$):
-- **Sum constraint**: $2c_0 + c_1 + c_2 + \cdots + c_d = \text{claim}$
-- **Chain constraint**: $g(r_j) = \text{next\_claim}$, computed via Horner's method with auxiliary variables
-
-For uni-skip rounds:
-- **Power-sum constraint**: $\sum_k \text{PowerSum}[k] \cdot c_k = \text{claim}$, where $\text{PowerSum}[k] = \sum_{t \in D} t^k$ over the symmetric evaluation domain $D$
-
-**Additional constraints:**
-- **Final output binding**: At chain end, $\text{final\_claim} = \sum_j \alpha_j \cdot y_j$ relates the last sumcheck claim to batched polynomial evaluations
-- **Input claim binding**: At chain start, verifies the initial claim is correctly derived from prior stage openings via sum-of-products constraints
-- **PCS evaluation binding**: Relates Dory evaluation commitments to witness variables
-
-**Baked public inputs**: Fiat-Shamir-derived values (challenges $r_j$, initial claims, batching coefficients) are embedded directly into R1CS matrix coefficients rather than appearing as witness variables. Both prover and verifier derive these identically from the transcript, so the resulting matrices $A$, $B$, $C$ are identical. This keeps the witness vector minimal.
+- the pad rows, whose commitments are the pad commitment from Phase 1;
+- two rows for the final evaluation $y$ and its blind, bound to Dory's hiding evaluation commitment;
+- one row of intermediates per multi-pair product row;
+- zero padding to a power of two.
 
 ### Phase 3: Nova folding
 
@@ -80,7 +49,7 @@ $$(A \cdot Z') \circ (B \cdot Z') = u' \cdot (C \cdot Z') + E'$$
 
 The random instance acts as a one-time pad: knowing $Z'$ alone reveals nothing about $Z_1$.
 
-Row commitments fold homomorphically. The round commitments from Phase 1 serve as the real instance's coefficient-row commitments, so no additional group operations are needed for those rows.
+Row commitments fold homomorphically. The pad commitment from Phase 1 serves as the real instance's pad-row commitments, so those rows are never recommitted.
 
 ### Phase 4: Spartan outer sumcheck
 
@@ -115,28 +84,11 @@ The witness $W$ and error $E$ are committed row-wise (as Pedersen commitments ov
 
 The $E$ opening follows the same pattern over the $R_E \times C_E$ grid.
 
-The coefficient-row commitments $C_0, \ldots, C_{R_{\text{coeff}}-1}$ are exactly the Pedersen commitments from Phase 1 — no additional commitments needed.
+The pad-row commitments are exactly the Pedersen commitments from Phase 1 — no additional commitments needed.
 
 ## Integration with Jolt
 
-BlindFold sits at Stage 8 of the Jolt prover pipeline, after all sumcheck stages complete:
-
-| Stage | Protocol | BlindFold role |
-|-------|----------|----------------|
-| 1 | Spartan outer (uni-skip) | Collect round commitments, stage configs |
-| 2 | RAM read-write, product virtual, instruction claim reduction, RAM RAF eval, output check (uni-skip) | Collect round commitments, stage configs |
-| 3 | Spartan shift, instruction input, registers claim reduction | Collect round commitments, stage configs |
-| 4 | Registers read-write, RAM val evaluation, RAM val final | Collect round commitments, stage configs |
-| 5 | Instruction read-RAF, RAM RA reduction, registers val evaluation | Collect round commitments, stage configs |
-| 6 | Bytecode read-RAF, booleanity, Hamming booleanity, RA virtual, inc reduction, advice reduction | Collect round commitments, stage configs |
-| 7 | Hamming weight claim reduction, advice reduction (address phase) | Collect round commitments, stage configs |
-| **8** | **Batched opening proof + BlindFold** | Build R1CS, fold, prove |
-
-Each stage contributes:
-- **Round commitments**: Pedersen commitments to sumcheck polynomial coefficients
-- **Stage configs**: Round count, polynomial degree, chain structure, uni-skip power sums, output/input constraints
-
-The `ProverOpeningAccumulator` collects `ZkStageData` — coefficients, blindings, challenges — across all stages.
+The pads are committed after the trace commitments; stages 1–7 run masked; stage 8 produces Dory's hiding batched opening. After stage 8 the prover replays its proof through the verifier's own stages to build the residual relation (the replay must land on the forward transcript's exact state), then proves it with BlindFold. A masked proof carries the masked tape, the pad commitment and BlindFold's proof; its stage sumcheck proofs are empty.
 
 ### Dory ZK evaluation commitments
 
@@ -148,21 +100,20 @@ BlindFold's extra constraints verify that $y_{\text{com}}$ matches the folded ev
 
 The verifier:
 
-1. **Derives challenges** from round commitments (same Fiat-Shamir transcript)
-2. **Constructs the verifier R1CS** deterministically from stage configs and baked public inputs
-3. **Reconstructs the real instance** from round commitments (proof data) with $u=1$, $E=\mathbf{0}$
-4. **Absorbs the random instance** from the proof
-5. **Folds** the two instances using the cross-term commitments and derived challenge $r$
-6. **Verifies Spartan outer sumcheck** ($\log m$ rounds, degree-3 polynomials)
-7. **Verifies Spartan inner sumcheck** ($\log |W|$ rounds, degree-2 polynomials)
-8. **Checks Hyrax openings**: verifies $E(r_x)$ and $W(r_y)$ against folded row commitments
-9. **Checks evaluation commitments**: verifies $y_{\text{com}}$ consistency for each PCS opening
+1. **Derives the pad layout** from the proof's shape and absorbs the pad commitment
+2. **Replays stages 1–7** over the masked tape, deriving the same challenges, and records each masked value with its pad
+3. **Builds the residual relation** and lowers it to relaxed R1CS
+4. **Reconstructs the real instance** from the pad commitment and the proof's auxiliary-row commitments, with $u=1$, $E=\mathbf{0}$
+5. **Absorbs the random instance** from the proof and **folds** using the cross-term commitments and derived challenge $r$
+6. **Verifies Spartan outer and inner sumchecks** and the **Hyrax openings** of $E(r_x)$ and $W(r_y)$
+7. **Checks the evaluation commitment**: the final evaluation rows match Dory's hiding evaluation commitment
+8. **Checks that every pad and every tape entry was used**
 
-The verifier never sees polynomial coefficients, intermediate claims, or evaluation values from any sumcheck stage.
+The verifier never sees a round coefficient, an intermediate claim or an evaluation value from any sumcheck stage.
 
 ## Security
 
-- **Hiding**: Pedersen commitments are computationally hiding under the discrete logarithm assumption. The prover's sumcheck messages reveal no information about the witness polynomials.
+- **Hiding**: each private message is masked by a fresh uniform pad, and the pads are committed with Pedersen, which is hiding; the folded BlindFold witness is uniform. The prover's sumcheck messages reveal no information about the witness polynomials.
 - **Binding**: Pedersen commitments are computationally binding. A malicious prover cannot open a commitment to different coefficients.
 - **Folding soundness**: The folded instance satisfies relaxed R1CS if and only if both constituent instances do (with overwhelming probability over the folding challenge).
 - **Extraction**: An extractor can recover the real witness from two accepting transcripts with different folding challenges (via rewinding).
@@ -172,6 +123,5 @@ The verifier never sees polynomial coefficients, intermediate claims, or evaluat
 - [Hyrax](https://eprint.iacr.org/2017/1132.pdf) — Matrix-commitment-based polynomial evaluation proofs (Wahby et al., 2018)
 - [Nova](https://eprint.iacr.org/2021/370) — Recursive SNARKs via folding (Kothapalli, Setty, Tzialla, 2022)
 - [Spartan](https://eprint.iacr.org/2019/550) — Sumcheck-based R1CS proving (Setty, 2020)
-- [Proofs, Arguments, and Zero-Knowledge](https://people.cs.georgetown.edu/jthaler/ProofsArgsAndZK.html), Section 13.2 — ZK sumcheck via Pedersen commitments (Thaler, 2022)
 - [Vega](https://eprint.iacr.org/2025/2094) — Low-latency zero-knowledge proofs over existing credentials (Kaviani, Setty, 2025)
 - [BlindFold interactive explainer](https://blindfoldzkp.github.io/)

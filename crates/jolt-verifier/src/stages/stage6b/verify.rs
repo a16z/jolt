@@ -8,6 +8,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{FieldTranscript, PrivateChannel};
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{
@@ -23,7 +24,6 @@ use super::field_registers_inc_claim_reduction::{
 use super::inc_claim_reduction::{
     inc_claim_reduction_input_points_from_upstream, inc_claim_reduction_input_values_from_upstream,
 };
-#[cfg(not(feature = "akita"))]
 use super::outputs::{Stage6bCarriedChallenges, Stage6bZkOutput};
 use super::ram_hamming_booleanity::RamHammingBooleanityInputClaims;
 use super::{
@@ -47,8 +47,7 @@ use super::{
         ram_ra_virtualization_input_values_from_upstream,
     },
 };
-#[cfg(not(feature = "akita"))]
-use crate::stages::zk::committed;
+use crate::stages::zk::masked_channel;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
@@ -71,19 +70,20 @@ use crate::{
     reason = "Stage 6b consumes the stage-6a output plus all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
 #[jolt_verifier_derive::fs_scope(Stage6b)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-    stage3: &Stage3Output<PCS::Field, VC::Output>,
-    stage4: &Stage4Output<PCS::Field, VC::Output>,
-    stage5: &Stage5Output<PCS::Field, VC::Output>,
-    stage6a: &Stage6aOutput<PCS::Field, VC::Output>,
-) -> Result<Stage6bOutput<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage1: &Stage1Output<PCS::Field>,
+    stage2: &Stage2Output<PCS::Field>,
+    stage3: &Stage3Output<PCS::Field>,
+    stage4: &Stage4Output<PCS::Field>,
+    stage5: &Stage5Output<PCS::Field>,
+    stage6a: &Stage6aOutput<PCS::Field>,
+) -> Result<Stage6bOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -120,56 +120,22 @@ where
         stage5.output_points(),
     );
 
-    // No zk protocol exists over the Akita axis, so the committed arm (and its
-    // runtime point-alias dedup arithmetic) is base-only.
-    #[cfg(not(feature = "akita"))]
-    if checked.zk {
-        let consistency = sumchecks.verify_zk(&proof.stages.stage6b_sumcheck_proof, transcript)?;
-        let cycle_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
-
-        // The committed-claim count is the derived output-point-cell total minus the
-        // runtime aliases between the booleanity bytecode-RA openings and the
-        // bytecode read-RAF openings — a point-equality dedup that is not expressible
-        // from the output Exprs, so it stays hand-written.
-        let booleanity_opening_point =
-            cycle_points.booleanity_opening_point().ok_or_else(|| {
-                VerifierError::StageClaimPublicInputFailed {
-                    stage: JoltRelationId::Booleanity,
-                    reason: "Stage 6 booleanity produced no opening point".to_string(),
-                }
-            })?;
-        let aliased_bytecode_ra_openings = cycle_points
-            .bytecode_read_raf
-            .bytecode_ra
-            .iter()
-            .filter(|point| point.as_slice() == booleanity_opening_point)
-            .count();
-        // The aliased openings are a filtered subset of the bytecode RA points
-        // counted by `point_count`, so the subtraction is exact; `saturating_sub`
-        // only settles the (unreachable) underflow for the arithmetic lint.
-        let committed_output_claims = cycle_points
-            .point_count()
-            .saturating_sub(aliased_bytecode_ra_openings);
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage6b_sumcheck_proof,
-            "stage6b_sumcheck_proof",
-            committed_output_claims,
-            JoltRelationId::BytecodeReadRaf,
-        )?;
+    if checked.zk.is_masked() {
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
             challenges: Stage6bCarriedChallenges {
                 instruction_ra_gamma: draws.instruction_ra_gamma,
+                #[cfg(not(feature = "akita"))]
                 inc_gamma: draws.inc_gamma,
                 #[cfg(feature = "field-inline")]
                 field_registers_inc_gamma: draws.field_registers_inc_gamma,
                 bytecode_reduction_eta: draws.eta,
             },
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points: cycle_points,
+            batch_rounds: batch.rounds,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }));
     }
 

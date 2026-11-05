@@ -15,16 +15,19 @@ use jolt_claims::protocols::composed::geometry::{
 use jolt_claims::protocols::composed::r1cs::{
     SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE, SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
 };
-use jolt_claims::protocols::jolt::JoltRelationId;
+use jolt_claims::protocols::jolt::geometry::spartan::{
+    outer_uniskip_opening, product_uniskip_opening,
+};
+use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
 use jolt_field::JoltField;
 use jolt_sumcheck::{
-    CenteredIntegerDomain, CommittedSumcheckConsistency, SumcheckClaim, SumcheckProof,
-    SumcheckStatement,
+    receive_masked_rounds, CenteredIntegerDomain, DegreeSchedule, MaskedRound, RoundWire,
+    SumcheckClaim, SumcheckProof,
 };
-use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel};
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
-use crate::stages::zk::committed::{self, CommittedOutputClaimOutput};
-use crate::verifier::CheckedInputs;
+use crate::stages::relations::{receive_masked_value, MaskedClaims};
+use crate::stages::zk::MaskedChannel;
 use crate::VerifierError;
 
 const UNISKIP_ROUNDS: usize = 1;
@@ -36,10 +39,11 @@ const UNISKIP_ROUNDS: usize = 1;
 /// two constructors are the only instances.
 pub struct UniskipParams {
     stage: JoltRelationId,
+    /// The round's single output opening.
+    output_opening: JoltOpeningId,
     stage_number: usize,
     degree: usize,
     domain_size: usize,
-    proof_field: &'static str,
 }
 
 impl UniskipParams {
@@ -47,10 +51,10 @@ impl UniskipParams {
     pub fn spartan_outer() -> Self {
         Self {
             stage: JoltRelationId::SpartanOuter,
+            output_opening: outer_uniskip_opening(),
             stage_number: 1,
             degree: SPARTAN_OUTER_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
-            proof_field: "stage1_uni_skip_first_round_proof",
         }
     }
 
@@ -58,10 +62,10 @@ impl UniskipParams {
     pub fn spartan_product() -> Self {
         Self {
             stage: JoltRelationId::SpartanProductVirtualization,
+            output_opening: product_uniskip_opening(),
             stage_number: 2,
             degree: SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
             domain_size: SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
-            proof_field: "stage2_uni_skip_first_round_proof",
         }
     }
 
@@ -114,12 +118,13 @@ where
     Ok(transcript.challenge()?)
 }
 
-/// The ZK uni-skip step's outputs: the committed round consistency and output
-/// claim commitments (carried downstream for BlindFold), plus the reduction
+/// The masked uni-skip step's outputs: the masked round and output claim
+/// (carried downstream for the residual relation), plus the reduction
 /// challenge.
-pub struct UniskipZk<F: JoltField, C> {
-    pub consistency: CommittedSumcheckConsistency<F, C>,
-    pub output_claims: CommittedOutputClaimOutput<C>,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UniskipMasked<F> {
+    pub rounds: Vec<MaskedRound<F>>,
+    pub output_claims: MaskedClaims<F>,
     pub challenge: F,
 }
 
@@ -168,41 +173,32 @@ where
     Ok(*challenge)
 }
 
-/// Verify a ZK-mode uni-skip round: committed round consistency plus the
-/// output-claim commitment count. The claims themselves stay committed
-/// (BlindFold verifies them at stage 8).
-pub fn verify_zk<F, C, T>(
-    checked: &CheckedInputs,
-    proof: &SumcheckProof<F, C>,
+/// Verify a masked uni-skip round: read the masked round at full width, its
+/// challenge, then the masked output claim. Nothing hidden is checked; the
+/// residual relation states the round-sum check and the output equality.
+pub fn verify_masked<F, C>(
     params: &UniskipParams,
-    transcript: &mut T,
-) -> Result<UniskipZk<F, C>, VerifierError>
+    channel: &mut C,
+) -> Result<UniskipMasked<F>, VerifierError>
 where
     F: JoltField,
-    C: Clone + Encoding,
-    T: FieldTranscript<F>,
+    C: MaskedChannel<F>,
 {
-    let consistency = proof
-        .verify_committed_consistency(
-            SumcheckStatement::new(UNISKIP_ROUNDS, params.degree),
-            transcript,
-        )
-        .map_err(|error| params.sumcheck_failed(error))?;
-    let output_claims = committed::verify_output_claim_commitments(
-        checked,
-        proof,
-        params.proof_field,
-        1,
-        params.stage,
+    let rounds = receive_masked_rounds::<F, C>(
+        &DegreeSchedule::uniform(UNISKIP_ROUNDS, params.degree),
+        RoundWire::Full,
+        channel,
     )?;
-    let [round] = consistency.rounds.as_slice() else {
-        return Err(
-            params.sumcheck_failed("uni-skip committed consistency did not produce one challenge")
-        );
+    let [round] = rounds.as_slice() else {
+        return Err(params.sumcheck_failed("uni-skip proof did not reduce to one challenge"));
     };
     let challenge = round.challenge;
-    Ok(UniskipZk {
-        consistency,
+    let output_claims = MaskedClaims {
+        received: vec![(params.output_opening.into(), receive_masked_value(channel)?)],
+        ..MaskedClaims::default()
+    };
+    Ok(UniskipMasked {
+        rounds,
         output_claims,
         challenge,
     })

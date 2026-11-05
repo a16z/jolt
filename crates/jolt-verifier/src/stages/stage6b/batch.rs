@@ -146,17 +146,17 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         clippy::too_many_arguments,
         reason = "Stage 6b's batch is built from the stage-6a output plus all five prior stage outputs directly; bundling them would reintroduce the removed `Stage6bParams` pack/unpack indirection."
     )]
-    pub(super) fn build<PCS, VC, ZkProof>(
+    pub(super) fn build<PCS, VC, ZkProof, O>(
         checked: &CheckedInputs,
         preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-        proof: &JoltProof<PCS, VC, ZkProof>,
+        proof: &JoltProof<PCS, VC, ZkProof, O>,
         formula_dimensions: &JoltFormulaDimensions,
-        stage1: &Stage1Output<F, VC::Output>,
-        stage2: &Stage2Output<F, VC::Output>,
-        stage3: &Stage3Output<F, VC::Output>,
-        stage4: &Stage4Output<F, VC::Output>,
-        stage5: &Stage5Output<F, VC::Output>,
-        stage6a: &Stage6aOutput<F, VC::Output>,
+        stage1: &Stage1Output<F>,
+        stage2: &Stage2Output<F>,
+        stage3: &Stage3Output<F>,
+        stage4: &Stage4Output<F>,
+        stage5: &Stage5Output<F>,
+        stage6a: &Stage6aOutput<F>,
         eta: Option<F>,
     ) -> Result<Self, VerifierError>
     where
@@ -173,7 +173,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
         let entry_bytecode_index = preprocessing
             .program
             .entry_bytecode_index_checked(JoltRelationId::BytecodeReadRaf)?;
-        let bytecode_table_rows = if checked.zk || committed_program {
+        let bytecode_table_rows = if checked.zk.is_masked() || committed_program {
             None
         } else {
             Some(
@@ -189,7 +189,7 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                     .as_slice(),
             )
         };
-        let address_val_stages = if checked.zk {
+        let address_val_stages = if checked.zk.is_masked() {
             Vec::new()
         } else {
             stage6a
@@ -200,21 +200,22 @@ impl<F: JoltField> Stage6bSumchecks<F> {
                 .clone()
         };
         #[cfg(not(feature = "akita"))]
-        let (trusted_advice_reference_point, untrusted_advice_reference_point) = if checked.zk {
-            (None, None)
-        } else {
-            let stage4 = stage4.clear()?;
-            (
-                advice_reference_point_from_upstream(
-                    &stage4.ram_val_check_init,
-                    JoltAdviceKind::Trusted,
-                ),
-                advice_reference_point_from_upstream(
-                    &stage4.ram_val_check_init,
-                    JoltAdviceKind::Untrusted,
-                ),
-            )
-        };
+        let (trusted_advice_reference_point, untrusted_advice_reference_point) =
+            if checked.zk.is_masked() {
+                (None, None)
+            } else {
+                let stage4 = stage4.clear()?;
+                (
+                    advice_reference_point_from_upstream(
+                        &stage4.ram_val_check_init,
+                        JoltAdviceKind::Trusted,
+                    ),
+                    advice_reference_point_from_upstream(
+                        &stage4.ram_val_check_init,
+                        JoltAdviceKind::Untrusted,
+                    ),
+                )
+            };
 
         Self::build_from_parts(Stage6bBuildParts {
             formula_dimensions,

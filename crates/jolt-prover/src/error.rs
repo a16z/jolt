@@ -6,7 +6,7 @@ use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 #[cfg(feature = "zk")]
-use jolt_zk::blindfold::ProverError as BlindFoldProverError;
+use jolt_zk::masking::ZkError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -91,11 +91,12 @@ pub enum ProverError<F: JoltField> {
     #[error("prover invariant violated: {reason}")]
     InvariantViolation { reason: &'static str },
 
-    /// The BlindFold tail failed: witness assembly or the folding proof
-    /// itself.
+    /// The masking layer or the ZK back end failed: an exhausted pad
+    /// schedule, a residual relation the masked transcript violates, or the
+    /// BlindFold proof itself.
     #[cfg(feature = "zk")]
     #[error(transparent)]
-    BlindFold(#[from] BlindFoldProverError<F>),
+    Zk(#[from] ZkError),
 }
 
 /// Route the typed kernel seam's extraction/self-check failures through

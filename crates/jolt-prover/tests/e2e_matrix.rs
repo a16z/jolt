@@ -293,7 +293,7 @@ mod matrix {
         guests!(emit_tests);
     }
 
-    #[cfg(all(feature = "zk", not(feature = "akita")))]
+    #[cfg(feature = "zk")]
     mod zk {
         #[cfg(not(feature = "field-inline"))]
         use super::*;

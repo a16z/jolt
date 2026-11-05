@@ -1,10 +1,9 @@
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 use jolt_field::JoltField;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
-use crate::stages::relations::SumcheckBatch;
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{MaskedClaims, SumcheckBatch};
 
 #[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{TrustedAdviceAddressPhase, UntrustedAdviceAddressPhase};
@@ -12,6 +11,7 @@ use super::committed_reduction_address_phase::{
     BytecodeReductionAddressPhase, ProgramImageReductionAddressPhase,
 };
 use super::hamming_weight_claim_reduction::HammingWeightClaimReduction;
+use crate::VerifierError;
 
 /// Source-of-truth for stage 7's sumcheck batch: the instances in Fiat-Shamir
 /// batch order (hamming-weight reduction, then the committed-program-only
@@ -112,7 +112,7 @@ pub struct Stage7ClearOutput<F: JoltField> {
 
 /// ZK counterpart of [`Stage7ClearOutput`]. The produced opening *values* stay
 /// committed (in `batch_output_claims`); BlindFold recomputes every per-relation
-/// sumcheck point and public it needs from `batch_consistency`, so the only data
+/// sumcheck point and public it needs from `batch_rounds`, so the only data
 /// stage 8 consumes in the clear is the produced opening points, off which it reads
 /// the hamming-weight opening point and resolves the precommitted final openings.
 ///
@@ -121,10 +121,10 @@ pub struct Stage7ClearOutput<F: JoltField> {
 /// `challenges.hamming_weight_claim_reduction.gamma`, matching the
 /// `input.stageN.challenges.<relation>.<field>` idiom used by stages 3–5.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage7ZkOutput<F: JoltField, C> {
+pub struct Stage7ZkOutput<F: JoltField> {
     pub challenges: Stage7Challenges<F>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     /// The produced opening points, the ZK counterpart of the clear path's
     /// `Stage7ClearOutput::output_points`, computed as a byproduct of the unified
     /// `derive_opening_points`. Stage 8 reads the hamming-weight opening point and
@@ -133,23 +133,23 @@ pub struct Stage7ZkOutput<F: JoltField, C> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage7Output<F: JoltField, C> {
+pub enum Stage7Output<F: JoltField> {
     Clear(Stage7ClearOutput<F>),
-    Zk(Stage7ZkOutput<F, C>),
+    Zk(Stage7ZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage7Output<F, C> {
-    pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, crate::VerifierError> {
+impl<F: JoltField> Stage7Output<F> {
+    pub fn clear(&self) -> Result<&Stage7ClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage7" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage7" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage7ZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage7ZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage7" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage7" }),
         }
     }
 }

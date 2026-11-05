@@ -196,10 +196,10 @@ mod zk {
             );
 
             let mut blindfold_tampered = proof;
-            let JoltProofClaims::Zk { blindfold_proof } = &mut blindfold_tampered.claims else {
+            let JoltProofClaims::Zk { zk_proof, .. } = &mut blindfold_tampered.claims else {
                 panic!("ZK proof must carry the BlindFold claims variant");
             };
-            blindfold_proof.random_u += Fr::from_u64(1);
+            zk_proof.blindfold.folding.random_u += Fr::from_u64(1);
             assert!(
                 dory::verify_full(&preprocessing, &public_io, &blindfold_tampered).is_err(),
                 "a tampered BlindFold proof must be rejected",

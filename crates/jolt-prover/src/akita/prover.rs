@@ -12,7 +12,7 @@ use jolt_openings::{
     TransparentObjectSetup,
 };
 use jolt_transcript::{Encoding, FieldTranscript, ProverInit, ProverState};
-use jolt_verifier::config::JoltProtocolConfig;
+use jolt_verifier::config::{JoltProtocolConfig, ZkConfig};
 use jolt_verifier::proof::{ClearProofClaims, JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
@@ -53,7 +53,7 @@ where
     // The Akita path is transparent-only (`akita` and `zk` are mutually
     // exclusive), so the mode context carries nothing; the shared stage
     // recipes still thread it to mint their clear recorders.
-    let mode = ProofMode::<VC>::new(None)?;
+    let mut mode = ProofMode::<VC>::clear();
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         &mut backend,
         preprocessing,
@@ -66,11 +66,11 @@ where
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
 
-    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mode, log_t, &mut transcript)?;
+    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mut mode, log_t, &mut transcript)?;
     finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        &mut mode,
         config,
         public_io,
         &stage1.clear_output,
@@ -79,7 +79,7 @@ where
     finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        &mut mode,
         config,
         &stage1.clear_output,
         &stage2.clear_output,
@@ -88,7 +88,7 @@ where
     finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        &mut mode,
         &checked,
         config,
         preprocessing,
@@ -99,7 +99,7 @@ where
     finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        &mut mode,
         &checked,
         config,
         preprocessing,
@@ -110,7 +110,7 @@ where
     finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        &mut mode,
         &checked,
         config,
         preprocessing,
@@ -124,7 +124,7 @@ where
     finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        &mut mode,
         &checked,
         config,
         preprocessing,
@@ -139,7 +139,7 @@ where
     finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        &mut mode,
         &checked,
         config,
         preprocessing,
@@ -186,7 +186,7 @@ where
     ]);
 
     Ok(JoltProof {
-        protocol: JoltProtocolConfig::for_zk(false),
+        protocol: JoltProtocolConfig::for_zk(ZkConfig::Transparent),
         commitments: stage0.commitment,
         fused_inc_commitment: Some(stage0.fused_inc.commitment),
         stages: JoltStageProofs {

@@ -23,10 +23,24 @@ compile_error!(
      Akita commitment axis (a lattice-friendly hiding commitment is a future workstream)"
 );
 
+/// The zero-knowledge axis. Serialized in [`JoltProof`](crate::proof::JoltProof)
+/// and absorbed as the first preamble word, so variants are append-only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ZkConfig {
     Transparent,
+    /// BlindFold over pads committed with a curve vector commitment (Dory).
     BlindFold,
+}
+
+impl ZkConfig {
+    /// Whether private messages are masked by committed pads: every mode but
+    /// [`Transparent`](Self::Transparent).
+    pub const fn is_masked(self) -> bool {
+        match self {
+            Self::Transparent => false,
+            Self::BlindFold => true,
+        }
+    }
 }
 
 /// The commitment axis of the protocol: how committed polynomials are
@@ -49,13 +63,9 @@ pub struct JoltProtocolConfig {
 }
 
 impl JoltProtocolConfig {
-    pub const fn for_zk(zk: bool) -> Self {
+    pub const fn for_zk(zk: ZkConfig) -> Self {
         Self {
-            zk: if zk {
-                ZkConfig::BlindFold
-            } else {
-                ZkConfig::Transparent
-            },
+            zk,
             commitment: SELECTED_COMMITMENT_CONFIG,
             field_inline: SELECTED_FIELD_INLINE_CONFIG,
         }
