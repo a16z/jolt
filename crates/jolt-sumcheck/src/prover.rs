@@ -56,6 +56,12 @@ use crate::round_proof::RoundMessage;
 /// member's first active round, and the final active round's challenge arrives
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
 pub trait ProveRounds<F: Field> {
+    /// Opt into concurrent scheduling. The returned view must operate on the
+    /// same round state as this object. Sequential implementations need not opt in.
+    fn parallel_rounds(&mut self) -> Option<&mut (dyn ProveRounds<F> + Send)> {
+        None
+    }
+
     fn num_rounds(&self) -> usize;
 
     /// Bind `bind` — the member's previous active round's challenge (`None`
@@ -75,6 +81,33 @@ pub trait ProveRounds<F: Field> {
     /// engine after the batch's round loop, for every member that was ever
     /// active; the member is fully bound afterwards.
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>>;
+}
+
+/// Opt a sendable round prover into concurrent scheduling without imposing
+/// `Send` on every implementation of [`ProveRounds`].
+pub struct SendRounds<P>(pub P);
+
+impl<F: Field, P: ProveRounds<F> + Send> ProveRounds<F> for SendRounds<P> {
+    fn parallel_rounds(&mut self) -> Option<&mut (dyn ProveRounds<F> + Send)> {
+        Some(self)
+    }
+
+    fn num_rounds(&self) -> usize {
+        self.0.num_rounds()
+    }
+
+    fn prove_round(
+        &mut self,
+        bind: Option<F>,
+        round: usize,
+        previous_claim: F,
+    ) -> Result<UnivariatePoly<F>, SumcheckError<F>> {
+        self.0.prove_round(bind, round, previous_claim)
+    }
+
+    fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
+        self.0.finish_rounds(bind)
+    }
 }
 
 pub struct MemberRound<'a, F: Field> {

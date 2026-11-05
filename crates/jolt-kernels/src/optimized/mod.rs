@@ -67,6 +67,8 @@ mod lazy_ra;
 mod one_hot_histograms;
 #[cfg(not(feature = "akita"))]
 pub mod opening;
+#[cfg(feature = "parallel")]
+mod parallel_members;
 pub mod precommitted_reduction;
 mod prefix_product;
 pub mod ram_hamming_booleanity;
@@ -85,6 +87,7 @@ mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
+
 pub(crate) mod support;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
@@ -134,7 +137,13 @@ where
     /// Packed commitment schemes use native group commitment/opening paths, so
     /// they cannot satisfy [`jolt_openings::StreamingCommitment`] and must retain their own
     /// boundary slots while sharing the optimized stage 1–7 kernels.
+    /// With parallel execution enabled, also schedules independent sum-check
+    /// members concurrently when every member opts in.
     pub fn with_optimized_compute(mut self) -> Self {
+        #[cfg(feature = "parallel")]
+        {
+            self.round_scheduler = Box::new(parallel_members::ParallelMembers);
+        }
         self.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
         self.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
         self.spartan_product_uniskip = Box::new(spartan_product::OptimizedProductUniskip);

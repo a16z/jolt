@@ -331,33 +331,33 @@ macro_rules! __stage_member {
     };
     // Rebind the member's kernel inside the instrumentation-only
     // [`SpannedRounds`](crate::driver::SpannedRounds) shim; later arms reach
-    // the kernel through `.inner`.
+    // the kernel through `.0.inner`.
     (spanned required $member:ident, $relation:ident) => {
-        let mut $member = $crate::driver::SpannedRounds {
+        let mut $member = ::jolt_sumcheck::SendRounds($crate::driver::SpannedRounds {
             inner: $member,
-            round_span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
-            finish_span: || {
-                ::tracing::info_span!(concat!(stringify!($relation), "::finish_rounds"))
-            },
-        };
-    };
-    (spanned optional $member:ident, $relation:ident) => {
-        let mut $member = $member.map(|__kernel| $crate::driver::SpannedRounds {
-            inner: __kernel,
             round_span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
             finish_span: || {
                 ::tracing::info_span!(concat!(stringify!($relation), "::finish_rounds"))
             },
         });
     };
+    (spanned optional $member:ident, $relation:ident) => {
+        let mut $member = $member.map(|__kernel| ::jolt_sumcheck::SendRounds($crate::driver::SpannedRounds {
+            inner: __kernel,
+            round_span: || ::tracing::info_span!(concat!(stringify!($relation), "::prove_round")),
+            finish_span: || {
+                ::tracing::info_span!(concat!(stringify!($relation), "::finish_rounds"))
+            },
+        }));
+    };
     // `SumcheckKernel`'s `MaybeAllocative` supertrait is `Allocative` under
     // this cfg, so the `dyn SumcheckKernel` upcasts at the argument.
     (flame required $member:ident, $fg:ident) => {
-        $fg.visit_root(&*$member.inner);
+        $fg.visit_root(&*$member.0.inner);
     };
     (flame optional $member:ident, $fg:ident) => {
         if let ::core::option::Option::Some(__kernel) = $member.as_ref() {
-            $fg.visit_root(&*__kernel.inner);
+            $fg.visit_root(&*__kernel.0.inner);
         }
     };
     (round_slot required $member:ident) => {
@@ -369,7 +369,7 @@ macro_rules! __stage_member {
             .map(|__kernel| __kernel as &mut dyn ::jolt_sumcheck::ProveRounds<F>)
     };
     (validate required $member:ident, $self:expr, $input_points:expr, $output_points:expr, $challenges:expr) => {
-        $member.inner.validate_derived_tables(
+        $member.0.inner.validate_derived_tables(
             &$self.$member,
             &$input_points.$member,
             &$output_points.$member,
@@ -378,7 +378,7 @@ macro_rules! __stage_member {
     };
     (validate optional $member:ident, $self:expr, $input_points:expr, $output_points:expr, $challenges:expr) => {
         $crate::driver::validate_optional_tables(
-            $member.as_ref().map(|__kernel| &*__kernel.inner),
+            $member.as_ref().map(|__kernel| &*__kernel.0.inner),
             $self.$member.as_ref(),
             $input_points.$member.as_ref(),
             $output_points.$member.as_ref(),
@@ -386,20 +386,20 @@ macro_rules! __stage_member {
         )?;
     };
     (extract required $member:ident, $inputs:expr) => {
-        $member.inner.output_claims(&$inputs.$member)?
+        $member.0.inner.output_claims(&$inputs.$member)?
     };
     (extract optional $member:ident, $inputs:expr) => {
         $crate::driver::extract_optional(
-            $member.as_mut().map(|__kernel| &mut *__kernel.inner),
+            $member.as_mut().map(|__kernel| &mut *__kernel.0.inner),
             $inputs.$member.as_ref(),
         )?
     };
     (park required $member:ident, $context:expr) => {
-        $context.park_residue($member.inner);
+        $context.park_residue($member.0.inner);
     };
     (park optional $member:ident, $context:expr) => {
         if let ::core::option::Option::Some(__kernel) = $member {
-            $context.park_residue(__kernel.inner);
+            $context.park_residue(__kernel.0.inner);
         }
     };
 }
