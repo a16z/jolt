@@ -204,7 +204,7 @@ mod field_inline_zk {
     use jolt_algebra::Fr;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_verifier::JoltSponge;
+    use jolt_transcript::{Keccak, ProverState};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
@@ -219,7 +219,7 @@ mod field_inline_zk {
         let mut context = backend.with_witness(&witness);
         let mut mode = test_mode();
         let mut prover_transcript = fixture_transcript();
-        let _ = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        let _ = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mut mode,
             LOG_T,
@@ -231,6 +231,7 @@ mod field_inline_zk {
             Through::Stage1,
             &test_checked_inputs(),
             &field_arithmetic_preprocessing(),
+            mode,
             &mut prover_transcript,
         );
     }

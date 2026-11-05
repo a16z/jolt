@@ -34,7 +34,7 @@ mod clear {
     use jolt_claims::protocols::field_inline::{
         FieldInlineCommittedPolynomial, FieldInlinePolynomialId,
     };
-    use jolt_openings::{CommitmentScheme, GroupCommitmentMetadata};
+    use jolt_openings::GroupCommitmentMetadata;
     use jolt_prover::JoltBackend;
     use jolt_prover::ProverConfig;
     use jolt_verifier::proof::JoltProofClaims;

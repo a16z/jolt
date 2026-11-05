@@ -535,7 +535,7 @@ mod field_inline_zk {
     use jolt_claims::OutputClaims;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
-    use jolt_verifier::JoltSponge;
+    use jolt_transcript::{Keccak, ProverState};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
@@ -565,7 +565,7 @@ mod field_inline_zk {
             transcript: &mut transcript,
         }
         .through_stage6a();
-        let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, JoltSponge>(
+        let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
             &mut mode,
             &checked,
@@ -591,6 +591,12 @@ mod field_inline_zk {
             1
         );
 
-        verify_through(Through::Stage6b, &checked, &preprocessing, &mut transcript);
+        verify_through(
+            Through::Stage6b,
+            &checked,
+            &preprocessing,
+            mode,
+            &mut transcript,
+        );
     }
 }

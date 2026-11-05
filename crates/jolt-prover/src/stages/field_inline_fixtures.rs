@@ -24,7 +24,9 @@ use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_algebra::Fr;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_algebra::Ring;
-use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltRelationId};
+use jolt_claims::protocols::jolt::JoltOneHotConfig;
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+use jolt_claims::protocols::jolt::JoltRelationId;
 #[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::{Bn254, JoltGroup, PedersenSetup};
 use jolt_crypto::{Bn254G1, Pedersen};
@@ -43,19 +45,28 @@ use jolt_riscv::{
     NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
     TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
-use jolt_transcript::{Channel, ProverTranscript, VerifierTranscript};
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+use jolt_transcript::{prover_transcript, verifier_transcript, Keccak, ProverState};
 use jolt_verifier::config::{ZkConfig, SELECTED_ZK_CONFIG};
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
-use jolt_verifier::stages::{
-    build_formula_dimensions, stage1, stage2, stage3, stage4, stage5, stage6a, stage6b,
-    PrecommittedSchedule,
+use jolt_verifier::stages::PrecommittedSchedule;
+use jolt_verifier::CheckedInputs;
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+use jolt_verifier::{
+    config::JoltProtocolConfig,
+    proof::{JoltCommitments, JoltProof, JoltProofClaims, JoltStageProofs},
+    stages::{
+        build_formula_dimensions, pow::StagePowNonces, stage1, stage2, stage3, stage4, stage5,
+        stage6a, stage6b,
+    },
+    JOLT_SESSION,
 };
-use jolt_verifier::{jolt_protocol_id, CheckedInputs, JoltSponge, JOLT_SESSION};
 #[cfg(feature = "akita")]
 use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-use jolt_zk::masking::CommittedPadsView;
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+use jolt_zk::masking::{CommittedPadsView, MaskedMessages, MaskedReader, MaskedSession};
 
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig};
 
@@ -493,7 +504,7 @@ pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
             .map(|k| generator.scalar_mul(&Fr::from_u64(k)))
             .collect();
         let setup = PedersenSetup::new(generators, generator.scalar_mul(&Fr::from_u64(1)));
-        let pads = BlindFold::<Pedersen<Bn254G1>>::commit_pads(
+        let (pads, _) = BlindFold::<Pedersen<Bn254G1>>::commit_pads(
             &setup,
             &PadLayout::new(1 << 14, 0).unwrap(),
             &mut fixture_transcript(),
@@ -508,79 +519,117 @@ pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
     }
 }
 
-/// A fresh prover transcript under Jolt's protocol id and session. The
-/// fixture prover starts at stage 1 (no stage 0), so [`verify_through`]
-/// runs the verifier stages from stage 1 on the same fresh transcript.
-pub(crate) fn fixture_transcript() -> ProverTranscript<JoltSponge> {
-    ProverTranscript::new(&jolt_protocol_id::<JoltSponge>(), JOLT_SESSION)
+/// A fresh prover transcript under Jolt's session over an empty statement.
+/// The fixture prover starts at stage 1 (no stage 0), so [`verify_through`]
+/// seeds the verifier the same way.
+#[cfg(all(feature = "zk", not(feature = "akita")))]
+pub(crate) fn fixture_transcript() -> ProverState<Keccak> {
+    prover_transcript::<Keccak>(&JOLT_SESSION, &0u64)
 }
 
 /// The last production verifier stage [`verify_through`] runs.
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Through {
     Stage1,
     Stage2,
     Stage4,
-    Stage5,
-    Stage6a,
     Stage6b,
 }
 
-/// Verifies the fixture prover's argument string with the production stage
-/// verifiers through `last`, requiring the verifier to consume every byte
-/// and land on the prover's sponge state.
+/// Runs the production masked stage verifiers through `last` over the
+/// fixture prover's masked tape (from `mode`), counting pads, and requires
+/// the verifier to consume the whole tape and land on the prover's sponge
+/// state. The fixture's field has no stage proof of work.
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 pub(crate) fn verify_through(
     last: Through,
     checked: &CheckedInputs,
-    preprocessing: &FixturePreprocessing,
-    prover: &mut ProverTranscript<JoltSponge>,
+    preprocessing: &JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
+    mode: ProofMode<Pedersen<Bn254G1>>,
+    prover: &mut ProverState<Keccak>,
 ) {
-    let narg = prover.narg().to_vec();
-    let mut transcript = VerifierTranscript::<JoltSponge>::new(
-        &jolt_protocol_id::<JoltSponge>(),
-        JOLT_SESSION,
-        &narg,
-    );
+    let (_, tape) = mode.into_parts();
+    let config = test_prover_config();
+    let empty = || JoltCommitments {
+        rd_inc: Default::default(),
+        ram_inc: Default::default(),
+        instruction_ra: Vec::new(),
+        ram_ra: Vec::new(),
+        bytecode_ra: Vec::new(),
+        field_inline: None,
+    };
+    let shell: JoltProof<DoryScheme, Pedersen<Bn254G1>, (), ()> = JoltProof {
+        protocol: JoltProtocolConfig::for_zk(checked.zk),
+        commitments: empty(),
+        stages: JoltStageProofs::masked(StagePowNonces::default()),
+        joint_opening_proof: (),
+        untrusted_advice_commitment: None,
+        claims: JoltProofClaims::Zk {
+            masked: MaskedMessages::default(),
+            zk_proof: (),
+        },
+        trace_length: config.trace_length,
+        ram_K: config.ram_K,
+        rw_config: config.rw_config,
+        one_hot_config: config.one_hot_config,
+        trace_polynomial_order: config.trace_polynomial_order,
+        narg: Vec::new(),
+    };
+    let mut transcript = verifier_transcript::<Keccak>(&JOLT_SESSION, &0u64, &[]);
     let verifier = &preprocessing.verifier;
-    let formula_dimensions =
-        build_formula_dimensions(verifier, checked, LOG_T, JoltRelationId::InstructionReadRaf)
-            .unwrap();
-    let mut counter = CommittedPadsView::counting();
-    let mut pads = checked.zk.is_masked().then_some(&mut counter);
+    let formula_dimensions = build_formula_dimensions(
+        &shell,
+        verifier,
+        checked,
+        LOG_T,
+        JoltRelationId::InstructionReadRaf,
+    )
+    .unwrap();
+    let mut session = MaskedSession::new(CommittedPadsView::counting(), MaskedReader::new(&tape));
     'stages: {
         let t = &mut transcript;
-        let stage1 = stage1::verify::<Fr, JoltSponge, ()>(checked, t, pads.as_deref_mut()).unwrap();
+        let masked = &mut session;
+        let stage1 = stage1::verify(checked, &shell, t, Some(&mut *masked)).unwrap();
         if last == Through::Stage1 {
             break 'stages;
         }
-        let stage2 = stage2::verify(checked, t, pads.as_deref_mut(), &stage1).unwrap();
+        let stage2 = stage2::verify(checked, &shell, t, Some(&mut *masked), &stage1).unwrap();
         if last == Through::Stage2 {
             break 'stages;
         }
-        let stage3 = stage3::verify(checked, t, pads.as_deref_mut(), &stage1, &stage2).unwrap();
-        let stage4 =
-            stage4::verify(checked, verifier, t, pads.as_deref_mut(), &stage2, &stage3).unwrap();
+        let stage3 =
+            stage3::verify(checked, &shell, t, Some(&mut *masked), &stage1, &stage2).unwrap();
+        let stage4 = stage4::verify(
+            checked,
+            verifier,
+            &shell,
+            t,
+            Some(&mut *masked),
+            &stage2,
+            &stage3,
+        )
+        .unwrap();
         if last == Through::Stage4 {
             break 'stages;
         }
         let stage5 = stage5::verify(
             checked,
+            &shell,
             &formula_dimensions,
             t,
-            pads.as_deref_mut(),
+            Some(&mut *masked),
             &stage2,
             &stage4,
         )
         .unwrap();
-        if last == Through::Stage5 {
-            break 'stages;
-        }
         let stage6a = stage6a::verify(
             checked,
             verifier,
+            &shell,
             &formula_dimensions,
             t,
-            pads.as_deref_mut(),
+            Some(&mut *masked),
             &stage1,
             &stage2,
             &stage3,
@@ -588,15 +637,13 @@ pub(crate) fn verify_through(
             &stage5,
         )
         .unwrap();
-        if last == Through::Stage6a {
-            break 'stages;
-        }
         let _stage6b = stage6b::verify(
             checked,
             verifier,
+            &shell,
             &formula_dimensions,
             t,
-            pads,
+            Some(&mut *masked),
             &stage1,
             &stage2,
             &stage3,
@@ -606,13 +653,17 @@ pub(crate) fn verify_through(
         )
         .unwrap();
     }
-    assert_eq!(transcript.remaining(), 0, "unconsumed argument bytes");
+    session.tape.finish().unwrap();
+    let forward = prover.verifier_message::<[u8; 32]>();
+    let replayed: [u8; 32] = transcript.verifier_message_as(32, |bytes| {
+        let mut out = [0u8; 32];
+        out.copy_from_slice(bytes);
+        out
+    });
     assert_eq!(
-        transcript.challenge_bytes::<32>(),
-        prover.challenge_bytes::<32>(),
+        replayed, forward,
         "verifier and prover sponge states diverge"
     );
-    transcript.finish().unwrap();
 }
 
 /// Twin-transcript replays of the already-round-tripped upstream stages, for
