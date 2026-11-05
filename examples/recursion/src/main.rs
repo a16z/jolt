@@ -1292,8 +1292,7 @@ fn verify_proofs(
     // Immutable recipes: tables from a native verification of this stream,
     // or empty tables (canonical path) when any proof does not verify.
     #[cfg(feature = "immutable-recipes")]
-    let recipe_tables =
-        immutable_recipe_tables::prepare(&all_groups_data, GUEST_TARGET_DIR);
+    let recipe_tables = immutable_recipe_tables::prepare(&all_groups_data, GUEST_TARGET_DIR);
     run_recursion_proof(
         guest,
         run_config,
@@ -1440,7 +1439,6 @@ fn main() {
 
 #[cfg(feature = "immutable-recipes")]
 mod immutable_recipe_tables;
-
 
 #[cfg(test)]
 mod tests {
