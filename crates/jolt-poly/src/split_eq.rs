@@ -302,8 +302,9 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     /// their `vars + 1` `Vec` headers. The empty point's layout differs.
     /// Excludes allocator slack.
     pub fn low_to_high_bytes(vars: usize) -> Option<usize> {
-        let out = 1usize << (vars / 2);
-        let inner = 1usize << vars.div_ceil(2);
+        let pow2 = |bits: usize| 1usize.checked_shl(u32::try_from(bits).ok()?);
+        let out = pow2(vars / 2)?;
+        let inner = pow2(vars.div_ceil(2))?;
         vars.checked_add(out.checked_mul(2)?)?
             .checked_add(inner)?
             .checked_sub(2)?

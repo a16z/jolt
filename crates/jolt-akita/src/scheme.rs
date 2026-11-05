@@ -426,21 +426,22 @@ impl Commitment for AkitaScheme {
 }
 
 impl AkitaScheme {
-    /// [`CommitmentScheme::setup`] that rejects, with
-    /// [`OpeningsError::InvalidSetup`] and before allocating the one-hot
-    /// backend setup, a request whose flat public matrix needs more than
-    /// `remaining_bytes`. Only the one-hot single-chunk setup is priced,
+    /// [`CommitmentScheme::setup`] that rejects a request whose flat public
+    /// matrix needs more than `matrix_byte_limit` bytes with
+    /// [`OpeningsError::SetupExceedsBudget`], before allocating the one-hot
+    /// backend setup. Only the one-hot single-chunk setup is priced,
     /// including grouped rows, which that matrix covers because it is sized
     /// from the grouped catalog. Full-width dense groups build separate,
-    /// unpriced backend setups, so they and every other shape are rejected
-    /// before any setup work.
+    /// unpriced backend setups, so they and every other shape fail with
+    /// [`OpeningsError::InvalidSetup`] before any setup work.
     ///
     /// Passing prices only that matrix, not the complete setup: schedule
     /// catalogs, backend caches, the setup-prefix export's buffers,
     /// commitments and hints, and verifier preparation are not counted.
-    pub fn setup_with_known_source_limit(
+    /// [`CommitmentScheme::setup`] checks no limit.
+    pub fn setup_with_matrix_byte_limit(
         params: AkitaSetupParams,
-        remaining_bytes: usize,
+        matrix_byte_limit: usize,
     ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
         if params.flavor != AkitaSetupFlavor::OneHot
             || params.akita_chunk_profile != AkitaChunkProfile::default()
@@ -450,15 +451,15 @@ impl AkitaScheme {
                 .is_some_and(|request| request.full_width_arities().next().is_some())
         {
             return Err(OpeningsError::InvalidSetup(
-                "a known setup-source limit prices only the one-hot single-chunk setup without full-width dense groups".into(),
+                "a matrix byte limit prices only the one-hot single-chunk setup without full-width dense groups".into(),
             ));
         }
-        Self::build_setup(params, Some(remaining_bytes))
+        Self::build_setup(params, Some(matrix_byte_limit))
     }
 
     fn build_setup(
         params: AkitaSetupParams,
-        known_source_limit: Option<usize>,
+        matrix_byte_limit: Option<usize>,
     ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
         let verifier = Self::verifier_setup_from_params(&params)?;
         let artifacts = &params.schedule_artifacts;
@@ -486,7 +487,7 @@ impl AkitaScheme {
         let (one_hot_backend_prover_setup, one_hot_cpu_backend, one_hot_backend_verifier_setup) =
             if params.max_num_vars >= one_hot_log_k && params.flavor != AkitaSetupFlavor::Dense {
                 let backend_prover_setup =
-                    crate::adapters::one_hot_setup_prover(&verifier, known_source_limit)?;
+                    crate::adapters::one_hot_setup_prover(&verifier, matrix_byte_limit)?;
                 let cpu_backend = CpuBackend::new(Arc::clone(&backend_prover_setup.expanded))
                     .map_err(invalid_setup)?;
                 let backend_verifier_setup =
@@ -1410,12 +1411,12 @@ mod tests {
     }
 
     /// The flat public matrix an unbudgeted setup generates bounds the
-    /// known-source limit exactly: one byte less is rejected, and the
+    /// matrix byte limit exactly: one byte less is rejected, and the
     /// admitted setup equals the unbudgeted one. The shape is the narrowest
     /// K=16 trace at the recursive cutover, whose Single row offloads setup
     /// contributions, so the admitted setup also exports prefix slots.
     #[test]
-    fn known_source_limit_admits_exactly_the_generated_matrix() {
+    fn matrix_byte_limit_admits_exactly_the_generated_matrix() {
         use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
 
         let params = || {
@@ -1436,12 +1437,15 @@ mod tests {
         let required =
             generated.expanded.shared_matrix().num_field_elements() * size_of::<AkitaField>();
 
-        assert!(matches!(
-            AkitaScheme::setup_with_known_source_limit(params(), required - 1),
-            Err(OpeningsError::InvalidSetup(_))
-        ));
+        assert_eq!(
+            AkitaScheme::setup_with_matrix_byte_limit(params(), required - 1).err(),
+            Some(OpeningsError::SetupExceedsBudget {
+                required,
+                limit: required - 1
+            })
+        );
         let (budgeted, budgeted_verifier) =
-            AkitaScheme::setup_with_known_source_limit(params(), required).unwrap();
+            AkitaScheme::setup_with_matrix_byte_limit(params(), required).unwrap();
         assert_eq!(budgeted_verifier, unbudgeted_verifier);
         assert_eq!(
             budgeted.one_hot_backend_prover_setup.unwrap().prefix_slots,
@@ -1452,7 +1456,7 @@ mod tests {
     /// Shapes whose setup allocates beyond the priced one-hot backend are
     /// rejected under any limit, though each builds unbudgeted.
     #[test]
-    fn known_source_limit_rejects_shapes_it_does_not_price() {
+    fn matrix_byte_limit_rejects_shapes_it_does_not_price() {
         use crate::schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 
         let artifacts =
@@ -1489,7 +1493,7 @@ mod tests {
             ),
         ] {
             assert!(matches!(
-                AkitaScheme::setup_with_known_source_limit(params.clone(), usize::MAX),
+                AkitaScheme::setup_with_matrix_byte_limit(params.clone(), usize::MAX),
                 Err(OpeningsError::InvalidSetup(_))
             ));
             let _unbudgeted = AkitaScheme::setup(params).unwrap();

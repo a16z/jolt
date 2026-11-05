@@ -1274,10 +1274,11 @@ pub(crate) fn validate_one_hot_k(one_hot_k: usize) -> Result<usize, OpeningsErro
 }
 
 /// The one-hot backend prover setup `setup` describes, sized by
-/// [`AkitaVerifierSetup::one_hot_backend_num_vars`].
+/// [`AkitaVerifierSetup::one_hot_backend_num_vars`], rejected by
+/// [`check_matrix_bytes`] before generation when `matrix_byte_limit` is set.
 pub(crate) fn one_hot_setup_prover(
     setup: &AkitaVerifierSetup,
-    known_source_limit: Option<usize>,
+    matrix_byte_limit: Option<usize>,
 ) -> Result<AkitaBackendProverSetup, OpeningsError> {
     let max_num_vars = setup.one_hot_backend_num_vars()?;
     let max_num_polys = setup.max_total_batch_polys;
@@ -1287,40 +1288,37 @@ pub(crate) fn one_hot_setup_prover(
             let requirements =
                 SetupRequirements::from_catalog(scheme.schedules(), max_num_vars, max_num_polys)
                     .map_err(invalid_setup)?;
-            if let Some(limit) = known_source_limit {
-                check_known_source_bytes(&requirements, limit)?;
+            if let Some(limit) = matrix_byte_limit {
+                check_matrix_bytes::<AkitaField>(
+                    requirements.matrix_capacity().num_field_elements,
+                    limit,
+                )?;
             }
             new_prover_setup(&requirements).map_err(invalid_setup)
         })
     })
 }
 
-/// Rejects `requirements` when the flat public matrix [`new_prover_setup`]
-/// generates, `matrix_capacity` field elements that the setup keeps, needs
-/// more than `limit` bytes. Nothing else the setup allocates is counted: the
-/// setup-prefix export streams each required slot's commitment from that
-/// matrix through per-slot buffers, and keeps the commitments and hints.
+/// Rejects a flat public matrix of `num_field_elements` `F` elements, the
+/// `matrix_capacity` that [`new_prover_setup`] generates and the setup keeps,
+/// when it needs more than `limit` bytes, with
+/// [`OpeningsError::SetupExceedsBudget`]. A size past `usize::MAX` is an
+/// [`OpeningsError::InvalidSetup`]: no address space holds it, limit or not.
+/// Nothing else the setup allocates is counted: the setup-prefix export
+/// streams each required slot's commitment from that matrix through per-slot
+/// buffers, and keeps the commitments and hints.
 ///
 /// This prices generation followed by export. With Akita's
 /// `disk-persistence` feature, off in this build, a cache hit returns before
 /// either, so enabling it requires gating or repricing this check.
-fn check_known_source_bytes<F>(
-    requirements: &SetupRequirements<F>,
-    limit: usize,
-) -> Result<(), OpeningsError> {
-    let required = requirements
-        .matrix_capacity()
-        .num_field_elements
-        .checked_mul(size_of::<F>())
-        .ok_or_else(|| {
-            OpeningsError::InvalidSetup("Akita setup matrix bytes overflow usize".into())
-        })?;
-    if required > limit {
-        return Err(OpeningsError::InvalidSetup(format!(
-            "the Akita one-hot setup needs {required} bytes for its flat public matrix, above the known-source limit of {limit} bytes"
-        )));
+fn check_matrix_bytes<F>(num_field_elements: usize, limit: usize) -> Result<(), OpeningsError> {
+    match num_field_elements.checked_mul(size_of::<F>()) {
+        Some(required) if required <= limit => Ok(()),
+        Some(required) => Err(OpeningsError::SetupExceedsBudget { required, limit }),
+        None => Err(OpeningsError::InvalidSetup(
+            "Akita setup matrix bytes overflow usize".into(),
+        )),
     }
-    Ok(())
 }
 
 fn largest_precommitted_num_vars<Cfg: CommitmentConfig>(
@@ -1468,6 +1466,25 @@ mod tests {
 
     fn af(value: u64) -> AkitaField {
         AkitaField::from_u64(value)
+    }
+
+    /// A matrix at the limit passes and one element more is a budget
+    /// rejection carrying both sizes; a size past `usize::MAX` is a malformed
+    /// setup at every limit.
+    #[test]
+    fn matrix_byte_check_rejects_above_the_limit_and_past_the_address_space() {
+        assert_eq!(check_matrix_bytes::<u64>(4, 32), Ok(()));
+        assert_eq!(
+            check_matrix_bytes::<u64>(5, 32),
+            Err(OpeningsError::SetupExceedsBudget {
+                required: 40,
+                limit: 32
+            })
+        );
+        assert!(matches!(
+            check_matrix_bytes::<u64>(usize::MAX, usize::MAX),
+            Err(OpeningsError::InvalidSetup(_))
+        ));
     }
 
     #[test]

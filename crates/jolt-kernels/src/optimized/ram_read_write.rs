@@ -458,7 +458,7 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for OptimizedBacken
 
 /// Bytes the RAM read-write kernel and RAM RAF evaluation hold in the same
 /// stage-2 batch, over the `prefix_cycles` cycles before the trace's constant
-/// suffix; zero for a phase split `prepare` rejects before allocating.
+/// suffix.
 #[derive(Clone, Copy, Debug)]
 pub struct RamReadWriteBytes {
     /// From the read-write kernel's preparation until a member of the batch
@@ -472,7 +472,8 @@ pub struct RamReadWriteBytes {
 impl RamReadWriteBytes {
     /// The read-write kernel's tables for `dimensions` under `prepare`'s
     /// `ReadWriteOrder` dispatch, with RAF's folded `ra` and unmap tables, or
-    /// `None` past `usize::MAX`.
+    /// `None` past `usize::MAX`. A phase split `prepare` rejects fails with
+    /// the same error.
     ///
     /// Both orders count the increment prefix (at most `prefix_cycles`
     /// entries), `val_init` (at least four slots), the split-eq tables
@@ -502,15 +503,18 @@ impl RamReadWriteBytes {
     pub fn new<F: JoltField>(
         dimensions: ReadWriteDimensions,
         prefix_cycles: usize,
+    ) -> Result<Option<Self>, KernelError<F>> {
+        let order = ReadWriteOrder::new::<F>(dimensions)?;
+        Ok(Self::for_order::<F>(order, dimensions, prefix_cycles))
+    }
+
+    fn for_order<F: JoltField>(
+        order: ReadWriteOrder,
+        dimensions: ReadWriteDimensions,
+        prefix_cycles: usize,
     ) -> Option<Self> {
-        let Ok(order) = ReadWriteOrder::new::<F>(dimensions) else {
-            return Some(Self {
-                prepared: 0,
-                first_bind: 0,
-            });
-        };
         let (log_t, log_k) = (dimensions.log_t(), dimensions.log_k());
-        let addresses = 1usize << log_k;
+        let addresses = 1usize.checked_shl(u32::try_from(log_k).ok()?)?;
         let field = |entries: usize| entries.checked_mul(size_of::<F>());
         let half_copy = field(addresses / 2)?;
         let shared = [
@@ -840,17 +844,15 @@ mod tests {
     /// Address-first, the first bind holds one half-length copy of a
     /// `K`-entry table at a time beside its bound entries. Over 2^13 cycles,
     /// 2^20 addresses and 4096 proof rows, with 136-byte entries, that 16 MiB
-    /// copy outweighs the bind's collect, and the term is 118,285,384 bytes:
-    /// above the 105,014,344 bytes without the copy, below the 135,062,600
-    /// bytes with two copies at once.
+    /// copy outweighs the bind's collect, and the term is 118,284,976 bytes:
+    /// above the 105,571,064 bytes with the collect leading instead, below the
+    /// 135,062,192 bytes with two copies at once.
     #[test]
     fn address_first_first_bind_holds_one_half_copy() {
         let bytes = RamReadWriteBytes::new::<Fr>(ReadWriteDimensions::new(13, 20, 0, 20), 4096)
             .unwrap()
+            .unwrap()
             .first_bind;
-        assert!(
-            (104 << 20..120 << 20).contains(&bytes),
-            "address-first first bind {bytes} outside 104..120 MiB"
-        );
+        assert_eq!(bytes, 118_284_976);
     }
 }

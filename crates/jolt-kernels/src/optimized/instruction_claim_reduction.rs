@@ -70,7 +70,7 @@ impl OptimizedInstructionClaimReduction {
     /// Not counted: the row store, a handle on the witness's rows when it
     /// has one.
     pub fn construction_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
-        fallible_collect_bytes::<F>(1usize << log_t)
+        fallible_collect_bytes::<F>(1usize.checked_shl(u32::try_from(log_t).ok()?)?)
     }
 
     /// Peak bytes over `2^log_t` cycles, `log_t >= 1`, from the end of
@@ -83,10 +83,11 @@ impl OptimizedInstructionClaimReduction {
     /// full capacity counted. Not counted: the row store, a handle on the
     /// witness's rows when it has one; the round messages.
     pub fn post_prepare_peak_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
-        let cycles = 1usize << log_t;
+        let pow2 = |bits: usize| 1usize.checked_shl(u32::try_from(bits).ok()?);
+        let cycles = pow2(log_t)?;
         let walk = log_t
-            .checked_add(1usize << (log_t / 2))?
-            .checked_add(1usize << log_t.div_ceil(2))?;
+            .checked_add(pow2(log_t / 2)?)?
+            .checked_add(pow2(log_t.div_ceil(2))?)?;
         cycles
             .checked_add(log_t)?
             .checked_add(Polynomial::<F>::in_place_shrink_len(cycles).max(walk))?

@@ -133,7 +133,7 @@ pub fn scalar_window_bytes<F: JoltField>(
         }
     }
 
-    let cycles = 1usize << log_t;
+    let cycles = 1usize.checked_shl(u32::try_from(log_t).ok()?)?;
     let mut peak = 0usize;
     // `generations` of access columns beside `entries` scalars.
     let mut window = |generations: usize, entries: usize| -> Option<()> {
@@ -554,6 +554,22 @@ mod tests {
         assert_eq!(
             scalar_window_bytes::<Fr>(13, 64, 4096),
             Some(184_320 + 14_336)
+        );
+    }
+
+    /// With 4096 addresses over 2^13 cycles, doubling the 4096-entry `ra`
+    /// table would hold as many field elements as the 4096 dense values, so
+    /// the first bind materializes 2048 values from it directly
+    /// (`LazyBind::FusedMaterialize`). The largest window opens the second
+    /// bind: its 1024-entry increment table beside the queued 4096-entry
+    /// table and the 2048 values, the `u32` address column and two
+    /// generations of `u64` value columns, 4096 · 36 + 7168 · 32 = 376,832
+    /// bytes, plus the same 14,336 LT bytes.
+    #[test]
+    fn scalar_windows_fused_materialize_at_the_first_bind() {
+        assert_eq!(
+            scalar_window_bytes::<Fr>(13, 4096, 4096),
+            Some(376_832 + 14_336)
         );
     }
 }
