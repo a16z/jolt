@@ -6,6 +6,8 @@
 name: AI merge gate
 
 on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
   push:
     branches: [main]
   issue_comment:
@@ -41,8 +43,7 @@ jobs:
         run: python3 scripts/ci/ai_merge_gate.py resolve
 
   refresh:
-    needs: resolve
-    if: needs.resolve.outputs.pr != ''
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -59,7 +60,8 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: python3 scripts/ci/ai_merge_gate.py refresh '${{ needs.resolve.outputs.pr }}'
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 scripts/ci/ai_merge_gate.py refresh "$PR_NUMBER"
 
   conflicts:
     if: github.event_name == 'push'
@@ -69,6 +71,8 @@ jobs:
       group: ai-merge-gate-conflicts
       cancel-in-progress: true
     permissions:
+      actions: read
+      checks: read
       contents: read
       pull-requests: write
     steps:
@@ -80,7 +84,7 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: python3 scripts/ci/ai_merge_gate.py conflicts
+        run: python3 scripts/ci/ai_merge_gate.py refresh-all
 
   evaluate:
     needs: resolve

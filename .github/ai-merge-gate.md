@@ -62,12 +62,15 @@ An independent refresh job clears all gate-managed labels when the current head 
 `ai-merge-gate` check from a trusted gate workflow run, in any status. These labels are `risk-1`
 through `risk-4`, `merge-eligible`, `needs-maintainer-review` and `no-reviewer-assigned`.
 Refresh does not wait behind classification or create checks; its failure does not block evaluation.
+It runs on `pull_request_target` opened, reopened and synchronize events, independently of the
+evaluation bridge, and executes only default-branch code, never pull-request bytes.
 Unrelated labels are left alone.
 
 The separate `merge-conflict` label follows GitHub's `mergeable` state for open PRs into the
-default branch, including drafts: false adds it; true removes it. An unknown state gets two
-retries, one second apart; if still unknown, the label stays unchanged and the job logs that fact.
-Each PR refresh checks conflicts, and a push to `main` checks all open PRs into the default branch.
+default branch, including drafts: false adds it; true removes it. Refresh reads every target PR
+before retrying only unknown states, two seconds apart, within a shared 60-second window.
+States still unknown keep their labels and are logged. Each PR refresh checks conflicts, and a
+push to `main` refreshes all gate labels and conflicts for open PRs into the default branch.
 Gate evaluation and draft cleanup never change `merge-conflict`.
 
 ## Limits and trust
@@ -88,7 +91,7 @@ checks the claimed workflow run and public fingerprint, not a cryptographic publ
 Event delivery and runner startup can delay label refresh; changes between API reads/writes
 can race with publication. GitHub dismisses stale approvals on push when configured below;
 same-head review changes require another evaluation to withdraw gate approval. A default-branch
-change refreshes conflicts but does not invalidate an old head's classification or approval
+change refreshes labels and conflicts but does not invalidate an old head's classification or approval
 result until its next evaluation. No live webhook, organization protection or dismissal behavior
 is proven by local fixtures.
 
@@ -98,6 +101,12 @@ An admin must retain existing required checks, set `AI_MERGE_GATE_MAINTAINERS`, 
 `OPENAI_API_KEY` repository secret, and create the labels `risk-1` through `risk-4`,
 `needs-maintainer-review`, `merge-eligible`, `no-reviewer-assigned` and `merge-conflict`.
 The gate never creates label definitions. A missing or malformed maintainer list fails evaluation.
+
+The repository's Actions event policy must allow `pull_request_target`, as `pr-title.yml` and
+`claude-routines.yml` already require. GitHub's [default public-repository policy blocks that event
+starting December 2, 2026](https://github.blog/changelog/2026-11-02-pull_request_target-blocked-by-default-december-2/).
+If blocked, per-PR refresh does not run; the independent refresh path runs only on pushes to
+`main`. The refresh job checks out only the default branch and executes no pull-request bytes.
 
 Allow GitHub Actions to create and approve pull requests, and require one approval with stale
 approvals dismissed on push. More than one required approval, code-owner review or last-push

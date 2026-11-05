@@ -148,6 +148,7 @@ class FakeApis:
         self.head_repo_id = 2
         # The pull requests branch forker:fix heads, most recently updated first; 7 stands for this one.
         self.branch_pulls = [{"number": 9, "state": "open", "base": {"ref": "release"}}, 7]
+        self.other_pulls = {}
         self.answer_text = answer_text
         self.risk, self.risks = risk, risks
         self.served_model = served_model
@@ -177,6 +178,8 @@ class FakeApis:
         parts = urlsplit(url)
         data = json.loads(body) if body else None
         path, query = parts.path, parse_qs(parts.query)
+        if method == "GET" and path in self.other_pulls:
+            return self.ok(self.other_pulls[path])
         if (method, path) == ("GET", f"/repos/{REPO}/pulls/7"):
             self.pr_reads += 1
             if self.pr_reads == 2 and self.during_recheck:
@@ -490,7 +493,7 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(apis.model_requests, [])
 
     def test_refresh_clears_managed_labels_without_a_trusted_gate_check_on_this_head(self) -> None:
-        for check, evaluated in [
+        cases = [
             (None, False),
             (record(GATE.GATE, OLD), False),
             (record(GATE.CLASSIFIER, NEW_HEAD), False),
@@ -500,44 +503,70 @@ class AiMergeGateTests(unittest.TestCase):
             (record(GATE.GATE, NEW_HEAD, status="queued", conclusion=None), True),
             (record(GATE.GATE, NEW_HEAD, status="in_progress", conclusion=None), True),
             (record(GATE.GATE, NEW_HEAD, conclusion="failure"), True),
-        ]:
-            with self.subTest(check=check):
-                kept = {"merge-conflict", "keep-healed"}
-                labels = GATE.MANAGED_LABELS | kept
-                apis = FakeApis(heads=[NEW_HEAD], labels=labels, records=[check] if check else [],
-                                mergeability=[False])
-                self.assertEqual(run_main(apis, "refresh", "7"), 0)
-                self.assertEqual(set(apis.labels), labels if evaluated else kept)
-                self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
+        ]
+        for command in (("refresh", "7"), ("refresh-all",)):
+            for check, evaluated in cases:
+                with self.subTest(command=command, check=check):
+                    kept = {"merge-conflict", "keep-healed"}
+                    labels = GATE.MANAGED_LABELS | kept
+                    apis = FakeApis(heads=[NEW_HEAD], labels=labels, records=[check] if check else [],
+                                    mergeability=[False])
+                    self.assertEqual(run_main(apis, *command), 0)
+                    self.assertEqual(set(apis.labels), labels if evaluated else kept)
+                    self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
 
     def test_merge_conflicts_follow_mergeability_including_base_pushes_and_unknown_state(self) -> None:
-        for command in (("refresh", "7"), ("conflicts",)):
+        for command in (("refresh", "7"), ("refresh-all",)):
             for mergeability, present, expected, retries in [
                 ([False], False, True, 0),
                 ([True], True, False, 0),
                 ([None, False], False, True, 1),
-                ([None, None, None], True, True, 2),
-                ([None, None, None], False, False, 2),
+                ([None] * 5 + [False], False, True, 5),
+                ([None], True, True, 30),
+                ([None], False, False, 30),
             ]:
                 with self.subTest(command=command, mergeability=mergeability, present=present):
                     labels = {"keep-healed"} | ({"merge-conflict"} if present else set())
-                    reads = [None, *mergeability] if command[0] == "refresh" else mergeability
+                    reads = [None, *mergeability]
                     apis = FakeApis(labels=labels, mergeability=reads, draft=True)
-                    with mock.patch("time.sleep") as delay:
-                        self.assertEqual(run_main(apis, *command), 0)
+                    with mock.patch("time.monotonic", return_value=0.0) as clock:
+                        def advance(seconds):
+                            clock.return_value += seconds
+
+                        with mock.patch("time.sleep", side_effect=advance) as delay:
+                            self.assertEqual(run_main(apis, *command), 0)
                     self.assertEqual(set(apis.labels), {"keep-healed"} | ({"merge-conflict"} if expected else set()))
                     self.assertEqual(delay.call_count, retries)
                     self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
         for change in ({"state": "closed"}, {"base": "release"}):
             apis = FakeApis(labels=["merge-conflict"], mergeability=[True], **change)
-            self.assertEqual(run_main(apis, "conflicts"), 0)
+            self.assertEqual(run_main(apis, "refresh-all"), 0)
             self.assertEqual(apis.labels, ["merge-conflict"])
             self.assertEqual(run_main(apis, "refresh", "7"), 0)
             self.assertIn("merge-conflict", apis.labels)
         missing = FakeApis(mergeability=[False])
         missing.label_definitions.remove("merge-conflict")
-        self.assertEqual(run_main(missing, "conflicts"), 1)
+        self.assertEqual(run_main(missing, "refresh-all"), 1)
         self.assertEqual(missing.label_writes, [])
+
+        apis = FakeApis(mergeability=[None] * 4 + [False])
+        settled_path = f"/repos/{REPO}/pulls/8"
+        apis.branch_pulls.append({"number": 8, "state": "open", "base": {"ref": "main"}})
+        apis.other_pulls[settled_path] = {"number": 8, "state": "open", "base": {"ref": "main"},
+                                         "head": {"sha": HEAD}, "labels": [], "mergeable": True}
+        first_pass_reads = []
+        with mock.patch("time.monotonic", return_value=0.0) as clock:
+            def advance(seconds):
+                reads = sum(urlsplit(url).path == settled_path for method, url in apis.requests)
+                self.assertGreater(reads, 0, "every PR must be read before the first retry delay")
+                if not first_pass_reads:
+                    first_pass_reads.append(reads)
+                self.assertEqual(reads, first_pass_reads[0], "settled PRs must not be retried")
+                clock.return_value += seconds
+
+            with mock.patch("time.sleep", side_effect=advance):
+                self.assertEqual(run_main(apis, "refresh-all"), 0)
+        self.assertIn("merge-conflict", apis.labels)
 
     def test_risk_cache_reuse_is_head_bound_and_already_correct_labels_are_not_rewritten(self) -> None:
         for cached_head in (HEAD, OLD):
