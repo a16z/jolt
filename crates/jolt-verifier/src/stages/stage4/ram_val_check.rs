@@ -166,7 +166,7 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
     }
-    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_support)]
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method(support = 1, returns_set = 1))]
     fn wire_output_openings(&self) -> std::collections::BTreeSet<JoltOpeningId> {
         // Wire openings beyond the output-`Expr` set (`ram_ra`/`ram_inc`): the
         // present staged `Val_init` contribution openings (advice /

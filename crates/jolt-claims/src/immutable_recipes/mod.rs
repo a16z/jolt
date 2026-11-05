@@ -1,26 +1,20 @@
-//! Closed, generated expression recipes. Runtime proof inputs never supply this table.
+//! Checked, generated expression recipes. Runtime proof inputs never supply this table.
 
 mod flags;
 mod key;
 #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
 pub mod record;
 pub use key::{KeySink, KeyVisit};
-/// Exact source-owned base eligibility for generic composed relations.
-pub struct BasePermit<S> {
-    marker: PhantomData<fn() -> S>,
-}
-impl<S> BasePermit<S> {
-    pub(crate) fn new() -> Self {
-        Self {
-            marker: PhantomData,
-        }
-    }
-}
+use crate::protocols::composed::ComposedOpeningId;
+use crate::protocols::field_inline::{
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
+};
+use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 
 use crate::{Expr, Source, Term};
 use jolt_field::{ImmutableRecipeField, Ring, IMMUTABLE_RECIPE_MODULUS};
 use std::cmp::Ordering;
-use std::{collections::BTreeSet, marker::PhantomData, slice::Iter};
+use std::{collections::BTreeSet, slice::Iter};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
@@ -186,7 +180,8 @@ impl<'a, O, D, C> Table<'a, O, D, C> {
 
 pub struct Recipe<'a, F, O, D, C> {
     record: &'a Record<'a, O, D, C>,
-    field: ImmutableRecipeField<F>,
+    // Zero-size capability proving that F uses the admitted guest field implementation.
+    _field: ImmutableRecipeField<F>,
     unit_first: bool,
 }
 
@@ -239,7 +234,7 @@ pub(crate) fn find<'a, F: Ring, O, D, C>(
             Ordering::Equal => {
                 return Ok(Some(Recipe {
                     record,
-                    field,
+                    _field: field,
                     unit_first,
                 }))
             }
@@ -404,7 +399,6 @@ impl<F: Ring, O, D, C> Recipe<'_, F, O, D, C> {
         challenge: impl FnMut(&C) -> Result<F, E>,
         derived: impl FnMut(&D) -> Result<F, E>,
     ) -> Result<F, EvaluationError<E>> {
-        let _ = self.field;
         ordered_fold(
             Terms::Compact {
                 record: self.record,
@@ -425,6 +419,7 @@ impl<F: Ring, O, D, C> Recipe<'_, F, O, D, C> {
     }
 }
 
+
 /// Used only on the selected field/context path. Unsupported fields and native
 /// recording retain the original Expr evaluator, including its operation order.
 pub fn evaluate_canonical<F: Ring, O, D, C, E>(
@@ -443,11 +438,6 @@ pub fn evaluate_canonical<F: Ring, O, D, C, E>(
     )
 }
 
-use crate::protocols::composed::ComposedOpeningId;
-use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
-};
-use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 
 pub type JoltTable = Table<'static, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 pub type ComposedTable = Table<'static, ComposedOpeningId, JoltDerivedId, JoltChallengeId>;

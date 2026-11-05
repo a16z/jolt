@@ -185,7 +185,7 @@ enum Commands {
 
     /// Write a parseable proof stream with an altered Akita schedule-row digest.
     #[cfg(feature = "akita")]
-    TamperOpening {
+    TamperScheduleDigest {
         #[arg(long)]
         example: String,
         #[arg(long)]
@@ -334,15 +334,9 @@ impl GuestProgram {
 }
 
 /// Write a generated guest source. A file whose bytes already match is left
-/// untouched, so its mtime does not force a guest rebuild;
-/// `RECURSION_WRITE_IF_CHANGED=off` rewrites every file as before. Tooling only:
-/// the bytes on disk are the same.
+/// untouched, so its mtime does not force a guest rebuild.
 fn write_generated(path: &Path, bytes: &[u8]) {
-    if !matches!(
-        std::env::var("RECURSION_WRITE_IF_CHANGED").as_deref(),
-        Ok("off")
-    ) && std::fs::read(path).is_ok_and(|existing| existing == bytes)
-    {
+    if std::fs::read(path).is_ok_and(|existing| existing == bytes) {
         info!("Unchanged, not rewritten: {}", path.display());
         return;
     }
@@ -472,7 +466,6 @@ fn preprocess_guest_prover(
 ) -> JoltProverPreprocessing {
     jolt_sdk::preprocess_program(guest_prog, memory_config, max_trace_length, mode).unwrap()
 }
-#[cfg_attr(feature = "immutable-recipes-record", jolt_claims::record_generate)]
 /// The packed (Akita) inner proofs use the modular prover over fp128 and the
 /// packed verifier preprocessing from
 /// the host's own verification of each proof.
@@ -919,7 +912,7 @@ fn generate_proofs(
         guest.name()
     );
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = GUEST_TARGET_DIR;
 
     let all_groups_data = collect_guest_proofs(guest, target_dir, false, mode, proofs);
 
@@ -972,7 +965,9 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
     program.set_memory_config(memory_config);
-    self::immutable_recursion_program!(program)
+    #[cfg(feature = "immutable-recipes")]
+    program.add_guest_feature("immutable-recipes");
+    program
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1064,7 +1059,7 @@ fn tamper_proof(
                     let ((mut selection, body), consumed): (([u8; 32], Vec<u8>), _) =
                         bincode::serde::decode_from_slice(&encoded, config).unwrap();
                     assert_eq!(consumed, encoded.len());
-                    // The v8 verifier resolves this digest in its trusted schedule catalog.
+                    // The verifier resolves this digest in its trusted schedule catalog.
                     *selection.first_mut().expect("schedule-row digest") ^= 1;
                     let encoded = bincode::serde::encode_to_vec((selection, body), config).unwrap();
                     proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config)
@@ -1088,6 +1083,8 @@ fn tamper_proof(
 /// trace rows of the guest build configurations screened at inner sizes 2^12
 /// and 2^20; the inner proofs are unchanged. A value the caller already set for
 /// any of these variables wins.
+const GUEST_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+
 const GUEST_BUILD_SETTINGS: [(&str, &str); 3] = [
     (
         "ZEROOS_GUEST_RUSTFLAGS",
@@ -1096,48 +1093,6 @@ const GUEST_BUILD_SETTINGS: [(&str, &str); 3] = [
     ("CARGO_PROFILE_RELEASE_CODEGEN_UNITS", "1"),
     ("CARGO_PROFILE_RELEASE_DEBUG", "0"),
 ];
-
-/// Content key of the verifier-guest build for the optional ELF cache
-/// (`RECURSION_GUEST_ELF_CACHE=<dir>`): the workspace tree and its uncommitted
-/// diff, every file under `examples/recursion` (the generated guest sources
-/// included), the Cargo git checkouts, the toolchain (`rustc -Vv`, `cargo -V`,
-/// the jolt CLI binary), this host binary (its features and build code), the
-/// guest build environment (RUSTFLAGS, the guest build settings), the
-/// bytes of the immutable recipe tables file (by content, not by path) and the
-/// target directory. `None` when any part cannot be read; the build then runs
-/// as usual. Tooling only: a hit reuses an ELF built from the same inputs.
-fn guest_elf_cache_key(target_dir: &str) -> Option<String> {
-    const SCRIPT: &str = r#"set -e
-cd "$1"
-{
-echo guest-elf-cache-v1
-git rev-parse 'HEAD^{tree}'
-git diff HEAD --binary | sha256sum
-find examples/recursion -type f ! -path '*/target*' -print0 | sort -z | xargs -0 sha256sum
-find "${CARGO_HOME:-$HOME/.cargo}/git/checkouts" -type f \( -name '*.rs' -o -name '*.toml' -o -name '*.json' \) -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum
-rustc -Vv
-cargo -V
-sha256sum "$(command -v "${JOLT_PATH:-jolt}")"
-sha256sum "$2"
-env | grep -E '^(ZEROOS_GUEST_RUSTFLAGS|CARGO_PROFILE_[A-Z0-9_]*|RUSTFLAGS|CARGO_ENCODED_RUSTFLAGS|CARGO_BUILD_[A-Z0-9_]*|JOLT_FUNC_NAME)=' | sort || true
-if [ -n "${JOLT_IMMUTABLE_RECIPES_RS:-}" ]; then echo immutable-recipes-tables; sha256sum < "$JOLT_IMMUTABLE_RECIPES_RS"; else echo immutable-recipes-tables-none; fi
-echo "$3"
-} | sha256sum | cut -c1-64
-"#;
-    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let exe = std::env::current_exe().ok()?;
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(SCRIPT)
-        .arg("sh")
-        .arg(&repo)
-        .arg(&exe)
-        .arg(target_dir)
-        .output()
-        .ok()?;
-    let key = String::from_utf8(output.stdout).ok()?.trim().to_string();
-    (output.status.success() && key.len() == 64).then_some(key)
-}
 
 /// Symbols the verifier guest's link places first in `.text` (an lld symbol
 /// ordering file). ZeroOS's weak `__main_entry` stub sits at the start of
@@ -1149,43 +1104,25 @@ const RECURSION_GUEST_LINK_ORDER: &str = "__default_main_entry\n";
 
 /// Linker flag that applies `RECURSION_GUEST_LINK_ORDER` to the verifier guest
 /// build. The ordering file is written into the guest target directory (only
-/// when its bytes differ). `RECURSION_GUEST_LINK_ORDER=off` links without it.
-fn recursion_guest_link_order_flag(target_dir: &str) -> Option<String> {
-    if matches!(
-        std::env::var("RECURSION_GUEST_LINK_ORDER").as_deref(),
-        Ok("off")
-    ) {
-        return None;
-    }
+/// when its bytes differ).
+fn recursion_guest_link_order_flag(target_dir: &str) -> String {
     std::fs::create_dir_all(target_dir).expect("create the guest target directory");
     let dir = std::fs::canonicalize(target_dir).expect("resolve the guest target directory");
     let path = dir.join("recursion-guest-link-order.txt");
-    if !std::fs::read(&path).is_ok_and(|existing| existing == RECURSION_GUEST_LINK_ORDER.as_bytes())
-    {
-        let tmp = dir.join(format!(
-            "recursion-guest-link-order.{}.tmp",
-            std::process::id()
-        ));
-        std::fs::write(&tmp, RECURSION_GUEST_LINK_ORDER).expect("write the guest link order");
-        std::fs::rename(&tmp, &path).expect("install the guest link order");
-    }
+    write_generated(&path, RECURSION_GUEST_LINK_ORDER.as_bytes());
     let path = path.to_str().expect("UTF-8 guest link order path");
     // ZEROOS_GUEST_RUSTFLAGS is split on whitespace.
     assert!(
         !path.contains(char::is_whitespace),
         "guest link order path contains whitespace: {path}"
     );
-    Some(format!("-Clink-arg=--symbol-ordering-file={path}"))
+    format!("-Clink-arg=--symbol-ordering-file={path}")
 }
 
 /// Builds the verifier guest, applying the default guest build settings to
 /// this build only (the inner guests keep the stock settings), together with
 /// the link order `RECURSION_GUEST_LINK_ORDER`, which applies with or without
-/// those settings. With `RECURSION_GUEST_ELF_CACHE=<dir>` set, an ELF already
-/// built for the same content key is reused instead of running the guest build,
-/// and a fresh build is stored under its key; unset, the build runs as before.
-/// With `RECURSION_GUEST_ELF_CACHE_PROBE` also set, the host logs the key and
-/// whether the lookup hits, then exits without building.
+/// those settings.
 fn build_recursion_guest(program: &mut Program, target_dir: &str) {
     let caller_guest_rustflags = std::env::var_os("ZEROOS_GUEST_RUSTFLAGS");
     let mut applied = Vec::new();
@@ -1196,55 +1133,13 @@ fn build_recursion_guest(program: &mut Program, target_dir: &str) {
         }
     }
     let link_order = recursion_guest_link_order_flag(target_dir);
-    if let Some(flag) = &link_order {
-        let flags = match std::env::var("ZEROOS_GUEST_RUSTFLAGS") {
-            Ok(flags) if !flags.trim().is_empty() => format!("{flags} {flag}"),
-            _ => flag.clone(),
-        };
-        std::env::set_var("ZEROOS_GUEST_RUSTFLAGS", flags);
-    }
-    info!("  recursion guest build settings: {applied:?}, link order: {link_order:?}");
-    let cache = std::env::var_os("RECURSION_GUEST_ELF_CACHE").map(PathBuf::from);
-    let key = cache.as_ref().and_then(|_| guest_elf_cache_key(target_dir));
-    let cached = match (&cache, &key) {
-        (Some(dir), Some(key)) => Some(dir.join(format!("{key}.elf"))),
-        _ => None,
+    let flags = match std::env::var("ZEROOS_GUEST_RUSTFLAGS") {
+        Ok(flags) if !flags.trim().is_empty() => format!("{flags} {link_order}"),
+        _ => link_order.clone(),
     };
-    if cache.is_some() && key.is_none() {
-        info!("  guest ELF cache: no key (inputs unreadable); building");
-    }
-    let hit = cached.as_ref().filter(|path| path.is_file()).cloned();
-    if std::env::var_os("RECURSION_GUEST_ELF_CACHE_PROBE").is_some() {
-        // Key-only probe: report the key and the lookup, build nothing.
-        info!(
-            "  guest ELF cache probe key={} hit={}",
-            key.as_deref().unwrap_or("none"),
-            hit.is_some()
-        );
-        std::process::exit(0);
-    }
-    match hit {
-        Some(path) => {
-            info!("  guest ELF cache hit {}", path.display());
-            program.elf = Some(GuestElf::read(path).expect("read the cached guest ELF"));
-        }
-        None => {
-            program.build(target_dir);
-            if let (Some(path), Some(built)) = (cached, program.elf.clone()) {
-                let tmp = path.with_extension("elf.tmp");
-                let stored = path
-                    .parent()
-                    .map(std::fs::create_dir_all)
-                    .transpose()
-                    .and_then(|_| std::fs::write(&tmp, built.bytes()))
-                    .and_then(|_| std::fs::rename(&tmp, &path));
-                match stored {
-                    Ok(()) => info!("  guest ELF cache store {}", path.display()),
-                    Err(error) => info!("  guest ELF cache store failed: {error}"),
-                }
-            }
-        }
-    }
+    std::env::set_var("ZEROOS_GUEST_RUSTFLAGS", flags);
+    info!("  recursion guest build settings: {applied:?}, link order: {link_order:?}");
+    program.build(target_dir);
     for key in applied {
         std::env::remove_var(key);
     }
@@ -1261,7 +1156,7 @@ fn run_recursion_proof(
     memory_config: MemoryConfig,
     max_trace_length: usize,
 ) {
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = GUEST_TARGET_DIR;
 
     let mut program = configured_recursion_program(memory_config);
     build_recursion_guest(&mut program, target_dir);
@@ -1398,7 +1293,7 @@ fn verify_proofs(
     // or empty tables (canonical path) when any proof does not verify.
     #[cfg(feature = "immutable-recipes")]
     let recipe_tables =
-        immutable_recipe_tables::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
+        immutable_recipe_tables::prepare(&all_groups_data, GUEST_TARGET_DIR);
     run_recursion_proof(
         guest,
         run_config,
@@ -1443,7 +1338,7 @@ fn main() {
         #[cfg(feature = "field-inline")]
         Some(Commands::CheckFieldKernels) => kernel_tests::run(),
         #[cfg(feature = "akita")]
-        Some(Commands::TamperOpening {
+        Some(Commands::TamperScheduleDigest {
             example,
             workdir,
             output,
@@ -1543,25 +1438,9 @@ fn main() {
     }
 }
 
-#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
-mod immutable_recipe_generation;
 #[cfg(feature = "immutable-recipes")]
 mod immutable_recipe_tables;
 
-#[cfg(not(feature = "immutable-recipes"))]
-macro_rules! immutable_recursion_program {
-    ($program:ident) => {
-        $program
-    };
-}
-#[cfg(feature = "immutable-recipes")]
-macro_rules! immutable_recursion_program {
-    ($program:ident) => {{
-        $program.add_guest_feature("immutable-recipes");
-        $program
-    }};
-}
-pub(crate) use immutable_recursion_program;
 
 #[cfg(test)]
 mod tests {
@@ -1694,10 +1573,6 @@ mod guest_build_tests {
     #[test]
     fn generated_writes_and_guest_settings_preserve_caller_state() {
         let keys = [
-            "RECURSION_WRITE_IF_CHANGED",
-            "RECURSION_GUEST_LINK_ORDER",
-            "RECURSION_GUEST_ELF_CACHE",
-            "RECURSION_GUEST_ELF_CACHE_PROBE",
             "ZEROOS_GUEST_RUSTFLAGS",
             "CARGO_PROFILE_RELEASE_CODEGEN_UNITS",
             "CARGO_PROFILE_RELEASE_DEBUG",
@@ -1719,8 +1594,7 @@ mod guest_build_tests {
             fs::metadata(&path).unwrap().modified().unwrap(),
             SystemTime::UNIX_EPOCH
         );
-        std::env::set_var("RECURSION_WRITE_IF_CHANGED", "off");
-        write_generated(&path, b"fixture");
+        write_generated(&path, b"changed fixture");
         assert_ne!(
             fs::metadata(&path).unwrap().modified().unwrap(),
             SystemTime::UNIX_EPOCH
