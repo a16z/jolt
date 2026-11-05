@@ -640,43 +640,6 @@ fn read_raf_flag_terms(
     circuit_flags[CircuitFlags::Store]
 }
 
-/// Dense indices for the distinct [`JoltInstructionRow::flag_class`]es of a
-/// bytecode table, in first-seen order (open addressing over the class key).
-/// Slots and keys are word-sized: a Jolt guest expands sub-word stores and
-/// loads into multi-row sequences.
-struct FlagClasses {
-    slots: Vec<usize>,
-    keys: Vec<usize>,
-}
-
-impl FlagClasses {
-    fn with_rows(rows: usize) -> Self {
-        Self {
-            slots: vec![usize::MAX; (2 * rows).next_power_of_two().max(16)],
-            keys: Vec::new(),
-        }
-    }
-
-    /// The index of `key`'s class, and whether this call created it.
-    fn index(&mut self, key: u32) -> (usize, bool) {
-        let key = key as usize;
-        let mask = self.slots.len() - 1;
-        let mut slot = key.wrapping_mul(0x9e37_79b9) & mask;
-        loop {
-            match self.slots[slot] {
-                usize::MAX => {
-                    let class = self.keys.len();
-                    self.keys.push(key);
-                    self.slots[slot] = class;
-                    return (class, true);
-                }
-                class if self.keys[class] == key => return (class, false),
-                _ => slot = (slot + 1) & mask,
-            }
-        }
-    }
-}
-
 fn read_raf_row_values<F>(
     instruction: &JoltInstructionRow,
     register_read_write_eq: &[Vec<F>; 3],
@@ -935,62 +898,39 @@ pub fn bytecode_ra(index: usize) -> JoltOpeningId {
     )
 }
 
-// Flag classes are indexed directly by key. `flag_class` packs an 8-bit instruction tag
-// above four low bits, so every key is below `DIRECT_FLAG_KEYS` and indexes a
-// word table holding `class + 1` (zero for an unseen key); a larger key would
-// take the open-addressing path. Same classes in the same first-seen order,
-// same sums, same result and first error.
+// flag_class packs a u8 instruction tag above four flag bits.
 const DIRECT_FLAG_KEYS: usize = 1 << 12;
+const _: () = assert!(((u8::MAX as usize) << 4 | 0xf) < DIRECT_FLAG_KEYS);
 
 struct DirectFlagClasses {
     direct: Vec<usize>,
-    /// Open-addressing classes for keys beyond the direct table (built on
-    /// first use) and each such class's shared index.
-    fallback: Option<(FlagClasses, Vec<usize>)>,
-    rows: usize,
     count: usize,
 }
 
 impl DirectFlagClasses {
-    fn with_rows(rows: usize) -> Self {
+    fn new() -> Self {
         Self {
             direct: vec![0; DIRECT_FLAG_KEYS],
-            fallback: None,
-            rows,
             count: 0,
         }
     }
 
-    /// The index of `key`'s class, and whether this call created it.
+    /// The index of `key`'s class in first-seen order, and whether it is new.
     #[inline(always)]
     fn index(&mut self, key: u32) -> (usize, bool) {
-        if let Some(slot) = self.direct.get_mut(key as usize) {
-            if *slot != 0 {
-                return (*slot - 1, false);
-            }
-            let class = self.count;
-            self.count += 1;
-            *slot = class + 1;
-            return (class, true);
+        let slot = &mut self.direct[key as usize];
+        if *slot != 0 {
+            return (*slot - 1, false);
         }
-        // Keys beyond the direct table share the class numbering.
-        let rows = self.rows;
-        let (fallback, shared) = self
-            .fallback
-            .get_or_insert_with(|| (FlagClasses::with_rows(rows), Vec::new()));
-        let (local, created) = fallback.index(key);
-        if created {
-            let class = self.count;
-            self.count += 1;
-            shared.push(class);
-            return (class, true);
-        }
-        (shared[local], false)
+        let class = self.count;
+        self.count += 1;
+        *slot = class + 1;
+        (class, true)
     }
 }
 
-/// `Σ_r address_eq[r] · stage_values(r)` over the bytecode rows (see the
-/// feature-off function of the same name; flag classes indexed directly).
+/// Fold bytecode stage values with `address_eq`, sharing flag computations
+/// between rows with the same instruction and virtual-sequence flags.
 ///
 /// # Errors
 ///
@@ -1020,7 +960,7 @@ where
     let rows = inputs.bytecode.len();
     let mut addresses = Vec::with_capacity(rows);
     let mut imms = Vec::with_capacity(rows);
-    let mut classes = DirectFlagClasses::with_rows(rows);
+    let mut classes = DirectFlagClasses::new();
     let mut class_weights: Vec<F> = Vec::new();
     let mut class_rows: Vec<&JoltInstructionRow> = Vec::new();
     for (instruction, &eq) in inputs.bytecode.iter().zip(address_eq) {
@@ -1186,27 +1126,5 @@ mod tests {
             read_raf_fold_stage_values(inputs(), &address_eq).unwrap(),
             expected
         );
-    }
-}
-
-#[cfg(test)]
-mod direct_class_tests {
-    use super::DirectFlagClasses;
-
-    #[test]
-    fn boundary_and_fallback_keys_share_first_seen_indices() {
-        let mut classes = DirectFlagClasses::with_rows(8);
-        for (key, expected) in [
-            (4095, (0, true)),
-            (4096, (1, true)),
-            (0, (2, true)),
-            (u32::MAX, (3, true)),
-            (4096, (1, false)),
-            (4095, (0, false)),
-            (u32::MAX, (3, false)),
-            (0, (2, false)),
-        ] {
-            assert_eq!(classes.index(key), expected);
-        }
     }
 }
