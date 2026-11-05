@@ -1099,7 +1099,7 @@ impl AkitaBatchProof {
         self.schedule_selection
     }
 
-    /// Headerless backend proof body: Akita's v8 argument bytes.
+    /// Headerless backend proof body: Akita's argument bytes.
     pub fn backend_proof_body_size(&self) -> usize {
         self.backend_proof.len()
     }
