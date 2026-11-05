@@ -169,7 +169,7 @@ impl<F: JoltField> InstructionReadRaf<F> {
                 let mut raf = gamma2 * identity - gamma * left() - gamma2 * right();
                 if CANONICAL_INSTRUCTION_ADDRESS {
                     // The input claim carries no γ³ term, so the sumcheck can only
-                    // close if Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0 -- i.e. no
+                    // close if Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0 — i.e. no
                     // identity-RAF cycle has an all-ones upper address half. Every
                     // fp128 alias `k = r + p < 2^128` has exactly that shape, and
                     // `U(k) = 0` implies `k < 2^128 - 2^64 < p`, so the surviving
@@ -302,7 +302,7 @@ mod tests {
     /// Pins the canonical-address term inside `EqRafFlag`.
     ///
     /// The term is what forces `Σ_j eq(r_red,j)·RafFlag_j·U(k_j) = 0`, and it is
-    /// invisible in the symbolic relation -- it rides inside a derived public. A
+    /// invisible in the symbolic relation — it rides inside a derived public. A
     /// refactor that dropped it would still typecheck, still produce a
     /// well-formed proof, and silently reopen the fp128 alias. Asserting the
     /// closed form (rather than just "nonzero") also pins the γ *power* and the

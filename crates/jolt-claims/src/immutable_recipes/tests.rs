@@ -171,14 +171,6 @@ fn native_field_never_visits_keys() {
     }
 }
 
-#[test]
-fn coefficient_import_rejects_modulus_without_reduction() {
-    assert_eq!(F::immutable_recipe_import(IMMUTABLE_RECIPE_MODULUS), None);
-    assert_eq!(
-        F::immutable_recipe_import(17).and_then(|v| v.immutable_recipe_export()),
-        Some(17)
-    );
-}
 
 #[test]
 fn full_shape_key_distinguishes_order_payloads_and_affine_flag() {

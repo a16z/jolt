@@ -187,11 +187,6 @@ pub enum FieldError {
     InvalidSize { expected: usize, actual: usize },
 }
 
-#[cfg(feature = "setup-weight-tiles")]
-mod setup_weight_tiles;
-#[cfg(feature = "signed-byte-sum")]
-mod signed_byte_sum;
-mod terminal_contraction;
 #[doc(hidden)]
 #[macro_export]
 macro_rules! immutable_recipe_ring_defaults {

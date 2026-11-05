@@ -8,7 +8,6 @@ use crate::protocols::field_inline::{
 use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 use crate::{Expr, Source};
 use jolt_field::Ring;
-use serde::Serializer;
 use std::collections::BTreeSet;
 use std::fmt::{Error as FmtError, Result as FmtResult, Write};
 use std::marker::PhantomData;
@@ -25,10 +24,7 @@ const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_TERM_FACTORS: usize = 12;
 const MAX_FALLBACK_KEYS: usize = MAX_KEYS;
 
-// The reviewed23-owner coverage plus actual Expr output evaluators. The
-// factored Outer output stays canonical and is not recorded. Bytecode anchor21
-// contributes input only; Full output is20. Tag 22 (lattice booleanity) left
-// with main's #2145, which deleted that relation.
+// Relation phases that must be observed before a capture can supply guest tables.
 const REQUIRED: &[(u64, Phase)] = &[
     (1, Phase::Support),
     (2, Phase::Input),
@@ -253,8 +249,6 @@ impl Session {
         Ok(Capture {
             records: state.records,
             fallbacks: state.fallbacks,
-            logical_bytes: state.logical_bytes,
-            factor_events: state.factor_events,
         })
     }
 }
@@ -276,8 +270,6 @@ pub struct Capture {
     records: Vec<Observed>,
     /// Keys left canonical because a term exceeds `MAX_TERM_FACTORS`.
     pub fallbacks: Vec<Fallback>,
-    pub logical_bytes: usize,
-    pub factor_events: usize,
 }
 
 struct Budget {
@@ -359,14 +351,6 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
             ));
         }
         for term in &expression.terms {
-            if term.factors.len() > 12 {
-                return Err(CaptureError::Representation(
-                    "term has more than 12 factors (detail: tag << 32 | phase << 16 | factors)",
-                    detail(term.factors.len())
-                        | (u64::from(self.phase.code()) << 16)
-                        | (self.key.get(1).copied().unwrap_or(0) << 32),
-                ));
-            }
             budget.factors = budget
                 .factors
                 .checked_add(term.factors.len())
@@ -455,7 +439,7 @@ impl<O: Copy + Eq, D: Copy + Eq, C: Copy + Eq> NativeRecord<O, D, C> {
     }
 }
 
-fn capture(make: impl FnOnce(&mut Budget) -> Result<Captured, CaptureError>) {
+fn with_capture(update: impl FnOnce(&mut State, &mut Budget) -> Result<(), CaptureError>) {
     let Ok(mut global) = global() else {
         return;
     };
@@ -473,7 +457,17 @@ fn capture(make: impl FnOnce(&mut Budget) -> Result<Captured, CaptureError>) {
         bytes: state.logical_bytes,
         factors: state.factor_events,
     };
-    let result = make(&mut budget).and_then(|record| {
+    match update(state, &mut budget) {
+        Ok(()) => {
+            state.logical_bytes = budget.bytes;
+            state.factor_events = budget.factors;
+        }
+        Err(error) => state.failure = Some(error),
+    }
+}
+
+fn capture(make: impl FnOnce(&mut Budget) -> Result<Captured, CaptureError>) {
+    with_capture(|state, budget| make(budget).and_then(|record| {
         let (key, phase) = record.identity();
         if state
             .fallbacks
@@ -510,13 +504,8 @@ fn capture(make: impl FnOnce(&mut Budget) -> Result<Captured, CaptureError>) {
         }
         // Count every observation, including duplicate keys, against the finite
         // capture budget. Repeated verifier use cannot escape the event ceiling.
-        state.logical_bytes = budget.bytes;
-        state.factor_events = budget.factors;
         Ok(())
-    });
-    if let Err(error) = result {
-        state.failure = Some(error);
-    }
+    }));
 }
 
 pub(crate) fn expression<F: Ring, O: Copy + Eq, D: Copy + Eq, C: Copy + Eq>(
@@ -547,7 +536,6 @@ pub(crate) fn expression<F: Ring, O: Copy + Eq, D: Copy + Eq, C: Copy + Eq>(
 
 /// One key left canonical: its complete key, phase, widest term and the number of
 /// observations. Repeated observations must report the same widest term.
-#[derive(serde::Serialize)]
 pub struct Fallback {
     pub key: Vec<u64>,
     pub phase: &'static str,
@@ -555,34 +543,25 @@ pub struct Fallback {
     pub observations: u64,
 }
 
-fn phase_name(phase: Phase) -> &'static str {
+fn phase_names(phase: Phase) -> (&'static str, &'static str) {
     match phase {
-        Phase::Input => "input",
-        Phase::Output => "output",
-        Phase::Support => "support",
+        Phase::Input => ("input", "Input"),
+        Phase::Output => ("output", "Output"),
+        Phase::Support => ("support", "Support"),
     }
 }
 
+fn phase_name(phase: Phase) -> &'static str {
+    phase_names(phase).0
+}
+
+fn phase_variant(phase: Phase) -> &'static str {
+    phase_names(phase).1
+}
+
 fn fallback(phase: Phase, visit: impl FnOnce(&mut dyn KeySink) -> bool, widest: usize) {
-    let Ok(mut global) = global() else {
-        return;
-    };
-    let Some(state) = &mut global.active else {
-        return;
-    };
-    if state.failure.is_some() {
-        return;
-    }
-    if state.owner != thread::current().id() {
-        state.failure = Some(CaptureError::Ownership);
-        return;
-    }
-    let mut budget = Budget {
-        bytes: state.logical_bytes,
-        factors: state.factor_events,
-    };
     let name = phase_name(phase);
-    let result = NativeRecord::<(), (), ()>::new(phase, visit, &mut budget).and_then(|record| {
+    with_capture(|state, budget| NativeRecord::<(), (), ()>::new(phase, visit, budget).and_then(|record| {
         if state.records.iter().any(|observed| {
             let (key, actual_phase) = observed.record.identity();
             key == record.key.as_slice() && actual_phase == phase
@@ -616,13 +595,8 @@ fn fallback(phase: Phase, visit: impl FnOnce(&mut dyn KeySink) -> bool, widest: 
                 },
             )?;
         }
-        state.logical_bytes = budget.bytes;
-        state.factor_events = budget.factors;
         Ok(())
-    });
-    if let Err(error) = result {
-        state.failure = Some(error);
-    }
+    }));
 }
 
 pub(crate) fn support<F: Ring, O: Copy + Ord, D: Copy + Eq, C: Copy + Eq>(
@@ -664,11 +638,7 @@ impl<O: RenderId, D: RenderId, C: RenderId> NativeRecord<O, D, C> {
         for word in &self.key {
             write!(writer, "{word}u64,")?;
         }
-        let phase = match self.phase {
-            Phase::Input => "Input",
-            Phase::Output => "Output",
-            Phase::Support => "Support",
-        };
+        let phase = phase_variant(self.phase);
         write!(writer, "],Phase::{phase},&[")?;
         for word in &self.headers {
             write!(writer, "{word}u64,")?;
@@ -753,109 +723,6 @@ impl Capture {
                 .write_str("]}){Ok(table)=>table,Err(_)=>panic!(\"invalid closed table\")};\n")?;
         }
         Ok(())
-    }
-}
-
-#[derive(serde::Serialize)]
-pub struct RecordIdentity<'a> {
-    pub key: &'a [u64],
-    pub phase: &'static str,
-    pub observations: u64,
-    pub headers: &'a [u64],
-    pub factors: &'a [u64],
-    #[serde(serialize_with = "decimal_strings")]
-    pub coefficients: &'a [u128],
-    pub sources: Vec<String>,
-    pub support: Vec<String>,
-}
-
-/// Canonical coefficients are field elements up to 128 bits; JSON numbers cannot
-/// carry them exactly, so the capture receipt writes them as decimal strings.
-fn decimal_strings<S: Serializer>(values: &&[u128], serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.collect_seq(values.iter().map(u128::to_string))
-}
-
-impl<O: RenderId, D: RenderId, C: RenderId> NativeRecord<O, D, C> {
-    fn identity(
-        &self,
-        observations: u64,
-        budget: &mut Budget,
-    ) -> Result<RecordIdentity<'_>, CaptureError> {
-        let mut sources = Vec::new();
-        let mut support = Vec::new();
-        budget.charge::<String>(self.sources.len())?;
-        budget.charge::<String>(self.support.len())?;
-        sources
-            .try_reserve(self.sources.len())
-            .map_err(|_| CaptureError::Capacity)?;
-        support
-            .try_reserve(self.support.len())
-            .map_err(|_| CaptureError::Capacity)?;
-        for source in &self.sources {
-            let mut writer = SourceText {
-                value: String::new(),
-            };
-            let result = match source {
-                Source::Opening(id) => writer
-                    .write_str("Opening:")
-                    .and_then(|()| id.render(&mut writer)),
-                Source::Challenge(id) => writer
-                    .write_str("Challenge:")
-                    .and_then(|()| id.render(&mut writer)),
-                Source::Derived(id) => writer
-                    .write_str("Derived:")
-                    .and_then(|()| id.render(&mut writer)),
-            };
-            result.map_err(|_| CaptureError::Serialization)?;
-            budget.charge::<u8>(writer.value.len())?;
-            sources.push(writer.value);
-        }
-        for opening in &self.support {
-            let mut writer = SourceText {
-                value: String::new(),
-            };
-            opening
-                .render(&mut writer)
-                .map_err(|_| CaptureError::Serialization)?;
-            budget.charge::<u8>(writer.value.len())?;
-            support.push(writer.value);
-        }
-        let phase = match self.phase {
-            Phase::Input => "input",
-            Phase::Output => "output",
-            Phase::Support => "support",
-        };
-        Ok(RecordIdentity {
-            key: &self.key,
-            phase,
-            observations,
-            headers: &self.headers,
-            factors: &self.factors,
-            coefficients: &self.coefficients,
-            sources,
-            support,
-        })
-    }
-}
-impl Capture {
-    pub fn identities(&self) -> Result<Vec<RecordIdentity<'_>>, CaptureError> {
-        let mut identities = Vec::new();
-        let mut budget = Budget {
-            bytes: 0,
-            factors: 0,
-        };
-        budget.charge::<RecordIdentity<'_>>(self.records.len())?;
-        identities
-            .try_reserve(self.records.len())
-            .map_err(|_| CaptureError::Capacity)?;
-        for observed in &self.records {
-            identities.push(match &observed.record {
-                Captured::Jolt(record) => record.identity(observed.occurrences, &mut budget)?,
-                Captured::Composed(record) => record.identity(observed.occurrences, &mut budget)?,
-                Captured::Field(record) => record.identity(observed.occurrences, &mut budget)?,
-            });
-        }
-        Ok(identities)
     }
 }
 

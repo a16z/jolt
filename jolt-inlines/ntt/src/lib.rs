@@ -66,8 +66,8 @@ pub fn forward_ntt64(
                     &aligned_twiddles.0,
                     p,
                     pinv,
-                )
-            };
+                );
+            }
             *state = aligned_state.0;
         }
     }
