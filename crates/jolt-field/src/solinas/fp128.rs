@@ -1061,7 +1061,7 @@ impl<const P: u128> Ring for Fp128<P> {
             -Self::from_u128(v.unsigned_abs())
         }
     }
-
+    crate::immutable_recipe_fp128_methods!();
     #[inline(always)]
     fn square(&self) -> Self {
         // A guest that routes this field squares in one field-inline multiply.
@@ -1077,7 +1077,22 @@ impl<const P: u128> Field for Fp128<P> {
     fn dot_product(a: &[Self], b: &[Self]) -> Self {
         <Self as MulBaseUnreduced<Self>>::dot_base(a, b)
     }
-
+    crate::terminal_contraction::fp128_methods!();
+    #[cfg(all(
+        feature = "signed-byte-sum",
+        feature = "field-inline-guest",
+        target_arch = "riscv64"
+    ))]
+    crate::signed_byte_sum::fp128_methods!();
+    fn scale_slice_into(scale: Self, src: &[Self], dst: &mut [Self]) {
+        Self::fill_ingress_scale(scale, src, dst);
+    }
+    #[cfg(all(
+        feature = "setup-weight-tiles",
+        feature = "field-inline-guest",
+        target_arch = "riscv64"
+    ))]
+    crate::setup_weight_tiles::fp128_methods!();
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
     #[inline]
     fn signed_sum<'a>(terms: impl IntoIterator<Item = (&'a Self, bool)>) -> Self
@@ -1204,7 +1219,8 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
     }
 }
 
-crate::impl_serde_bytes!(impl[const P: u128] Fp128<P>, 16);
+#[path = "fp128_word_decode.rs"]
+mod word_decode;
 
 impl<const P: u128> WithAccumulator for Fp128<P> {
     type SumAccumulator = Fp128SumAccumulator<P>;
@@ -1222,6 +1238,7 @@ impl<const P: u128> PseudoMersenne for Fp128<P> {
     }
 
     #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+    #[inline(always)]
     fn inline_weighted_dot(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Option<Self> {
         Self::inline_accumulators().then(|| Self::inline_weighted_dot_kernel(rows, weights, pows))
     }
@@ -1293,6 +1310,8 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
+    #[rustfmt::skip]
+    #[inline(always)]
     fn inline_weighted_dot_kernel(rows: &[&[Self]], weights: &[Self], pows: &[Self]) -> Self {
         // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`, so a slice
         // of it, and a slice of such slices, have the limb slices' layout.
@@ -1301,7 +1320,7 @@ impl<const P: u128> Fp128<P> {
         };
         let rows: &[&[[u64; 2]]] =
             unsafe { core::slice::from_raw_parts(rows.as_ptr().cast(), rows.len()) };
-        Self::from_inline_limbs(crate::field_inline::weighted_dot_rows(
+        if pows.len() == 64 && rows.len() >= 5 { if let Some(alpha) = geometric::ratio(pows) { return Self::from_inline_limbs(crate::field_inline::horner::weighted(rows, cast(weights), &alpha.0, pows.len())); } } Self::from_inline_limbs(crate::field_inline::weighted_dot_rows(
             rows,
             cast(weights),
             cast(pows),
@@ -1459,6 +1478,34 @@ impl<const P: u128> Fp128<P> {
     }
 }
 
+// On a guest whose field-inline
+// unit computes in this field, the slice product loads `scale` into a field
+// register once and each element costs its own ingress, one multiply and one
+// canonical readout (range checked as every field-inline result is). The
+// kernel uses only the operand, output and readout scratch registers, never
+// the accumulators that `signed_sum` lends out, and runs no caller code while
+// the scale is resident. Elsewhere, the software product.
+impl<const P: u128> Fp128<P> {
+    #[inline]
+    fn fill_ingress_scale(scale: Self, src: &[Self], dst: &mut [Self]) {
+        let len = src.len().min(dst.len());
+        #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
+        if Self::FIELD_INLINE && len >= 2 {
+            // SAFETY: `Fp128` is `repr(transparent)` over `[u64; 2]`.
+            let src: &[[u64; 2]] = unsafe { core::slice::from_raw_parts(src.as_ptr().cast(), len) };
+            let dst = &mut dst[..len];
+            crate::field_inline::scale::scale_into(&scale.0, src, |index, limbs| {
+                dst[index] = Self::from_inline_limbs(limbs);
+            });
+            return;
+        }
+        dst[..len]
+            .iter_mut()
+            .zip(&src[..len])
+            .for_each(|(value, &low_value)| *value = low_value * scale);
+    }
+}
+
 #[cfg(test)]
 mod wide_tests {
     use super::*;
@@ -1507,3 +1554,6 @@ mod wide_tests {
         }
     }
 }
+
+#[cfg(any(test, all(feature = "field-inline-guest", target_arch = "riscv64")))]
+mod geometric;
