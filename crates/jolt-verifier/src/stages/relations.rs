@@ -200,7 +200,7 @@ where
     {
         Vec::new()
     }
-    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_support)]
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method(support = 1, returns_set = 1))]
     /// The opening ids this instance absorbs into the transcript (and commits in
     /// ZK): the output-`Expr`-referenced set minus the aliased openings (absorbed
     /// once via their canonical source). The generated `output_claim_count` sums
@@ -297,7 +297,7 @@ where
     ) -> Result<F, VerifierError> {
         Err(VerifierError::MissingStageClaimDerived { id: (*id).into() })
     }
-    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_input)]
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method(input = 1))]
     /// The input claim (claimed sum), evaluated from the input `Expr` against the
     /// wired input opening values and the drawn `challenges`. Shared by prover and
     /// verifier; clear only. The challenge leg resolves through the drawn
@@ -323,7 +323,7 @@ where
             |id| self.derive_input_term(id, challenges),
         )
     }
-    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_output_call)]
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method(call_evaluate_output_expression = 1))]
     /// The expected output claim, evaluated from the produced opening *values*, the
     /// produced opening *points* (for output deriveds), the input points, the drawn
     /// `challenges`, and the relation's derived public values. Shared by prover and
@@ -339,7 +339,7 @@ where
             self.derive_output_term(id, input_points, output_points, challenges)
         })
     }
-    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_output)]
+    #[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method(output = 1))]
     /// Evaluate the canonical output expression with a per-call derived-value
     /// resolver. Relations can share public computations across terms without
     /// restating the expression or changing opening and challenge resolution.
@@ -483,7 +483,7 @@ where
     }
     Ok(())
 }
-#[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::ir_wire_call)]
+#[cfg_attr(feature = "immutable-recipes", jolt_verifier_derive::recipe_method(call_wire_output_openings = 1))]
 /// Assert one member's wire claims match its expected output shape: the
 /// provided `canonical_order` id-set, minus the member's aliased openings
 /// (absorbed via their canonical source; their value equality is enforced

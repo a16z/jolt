@@ -73,8 +73,6 @@ pub use verifier::{
 #[cfg(feature = "immutable-recipes")]
 pub mod immutable_recipes;
 
-#[doc(hidden)]
-#[macro_export]
 macro_rules! recipe_verify_clear {
     ($checked:expr; $receiver:ident ($($argument:expr),* $(,)?)) => {{
         #[cfg(not(feature = "immutable-recipes"))]
@@ -87,8 +85,6 @@ macro_rules! recipe_verify_clear {
     }};
 }
 
-#[doc(hidden)]
-#[macro_export]
 macro_rules! recipe_validate_output_claims {
     ($checked:expr; $receiver:ident ($($argument:expr),* $(,)?)) => {{
         #[cfg(not(feature = "immutable-recipes"))]
@@ -100,3 +96,6 @@ macro_rules! recipe_validate_output_claims {
         }
     }};
 }
+
+pub(crate) use recipe_validate_output_claims;
+pub(crate) use recipe_verify_clear;
