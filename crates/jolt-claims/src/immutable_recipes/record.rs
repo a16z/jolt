@@ -467,45 +467,47 @@ fn with_capture(update: impl FnOnce(&mut State, &mut Budget) -> Result<(), Captu
 }
 
 fn capture(make: impl FnOnce(&mut Budget) -> Result<Captured, CaptureError>) {
-    with_capture(|state, budget| make(budget).and_then(|record| {
-        let (key, phase) = record.identity();
-        if state
-            .fallbacks
-            .iter()
-            .any(|listed| listed.key.as_slice() == key && listed.phase == phase_name(phase))
-        {
-            // The same key and phase was already seen over-wide: one table entry
-            // must never stand for observations that were not all recorded.
-            return Err(CaptureError::Conflict);
-        }
-        if let Some(previous) = state
-            .records
-            .iter_mut()
-            .find(|previous| previous.record.identity() == record.identity())
-        {
-            if !previous.record.same_value(&record) {
+    with_capture(|state, budget| {
+        make(budget).and_then(|record| {
+            let (key, phase) = record.identity();
+            if state
+                .fallbacks
+                .iter()
+                .any(|listed| listed.key.as_slice() == key && listed.phase == phase_name(phase))
+            {
+                // The same key and phase was already seen over-wide: one table entry
+                // must never stand for observations that were not all recorded.
                 return Err(CaptureError::Conflict);
             }
-            previous.occurrences = previous
-                .occurrences
-                .checked_add(1)
-                .ok_or(CaptureError::Capacity)?;
-        } else {
-            if state.records.len() == MAX_KEYS {
-                return Err(CaptureError::Capacity);
+            if let Some(previous) = state
+                .records
+                .iter_mut()
+                .find(|previous| previous.record.identity() == record.identity())
+            {
+                if !previous.record.same_value(&record) {
+                    return Err(CaptureError::Conflict);
+                }
+                previous.occurrences = previous
+                    .occurrences
+                    .checked_add(1)
+                    .ok_or(CaptureError::Capacity)?;
+            } else {
+                if state.records.len() == MAX_KEYS {
+                    return Err(CaptureError::Capacity);
+                }
+                budget.push(
+                    &mut state.records,
+                    Observed {
+                        record,
+                        occurrences: 1,
+                    },
+                )?;
             }
-            budget.push(
-                &mut state.records,
-                Observed {
-                    record,
-                    occurrences: 1,
-                },
-            )?;
-        }
-        // Count every observation, including duplicate keys, against the finite
-        // capture budget. Repeated verifier use cannot escape the event ceiling.
-        Ok(())
-    }));
+            // Count every observation, including duplicate keys, against the finite
+            // capture budget. Repeated verifier use cannot escape the event ceiling.
+            Ok(())
+        })
+    });
 }
 
 pub(crate) fn expression<F: Ring, O: Copy + Eq, D: Copy + Eq, C: Copy + Eq>(
@@ -561,42 +563,44 @@ fn phase_variant(phase: Phase) -> &'static str {
 
 fn fallback(phase: Phase, visit: impl FnOnce(&mut dyn KeySink) -> bool, widest: usize) {
     let name = phase_name(phase);
-    with_capture(|state, budget| NativeRecord::<(), (), ()>::new(phase, visit, budget).and_then(|record| {
-        if state.records.iter().any(|observed| {
-            let (key, actual_phase) = observed.record.identity();
-            key == record.key.as_slice() && actual_phase == phase
-        }) {
-            // The same key and phase was already recorded narrow.
-            return Err(CaptureError::Conflict);
-        }
-        if let Some(previous) = state
-            .fallbacks
-            .iter_mut()
-            .find(|previous| previous.key == record.key && previous.phase == name)
-        {
-            if previous.widest_term != widest {
+    with_capture(|state, budget| {
+        NativeRecord::<(), (), ()>::new(phase, visit, budget).and_then(|record| {
+            if state.records.iter().any(|observed| {
+                let (key, actual_phase) = observed.record.identity();
+                key == record.key.as_slice() && actual_phase == phase
+            }) {
+                // The same key and phase was already recorded narrow.
                 return Err(CaptureError::Conflict);
             }
-            previous.observations = previous
-                .observations
-                .checked_add(1)
-                .ok_or(CaptureError::Capacity)?;
-        } else {
-            if state.fallbacks.len() == MAX_FALLBACK_KEYS {
-                return Err(CaptureError::Capacity);
+            if let Some(previous) = state
+                .fallbacks
+                .iter_mut()
+                .find(|previous| previous.key == record.key && previous.phase == name)
+            {
+                if previous.widest_term != widest {
+                    return Err(CaptureError::Conflict);
+                }
+                previous.observations = previous
+                    .observations
+                    .checked_add(1)
+                    .ok_or(CaptureError::Capacity)?;
+            } else {
+                if state.fallbacks.len() == MAX_FALLBACK_KEYS {
+                    return Err(CaptureError::Capacity);
+                }
+                budget.push(
+                    &mut state.fallbacks,
+                    Fallback {
+                        key: record.key,
+                        phase: name,
+                        widest_term: widest,
+                        observations: 1,
+                    },
+                )?;
             }
-            budget.push(
-                &mut state.fallbacks,
-                Fallback {
-                    key: record.key,
-                    phase: name,
-                    widest_term: widest,
-                    observations: 1,
-                },
-            )?;
-        }
-        Ok(())
-    }));
+            Ok(())
+        })
+    });
 }
 
 pub(crate) fn support<F: Ring, O: Copy + Ord, D: Copy + Eq, C: Copy + Eq>(
