@@ -5,9 +5,10 @@
 //! - **Tracing subscriber setup** — configures `tracing-chrome` (Perfetto/Chrome JSON)
 //!   and `tracing-subscriber` (console output) for the host binary.
 //! - **Memory profiling** — tracks memory deltas across proving stages via `memory-stats`.
-//! - **Instruction counts** — samples a process-wide hardware counter of
-//!   user-space instructions retired at the boundaries of every span on the
-//!   orchestrating thread (Linux `perf_event_open`; absent elsewhere).
+//! - **Hardware counters** — samples instructions at span boundaries on the
+//!   orchestrating thread (Linux `perf_event_open`, macOS `proc_pid_rusage`).
+//!   macOS also provides cycles and V6 `hw.perflevel0` counts; output records each
+//!   platform's privilege and thread scope.
 //! - **System metrics monitoring** (`monitor` feature) — background thread sampling
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
 //!   rewritten into native Perfetto counter tracks at flush (`summary::finalize_trace`).
@@ -59,7 +60,7 @@ pub mod taxonomy;
 pub mod memory;
 
 #[cfg(not(target_arch = "wasm32"))]
-mod instructions;
+pub mod counters;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod span_boundary;
@@ -88,6 +89,8 @@ mod units;
 pub use setup::{setup_tracing, setup_tracing_with_trace_path, TracingFormat, TracingGuards};
 pub use units::{format_memory_size, BYTES_PER_GIB, BYTES_PER_MIB};
 
+#[cfg(not(target_arch = "wasm32"))]
+pub use counters::{CoreCounters, CounterSource, CounterValues, HardwareCounterMetadata};
 #[cfg(not(target_arch = "wasm32"))]
 pub use memory::{
     current_footprint_bytes, end_memory_tracing_span, peak_footprint_bytes, peak_rss_bytes,

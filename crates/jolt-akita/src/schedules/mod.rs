@@ -183,6 +183,14 @@ pub mod emit {
     }
 
     impl FixtureSpec {
+        /// Generate a direct catalog for archived inner proofs.
+        pub fn prepare_direct(mut self) -> Result<EmitSpec, String> {
+            if let Some((cutover, _)) = self.direct_plan.as_mut() {
+                *cutover = usize::MAX;
+            }
+            self.prepare()
+        }
+
         /// Plan the direct-only prefix before the generic emitter fills remaining rows.
         pub fn prepare(mut self) -> Result<EmitSpec, String> {
             if let Some((cutover, direct_policy)) = self.direct_plan {

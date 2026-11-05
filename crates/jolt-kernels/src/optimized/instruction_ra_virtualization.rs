@@ -218,6 +218,14 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         }
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
+        let paired = folded_ra.paired_lo_hi(num_committed);
+        let gather = |row, pairs: &mut [(F, F)]| {
+            if let Some(paired) = &paired {
+                paired.gather(row, pairs);
+            } else {
+                folded_ra.lo_hi_all(row, pairs);
+            }
+        };
         let prefix_pairs = folded_ra.prefix_len().div_ceil(2);
         let constant_groups: Vec<_> = folded_ra
             .tail_values()
@@ -254,7 +262,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                     grid: vec![F::zero(); product_grid_scratch_len(n)],
                 },
                 |scratch, row, _x_in, e_in| {
-                    folded_ra.lo_hi_all(row, &mut scratch.pairs);
+                    gather(row, &mut scratch.pairs);
                     for lane in &mut scratch.row_lanes {
                         *lane = F::Accumulator::default();
                     }
@@ -331,7 +339,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
                             )
                         },
                         |(pairs, sum), row, _, weight| {
-                            folded_ra.lo_hi_all(row, pairs);
+                            gather(row, pairs);
                             let value = pairs.chunks_exact(n).take(self.active_virtuals).fold(
                                 F::zero(),
                                 |sum, factors| {
@@ -866,6 +874,23 @@ mod tests {
         }
         for case in ExceptionalEq::ALL {
             assert_parity_case(10, 2, 4, 2, 377, false, fr(31), Some(case), Some(513));
+        }
+    }
+
+    #[test]
+    fn paired_gathers_preserve_rounds_and_exceptional_eq() {
+        for exceptional in [None].into_iter().chain(ExceptionalEq::ALL.map(Some)) {
+            assert_parity_case(
+                15,
+                1,
+                4,
+                4,
+                388,
+                false,
+                fr(31),
+                exceptional,
+                Some((1 << 15) - 5),
+            );
         }
     }
 

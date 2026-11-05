@@ -67,7 +67,7 @@ telemetry:<workload>:<metric>
 <metric>   ::= prover_time_s         (root-span duration, seconds)
              | peak_rss_gib          (process-lifetime getrusage high-water mark)
              | peak_memory_gib       (max over memory samples in the root span)
-             | instructions          (user-space instructions retired in the root span)
+             | instructions          (hardware instructions retired in the root span)
              | instructions:<span-label> (the same, summed over all instances)
              | total:<span-label>    (inclusive time summed over all instances, seconds)
              | self:<span-label>     (exclusive time summed over all instances, seconds)
@@ -87,11 +87,17 @@ optimizer's shared per-workload run enables it when any sharer needs it) and
 report exact bytes; snapshot labels are the flamegraph names
 (`Stage2Batch_prepared`, …) and root frames are the kernel type names from
 the summary's `heap` section. `instructions` metrics read the profile
-harness's Linux hardware counter; on hosts without one (macOS, most CI VMs)
-they are measurement errors, as are labels with any instance inside a rayon
-closure (only spans on the orchestrating thread are counted). Set
-`RAYON_NUM_THREADS=1` for near-deterministic counts (see the book's
-measurement semantics).
+harness's hardware counters on Linux and supported Macs. Linux counts
+user-space instructions on the opening thread and its future descendants;
+macOS counts user and kernel instructions across all process threads,
+including profiler threads. The summary's `hardware_counters` metadata records
+that scope. Compare runs on the same platform and configuration. Unavailable
+counters produce measurement errors, as do labels with any instance inside a
+rayon closure (only spans on the orchestrating thread are sampled).
+`RAYON_NUM_THREADS=1` reduces scheduling noise; see the book's
+[measurement semantics](../book/src/usage/profiling/zkvm_profiling.md#hardware-counter-scope).
+Apple cycle counts and V6 `perflevel0` counts are available in `summary.json` for
+direct queries; they do not add new telemetry objective keys.
 
 ```bash
 cargo run -p jolt-eval --bin measure-objectives -- \
