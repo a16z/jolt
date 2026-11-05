@@ -8,10 +8,11 @@ from pathlib import Path, PurePosixPath
 import pwd
 import re
 import shutil
-import signal
+import shlex
 import stat
 import subprocess
 import sys
+import tempfile
 import tarfile
 import zipfile
 
@@ -21,12 +22,6 @@ LIMITS = {'dispatch.json': 1024 * 1024, 'plan.zip': 8 * 1024 * 1024,
 TIMEOUTS = {'pr': 120 * 60, 'main': 180 * 60, 'nightly': 180 * 60}
 
 
-def write_json(filename, value):
-    temporary = filename.with_suffix('.tmp')
-    temporary.write_text(json.dumps(value) + '\n')
-    temporary.replace(filename)
-
-
 def environment(home, temporary):
     return {'HOME': str(home), 'USER': pwd.getpwuid(os.getuid()).pw_name,
             'LOGNAME': pwd.getpwuid(os.getuid()).pw_name,
@@ -34,31 +29,42 @@ def environment(home, temporary):
             'CARGO_HOME': str(home / '.cargo'), 'RUSTUP_HOME': str(home / '.rustup'),
             'TMPDIR': str(temporary), 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8',
             'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
-            'GIT_TERMINAL_PROMPT': '0'}
+            'GIT_TERMINAL_PROMPT': '0', 'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}'}
 
 
-def process_identity(pid):
-    try:
-        fields = Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()
-        if fields[0] == 'Z':
-            return None
-        return {'pid': pid, 'start': fields[19],
-                'boot': Path('/proc/sys/kernel/random/boot_id').read_text().strip()}
-    except (OSError, IndexError):
-        return None
+def unit_name(job):
+    return f'jolt-bench-{job.name}.service'
+
+
+def unit_state(job):
+    env = environment(Path(pwd.getpwuid(os.getuid()).pw_dir), job / 'tmp')
+    result = subprocess.run(['systemctl', '--user', 'show', unit_name(job),
+        '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,ExecMainCode'],
+        env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    if 'LoadState' not in values:
+        raise ValueError('runner systemd user manager is unavailable: ' + result.stderr.strip())
+    return values
 
 
 def status(job):
+    state = unit_state(job)
     if not job.exists():
         return {'state': 'absent', 'exit_code': None}
-    if (job / 'exit.json').exists():
-        return {'state': 'finished', 'exit_code': json.loads((job / 'exit.json').read_text())['exit_code']}
-    try:
-        worker = json.loads((job / 'worker.json').read_text())
-        alive = process_identity(worker['pid']) == worker
-    except FileNotFoundError:
-        alive = False
-    return {'state': 'running' if alive else 'lost', 'exit_code': None}
+    if state['LoadState'] == 'not-found':
+        return {'state': 'lost', 'exit_code': None}
+    if state['SubState'] in ('running', 'start', 'start-post', 'stop', 'stop-sigterm', 'stop-sigkill', 'stop-post') or state['ActiveState'] == 'activating':
+        return {'state': 'running', 'exit_code': None}
+    if state['SubState'] == 'exited' or state['ActiveState'] in ('failed', 'inactive'):
+        code = int(state['ExecMainStatus'])
+        if state['Result'] == 'timeout':
+            code = 124
+        elif state['ExecMainCode'] != '1':
+            code = 128 + code if code else 1
+        elif state['Result'] != 'success' and code == 0:
+            code = 1
+        return {'state': 'finished', 'exit_code': code}
+    return {'state': 'running', 'exit_code': None}
 
 
 def extract_zip(filename, destination, *, plan=False):
@@ -96,10 +102,11 @@ def fetch_harness(job, plan, env):
                    stdout=subprocess.DEVNULL)
 
 
-def submit(job, stream, home, lock_fd=None):
+def submit(job, stream, home):
     if job.exists():
         return {'state': 'exists'}
     job.mkdir(mode=0o700)
+    launching = False
     try:
         names = set()
         with tarfile.open(fileobj=stream, mode='r|') as archive:
@@ -134,57 +141,52 @@ def submit(job, stream, home, lock_fd=None):
         (job / 'tmp').mkdir()
         env = environment(home, job / 'tmp')
         fetch_harness(job, plan, env)
-        with (job / 'worker.log').open('ab') as log:
-            subprocess.Popen([sys.executable, str(Path(__file__).resolve()), '--worker', str(job),
-                              str(lock_fd if lock_fd is not None else -1)],
-                stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=job,
-                env=env, start_new_session=True, close_fds=True,
-                pass_fds=() if lock_fd is None else (lock_fd,))
+        clean = ['/usr/bin/env', '-i', *(f'{key}={value}' for key, value in env.items())]
+        entry = [sys.executable, str(Path(__file__).resolve())]
+        # The installed entry and planned ci.py share this target/finalize argv contract.
+        stopped = shlex.join([*clean, *entry, '--finalize-stopped', str(job)]) + ' ${EXIT_CODE} ${SERVICE_RESULT}'
+        if unit_state(job)['LoadState'] != 'not-found':
+            raise ValueError('executor unit already exists without its job directory')
+        launching = True
+        subprocess.run(['systemd-run', '--user', '--quiet', '--unit=' + unit_name(job),
+            '--service-type=exec', '--property=RemainAfterExit=yes', '--property=ExitType=cgroup',
+            '--property=KillMode=control-group', '--property=TimeoutStopSec=60s',
+            f'--property=RuntimeMaxSec={TIMEOUTS[plan["tier"]]}s', '--property=ExecStopPost=' + stopped,
+            '--working-directory=' + str(job), *clean, *entry, '--worker', str(job)], env=env, check=True)
         return {'state': 'submitted'}
     except BaseException:
-        shutil.rmtree(job)
+        if not launching:
+            shutil.rmtree(job)
         raise
 
 
-def worker(job, home, lock_fd=-1):
+def finalize(job, home):
+    return subprocess.run([sys.executable, str(job / 'harness/scripts/bench/ci.py'), 'finalize',
+        '--dispatch', str(job / 'dispatch.json'), '--plan', str(job / 'plan.json'), '--out', str(job / 'result')],
+        cwd=job / 'harness', env=environment(home, job / 'tmp'), timeout=60).returncode
+
+
+def worker(job, home):
     code = 1
     try:
-        try:
-            write_json(job / 'worker.json', process_identity(os.getpid()))
-        finally:
-            # Keep status/remove behind submit's lock until the detached worker
-            # publishes its identity, even if the submitting SSH process exits.
-            if lock_fd >= 0:
-                os.close(lock_fd)
-        plan = json.loads((job / 'plan.json').read_text())
-        env = environment(home, job / 'tmp')
-        source = job / 'harness'
-        command = [sys.executable, str(source / 'scripts/bench/ci.py')]
-        common = ['--plan', str(job / 'plan.json'), '--out', str(job / 'result')]
-        try:
-            with subprocess.Popen(command + ['target', '--dispatch', str(job / 'dispatch.json'),
-                    '--bundles', str(job / 'bundles'), *common], cwd=source, env=env,
-                    start_new_session=True) as child:
-                try:
-                    code = child.wait(timeout=TIMEOUTS[plan['tier']])
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid, signal.SIGTERM)
-                    try:
-                        child.wait(timeout=30)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(child.pid, signal.SIGKILL)
-                        child.wait()
-                    code = 124
-        finally:
-            final = subprocess.run(command + ['finalize', '--dispatch', str(job / 'dispatch.json'), *common],
-                                   cwd=source, env=env, timeout=60)
-            if final.returncode and code == 0:
-                code = final.returncode
-    except BaseException as error:
-        code = code or 1
-        print(f'executor: {error}', file=sys.stderr, flush=True)
+        code = subprocess.run([sys.executable, str(job / 'harness/scripts/bench/ci.py'), 'target',
+            '--dispatch', str(job / 'dispatch.json'), '--plan', str(job / 'plan.json'),
+            '--bundles', str(job / 'bundles'), '--out', str(job / 'result')],
+            cwd=job / 'harness', env=environment(home, job / 'tmp')).returncode
     finally:
-        write_json(job / 'exit.json', {'exit_code': code})
+        final = finalize(job, home)
+    return code or final
+
+
+def remove(job):
+    if job.exists():
+        env = environment(Path(pwd.getpwuid(os.getuid()).pw_dir), job / 'tmp')
+        if unit_state(job)['LoadState'] != 'not-found':
+            subprocess.run(['systemctl', '--user', 'stop', unit_name(job)], env=env, check=True)
+            subprocess.run(['systemctl', '--user', 'reset-failed', unit_name(job)], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        shutil.rmtree(job)
+    return {'state': 'removed'}
 
 
 def fetch(job, output):
@@ -193,21 +195,36 @@ def fetch(job, output):
     root = job / 'result'
     if not (root / 'benchmark-results.json').is_file():
         raise ValueError('job has no root result')
+    env = environment(Path(pwd.getpwuid(os.getuid()).pw_dir), job / 'tmp')
+    with tempfile.TemporaryFile() as journal:
+        subprocess.run(['journalctl', '--user', '-u', unit_name(job), '--no-pager', '--lines=10000', '-o', 'cat'],
+                       env=env, stdout=journal, check=True)
+        journal.seek(max(0, journal.tell() - 8 * 1024**2))
+        (root / 'executor.log').write_bytes(journal.read(8 * 1024**2))
     with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
         for filename in sorted(root.rglob('*')):
             relative = filename.relative_to(root)
-            if relative.parts[0] == 'builds' or 'runtime-cache' in relative.parts:
+            build_log = relative.parts[0] == 'builds' and len(relative.parts) == 3 and relative.name == 'build.log'
+            if (relative.parts[0] == 'builds' and not build_log) or 'runtime-cache' in relative.parts:
                 continue
             if filename.is_symlink():
                 raise ValueError('result contains a symlink')
             if filename.is_file():
-                archive.write(filename, relative.as_posix())
+                if build_log:
+                    with filename.open('rb') as log:
+                        log.seek(max(0, filename.stat().st_size - 8 * 1024**2))
+                        archive.writestr(relative.as_posix(), log.read(8 * 1024**2))
+                else:
+                    archive.write(filename, relative.as_posix())
 
 
 def main():
     home = Path(pwd.getpwuid(os.getuid()).pw_dir)
-    if len(sys.argv) == 4 and sys.argv[1] == '--worker':
-        worker(Path(sys.argv[2]), home, int(sys.argv[3]))
+    if len(sys.argv) == 3 and sys.argv[1] == '--worker':
+        raise SystemExit(worker(Path(sys.argv[2]), home))
+    if len(sys.argv) == 5 and sys.argv[1] == '--finalize-stopped':
+        if sys.argv[3] != 'exited' or sys.argv[4] == 'timeout':
+            raise SystemExit(finalize(Path(sys.argv[2]), home))
         return
     if len(sys.argv) != 1:
         raise ValueError('only SSH_ORIGINAL_COMMAND is accepted')
@@ -218,21 +235,24 @@ def main():
     root = home / '.local/share/jolt-bench/jobs'
     os.umask(0o077)
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with (root / '.lock').open('a') as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        job = root / job_id
-        if verb == 'fetch':
-            fetch(job, sys.stdout.buffer)
-            return
+    with tempfile.TemporaryFile(dir=root) as incoming:
         if verb == 'submit':
-            result = submit(job, sys.stdin.buffer, home, lock.fileno())
-        elif verb == 'status':
-            result = status(job)
-        else:
-            if job.exists():
-                shutil.rmtree(job)
-            result = {'state': 'removed'}
-        print(json.dumps(result))
+            total = 0
+            while chunk := sys.stdin.buffer.read(1024 * 1024):
+                total += len(chunk)
+                if total > sum(LIMITS.values()) + 1024 * 1024:
+                    raise ValueError('submission exceeds tar size cap')
+                incoming.write(chunk)
+            incoming.seek(0)
+        with (root / '.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            job = root / job_id
+            if verb == 'fetch':
+                fetch(job, sys.stdout.buffer)
+                return
+            result = (submit(job, incoming, home) if verb == 'submit' else
+                      status(job) if verb == 'status' else remove(job))
+            print(json.dumps(result))
 
 
 if __name__ == '__main__':

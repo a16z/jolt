@@ -262,8 +262,8 @@ prover optimization or guest optimization is changed by the builder-profile spli
 The collector revision must be committed, and `run.py` must be that revision's
 file. Admitted PR builds prefer main's native profiling harness. When its declared
 file set differs from a leg's own harness, or its build attempt fails, that leg
-uses its own native harness instead. The failed attempt's directory is not
-uploaded; its compiler output is available in the measure job's log. The collector
+uses its own native harness instead. Failed build output is published in
+`executor.log` and the last 8 MiB of each `builds/*/build.log`. Other build payloads are excluded. The collector
 and suite configuration still come from main; the PR's collector code is never
 executed.
 
@@ -538,10 +538,13 @@ with a bounded job ID. Submission carries an uncompressed POSIX tar containing
 only `dispatch.json`, `plan.zip` and, for main/nightly, `builds.zip`. The entry
 limits those files to 1 MiB, 8 MiB and 32 GiB, respectively, rejects links,
 duplicates and traversal, and caps extracted builds at 64 GiB. It fetches the
-planned harness SHA anonymously from `https://github.com/a16z/jolt`. The worker
-has a separate session and durable PID/exit records, so SSH disconnects and
-daemon restarts do not restart it. A repeated job ID returns `exists` without
-re-executing it. A reboot without an exit record reports `lost`.
+planned harness SHA anonymously from `https://github.com/a16z/jolt`. The worker runs in a transient `runner` systemd user unit named
+`jolt-bench-JOB.service`, so SSH disconnects and daemon restarts do not restart it.
+`RuntimeMaxSec` bounds each tier, `ExitType=cgroup` includes separate-session
+descendants, and `KillMode=control-group` terminates the whole job. Completed and
+failed unit states are retained for status reads; `remove` stops and resets the
+unit before deleting its directory. A repeated job ID returns `exists` without
+re-executing it. A reboot that loses the transient unit reports `lost`.
 
 The worker uses a fixed environment with the `runner` Rust and uv directories
 on PATH and no inherited GitHub, SSH, cloud or Pika credentials. It calls
@@ -550,7 +553,12 @@ always finalizes the result. The PR path anonymously rechecks the same label,
 branch and head after acquiring the kernel lock and again before proving.
 Removing the label does not terminate a build or proof already running. The App
 submits one job at a time in FIFO order; the kernel lock also serializes manual
-target commands. PR timeouts are 120 minutes; main/nightly timeouts are 180.
+target commands. Submission is size-capped and staged before acquiring the jobs
+lock, so an incomplete upload cannot block status/fetch/remove. PR timeouts are
+120 minutes; main/nightly timeouts are 180. Results include an `executor.log` tail
+of at most 8 MiB from the unit journal and capped per-build logs. Normal completion
+finalizes in the worker; systemd finalizes a killed/timed-out worker after its
+process tree has stopped.
 
 PR source, including `build.rs`, executes only on `jolt-bench` as `runner`.
 While a label remains, anyone able to push that same-repository branch can change
@@ -559,7 +567,10 @@ not a sandbox: PR code can change that account's files, warm Cargo state and
 future measurements. Hash validation authenticates neither a persistent host nor
 locally produced PR binaries. This remains accepted persistent-account trust
 debt. The account must have no write-capable GitHub, SSH, cloud or Pika credentials
-in its environment, home, helpers or accessible files. Pika agents never run there.
+in its environment, home, helpers or accessible files. Pika agents never run there. SSH invokes the forced command through the account
+login shell; a runner-owned Bash startup file can run first. That startup hook
+has the same trust level as the accepted persistent-account state, and clearing
+the entry environment does not remove it.
 
 ### One-time host installation
 
@@ -571,6 +582,7 @@ these commands in a root shell on `jolt-bench`:
 
 ```sh
 set -eu
+loginctl enable-linger runner
 install -d -o root -g root -m 0755 /usr/local/libexec
 install -o root -g root -m 0755 /root/jolt-bench-entry.reviewed /usr/local/libexec/jolt-bench-entry
 install -d -o root -g root -m 0755 /etc/ssh/authorized_keys
@@ -597,7 +609,12 @@ The root-owned authorized-key path prevents PR code from changing this key's
 restrictions through the account's home directory. It does not prevent code
 already running as `runner` from modifying other account state. The entry stores
 private jobs under `/home/runner/.local/share/jolt-bench/jobs/`; no persistent
-service unit is installed.
+benchmark service unit is installed. Linger keeps the runner user manager
+available without an interactive login. The entry sets
+`XDG_RUNTIME_DIR=/run/user/<runner uid>`. From the dispatcher host, use the
+dedicated key to run `status preflight` through the forced command: it must return
+`absent` without a user-manager connection error. That status path calls
+`systemctl --user`, so an interactive-shell-only success is insufficient.
 
 Install the build and run prerequisites above and uv through the normal host
 operator process. Confirm the fixed `znver4` ISA and physical CPU topology. Resolve
@@ -638,7 +655,9 @@ means partial results or unavailable comparisons. Automatic PR calibration is
 currently unavailable, so otherwise complete PR results are neutral. Measured
 deltas and calibration context never produce a regression verdict. An ingest
 failure or missing/invalid `check.json` fails the check with the ingest link.
-No GitHub Actions comment or separate comment-enable variable exists.
+No GitHub Actions comment or separate comment-enable variable exists. Executor
+failures before a result and failed ingests leave no history record; their App
+check or hosted workflow failure is the visible outcome.
 
 The companion history publisher must merge after #2215. It collects the ingest
 workflow's canonical artifacts, keeps PR comparisons separate, and appends only
@@ -661,7 +680,3 @@ uv run --no-project python -m unittest \
   scripts.tests.test_e2e_publication scripts.tests.test_e2e_entry \
   scripts.tests.test_e2e_ingest -v
 ```
-
-Process fixtures own and reap their children. They await completed readiness
-records rather than scheduling sleeps or host-wide PID assumptions. Rust test
-changes must follow the same ownership rule; Tokio timer tests use paused time.

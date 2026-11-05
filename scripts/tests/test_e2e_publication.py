@@ -125,10 +125,11 @@ class E2ePublicationTests(unittest.TestCase):
             self.assertIn('Prover profiles: base `release`; head `release`.', text)
             self.assertIn('Calibration unavailable:', text)
             self.assertNotIn('Supplied reference method:', text)
+        expected['manifest_digests'] = None
         for key, value in [('profile', 'ci'), ('profile_config', {'lto': 'off'})]:
             changed = copy.deepcopy(result)
             changed['builds'][1][key] = value
-            with self.subTest(mismatch=key), self.assertRaises(ValueError):
+            with self.subTest(mismatch=key), self.assertRaisesRegex(ValueError, key):
                 publication.validate(changed, expected, config)
 
     def test_comment_uses_leg_medians_and_keeps_unavailable_comparisons_visible(self):

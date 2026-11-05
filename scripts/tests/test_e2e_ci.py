@@ -24,7 +24,7 @@ finally:
 
 
 class E2eCiTests(unittest.TestCase):
-    def test_dispatch_and_target_bind_each_tier_and_always_finalize(self):
+    def test_dispatch_and_target_bind_each_tier(self):
         for tier in ('pr', 'main', 'nightly'):
             plan = {'enabled': True, 'tier': tier,
                 'provenance': {'run_id': '123', 'run_attempt': '2', 'pr_number': 7,
@@ -46,19 +46,15 @@ class E2eCiTests(unittest.TestCase):
                                              bundles=root / 'bundles', out=root / 'out')
                 with patch.object(ci, 'load_plan', return_value=plan), patch.dict(os.environ), \
                         patch.object(ci, 'local', return_value=0) as local, \
-                        patch.object(ci, 'execute', return_value=0) as execute, \
-                        patch.object(ci, 'finalize') as finalize:
+                        patch.object(ci, 'execute', return_value=0) as execute:
                     self.assertEqual(ci.target(options), 0)
                     self.assertEqual(local.called, tier == 'pr')
                     self.assertEqual(execute.called, tier != 'pr')
                     if tier != 'pr':
                         self.assertEqual(execute.call_args.args[0].index_sha256, '1' * 64)
-                    finalize.assert_called_once()
-                    finalize.reset_mock()
                     (local if tier == 'pr' else execute).side_effect = ValueError('owned failure')
                     with self.assertRaisesRegex(ValueError, 'owned failure'):
                         ci.target(options)
-                    finalize.assert_called_once()
             for field, value in [('run_attempt', 1), ('tier', 'other'), ('check_sha', 'f' * 40)]:
                 with self.subTest(tier=tier, field=field), self.assertRaises(ValueError):
                     ci.check_dispatch(dict(manifest, **{field: value}), plan)

@@ -304,7 +304,7 @@ def build(args):
         out = Path(args.out).resolve()
         out.rename(out.with_name(out.name + '-shared-harness-attempt'))
         return build_attempt(args, revision, manifest['reason'].replace(
-            '(see build.log)', '(see the measure job log)'))
+            '(see build.log)', '(see executor.log and builds/*/build.log in the result artifact)'))
     return manifest
 
 

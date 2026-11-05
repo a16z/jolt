@@ -438,7 +438,7 @@ class BuildCacheTests(unittest.TestCase):
         self.assertTrue(all(code == 'fn candidate_api() {}\n' for code in attempted[1:]))
         self.assertEqual(manifest['native_harness_revision'], candidate)
         self.assertIn('does not compile', manifest['harness_fallback_reason'])
-        self.assertIn('measure job log', manifest['harness_fallback_reason'])
+        self.assertIn('executor.log and builds/*/build.log', manifest['harness_fallback_reason'])
         self.assertIn('+fn candidate_api()', manifest['harness_diff']['text'])
         self.assertTrue((self.root / 'fallback-shared-harness-attempt/build.log').is_file())
 

@@ -121,6 +121,10 @@ class IngestTests(unittest.TestCase):
             checked, request, committed, bound = ingest.trusted_plan(123, 1)
             self.assertEqual((checked, request, committed), (plan, dispatch, config))
             self.assertEqual(bound['plan_sha256'], receipt['plan_sha256'])
+            prs = actual['pull_requests']
+            actual['pull_requests'] = []
+            self.assertEqual(ingest.trusted_plan(123, 1)[0], plan)
+            actual['pull_requests'] = prs
             actual['pull_requests'][0]['base']['ref'] = 'other'
             with self.assertRaises(ValueError):
                 ingest.trusted_plan(123, 1)
@@ -128,6 +132,37 @@ class IngestTests(unittest.TestCase):
             artifacts.append(copy.deepcopy(artifacts[0]))
             with self.assertRaisesRegex(ValueError, 'exactly one'):
                 ingest.trusted_plan(123, 1)
+
+    def test_main_ingest_refuses_divergence_and_foreign_build_artifacts(self):
+        result, plan, dispatch, config, receipt, _ = inputs('main')
+        actual = {'id': 123, 'run_attempt': 1, 'repository': {'full_name': 'a16z/jolt'},
+            'head_repository': {'full_name': 'a16z/jolt'}, 'name': ingest.bench.WORKFLOW,
+            'path': ingest.bench.WORKFLOW_FILE, 'status': 'completed', 'conclusion': 'success',
+            'event': 'push', 'head_branch': 'main', 'head_sha': 'c' * 40}
+        comparison = {'status': 'ahead'}
+        builds = {'name': 'jolt-e2e-builds-123-1', 'expired': False, 'workflow_run': {'id': 123}}
+        def github(path):
+            if path.startswith('actions/runs/'):
+                return actual
+            if path.startswith('compare/'):
+                return comparison
+            if path.startswith('actions/artifacts/'):
+                return builds
+            return {'type': 'file', 'encoding': 'base64', 'content': base64.b64encode(config).decode()}
+        def artifact(run_id, attempt, prefix, filename):
+            return (plan, json.dumps(plan).encode(), 42) if filename == 'plan.json' else (
+                dispatch, json.dumps(dispatch).encode(), 43)
+        with patch.object(ingest.ci, 'github', side_effect=github), \
+                patch.object(ingest, 'artifact_json', side_effect=artifact):
+            ingest.trusted_plan(123, 1)
+            for target, key, value in [(comparison, 'status', 'diverged'),
+                    (builds, 'workflow_run', {'id': 999}), (builds, 'name', 'other'),
+                    (actual, 'head_branch', 'candidate'), (actual, 'head_sha', 'f' * 40)]:
+                original = target[key]
+                target[key] = value
+                with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                    ingest.trusted_plan(123, 1)
+                target[key] = original
 
     def test_digest_mismatch_and_untrusted_actor_refuse_before_results_are_written(self):
         result, plan, dispatch, config, receipt, _ = inputs()
@@ -201,6 +236,8 @@ class IngestTests(unittest.TestCase):
                 self.assertEqual(ingest.check_result('123-1', checked, 1, 'failed')['conclusion'], 'failure')
 
     def test_untrusted_zip_paths_and_download_caps_are_enforced(self):
+        self.assertEqual(ingest.result_files(zipped({'builds/fixture/build.log': b'owned log'})),
+                         {'builds/fixture/build.log': b'owned log'})
         for filename in ('../outside', '/outside', './benchmark-results.json', 'a//b',
                          'builds/secret', 'case/runtime-cache/secret', 'a\\b'):
             with self.subTest(filename=filename), self.assertRaises(ValueError):

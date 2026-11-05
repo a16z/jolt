@@ -405,19 +405,16 @@ def dispatch(args):
 
 
 def target(args):
-    try:
-        plan = load_plan(args.plan)
-        manifest = bench.parse_json(args.dispatch.read_text())
-        check_dispatch(manifest, plan)
-        for key, name in [('run_id', 'GITHUB_RUN_ID'), ('run_attempt', 'GITHUB_RUN_ATTEMPT'),
-                          ('workflow', 'GITHUB_WORKFLOW'), ('event', 'GITHUB_EVENT_NAME'), ('ref', 'GITHUB_REF')]:
-            os.environ[name] = str(plan['provenance'][key])
-        if plan['tier'] == 'pr':
-            return local(args)
-        return execute(argparse.Namespace(plan=args.plan, out=args.out, bundles=args.bundles,
-            artifact_id=manifest['build_artifact_id'], index_sha256=manifest['build_index_sha256']))
-    finally:
-        finalize(args)
+    plan = load_plan(args.plan)
+    manifest = bench.parse_json(args.dispatch.read_text())
+    check_dispatch(manifest, plan)
+    for key, name in [('run_id', 'GITHUB_RUN_ID'), ('run_attempt', 'GITHUB_RUN_ATTEMPT'),
+                      ('workflow', 'GITHUB_WORKFLOW'), ('event', 'GITHUB_EVENT_NAME'), ('ref', 'GITHUB_REF')]:
+        os.environ[name] = str(plan['provenance'][key])
+    if plan['tier'] == 'pr':
+        return local(args)
+    return execute(argparse.Namespace(plan=args.plan, out=args.out, bundles=args.bundles,
+        artifact_id=manifest['build_artifact_id'], index_sha256=manifest['build_index_sha256']))
 
 
 def verify(args):

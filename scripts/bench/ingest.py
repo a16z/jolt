@@ -97,8 +97,8 @@ def trusted_plan(run_id, attempt):
     if plan['tier'] == 'pr':
         prs = actual['pull_requests']
         item = plan['runs'][0]
-        if (actual['event'] != 'pull_request_target' or len(plan['runs']) != 1 or len(prs) != 1
-                or prs[0]['number'] != prov['pr_number'] or prs[0]['base']['ref'] != 'main'
+        if (actual['event'] != 'pull_request_target' or len(plan['runs']) != 1
+                or (prs and not any(pr['number'] == prov['pr_number'] and pr['base']['ref'] == 'main' for pr in prs))
                 or actual['head_branch'] != plan['admission']['head_ref']
                 or actual['head_sha'] != item['submitted_head']):
             raise ValueError('PR plan is not bound to the admitted head and main base')
@@ -138,7 +138,8 @@ def result_files(raw):
                     or name.as_posix() != member.filename
                     or member.filename in files or stat.S_ISLNK(mode)
                     or stat.S_IFMT(mode) not in (0, stat.S_IFREG) or member.is_dir()
-                    or name.parts[0] == 'builds' or 'runtime-cache' in name.parts):
+                    or (name.parts[0] == 'builds' and not (len(name.parts) == 3 and name.name == 'build.log'))
+                    or 'runtime-cache' in name.parts):
                 raise ValueError('unsafe, excluded, or duplicate result member')
             total += member.file_size
             if total > 4 * 1024**3 or member.file_size > 128 * 1024**2 or len(files) >= 100000:
