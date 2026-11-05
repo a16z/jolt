@@ -69,8 +69,8 @@ The result JSON retains the original plan run's provenance. Main/nightly plans
 are bound to the producer's main head. PR plans bind the payload PR number,
 label event/actor, base, submitted head, measured merge and harness; merge parents
 and planned native inputs are checked. GitHub's `pull_request_target` run head
-is the submitted PR head. When GitHub no longer returns that PR in the producer's
-`pull_requests`, collection is rejected. Current PR state can change after a
+is the submitted PR head. An empty live `pull_requests` list is accepted after a PR merges; a non-empty
+list must still contain the planned PR with base `main`. Current PR state can change after a
 valid measurement; it does not rewrite archived history. Only JSON is read;
 downloaded scripts, HTML and binaries are never executed.
 

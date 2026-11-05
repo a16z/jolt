@@ -306,6 +306,10 @@ class BenchmarkHistoryTests(unittest.TestCase):
                          ("rejected", "PR plan number is not a pull request of the producer run"))
         self.assertIsNone(raw)
 
+    def test_merged_pr_with_an_empty_live_pull_requests_list_keeps_its_plan_identity(self):
+        record, _ = collected_fixture(synthetic_pr_result(), plan_run_change={'pull_requests': []})
+        self.assertEqual((record['publication_status'], record['source']['pr_number']), ('ready', 7))
+
     def test_only_successful_app_ingests_can_publish_even_when_target_execution_failed(self):
         data = synthetic_pr_result()
         for change in ({'conclusion': 'skipped'}, {'conclusion': 'failure'}, {'conclusion': 'cancelled'},

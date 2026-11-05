@@ -403,7 +403,8 @@ def producer_plan(ingest, bundle, run):
         item = plan["runs"][0]
         admission = plan["admission"]
         if (run["event"] != "pull_request_target" or len(plan["runs"]) != 1
-                or provenance["pr_number"] not in [pr["number"] for pr in run.get("pull_requests") or ()]):
+                or (run.get("pull_requests") and not any(pr["number"] == provenance["pr_number"]
+                    and pr["base"]["ref"] == "main" for pr in run["pull_requests"]))):
             raise ValueError("PR plan number is not a pull request of the producer run")
         if (item["submitted_head"] != run["head_sha"] or not revision(item["base"])
                 or not revision(item["head"]) or admission["head_ref"] != run["head_branch"]
