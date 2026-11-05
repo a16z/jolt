@@ -68,6 +68,10 @@ impl AdviceTape {
         self.data.len()
     }
 
+    pub(crate) fn capacity(&self) -> usize {
+        self.data.capacity()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }

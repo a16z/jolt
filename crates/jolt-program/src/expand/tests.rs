@@ -450,6 +450,53 @@ fn inline_provider_allows_sequences_larger_than_instruction_recipes() -> Result<
     Ok(())
 }
 
+/// A registered inline's rows, reset rows included, fill the `u16` sequence
+/// length and no more; that maximum is the exported per-source bound.
+#[test]
+fn inline_rows_with_resets_stop_at_the_sequence_length_limit() -> Result<(), ExpansionError> {
+    struct ResettingProvider {
+        rows: usize,
+    }
+
+    impl InlineExpansionProvider for ResettingProvider {
+        fn expand_inline(
+            &mut self,
+            instruction: &SourceInstruction,
+            _profile: JoltInstructionProfile,
+        ) -> Result<ExpandedInstructionSequence, ExpansionError> {
+            let mut builder = InlineExpansionBuilder::new(*instruction.row());
+            let register = builder.allocate_for_inline()?;
+            for _ in 0..self.rows {
+                builder.emit_i(Kind::ADDI, *register, 0, 1);
+            }
+            builder.release(register);
+            builder.finalize()
+        }
+    }
+
+    let input = instruction(SourceInstructionKind::Inline, Some(3), false);
+    let longest = usize::from(u16::MAX);
+    let expand = |rows| {
+        expand_instruction_with_provider(
+            &input,
+            &mut ExpansionAllocator::new(),
+            &mut ResettingProvider { rows },
+            RV64IMAC_JOLT,
+        )
+    };
+    let expanded = rows(expand(longest - 1)?);
+    assert_eq!(expanded.len(), longest);
+    assert_eq!(expanded[0].virtual_sequence_remaining, Some(u16::MAX - 1));
+    assert_eq!(expanded[longest - 1].operands.imm, 0, "reset row");
+    assert_eq!(MAX_EXPANDED_ROWS_PER_SOURCE, longest);
+    assert!(matches!(
+        expand(longest),
+        Err(ExpansionError::CapacityExceeded { actual, capacity })
+            if actual == longest + 1 && capacity == longest
+    ));
+    Ok(())
+}
+
 #[test]
 fn source_only_expanders_are_not_target_legal() {
     macro_rules! assert_source_only {

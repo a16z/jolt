@@ -54,7 +54,7 @@ use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 use jolt_akita::AkitaField;
-use jolt_host::{GuestElf, JoltProgramSource, Program};
+use jolt_host::{default_target_dir, GuestElf, JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
@@ -338,7 +338,17 @@ pub struct ProfileArgs {
 
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
-    /// optimized`. The profile reserves against it in turn and returns an
+    /// optimized`. The budget first routes the trace over the `2^scale`
+    /// domain with `TracerBackend::limited_for_row_domain`, a routing proxy,
+    /// not a peak: at or above it the guest runs twice, as without a budget;
+    /// below it, once through the limited serial trace, which rejects parallel
+    /// tracing (`TRACER_PARALLEL`), fails at the first covered request the
+    /// budget cannot hold (its setup alone requests over 1 GiB by default) and
+    /// keeps its row reserve in the trace output the checks below count. A run
+    /// much shorter than the domain can take the limited trace although the
+    /// original would fit, and a budget just above the proxy keeps an original
+    /// trace whose unpriced requests can exceed it.
+    /// The profile then reserves against the budget in turn and returns an
     /// error at the first reservation that does not fit: the optimized
     /// prover's known eager reservation, which covers the trace buffers and
     /// named eager tables only, after tracing and before proving; then, under
@@ -809,12 +819,23 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     }
     #[cfg(feature = "field-inline")]
     program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
+    let limited = args
+        .memory_budget
+        .and_then(|budget| TracerBackend::limited_for_row_domain(budget.bytes(), max_trace_length));
     // Reuse the execution trace for sizing, memory layout, and proving. A
     // preliminary legacy trace duplicates execution and can leave large
     // allocator-retained buffers in the measured process.
-    let trace_output = program
-        .trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
-        .expect("modular trace");
+    let trace_output = if let Some(mut tracer) = limited {
+        // The tracer symbolizes a guest panic's backtrace from the ELF path;
+        // building here sets it, so `trace_with_backend` does not rebuild.
+        program.build(&default_target_dir().to_string_lossy());
+        let elf = program.elf.as_ref().expect("guest build produces an ELF");
+        tracer.elf_path = Some(elf.path().clone());
+        program.trace_with_backend(&mut tracer, &input, &[], &[])
+    } else {
+        program.trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
+    }
+    .expect("modular trace");
     let trace_length = trace_output.trace.proof_len();
     assert!(
         trace_length.next_power_of_two() <= max_trace_length,

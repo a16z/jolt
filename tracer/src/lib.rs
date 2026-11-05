@@ -22,6 +22,7 @@ pub mod execution_backend;
 pub mod instruction;
 mod jolt_cycle_adapter;
 pub mod parallel;
+mod trace_allocation;
 pub mod trace_row;
 pub mod utils;
 
