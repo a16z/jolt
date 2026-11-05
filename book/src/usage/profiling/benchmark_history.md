@@ -114,8 +114,7 @@ Pages build completed: check that build and both URLs after the first merged run
 [Pages build API](https://docs.github.com/en/rest/pages/pages#request-a-github-pages-build),
 [GITHUB_TOKEN type](https://docs.github.com/en/actions/concepts/security/github_token)
 
-Merge #2215 first, then this publisher (#2213), preserving the existing
-branch-based site and allowed actions. A successful ingest then appends results
+Publication preserves the existing branch-based site and allowed actions. A successful ingest then appends results
 and requests a build automatically. A user with workflow-dispatch permission can refresh assets
 or replay an existing ingest attempt before its artifact expires:
 
@@ -186,4 +185,3 @@ bootstrap probes do not enter history trends. After catalog publication, this
 workflow runs `publication.py verify-calibration` against its immutable ingest
 artifact and requires bands for all 17 probe cells. The README's first-run and
 post-main-advance acceptance steps remain prerequisites to ordinary enablement.
-This publisher must merge after #2215, which supplies that trusted command.
