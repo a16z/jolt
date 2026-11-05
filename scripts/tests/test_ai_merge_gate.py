@@ -108,9 +108,6 @@ def trees_for(files):
     base, head = {}, {}
     for entry in files:
         new, status = entry["filename"], entry.get("status", "modified")
-        if status == "renamed":
-            base[entry["previous_filename"]] = head[new] = f"moved to {new}\n"
-            continue
         if status != "added":
             base[new] = f"old {new}\n"
         if status != "removed":
@@ -142,8 +139,6 @@ class FakeApis:
                  reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None) -> None:
         # The pull request's file list, which follows its branch; the commits' trees do not move.
         self.files = [entry if isinstance(entry, dict) else {"filename": entry} for entry in files]
-        self.changed_paths = {entry["filename"] for entry in self.files} | {
-            entry["previous_filename"] for entry in self.files if "previous_filename" in entry}
         self.author, self.comments, self.reviews = author, list(comments), list(reviews)
         self.labels, self.draft, self.heads, self.diff, self.counts = list(labels), draft, list(heads), diff, counts
         self.reviewers, self.teams, self.assignees = list(reviewers), list(teams), list(assignees)
@@ -194,9 +189,6 @@ class FakeApis:
                             "assignees": [{"login": login} for login in self.assignees],
                             "changed_files": self.counts[0], "additions": self.counts[1],
                             "deletions": self.counts[2]})
-        if (method, path) == ("GET", f"/repos/{REPO}/pulls/7/files"):
-            page = int(query["page"][0])
-            return self.ok(self.files[100 * (page - 1):100 * page])
         if (method, path) == ("POST", "/graphql"):
             nodes = self.comments if "comments(" in data["query"] else self.reviews
             return self.ok({"data": {"repository": {"pullRequest": {
@@ -395,6 +387,17 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(apis.gate(), ("success", "Risk 4 approved by core-b"))
         self.assertEqual(set(apis.labels), {"merge-eligible"})
         self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
+
+    def test_binary_files_are_exported_and_classified(self) -> None:
+        binary, text = "book/image.png", "book/chapter.md"
+        diff = (f"diff --git a/{binary} b/{binary}\nBinary files a/{binary} and b/{binary} differ\n"
+                + unified_diff(text, "old\n", "new\n"))
+        apis = evaluate(FakeApis(files=[binary, text], diff=diff, counts=(2, 1, 1),
+                                 trees={BASE: {binary: b"\xff", text: "old\n"},
+                                        HEAD: {binary: b"\xfe", text: "new\n"}},
+                                 risk=1, comments=[comment("core-a", attestation())]))
+        self.assertIn("risk-1", apis.labels)
+        self.assertEqual(apis.approved(), [HEAD])
 
     def test_classifier_risks_choose_the_highest_level(self) -> None:
         for levels, expected in [

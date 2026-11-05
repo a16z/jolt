@@ -52,7 +52,6 @@ shell commands can interpret source text, so this is not a general execution-pro
 The publisher receives only the plan and result, binds them to the repository, revisions,
 changed paths and trusted-input fingerprint, validates the JSON, and escapes published text.
 The classifier's JSON contains overall `reasoning` and per-path `risks` (path, level, reasoning).
-It does not produce a separate semantic verdict.
 
 Classifier results are cached on the exact head with a fingerprint of the gate, agent runner,
 diff parser, gate/evaluation workflows and skill. Attestations and approvals are reread; labels
@@ -67,7 +66,7 @@ publication consumes that reservation without counting it again. Failed attempts
 Verified snapshots are bounded to 500,000,000 bytes per revision. These are resource limits,
 not risk-level rules.
 
-Classification now relies on the model alone. A change to the gate or its instructions can
+Classification relies on the model alone. A change to the gate or its instructions can
 receive risk 1–3 and auto-approval: it cannot alter its own judge on that run, but changes
 future runs after merging. Opaque external dependency updates also rely on the model's judgment.
 
