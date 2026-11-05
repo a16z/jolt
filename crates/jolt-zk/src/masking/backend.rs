@@ -15,6 +15,7 @@ use thiserror::Error as ThisError;
 #[cfg(feature = "prover")]
 use super::CommittedPads;
 use super::{CommittedPadsView, PadLayout, ResidualRelation};
+use crate::blindfold::RelaxedError;
 #[cfg(feature = "whiteout")]
 use crate::whiteout::WhiteoutError;
 
@@ -26,7 +27,7 @@ pub type CommittedPadsWith<F, B> = (
     <B as ZkBackend<F>>::PadCommitment,
 );
 
-/// A field-generic source error (a sumcheck or Whiteout error), erased so
+/// A field-generic source error (a sumcheck, BlindFold or Whiteout error), erased so
 /// that [`ZkError`] stays field-independent like the verifier's error type.
 /// Callers recover the typed error with `downcast_ref`.
 pub type ErasedSource = Box<dyn Error + Send + Sync + 'static>;
@@ -72,6 +73,14 @@ pub enum ZkError {
     /// A `SumcheckError<F>`.
     #[error("masked sumcheck: {0}")]
     Sumcheck(#[source] ErasedSource),
+    #[error("BlindFold relation shape: {0}")]
+    BlindFoldShape(#[from] RelaxedError),
+    /// A BlindFold `ProverError<F>`.
+    #[error("BlindFold prover: {0}")]
+    BlindFoldProver(#[source] ErasedSource),
+    /// A BlindFold `VerificationError<F>` other than a transcript failure.
+    #[error("BlindFold proof rejected: {0}")]
+    BlindFoldRejected(#[source] ErasedSource),
     /// A Whiteout `WhiteoutError`, erased so the variant exists whether or
     /// not the `whiteout` feature is on (feature additivity: dependents match
     /// `ZkError` exhaustively).
@@ -110,7 +119,10 @@ impl ZkError {
             | Self::RoundCountMismatch { .. }
             | Self::InvalidRelation { .. }
             | Self::ClaimMismatch(_)
-            | Self::Sumcheck(_) => false,
+            | Self::Sumcheck(_)
+            | Self::BlindFoldShape(_)
+            | Self::BlindFoldProver(_)
+            | Self::BlindFoldRejected(_) => false,
         }
     }
 }

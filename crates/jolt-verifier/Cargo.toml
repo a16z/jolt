@@ -38,7 +38,6 @@ akita = ["jolt-prover/akita", "jolt-claims/akita", "tracer/fp128-field-inline"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
-ark-serialize.workspace = true
 bincode.workspace = true
 common.workspace = true
 jolt-zk.workspace = true
@@ -58,6 +57,7 @@ num-traits.workspace = true
 serde.workspace = true
 sha3.workspace = true
 thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
 jolt-transcript = { workspace = true, features = [

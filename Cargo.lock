@@ -4129,7 +4129,6 @@ name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
  "allocative",
- "ark-serialize 0.5.0",
  "bincode 2.0.1",
  "common",
  "jolt-akita",
@@ -4159,6 +4158,7 @@ dependencies = [
  "syn 3.0.9",
  "thiserror 2.0.21",
  "tracer",
+ "tracing",
 ]
 
 [[package]]

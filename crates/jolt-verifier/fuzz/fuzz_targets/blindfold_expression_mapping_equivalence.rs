@@ -29,7 +29,7 @@ use jolt_claims::{
     Source, Term,
 };
 use jolt_field::{Fr, Ring};
-use jolt_verifier::stages::zk::blindfold::evaluate_mapped_expression;
+use jolt_verifier::stages::zk::residual::evaluate_mapped_expression;
 use libfuzzer_sys::fuzz_target;
 
 const MAX_TERMS: usize = 12;

@@ -24,8 +24,6 @@ use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::pow::PowSite;
@@ -64,17 +62,13 @@ pub struct Stage2ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage2OutputClaims<F>,
     pub clear_output: Stage2ClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub uniskip_witness: CommittedSumcheckWitness<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 2 on `transcript` (positioned at the stage-1 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage2<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     config: &ProverConfig,
     public_io: &JoltDevice,
     stage1: &Stage1ClearOutput<F>,
@@ -178,12 +172,9 @@ where
         &inputs,
         &input_points,
         &challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     let claims = Stage2OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
@@ -198,10 +189,6 @@ where
             output_points: proved.output_points,
             product_tau_low: tau_low,
         },
-        #[cfg(feature = "zk")]
-        uniskip_witness: proved_uniskip.witness,
-        #[cfg(feature = "zk")]
-        committed_witness,
     })
 }
 
@@ -225,7 +212,7 @@ mod field_inline_round_trip {
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, test_prover_config, test_public_io, LOG_T,
+        field_arithmetic_backend, test_mode, test_prover_config, test_public_io, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
 
@@ -234,7 +221,7 @@ mod field_inline_round_trip {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
 
@@ -244,14 +231,14 @@ mod field_inline_round_trip {
         );
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             LOG_T,
             &mut prover_state,
         )
         .unwrap();
         let out = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             &config,
             &public_io,
             &stage1.clear_output,
@@ -284,167 +271,57 @@ mod field_inline_round_trip {
     }
 }
 
-#[cfg(all(test, feature = "field-inline", feature = "zk"))]
+/// clear claims, and the production stage-1/2 zk verifiers consume the
+/// prover's argument string.
+#[cfg(all(test, feature = "field-inline", feature = "zk", not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
-    use common::constants::MAX_BLINDFOLD_GENERATORS;
-    use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
-    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_transcript::{prover_transcript, Keccak, ProverState};
-    use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
-    use jolt_verifier::stages::stage1::outputs::Stage1BatchSumchecks;
-    use jolt_verifier::stages::uniskip::{self, UniskipParams};
-    use jolt_verifier::stages::PrecommittedSchedule;
-    use jolt_verifier::CheckedInputs;
+    use jolt_transcript::{Keccak, ProverState};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        field_arithmetic_backend, test_prover_config, test_public_io, ENTRY, LOG_T,
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, test_mode, test_prover_config, test_public_io, verify_through,
+        Through, LOG_T,
     };
     use crate::stages::stage1::prove_stage1;
 
-    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
-
     #[test]
-    fn committed_stage2_shell_carries_the_curated_rows_and_replays() {
+    fn masked_stage2_round_trips_the_masked_verifier() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
 
-        let mut prover_state = prover_transcript::<Keccak>(
-            &jolt_transcript::protocol_tag(b"stage2-field-inline-zk"),
-            b"",
-        );
+        let mut prover_transcript = fixture_transcript();
         let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             LOG_T,
-            &mut prover_state,
+            &mut prover_transcript,
         )
         .unwrap();
-        let out = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+        let _ = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             &config,
             &public_io,
             &stage1.clear_output,
-            &mut prover_state,
+            &mut prover_transcript,
         )
         .unwrap();
 
-        let values: Vec<Fr> = out
-            .committed_witness
-            .output_claim_rows
-            .iter()
-            .flatten()
-            .copied()
-            .collect();
-        assert_eq!(values.len(), 18);
-
-        // The replay (stage2::verify's zk body over its public constituents),
-        // mirroring blindfold.rs's transcript hard check at stage scope.
-        let checked = CheckedInputs {
-            public_io: JoltDevice::default(),
-            zk: true,
-            trace_length: 1 << LOG_T,
-            ram_K: 1 << 4,
-            entry_address: ENTRY,
-            preprocessing_digest: [0u8; 32],
-            untrusted_advice_commitment_present: false,
-            trusted_advice_commitment_present: false,
-            vc_capacity: Some(CAPACITY),
-            precommitted: PrecommittedSchedule {
-                trusted_advice: None,
-                untrusted_advice: None,
-                bytecode: None,
-                program_image: None,
-            },
-        };
-        let mut transcript = prover_transcript::<Keccak>(
-            &jolt_transcript::protocol_tag(b"stage2-field-inline-zk"),
-            b"",
-        );
-        {
-            let tau = uniskip::draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
-            let uniskip_step = uniskip::verify_zk(
-                &checked,
-                &stage1.uniskip_proof,
-                &UniskipParams::spartan_outer(),
-                &mut transcript,
-            )
-            .unwrap();
-            let sumchecks = Stage1BatchSumchecks {
-                outer_remainder: OuterRemainder::new(
-                    SpartanOuterDimensions::rv64(LOG_T),
-                    tau,
-                    uniskip_step.challenge,
-                ),
-            };
-            let _stage1_consistency = sumchecks
-                .verify_zk(&stage1.sumcheck_proof, &mut transcript)
-                .unwrap();
-        }
-
-        let log_t = LOG_T;
-        let log_k = config.ram_K.ilog2() as usize;
-        let read_write_dimensions = config.rw_config.ram_dimensions(log_t, log_k);
-        let product_dimensions = SpartanProductDimensions::new(log_t);
-        let raf_dimensions = RamRafEvaluationDimensions::try_from(read_write_dimensions).unwrap();
-        let tau_low = product_tau_low(&stage1.clear_output.remainder_point(), log_t).unwrap();
-        let tau_high: Fr = draw_spartan_product_tau_high(&mut transcript).unwrap();
-        let product_uniskip_step = uniskip::verify_zk(
-            &checked,
-            &out.uniskip_proof,
-            &UniskipParams::spartan_product(),
-            &mut transcript,
-        )
-        .unwrap();
-
-        let lowest_address = public_io.memory_layout.get_lowest_address();
-        let public_memory = PublicIoMemory::new(&public_io).unwrap();
-        let sumchecks = Stage2BatchSumchecks {
-            ram_read_write: RamReadWriteChecking::new(
-                read_write_dimensions,
-                log_k,
-                tau_low.clone(),
-            ),
-            product_remainder: ProductRemainder::new(
-                product_dimensions,
-                product_uniskip_step.challenge,
-                tau_high,
-                tau_low.clone(),
-            ),
-            instruction_claim_reduction: InstructionClaimReduction::new(
-                TraceDimensions::new(log_t),
-                tau_low.clone(),
-            ),
-            field_registers_claim_reduction: FieldRegistersClaimReduction::new(
-                FieldRegistersTraceDimensions::new(log_t),
-                tau_low.clone(),
-            ),
-            ram_raf_evaluation: RamRafEvaluation::new(
-                read_write_dimensions,
-                raf_dimensions,
-                log_k,
-                lowest_address,
-                tau_low.clone(),
-            ),
-            ram_output_check: RamOutputCheck::new(read_write_dimensions, public_memory),
-        };
-        let _challenges = sumchecks.draw_challenges(&mut transcript).unwrap();
-        let _stage2_consistency = sumchecks
-            .verify_zk(&out.sumcheck_proof, &mut transcript)
-            .unwrap();
-
-        assert_eq!(
-            transcript.verifier_message::<[u8; 32]>(),
-            prover_state.verifier_message::<[u8; 32]>()
+        verify_through(
+            Through::Stage2,
+            &test_checked_inputs(),
+            &field_arithmetic_preprocessing(),
+            mode,
+            &mut prover_transcript,
         );
     }
 }

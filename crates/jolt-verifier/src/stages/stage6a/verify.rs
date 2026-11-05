@@ -5,6 +5,7 @@ use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, 
 use jolt_crypto::VectorCommitment;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_inline::field_inline_bytecode_read_raf_address_phase_input_values_from_upstream;
@@ -17,6 +18,7 @@ use super::{
         Stage6aSumchecks, Stage6aZkOutput,
     },
 };
+use crate::stages::zk::masked_channel;
 use crate::{
     preprocessing::JoltVerifierPreprocessing,
     proof::JoltProof,
@@ -27,7 +29,6 @@ use crate::{
         stage3::Stage3Output,
         stage4::Stage4Output,
         stage5::Stage5Output,
-        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -38,18 +39,19 @@ use crate::{
     reason = "Stage 6a's address-phase input claim folds all five prior stage outputs directly; bundling them would reintroduce the removed `Deps` indirection."
 )]
 #[jolt_verifier_derive::fs_scope(Stage6a)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-    stage3: &Stage3Output<PCS::Field, VC::Output>,
-    stage4: &Stage4Output<PCS::Field, VC::Output>,
-    stage5: &Stage5Output<PCS::Field, VC::Output>,
-) -> Result<Stage6aOutput<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage1: &Stage1Output<PCS::Field>,
+    stage2: &Stage2Output<PCS::Field>,
+    stage3: &Stage3Output<PCS::Field>,
+    stage4: &Stage4Output<PCS::Field>,
+    stage5: &Stage5Output<PCS::Field>,
+) -> Result<Stage6aOutput<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -93,23 +95,16 @@ where
     // opening values; produced points derive from its own sumcheck point).
     let address_input_points = address_sumchecks.empty_input_points();
 
-    if checked.zk {
-        let consistency =
-            address_sumchecks.verify_zk(&proof.stages.stage6a_sumcheck_proof, transcript)?;
-        let output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage6a_sumcheck_proof,
-            "stage6a_sumcheck_proof",
-            address_sumchecks.output_claim_count(),
-            JoltRelationId::BytecodeReadRaf,
+    if checked.zk.is_masked() {
+        let batch = address_sumchecks.verify_masked(
+            &address_input_points,
+            &mut masked_channel(masked, transcript)?,
         )?;
-        let output_points = address_sumchecks
-            .derive_opening_points(&consistency.challenges(), &address_input_points)?;
         return Ok(Stage6aOutput::Zk(Stage6aZkOutput {
             challenges: carried,
-            consistency,
-            output_claims,
-            output_points,
+            rounds: batch.rounds,
+            output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }));
     }
 

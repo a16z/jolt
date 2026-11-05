@@ -27,8 +27,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::pow::PowSite;
@@ -62,8 +60,6 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage6bOutputClaims<F>,
     pub clear_output: Stage6bClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
     /// The nonce ground before the post-6a draws, when their loss needs one.
     pub pow_nonce: Option<u64>,
 }
@@ -73,7 +69,7 @@ pub struct Stage6bProverOutput<F: JoltField, C> {
 #[tracing::instrument(skip_all)]
 pub fn prove_stage6b<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     checked: &CheckedInputs,
     config: &ProverConfig,
     preprocessing: &JoltProverPreprocessing<PCS, VC>,
@@ -192,12 +188,9 @@ where
         &inputs,
         &input_points,
         &cycle_challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     Ok(Stage6bProverOutput {
@@ -208,8 +201,6 @@ where
             output_points: proved.output_points,
             bytecode_reduction_weights: bytecode_weights,
         },
-        #[cfg(feature = "zk")]
-        committed_witness,
         pow_nonce,
     })
 }
@@ -249,8 +240,8 @@ mod field_inline_round_trip {
     use crate::stages::field_inline_fixtures::twins::FixturePreprocessing;
     use crate::stages::field_inline_fixtures::{
         addi_only_backend, addi_only_preprocessing, field_arithmetic_backend,
-        field_arithmetic_preprocessing, test_checked_inputs, test_prover_config, test_public_io,
-        twins, LOG_T, RAM_LOG_K,
+        field_arithmetic_preprocessing, test_checked_inputs, test_mode, test_prover_config,
+        test_public_io, twins, LOG_T, RAM_LOG_K,
     };
 
     #[test]
@@ -279,7 +270,7 @@ mod field_inline_round_trip {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
@@ -288,7 +279,7 @@ mod field_inline_round_trip {
             prover_transcript::<Keccak>(&jolt_transcript::protocol_tag(label), b"");
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &mut context,
-            mode: &mode,
+            mode: &mut mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
@@ -298,7 +289,7 @@ mod field_inline_round_trip {
         .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             &checked,
             &config,
             &preprocessing,
@@ -533,47 +524,40 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the stage-6b committed shell carries the curated row count — the
-/// alias-deduped cycle-point cell total, whose field-inline share is exactly the one
-/// spliced reduced `FieldRdInc` row.
-#[cfg(all(test, feature = "field-inline", feature = "zk"))]
+/// ZK with field-inline enabled: the stage-6b committed witness carries the generated layout's
+/// row count, whose field-inline share is exactly the one reduced `FieldRdInc` row, and the
+/// production stage-1..6b zk verifiers consume the prover's argument string.
+#[cfg(all(test, feature = "field-inline", feature = "zk", not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
     use crate::stages::field_inline_fixtures::proving::FixtureProver;
-    use common::constants::MAX_BLINDFOLD_GENERATORS;
     use jolt_claims::OutputClaims;
-    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_transcript::{prover_transcript, Keccak, ProverState};
+    use jolt_transcript::{Keccak, ProverState};
 
     use super::*;
     use crate::stages::field_inline_fixtures::{
-        addi_only_backend, addi_only_preprocessing, test_checked_inputs, test_prover_config,
-        test_public_io,
+        addi_only_backend, addi_only_preprocessing, fixture_transcript, test_checked_inputs,
+        test_mode, test_prover_config, test_public_io, verify_through, Through,
     };
 
-    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
-
     #[test]
-    fn committed_stage6b_shell_carries_the_curated_rows() {
+    fn masked_stage6b_round_trips_the_masked_verifier() {
         let witness = addi_only_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
+        let mut mode = test_mode();
         let config = test_prover_config();
         let public_io = test_public_io();
         let checked = test_checked_inputs();
         let preprocessing = addi_only_preprocessing();
 
-        let mut transcript = prover_transcript::<Keccak>(
-            &jolt_transcript::protocol_tag(b"stage6b-field-inline-zk"),
-            b"",
-        );
+        let mut transcript = fixture_transcript();
         let ((((stage1, stage2, stage3), stage4), stage5), stage6a) = FixtureProver {
             backend: &mut context,
-            mode: &mode,
+            mode: &mut mode,
             config: &config,
             public_io: &public_io,
             checked: &checked,
@@ -583,7 +567,7 @@ mod field_inline_zk {
         .through_stage6a();
         let out = prove_stage6b::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             &checked,
             &config,
             &preprocessing,
@@ -597,32 +581,22 @@ mod field_inline_zk {
         )
         .unwrap();
 
-        // The committed row total is the verifier's expectation: the derived
-        // output-point cell count minus the runtime booleanity-vs-bytecode
-        // aliases. The field-inline reduction contributes exactly one of those cells —
-        // its single reduced `FieldRdInc` opening.
-        let values: Vec<Fr> = out
-            .committed_witness
-            .output_claim_rows
-            .iter()
-            .flatten()
-            .copied()
-            .collect();
-        let cycle_points = &out.clear_output.output_points;
-        let booleanity_point = cycle_points.booleanity_opening_point().unwrap().to_vec();
-        let aliased = cycle_points
-            .bytecode_read_raf
-            .bytecode_ra
-            .iter()
-            .filter(|point| point.as_slice() == booleanity_point)
-            .count();
         assert_eq!(
-            values.len(),
-            cycle_points.point_count().saturating_sub(aliased)
-        );
-        assert_eq!(
-            OutputClaims::opening_values(&out.claims.field_registers_inc_claim_reduction).len(),
+            OutputClaims::opening_values(
+                &out.clear_output
+                    .output_values
+                    .field_registers_inc_claim_reduction
+            )
+            .len(),
             1
+        );
+
+        verify_through(
+            Through::Stage6b,
+            &checked,
+            &preprocessing,
+            mode,
+            &mut transcript,
         );
     }
 }

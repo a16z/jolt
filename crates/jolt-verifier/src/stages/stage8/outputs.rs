@@ -3,6 +3,8 @@ use jolt_field::JoltField;
 use jolt_openings::VerifierOpeningClaim;
 use jolt_poly::{Point, HIGH_TO_LOW};
 
+#[cfg(not(feature = "akita"))]
+use crate::VerifierError;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
 #[cfg(not(feature = "akita"))]
@@ -38,10 +40,10 @@ pub enum Stage8Output<F: JoltField, C, H> {
 
 #[cfg(not(feature = "akita"))]
 impl<F: JoltField, C, H> Stage8Output<F, C, H> {
-    pub fn zk(&self) -> Result<&Stage8ZkOutput<F, C, H>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage8ZkOutput<F, C, H>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage8" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage8" }),
         }
     }
 }

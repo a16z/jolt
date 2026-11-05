@@ -1,25 +1,26 @@
-//! BlindFold, the curve back end: the claim, protocol, layout and
-//! verifier-equation types, the prover, and the verifier.
+//! The curve back end: BlindFold over committed pads.
+//!
+//! The residual relation is lowered to relaxed R1CS whose witness rows begin
+//! with the pad rows, committed before the first challenge. The prover folds
+//! the committed instance with a random satisfying instance (NovaBlindFold,
+//! HyperNova §7) and proves the folded instance with Spartan's outer and inner
+//! sumchecks; the folded witness is uniform, so the tail reveals nothing.
 
-mod assignment;
-mod builder;
+mod backend;
 mod error;
 mod proof;
-pub mod protocol;
+mod protocol;
 #[cfg(feature = "prover")]
 mod prove;
-pub mod r1cs;
 mod relaxed;
-mod statements;
 mod verify;
 
-pub use assignment::AssignedBlindFoldWitness;
-pub use builder::{BlindFoldProtocolBuilder, BlindFoldStageBuilder};
-pub use error::{Error, LayoutError, ProverError, RelaxedError, VerificationError};
-pub use proof::BlindFoldProof;
+pub use backend::{BlindFold, BlindFoldPadOpening, BlindFoldResidualWitness};
+pub use error::{ProverError, RelaxedError, VerificationError};
+pub use proof::{BlindFoldProof, FoldedEvaluation, FoldingCommitments, OuterClaims};
 pub use protocol::{
-    BlindFoldDimensions, BlindFoldProtocol, FinalOpeningWitnessCoordinates, RowDimensions,
-    WitnessCoordinate, WitnessRowLayout,
+    pad_row_count, BlindFoldDimensions, BlindFoldProtocol, FinalOpeningWitnessCoordinates,
+    RowDimensions, WitnessCoordinate, WitnessRowLayout,
 };
 #[cfg(feature = "prover")]
 pub use prove::{
@@ -27,6 +28,3 @@ pub use prove::{
     DirectBlindFoldRowCommitter,
 };
 pub use relaxed::{RelaxedInstance, RelaxedWitness};
-pub use statements::{
-    BlindFoldStage, BlindFoldStatement, CommittedClaimRows, FinalOpeningBinding, OpeningAlias,
-};

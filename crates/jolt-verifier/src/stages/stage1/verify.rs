@@ -1,8 +1,9 @@
-use jolt_claims::protocols::jolt::{geometry::spartan::SpartanOuterDimensions, JoltRelationId};
+use jolt_claims::protocols::jolt::geometry::spartan::SpartanOuterDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::Ring;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
+use jolt_zk::masking::MaskedSession;
 
 use super::outer_remainder::{outer_remainder_input_values_from_uniskip_output, OuterRemainder};
 use super::outputs::{
@@ -14,18 +15,19 @@ use crate::{
     stages::{
         pow::{check_pow, PowSite},
         uniskip,
-        zk::committed,
+        zk::masked_channel,
     },
     verifier::CheckedInputs,
     VerifierError,
 };
 
 #[jolt_verifier_derive::fs_scope(Stage1)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-) -> Result<Stage1Output<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+) -> Result<Stage1Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -38,11 +40,10 @@ where
     check_pow(PowSite::Stage1Tau, pow_nonces, transcript)?;
     let tau = uniskip::draw_spartan_outer_tau(transcript, log_t)?;
 
-    if !checked.zk {
+    if !checked.zk.is_masked() {
         let claims = &proof.clear_claims()?.stage1;
         let uni_skip_first_round_proof = &proof.stages.stage1_uni_skip_first_round_proof;
         let sumcheck_proof = &proof.stages.stage1_sumcheck_proof;
-
         // The uni-skip first round consumes no openings: its symbolic `input_expression`
         // is `zero` (jolt-claims `spartan/outer_uniskip.rs`), so the input claim is the
         // constant zero. BlindFold still single-sources this claim from that same symbolic
@@ -98,15 +99,8 @@ where
     }
 
     {
-        // The committed path grinds no stage-1 nonce (ZK runs over BN254 only,
-        // where no site needs one), so the slot must stay empty.
-        pow_nonces.require_absent(PowSite::Stage1)?;
-        let uniskip = uniskip::verify_zk(
-            checked,
-            &proof.stages.stage1_uni_skip_first_round_proof,
-            &uniskip_params,
-            transcript,
-        )?;
+        let mut channel = masked_channel(masked, transcript)?;
+        let uniskip = uniskip::verify_masked(&uniskip_params, &mut channel)?;
         let uniskip_challenge = uniskip.challenge;
 
         // Built after the uni-skip step so the relation carries `tau` and the
@@ -118,30 +112,19 @@ where
         };
         let input_points = sumchecks.empty_input_points();
 
-        let remainder_consistency =
-            sumchecks.verify_zk(&proof.stages.stage1_sumcheck_proof, transcript)?;
-        // Clear and committed proofs share the composed member's canonical order.
-        let output_claim_count = sumchecks.output_claim_count();
-        let remainder_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage1_sumcheck_proof,
-            "stage1_sumcheck_proof",
-            output_claim_count,
-            JoltRelationId::SpartanOuter,
-        )?;
-        let output_points =
-            sumchecks.derive_opening_points(&remainder_consistency.challenges(), &input_points)?;
+        check_pow(PowSite::Stage1, pow_nonces, channel.transcript())?;
+        let batch = sumchecks.verify_masked(&input_points, &mut channel)?;
 
         Ok(Stage1Output::Zk(Stage1ZkOutput {
             challenges: Stage1Challenges {
                 tau,
                 uniskip_challenge,
             },
-            uniskip_consistency: uniskip.consistency,
+            uniskip_rounds: uniskip.rounds,
             uniskip_output_claims: uniskip.output_claims,
-            remainder_consistency,
-            remainder_output_claims,
-            output_points,
+            remainder_rounds: batch.rounds,
+            remainder_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }))
     }
 }

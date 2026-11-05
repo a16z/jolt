@@ -22,5 +22,5 @@ pub mod field_inline;
     not(feature = "field-inline")
 ))]
 pub mod standard;
-#[cfg(not(feature = "field-inline"))]
+#[cfg(not(any(feature = "field-inline", feature = "akita")))]
 pub mod zk;

@@ -84,8 +84,8 @@ pub fn verify<F, PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-    stage6: &Stage6bOutput<F, VC::Output>,
-    stage7: &Stage7Output<F, VC::Output>,
+    stage6: &Stage6bOutput<F>,
+    stage7: &Stage7Output<F>,
 ) -> Result<Stage8Output<F, PCS::Output, VC::Output>, VerifierError>
 where
     F: JoltField,
@@ -116,7 +116,7 @@ where
             return Err(VerifierError::ExpectedClearProof { field: "stage7" });
         }
         (Stage6bOutput::Zk(_), Stage7Output::Clear(_)) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage7" });
+            return Err(VerifierError::ExpectedMaskedProof { field: "stage7" });
         }
     };
     let stage6_points = stage6.output_points();
@@ -180,7 +180,7 @@ where
     };
     let opening_ids: Vec<ComposedOpeningId> = entries.iter().map(|entry| entry.id).collect();
 
-    if checked.zk {
+    if checked.zk.is_masked() {
         let gamma_powers = transcript.challenge_powers(entries.len())?;
         let commitments: Vec<PCS::Output> = entries
             .iter()
@@ -676,9 +676,9 @@ pub fn verify<'a, F, PCS, VC, T, ZkProof>(
     formula_dimensions: &JoltFormulaDimensions,
     trusted_advice_commitment: Option<&PCS::Output>,
     transcript: &mut T,
-    stage4: &Stage4Output<F, VC::Output>,
-    stage6: &Stage6bOutput<F, VC::Output>,
-    stage7: &Stage7Output<F, VC::Output>,
+    stage4: &Stage4Output<F>,
+    stage6: &Stage6bOutput<F>,
+    stage7: &Stage7Output<F>,
     context: &mut PCS::VerificationContext<'_>,
 ) -> Result<PCS::PendingEof, VerifierError>
 where

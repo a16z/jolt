@@ -21,6 +21,7 @@ use jolt_kernels::reference::instruction_read_raf::InstructionReadRafWitness;
 use jolt_kernels::{CommitmentGrid, JoltBackend, KernelContext, WitnessCommitment};
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_verifier::config::SELECTED_ZK_CONFIG;
 use jolt_verifier::proof::JoltCommitments;
 #[cfg(feature = "field-inline")]
 use jolt_verifier::proof::{FieldInlineCommitments, FieldRegistersCommitments};
@@ -128,7 +129,7 @@ where
         config.one_hot_config,
         trusted_advice.is_some(),
         untrusted_advice_present,
-        cfg!(feature = "zk"),
+        SELECTED_ZK_CONFIG,
     )?;
 
     // The dominant-advice regime (an advice grid wider than every other

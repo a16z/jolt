@@ -53,7 +53,7 @@ jolt-dit = { workspace = true, optional = true }
 jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
-jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
+jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rand_chacha = { workspace = true, optional = true }
@@ -89,26 +89,6 @@ required-features = ["whiteout-prover"]
 [[test]]
 name = "whiteout_zeroize"
 required-features = ["whiteout-prover"]
-
-[[test]]
-name = "assignment_pipeline"
-required-features = ["prover"]
-
-[[test]]
-name = "proof_pipeline"
-required-features = ["prover"]
-
-[[test]]
-name = "r1cs_pipeline"
-required-features = ["prover"]
-
-[[test]]
-name = "real_prover"
-required-features = ["prover"]
-
-[[test]]
-name = "sumcheck_pipeline"
-required-features = ["prover"]
 
 [[example]]
 name = "sigma_dudect"

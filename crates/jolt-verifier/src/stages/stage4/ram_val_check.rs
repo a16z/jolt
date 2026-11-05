@@ -14,6 +14,7 @@
 //! fields and in the serialized `Stage4OutputClaims` aggregate. Only their values feed
 //! the input claim; their staged points are carried for completeness.
 
+use crate::stages::zk::MaskedChannel;
 pub use jolt_claims::protocols::jolt::relations::ram::{
     RamValCheckChallenges, RamValCheckInputClaims, RamValCheckOutputClaims,
 };
@@ -26,11 +27,16 @@ use jolt_claims::protocols::jolt::{
     relations::ram::{RamValCheck as RamValCheckSymbolic, RamValCheckShape, RamValContribution},
     JoltAdviceKind, JoltDerivedId, JoltOpeningId, JoltRelationId, RamValCheckPublic,
 };
-use jolt_claims::SymbolicSumcheck;
+use jolt_claims::{MapCells, OutputClaims, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{block_selector_mle_msb, LtPolynomial};
+use jolt_zk::masking::MaskedOperand;
+use std::collections::BTreeMap;
+use std::convert::Infallible;
 
-use crate::stages::relations::ConcreteSumcheck;
+use crate::stages::relations::{
+    receive_masked_value, ClaimRoute, ClaimRoutes, ComposedOpeningId, ConcreteSumcheck,
+};
 use crate::stages::stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints};
 use crate::verifier::CheckedInputs;
 use crate::VerifierError;
@@ -270,7 +276,11 @@ impl<F: JoltField> ConcreteSumcheck<F> for RamValCheck<F> {
                                 "RAM read-write opening point is shorter than the address width",
                             )
                         })?;
-                Ok(LtPolynomial::evaluate(output_cycle, fixed_cycle) + challenges.gamma)
+                Ok(lt_cycle_plus_gamma(
+                    output_cycle,
+                    fixed_cycle,
+                    challenges.gamma,
+                ))
             }
             // Input publics — resolved in `derive_input_term`, never in the output expr.
             RamValCheckPublic::InitEval
@@ -303,6 +313,20 @@ pub struct RamValCheckInitStructure<F: JoltField> {
 }
 
 impl<F: JoltField> RamValCheckInitStructure<F> {
+    /// The staged contribution openings' points: each advice block's opening
+    /// point and the program image's full RAM address point.
+    pub fn staged_points(&self) -> RamValCheckStagedOpenings<Vec<F>> {
+        let advice = |kind| {
+            self.advice_block(kind)
+                .map(|block| block.opening_point.clone())
+        };
+        RamValCheckStagedOpenings {
+            untrusted_advice: advice(JoltAdviceKind::Untrusted),
+            trusted_advice: advice(JoltAdviceKind::Trusted),
+            program_image: self.program_image_point.clone(),
+        }
+    }
+
     pub fn advice_block(&self, kind: JoltAdviceKind) -> Option<&RamValCheckAdviceBlock<F>> {
         self.advice_blocks
             .iter()
@@ -315,8 +339,8 @@ impl<F: JoltField> RamValCheckInitStructure<F> {
     /// program image first, then advice in `advice_blocks` order.
     ///
     /// WARNING: contribution order and selectors must stay in lockstep with
-    /// BlindFold's `ram_val_check_init` (zk/blindfold/mod.rs) and the prover's own
-    /// decomposition.
+    /// the residual relation's `ram_val_check_init` (`zk/residual/mod.rs`) and
+    /// the prover's own decomposition.
     pub fn decomposition(&self) -> RamValCheckInit<F> {
         let mut contributions = Vec::new();
         if self.program_image_point.is_some() {
@@ -383,6 +407,24 @@ pub struct RamValCheckInitialEvaluation<F: JoltField> {
 }
 
 impl<F: JoltField> RamValCheckInitialEvaluation<F> {
+    /// The staged opening values this evaluation decomposes `Val_init` into:
+    /// the inverse of attaching [`RamValCheckStagedOpenings`] to the init
+    /// structure. A masked prover sends them, masked, in this shape.
+    pub fn staged_openings(&self) -> RamValCheckStagedOpenings<F> {
+        let advice = |kind| {
+            self.advice_contribution(kind)
+                .map(|contribution| contribution.opening_value)
+        };
+        RamValCheckStagedOpenings {
+            untrusted_advice: advice(JoltAdviceKind::Untrusted),
+            trusted_advice: advice(JoltAdviceKind::Trusted),
+            program_image: self
+                .program_image_contribution
+                .as_ref()
+                .map(|(_, value)| *value),
+        }
+    }
+
     pub fn advice_contribution(
         &self,
         kind: JoltAdviceKind,
@@ -403,6 +445,77 @@ pub struct VerifiedRamValCheckAdviceContribution<F: JoltField> {
     pub opening_point: Vec<F>,
     /// The advice block opening *value* this contribution weights by `selector`.
     pub opening_value: F,
+}
+
+/// The RAM value-check's staged `Val_init` contribution openings, each present
+/// exactly when the init structure has that contribution: the stage-4 claim
+/// cells a clear proof sends before the batch (the RAM value-check input claim
+/// consumes them), and that a committed proof commits with the rest of the
+/// stage's claims. Generic over the cell: the points come from
+/// [`RamValCheckInitStructure::staged_points`]; the cells and their order are
+/// the matching fields of [`RamValCheckOutputClaims`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, OutputClaims)]
+#[relation(RamValCheck)]
+pub struct RamValCheckStagedOpenings<C> {
+    #[opening(untrusted_advice)]
+    pub untrusted_advice: Option<C>,
+    #[opening(trusted_advice)]
+    pub trusted_advice: Option<C>,
+    #[opening(ProgramImageInitContributionRw)]
+    pub program_image: Option<C>,
+}
+
+impl<F: JoltField> RamValCheckStagedOpenings<F> {
+    /// Receives the openings masked, in the shape of their staged `points`,
+    /// each with its pad.
+    pub fn receive_masked<C>(
+        points: &RamValCheckStagedOpenings<Vec<F>>,
+        channel: &mut C,
+    ) -> Result<Vec<(ComposedOpeningId, MaskedOperand<F>)>, VerifierError>
+    where
+        C: MaskedChannel<F>,
+    {
+        let mut received = Vec::new();
+        let _: RamValCheckStagedOpenings<F> = points.try_map_cells(&mut |id, _point| {
+            let value = receive_masked_value(channel)?;
+            received.push(((*id).into(), value));
+            Ok::<F, VerifierError>(value.masked)
+        })?;
+        Ok(received)
+    }
+
+    /// The received openings by id, the pre-filled `Staged` cells of the
+    /// stage-4 claims receive.
+    pub fn by_id(&self) -> BTreeMap<ComposedOpeningId, F> {
+        self.canonical_order()
+            .into_iter()
+            .map(Into::into)
+            .zip(self.opening_values())
+            .collect()
+    }
+}
+
+impl<C: Clone> RamValCheckStagedOpenings<C> {
+    /// The staged cells of the RAM value check's claims (or points).
+    pub fn from_claims(claims: &RamValCheckOutputClaims<C>) -> Self {
+        Self {
+            untrusted_advice: claims.untrusted_advice.clone(),
+            trusted_advice: claims.trusted_advice.clone(),
+            program_image: claims.program_image.clone(),
+        }
+    }
+}
+
+impl<F: JoltField> RamValCheckStagedOpenings<Vec<F>> {
+    /// The stage-4 claim routes: every staged cell is [`ClaimRoute::Staged`].
+    pub fn claim_routes(&self) -> ClaimRoutes {
+        let mut routes = ClaimRoutes::default();
+        let Ok(_) = self.try_map_cells(&mut |id, _point| {
+            routes.set(*id, ClaimRoute::Staged);
+            Ok::<F, Infallible>(F::zero())
+        });
+        routes
+    }
 }
 
 /// Attach the proof's staged advice / program-image opening *values* to the
@@ -463,10 +576,21 @@ pub(crate) fn ram_val_check_initial_evaluation<F: JoltField>(
     })
 }
 
+/// The RAM value check's output public `LtCyclePlusGamma`:
+/// `LT(output_cycle, fixed_cycle) + γ`. The clear check and the masked
+/// residual both evaluate it here.
+pub(crate) fn lt_cycle_plus_gamma<F: JoltField>(
+    output_cycle: &[F],
+    fixed_cycle: &[F],
+    gamma: F,
+) -> F {
+    LtPolynomial::evaluate(output_cycle, fixed_cycle) + gamma
+}
+
 /// The advice block's selector and opening point, derived from the memory layout
 /// and the RAM address point.
 ///
-/// WARNING: the ZK path recomputes the same geometry in `zk::blindfold`'s
+/// WARNING: the ZK path recomputes the same geometry in `zk::residual`'s
 /// `advice_selector`, so the two must stay in lockstep.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RamValCheckAdviceBlock<F: JoltField> {
@@ -477,7 +601,7 @@ pub struct RamValCheckAdviceBlock<F: JoltField> {
 /// Compute the [`RamValCheckAdviceBlock`] for `kind` against `r_address`, using the
 /// advice block's start/size from the memory layout.
 ///
-/// WARNING: the ZK path recomputes the same geometry in `zk::blindfold`'s
+/// WARNING: the ZK path recomputes the same geometry in `zk::residual`'s
 /// `advice_selector`, so the two must stay in lockstep.
 fn ram_val_check_advice_block<F: JoltField>(
     kind: JoltAdviceKind,

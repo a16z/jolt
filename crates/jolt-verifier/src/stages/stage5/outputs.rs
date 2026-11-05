@@ -1,8 +1,7 @@
 use jolt_field::JoltField;
-use jolt_sumcheck::BatchedCommittedSumcheckConsistency;
+use jolt_sumcheck::BatchedMaskedRounds;
 
-use crate::stages::relations::SumcheckBatch;
-use crate::stages::zk::outputs::CommittedOutputClaimOutput;
+use crate::stages::relations::{MaskedClaims, SumcheckBatch};
 
 #[cfg(feature = "field-inline")]
 pub use super::field_registers_val_evaluation::{
@@ -13,6 +12,7 @@ use super::instruction_read_raf::{
 };
 use super::ram_ra_claim_reduction::{RamRaClaimReduction, RamRaClaimReductionOutputClaims};
 use super::registers_val_evaluation::{RegistersValEvaluation, RegistersValEvaluationOutputClaims};
+use crate::VerifierError;
 
 /// Source-of-truth for stage 5's sumcheck batch, in Fiat-Shamir batch order (instruction
 /// read-RAF, RAM-RA reduction, register value-evaluation, the field-inline field-register
@@ -106,10 +106,10 @@ pub struct Stage5ClearOutput<F: JoltField> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stage5ZkOutput<F: JoltField, C> {
+pub struct Stage5ZkOutput<F: JoltField> {
     pub challenges: Stage5Challenges<F>,
-    pub batch_consistency: BatchedCommittedSumcheckConsistency<F, C>,
-    pub batch_output_claims: CommittedOutputClaimOutput<C>,
+    pub batch_rounds: BatchedMaskedRounds<F>,
+    pub batch_output_claims: MaskedClaims<F>,
     /// The produced opening points, the ZK counterpart of the clear path's
     /// `output_points`. Read through the same `*_point()` accessors.
     pub output_points: Stage5OutputPoints<F>,
@@ -124,12 +124,12 @@ pub struct Stage5ZkOutput<F: JoltField, C> {
 // consistency and output-claim commitments. Boxing the common clear variant to
 // shrink the rarer ZK one would add indirection to every clear-path access.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Stage5Output<F: JoltField, C> {
+pub enum Stage5Output<F: JoltField> {
     Clear(Stage5ClearOutput<F>),
-    Zk(Stage5ZkOutput<F, C>),
+    Zk(Stage5ZkOutput<F>),
 }
 
-impl<F: JoltField, C> Stage5Output<F, C> {
+impl<F: JoltField> Stage5Output<F> {
     /// The produced opening points, available regardless of proving mode.
     pub fn output_points(&self) -> &Stage5OutputPoints<F> {
         match self {
@@ -147,17 +147,17 @@ impl<F: JoltField, C> Stage5Output<F, C> {
         }
     }
 
-    pub fn clear(&self) -> Result<&Stage5ClearOutput<F>, crate::VerifierError> {
+    pub fn clear(&self) -> Result<&Stage5ClearOutput<F>, VerifierError> {
         match self {
             Self::Clear(output) => Ok(output),
-            Self::Zk(_) => Err(crate::VerifierError::ExpectedClearProof { field: "stage5" }),
+            Self::Zk(_) => Err(VerifierError::ExpectedClearProof { field: "stage5" }),
         }
     }
 
-    pub fn zk(&self) -> Result<&Stage5ZkOutput<F, C>, crate::VerifierError> {
+    pub fn zk(&self) -> Result<&Stage5ZkOutput<F>, VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage5" }),
+            Self::Clear(_) => Err(VerifierError::ExpectedMaskedProof { field: "stage5" }),
         }
     }
 }
