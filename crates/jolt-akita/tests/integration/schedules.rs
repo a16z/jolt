@@ -539,9 +539,11 @@ fn catalogs_have_exact_emitted_keys() {
         .chain([("fp128_response_digits", response_catalog())])
         .collect();
     assert_eq!(specs.len(), cases.len());
-    assert_eq!(
-        specs.get(4).expect("dense emit spec").spec.family_name,
-        JoltDenseBounded::schedule_family_name()
+    assert!(
+        specs
+            .iter()
+            .any(|fixture| fixture.spec.family_name == JoltDenseBounded::schedule_family_name()),
+        "no emit spec for the dense family"
     );
     for (fixture, (family_name, catalog)) in specs.iter().zip(cases) {
         let spec = &fixture.spec;

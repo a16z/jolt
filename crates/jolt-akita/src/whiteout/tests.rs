@@ -579,3 +579,21 @@ fn packaged_response_rows_are_the_planned_rows() {
     assert_eq!(packaged.plan, planned.plan);
     assert_eq!(packaged.digest, planned.digest);
 }
+
+/// A setup whose persisted plans carry a response set keeps no response
+/// catalog, so its wire form does not ship one; a fresh setup ships it.
+#[test]
+fn response_catalog_travels_only_without_a_persisted_response_set() {
+    let setup = fresh();
+    assert!(WhiteoutSetupWire::from(setup.clone())
+        .response_catalog
+        .is_some());
+    let plans = setup.export().unwrap();
+    assert!(plans.responses.is_some());
+    let loaded = WhiteoutSetup::from(WhiteoutSetupWire {
+        grouped: None,
+        plans: Some(plans),
+        response_catalog: Some(response_catalog()),
+    });
+    assert!(WhiteoutSetupWire::from(loaded).response_catalog.is_none());
+}

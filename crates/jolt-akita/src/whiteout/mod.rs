@@ -1408,8 +1408,10 @@ pub struct WhiteoutSetup {
     grouped: Option<GroupedScheduleParams>,
     /// The persisted plans the setup was constructed with.
     persisted: Option<WhiteoutPlans>,
-    /// The packaged response catalog ([`ResponsePlans`]), unless persisted
-    /// plans carry the response set.
+    /// The packaged response catalog ([`ResponsePlans`]). `None` when the
+    /// persisted plans carry a response set, which then fixes every row
+    /// ([`Self::from_parts`]), so the wire form carries it only for a setup
+    /// that may still derive a response row.
     response_catalog: Option<Arc<Vec<u8>>>,
     planned: Arc<OnceLock<PlannedSetup>>,
 }
@@ -1436,12 +1438,7 @@ impl From<WhiteoutSetup> for WhiteoutSetupWire {
 
 impl From<WhiteoutSetupWire> for WhiteoutSetup {
     fn from(wire: WhiteoutSetupWire) -> Self {
-        Self {
-            grouped: wire.grouped,
-            persisted: wire.plans,
-            response_catalog: wire.response_catalog.map(Arc::new),
-            planned: Arc::default(),
-        }
+        Self::from_parts(wire.grouped, wire.plans, wire.response_catalog)
     }
 }
 
@@ -1528,16 +1525,31 @@ impl WhiteoutSetup {
             WhiteoutSource::Plan => None,
             WhiteoutSource::Load(plans) => Some(plans),
         };
-        let setup = Self {
-            grouped,
-            persisted,
-            response_catalog: response_catalog.map(Arc::new),
-            planned: Arc::default(),
-        };
+        let setup = Self::from_parts(grouped, persisted, response_catalog);
         if let (None, Some((num_vars, num_polys))) = (&setup.persisted, trace) {
             let _ = setup.planned(num_vars, num_polys)?;
         }
         Ok(setup)
+    }
+
+    /// The one constructor: drops `response_catalog` when `persisted`
+    /// carries a response set, which refuses any length it lacks.
+    fn from_parts(
+        grouped: Option<GroupedScheduleParams>,
+        persisted: Option<WhiteoutPlans>,
+        response_catalog: Option<Vec<u8>>,
+    ) -> Self {
+        let carries_responses = persisted
+            .as_ref()
+            .is_some_and(|plans| plans.responses.is_some());
+        Self {
+            grouped,
+            persisted,
+            response_catalog: response_catalog
+                .filter(|_| !carries_responses)
+                .map(Arc::new),
+            planned: Arc::default(),
+        }
     }
 
     fn admitted(&self) -> BTreeSet<Vec<PrecommittedShape>> {

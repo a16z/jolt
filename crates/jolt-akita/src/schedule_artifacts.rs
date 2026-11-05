@@ -80,7 +80,7 @@ impl AkitaScheduleArtifacts {
 
     /// Adds Whiteout's response catalog. Its bytes are audited when a
     /// Whiteout setup first needs a response row.
-    pub fn with_response_catalog(mut self, bytes: Vec<u8>) -> Self {
+    fn with_response_catalog(mut self, bytes: Vec<u8>) -> Self {
         self.response = Some(bytes);
         self
     }
