@@ -185,6 +185,10 @@ fn pool_bytes<F: PseudoMersenne>(len: usize) -> Option<usize> {
 }
 
 #[cfg(feature = "solinas")]
+#[expect(
+    clippy::chunks_exact_to_as_chunks,
+    reason = "F::NUM_BYTES cannot be used as a const generic argument"
+)]
 fn decode_pool<F, E, const D: usize>(bytes: &[u8], len: usize) -> Option<Vec<E>>
 where
     F: PseudoMersenne,

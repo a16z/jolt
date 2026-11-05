@@ -104,6 +104,10 @@ where
 }
 
 /// Fixed-seed field elements.
+#[expect(
+    clippy::chunks_exact_to_as_chunks,
+    reason = "T::WORDS cannot be used as a const generic argument"
+)]
 pub fn elements<T: Sample>(seed: u64, len: usize) -> Vec<T> {
     words(seed, T::WORDS * len)
         .chunks_exact(T::WORDS)

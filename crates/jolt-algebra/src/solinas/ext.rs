@@ -132,6 +132,10 @@ impl<F: Field, C: Ext2Config<F>> std::fmt::Display for FpExt2<F, C> {
 impl<F: Field + CanonicalBytes, C: Ext2Config<F>> CanonicalBytes for FpExt2<F, C> {
     const NUM_BYTES: usize = F::NUM_BYTES * 2;
 
+    #[expect(
+        clippy::chunks_exact_to_as_chunks,
+        reason = "F::NUM_BYTES cannot be used as a const generic argument"
+    )]
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), Self::NUM_BYTES);
         for (coefficient, bytes) in self.coeffs.iter().zip(out.chunks_exact_mut(F::NUM_BYTES)) {
@@ -329,6 +333,10 @@ impl<F: Field> std::fmt::Display for FpExt4<F> {
 impl<F: PseudoMersenne> CanonicalBytes for FpExt4<F> {
     const NUM_BYTES: usize = F::NUM_BYTES * 4;
 
+    #[expect(
+        clippy::chunks_exact_to_as_chunks,
+        reason = "F::NUM_BYTES cannot be used as a const generic argument"
+    )]
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), Self::NUM_BYTES);
         for (coefficient, bytes) in self.coeffs.iter().zip(out.chunks_exact_mut(F::NUM_BYTES)) {

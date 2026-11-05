@@ -319,6 +319,10 @@ fn candidates_at_the_modulus_boundary() {
 #[test]
 fn extension_coordinates_follow_the_single_base_pool() {
     type Base = Prime32Offset99;
+    #[expect(
+        clippy::chunks_exact_to_as_chunks,
+        reason = "E::DEGREE cannot be used as a const generic argument"
+    )]
     fn check<E: ChallengeCodec + ExtField<Base>>() {
         let count = 2 * E::DEGREE;
         let mut tape = vec![0xff; E::challenge_bytes(2).unwrap()];
@@ -349,6 +353,10 @@ fn hex_bytes(bytes: &[u8]) -> String {
     hex
 }
 
+#[expect(
+    clippy::chunks_exact_to_as_chunks,
+    reason = "F::NUM_BYTES cannot be used as a const generic argument"
+)]
 fn canonical_hex<F: CanonicalBytes>(values: &[F]) -> String {
     let mut encoded = vec![0; F::NUM_BYTES * values.len()];
     for (value, bytes) in values.iter().zip(encoded.chunks_exact_mut(F::NUM_BYTES)) {
