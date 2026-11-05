@@ -1,4 +1,5 @@
-//! Generic BlindFold claim, protocol, layout, and verifier-equation types.
+//! Zero knowledge for Jolt: generic BlindFold claim, protocol, layout and
+//! verifier-equation types, and the masking front end ([`masking`]).
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -22,6 +23,7 @@ mod assignment;
 mod builder;
 #[cfg(feature = "blindfold")]
 mod error;
+pub mod masking;
 #[cfg(feature = "blindfold")]
 mod proof;
 #[cfg(feature = "blindfold")]
@@ -32,6 +34,7 @@ mod prove;
 pub mod r1cs;
 #[cfg(feature = "blindfold")]
 mod relaxed;
+mod secret;
 #[cfg(feature = "blindfold")]
 mod statements;
 #[cfg(feature = "blindfold")]

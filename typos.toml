@@ -11,6 +11,10 @@ extend-exclude = [
   "**/fuzz/seeds/**",
 ]
 
+[default]
+# Whiteout paper theorem labels (`wo:thm:zk`) and "Thm" citations of them.
+extend-ignore-re = ["wo:thm:[a-z-]+", "\\bThm\\b"]
+
 [default.extend-words]
 "groth" = "groth"
 "fle" = "fle"

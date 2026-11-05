@@ -29,11 +29,15 @@ prover = [
   "jolt-sumcheck/prover",
   "jolt-transcript/prover-grinding",
 ]
+# `CommittedPads::uncommitted`, for tests of protocols written over the
+# masked channel in other crates (Akita's masked levels).
+test-support = []
 
 [lints]
 workspace = true
 
 [dependencies]
+jolt-claim-expr.workspace = true
 jolt-claims = { workspace = true, optional = true }
 jolt-crypto = { workspace = true, optional = true }
 jolt-field.workspace = true
@@ -46,6 +50,7 @@ rand_core.workspace = true
 rayon = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 jolt-crypto = { workspace = true, features = ["bn254"] }
