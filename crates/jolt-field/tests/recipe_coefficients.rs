@@ -8,4 +8,3 @@ fn coefficient_import_rejects_modulus_without_reduction() {
         Some(17)
     );
 }
-
