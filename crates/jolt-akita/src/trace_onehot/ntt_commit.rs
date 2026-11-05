@@ -17,7 +17,7 @@ use crate::AkitaField;
 
 const DIGIT_LIMBS: usize = 8;
 const DIGIT_BITS: usize = 16;
-const MAX_NTT_POSITIONS: usize = 252;
+pub(super) const MAX_NTT_POSITIONS: usize = 252;
 const DOT_BATCH: usize = 6;
 const COLUMN_TILE: usize = 4;
 const COMMIT_RING_DIMENSION: usize = 512;
@@ -122,7 +122,9 @@ impl<'a, const D: usize> PreparedNttCommit<'a, D> {
                 accumulated_positions = 0;
             }
         }
-        flush_digit_accumulators(&mut scratch.digit_accumulators, &mut result);
+        if accumulated_positions != 0 {
+            flush_digit_accumulators(&mut scratch.digit_accumulators, &mut result);
+        }
         Ok(result)
     }
 }
