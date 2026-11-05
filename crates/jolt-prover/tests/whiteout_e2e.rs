@@ -31,13 +31,13 @@ mod whiteout {
         AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
         HidingRandomness, WhiteoutPlans,
     };
+    use jolt_algebra::Ring;
     use jolt_prover::akita;
     use jolt_prover::akita::preprocessing::{
         self, AkitaProverPreprocessing, AkitaVc, AkitaVerifierPreprocessing,
     };
     use jolt_prover::akita::witness::{AdviceObject, DirectProgramOpenings, HidingOpening};
     use jolt_prover::{JoltBackend, ProverConfig, ProverError};
-    use jolt_algebra::Ring;
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
@@ -363,13 +363,20 @@ mod whiteout {
         };
         for position in [0, len / 4, len / 2, 3 * len / 4, len - 1] {
             assert!(
-                verify(proved, &tamper(&|values| values[position] += F::from_u64(1))).is_err(),
+                verify(
+                    proved,
+                    &tamper(&|values| values[position] += F::from_u64(1))
+                )
+                .is_err(),
                 "a shifted masked value at {position} of {len} must reject"
             );
         }
-        assert!(verify(proved, &tamper(&|values| {
-            let _ = values.pop();
-        }))
+        assert!(verify(
+            proved,
+            &tamper(&|values| {
+                let _ = values.pop();
+            })
+        )
         .is_err());
         assert!(verify(proved, &tamper(&|values| values.push(F::from_u64(0)))).is_err());
     }
