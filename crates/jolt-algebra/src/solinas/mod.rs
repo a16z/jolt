@@ -7,8 +7,8 @@
 mod ext;
 mod fp128;
 mod packed;
-/// Former location of [`crate::parallel`], kept until Akita imports the
-/// helpers from the crate root (M1c).
+/// Former location of [`crate::parallel`], kept while Akita imports the
+/// helpers from here.
 pub mod parallel {
     pub use crate::parallel::*;
 }

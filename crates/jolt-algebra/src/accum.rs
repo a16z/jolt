@@ -2,6 +2,8 @@
 //!
 //! These live in a dedicated module so Akita-specific stage implementations can
 //! share the same arithmetic helper without coupling to one another.
+//!
+//! Consumer: Akita's sumcheck stages, which import [`reduce_signed_accum`].
 
 use crate::Field;
 use crate::Unreduced;

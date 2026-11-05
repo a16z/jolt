@@ -68,6 +68,11 @@ impl<F: WithCommitAccumulator, const D: usize> NegacyclicShiftWindows<F, D> {
 
     /// Baseline x86-64 widens `u16` lanes with SSE2 unpacks; AVX2 widens
     /// eight lanes per `vpmovzxwd`.
+    ///
+    /// # Safety
+    ///
+    /// Requires AVX2. The body is the safe portable loop, compiled with AVX2
+    /// enabled.
     #[cfg(target_arch = "x86_64")]
     #[target_feature(enable = "avx2")]
     unsafe fn accumulate_shifts_into_avx2(

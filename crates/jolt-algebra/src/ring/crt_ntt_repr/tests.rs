@@ -216,7 +216,7 @@ fn centered_mont_lut_matches_centered_residue_boundary() {
 }
 
 #[test]
-#[should_panic(expected = "lazy pointwise dot requires an i32 SIMD parameter set")]
+#[should_panic(expected = "lazy pointwise dot requires an i32 batched parameter set")]
 fn lazy_pointwise_dot_rejects_non_i32_parameter_sets() {
     const D: usize = 64;
     let params = CrtNttParamSet::<i16, SYNTHETIC_I16_NUM_PRIMES, D>::new(synthetic_i16_primes());

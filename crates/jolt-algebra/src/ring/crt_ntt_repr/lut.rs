@@ -23,7 +23,7 @@ const DIGIT_LUT_OFFSET: i16 = 128;
 /// Digit-to-Montgomery conversion for balanced i8 digits in an active range
 /// `[-bound, bound)`, built once per mat-vec.
 ///
-/// Digits are secret (Whiteout response digits), so the conversion is one
+/// Digits can be secret (masked response digits), so the conversion is one
 /// Montgomery product by `R^2` per coefficient rather than a table read: a
 /// load indexed by a secret digit leaks it through the cache.
 #[derive(Debug, Clone)]

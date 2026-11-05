@@ -199,7 +199,10 @@ impl<F: Field + CanonicalEncoding> BalancedDecomposePow2Params<F> {
     /// Panics if the plane count differs from `levels()` or a digit does not fit
     /// the output carrier (`i8` or `i16`).
     #[doc(hidden)]
-    #[expect(private_bounds)]
+    #[expect(
+        private_bounds,
+        reason = "BalancedSignedDigit is private, so outputs are limited to its i8 and i16 impls"
+    )]
     #[inline]
     pub fn decompose_small_signed_into<T, O, const D: usize>(
         &self,

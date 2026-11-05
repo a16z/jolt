@@ -351,7 +351,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         assert_eq!(accs.len(), ntt_mat.len());
         assert!(
             params.uses_lazy_i32_dot(),
-            "lazy pointwise dot requires an i32 SIMD parameter set"
+            "lazy pointwise dot requires an i32 batched parameter set"
         );
         assert!(
             !digits.is_empty() && digits.len() <= params.pointwise_dot_batch_size(),
@@ -362,6 +362,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             for (dst, digit) in scratch.iter_mut().zip(digits) {
                 lut.fill_ntt_limb::<false, D>(k, digit, params, dst);
             }
+            #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
             let rhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                 digits
                     .get(index)
@@ -370,6 +371,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             let prime = params.primes[k];
 
             for (acc, matrix_row) in accs.iter_mut().zip(ntt_mat) {
+                #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
                 let lhs_pointers: [*const i32; I32_LAZY_DOT_BATCH] = std::array::from_fn(|index| {
                     digits.get(index).map_or(std::ptr::null(), |_| {
                         matrix_row[column_start + index].limbs[k]

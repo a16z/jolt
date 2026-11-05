@@ -30,11 +30,11 @@ const NO_AVX2: AvxCpuFeatures = AvxCpuFeatures {
 #[test]
 fn avx_mode_defaults_to_avx2_when_supported() {
     assert_eq!(
-        select_avx_ntt_mode(None, None, AVX2_ONLY),
+        select_avx_ntt_mode(false, None, AVX2_ONLY),
         Some(AvxNttMode::Avx2)
     );
     assert_eq!(
-        select_avx_ntt_mode(None, None, AVX512),
+        select_avx_ntt_mode(false, None, AVX512),
         Some(AvxNttMode::Avx2)
     );
 }
@@ -42,29 +42,29 @@ fn avx_mode_defaults_to_avx2_when_supported() {
 #[test]
 fn avx512_is_opt_in_and_requires_the_features() {
     assert_eq!(
-        select_avx_ntt_mode(None, Some("1"), AVX512),
+        select_avx_ntt_mode(false, Some("1"), AVX512),
         Some(AvxNttMode::Avx512)
     );
     assert_eq!(
-        select_avx_ntt_mode(None, Some("1"), AVX2_ONLY),
+        select_avx_ntt_mode(false, Some("1"), AVX2_ONLY),
         Some(AvxNttMode::Avx2)
     );
     assert_eq!(
-        select_avx_ntt_mode(None, Some("0"), AVX512),
+        select_avx_ntt_mode(false, Some("0"), AVX512),
         Some(AvxNttMode::Avx2)
     );
 }
 
 #[test]
 fn x86_ntt_requires_avx2() {
-    assert_eq!(select_avx_ntt_mode(None, None, NO_AVX2), None);
-    assert_eq!(select_avx_ntt_mode(None, Some("1"), NO_AVX2), None);
+    assert_eq!(select_avx_ntt_mode(false, None, NO_AVX2), None);
+    assert_eq!(select_avx_ntt_mode(false, Some("1"), NO_AVX2), None);
 }
 
 #[test]
 fn scalar_kill_switch_disables_x86_ntt_simd() {
-    assert_eq!(select_avx_ntt_mode(Some("1"), None, AVX2_ONLY), None);
-    assert_eq!(select_avx_ntt_mode(Some("1"), Some("1"), AVX512), None);
+    assert_eq!(select_avx_ntt_mode(true, None, AVX2_ONLY), None);
+    assert_eq!(select_avx_ntt_mode(true, Some("1"), AVX512), None);
 }
 
 fn random_mont_array<W: PrimeWidth, const D: usize>(

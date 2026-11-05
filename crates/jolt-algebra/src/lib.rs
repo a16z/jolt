@@ -131,6 +131,10 @@ pub mod solinas;
 mod unreduced;
 
 pub use accum::reduce_signed_accum;
+pub use algebra::{
+    lift_ct, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
+    MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
+};
 #[cfg(feature = "solinas")]
 pub use fft::SmoothFftField;
 pub use modulus::field_modulus_be_bytes;
@@ -145,11 +149,6 @@ pub use ring::{
     mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring, residue_kernel, terminal_residue_kernel,
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
     DigitMontLut, I16TailParams, Ifma52NttMatrix, Ifma52Params, ResidueKernelPoint,
-};
-
-pub use algebra::{
-    lift_ct, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
-    MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 mod field_inline;
@@ -210,8 +209,8 @@ pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 ///
 /// Every variant reports a rejected argument; none signals a failed internal
 /// invariant. `InvalidSetup` marks a parameter that only setup or
-/// preprocessing supplies (an NTT prime, a CRT basis, a prepared matrix),
-/// `InvalidInput` and `InvalidSize` a per-call operand.
+/// preprocessing supplies (an NTT prime, a CRT basis), `InvalidInput` and
+/// `InvalidSize` a per-call operand.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AlgebraError {
     #[error("invalid input: {0}")]

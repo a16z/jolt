@@ -2,11 +2,9 @@
 
 use super::CyclotomicRing;
 use crate::fft::field_pow;
+use crate::{narrowing::usize_to_u64, AlgebraError, Field};
 #[cfg(test)]
-use crate::ExtField;
-use crate::Unreduced;
-use crate::{narrowing::usize_to_u64, AlgebraError};
-use crate::{Field, MulBaseUnreduced, Zero};
+use crate::{ExtField, MulBaseUnreduced};
 
 /// Return the first `len` powers of `alpha`, starting with one.
 pub fn scalar_powers<F: Field>(alpha: F, len: usize) -> Vec<F> {
@@ -117,65 +115,11 @@ where
         })
 }
 
-/// Fast (deferred-reduction) counterpart of `eval_flat_ring_at_pows`.
-///
-/// This is the runtime-dimension form of [`eval_ring_at_pows_fast`].
-///
-/// # Panics
-///
-/// Panics in debug builds if `coeffs.len() != alpha_pows.len()`.
-#[inline]
-pub fn eval_flat_ring_at_pows_fast<F, E>(coeffs: &[F], alpha_pows: &[E]) -> E
-where
-    F: Field,
-    E: MulBaseUnreduced<F>,
-{
-    debug_assert_eq!(alpha_pows.len(), coeffs.len());
-    let accum = coeffs.iter().zip(alpha_pows.iter()).fold(
-        <E as Unreduced>::Product::zero(),
-        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_unreduced(*coeff),
-    );
-    <E as Unreduced>::reduce_product(accum)
-}
-
-/// Fast (deferred-reduction) counterpart of `eval_ring_at_pows`.
-///
-/// Same signature and result as `eval_ring_at_pows`, but accumulates all `D`
-/// widening `E × F` products into a single [`Unreduced::Product`] and
-/// reduces **once** instead of reducing after every coefficient. On a 128-bit
-/// prime the modular reduction is a large fraction of each multiply, so this
-/// turns ~`D` reductions into one.
-///
-/// Bit-identical to `eval_ring_at_pows` as long as the running product-sum
-/// stays within the accumulator's carry headroom. For `Fp128` each `u128`
-/// accumulator limb holds a 64-bit product word, so the sum of up to ~`2^64`
-/// products is exact — `D ≈ 64` is trivially within bounds (validated by
-/// `deferred_matches_per_term_fp128_d64`). This is why callers can use it even
-/// though `Fp128` keeps `SUM_IS_EXACT` at its conservative
-/// `false` default.
-///
-/// # Panics
-///
-/// Panics in debug builds if `alpha_pows.len() != D`.
-#[inline]
-pub fn eval_ring_at_pows_fast<F, E, const D: usize>(r: &CyclotomicRing<F, D>, alpha_pows: &[E]) -> E
-where
-    F: Field,
-    E: MulBaseUnreduced<F>,
-{
-    debug_assert_eq!(alpha_pows.len(), D);
-    let accum = r.coefficients().iter().zip(alpha_pows.iter()).fold(
-        <E as Unreduced>::Product::zero(),
-        |acc, (coeff, alpha_pow)| acc + alpha_pow.mul_base_unreduced(*coeff),
-    );
-    <E as Unreduced>::reduce_product(accum)
-}
-
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "test code")]
 mod tests {
     use super::*;
-    use crate::{CanonicalEncoding, One, Prime128OffsetA7F7};
+    use crate::{CanonicalEncoding, One, Prime128OffsetA7F7, Zero};
 
     type F = Prime128OffsetA7F7;
     const D: usize = 64;
@@ -208,13 +152,8 @@ mod tests {
             }
             assert_eq!(
                 eval_ring_at_pows(&ring, &pows),
-                eval_ring_at_pows_fast(&ring, &pows),
+                F::dot_base(&pows, ring.coefficients()),
                 "deferred reduction diverged from per-term at seed {seed}"
-            );
-            assert_eq!(
-                eval_flat_ring_at_pows(ring.coefficients(), &pows),
-                eval_flat_ring_at_pows_fast(ring.coefficients(), &pows),
-                "flat deferred reduction diverged from per-term at seed {seed}"
             );
         }
     }

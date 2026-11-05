@@ -9,6 +9,8 @@
 //! Direct calls to standard library operations such as [`usize::checked_add`]
 //! remain appropriate for a single local formula. This module owns formulas
 //! that otherwise tend to be copied into helpers throughout the workspace.
+//!
+//! Consumer: Akita's commitment and opening code, which imports these helpers.
 
 use core::ops::Range;
 

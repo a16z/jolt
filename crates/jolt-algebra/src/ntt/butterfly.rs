@@ -102,9 +102,11 @@ impl<W: PrimeWidth, const D: usize> NttTwiddles<W, D> {
             psi_pows[i] = prime.from_canonical(W::from_i64(cur));
             #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
             {
-                let raw_r2 = (i128::from(cur) * i128::from(prime.montsq.to_i64()))
-                    .rem_euclid(i128::from(p)) as i64;
-                psi_pows_r2[i] = W::from_i64(if raw_r2 > p / 2 { raw_r2 - p } else { raw_r2 });
+                psi_pows_r2[i] = prime.center(
+                    prime
+                        .mul(psi_pows[i], MontCoeff::from_raw(prime.montsq))
+                        .raw(),
+                );
             }
             psi_inv_pows[i] = prime.from_canonical(W::from_i64(cur_inv));
             cur = (cur * psi) % p;
@@ -287,16 +289,15 @@ pub fn forward_ntt<W: PrimeWidth, const D: usize>(
 ///
 /// Transforms `D` evaluations in-place back to coefficient form.
 /// Includes the final `D^{-1}` scaling.
-#[cfg_attr(
-    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
-    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
-)]
 pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
@@ -379,16 +380,15 @@ pub fn inverse_ntt<W: PrimeWidth, const D: usize>(
 /// Evaluates a polynomial at the D-th roots of *unity* (roots of X^D - 1)
 /// rather than X^D + 1. Used with `inverse_ntt_cyclic` to compute unreduced
 /// polynomial products via CRT over (X^D - 1)(X^D + 1).
-#[cfg_attr(
-    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
-    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
-)]
 pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and
@@ -467,16 +467,15 @@ pub fn forward_ntt_cyclic<W: PrimeWidth, const D: usize>(
 ///
 /// Recovers coefficients of a polynomial from evaluations at D-th roots of unity.
 /// Includes the `D^{-1}` scaling factor.
-#[cfg_attr(
-    not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
-    expect(unused_variables, reason = "the kernel plan selects only SIMD kernels")
-)]
 pub fn inverse_ntt_cyclic<W: PrimeWidth, const D: usize>(
     a: &mut [MontCoeff<W>; D],
     prime: NttPrime<W>,
     tw: &NttTwiddles<W, D>,
     plan: NttKernelPlan,
 ) {
+    // Only the SIMD transforms take a plan-selected path here.
+    #[cfg(not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")))]
+    let _ = plan;
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     if use_x86_transform_ntt::<D>(plan) {
         // SAFETY: the plan proves AVX2 (and AVX-512 when selected) and

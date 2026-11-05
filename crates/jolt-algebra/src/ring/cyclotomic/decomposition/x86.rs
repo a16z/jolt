@@ -204,6 +204,11 @@ unsafe fn balanced_decompose_u32_blocks_avx2<const WORDS: usize>(
 }
 
 /// AVX-512 instantiation of the add-bias balanced decomposition kernel.
+///
+/// # Safety
+///
+/// Requires AVX-512F, BW, VL and DQ. The body is the safe portable kernel,
+/// compiled with those features enabled.
 #[target_feature(enable = "avx512f,avx512bw,avx512vl,avx512dq")]
 pub(super) unsafe fn balanced_decompose_coefficients_pow2_signed_avx512<
     F: Field + CanonicalEncoding,
@@ -217,6 +222,11 @@ pub(super) unsafe fn balanced_decompose_coefficients_pow2_signed_avx512<
 }
 
 /// AVX2 instantiation of the add-bias balanced decomposition kernel.
+///
+/// # Safety
+///
+/// Requires AVX2. The body is the safe portable kernel, compiled with AVX2
+/// enabled.
 #[target_feature(enable = "avx2")]
 pub(super) unsafe fn balanced_decompose_coefficients_pow2_signed_avx2<
     F: Field + CanonicalEncoding,

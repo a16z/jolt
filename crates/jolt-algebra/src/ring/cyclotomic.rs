@@ -1,6 +1,7 @@
 //! Cyclotomic ring `Z_q[X]/(X^D + 1)` in coefficient form.
 
 mod decomposition;
+mod inverse;
 mod shift_windows;
 #[cfg(test)]
 mod tests;
@@ -284,22 +285,7 @@ impl<F: Field, const D: usize> CyclotomicRing<F, D> {
     /// temporary ring element, saving D additions and one memory pass.
     #[inline]
     pub fn mul_accumulate_into(&self, rhs: &Self, dst: &mut Self) {
-        for i in 0..D {
-            let ai = self.coeffs[i];
-            if ai.is_zero() {
-                continue;
-            }
-
-            let (dst_wrap, dst_direct) = dst.coeffs.split_at_mut(i);
-            let (rhs_direct, rhs_wrap) = rhs.coeffs.split_at(D - i);
-
-            for (dst_coeff, rhs_coeff) in dst_direct.iter_mut().zip(rhs_direct.iter()) {
-                *dst_coeff += ai * *rhs_coeff;
-            }
-            for (dst_coeff, rhs_coeff) in dst_wrap.iter_mut().zip(rhs_wrap.iter()) {
-                *dst_coeff -= ai * *rhs_coeff;
-            }
-        }
+        negacyclic_mul_accumulate(&self.coeffs, &rhs.coeffs, &mut dst.coeffs);
     }
 
     /// Check whether all coefficients are zero.
@@ -355,5 +341,25 @@ impl<F: Field + CanonicalEncoding, const D: usize> CyclotomicRing<F, D> {
                 canonical as i128
             }
         })
+    }
+}
+
+/// `out += lhs * rhs` in `Z_q[X]/(X^n + 1)` by schoolbook convolution, for
+/// operands and output of equal length `n`.
+#[inline]
+pub(crate) fn negacyclic_mul_accumulate<F: Field>(lhs: &[F], rhs: &[F], out: &mut [F]) {
+    let n = rhs.len();
+    for (i, &lhs_coeff) in lhs.iter().enumerate() {
+        if lhs_coeff.is_zero() {
+            continue;
+        }
+        let (out_wrap, out_direct) = out.split_at_mut(i);
+        let (rhs_direct, rhs_wrap) = rhs.split_at(n - i);
+        for (dst, rhs_coeff) in out_direct.iter_mut().zip(rhs_direct) {
+            *dst += lhs_coeff * *rhs_coeff;
+        }
+        for (dst, rhs_coeff) in out_wrap.iter_mut().zip(rhs_wrap) {
+            *dst -= lhs_coeff * *rhs_coeff;
+        }
     }
 }

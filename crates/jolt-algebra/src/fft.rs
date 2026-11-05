@@ -408,8 +408,8 @@ impl<F: Field> FftWorkspace<F> {
                     let base = group_start + j;
 
                     // Gather the `r` lanes of this butterfly into a
-                    // stack array (cap of 8 is debug-asserted in
-                    // `precompute_stages`).
+                    // stack array (`precompute_stages` rejects radices
+                    // above `MAX_RADIX`).
                     let mut x = [F::zero(); 8];
                     for (ki, xi) in x[..r].iter_mut().enumerate() {
                         *xi = self.buf_a[base + ki * block];

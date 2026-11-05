@@ -87,7 +87,10 @@ trait Width: PrimeWidth {
 ///
 /// `SIGNED` inputs lie in `(-p, p)`; otherwise inputs lie in `[0, 2p)`.
 #[inline(always)]
-#[expect(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the inlined radix-4 step takes its block bounds, loader, three twiddle multipliers and modulus directly"
+)]
 unsafe fn forward_radix4<V: Lanes, const SIGNED: bool>(
     a: *mut V::Elem,
     start: usize,

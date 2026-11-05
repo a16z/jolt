@@ -1,10 +1,10 @@
-//! Host kernel selection for one prepared CRT+NTT parameter set.
+//! Kernel selection for one prepared CRT+NTT parameter set.
 
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use super::avx::AvxNttMode;
 use super::prime::PrimeWidth;
 
-/// Host kernels selected once when a CRT+NTT parameter set is prepared.
+/// Kernels selected once when a CRT+NTT parameter set is prepared.
 ///
 /// AVX2 is the default x86 backend for both transforms and pointwise
 /// arithmetic; AVX-512 is an opt-in (see [`super::avx::avx_ntt_mode`]).
@@ -39,7 +39,7 @@ enum NttKernelKind {
 impl NttKernelPlan {
     pub(crate) const SCALAR: Self = Self(NttKernelKind::Scalar);
 
-    /// Detect the best enabled host plan for residue width `W`.
+    /// Detect the best enabled plan for residue width `W`.
     pub fn detect<W: PrimeWidth>() -> Self {
         #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
         {

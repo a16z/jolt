@@ -42,3 +42,18 @@ pub fn field_modulus_be_bytes<F: Field + CanonicalEncoding>() -> Result<[u8; 32]
     }
     Ok(output)
 }
+
+#[cfg(all(test, feature = "solinas"))]
+#[expect(clippy::unwrap_used, reason = "test code")]
+mod tests {
+    use super::field_modulus_be_bytes;
+    use crate::Prime32Offset99;
+
+    #[test]
+    fn modulus_bytes_are_the_big_endian_modulus() {
+        assert_eq!(
+            field_modulus_be_bytes::<Prime32Offset99>().unwrap()[28..],
+            (u32::MAX - 98).to_be_bytes()
+        );
+    }
+}
