@@ -58,6 +58,18 @@ diff parser, gate/evaluation workflows and skill. Attestations and approvals are
 and gate approval are reconciled after classification. Drafts run no classifier and clear
 managed state. Closing removes merge eligibility; merging preserves the historical approval.
 
+An independent refresh job clears all gate-managed labels when the current head has no
+`ai-merge-gate` check from a trusted gate workflow run, in any status. These labels are `risk-1`
+through `risk-4`, `merge-eligible`, `needs-maintainer-review` and `no-reviewer-assigned`.
+Refresh does not wait behind classification or create checks; its failure does not block evaluation.
+Unrelated labels are left alone.
+
+The separate `merge-conflict` label follows GitHub's `mergeable` state for open PRs into the
+default branch, including drafts: false adds it; true removes it. An unknown state gets two
+retries, one second apart; if still unknown, the label stays unchanged and the job logs that fact.
+Each PR refresh checks conflicts, and a push to `main` checks all open PRs into the default branch.
+Gate evaluation and draft cleanup never change `merge-conflict`.
+
 ## Limits and trust
 
 The broker retains its request, token, spend and wall-time limits in `classifier_agent.py`.
@@ -73,17 +85,19 @@ future runs after merging. Opaque external dependency updates also rely on the m
 Writers remain trusted: workflows with write tokens can forge cached check metadata or submit
 approvals, and writers can edit/delete the attempt comment to reset counts. Cache validation
 checks the claimed workflow run and public fingerprint, not a cryptographic publisher identity.
-Event delays and changes between API reads/writes can leave approval or labels stale until the
-next evaluation. A default-branch change does not invalidate an old head's result until its
-next evaluation. No live webhook, organization protection or dismissal behavior is proven by
-local fixtures.
+Event delivery and runner startup can delay label refresh; changes between API reads/writes
+can race with publication. GitHub dismisses stale approvals on push when configured below;
+same-head review changes require another evaluation to withdraw gate approval. A default-branch
+change refreshes conflicts but does not invalidate an old head's classification or approval
+result until its next evaluation. No live webhook, organization protection or dismissal behavior
+is proven by local fixtures.
 
 ## Installation
 
 An admin must retain existing required checks, set `AI_MERGE_GATE_MAINTAINERS`, provide the
 `OPENAI_API_KEY` repository secret, and create the labels `risk-1` through `risk-4`,
-`needs-maintainer-review`, `merge-eligible` and `no-reviewer-assigned`. The gate never creates
-label definitions. A missing or malformed maintainer list fails evaluation.
+`needs-maintainer-review`, `merge-eligible`, `no-reviewer-assigned` and `merge-conflict`.
+The gate never creates label definitions. A missing or malformed maintainer list fails evaluation.
 
 Allow GitHub Actions to create and approve pull requests, and require one approval with stale
 approvals dismissed on push. More than one required approval, code-owner review or last-push

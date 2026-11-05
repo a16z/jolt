@@ -136,13 +136,15 @@ class FakeApis:
                  records=(), heads=(HEAD,), diff=PLAIN_DIFF, files=("crates/jolt-prover/src/lib.rs",),
                  counts=(1, 1, 1), risk=2, risks=None, answer_text=None,
                  served_model="gpt-6.1-sol", trees=None,
-                 reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None) -> None:
+                 reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None,
+                 mergeability=(True,)) -> None:
         # The pull request's file list, which follows its branch; the commits' trees do not move.
         self.files = [entry if isinstance(entry, dict) else {"filename": entry} for entry in files]
         self.author, self.comments, self.reviews = author, list(comments), list(reviews)
         self.labels, self.draft, self.heads, self.diff, self.counts = list(labels), draft, list(heads), diff, counts
         self.reviewers, self.teams, self.assignees = list(reviewers), list(teams), list(assignees)
         self.state, self.base, self.merged_at = state, base, merged_at
+        self.mergeability = list(mergeability)
         self.head_repo_id = 2
         # The pull requests branch forker:fix heads, most recently updated first; 7 stands for this one.
         self.branch_pulls = [{"number": 9, "state": "open", "base": {"ref": "release"}}, 7]
@@ -153,7 +155,7 @@ class FakeApis:
         self.exported, self.during_model, self.truncated = dict(self.trees), None, False
         self.during_recheck, self.pr_reads = None, 0
         self.writers = {"core-a", "core-b", "maintainer", "ci-bot"}
-        self.label_definitions = set(GATE.MANAGED_LABELS)
+        self.label_definitions = set(GATE.MANAGED_LABELS) | {"merge-conflict"}
         self.label_writes, self.during_label_write = [], None
         self.review_writes, self.during_approve = [], None
         gate_run = {"path": f"{GATE.WORKFLOW}@main", "event": "workflow_run", "head_repository": {"full_name": REPO}}
@@ -180,7 +182,9 @@ class FakeApis:
             if self.pr_reads == 2 and self.during_recheck:
                 self.during_recheck(self)
             head = self.heads.pop(0) if len(self.heads) > 1 else self.heads[0]
+            mergeable = self.mergeability.pop(0) if len(self.mergeability) > 1 else self.mergeability[0]
             return self.ok({"number": 7, "state": self.state, "merged_at": self.merged_at, "draft": self.draft,
+                            "mergeable": mergeable,
                             "base": {"ref": self.base, "repo": {"id": 1}},
                             "head": {"sha": head, "ref": "fix", "repo": {"id": self.head_repo_id}}, "user": {"login": self.author},
                             "labels": [{"name": name} for name in self.labels],
@@ -274,6 +278,8 @@ class FakeApis:
             pulls = [{"number": 7, "state": self.state, "base": {"ref": self.base}} if pull == 7 else pull
                      for pull in self.branch_pulls]
             listed = [pull for pull in pulls if query["state"] in (["all"], [pull["state"]])]
+            if "base" in query:
+                return self.ok([pull for pull in listed if query["base"] == [pull["base"]["ref"]]])
             return self.ok(listed if query["head"] == ["forker:fix"] else [])
         raise AssertionError(f"unexpected request {method} {url}")
 
@@ -482,6 +488,56 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(apis.label_writes, [("POST", ["merge-eligible", "risk-3"]),
                                              ("DELETE", "no-reviewer-assigned"), ("DELETE", "risk-4")])
         self.assertEqual(apis.model_requests, [])
+
+    def test_refresh_clears_managed_labels_without_a_trusted_gate_check_on_this_head(self) -> None:
+        for check, evaluated in [
+            (None, False),
+            (record(GATE.GATE, OLD), False),
+            (record(GATE.CLASSIFIER, NEW_HEAD), False),
+            (record(GATE.GATE, NEW_HEAD, app={"id": 1}), False),
+            (record(GATE.GATE, NEW_HEAD, external_id=OTHER_RUN), False),
+            (record(GATE.GATE, NEW_HEAD, external_id=PR_RUN), False),
+            (record(GATE.GATE, NEW_HEAD, status="queued", conclusion=None), True),
+            (record(GATE.GATE, NEW_HEAD, status="in_progress", conclusion=None), True),
+            (record(GATE.GATE, NEW_HEAD, conclusion="failure"), True),
+        ]:
+            with self.subTest(check=check):
+                kept = {"merge-conflict", "keep-healed"}
+                labels = GATE.MANAGED_LABELS | kept
+                apis = FakeApis(heads=[NEW_HEAD], labels=labels, records=[check] if check else [],
+                                mergeability=[False])
+                self.assertEqual(run_main(apis, "refresh", "7"), 0)
+                self.assertEqual(set(apis.labels), labels if evaluated else kept)
+                self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
+
+    def test_merge_conflicts_follow_mergeability_including_base_pushes_and_unknown_state(self) -> None:
+        for command in (("refresh", "7"), ("conflicts",)):
+            for mergeability, present, expected, retries in [
+                ([False], False, True, 0),
+                ([True], True, False, 0),
+                ([None, False], False, True, 1),
+                ([None, None, None], True, True, 2),
+                ([None, None, None], False, False, 2),
+            ]:
+                with self.subTest(command=command, mergeability=mergeability, present=present):
+                    labels = {"keep-healed"} | ({"merge-conflict"} if present else set())
+                    reads = [None, *mergeability] if command[0] == "refresh" else mergeability
+                    apis = FakeApis(labels=labels, mergeability=reads, draft=True)
+                    with mock.patch("time.sleep") as delay:
+                        self.assertEqual(run_main(apis, *command), 0)
+                    self.assertEqual(set(apis.labels), {"keep-healed"} | ({"merge-conflict"} if expected else set()))
+                    self.assertEqual(delay.call_count, retries)
+                    self.assertEqual((apis.created, apis.review_writes, apis.model_requests), ([], [], []))
+        for change in ({"state": "closed"}, {"base": "release"}):
+            apis = FakeApis(labels=["merge-conflict"], mergeability=[True], **change)
+            self.assertEqual(run_main(apis, "conflicts"), 0)
+            self.assertEqual(apis.labels, ["merge-conflict"])
+            self.assertEqual(run_main(apis, "refresh", "7"), 0)
+            self.assertIn("merge-conflict", apis.labels)
+        missing = FakeApis(mergeability=[False])
+        missing.label_definitions.remove("merge-conflict")
+        self.assertEqual(run_main(missing, "conflicts"), 1)
+        self.assertEqual(missing.label_writes, [])
 
     def test_risk_cache_reuse_is_head_bound_and_already_correct_labels_are_not_rewritten(self) -> None:
         for cached_head in (HEAD, OLD):
