@@ -466,7 +466,6 @@ fn preprocess_guest_prover(
 ) -> JoltProverPreprocessing {
     jolt_sdk::preprocess_program(guest_prog, memory_config, max_trace_length, mode).unwrap()
 }
-#[cfg_attr(feature = "immutable-recipes-record", jolt_claims::record_generate)]
 /// The packed (Akita) inner proofs use the modular prover over fp128 and the
 /// packed verifier preprocessing from
 /// the host's own verification of each proof.
@@ -913,7 +912,7 @@ fn generate_proofs(
         guest.name()
     );
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = GUEST_TARGET_DIR;
 
     let all_groups_data = collect_guest_proofs(guest, target_dir, false, mode, proofs);
 
@@ -966,7 +965,9 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
     program.set_memory_config(memory_config);
-    self::immutable_recursion_program!(program)
+    #[cfg(feature = "immutable-recipes")]
+    program.add_guest_feature("immutable-recipes");
+    program
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -1082,6 +1083,8 @@ fn tamper_proof(
 /// trace rows of the guest build configurations screened at inner sizes 2^12
 /// and 2^20; the inner proofs are unchanged. A value the caller already set for
 /// any of these variables wins.
+const GUEST_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+
 const GUEST_BUILD_SETTINGS: [(&str, &str); 3] = [
     (
         "ZEROOS_GUEST_RUSTFLAGS",
@@ -1153,7 +1156,7 @@ fn run_recursion_proof(
     memory_config: MemoryConfig,
     max_trace_length: usize,
 ) {
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = GUEST_TARGET_DIR;
 
     let mut program = configured_recursion_program(memory_config);
     build_recursion_guest(&mut program, target_dir);
@@ -1290,7 +1293,7 @@ fn verify_proofs(
     // or empty tables (canonical path) when any proof does not verify.
     #[cfg(feature = "immutable-recipes")]
     let recipe_tables =
-        immutable_recipe_tables::prepare(&all_groups_data, "/tmp/jolt-guest-targets");
+        immutable_recipe_tables::prepare(&all_groups_data, GUEST_TARGET_DIR);
     run_recursion_proof(
         guest,
         run_config,
@@ -1435,25 +1438,9 @@ fn main() {
     }
 }
 
-#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
-mod immutable_recipe_generation;
 #[cfg(feature = "immutable-recipes")]
 mod immutable_recipe_tables;
 
-#[cfg(not(feature = "immutable-recipes"))]
-macro_rules! immutable_recursion_program {
-    ($program:ident) => {
-        $program
-    };
-}
-#[cfg(feature = "immutable-recipes")]
-macro_rules! immutable_recursion_program {
-    ($program:ident) => {{
-        $program.add_guest_feature("immutable-recipes");
-        $program
-    }};
-}
-pub(crate) use immutable_recursion_program;
 
 #[cfg(test)]
 mod tests {
@@ -1562,9 +1549,9 @@ mod guest_build_tests {
     use std::fs::{self, File};
     use std::time::SystemTime;
 
-    struct Environment(Vec<(&'static str, Option<OsString>)>);
+    pub(super) struct Environment(Vec<(&'static str, Option<OsString>)>);
     impl Environment {
-        fn save(keys: &[&'static str]) -> Self {
+        pub(super) fn save(keys: &[&'static str]) -> Self {
             Self(
                 keys.iter()
                     .map(|&key| (key, std::env::var_os(key)))

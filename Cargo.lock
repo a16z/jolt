@@ -5510,7 +5510,6 @@ dependencies = [
  "jolt-witness",
  "postcard",
  "serde",
- "serde_json",
  "sha2 0.11.1",
  "tracer",
  "tracing",

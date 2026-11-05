@@ -18,7 +18,6 @@ immutable-recipes = [
   "dep:sha2",
   "dep:hex",
 ]
-immutable-recipes-record = ["immutable-recipes", "dep:serde_json"]
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
 # Non-default: default workspace builds must not unify field-inline into the
 # verifier stack. The recursion flow needs it.
@@ -38,7 +37,6 @@ jolt-poly.workspace = true
 jolt-sumcheck.workspace = true
 sha2 = { workspace = true, optional = true }
 hex = { workspace = true, optional = true }
-serde_json = { workspace = true, features = ["std"], optional = true }
 jolt-akita = { path = "../../crates/jolt-akita", optional = true }
 jolt-program = { path = "../../crates/jolt-program", optional = true }
 jolt-witness = { path = "../../crates/jolt-witness", optional = true }

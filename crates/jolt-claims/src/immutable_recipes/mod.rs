@@ -1,4 +1,4 @@
-//! Checked expression recipes. Runtime proof inputs never supply this table.
+//! Checked, generated expression recipes. Runtime proof inputs never supply this table.
 
 mod flags;
 mod key;
@@ -444,6 +444,12 @@ pub type ComposedTable = Table<'static, ComposedOpeningId, JoltDerivedId, JoltCh
 pub type FieldTable =
     Table<'static, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId>;
 
+#[cfg(target_arch = "riscv64")]
+pub(crate) mod compiled {
+    use super::{ComposedTable, FieldTable, JoltTable, Phase, Record};
+    include!(env!("JOLT_IMMUTABLE_RECIPES_RS"));
+}
+#[cfg(not(target_arch = "riscv64"))]
 pub(crate) mod compiled {
     use super::{ComposedTable, FieldTable, JoltTable};
     pub static JOLT: JoltTable = JoltTable::empty();
