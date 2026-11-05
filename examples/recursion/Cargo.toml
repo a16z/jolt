@@ -19,6 +19,8 @@ immutable-recipes = [
   "dep:hex",
 ]
 ntt-inline = ["akita", "dep:jolt-inlines-ntt"]
+# Non-default: default workspace builds must not unify field-inline into the
+# verifier stack. The recursion flow needs it.
 field-inline = ["jolt-sdk/field-inline"]
 akita = [
   "jolt-sdk/akita",
