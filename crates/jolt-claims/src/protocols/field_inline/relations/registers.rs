@@ -72,6 +72,7 @@ pub struct ReadWriteChecking {
 
 twist::instantiate_read_write_checking! {
     relation = ReadWriteChecking,
+    recipe = { crate::immutable_symbolic_recipe!(12, FIELD, Field; shape); },
     id = FieldInlineRelationId::FieldRegistersReadWriteChecking,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
     dimensions = FieldRegistersReadWriteDimensions,
@@ -124,6 +125,7 @@ pub struct ValEvaluation {
 
 twist::instantiate_val_evaluation! {
     relation = ValEvaluation,
+    recipe = { crate::immutable_symbolic_recipe!(17, FIELD, Field; shape); },
     id = FieldInlineRelationId::FieldRegistersValEvaluation,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
     dimensions = FieldRegistersTraceDimensions,
@@ -136,11 +138,7 @@ twist::instantiate_val_evaluation! {
     lt_cycle = FieldRegistersValEvaluationPublic::LtCycle,
 }
 
-macro_rules! immutable_twist_recipe {
-    (ReadWriteChecking) => { crate::immutable_symbolic_recipe!(12, FIELD, Field; shape); };
-    (ValEvaluation) => { crate::immutable_symbolic_recipe!(17, FIELD, Field; shape); };
-}
-pub(crate) use immutable_twist_recipe;
+
 
 #[cfg(test)]
 mod tests {
