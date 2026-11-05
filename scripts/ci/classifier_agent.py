@@ -32,7 +32,6 @@ MAX_VERDICT_BYTES = 60_000
 CLASSIFICATION_SCHEMA = {
     "type": "object",
     "properties": {
-        "verdict": {"type": "string", "enum": ["SAFE", "AFFECTS", "UNCERTAIN"]},
         "reasoning": {"type": "string", "minLength": 1, "maxLength": 12_000},
         "risks": {"type": "array", "minItems": 1, "maxItems": 5000, "items": {
             "type": "object",
@@ -43,7 +42,7 @@ CLASSIFICATION_SCHEMA = {
             },
             "required": ["path", "level", "reasoning"], "additionalProperties": False}},
     },
-    "required": ["verdict", "reasoning", "risks"], "additionalProperties": False,
+    "required": ["reasoning", "risks"], "additionalProperties": False,
 }
 
 
@@ -57,8 +56,7 @@ def validate_verdict(answer: object, paths: set[str]) -> dict:
             and all(ord(char) >= 32 or char in "\n\t" for char in value)
 
     if len(json.dumps(answer).encode()) > MAX_VERDICT_BYTES or not isinstance(answer, dict) \
-            or set(answer) != {"verdict", "reasoning", "risks"} \
-            or answer["verdict"] not in ("SAFE", "AFFECTS", "UNCERTAIN") \
+            or set(answer) != {"reasoning", "risks"} \
             or not text(answer["reasoning"], 12_000) or not isinstance(answer["risks"], list) \
             or not 0 < len(answer["risks"]) <= 5000:
         raise AgentFailure("invalid classifier verdict schema")

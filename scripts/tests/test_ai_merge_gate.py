@@ -137,7 +137,7 @@ class FakeApis:
 
     def __init__(self, author="core-a", comments=(), reviews=(), labels=(), draft=False,
                  records=(), heads=(HEAD,), diff=PLAIN_DIFF, files=("crates/jolt-prover/src/lib.rs",),
-                 counts=(1, 1, 1), verdict="SAFE", risk=2, risks=None, answer_text=None,
+                 counts=(1, 1, 1), risk=2, risks=None, answer_text=None,
                  served_model="gpt-6.1-sol", trees=None,
                  reviewers=(), teams=(), assignees=(), state="open", base="main", merged_at=None) -> None:
         # The pull request's file list, which follows its branch; the commits' trees do not move.
@@ -151,7 +151,7 @@ class FakeApis:
         self.head_repo_id = 2
         # The pull requests branch forker:fix heads, most recently updated first; 7 stands for this one.
         self.branch_pulls = [{"number": 9, "state": "open", "base": {"ref": "release"}}, 7]
-        self.verdict, self.answer_text = verdict, answer_text
+        self.answer_text = answer_text
         self.risk, self.risks = risk, risks
         self.served_model = served_model
         self.trees = dict(trees) if trees is not None else trees_for(self.files)
@@ -312,11 +312,11 @@ class FakeClassifier:
     def prepaid(self, _source):
         return False
 
-    def ask(self, instructions, source, admit, counts, runtime_lines=None):
+    def ask(self, instructions, source, admit, counts):
         with tempfile.TemporaryDirectory() as directory:
             prepared = RealClassifier(Path(directory), prepare=True)
             try:
-                prepared.ask(instructions, source, admit, counts, runtime_lines)
+                prepared.ask(instructions, source, admit, counts)
             except GATE.Prepared:
                 pass
             manifest = (Path(directory) / "workspace/change.json").read_text()
@@ -330,7 +330,7 @@ class FakeClassifier:
             for path in sorted(source.changed())]
         try:
             return json.loads(self.apis.answer_text) if self.apis.answer_text else {
-                "verdict": self.apis.verdict, "reasoning": "prover-only", "risks": risks}
+                "reasoning": "prover-only", "risks": risks}
         except ValueError as error:
             raise AGENT.AgentFailure("invalid JSON") from error
 
@@ -362,250 +362,6 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual((apis.model_requests, apis.approved()), ([], []))
         self.assertIn("needs-maintainer-review", apis.labels)
 
-    def test_verifier_floor_exempts_only_comments_blanks_and_cfg_test_code(self) -> None:
-        path = "crates/jolt-verifier/src/config.rs"
-        for old, new, expected in [
-            ("fn verify() { reject(); }\n", "fn verify() { accept(); }\n", 4),
-            ("#[cfg(test)]\nmod tests { fn check() { reject(); } }\n",
-             "#[cfg(test)]\nmod tests { fn check() { accept(); } }\n", 1),
-            ('#[cfg(any(test, feature = "prover-fixtures"))]\nfn check() { reject(); }\n',
-             '#[cfg(any(test, feature = "prover-fixtures"))]\nfn check() { accept(); }\n', 4),
-            ("#[cfg(test)]\nfn check() { reject(); }\n", "fn check() { reject(); }\n", 4),
-            ("// old\n/// old\n//! old\n/* old\n * old\n */\nfn verify() {}\n",
-             "// new\n/// new\n//! new\n/* new\n * new\n */\n\nfn verify() {}\n", 1),
-            ("/*\nfn verify() {}\n*/\n", "fn verify() {}\n", 4),
-            ('const TEXT: &str = r#"\n// old\n"#;\n', 'const TEXT: &str = r#"\n// new\n"#;\n', 4),
-            ("#[cfg(test)] fn check() {}\nfn verify() { reject(); }\n",
-             "#[cfg(test)] fn check() {}\nfn verify() { accept(); }\n", 4),
-            ("mod tests {\n#![cfg(test)]\nfn check() {}\n}\nfn verify() { reject(); }\n",
-             "mod tests {\n#![cfg(test)]\nfn check() {}\n}\nfn verify() { accept(); }\n", 4),
-            ("#![cfg(test)]\nfn check() { reject(); }\n", "#![cfg(test)]\nfn check() { accept(); }\n", 1),
-            ("production! {\n#[cfg(test)]\nfn input() { reject(); }\n}\n",
-             "production! {\n#[cfg(test)]\nfn input() { accept(); }\n}\n", 4),
-            ('#[cfg(test)]\n#[doc = "test"] fn check() {}\nfn verify() { reject(); }\n',
-             '#[cfg(test)]\n#[doc = "test"] fn check() {}\nfn verify() { accept(); }\n', 4),
-            ("#[cfg(test)]\nfn check() {} fn verify() { reject(); }\n",
-             "#[cfg(test)]\nfn check() {} fn verify() { accept(); }\n", 4),
-            ("#[cfg(test)]\nconst TEST: bool = true; fn verify() { reject(); }\n",
-             "#[cfg(test)]\nconst TEST: bool = true; fn verify() { accept(); }\n", 4),
-            ("#[cfg_attr(all(test), inline)]\nfn verify() { reject(); }\n",
-             "#[cfg_attr(all(test), inline)]\nfn verify() { accept(); }\n", 4),
-            ('#[cfg_attr(all(test, feature = "x"), derive(Debug))]\nstruct Proof { value: u8 }\n',
-             '#[cfg_attr(all(test, feature = "x"), derive(Debug))]\nstruct Proof { value: bool }\n', 4),
-            ("#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { reject(); }\n",
-             "#![cfg_attr(all(test), allow(dead_code))]\nfn verify() { accept(); }\n", 4),
-            *[(f"// note{separator}/*\nfn verify() -> bool {{ false }}\n// */\n",
-               f"// note{separator}/*\nfn verify() -> bool {{ true }}\n// */\n", 4)
-              for separator in ("\x0c", "\r", "\u2028")],
-        ]:
-            with self.subTest(old=old, new=new):
-                apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
-                self.assertIn(f"risk-{expected}", apis.labels)
-                self.assertEqual(apis.approved(), [HEAD] if expected == 1 else [])
-
-    def test_pr_1998_stacked_multiline_test_attributes_do_not_raise_risk(self):
-        for path, attribute in (
-            ("crates/jolt-transcript/src/poseidon.rs",
-             '#[expect(\n    unused_results,\n    reason = "DuplexSpongeInterface methods return &mut Self for chaining"\n)]'),
-            ("crates/jolt-verifier/src/verifier.rs",
-             '#[cfg_attr(\n    not(feature = "field-inline"),\n    expect(\n        clippy::useless_conversion,\n        reason = "field-inline selects composed claim and opening types"\n    )\n)]'),
-        ):
-            old = f"fn verify() {{}}\n#[cfg(test)]\n{attribute}\nmod tests {{ fn check() {{ old(); }} }}\n"
-            new = "fn verify() {}\n"
-            with self.subTest(path=path):
-                apis = evaluate(changed_contents({path: old}, {path: new}, risk=1))
-                self.assertIn("risk-1", apis.labels)
-                self.assertEqual(apis.approved(), [HEAD])
-
-    def test_pr_1998_external_test_modules_follow_all_parent_declarations(self):
-        crate = "crates/jolt-akita"
-        child = f"{crate}/src/trace_onehot/tests.rs"
-        parent = f"{crate}/src/trace_onehot/mod.rs"
-        for declaration, extra, risk in (
-            ("#[cfg(test)]\nmod tests;\n", {}, 1),
-            ('#[cfg(all(test, feature = "committed"))]\nmod tests;\n', {}, 1),
-            ('#[cfg(any(test, feature = "runtime"))]\nmod tests;\n', {}, 4),
-            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/src/trace_onehot.rs": "mod tests;\n"}, 4),
-            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/src/lib.rs": "mod trace_onehot { mod tests; }\n"}, 4),
-            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/src/lib.rs": '#[path = "trace_onehot/tests.rs"]\nmod runtime;\n'}, 4),
-            ('#[cfg(test)]\nmod tests;\n', {f"{crate}/Cargo.toml": '[package]\nname = "jolt-akita"\n[lib]\npath = "src/trace_onehot/tests.rs"\n'}, 4),
-        ):
-            with self.subTest(declaration=declaration, extra=extra):
-                base = {f"{crate}/Cargo.toml": '[package]\nname = "jolt-akita"\n',
-                        parent: declaration, child: "fn check() { old(); }\n", **extra}
-                apis = evaluate(changed_contents(base, {**base, child: "fn check() { new(); }\n"}, risk=1))
-                self.assertIn(f"risk-{risk}", apis.labels)
-
-    def test_indirect_modules_and_cargo_targets_keep_the_runtime_floor(self):
-        crate = "crates/jolt-verifier"
-        helper = f"{crate}/src/helper.rs"
-        base = {f"{crate}/Cargo.toml": '[package]\nname = "jolt-verifier"\n',
-                f"{crate}/src/lib.rs": "#[cfg(test)]\nmod helper;\n"}
-        cases = [
-            (helper, {"crates/other/Cargo.toml": '[package]\nname = "other"\n',
-                      "crates/other/src/lib.rs": '#[path = "../../jolt-verifier/src/helper.rs"]\npub mod helper;\n'}),
-            (helper, {f"{crate}/src/lib.rs": '#[cfg_attr(not(test), path = "helper.rs")]\nmod alias;\n#[cfg(test)]\nmod helper;\n'}),
-            (helper, {"crates/other/Cargo.toml": '[package]\nname = "other"\n',
-                      "crates/other/src/lib.rs": 'include!("../../jolt-verifier/src/helper.rs");\n'}),
-            (helper, {f"{crate}/src/outer.rs": 'mod inline { #[path = "../../helper.rs"] mod runtime; }\n'}),
-            (helper, {f"{crate}/src/outer.rs": 'mod inline { include!(r"helper.rs"); }\n'}),
-            (helper, {f"{crate}/src/lib.rs": "macro_rules! declare { ($n:ident) => { pub mod $n; }; }\n"
-                      "#[cfg(not(test))]\ndeclare!(helper);\n#[cfg(test)]\nmod helper;\n"}),
-            (f"{crate}/build.rs", {f"{crate}/mod.rs": "#[cfg(test)]\nmod build;\n"}),
-            (helper, {f"{crate}/Cargo.toml": '[package]\nname = "jolt-verifier"\nbuild = "src/helper.rs"\n'}),
-        ]
-        for target in ("src/main.rs", "src/bin/helper.rs", "examples/helper.rs", "benches/helper.rs", "tests/helper.rs"):
-            child = Path(target)
-            cases.append((f"{crate}/{target}", {f"{crate}/{child.parent}/mod.rs": f"#[cfg(test)]\nmod {child.stem};\n"}))
-        for child, extra in cases:
-            with self.subTest(child=child, extra=extra):
-                old = {**base, **extra, child: "fn main() { reject(); }\n"}
-                apis = changed_contents(old, {**old, child: "fn main() { accept(); }\n"}, risk=1)
-                source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
-                self.assertEqual(source.code_changes(child), 2)
-
-    def test_current_sumcheck_test_removal_is_not_runtime_code(self):
-        child = "crates/jolt-sumcheck/src/tests.rs"
-        files = {path: (GATE.ROOT / path).read_text() for path in (
-            "crates/jolt-sumcheck/Cargo.toml", "crates/jolt-sumcheck/src/lib.rs", child,
-            "crates/jolt-sumcheck/tests/f8_domain.rs", "crates/jolt-prover/Cargo.toml",
-            "crates/jolt-prover/src/profile.rs",
-        )}
-        first = files[child].index("#[test]")
-        second = files[child].index("#[test]", first + 1)
-        head = {**files, child: files[child][:first] + files[child][second:]}
-        apis = changed_contents(files, head, risk=1)
-        source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
-        self.assertEqual(source.code_changes(child), 0)
-        self.assertIn("risk-1", evaluate(apis).labels)
-
-    def test_non_library_macro_targets_do_not_block_library_tests(self):
-        crate = "crates/jolt-sumcheck"
-        child = f"{crate}/src/checks.rs"
-        macro = "macro_rules! declare { ($n:ident) => { mod $n; }; }\n"
-        for target in ("tests/integration.rs", "benches/bench.rs", "examples/demo.rs", "build.rs", "src/bin/tool.rs", "tooling/build.rs"):
-            with self.subTest(target=target):
-                manifest = '[package]\nname = "jolt-sumcheck"\n'
-                if target == "tooling/build.rs":
-                    manifest += f'build = "{target}"\n'
-                files = {f"{crate}/Cargo.toml": manifest,
-                         f"{crate}/src/lib.rs": "#[cfg(test)]\nmod checks;\n",
-                         child: "fn check() { old(); }\n", f"{crate}/{target}": macro}
-                apis = changed_contents(files, {**files, child: "fn check() { new(); }\n"}, risk=1)
-                source = GATE.Source(GATE.GitHub(apis, "token", REPO), BASE, HEAD)
-                self.assertEqual(source.code_changes(child), 0)
-
-    def test_affecting_or_uncertain_risk_three_changes_must_be_minimal_in_aggregate(self) -> None:
-        for verdict in ("AFFECTS", "UNCERTAIN"):
-            for crate in ("jolt-field", "jolt-prover", "jolt-akita"):
-                for file_count, lines, expected in [(1, 10, 3), (1, 11, 4), (2, 6, 4), (1, 200, 4)]:
-                    with self.subTest(verdict=verdict, crate=crate, file_count=file_count, lines=lines):
-                        base = {f"crates/{crate}/src/part{i}.rs": "old();\n" * lines for i in range(file_count)}
-                        head = {path: "new();\n" * lines for path in base}
-                        apis = evaluate(changed_contents(base, head, verdict=verdict, risk=3))
-                        wanted = 4 if crate == "jolt-akita" else expected
-                        self.assertIn(f"risk-{wanted}", apis.labels)
-                        self.assertEqual(apis.approved(), [HEAD] if wanted == 3 else [])
-        prover, field = "crates/jolt-prover/src/big.rs", "crates/jolt-field/src/lib.rs"
-        apis = evaluate(changed_contents({prover: "old();\n" * 200, field: "// old\nfn helper() {}\n"},
-                                         {prover: "new();\n" * 200, field: "// new\nfn helper() {}\n"},
-                                         verdict="UNCERTAIN", risk=3))
-        self.assertIn("risk-4", apis.labels)
-        self.assertEqual(apis.approved(), [])
-
-    def test_traced_prover_only_changes_override_path_defaults(self) -> None:
-        for path in (
-            "crates/jolt-akita/src/trace_onehot/decomposition.rs",
-            "crates/jolt-sumcheck/src/prover.rs",
-            "crates/jolt-prover/src/stages/stage3.rs",
-            "crates/jolt-field/src/lib.rs",
-            "crates/jolt-transcript/src/prover.rs",
-            "crates/jolt-verifier-derive/src/lib.rs",
-        ):
-            with self.subTest(path=path):
-                apis = evaluate(changed_contents({path: "old();\n" * 11},
-                                                 {path: "new();\n" * 11}, risk=2))
-                self.assertEqual(set(apis.labels), {"risk-2", "merge-eligible"})
-                self.assertEqual(apis.approved(), [HEAD])
-
-        prover = "crates/jolt-akita/src/trace_onehot/decomposition.rs"
-        shared = "crates/jolt-field/src/lib.rs"
-        apis = evaluate(changed_contents(
-            {prover: "old();\n" * 11, shared: "old();\n"},
-            {prover: "new();\n" * 11, shared: "new();\n"}, verdict="AFFECTS",
-            risks=[{"path": prover, "level": 2, "reasoning": "Only prover callers use this helper."},
-                   {"path": shared, "level": 3, "reasoning": "Bounded shared arithmetic change."}]))
-        self.assertEqual(set(apis.labels), {"risk-3", "merge-eligible"})
-        self.assertEqual(apis.approved(), [HEAD])
-
-    def test_unreadable_inputs_fail_early_only_on_floor_paths(self) -> None:
-        for crate in ("jolt-field", "jolt-verifier"):
-            path = f"crates/{crate}/src/data.bin"
-            apis = evaluate(FakeApis(files=[path], trees={BASE: {path: "old"}, HEAD: {path: b"\xff"}},
-                                     verdict="UNCERTAIN", risk=4))
-            self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
-            self.assertIn("risk-4", apis.labels)
-        for binary, text, level in [
-            ("book/image.png", "book/chapter.md", 1),
-            ("crates/jolt-verifier/fuzz/fixtures/input.bin", "crates/jolt-prover/src/lib.rs", 2),
-        ]:
-            with self.subTest(binary=binary):
-                diff = (f"diff --git a/{binary} b/{binary}\nBinary files a/{binary} and b/{binary} differ\n"
-                        + unified_diff(text, "old\n", "new\n"))
-                apis = evaluate(FakeApis(files=[binary, text], diff=diff, counts=(2, 1, 1),
-                                         trees={BASE: {binary: b"\xff", text: "old\n"},
-                                                HEAD: {binary: b"\xfe", text: "new\n"}},
-                                         risk=level, comments=[comment("core-a", attestation())]))
-                self.assertIn(f"risk-{level}", apis.labels)
-                self.assertEqual(apis.approved(), [HEAD])
-
-    def test_dependency_bumps_follow_both_lockfile_closures_without_a_classifier(self) -> None:
-        lock = ('version = 4\n\n[[package]]\nname = "jolt-verifier"\nversion = "0.1.0"\n'
-                'dependencies = ["middle"]\n\n[[package]]\nname = "middle"\nversion = "1.0.0"\n'
-                'dependencies = ["runtime-dep 1.0.0"]\n\n[[package]]\nname = "runtime-dep"\n'
-                'version = "1.0.0"\n\n[[package]]\nname = "outside"\nversion = "1.0.0"\n')
-        for dependency, expected in [("runtime-dep", 3), ("outside", 2)]:
-            for manifest in (None, "version", "rev", "tag"):
-                with self.subTest(dependency=dependency, manifest=manifest):
-                    old = {"Cargo.lock": lock}
-                    new = {"Cargo.lock": lock.replace(f'name = "{dependency}"\nversion = "1.0.0"',
-                                                     f'name = "{dependency}"\nversion = "2.0.0"')}
-                    if manifest:
-                        section = "workspace.dependencies" if manifest == "version" else "patch.crates-io"
-                        git = '' if manifest == "version" else ', git = "https://example.invalid/fork"'
-                        old["Cargo.toml"] = (f'[{section}]\nalias = {{ package = "{dependency}"{git}, '
-                                             f'{manifest} = "1" }}\n')
-                        new["Cargo.toml"] = old["Cargo.toml"].replace(f'{manifest} = "1"', f'{manifest} = "2"')
-                    apis = evaluate(changed_contents(old, new, verdict="UNCERTAIN", risk=4))
-                    self.assertIn(f"risk-{expected}", apis.labels)
-                    self.assertEqual(apis.approved(), [HEAD])
-                    self.assertEqual(apis.model_requests, [])
-        prover = "crates/jolt-prover/src/big.rs"
-        for verdict in ("UNCERTAIN", "AFFECTS"):
-            with self.subTest(mixed_bump_verdict=verdict):
-                old = {"Cargo.lock": lock, prover: "old();\n" * 200}
-                new = {"Cargo.lock": lock.replace('name = "runtime-dep"\nversion = "1.0.0"',
-                                                  'name = "runtime-dep"\nversion = "2.0.0"'),
-                       prover: "new();\n" * 200}
-                apis = evaluate(changed_contents(old, new, verdict=verdict, risk=2))
-                self.assertIn("risk-4", apis.labels)
-                self.assertEqual(apis.approved(), [])
-
-    def test_other_manifest_edits_keep_the_shared_code_floor(self) -> None:
-        path = "Cargo.toml"
-        lock = 'version = 4\n[[package]]\nname = "jolt-verifier"\nversion = "0.1.0"\n'
-        for old, new in [
-            ('[dependencies]\nfoo = "1"\n', '[dependencies]\nfoo = "1"\nbar = "2"\n'),
-            ('[dependencies]\nfoo = { version = "1", features = ["a"] }\n',
-             '[dependencies]\nfoo = { version = "2", features = ["b"] }\n'),
-            ('[workspace]\nresolver = "2"\n', '[workspace]\nresolver = "3"\n'),
-        ]:
-            with self.subTest(new=new):
-                apis = evaluate(changed_contents({path: old, "Cargo.lock": lock},
-                                                 {path: new, "Cargo.lock": lock}, risk=1))
-                self.assertIn("risk-3", apis.labels)
-                self.assertEqual(len(apis.model_requests), 1)
-
     def test_risk_four_requires_a_current_head_maintainer_approval_and_never_gets_the_gates(self) -> None:
         for reviews, expected in [
             ([], "neutral"),
@@ -616,19 +372,22 @@ class AiMergeGateTests(unittest.TestCase):
             ([review("core-b", "APPROVED")], "success"),
         ]:
             with self.subTest(reviews=reviews):
-                apis = evaluate(FakeApis(files=["crates/jolt-verifier/src/lib.rs"], verdict="AFFECTS", risk=4,
+                apis = evaluate(FakeApis(files=["crates/jolt-verifier/src/lib.rs"], risk=4,
                                          reviews=reviews, comments=[comment("core-a", attestation())]))
                 self.assert_completed(apis, expected)
                 wanted = {"merge-eligible"} if expected == "success" else {"no-reviewer-assigned"}
                 self.assertEqual(set(apis.labels), wanted if expected == "success" else {"risk-4"} | wanted)
                 self.assertEqual(apis.review_writes, [], "the attestation never earns a risk-4 approval")
 
-    def test_risk_three_attestation_earns_the_gates_approval_of_the_head(self) -> None:
-        apis = evaluate(FakeApis(verdict="AFFECTS", risk=3, comments=[comment("core-a", attestation())]))
-        self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
-        self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
-        self.assertEqual(set(apis.labels), {"risk-3", "merge-eligible"})
-        self.assertEqual(apis.review_writes, [("APPROVE", HEAD)])
+    def test_auto_approval_requires_current_head_attestation_at_each_eligible_risk(self) -> None:
+        for risk in (1, 2, 3):
+            for sha in (HEAD, OLD):
+                with self.subTest(risk=risk, attested_head=sha):
+                    apis = evaluate(FakeApis(risk=risk, comments=[comment("core-a", attestation(sha))]))
+                    self.assert_completed(apis, "success" if sha == HEAD else "neutral")
+                    self.assertEqual(apis.record(GATE.CLASSIFIER), ["success"])
+                    self.assertIn(f"risk-{risk}", apis.labels)
+                    self.assertEqual(apis.approved(), [HEAD] if sha == HEAD else [])
 
     def test_current_head_maintainer_approval_satisfies_risk_four_without_a_model(self) -> None:
         apis = FakeApis(reviews=[review("core-b", "APPROVED")])
@@ -637,18 +396,21 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(set(apis.labels), {"merge-eligible"})
         self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
 
-    def test_risk_paths_and_semantic_results_choose_the_highest_level(self) -> None:
+    def test_classifier_risks_choose_the_highest_level(self) -> None:
         for levels, expected in [
             ({"README.md": 1}, 1),
             ({"crates/jolt-kernels/src/lib.rs": 2}, 2),
             ({"Cargo.lock": 2}, 2),
-            ({"Cargo.lock": 1}, 3),
+            ({"Cargo.lock": 1}, 1),
             ({"crates/jolt-prover/src/stages/stage3.rs": 2}, 2),
-            ({"crates/jolt-verifier/src/config.rs": 1}, 4),
+            ({"crates/jolt-verifier/src/config.rs": 1}, 1),
             ({"README.md": 1, "crates/jolt-prover/src/stages/stage3.rs": 2}, 2),
             ({"crates/jolt-akita/src/native_batching.rs": 4}, 4),
-            ({"crates/jolt-akita/src/adapters.rs": 3}, 4),
+            ({"crates/jolt-akita/src/adapters.rs": 3}, 3),
             ({"new/shared.rs": 3}, 3),
+            ({".claude/skills/verifier-classifier/SKILL.md": 1}, 1),
+            ({"docs/a.md": 1, "src/a.rs": 2, "src/b.rs": 3}, 3),
+            ({"src/a.rs": 2, "src/b.rs": 4}, 4),
         ]:
             with self.subTest(levels=levels):
                 files = [{"filename": name} for name in levels]
@@ -671,7 +433,6 @@ class AiMergeGateTests(unittest.TestCase):
             ({}, {"risk-2"}, 1),
             ({"author": "outsider", "files": ["docs/guide.md"]},
              {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
-            ({"files": [".claude/skills/verifier-classifier/SKILL.md"]}, {"no-reviewer-assigned"}, 0),
             ({"author": "outsider"}, {"needs-maintainer-review", "no-reviewer-assigned"}, 0),
         ]:
             with self.subTest(kwargs=kwargs):
@@ -698,7 +459,7 @@ class AiMergeGateTests(unittest.TestCase):
             ("draft, approved and attested", {"draft": True, "records": [record(GATE.CLASSIFIER)],
                                               "reviews": [review("maintainer", "APPROVED")],
                                               "comments": [comment("core-a", attestation())]}, set()),
-            ("reclassified to risk-4", {"verdict": "AFFECTS", "risk": 4, "comments": [comment("core-a", attestation())]},
+            ("reclassified to risk-4", {"risk": 4, "comments": [comment("core-a", attestation())]},
              {"risk-4", "no-reviewer-assigned"}),
         ]:
             with self.subTest(case=case):
@@ -731,18 +492,15 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(set(apis.labels), {"merge-eligible", "risk-2", "keep-healed"})
 
     def test_invalid_cached_risk_results_cannot_waive_review(self) -> None:
-        for case in ("failed check", "old inputs", "policy-only result", "legacy result"):
+        for case in ("failed check", "old inputs", "legacy result"):
             with self.subTest(case=case):
-                apis = FakeApis(records=[record(GATE.CLASSIFIER)], verdict="UNCERTAIN",
+                apis = FakeApis(records=[record(GATE.CLASSIFIER)], risk=4,
                                 comments=[comment("core-a", attestation())])
                 cached = apis.check_runs[0]
                 if case == "failed check":
                     cached["conclusion"] = "failure"
                 elif case == "old inputs":
                     cached["output"]["text"] = json.dumps({"risk": 2, "classifier_inputs_sha256": "0" * 64})
-                elif case == "policy-only result":
-                    cached["output"]["text"] = json.dumps({"risk": 2, "policy_sha256": hashlib.sha256(
-                        (GATE.ROOT / GATE.RISK_POLICY).read_bytes()).hexdigest()})
                 else:
                     cached["output"].pop("text")
                 evaluate(apis)
@@ -802,14 +560,7 @@ class AiMergeGateTests(unittest.TestCase):
                 self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned"} if cached else set())
                 self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
 
-    def test_pr_risk_policy_is_data_and_missing_admin_labels_fail_closed(self) -> None:
-        files = [{"filename": GATE.RISK_POLICY}, {"filename": "crates/jolt-prover/src/stages/stage3.rs"}]
-        trees = trees_for(files)
-        trees[HEAD][GATE.RISK_POLICY] = '{"risk-1": {"paths": ["**"]}}'
-        apis = evaluate(FakeApis(files=files, trees=trees, reviews=[review("maintainer", "APPROVED")]))
-        self.assert_completed(apis, "neutral")
-        self.assertEqual(set(apis.labels), {"no-reviewer-assigned"})
-        self.assertEqual(apis.model_requests, [])
+    def test_missing_admin_labels_fail_closed(self) -> None:
         missing = FakeApis(comments=[comment("core-a", attestation())])
         missing.label_definitions.clear()
         with self.assertRaisesRegex(GATE.GateError, "admin must create"):
@@ -1068,8 +819,7 @@ class AiMergeGateTests(unittest.TestCase):
 
     def test_unclassified_heads_have_no_risk_labels_and_need_current_maintainer_approval(self) -> None:
         for kwargs in (
-            {"files": [GATE.RISK_POLICY]},
-            {"files": [GATE.RISK_POLICY], "records": [record(GATE.CLASSIFIER)]},
+            {"answer_text": "invalid JSON"},
             {"files": ["scripts/ci/build-input.py"], "comments": [ledger({HEAD: 2})]},
             {"author": "outsider", "files": ["docs/guide.md"]},
         ):
@@ -1119,7 +869,7 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertNotIn(diff, request["input"])
         self.assertEqual(json.loads(request["input"])["shas"], {"base": BASE, "head": HEAD})
         self.assertIn("# Verifier classifier", request["instructions"])
-        self.assertIn((GATE.ROOT / "specs/verifier-closure-lints.md").read_text(), request["instructions"])
+        self.assertEqual(request["instructions"], (GATE.ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text())
         self.assertNotIn(diff, request["instructions"])
         self.assertEqual([run["name"] for run in apis.created], [GATE.GATE, GATE.CLASSIFIER])
         admission, verdict = apis.posted
@@ -1183,7 +933,7 @@ class AiMergeGateTests(unittest.TestCase):
             ("the gate's file run by a pull request", record(GATE.CLASSIFIER, external_id=PR_RUN)),
         ]:
             with self.subTest(case=case):
-                apis = evaluate(FakeApis(verdict="AFFECTS", records=[forged], comments=[comment("core-a", attestation())]))
+                apis = evaluate(FakeApis(risk=4, records=[forged], comments=[comment("core-a", attestation())]))
                 self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
                 self.assertEqual((len(apis.model_requests), apis.review_writes), (1, []))
 
@@ -1194,15 +944,9 @@ class AiMergeGateTests(unittest.TestCase):
         self.assertEqual(apis.review_writes, [])
         self.assertEqual(apis.record(GATE.CLASSIFIER), ["success"], "the paid verdict stays cached for its head")
 
-    def test_uncertain_or_inconsistent_classification_requires_human_review(self) -> None:
+    def test_failed_classification_requires_human_review(self) -> None:
         attested = [comment("core-a", attestation())]
-        for verdict in ("AFFECTS", "UNCERTAIN"):
-            with self.subTest(verdict=verdict):
-                apis = evaluate(FakeApis(verdict=verdict, comments=attested))
-                self.assertEqual(apis.gate(), ("neutral", "Risk 4: current-head maintainer approval required"))
-                self.assertEqual(apis.record(GATE.CLASSIFIER), ["neutral"])
-                self.assertEqual(set(apis.labels), {"risk-4", "no-reviewer-assigned"})
-        for case, overrides in [("unknown verdict", {"answer_text": '{"verdict": "LIKELY_SAFE", "reasoning": "x"}'}),
+        for case, overrides in [("missing risks", {"answer_text": '{"reasoning": "x"}'}),
                                 ("not JSON", {"answer_text": "SAFE"}),
                                 ("other model", {"served_model": "gpt-6-luna"})]:
             with self.subTest(case=case):
@@ -1330,7 +1074,7 @@ class AiMergeGateTests(unittest.TestCase):
             ("classifier instruction added on A", BranchMovesToBAndBack(
                 [{"filename": ".claude/skills/verifier-classifier/new.md", "status": "added"}],
                 b_files, comments=attested),
-             ("neutral", "Human approval required: the change edits the gate's inputs")),
+             ("success", "Review attested by core-a")),
             ("prover file changed on A", BranchMovesToBAndBack(
                 ["crates/jolt-prover/src/lib.rs"], b_files, comments=attested),
              ("success", "Review attested by core-a")),
@@ -1343,66 +1087,10 @@ class AiMergeGateTests(unittest.TestCase):
                 inputs = [request["input"] for request in apis.model_requests]
                 self.assertEqual(len(inputs), expected[0] == "success")
                 for material in inputs:
-                    self.assertIn("crates/jolt-prover/src/lib.rs", material)
+                    self.assertEqual(json.loads(material)["paths"], sorted(apis.trees[HEAD]))
                     self.assertNotIn("CONTRIBUTING.md", material)
                 trees = {urlsplit(url).path.rsplit("/", 1)[1] for _, url in apis.requests if "/git/trees/" in url}
                 self.assertEqual(trees, {BASE, HEAD})
-
-    def test_gate_inputs_are_risk_four_with_or_without_a_cached_classification(self) -> None:
-        for path in (GATE.WORKFLOW, GATE.AGENT_WORKFLOW, "scripts/ci/classifier_agent.py",
-                     ".github/workflows/ai-merge-gate-events.yml", ".claude/skills/verifier-classifier/SKILL.md",
-                     "specs/verifier-closure-lints.md", GATE.RISK_POLICY):
-            for cached in (False, True):
-                apis = FakeApis(files=[path], risk=1,
-                                records=[record(GATE.CLASSIFIER)] if cached else [])
-                github = GATE.GitHub(apis, "token", REPO)
-                gate = GATE.Gate(github, FakeClassifier(apis), "main", MAINTAINERS, RUN_ID)
-                pull = github.get(f"/repos/{REPO}/pulls/7")
-                with self.subTest(path=path, cached=cached):
-                    self.assertEqual(gate.risk_level(pull), 4)
-
-    def test_changes_to_gate_inputs_never_get_the_gates_approval(self) -> None:
-        attested = [comment("core-a", attestation())]
-        renamed = {"filename": "docs/classifier.md", "previous_filename": ".claude/skills/verifier-classifier/SKILL.md",
-                   "status": "renamed"}
-        for case, files in [("classifier skill renamed away", [renamed]),
-                            ("closure spec removed", [{"filename": "specs/verifier-closure-lints.md",
-                                                       "status": "removed"}]),
-                            ("closure spec", ["specs/verifier-closure-lints.md"]),
-                            ("risk policy", [GATE.RISK_POLICY]),
-                            ("classifier workflow", [GATE.WORKFLOW]),
-                            ("events workflow", [".github/workflows/ai-merge-gate-events.yml"]),
-                            ("classifier skill", [".claude/skills/verifier-classifier/SKILL.md"])]:
-            with self.subTest(case=case):
-                apis = evaluate(FakeApis(comments=attested, files=files, counts=(len(files), 1, 1)))
-                self.assertEqual(apis.gate(), ("neutral", "Human approval required: the change edits the gate's inputs"))
-                self.assertEqual((apis.model_requests, apis.review_writes), ([], []))
-        for approver, expected in [
-            ("maintainer", ("neutral", "Risk 4: current-head maintainer approval required")),
-            ("core-b", ("success", "Risk 4 approved by core-b")),
-        ]:
-            with self.subTest(approver=approver):
-                approved = evaluate(FakeApis(comments=attested, files=[".claude/skills/verifier-classifier/SKILL.md"],
-                                             reviews=[review(approver, "APPROVED")]))
-                self.assertEqual((approved.gate(), approved.review_writes), (expected, []))
-        path = ".github/ISSUE_TEMPLATE/bug_report.md"
-        old, new = "Describe the bug\n", "Describe the bug and how to reproduce it\n"
-        template = evaluate(FakeApis(comments=attested, files=[path], diff=unified_diff(path, old, new),
-                                     trees={BASE: {path: old}, HEAD: {path: new}}))
-        self.assertEqual(template.gate(), ("success", "Review attested by core-a"))
-        self.assertEqual((len(template.model_requests), template.approved()), (1, [HEAD]))
-
-    def test_unprotected_gate_and_review_files_use_the_classifier(self) -> None:
-        for path in ("scripts/ci/ai_merge_gate.py", "scripts/ci/json.py", ".github/workflows/other.yml",
-                     ".github/workflows/diff-classifier.yml",
-                     ".claude/skills/ci-code-review/SKILL.md", ".claude/skills/comment-policy/SKILL.md",
-                     ".claude/skills/test-policy/SKILL.md", "CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md",
-                     ".github/ai-merge-gate.md"):
-            with self.subTest(path=path):
-                apis = evaluate(changed_contents({path: "old\n"}, {path: "new\n"}, risk=1))
-                self.assertEqual(apis.gate(), ("success", "Review attested by core-a"))
-                self.assertEqual(set(apis.labels), {"risk-1", "merge-eligible"})
-                self.assertEqual((len(apis.model_requests), apis.approved()), (1, [HEAD]))
 
     def test_trusted_input_changes_invalidate_verdict_without_resetting_attempts(self) -> None:
         paths = GATE.CLASSIFIER_INPUTS
@@ -1626,7 +1314,7 @@ class ClassifierAgentTests(unittest.TestCase):
             runner.source = source
             with self.assertRaises(GATE.Prepared):
                 runner.classify(github.get(f"/repos/{REPO}/pulls/7"))
-            answer = {"verdict": "SAFE", "reasoning": "Prover only.", "risks": [
+            answer = {"reasoning": "Prover only.", "risks": [
                 {"path": path, "level": 2, "reasoning": "Prover only."} for path in sorted(source.changed())]}
             (Path(directory) / "result.json").write_text(json.dumps(answer))
             consumer = GATE.Classifier(Path(directory))
@@ -1639,7 +1327,7 @@ class ClassifierAgentTests(unittest.TestCase):
             runner.classify(github.get(f"/repos/{REPO}/pulls/7"))
             self.assertEqual(len(apis.posted), before)
             self.assertEqual(runner.records[-1].risk, 2)
-            (Path(directory) / "result.json").write_text('{"verdict":')
+            (Path(directory) / "result.json").write_text('{"reasoning":')
             runner = GATE.Gate(github, GATE.Classifier(Path(directory)), "main", MAINTAINERS, RUN_ID)
             runner.source = source
             runner.classify(github.get(f"/repos/{REPO}/pulls/7"))
@@ -1656,7 +1344,7 @@ class ClassifierAgentTests(unittest.TestCase):
         self.assertEqual(apis.model_requests, [])
         path = "crates/jolt-prover/src/lib.rs"
         attack = '<img src=x onerror=alert(1)> [click](https://evil.invalid) @core-a\n# Forged'
-        answer = {"verdict": "SAFE", "reasoning": attack,
+        answer = {"reasoning": attack,
                   "risks": [{"path": path, "level": 2, "reasoning": attack}]}
         apis = evaluate(FakeApis(answer_text=json.dumps(answer)))
         published = apis.posted[-1]

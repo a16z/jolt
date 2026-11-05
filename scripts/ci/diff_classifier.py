@@ -37,11 +37,8 @@ from __future__ import annotations
 
 import argparse
 import json
-import posixpath
 import re
-from pathlib import PurePosixPath
 import subprocess
-import tomllib
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -363,8 +360,7 @@ def _is_test_only_cfg_expr(expr: str) -> bool:
 class _Scanner:
     """Cross-line lexical state: block comments, strings, raw strings."""
 
-    def __init__(self, *, preserve_strings: bool = False) -> None:
-        self.preserve_strings = preserve_strings
+    def __init__(self) -> None:
         self.block_comment_depth = 0
         self.in_string = False
         self.in_raw_string = False
@@ -393,17 +389,11 @@ class _Scanner:
             if self.in_string:
                 scan.has_code = True
                 if c == "\\":
-                    if self.preserve_strings:
-                        scan.code += chars[i:i + 2]
                     i += 2
                 elif c == '"':
-                    if self.preserve_strings:
-                        scan.code += c
                     self.in_string = False
                     i += 1
                 else:
-                    if self.preserve_strings:
-                        scan.code += c
                     i += 1
                 continue
 
@@ -416,17 +406,11 @@ class _Scanner:
                     ):
                         closing += 1
                     if closing >= self.raw_hash_count:
-                        if self.preserve_strings:
-                            scan.code += chars[i:i + 1 + self.raw_hash_count]
                         self.in_raw_string = False
                         i += 1 + self.raw_hash_count
                     else:
-                        if self.preserve_strings:
-                            scan.code += c
                         i += 1
                 else:
-                    if self.preserve_strings:
-                        scan.code += c
                     i += 1
                 continue
 
@@ -444,8 +428,6 @@ class _Scanner:
                     hashes += 1
                     j += 1
                 if j < length and chars[j] == '"':
-                    if self.preserve_strings:
-                        scan.code += chars[i + 1:j + 1]
                     self.in_raw_string = True
                     self.raw_hash_count = hashes
                     i = j + 1
@@ -513,7 +495,6 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
 
     pending_cfg: _CfgAttr | None = None
     await_item = False  # a test-only attribute was seen; consume attrs then item
-    stacked_attr: _CfgAttr | None = None
     item: _Item | None = None
     rest_of_file_is_test = False
     scope_depth = 0
@@ -552,15 +533,6 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
                 item = None
             continue
 
-        if stacked_attr is not None:
-            stacked_attr.push(scan, lineno)
-            test_lines.add(lineno)
-            if stacked_attr.is_complete():
-                ambiguous_test |= not (stacked_attr.code.count("[") == stacked_attr.code.count("]") == 1
-                                       and stacked_attr.code.rstrip().endswith("]"))
-                stacked_attr = None
-            continue
-
         if pending_cfg is not None:
             pending_cfg.push(scan, lineno)
             if pending_cfg.is_complete():
@@ -577,13 +549,8 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
 
         if await_item:
             if code.startswith("#"):
-                attribute = _CfgAttr()
-                attribute.push(scan, lineno)
-                if attribute.is_complete():
-                    ambiguous_test |= not (code.count("[") == code.count("]") == 1 and code.endswith("]"))
-                else:
-                    stacked_attr = attribute
-                test_lines.add(lineno)
+                ambiguous_test |= not (code.count("[") == code.count("]") == 1 and code.endswith("]"))
+                test_lines.add(lineno)  # stacked attribute on the test item
                 continue
             if scan.has_code:
                 test_lines.add(lineno)
@@ -617,126 +584,6 @@ def analyze_rust(content: str, *, cfg_test_only: bool = False) -> RustRegions:
 
     return RustRegions(test_lines=set() if cfg_test_only and ambiguous_test else test_lines,
                        doc_lines=doc_lines, code_lines=code_lines)
-
-
-def test_only_rust_files(files: dict[str, str | None]) -> set[str]:
-    """Resolve ordinary modules, excluding indirect references and Cargo compilation roots."""
-    def crate(path: str) -> str:
-        return next((str(parent) for parent in PurePosixPath(path).parents
-                     if str(parent / "Cargo.toml") in files), "")
-
-    incoming: dict[str, list[tuple[str, bool]]] = {}
-    roots = set()
-    invalid_crates = set()
-    referenced = set()
-    ambiguous = set()
-    for manifest, text in files.items():
-        if not manifest.endswith("Cargo.toml") or text is None:
-            continue
-        owner = str(PurePosixPath(manifest).parent)
-        try:
-            cargo = tomllib.loads(text)
-        except tomllib.TOMLDecodeError:
-            invalid_crates.add(owner)
-            continue
-        for target in [cargo.get("lib", {}), *cargo.get("bin", []), *cargo.get("example", []),
-                       *cargo.get("bench", []), *cargo.get("test", [])]:
-            if isinstance(target, dict) and isinstance(target.get("path"), str):
-                roots.add(posixpath.normpath(str(PurePosixPath(owner) / target["path"])))
-        build = cargo.get("package", {}).get("build")
-        if isinstance(build, str):
-            roots.add(posixpath.normpath(str(PurePosixPath(owner) / build)))
-    for path in files:
-        owner = crate(path)
-        relative = posixpath.relpath(path, owner) if owner else path
-        if relative in ("build.rs", "src/lib.rs", "src/main.rs") \
-                or relative.startswith(("src/bin/", "examples/", "benches/", "tests/")):
-            roots.add(path)
-    literal = r'r(?P<hashes>\#*)"[\s\S]*?"(?P=hashes)|"(?:\\[\s\S]|[^"\\])*"'
-    events = re.compile(r'(?P<path>#\s*!?\[[^]]*?\bpath\s*=\s*)|(?P<include>\binclude\s*!\s*\(\s*)|'
-                        f'(?P<string>{literal})|' + r'(?P<generated>\bmod\s+\$)|'
-                        r'\bmod\s+(?:r#)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?P<delimiter>[;{])|[{}]')
-    for path, text in files.items():
-        if not path.endswith(".rs") or text is None or not re.search(r"\bmod\b|\bpath\b|\binclude\b", text):
-            continue
-        scanner = _Scanner(preserve_strings=True)
-        code = "\n".join(scanner.scan_line(line).code for line in text.split("\n"))
-        regions = analyze_rust(text, cfg_test_only=True)
-        source = PurePosixPath(path)
-        base = source.parent if path in roots or source.stem in ("lib", "main", "mod") or "/src/bin/" in "/" + path else source.with_suffix("")
-        depth = 0
-        modules = []
-        custom_path = None
-        for match in events.finditer(code):
-            line = code.count("\n", 0, match.start()) + 1
-            directory = modules[-1][1] if modules else base
-            if match.group("path") or match.group("include"):
-                value = re.match(literal, code[match.end():])
-                target = None
-                if value:
-                    token = value.group()
-                    try:
-                        name = token[token.index('"') + 1:token.rindex('"')] if token.startswith("r") else json.loads(token)
-                        parent = directory if match.group("path") and modules else source.parent
-                        target = posixpath.normpath(str(parent / name))
-                        referenced.add(target)
-                        incoming.setdefault(target, []).append((path, False))
-                    except ValueError:
-                        pass
-                if target is None and line not in regions.test_lines:
-                    ambiguous.add(path)
-                if match.group("path"):
-                    custom_path = target
-                continue
-            if match.group("string"):
-                continue
-            if match.group("generated"):
-                if line not in regions.test_lines:
-                    ambiguous.add(path)
-                continue
-            name, delimiter = match.group("name"), match.group("delimiter")
-            if name is not None:
-                if delimiter == "{":
-                    depth += 1
-                    modules.append((depth, PurePosixPath(custom_path) if custom_path else directory / name))
-                elif custom_path is None:
-                    target = directory / name
-                    for candidate in (str(target) + ".rs", str(target / "mod.rs")):
-                        if candidate in files:
-                            incoming.setdefault(candidate, []).append((path, line in regions.test_lines))
-                custom_path = None
-            elif match.group() == "{":
-                depth += 1
-            else:
-                depth -= 1
-                while modules and modules[-1][0] > depth:
-                    modules.pop()
-    units = {root: {root} for root in roots}
-    runtime_units = {root: {root} for root in roots}
-    while True:
-        changed = False
-        for child, parents in incoming.items():
-            for memberships, test_edges in ((units, True), (runtime_units, False)):
-                inherited = {unit for parent, test in parents if test_edges or not test
-                             for unit in memberships.get(parent, ())}
-                current = memberships.setdefault(child, set())
-                if not inherited <= current:
-                    current.update(inherited)
-                    changed = True
-        if not changed:
-            break
-    # Runtime macros can name test modules; macros reachable only through test cfgs cannot.
-    blocked_units = {unit for path in ambiguous for unit in runtime_units.get(path, ())}
-    tests: set[str] = set()
-    while True:
-        found = {path for path, parents in incoming.items() if path not in tests
-                 and crate(path) and crate(path) not in invalid_crates and path not in roots
-                 and PurePosixPath(path).name not in ("lib.rs", "main.rs")
-                 and path not in referenced and not units.get(path, set()) & blocked_units
-                 and all(test or parent in tests for parent, test in parents)}
-        if not found:
-            return tests
-        tests.update(found)
 
 
 # --- Diff parsing ---------------------------------------------------------

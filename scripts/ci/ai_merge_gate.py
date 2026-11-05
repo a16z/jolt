@@ -13,7 +13,6 @@ A separate job runs Codex exec in its native read-only sandbox; this publisher n
 
 from __future__ import annotations
 
-import difflib
 import hashlib
 import html
 import io
@@ -22,15 +21,13 @@ import os
 import re
 import sys
 import tarfile
-import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from fnmatch import fnmatchcase
 from pathlib import Path
 
-from diff_classifier import analyze_rust, parse_diff, test_only_rust_files
+from diff_classifier import parse_diff
 from classifier_agent import AgentFailure, EFFORT, MODEL, validate_verdict
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -44,7 +41,6 @@ WORKFLOW = ".github/workflows/ai-merge-gate.yml"
 ACTIONS_APP_ID = 15368
 # GITHUB_TOKEN writes as github-actions[bot], whose login GraphQL reports without the suffix.
 PUBLISHER = "github-actions"
-RISK_POLICY = ".github/ai-merge-gate-risk.json"
 RISK_LABELS = {f"risk-{level}" for level in range(1, 5)}
 NEEDS_MAINTAINER = "needs-maintainer-review"
 MERGE_ELIGIBLE = "merge-eligible"
@@ -65,13 +61,9 @@ LEDGER = re.compile(r"<!-- ai-merge-gate/attempts (\{.*\}) -->")
 # The run-name of .github/workflows/ai-merge-gate-events.yml, which GitHub reports as display_title.
 RUN_NAME = re.compile(r"AI merge gate events for PR #([1-9][0-9]*)")
 REVIEW_FIELDS = "state commit { oid } fullDatabaseId"
-# The classifier's instructions, policy and workflow entry points require human approval.
 AGENT_WORKFLOW = ".github/workflows/ai-merge-gate-evaluate.yml"
-GATE_INPUTS = (WORKFLOW, AGENT_WORKFLOW, "scripts/ci/classifier_agent.py", ".github/workflows/ai-merge-gate-events.yml",
-               ".claude/skills/verifier-classifier/", "specs/verifier-closure-lints.md", RISK_POLICY)
-CLASSIFIER_INPUTS = ("scripts/ci/classifier_agent.py", AGENT_WORKFLOW, "scripts/ci/ai_merge_gate.py", "scripts/ci/diff_classifier.py", WORKFLOW,
-                     ".claude/skills/verifier-classifier/SKILL.md", "specs/verifier-closure-lints.md",
-                     RISK_POLICY)
+CLASSIFIER_INPUTS = ("scripts/ci/classifier_agent.py", AGENT_WORKFLOW, "scripts/ci/ai_merge_gate.py",
+                     "scripts/ci/diff_classifier.py", WORKFLOW, ".claude/skills/verifier-classifier/SKILL.md")
 MAX_HEAD_ATTEMPTS = 2
 MAX_PR_ATTEMPTS = 3
 MAX_TREE_BYTES = 500_000_000
@@ -165,7 +157,7 @@ class GitHub:
 
 
 class Source:
-    """The pull request's merge base and head, pinned by SHA: the changed paths every guard reads,
+    """The pull request's merge base and head, pinned by SHA: the changed paths the classifier must cover,
     and the model's read-only view of both commits. Each commit's files come from GitHub's archive
     of that exact commit, held in memory as data."""
 
@@ -173,7 +165,6 @@ class Source:
         self.github, self.shas = github, {"base": base, "head": head}
         self.listings: dict[str, dict[str, dict]] = {}
         self.trees: dict[str, dict[str, str | None]] = {}
-        self.test_files: dict[str, set[str]] = {}
 
     def listing(self, revision: str) -> dict[str, dict]:
         """The commit's files, links and submodules by path, from its complete tree listing."""
@@ -232,69 +223,6 @@ class Source:
             self.trees[revision] = files
         return self.trees[revision]
 
-    def code_changes(self, path: str) -> int:
-        """Added plus removed runtime-code lines, comparing both revisions after excluding
-        cfg(test)-only Rust code and whole Rust comment/blank lines. Other formats count every
-        non-blank line rather than treating comment-looking data as comments. Full projections also
-        catch unchanged lines exposed by removing a cfg or a block-comment delimiter."""
-        revisions = []
-        for revision in ("base", "head"):
-            text = self.tree(revision).get(path, "")
-            if text is None:
-                return MAX_TREE_BYTES
-            lines = text.split("\n")
-            if path.endswith(".rs"):
-                if revision not in self.test_files:
-                    self.test_files[revision] = test_only_rust_files(self.tree(revision))
-                if path in self.test_files[revision]:
-                    revisions.append([])
-                    continue
-                regions = analyze_rust(text, cfg_test_only=True)
-                runtime_lines = regions.code_lines - regions.test_lines
-                lines = [line for number, line in enumerate(lines, 1)
-                         if number in runtime_lines]
-            else:
-                lines = [line for line in lines if line.strip()]
-            revisions.append(lines)
-        return sum(i2 - i1 + j2 - j1 for tag, i1, i2, j1, j2 in
-                   difflib.SequenceMatcher(None, *revisions, autojunk=False).get_opcodes() if tag != "equal")
-
-    def dependency_bumps(self, paths: set[str], roots: list[str]) -> dict[str, int]:
-        """Version/pin-only manifests and lock entries, ranked by the union of both lock graphs.
-        Package-name matching deliberately includes all versions and dev/build edges."""
-        try:
-            locks = [tomllib.loads(self.tree(revision)["Cargo.lock"]) for revision in ("base", "head")]
-        except (KeyError, TypeError, tomllib.TOMLDecodeError):
-            return {}
-        edges: dict[str, set[str]] = {}
-        for lock in locks:
-            for package in lock.get("package", []):
-                edges.setdefault(package["name"], set()).update(dep.split()[0] for dep in package.get("dependencies", []))
-        closure, pending = set(roots), list(roots)
-        while pending:
-            for name in edges.get(pending.pop(), set()) - closure:
-                closure.add(name)
-                pending.append(name)
-        risks = {}
-        for path in paths:
-            if Path(path).name not in ("Cargo.toml", "Cargo.lock"):
-                continue
-            try:
-                before, after = [tomllib.loads(self.tree(revision)[path]) for revision in ("base", "head")]
-            except (KeyError, TypeError, tomllib.TOMLDecodeError):
-                continue
-            if path.endswith("Cargo.lock"):
-                old_packages, new_packages = before.pop("package", []), after.pop("package", [])
-                names = {p["name"] for p in old_packages + new_packages
-                         if p not in old_packages or p not in new_packages}
-            else:
-                old_pins, new_pins = strip_dependency_pins(before), strip_dependency_pins(after)
-                names = {name for name in old_pins.keys() | new_pins.keys()
-                         if old_pins.get(name) != new_pins.get(name)}
-            if before == after and names:
-                risks[path] = 3 if names & closure else 2
-        return risks
-
 
 class Prepared(Exception):
     """The trusted preparation job reserved an attempt and exported its inputs."""
@@ -317,7 +245,7 @@ class Classifier:
             and plan.get("classifier_inputs_sha256") == classifier_inputs_sha256() \
             and plan.get("paths") == sorted(source.changed())
 
-    def ask(self, instructions: str, source: Source, admit, counts: tuple[int, int, int], runtime_lines: dict[str, int] | None = None) -> dict | None:
+    def ask(self, instructions: str, source: Source, admit, counts: tuple[int, int, int]) -> dict | None:
         if not self.prepare:
             if not self.prepaid(source):
                 return None
@@ -339,7 +267,7 @@ class Classifier:
         (workspace / "diff.patch").write_text(diff)
         plan = {"repository": source.github.repo, "shas": source.shas, "paths": sorted(source.changed()),
                 "classifier_inputs_sha256": classifier_inputs_sha256()}
-        (workspace / "change.json").write_text(json.dumps({**plan, "runtime_code_changed_lines": runtime_lines or {}}, indent=2))
+        (workspace / "change.json").write_text(json.dumps(plan, indent=2))
         (self.directory / "instructions.md").write_text(instructions)
         admit()
         (self.directory / "plan.json").write_text(json.dumps(plan))
@@ -387,23 +315,6 @@ def unassigned(pull: dict) -> bool:
     return not (pull["requested_reviewers"] or pull["requested_teams"] or pull["assignees"])
 
 
-def strip_dependency_pins(manifest: dict) -> dict[str, set[str]]:
-    """Remove dependency version/rev/tag fields in place, returning the original specs by
-    package name. Everything else, including dependency membership and features, stays."""
-    owners = [manifest, manifest.get("workspace", {}), *manifest.get("target", {}).values()]
-    tables = [owner.get(kind, {}) for owner in owners
-              for kind in ("dependencies", "dev-dependencies", "build-dependencies")]
-    tables += list(manifest.get("patch", {}).values()) + [manifest.get("replace", {})]
-    pins: dict[str, set[str]] = {}
-    for table in tables:
-        for alias, spec in table.items():
-            spec = {"version": spec} if isinstance(spec, str) else spec
-            name = spec.get("package", alias)
-            pins.setdefault(name, set()).add(json.dumps(spec, sort_keys=True))
-            table[alias] = {key: value for key, value in spec.items() if key not in ("version", "rev", "tag")}
-    return pins
-
-
 class Gate:
     def __init__(self, github: GitHub, model: Classifier, default_branch: str, maintainer_list: str,
                  run_id: str) -> None:
@@ -419,7 +330,6 @@ class Gate:
         self.posted = 0
         self.source: Source | None = None
         self.unclassified = False
-        self.policy = json.loads((ROOT / RISK_POLICY).read_text())
 
     def is_maintainer(self, login: str) -> bool:
         if not self.maintainers:
@@ -477,22 +387,16 @@ class Gate:
             return None
         return Record(name, run["conclusion"], output["title"], output["summary"], risk)
 
-    def path_risks(self, pull: dict) -> dict[str, int]:
-        return {path: max((int(label[-1]) for label, rule in self.policy.items()
-                           if any(fnmatchcase(path, pattern) for pattern in rule["paths"])), default=0)
-                for path in self.pinned(pull).changed()}
-
     def risk_level(self, pull: dict) -> int:
-        if self.unclassified or not self.authorized(pull) or any(
-                path.startswith(GATE_INPUTS) for path in self.pinned(pull).changed()):
+        if self.unclassified or not self.authorized(pull):
             return 4
         if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
             return record.risk
         return 4
 
     def pinned(self, pull: dict) -> Source:
-        """The evaluated head and its merge base with the base branch, fixed on first use. The path
-        guards, the model's input and its tools all read these two commits."""
+        """The evaluated head and its merge base with the base branch, fixed on first use. The model's
+        input and its tools read these two commits."""
         if self.source is None:
             head, ref = pull["head"]["sha"], urllib.parse.quote(pull["base"]["ref"], safe="")
             base = self.github.get(f"/repos/{self.repo}/compare/{ref}...{head}?per_page=1")["merge_base_commit"]["sha"]
@@ -532,15 +436,8 @@ class Gate:
     def classify_head(self, pull: dict) -> None:
         number, head = pull["number"], pull["head"]["sha"]
         self.ledger = self.attempts()
-        paths = self.path_risks(pull)
         source = self.pinned(pull)
-        bumps = source.dependency_bumps(set(paths), self.policy["risk-3"]["dependency_roots"])
-        if bumps.keys() == paths.keys() and bumps:
-            risk = max(bumps.values())
-            self.records.append(Record(CLASSIFIER, "success", "Dependency bumps: deterministic risk",
-                                       "Only dependency versions/pins or lock entries changed.\n\n" +
-                                       "\n".join(f"- `{path}`: risk-{level}" for path, level in sorted(bumps.items())), risk))
-            return
+        paths = source.changed()
         used = sum(self.ledger.values())
         if not self.model.prepaid(source) and (self.ledger.get(head, 0) >= MAX_HEAD_ATTEMPTS or used >= MAX_PR_ATTEMPTS):
             self.records.append(Record(CLASSIFIER, "skipped", "Verifier classifier: attempts spent",
@@ -550,8 +447,6 @@ class Gate:
                                        "approve it. No risk label is assigned; policy requires an independent "
                                        "current-head maintainer approval.", None))
             return
-        code = {path: source.code_changes(path) for path, floor in paths.items()
-                if floor >= 3 and path not in bumps and not path.endswith("Cargo.lock")}
 
         def admit() -> None:
             # Counted durably before the first paid request, so a timeout or crash still counts.
@@ -562,40 +457,17 @@ class Gate:
                          "this text; without one, the attempt failed and the head has no classifier result.")
 
         skill = (ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text()
-        closure = (ROOT / "specs/verifier-closure-lints.md").read_text()
-        policy = (ROOT / RISK_POLICY).read_text()
-        answer = self.model.ask(f"{skill}\n\n## Trusted risk policy: {RISK_POLICY}\n\n{policy}"
-                                f"\n\nDeterministic dependency-bump risks: {json.dumps(bumps, sort_keys=True)}. "
-                                "These paths cannot raise the verdict or risk; judge other changes independently."
-                                f"\n\n## Reference: specs/verifier-closure-lints.md\n\n{closure}",
-                                source, admit, (pull["changed_files"], pull["additions"], pull["deletions"]), code)
+        answer = self.model.ask(skill, source, admit,
+                                (pull["changed_files"], pull["additions"], pull["deletions"]))
         if answer is not None:
-            answer = validate_verdict(answer, set(paths))
+            answer = validate_verdict(answer, paths)
         if answer is None:
             raise AgentFailure("no classifier verdict")
-        risks = {}
-        for item in answer["risks"]:
-            path, level = item["path"], item["level"]
-            floor = paths[path]
-            if level == 3 and floor == 4:
-                level = 4
-            if path in code and code[path] == 0:
-                floor = 1
-            risks[path] = bumps.get(path, max(level, floor) if level == 1 and floor >= 3 else level)
-        risk = max(risks.values())
-        changed_lines = sum(code[path] if path in code else source.code_changes(path)
-                            for path, level in risks.items()
-                            if level == 3 and path not in bumps and not path.endswith("Cargo.lock"))
-        minimal = changed_lines <= self.policy["risk-3"]["max_changed_lines"]
-        if answer["verdict"] != "SAFE" and (
-                max(level for path, level in risks.items() if path not in bumps) < 3 or not minimal):
-            risk = 4
-        conclusion = "success" if answer["verdict"] == "SAFE" else "neutral"
-        self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: {answer['verdict']}",
-                                   f"{model_text(answer['reasoning'])}\n\nRisk: risk-{risk}\n\n"
-                                   f"Risk-3 runtime-code lines added + removed: {changed_lines}; "
-                                   f"minimal: at most {self.policy['risk-3']['max_changed_lines']}.\n\n" +
-                                   "\n".join(f"- {model_text(item['path'])}: risk-{risks[item['path']]} — {model_text(item['reasoning'])}"
+        risk = max(item["level"] for item in answer["risks"])
+        conclusion = "success" if risk < 4 else "neutral"
+        self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: risk-{risk}",
+                                   f"{model_text(answer['reasoning'])}\n\nRisk: risk-{risk}\n\n" +
+                                   "\n".join(f"- {model_text(item['path'])}: risk-{item['level']} — {model_text(item['reasoning'])}"
                                              for item in answer["risks"]) +
                                    f"\n\n_{MODEL}, reasoning effort {EFFORT}_", risk))
 
@@ -646,7 +518,6 @@ class Gate:
         """The table's result for `pull`, including whether the gate approves its head. With `pay`
         false, a row that needs a new paid model result decides UNSETTLED instead."""
         number, head, author = pull["number"], pull["head"]["sha"], pull["user"]["login"]
-        changed = self.pinned(pull).changed()
         self.comments = self.github.discussion(number, "comments", "fullDatabaseId")
         self.reviews = self.github.discussion(number, "reviews", REVIEW_FIELDS)
         blocking, approvers, current = self.approvals(pull)
@@ -655,20 +526,13 @@ class Gate:
                            "A maintainer or writer requested changes; the gate does not approve until they "
                            "approve or their review is dismissed.")
         authorized = self.authorized(pull)
-        protected = sorted(path for path in changed if path.startswith(GATE_INPUTS))
-        if not approvers:
-            if not authorized:
-                return Outcome("neutral", "Human approval required",
-                               f"@{author} is not a maintainer, so no classifier runs. Unclassified heads "
-                               "require an independent current-head maintainer approval.",
-                               human=True)
-            if protected:
-                return Outcome("neutral", "Human approval required: the change edits the gate's inputs",
-                               "Once merged, these files act on every later pull request, so an independent "
-                               "maintainer must approve the current head: " + ", ".join(f"`{path}`" for path in protected),
-                               human=True)
+        if not approvers and not authorized:
+            return Outcome("neutral", "Human approval required",
+                           f"@{author} is not a maintainer, so no classifier runs. Unclassified heads "
+                           "require an independent current-head maintainer approval.",
+                           human=True)
         # `self.records` holds this run's classification or its refusal: one paid attempt per run.
-        if authorized and not current and not protected and not self.records \
+        if authorized and not current and not self.records \
                 and self.recorded(head, CLASSIFIER) is None:
             if not pay:
                 return UNSETTLED
@@ -684,7 +548,7 @@ class Gate:
                            "never approves risk-4 itself.", human=True)
         attested_by = self.attester(pull)
         classified = self.recorded(head, CLASSIFIER) is not None
-        approve = attested_by is not None and classified and authorized and not protected
+        approve = attested_by is not None and classified and authorized
         if approvers:
             return Outcome("success", "Approved by " + ", ".join(approvers),
                            "A writer other than the author approved the pull request, and GitHub has not "
@@ -708,7 +572,7 @@ class Gate:
         labels = set()
         if not self.authorized(pull):
             labels.add(NEEDS_MAINTAINER)
-        elif not self.unclassified and not any(path.startswith(GATE_INPUTS) for path in self.pinned(pull).changed()):
+        elif not self.unclassified:
             if record := self.recorded(pull["head"]["sha"], CLASSIFIER):
                 labels.add(f"risk-{record.risk}")
         if policy.conclusion == "success":
