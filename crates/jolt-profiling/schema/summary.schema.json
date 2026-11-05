@@ -11,6 +11,18 @@
         "$ref": "#/$defs/CounterSummary"
       }
     },
+    "hardware_counters": {
+      "description": "Hardware counter backend and accounting scope; `null` when unavailable\nor absent from an older summary.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/HardwareCounterMetadata"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
     "heap": {
       "description": "Heap attribution from the allocative lane's mid-stage snapshots,\nkeyed by snapshot label (e.g. `Stage2Batch_prepared`). Empty unless\nthe run was profiled with the `allocative` feature. Exact bytes,\nparsed from the `.folded` snapshots in the run directory; full stack\ndetail stays in those files and renders in the run's `memory.html`.",
       "type": "object",
@@ -85,6 +97,36 @@
     "counters"
   ],
   "$defs": {
+    "CoreCounters": {
+      "description": "Instructions and cycles on the cores of `hw.perflevel0`, the highest\nperformance level, in hardware counter units.",
+      "type": "object",
+      "properties": {
+        "cycles": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "instructions": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "instructions",
+        "cycles"
+      ]
+    },
+    "CounterSource": {
+      "description": "Hardware API used for the run; unsupported counters have no source.",
+      "type": "string",
+      "enum": [
+        "linux_perf_event",
+        "macos_rusage_v4",
+        "macos_rusage_v6"
+      ]
+    },
     "CounterSummary": {
       "type": "object",
       "properties": {
@@ -107,6 +149,27 @@
         "samples",
         "max",
         "mean"
+      ]
+    },
+    "HardwareCounterMetadata": {
+      "description": "Scope of the hardware counts in a summary. Counts from different scopes\nare not directly comparable.",
+      "type": "object",
+      "properties": {
+        "privilege_scope": {
+          "$ref": "#/$defs/PrivilegeScope"
+        },
+        "source": {
+          "$ref": "#/$defs/CounterSource"
+        },
+        "thread_scope": {
+          "$ref": "#/$defs/ThreadScope"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "privilege_scope",
+        "thread_scope"
       ]
     },
     "HeapSnapshot": {
@@ -145,9 +208,26 @@
         "roots"
       ]
     },
+    "PrivilegeScope": {
+      "type": "string",
+      "enum": [
+        "user",
+        "user_and_kernel"
+      ]
+    },
     "RootSummary": {
       "type": "object",
       "properties": {
+        "cycles": {
+          "description": "CPU cycles over the same interval; `null` when unavailable. These\nare summed over counted threads, not elapsed time or RISC-V cycles.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
         "dark_time_fraction": {
           "type": "number",
           "format": "double"
@@ -159,7 +239,7 @@
           "minimum": 0
         },
         "instructions": {
-          "description": "User-space instructions retired by the process while the root span\nwas open (all counted threads); `null` without a hardware counter or\nwhen the kernel multiplexed it.",
+          "description": "Instructions retired while the root span was open, with the scope in\n`hardware_counters`; `null` when the interval could not be measured.",
           "type": [
             "integer",
             "null"
@@ -178,6 +258,18 @@
             "null"
           ],
           "format": "double"
+        },
+        "perflevel0": {
+          "description": "The subset of instructions and cycles on `hw.perflevel0` cores;\navailable with macOS rusage V6.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoreCounters"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "wall_time_ns": {
           "type": "integer",
@@ -237,8 +329,8 @@
           "format": "uint64",
           "minimum": 0
         },
-        "instructions": {
-          "description": "User-space instructions the process retired inside this label's\ninstances, summed (inclusive, like `total_ns`). `null` unless every\ninstance ran on the orchestrating thread with a usable hardware\ncounter.",
+        "cycles": {
+          "description": "CPU cycles summed over the same instances; `null` when unavailable\nor any instance could not be measured.",
           "type": [
             "integer",
             "null"
@@ -246,6 +338,28 @@
           "format": "uint64",
           "default": null,
           "minimum": 0
+        },
+        "instructions": {
+          "description": "Instructions retired inside this label's instances, summed with the\nscope in `hardware_counters` (inclusive, like `total_ns`). `null` unless every\ninstance ran on the orchestrating thread with a usable hardware\ncounter.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "perflevel0": {
+          "description": "The subset of instructions and cycles on `hw.perflevel0` cores;\navailable with macOS rusage V6 when every instance was measured.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoreCounters"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "self_ns": {
           "description": "Exclusive time: inclusive minus same-thread children, summed over all\ninstances.",
@@ -270,8 +384,18 @@
     "StageSummary": {
       "type": "object",
       "properties": {
+        "cycles": {
+          "description": "CPU cycles over the same interval; `null` when unavailable. These\nare summed over counted threads, not elapsed time or RISC-V cycles.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
         "instructions": {
-          "description": "User-space instructions retired by the process while the stage span\nwas open, from `StageBoundaryRow`; `null` without a hardware counter\nor when the kernel multiplexed it.",
+          "description": "Instructions retired while the stage span was open, with the scope in\n`hardware_counters`; `null` when the interval could not be measured.",
           "type": [
             "integer",
             "null"
@@ -290,6 +414,18 @@
             "null"
           ],
           "format": "double"
+        },
+        "perflevel0": {
+          "description": "The subset of instructions and cycles on `hw.perflevel0` cores;\navailable with macOS rusage V6.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoreCounters"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "rss_close_gib": {
           "type": [
@@ -323,6 +459,20 @@
       "required": [
         "label",
         "wall_time_ns"
+      ]
+    },
+    "ThreadScope": {
+      "oneOf": [
+        {
+          "description": "Opening thread and subsequently spawned descendant threads/processes.",
+          "type": "string",
+          "const": "opening_thread_and_descendants"
+        },
+        {
+          "description": "All threads of this process, including pre-existing workers and profiler\nthreads; child processes are excluded.",
+          "type": "string",
+          "const": "all_process_threads"
+        }
       ]
     }
   }

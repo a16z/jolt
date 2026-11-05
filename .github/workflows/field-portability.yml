@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/field-portability.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -14,7 +14,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/field-portability.yml"
-      - "crates/jolt-field/**"
+      - "crates/jolt-algebra/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -57,14 +57,14 @@ jobs:
           grep -Eq '(^|[[:space:]])pclmulqdq([[:space:]]|$)' /proc/cpuinfo
       - name: Clippy binary backend
         run: |
-          cargo clippy -p jolt-field --all-targets --no-default-features --features binary
-          cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
-          cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
+          cargo clippy -p jolt-algebra --all-targets --no-default-features --features binary
+          cargo clippy -p jolt-algebra --all-targets --no-default-features --features binary,allocative
+          cargo clippy -p jolt-algebra --all-targets --features solinas,binary,allocative
       - name: Compare binary kernels with portable arithmetic
         if: matrix.kernel
-        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
+        run: cargo nextest run -p jolt-algebra --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
       - name: Run whole binary field suite
-        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
+        run: cargo nextest run -p jolt-algebra --no-default-features --features binary --cargo-quiet
 
   binary-aarch64:
     name: Binary fields on AArch64 (${{ matrix.feature }})
@@ -92,14 +92,14 @@ jobs:
           grep -Eq '(^|[[:space:]])pmull([[:space:]]|$)' /proc/cpuinfo
       - name: Clippy binary backend
         run: |
-          cargo clippy -p jolt-field --all-targets --no-default-features --features binary
-          cargo clippy -p jolt-field --all-targets --no-default-features --features binary,allocative
-          cargo clippy -p jolt-field --all-targets --features solinas,binary,allocative
+          cargo clippy -p jolt-algebra --all-targets --no-default-features --features binary
+          cargo clippy -p jolt-algebra --all-targets --no-default-features --features binary,allocative
+          cargo clippy -p jolt-algebra --all-targets --features solinas,binary,allocative
       - name: Compare binary kernels with portable arithmetic
         if: matrix.kernel
-        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
+        run: cargo nextest run -p jolt-algebra --no-default-features --features binary --cargo-quiet --lib -E 'test(=binary::tests::kernel_matches_portable)'
       - name: Run whole binary field suite
-        run: cargo nextest run -p jolt-field --no-default-features --features binary --cargo-quiet
+        run: cargo nextest run -p jolt-algebra --no-default-features --features binary --cargo-quiet
 
   avx2:
     name: AVX2 field kernels
@@ -116,11 +116,11 @@ jobs:
       - name: Run packed field tests
         env:
           RUSTFLAGS: -D warnings -C target-feature=+avx2
-        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --test solinas_packed_differential
+        run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas,asm --test solinas_packed_differential
       - name: Compare scalar Fp128 assembly with portable arithmetic
         env:
           RUSTFLAGS: -D warnings -C target-feature=+avx2
-        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+        run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
 
   aarch64-neon:
     name: AArch64 NEON field kernels
@@ -139,11 +139,11 @@ jobs:
       - name: Run packed field tests
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
-        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --test solinas_packed_differential
+        run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas,asm --test solinas_packed_differential
       - name: Compare scalar Fp128 assembly with portable arithmetic
         env:
           RUSTFLAGS: -D warnings -C target-cpu=native
-        run: cargo nextest run --release -p jolt-field --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+        run: cargo nextest run --release -p jolt-algebra --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
 
   avx512:
     name: AVX-512 field kernels (emulated)
@@ -166,9 +166,9 @@ jobs:
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
           RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
-        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas,asm --test solinas_packed_differential
+        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-algebra --no-default-features --features solinas,asm --test solinas_packed_differential
       - name: Compare scalar assembly with portable arithmetic under emulation
         env:
           CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUNNER: /opt/intel-sde/sde64 -icx --
           RUSTFLAGS: -D warnings -C target-feature=+avx2,+avx512f,+avx512dq
-        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-field --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'
+        run: cargo nextest run --release --target x86_64-unknown-linux-gnu -p jolt-algebra --no-default-features --features solinas,asm --lib -E 'test(fp128_asm_matches_portable)'

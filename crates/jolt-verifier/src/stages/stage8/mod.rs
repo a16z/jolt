@@ -13,9 +13,9 @@ pub mod outputs;
 pub mod precommitted;
 mod verify;
 
+pub use outputs::Stage8ZkOutput;
 #[cfg(not(feature = "akita"))]
-pub use outputs::Stage8ClearOutput;
-pub use outputs::{Stage8Output, Stage8ZkOutput};
+pub use outputs::{Stage8ClearOutput, Stage8Output};
 pub use precommitted::precommitted_final_openings;
 pub use verify::verify;
 #[cfg(not(feature = "akita"))]

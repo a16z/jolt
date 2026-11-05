@@ -19,8 +19,10 @@ workspace = true
 # Keccak is the stock sponge; Blake2b and Poseidon are opt-in.
 default = ["transcript-keccak"]
 # The prover's proof-of-work nonce search. It copies the sponge state, which
-# spongefish 0.8.0 exposes only under `yolocrypto`, so verifier builds leave it
-# off. `yolocrypto` changes visibility only, not the bytes absorbed or squeezed.
+# spongefish 0.8.0 exposes only under `yolocrypto`. Dory verifier builds leave
+# it off. Akita builds always have it: akita-pcs depends on akita-prover, which
+# enables it on this crate through the workspace `[patch]`. `yolocrypto`
+# changes visibility only, not the bytes absorbed or squeezed.
 prover-grinding = ["spongefish/yolocrypto"]
 solinas = ["jolt-field/solinas"]
 binary = ["jolt-field/binary"]

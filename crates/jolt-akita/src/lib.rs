@@ -68,7 +68,9 @@ pub use native_batching::{
 };
 pub use schedule_artifacts::{AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts};
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
-pub use scheme::{AkitaScheme, TraceOneHotCommitment};
+pub use scheme::{
+    AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript, TraceOneHotCommitment,
+};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw

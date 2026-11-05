@@ -2,9 +2,10 @@
 //! Verify an accumulated outer proof, consume its input batch, and export its direct-fold obligations.
 use akita_types::setup_claims::{SetupBatchStatement, SetupClaim, SetupQuery};
 use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
-use jolt_akita::{AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext};
+use jolt_akita::{
+    AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext, AkitaVerifierTranscript,
+};
 use jolt_akita_recursion::{InnerProof, Preprocessing, Vc};
-use jolt_transcript::{Blake2b512, VerifierState};
 use serde::{Deserialize, Serialize};
 use std::slice::Iter;
 
@@ -64,7 +65,7 @@ impl ExternalInput {
             AkitaField,
             AkitaScheme,
             Vc,
-            VerifierState<Blake2b512>,
+            AkitaVerifierTranscript<'_>,
         >(
             &self.preprocessing,
             &self.outer.io,
