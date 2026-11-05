@@ -17,8 +17,11 @@ import zipfile
 
 
 REPOSITORY = "a16z/jolt"
-WORKFLOW = "End-to-end prover benchmarks"
-WORKFLOW_FILE = ".github/workflows/e2e-bench.yml"
+WORKFLOW = "End-to-end benchmark ingest"
+WORKFLOW_FILE = ".github/workflows/e2e-bench-ingest.yml"
+PLAN_WORKFLOW = "End-to-end prover benchmarks"
+PLAN_WORKFLOW_FILE = ".github/workflows/e2e-bench.yml"
+APP = "0xandoroid-ai-agent[bot]"
 SITE_PATH = Path("dev/prover-history")
 ASSETS = Path(__file__).resolve().parents[2] / "web/benchmarks"
 METRICS = (
@@ -173,10 +176,13 @@ def validate_result(data):
         value = data["suite"][name]
         if type(value) is not int or value < minimum:
             raise ValueError(f"Invalid suite {name}")
-    require_fields(data["host"], (
-        "id", "architecture", "cpu_model", "kernel", "physical_cores", "logical_cpus",
-        "memory_bytes", "topology", "settings",
-    ), "Host")
+    if data["host"] is None and (data["status"] == "complete" or any(case["samples"] for case in data["cases"])):
+        raise ValueError("Measured results require a host identity")
+    if data["host"] is not None:
+        require_fields(data["host"], (
+            "id", "architecture", "cpu_model", "kernel", "physical_cores", "logical_cpus",
+            "memory_bytes", "topology", "settings",
+        ), "Host")
     require_fields(data["wall_time"], ("build_s", "benchmark_s", "total_s", "scope"), "Wall time")
     if not isinstance(data["builds"], list) or not isinstance(data["cases"], list):
         raise ValueError("Builds and cases must be arrays")
@@ -252,26 +258,26 @@ def validate_source(run, run_id, attempt):
         or run["repository"]["full_name"] != REPOSITORY
         or (run.get("head_repository") or {}).get("full_name") != REPOSITORY
         or run["path"] != WORKFLOW_FILE or run["name"] != WORKFLOW
-        or run["event"] not in {"push", "schedule", "workflow_dispatch", "pull_request_target"}
-        or (run["event"] != "pull_request_target" and run["head_branch"] != "main")
-        or run["status"] != "completed" or run["conclusion"] == "skipped" or not revision(run["head_sha"])
+        or run["event"] != "workflow_dispatch" or run["head_branch"] != "main"
+        or run["actor"]["login"] != APP
+        or run["status"] != "completed" or run["conclusion"] != "success" or not revision(run["head_sha"])
     ):
         raise ValueError("Refusing a foreign, untrusted, unfinished, skipped, or mismatched producer run")
 
 
-def validate_provenance(data, run, measured_revision, plan=None):
+def validate_provenance(data, run, measured_revision, plan):
     provenance = data["provenance"]
     expected = {
-        "workflow": WORKFLOW, "workflow_file": WORKFLOW_FILE,
+        "workflow": PLAN_WORKFLOW, "workflow_file": PLAN_WORKFLOW_FILE,
         "event": run["event"], "ref": "refs/heads/main",
-        "pr_number": plan["provenance"]["pr_number"] if plan else None,
+        "pr_number": plan["provenance"]["pr_number"],
     }
     if any(provenance[key] != value for key, value in expected.items()):
         raise ValueError("Artifact provenance does not match its GitHub workflow")
     for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"])):
         if str(provenance[field]) != str(value):
             raise ValueError(f"Artifact {field} does not match GitHub")
-    if plan is not None:
+    if plan["tier"] == "pr":
         item = plan["runs"][0]
         expected_revisions = {"base": item["base"], "head": item["submitted_head"],
                               "merge": item["head"], "harness": plan["harness"]}
@@ -284,8 +290,12 @@ def validate_provenance(data, run, measured_revision, plan=None):
         for build in data["builds"]:
             if build["revision"] != legs[build["leg"]] or build["harness_revision"] != plan["harness"]:
                 raise ValueError("PR build differs from the admitted revisions")
-            if build["status"] == "complete" and any(build.get(key) != value for key, value in
-                    plan["expected_builds"][build["revision"]].items()):
+            planned = dict(plan["expected_builds"][build["revision"]])
+            if build["native_harness_revision"] != plan["harness"]:
+                if build["native_harness_revision"] != build["revision"] or not build.get("harness_fallback_reason"):
+                    raise ValueError("PR build uses an unplanned native harness")
+                planned["harness_files"] = plan["own_harness_files"][build["revision"]]
+            if build["status"] == "complete" and any(build.get(key) != value for key, value in planned.items()):
                 raise ValueError("PR build differs from the planned native inputs")
         for case in data["cases"]:
             if any(sample["revision"] != legs[sample["leg"]] for sample in case["samples"]):
@@ -297,11 +307,17 @@ def validate_provenance(data, run, measured_revision, plan=None):
         or (expected_tier and data["tier"] != expected_tier)
         or data["revisions"]["head"] != measured_revision
         or data["revisions"]["merge"] not in {None, measured_revision}
+        or data["revisions"]["harness"] != plan["harness"]
+        or data.get("artifacts") != {"id": plan["dispatch"]["build_artifact_id"],
+            "index_sha256": plan["dispatch"]["build_index_sha256"], "plan_sha256": plan["sha256"]}
     ):
         raise ValueError("Artifact tier, purpose, or revision does not match the source run")
     for build in data["builds"]:
         if build["leg"] != "head" or build["revision"] != measured_revision:
             raise ValueError("History build does not match the source revision")
+        manifest = {key: value for key, value in build.items() if key != "leg"}
+        if digest(json.dumps(manifest, sort_keys=True, allow_nan=False).encode()) != plan["dispatch"]["manifest_digests"][measured_revision]:
+            raise ValueError("History build differs from the hosted dispatch digest")
     for case in data["cases"]:
         for sample in case["samples"]:
             if sample["leg"] != "head" or sample["revision"] != measured_revision:
@@ -319,45 +335,89 @@ def artifact_json(bundle, member):
     return bundle.read(entries[0])
 
 
-def pr_plan(run, artifacts):
-    matches = [item for item in artifacts if item["name"] == f"jolt-e2e-plan-{run['id']}-{run['run_attempt']}"]
-    if len(matches) != 1:
-        raise ValueError("PR history requires exactly one trusted plan artifact")
-    artifact = matches[0]
-    actual = artifact.get("workflow_run") or {}
-    if (actual.get("id") != run["id"] or actual.get("head_sha") != run["head_sha"]
-            or artifact["expired"] or artifact["size_in_bytes"] > 8 * 1024 * 1024):
-        raise ValueError("PR plan artifact is expired, oversized, or from another run")
-    archive = gh(f"repos/{REPOSITORY}/actions/artifacts/{int(artifact['id'])}/zip")
-    with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
-        raw = artifact_json(bundle, "plan.json")
+def producer_run(ingest):
+    title = re.fullmatch(r"e2e-bench ingest ([1-9][0-9]*)-([1-9][0-9]*)", ingest["display_title"])
+    if title is None:
+        raise ValueError("Ingest run title does not identify a producer attempt")
+    run_id, attempt = map(int, title.groups())
+    run = json.loads(gh(f"repos/{REPOSITORY}/actions/runs/{run_id}/attempts/{attempt}"))
+    if (run["id"] != run_id or run["run_attempt"] != attempt
+            or run["repository"]["full_name"] != REPOSITORY
+            or (run.get("head_repository") or {}).get("full_name") != REPOSITORY
+            or run["name"] != PLAN_WORKFLOW or run["path"] != PLAN_WORKFLOW_FILE
+            or run["event"] not in {"push", "schedule", "workflow_dispatch", "pull_request_target"}
+            or (run["event"] != "pull_request_target" and run["head_branch"] != "main")
+            or run["status"] != "completed" or run["conclusion"] != "success"):
+        raise ValueError("Ingest names an untrusted plan producer")
+    return run
+
+
+def producer_plan(ingest, bundle, run):
+    raw = artifact_json(bundle, "ingest.json")
     if raw is None:
-        raise ValueError("PR plan artifact has no plan.json")
-    plan = read_json(raw)
-    require_fields(plan, ("enabled", "tier", "runs", "harness", "provenance", "admission", "expected_builds"), "PR plan")
-    if (plan["enabled"] is not True or plan["tier"] != "pr" or len(plan["runs"]) != 1
-            or not revision(plan["harness"])):
-        raise ValueError("PR plan does not admit one comparison")
+        raise ValueError("Canonical result has no ingest receipt")
+    receipt = read_json(raw)
+    run_id, attempt = receipt["plan_run_id"], receipt["plan_run_attempt"]
+    if (receipt["schema"] != 1 or type(run_id) is not int or run_id <= 0
+            or type(attempt) is not int or attempt <= 0
+            or receipt["ingest_run_id"] != ingest["id"] or receipt["ingest_run_attempt"] != ingest["run_attempt"]
+            or receipt["job_id"] != f"{run_id}-{attempt}"
+            or ingest["display_title"] != f"e2e-bench ingest {receipt['job_id']}"):
+        raise ValueError("Ingest receipt does not match the App run and job")
+    if (run["id"], run["run_attempt"]) != (run_id, attempt):
+        raise ValueError("Ingest receipt names a different producer attempt")
+    artifacts, page = [], 1
+    while True:
+        batch = json.loads(gh(f"repos/{REPOSITORY}/actions/runs/{run_id}/artifacts?per_page=100&page={page}"))["artifacts"]
+        artifacts.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    documents = {}
+    for prefix, member, id_key, hash_key in (
+            ("jolt-e2e-plan", "plan.json", "plan_artifact_id", "plan_sha256"),
+            ("jolt-e2e-dispatch", "dispatch.json", "dispatch_artifact_id", "dispatch_sha256")):
+        matches = [item for item in artifacts if item["name"] == f"{prefix}-{run_id}-{attempt}"]
+        if len(matches) != 1:
+            raise ValueError("History requires one exact plan-run artifact per attempt")
+        artifact = matches[0]
+        if (artifact["id"] != receipt[id_key] or artifact["expired"]
+                or artifact["workflow_run"]["id"] != run_id or artifact["size_in_bytes"] > 8 * 1024 * 1024):
+            raise ValueError("Plan-run artifact differs from the trusted ingest receipt")
+        archive = gh(f"repos/{REPOSITORY}/actions/artifacts/{int(artifact['id'])}/zip")
+        with zipfile.ZipFile(io.BytesIO(archive)) as source:
+            content = artifact_json(source, member)
+        if content is None or digest(content) != receipt[hash_key]:
+            raise ValueError("Plan-run artifact digest differs from the ingest receipt")
+        documents[member] = read_json(content)
+    plan, dispatch = documents["plan.json"], documents["dispatch.json"]
     provenance = plan["provenance"]
-    if (provenance["event"] != "pull_request_target" or provenance["ref"] != "refs/heads/main"
-            or provenance["workflow_file"] != WORKFLOW_FILE or provenance["workflow"] != WORKFLOW
-            or str(provenance["run_id"]) != str(run["id"])
-            or str(provenance["run_attempt"]) != str(run["run_attempt"])
-            or type(provenance["pr_number"]) is not int or provenance["pr_number"] <= 0):
-        raise ValueError("PR plan is not from the trusted producer attempt")
-    # GitHub can omit the admitted PR from run.pull_requests, for example after it merges; such a result is archived as rejected.
-    if provenance["pr_number"] not in [pr["number"] for pr in run.get("pull_requests") or ()]:
-        raise ValueError("PR plan number is not a pull request of the producer run")
-    item = plan["runs"][0]
-    admission = plan["admission"]
-    if (item["submitted_head"] != run["head_sha"] or not revision(item["base"])
-            or not revision(item["head"]) or admission["head_ref"] != run["head_branch"]
-            or type(admission["label_event_id"]) is not int or not admission["label_actor"]):
-        raise ValueError("PR plan does not match the source branch and head")
-    commit = json.loads(gh(f"repos/{REPOSITORY}/commits/{item['head']}"))
-    if [parent["sha"] for parent in commit["parents"]] != [item["base"], item["submitted_head"]]:
-        raise ValueError("PR merge parents differ from the admitted base and head")
-    return dict(plan, sha256=digest(raw), artifact_id=artifact["id"])
+    if (plan["enabled"] is not True or not plan["runs"] or not revision(plan["harness"])
+            or dispatch["schema"] != 1 or dispatch["tier"] != plan["tier"]
+            or dispatch["run_id"] != run_id or dispatch["run_attempt"] != attempt
+            or provenance["workflow_file"] != PLAN_WORKFLOW_FILE or provenance["workflow"] != PLAN_WORKFLOW
+            or provenance["event"] != run["event"] or provenance["ref"] != "refs/heads/main"
+            or str(provenance["run_id"]) != str(run_id) or str(provenance["run_attempt"]) != str(attempt)):
+        raise ValueError("Plan and dispatch do not match their trusted producer attempt")
+    if plan["tier"] == "pr":
+        item = plan["runs"][0]
+        admission = plan["admission"]
+        if (run["event"] != "pull_request_target" or len(plan["runs"]) != 1
+                or provenance["pr_number"] not in [pr["number"] for pr in run.get("pull_requests") or ()]):
+            raise ValueError("PR plan number is not a pull request of the producer run")
+        if (item["submitted_head"] != run["head_sha"] or not revision(item["base"])
+                or not revision(item["head"]) or admission["head_ref"] != run["head_branch"]
+                or dispatch["check_sha"] != item["submitted_head"]
+                or dispatch["pr"] != {"number": provenance["pr_number"], "head_sha": item["submitted_head"],
+                    "label_event_id": admission["label_event_id"], "label_actor": admission["label_actor"]}):
+            raise ValueError("PR plan does not match its admitted source and label")
+        commit = json.loads(gh(f"repos/{REPOSITORY}/commits/{item['head']}"))
+        if [parent["sha"] for parent in commit["parents"]] != [item["base"], item["submitted_head"]]:
+            raise ValueError("PR merge parents differ from the admitted base and head")
+    elif (run["event"] == "pull_request_target" or run["head_branch"] != "main"
+            or plan["runs"][-1]["head"] != run["head_sha"] or dispatch["check_sha"] != run["head_sha"]):
+        raise ValueError("History plan is not bound to the measured main revision")
+    return dict(plan, sha256=receipt["plan_sha256"], artifact_id=receipt["plan_artifact_id"], dispatch=dispatch)
 
 
 def first_parent_revisions(before, after, oldest):
@@ -424,19 +484,20 @@ def push_documents(raw_index, run):
     }
 
 
-def source_record(run, publisher_revision, measured_revision):
+def source_record(run, publisher_revision, measured_revision, producer):
     return {
         "key": f"github-{measured_revision}-{run['id']}-{run['run_attempt']}",
         "source": {
             "type": "github", "repository": REPOSITORY, "commit": measured_revision,
             "run_head_sha": run["head_sha"], "run_id": run["id"], "run_attempt": run["run_attempt"],
-            "event": run["event"], "workflow": WORKFLOW, "workflow_file": WORKFLOW_FILE,
+            "event": producer["event"], "workflow": WORKFLOW, "workflow_file": WORKFLOW_FILE,
             "url": f"https://github.com/{REPOSITORY}/actions/runs/{run['id']}/attempts/{run['run_attempt']}",
             "conclusion": run["conclusion"], "artifact": None,
+            "plan_run_id": producer["id"], "plan_run_attempt": producer["run_attempt"],
         },
-        "started_at": utc_timestamp(run["run_started_at"]),
-        "tier": {"push": "main", "schedule": "nightly", "pull_request_target": "pr"}.get(run["event"], "unknown"),
-        "kind": "comparison" if run["event"] == "pull_request_target" else "history",
+        "started_at": utc_timestamp(producer["run_started_at"]),
+        "tier": {"push": "main", "schedule": "nightly", "pull_request_target": "pr"}.get(producer["event"], "unknown"),
+        "kind": "comparison" if producer["event"] == "pull_request_target" else "history",
         "status": "missing", "publication_status": "missing",
         "reason": "Producer completed without the expected artifact; the point values are unknown.",
         "benchmark_schema": None, "sha256": None, "push_index": None, "push_index_sha256": None,
@@ -448,6 +509,7 @@ def collect(run_id, attempt, publisher_revision):
     root = f"repos/{REPOSITORY}/actions"
     run = json.loads(gh(f"{root}/runs/{run_id}/attempts/{attempt}"))
     validate_source(run, run_id, attempt)
+    producer = producer_run(run)
     expected_name = f"jolt-e2e-{run_id}-{attempt}"
     artifacts = []
     page = 1
@@ -457,14 +519,7 @@ def collect(run_id, attempt, publisher_revision):
         if len(batch) < 100:
             break
         page += 1
-    record = source_record(run, publisher_revision, run["head_sha"])
-    plan = None
-    if run["event"] == "pull_request_target":
-        try:
-            plan = pr_plan(run, artifacts)
-        except (ValueError, TypeError, KeyError, zipfile.BadZipFile) as error:
-            record.update(publication_status="rejected", status="rejected", reason=str(error))
-            return [(record, None)], None
+    record = source_record(run, publisher_revision, producer["head_sha"], producer)
     artifacts = [item for item in artifacts if item["name"] == expected_name]
     root_raw = None
     raw_index = None
@@ -486,29 +541,31 @@ def collect(run_id, attempt, publisher_revision):
             archive = gh(f"{root}/artifacts/{int(artifact['id'])}/zip")
             try:
                 with zipfile.ZipFile(io.BytesIO(archive)) as bundle:
+                    plan = producer_plan(run, bundle, producer)
                     root_raw = artifact_json(bundle, "benchmark-results.json")
                     raw_index = artifact_json(bundle, "index.json")
-                    expected, declared, bounds = [run["head_sha"]], {run["head_sha"]}, None
+                    expected, declared, bounds = [producer["head_sha"]], {producer["head_sha"]}, None
                     if raw_index is not None:
                         record["push_index"] = f"runs/{record['key']}.index.json"
                         record["push_index_sha256"] = digest(raw_index)
-                        expected, declared, bounds = push_documents(raw_index, run)
+                        expected, declared, bounds = push_documents(raw_index, producer)
                     records = []
                     for position, sha in enumerate(expected):
-                        item = source_record(run, publisher_revision, sha)
-                        if plan is not None:
+                        item = source_record(run, publisher_revision, sha, producer)
+                        item["tier"] = plan["tier"]
+                        item["source"].update(plan_artifact_id=plan["artifact_id"], plan_sha256=plan["sha256"])
+                        if plan["tier"] == "pr":
                             item["source"].update(pr_number=plan["provenance"]["pr_number"],
                                 base_commit=plan["runs"][0]["base"], merge_commit=plan["runs"][0]["head"],
                                 harness_revision=plan["harness"], label_event_id=plan["admission"]["label_event_id"],
-                                label_actor=plan["admission"]["label_actor"],
-                                plan_artifact_id=plan["artifact_id"], plan_sha256=plan["sha256"])
+                                label_actor=plan["admission"]["label_actor"])
                         item["source"]["artifact"] = record["source"]["artifact"]
                         item["source"]["commit_index"] = position
                         if bounds is not None:
                             item["source"]["push_range"] = bounds
                             item["push_index"] = record["push_index"]
                             item["push_index_sha256"] = record["push_index_sha256"]
-                        member = "benchmark-results.json" if sha == run["head_sha"] else f"commits/{sha}/benchmark-results.json"
+                        member = "benchmark-results.json" if sha == producer["head_sha"] else f"commits/{sha}/benchmark-results.json"
                         raw = artifact_json(bundle, member)
                         if raw is not None:
                             item["sha256"] = digest(raw)
@@ -520,13 +577,13 @@ def collect(run_id, attempt, publisher_revision):
                                 if isinstance(data, dict):
                                     item["benchmark_schema"] = data.get("schema_version")
                                 validate_result(data)
-                                validate_provenance(data, run, sha, plan)
+                                validate_provenance(data, producer, sha, plan)
                                 item.update(tier=data["tier"], kind=data["kind"], status=data["status"], publication_status="ready", reason=data["reason"])
                             except (ValueError, TypeError) as error:
                                 item.update(publication_status="rejected", status="rejected", reason=str(error))
                         records.append((item, raw))
                     return records, raw_index
-            except (ValueError, TypeError, zipfile.BadZipFile, RuntimeError) as error:
+            except (ValueError, TypeError, KeyError, zipfile.BadZipFile, RuntimeError) as error:
                 record.update(publication_status="rejected", status="rejected", reason=str(error))
     if root_raw is not None:
         record["sha256"] = digest(root_raw)

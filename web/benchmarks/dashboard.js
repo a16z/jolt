@@ -114,7 +114,7 @@ function renderRegimes() {
   const matching = points.filter((point) => point.key === $("point-select").value);
   const unique = new Map(matching.map((point) => [point.regime, point]));
   choices($("regime-select"), [...unique].map(([key, point], i) => [key,
-    `Configuration ${i + 1}: ${point.data.host.id} / ${point.data.host.cpu_model} / ${point.build?.profile ?? "unknown profile"} / ${point.build?.target_cpu ?? "unknown target"} / ${point.build?.rustflags ?? "unknown flags"}`,
+    `Configuration ${i + 1}: ${point.data.host?.id ?? "unknown host"} / ${point.data.host?.cpu_model ?? "unknown CPU"} / ${point.build?.profile ?? "unknown profile"} / ${point.build?.target_cpu ?? "unknown target"} / ${point.build?.rustflags ?? "unknown flags"}`,
   ]), "No host/build configurations");
   render();
 }

@@ -14,6 +14,17 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 
 ## Essential Commands
 
+### Prover benchmark history
+
+The history publisher collects the Pika App's successful **End-to-end benchmark ingest**
+runs, not the planning workflow. Its canonical artifact is
+`jolt-e2e-INGEST_RUN_ID-ATTEMPT`; `ingest.json` binds it to the original plan and
+measured revisions. PR code runs only as `runner` on `jolt-bench`, never on the
+daemon host. Merge #2215 before this companion (#2213). Publication appends only
+under `dev/prover-history/` on the existing `gh-pages` source and leaves `dev/bench/`
+unchanged. See `book/src/usage/profiling/benchmark_history.md` and the producer's
+`scripts/bench/README.md` for setup and admission.
+
 ### Linting and Formatting
 
 ```bash

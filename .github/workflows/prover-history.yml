@@ -2,7 +2,7 @@ name: Publish prover benchmark history
 
 on:
   workflow_run:
-    workflows: [End-to-end prover benchmarks]
+    workflows: [End-to-end benchmark ingest]
     types: [completed]
   pull_request:
     paths:
@@ -14,10 +14,10 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Producer run to archive; leave empty to redeploy the existing site
+        description: Ingest run to archive; leave empty to redeploy the existing site
         type: string
       run_attempt:
-        description: Producer attempt to archive (each attempt is retained separately)
+        description: Ingest attempt to archive (each attempt is retained separately)
         type: string
         default: '1'
 
@@ -44,11 +44,12 @@ jobs:
     if: >-
       github.repository == 'a16z/jolt' &&
       ((github.event_name == 'workflow_run' &&
-        github.event.workflow_run.conclusion != 'skipped' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.actor.login == '0xandoroid-ai-agent[bot]' &&
         github.event.workflow_run.head_repository.full_name == github.repository &&
-        (github.event.workflow_run.head_branch == 'main' || github.event.workflow_run.event == 'pull_request_target') &&
-        contains(fromJSON('["push","schedule","workflow_dispatch","pull_request_target"]'), github.event.workflow_run.event) &&
-        github.event.workflow_run.path == '.github/workflows/e2e-bench.yml') ||
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.event == 'workflow_dispatch' &&
+        github.event.workflow_run.path == '.github/workflows/e2e-bench-ingest.yml') ||
        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     permissions:

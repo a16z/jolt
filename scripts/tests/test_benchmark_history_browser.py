@@ -168,13 +168,13 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
         with self.subTest(pcs="dory"):
             self.assertEqual(self.page.locator("#regime-select option").count(), 3)
             self.assertEqual(self.page.locator(".chart-point").count(), 4)
-            self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "12")
-            changed = self.page.locator("#history-rows tr").filter(has_text="Run 102, attempt 1")
+            self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 1101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "12")
+            changed = self.page.locator("#history-rows tr").filter(has_text="Run 1102, attempt 1")
             self.assertEqual(changed.locator("td").nth(2).inner_text().splitlines()[0], "22")
             build = json.loads(changed.locator("pre").text_content())["build"]
             self.assertEqual(build["source_cargo_lock_sha256"], "b" * 64)
             self.assertEqual(build["cargo_lock_sha256"], "c" * 64)
-            changed = self.page.locator("#history-rows tr").filter(has_text="Run 104, attempt 1")
+            changed = self.page.locator("#history-rows tr").filter(has_text="Run 1104, attempt 1")
             self.assertEqual(changed.locator("td").nth(2).inner_text().splitlines()[0], "32")
             build = json.loads(changed.locator("pre").text_content())["build"]
             self.assertEqual(build["host"]["settings"]["swap_free_bytes"], 8110710784)
@@ -197,7 +197,7 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
             self.assertEqual(self.page.locator("#regime-select option").count(), 1)
             self.assertEqual(self.page.locator(".chart-point").count(), 2)
             for number in (115, 116):
-                changed = self.page.locator("#history-rows tr").filter(has_text=f"Run {number}, attempt 1")
+                changed = self.page.locator("#history-rows tr").filter(has_text=f"Run {number + 1000}, attempt 1")
                 build = json.loads(changed.locator("pre").text_content())["build"]
                 self.assertEqual(build["akita_schedules"][0]["sha256"], f"{number:064x}")
         self.page.get_by_role("button", name="Nightly", exact=True).click()
@@ -209,7 +209,7 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
 
     def test_failed_and_missing_values_break_lines_and_never_execute_data(self):
         self.select_point()
-        failed = self.page.locator("#history-rows tr").filter(has_text="Run 103, attempt 1")
+        failed = self.page.locator("#history-rows tr").filter(has_text="Run 1103, attempt 1")
         self.assertEqual(failed.locator("td").nth(2).inner_text(), "—")
         self.assertIn("failed", failed.inner_text())
         self.assertIn("<img", failed.inner_text())
@@ -218,20 +218,36 @@ class BenchmarkHistoryBrowserTests(unittest.TestCase):
         paths = self.page.locator(".chart-line").evaluate_all("paths => paths.map(p => p.getAttribute('points').trim().split(' ').length)")
         self.assertEqual(paths, [2, 2])
         self.page.select_option("#metric-select", "peak_rss_bytes")
-        missing_metric = self.page.locator("#history-rows tr").filter(has_text="Run 105, attempt 1")
+        missing_metric = self.page.locator("#history-rows tr").filter(has_text="Run 1105, attempt 1")
         self.assertEqual(missing_metric.locator("td").nth(2).inner_text(), "—")
         self.assertIn("missing", missing_metric.inner_text())
-        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "100")
-        self.assertIn("missing", self.page.locator("#history-rows tr").filter(has_text="Run 111, attempt 1").inner_text())
-        self.assertIn("disabled", self.page.locator("#history-rows tr").filter(has_text="Run 112, attempt 1").inner_text())
-        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 114, attempt 1").locator("td").nth(2).inner_text(), "—")
+        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 1101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "100")
+        self.assertIn("missing", self.page.locator("#history-rows tr").filter(has_text="Run 1111, attempt 1").inner_text())
+        self.assertIn("disabled", self.page.locator("#history-rows tr").filter(has_text="Run 1112, attempt 1").inner_text())
+        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 1114, attempt 1").locator("td").nth(2).inner_text(), "—")
         self.page.select_option("#metric-select", "verify_s")
-        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "0.3")
+        self.assertEqual(self.page.locator("#history-rows tr").filter(has_text="Run 1101, attempt 1").locator("td").nth(2).inner_text().splitlines()[0], "0.3")
+        self.assert_clean()
+
+    def test_finalized_unexecuted_results_show_unknown_host_and_no_values(self):
+        data = synthetic_result(123)
+        data.update(status='incomplete', host=None, builds=[], reason='target did not produce measurements')
+        data['cases'][0].update(status='missing', samples=[], cpu_ids=[])
+        record, raw = collected_fixture(data)
+        history.append_site(self.site / 'partial-fixture', [(record, raw)])
+        self.requests.clear()
+        self.url = self.url.replace('/dev/prover-history/', '/partial-fixture/dev/prover-history/')
+        self.page.goto(self.url)
+        expect(self.page.locator('#load-status')).to_contain_text('archived run records')
+        self.assertIn('unknown host / unknown CPU', self.page.locator('#regime-select').inner_text())
+        self.assertEqual(self.page.locator('#history-rows tr').count(), 1)
+        self.assertEqual(self.page.locator('#history-rows td').nth(2).inner_text(), '—')
+        self.assertEqual(self.page.locator('.chart-point').count(), 0)
         self.assert_clean()
 
     def test_integer_metrics_keep_all_digits_in_values_ranges_and_tooltips(self):
         self.select_point()
-        row = self.page.locator("#history-rows tr").filter(has_text="Run 101, attempt 1")
+        row = self.page.locator("#history-rows tr").filter(has_text="Run 1101, attempt 1")
         for metric, value, extent in (
             ("proof_bytes", "123,456", "123,455–123,457"),
             ("trace_rows", "4,194,301", "4,194,300–4,194,302"),

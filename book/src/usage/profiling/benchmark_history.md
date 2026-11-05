@@ -3,7 +3,7 @@
 The dashboard lives at `dev/prover-history/` on the existing `gh-pages` branch.
 It appends each result and its raw JSON without changing `dev/bench/` or other
 site files. Main, nightly and opted-in PR comparisons have separate views.
-Benchmark execution requires the restricted runner and producer setup in
+Benchmark execution requires the Pika App dispatcher and forced-command target setup in
 `scripts/bench/README.md`; publication needs neither a new repository variable
 nor a Pages-source change.
 
@@ -48,25 +48,31 @@ artifact-only timings do not predict changed-source PR compilation time.
 
 ## Trusted collection and append-only publication
 
-`prover-history.yml` reacts to completed **End-to-end prover benchmarks** runs,
-including failed and cancelled ones, or a manual dispatch on `main`. It ignores
-skipped runs, which are PR pushes and label events that were never admitted, and
-the collector refuses them. Its executable collector and UI assets are checked
-out from `main`, never from the source PR or an artifact.
-The workflow can only publish the configured legacy site: `gh-pages` at `/`.
-It does not edit that setting or a deployment environment.
+`prover-history.yml` collects successful **End-to-end benchmark ingest** runs
+started by `0xandoroid-ai-agent[bot]` on main, or replays such a run by manual
+dispatch. A successful ingest may contain a failed target measurement: validation
+success does not mean the benchmark succeeded. Failed, cancelled or skipped
+ingests are refused because they have no validated canonical publication.
+The executable collector and UI assets come from main, never the source PR or
+an artifact. The workflow publishes only to the existing legacy Pages source,
+`gh-pages` at `/`, and does not edit that setting.
 
-The collector verifies repository, producer workflow/name/path, event, attempt,
-artifact ID/name and source revisions. Main/nightly sources must be main-branch
-push, schedule or dispatch runs. PR sources must be trusted `pull_request_target`
-runs and carry a matching `jolt-e2e-plan-RUN_ID-ATTEMPT` artifact whose PR number
-is in the run's `pull_requests`. When GitHub returns no matching PR there, the
-result is archived as rejected; the runs of merged PR 2188 are one observed case.
-The plan binds label admission, base/head/merge/harness, native build inputs and
-merge parents; GitHub's run head is the submitted PR head, not the trusted
-harness revision.
-Current PR state can change after a valid run; that does not rewrite its history.
-Only JSON is read. Downloaded scripts, HTML and binaries are never executed.
+The canonical artifact is `jolt-e2e-INGEST_RUN_ID-ATTEMPT`. Its `ingest.json`
+receipt binds the ingest attempt to the original plan run/attempt, job ID, plan
+and dispatch artifact IDs and SHA-256 digests. The collector checks repository,
+ingest actor/name/path, event, main branch, attempt and display title. It follows
+the receipt to the successful **End-to-end prover benchmarks** producer and its
+exact plan and dispatch artifacts. The ingest workflow's own main checkout SHA
+is not the measured commit.
+
+The result JSON retains the original plan run's provenance. Main/nightly plans
+are bound to the producer's main head. PR plans bind the payload PR number,
+label event/actor, base, submitted head, measured merge and harness; merge parents
+and planned native inputs are checked. GitHub's `pull_request_target` run head
+is the submitted PR head. When GitHub no longer returns that PR in the producer's
+`pull_requests`, collection is rejected. Current PR state can change after a
+valid measurement; it does not rewrite archived history. Only JSON is read;
+downloaded scripts, HTML and binaries are never executed.
 
 For multi-commit pushes, `index.json` declares the oldest-first documents. The
 tip uses `benchmark-results.json`; earlier commits use
@@ -76,7 +82,8 @@ is not independent proof of the original event boundary. The original index is
 archived with the results. The page shows received records, not proof that no
 provider job was missed.
 
-Each immutable key includes measured revision, source run ID and attempt.
+Each immutable key includes measured revision, ingest run ID and attempt.
+The record also retains the original plan run ID and attempt.
 Identical replay is a no-op; conflicting bytes are refused. Expired upstream
 artifacts cannot erase archived results. Missing, rejected, unsupported and
 failed runs remain visible rather than becoming zero timings. JSON is limited
@@ -107,16 +114,16 @@ Pages build completed: check that build and both URLs after the first merged run
 [Pages build API](https://docs.github.com/en/rest/pages/pages#request-a-github-pages-build),
 [GITHUB_TOKEN type](https://docs.github.com/en/actions/concepts/security/github_token)
 
-Merge the reviewed producer and publisher, preserving the existing branch-based
-site and allowed actions. Then a producer completion appends and requests a
-build automatically. A user with workflow-dispatch permission can refresh assets
-or replay an existing producer attempt before its artifact expires:
+Merge #2215 first, then this publisher (#2213), preserving the existing
+branch-based site and allowed actions. A successful ingest then appends results
+and requests a build automatically. A user with workflow-dispatch permission can refresh assets
+or replay an existing ingest attempt before its artifact expires:
 
 ```sh
 # Refresh history assets and request a build of the existing site.
 gh workflow run prover-history.yml --repo a16z/jolt --ref main
 
-# Append a specific existing producer attempt, preserving its original identity.
+# Append a specific existing ingest attempt, preserving its original identity.
 gh workflow run prover-history.yml --repo a16z/jolt --ref main \
   -f run_id="$RUN_ID" -f run_attempt="$RUN_ATTEMPT"
 ```
@@ -153,5 +160,5 @@ uv run --no-project --with playwright==1.61.0 python -m unittest scripts.tests.t
 Browser checks use bundled headless Chromium and the page's unchanged content
 policy. They exercise PR/main separation, filters, details, raw downloads,
 failure gaps, hostile strings and mobile/desktop layout. A live dashboard still
-needs merged workflows, an enabled restricted runner and actual received runs;
+needs merged workflows, an enabled App dispatcher and target, and received ingest runs;
 source and preview checks do not establish live execution or deployment.

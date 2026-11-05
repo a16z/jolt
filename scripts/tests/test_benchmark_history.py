@@ -53,6 +53,7 @@ def synthetic_result(run_id=101, attempt=1, tier="main", revision=REVISION):
         },
         "builds": [{
             "schema_version": 1, "leg": "head", "revision": revision, "harness_revision": REVISION,
+            "native_harness_revision": REVISION,
             "toolchain": "synthetic-rustc", "rustflags": "-C target-cpu=synthetic", "cargo_lock_sha256": "d" * 64,
             "cargo_version": "synthetic-cargo", "target_cpu": "synthetic", "target_triple": "x86_64-unknown-linux-gnu",
             "target_features": ["sse2"], "profile": "release", "source_cargo_lock_sha256": "d" * 64,
@@ -76,16 +77,72 @@ def synthetic_result(run_id=101, attempt=1, tier="main", revision=REVISION):
     }
 
 
-def synthetic_run(data):
+def synthetic_plan_run(data):
     return {
         "id": int(data["provenance"]["run_id"]), "run_attempt": data["provenance"]["run_attempt"],
         "repository": {"full_name": "a16z/jolt"}, "head_repository": {"full_name": "a16z/jolt"},
         "path": ".github/workflows/e2e-bench.yml", "name": "End-to-end prover benchmarks",
-        "head_branch": "candidate" if data["tier"] == "pr" else "main",
+        "head_branch": "candidate" if data["provenance"]["event"] == "pull_request_target" else "main",
         "head_sha": data["revisions"]["head"], "event": data["provenance"]["event"],
         "status": "completed", "conclusion": "success", "run_started_at": data["started_at"],
-        "pull_requests": [{"number": data["provenance"]["pr_number"]}] if data["provenance"]["pr_number"] else [],
+        "pull_requests": [{"number": data["provenance"]["pr_number"], "base": {"ref": "main"}}] if data["provenance"]["pr_number"] else [],
     }
+
+
+def synthetic_run(data):
+    run = synthetic_plan_run(data)
+    run.update(id=run['id'] + 1000, event='workflow_dispatch', path=history.WORKFLOW_FILE,
+               name=history.WORKFLOW, head_branch='main', head_sha='f' * 40,
+               actor={'login': history.APP},
+               display_title=f"e2e-bench ingest {data['provenance']['run_id']}-{data['provenance']['run_attempt']}")
+    return run
+
+
+def producer_fixture(data, run, *, runs=None, plan_run_change=None, builds=None):
+    producer = synthetic_plan_run(data)
+    producer['id'], producer['run_attempt'] = map(int, run['display_title'].split()[-1].split('-'))
+    producer.update(plan_run_change or {})
+    paired = data['provenance']['event'] == 'pull_request_target'
+    plan = {'enabled': True, 'tier': 'pr' if paired else data['tier'], 'harness': REVISION,
+            'provenance': copy.deepcopy(data['provenance']),
+            'runs': runs or [{'base': 'b' * 40 if paired else None,
+                             'head': 'c' * 40 if paired else data['revisions']['head'],
+                             'submitted_head': data['revisions']['head']}],
+            'admission': {'label_event_id': 11, 'label_actor': 'maintainer', 'head_ref': 'candidate'},
+            'expected_builds': {build['revision']: {key: build[key] for key in (
+                'revision', 'harness_revision', 'profile', 'rustflags')} for build in data['builds']},
+            'own_harness_files': {build['revision']: build['harness_files'] for build in data['builds']}}
+    for build in plan['expected_builds'].values():
+        build['harness_files'] = {'profile.rs': '1' * 64}
+    dispatch = {'schema': 1, 'tier': plan['tier'], 'run_id': producer['id'], 'run_attempt': producer['run_attempt'],
+                'check_sha': producer['head_sha'], 'pr': None,
+                'build_artifact_id': None if paired else 45, 'build_index_sha256': None if paired else 'e' * 64,
+                'manifest_digests': {build['revision']: history.digest(json.dumps(
+                    {key: value for key, value in build.items() if key != 'leg'}, sort_keys=True).encode())
+                    for build in (builds or data['builds'])}}
+    if paired:
+        dispatch['pr'] = {'number': data['provenance']['pr_number'], 'head_sha': data['revisions']['head'],
+                          'label_event_id': 11, 'label_actor': 'maintainer'}
+    plan_raw, dispatch_raw = json.dumps(plan).encode(), json.dumps(dispatch).encode()
+    data.setdefault('artifacts', {})['plan_sha256'] = history.digest(plan_raw)
+    if not paired:
+        data['artifacts'].update(id=45, index_sha256='e' * 64)
+    receipt = {'schema': 1, 'plan_run_id': producer['id'], 'plan_run_attempt': producer['run_attempt'],
+               'ingest_run_id': run['id'], 'ingest_run_attempt': run['run_attempt'],
+               'job_id': f"{producer['id']}-{producer['run_attempt']}", 'plan_artifact_id': 43,
+               'dispatch_artifact_id': 44, 'plan_sha256': history.digest(plan_raw),
+               'dispatch_sha256': history.digest(dispatch_raw)}
+    artifacts = [dict(id=value, name=f"{prefix}-{producer['id']}-{producer['run_attempt']}",
+                      expired=False, size_in_bytes=100,
+                      workflow_run={'id': producer['id'], 'head_sha': producer['head_sha']})
+                 for value, prefix in ((43, 'jolt-e2e-plan'), (44, 'jolt-e2e-dispatch'))]
+    archives = {}
+    for value, member, content in ((43, 'plan.json', plan_raw), (44, 'dispatch.json', dispatch_raw)):
+        archive = io.BytesIO()
+        with zipfile.ZipFile(archive, 'w') as bundle:
+            bundle.writestr(member, content)
+        archives[value] = archive.getvalue()
+    return producer, receipt, artifacts, archives
 
 
 def synthetic_pr_result():
@@ -104,52 +161,39 @@ def synthetic_pr_result():
     return data
 
 
-def collected_fixture(data, *, run=None, missing=False, extra_zip=None, artifact_change=None):
+def collected_fixture(data, *, run=None, missing=False, extra_zip=None, artifact_change=None,
+                      plan_run_change=None, receipt_change=None):
     run = run or synthetic_run(data)
+    producer, receipt, plan_artifacts, archives = producer_fixture(data, run, plan_run_change=plan_run_change)
+    receipt.update(receipt_change or {})
     raw = (json.dumps(data, indent=4) + "\n").encode()
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr("benchmark-results.json", raw)
+        bundle.writestr("ingest.json", json.dumps(receipt))
         for name, content in (extra_zip or {}).items():
             bundle.writestr(name, content)
-    artifact = {
-        "id": 42, "name": f"jolt-e2e-{run['id']}-{run['run_attempt']}", "expired": False,
+    artifact = {"id": 42, "name": f"jolt-e2e-{run['id']}-{run['run_attempt']}", "expired": False,
         "size_in_bytes": len(archive.getvalue()), "digest": "sha256:synthetic",
-        "workflow_run": {"id": run["id"], "head_sha": run["head_sha"]},
-    }
+        "workflow_run": {"id": run["id"], "head_sha": run["head_sha"]}}
     artifact.update(artifact_change or {})
-    extra_artifacts = []
-    if data["tier"] == "pr" and data["provenance"]["event"] == "pull_request_target":
-        plan = {"enabled": True, "tier": "pr", "harness": REVISION,
-                "provenance": copy.deepcopy(data["provenance"]),
-                "runs": [{"base": "b" * 40, "head": "c" * 40, "submitted_head": REVISION}],
-                "admission": {"label_event_id": 11, "label_actor": "maintainer", "head_ref": "candidate"},
-                "expected_builds": {sha: {"revision": sha, "harness_revision": REVISION,
-                    "profile": "release", "rustflags": "-C target-cpu=synthetic"} for sha in ("b" * 40, "c" * 40)}}
-        plan_raw = json.dumps(plan).encode()
-        data["artifacts"]["plan_sha256"] = history.digest(plan_raw)
-        raw = (json.dumps(data, indent=4) + "\n").encode()
-        archive = io.BytesIO()
-        with zipfile.ZipFile(archive, "w") as bundle:
-            bundle.writestr("benchmark-results.json", raw)
-        plan_archive = io.BytesIO()
-        with zipfile.ZipFile(plan_archive, "w") as bundle:
-            bundle.writestr("plan.json", plan_raw)
-        extra_artifacts = [dict(artifact, id=43, name=f"jolt-e2e-plan-{run['id']}-{run['run_attempt']}")]
-
     def api(path):
-        if "/attempts/" in path:
+        if path == f"repos/a16z/jolt/actions/runs/{run['id']}/attempts/{run['run_attempt']}":
             return json.dumps(run).encode()
+        if path == f"repos/a16z/jolt/actions/runs/{producer['id']}/attempts/{producer['run_attempt']}":
+            return json.dumps(producer).encode()
+        if f"/runs/{producer['id']}/artifacts?" in path:
+            return json.dumps({'artifacts': plan_artifacts}).encode()
         if "/artifacts?" in path:
-            return json.dumps({"artifacts": extra_artifacts + ([] if missing else [artifact])}).encode()
+            return json.dumps({"artifacts": [] if missing else [artifact]}).encode()
         if path.endswith("/artifacts/42/zip"):
             return archive.getvalue()
-        if path.endswith("/artifacts/43/zip"):
-            return plan_archive.getvalue()
+        for value, content in archives.items():
+            if path.endswith(f'/artifacts/{value}/zip'):
+                return content
         if path.endswith("/commits/" + "c" * 40):
             return json.dumps({"parents": [{"sha": "b" * 40}, {"sha": REVISION}]}).encode()
         raise AssertionError(f"Unexpected API call: {path}")
-
     with mock.patch.object(history, "gh", side_effect=api):
         records, raw_index = history.collect(run["id"], run["run_attempt"], REVISION)
         assert raw_index is None and len(records) == 1
@@ -169,11 +213,15 @@ def collected_push(*, omit_index_entry=False, bad_path=False, wrong_revision=Fal
         documents.pop(1)
     if bad_path:
         documents[0]["path"] = "../benchmark-results.json"
-    raw_index = json.dumps({"schema_version": 1, "push_before": before, "push_after": tip, "documents": documents}).encode()
     earlier = synthetic_result(200, revision=tip if wrong_revision else first)
+    producer, receipt, plan_artifacts, archives = producer_fixture(data, run, builds=[*data['builds'], *earlier['builds']], runs=[
+        {'base': None, 'head': sha, 'submitted_head': sha} for sha in (first, missing, tip)])
+    raw_index = json.dumps({"schema_version": 1, "push_before": before, "push_after": tip, "documents": documents}).encode()
+    earlier["artifacts"] = copy.deepcopy(data["artifacts"])
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr("index.json", raw_index)
+        bundle.writestr("ingest.json", json.dumps(receipt))
         bundle.writestr("benchmark-results.json", json.dumps(data))
         bundle.writestr(f"commits/{first}/benchmark-results.json", json.dumps(earlier))
     comparison = {
@@ -185,22 +233,28 @@ def collected_push(*, omit_index_entry=False, bad_path=False, wrong_revision=Fal
             {"sha": tip, "parents": [{"sha": missing}, {"sha": side}]},
         ],
     }
-    artifact = {"id": 42, "name": "jolt-e2e-200-1", "expired": False, "size_in_bytes": len(archive.getvalue()),
-                "workflow_run": {"id": 200, "head_sha": tip}}
+    artifact = {"id": 42, "name": "jolt-e2e-1200-1", "expired": False, "size_in_bytes": len(archive.getvalue()),
+                "workflow_run": {"id": run["id"], "head_sha": run["head_sha"]}}
 
     def api(path):
-        if "/attempts/" in path:
+        if '/runs/1200/attempts/' in path:
             return json.dumps(run).encode()
-        if "/artifacts?" in path:
-            return json.dumps({"artifacts": [artifact]}).encode()
-        if "/compare/" in path:
+        if '/runs/200/attempts/' in path:
+            return json.dumps(producer).encode()
+        if '/runs/200/artifacts?' in path:
+            return json.dumps({'artifacts': plan_artifacts}).encode()
+        if '/artifacts?' in path:
+            return json.dumps({'artifacts': [artifact]}).encode()
+        if '/compare/' in path:
             return json.dumps(comparison).encode()
-        if path.endswith("/artifacts/42/zip"):
+        if path.endswith('/artifacts/42/zip'):
             return archive.getvalue()
+        for value, content in archives.items():
+            if path.endswith(f'/artifacts/{value}/zip'):
+                return content
         raise AssertionError(path)
-
-    with mock.patch.object(history, "gh", side_effect=api):
-        return history.collect(200, 1, REVISION)
+    with mock.patch.object(history, 'gh', side_effect=api):
+        return history.collect(1200, 1, REVISION)
 
 
 class BenchmarkHistoryTests(unittest.TestCase):
@@ -230,24 +284,37 @@ class BenchmarkHistoryTests(unittest.TestCase):
             with self.subTest(event=event), self.assertRaises(ValueError):
                 collected_fixture(data, run=dict(original, event=event))
 
+    def test_admitted_native_harness_fallback_remains_a_pr_comparison(self):
+        data = synthetic_pr_result()
+        head = data['builds'][0]
+        head.update(native_harness_revision=head['revision'], harness_fallback_reason='preferred harness failed',
+                    harness_files={'profile.rs': '9' * 64})
+        record, _ = collected_fixture(data)
+        self.assertEqual((record['tier'], record['publication_status']), ('pr', 'ready'))
+
+    def test_ingest_receipt_cannot_substitute_a_job_attempt_or_plan_digest(self):
+        for change in ({'job_id': '999-1'}, {'ingest_run_attempt': 2}, {'plan_sha256': 'f' * 64},
+                       {'dispatch_artifact_id': 99}):
+            with self.subTest(change=change):
+                record, _ = collected_fixture(synthetic_result(), receipt_change=change)
+                self.assertEqual(record['publication_status'], 'rejected')
+
     def test_pr_plan_number_must_be_a_pull_request_of_the_producer_run(self):
         data = synthetic_pr_result()
-        record, raw = collected_fixture(data, run=dict(synthetic_run(data), pull_requests=[{"number": 8}]))
+        record, raw = collected_fixture(data, plan_run_change={"pull_requests": [{"number": 8}]})
         self.assertEqual((record["publication_status"], record["reason"]),
                          ("rejected", "PR plan number is not a pull request of the producer run"))
         self.assertIsNone(raw)
 
-    def test_skipped_producer_runs_are_refused_but_failed_and_cancelled_runs_are_archived(self):
+    def test_only_successful_app_ingests_can_publish_even_when_target_execution_failed(self):
         data = synthetic_pr_result()
-        with self.assertRaisesRegex(ValueError, "Refusing"):
-            collected_fixture(data, run=dict(synthetic_run(data), conclusion="skipped"), missing=True)
-        for attempt, conclusion in ((1, "failure"), (2, "cancelled")):
-            changed = copy.deepcopy(data)
-            changed["provenance"]["run_attempt"] = attempt
-            record, raw = collected_fixture(changed, run=dict(synthetic_run(changed), conclusion=conclusion))
-            history.append_site(self.site, [(record, raw)])
-        self.assertEqual({(entry["source"]["conclusion"], entry["tier"]) for entry in self.index()["runs"]},
-                         {("failure", "pr"), ("cancelled", "pr")})
+        for change in ({'conclusion': 'skipped'}, {'conclusion': 'failure'}, {'conclusion': 'cancelled'},
+                       {'actor': {'login': 'github-actions[bot]'}}, {'head_branch': 'candidate'}):
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'Refusing'):
+                collected_fixture(data, run=dict(synthetic_run(data), **change))
+        data['status'] = 'failed'
+        record, raw = collected_fixture(data)
+        self.assertEqual((record['publication_status'], record['status']), ('ready', 'failed'))
 
     def test_append_is_immutable_idempotent_and_preserves_legacy(self):
         legacy = self.site / "dev/bench/data.js"
@@ -336,7 +403,7 @@ class BenchmarkHistoryTests(unittest.TestCase):
         record, raw = collected_fixture(data, run=real_run)
         self.assertEqual(record["publication_status"], "rejected")
         history.append_site(self.site, [(record, raw)])
-        self.assertIsNotNone(self.index()["runs"][0]["raw"])
+        self.assertIsNone(self.index()["runs"][0]["raw"])
         record, raw = collected_fixture(synthetic_result(), artifact_change={"workflow_run": {"id": 999, "head_sha": REVISION}})
         self.assertEqual(record["publication_status"], "rejected")
         self.assertIsNone(raw)
