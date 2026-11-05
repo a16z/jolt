@@ -5,7 +5,7 @@ use jolt_field::JoltField;
 use jolt_r1cs::{ConstraintMatrices, R1csBuilder, Variable};
 use jolt_sumcheck::{CommittedOutputClaims, CommittedSumcheckConsistency};
 
-use crate::{
+use crate::blindfold::{
     r1cs::Layout, BlindFoldProtocolBuilder, BlindFoldStatement, Error, RelaxedError,
     RelaxedInstance, VerificationError,
 };
@@ -609,7 +609,7 @@ fn checked_sum(
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use crate::{
+    use crate::blindfold::{
         BlindFoldStage, BlindFoldStatement, CommittedClaimRows, FinalOpeningBinding, OpeningAlias,
     };
     use jolt_claims::{constant, opening, Expr};

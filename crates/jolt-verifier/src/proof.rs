@@ -4,7 +4,7 @@ use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
-use jolt_zk::BlindFoldProof;
+use jolt_zk::blindfold::BlindFoldProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{

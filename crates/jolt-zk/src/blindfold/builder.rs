@@ -4,7 +4,7 @@ use jolt_sumcheck::{
     CommittedOutputClaims, CommittedSumcheckConsistency, SumcheckDomainSpec, SumcheckStatement,
 };
 
-use crate::{
+use crate::blindfold::{
     BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows, Error,
     FinalOpeningBinding, OpeningAlias, VerificationError,
 };

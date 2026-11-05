@@ -1173,7 +1173,7 @@ mod tests {
         ClearProof, ClearSumcheckProof, CommittedSumcheckProof, CompressedSumcheckProof,
     };
     use jolt_transcript::FieldTranscript;
-    use jolt_zk::BlindFoldProof;
+    use jolt_zk::blindfold::BlindFoldProof;
     use num_traits::Zero;
 
     use crate::preprocessing::ProgramPreprocessing;

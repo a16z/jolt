@@ -6,7 +6,7 @@ use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
 #[cfg(feature = "zk")]
-use jolt_zk::ProverError as BlindFoldProverError;
+use jolt_zk::blindfold::ProverError as BlindFoldProverError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]

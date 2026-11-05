@@ -5,7 +5,7 @@ use jolt_r1cs::{ConstraintMatrices, MatrixColumnContributions};
 use jolt_sumcheck::{BooleanHypercube, SumcheckClaim};
 use jolt_transcript::{require_no_pow, Encoding, FieldTranscript, Transcript};
 
-use crate::{
+use crate::blindfold::{
     BlindFoldProof, BlindFoldProtocol, RelaxedError, RelaxedInstance, VerificationError,
     WitnessCoordinate,
 };
@@ -550,7 +550,7 @@ fn ensure_len(name: &'static str, expected: usize, actual: usize) -> Result<(), 
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use crate::{
+    use crate::blindfold::{
         r1cs::{FinalOpeningLayout, Layout},
         BlindFoldDimensions, RowDimensions, WitnessRowLayout,
     };

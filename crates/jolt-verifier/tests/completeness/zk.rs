@@ -22,7 +22,7 @@ use jolt_transcript::{Keccak, VerifierState};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-use jolt_zk::BlindFoldProof;
+use jolt_zk::blindfold::BlindFoldProof;
 
 #[test]
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
