@@ -134,10 +134,9 @@ fn akita_streamed_trace_batch_rejects_swapped_evaluations() {
         "expected the embedded-argument rejection, got: {err}"
     );
 
-    // The embedded opening absorbs no setup bytes of its own. Akita's
-    // descriptor binds the backend setup and the selected schedule, and the
-    // trace batch must match the verifier setup's shape, layout digest and K
-    // exactly, so a setup that differs in any of them rejects the proof.
+    // The trace batch must match the verifier setup's shape, layout digest
+    // and K exactly. Jolt's statement check rejects each mismatch below
+    // before Akita runs; Akita's descriptor binding is tested upstream.
     let setup_json =
         serde_json::to_value(&verifier_setup).expect("verifier setup should serialize");
     for (field, value) in [

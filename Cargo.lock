@@ -5500,7 +5500,6 @@ dependencies = [
  "jolt-akita",
  "jolt-field",
  "jolt-inlines-blake2",
- "jolt-inlines-keccak256",
  "jolt-inlines-ntt",
  "jolt-poly",
  "jolt-program",
@@ -5526,7 +5525,6 @@ dependencies = [
  "jolt-inlines-blake2",
  "jolt-riscv",
  "jolt-sdk",
- "jolt-transcript",
  "serde",
 ]
 

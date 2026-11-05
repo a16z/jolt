@@ -136,7 +136,7 @@ pub trait GroupBatchOpening: CommitmentScheme {
 
     /// Verifies the batch at the groups' local points. The caller must stop on
     /// an error, and pass its transcript to [`Self::check_eof`] after its own
-    /// last message.
+    /// last message. `Ok` alone does not mean the batch was accepted.
     fn verify_batch(
         setup: &Self::VerifierSetup,
         groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],

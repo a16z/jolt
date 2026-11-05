@@ -1019,6 +1019,9 @@ pub struct AkitaBatchProof {
     /// prover. The verifier resolves this digest under its configured catalog;
     /// the backend proof body does not encode the selection itself.
     pub(crate) schedule_selection: [u8; SCHEDULE_SELECTION_BYTES],
+    /// Akita's argument on the standalone paths. Empty for Jolt's trace batch,
+    /// whose argument is in Jolt's argument string; its verifier rejects a
+    /// non-empty body.
     #[serde(with = "serde_bytes")]
     pub(crate) backend_proof: Vec<u8>,
 }
@@ -1043,15 +1046,9 @@ impl AkitaBatchProof {
         self.schedule_selection
     }
 
-    /// Headerless backend proof body: Akita's Spongefish argument bytes.
+    /// Headerless standalone argument size; zero for Jolt's trace batch.
     pub fn backend_proof_body_size(&self) -> usize {
         self.backend_proof.len()
-    }
-
-    /// Sum of the raw component bytes before the enclosing Jolt serializer
-    /// adds container tags or length prefixes.
-    pub fn unframed_payload_size(&self) -> Option<usize> {
-        SCHEDULE_SELECTION_BYTES.checked_add(self.backend_proof.len())
     }
 }
 

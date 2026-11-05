@@ -1015,17 +1015,14 @@ fn prove_workload(
     .expect("modular Akita prove");
     let duration = now.elapsed();
 
-    let akita_proof_body_size = proof.joint_opening_proof.backend_proof_body_size();
-    let akita_opening_unframed_size = proof
-        .joint_opening_proof
-        .unframed_payload_size()
-        .expect("Akita opening component lengths must fit usize");
+    // Akita's opening is the argument string's suffix, after the stage 1-7
+    // prover messages.
+    let argument_string_size = proof.narg.len();
     let proof_size = bincode::serde::encode_to_vec(&proof, bincode::config::standard())
         .expect("serialize Akita proof")
         .len();
     tracing::info!(
-        akita_proof_body_size,
-        akita_opening_unframed_size,
+        argument_string_size,
         jolt_proof_wire_size = proof_size,
         "Akita proof sizes"
     );

@@ -575,8 +575,10 @@ fn prover_only_name(name: &str) -> bool {
     name.starts_with("prove") || name.starts_with("commit_round")
 }
 
-/// Calls that hand the caller's transcript to another crate's protocol.
-const HANDS_OFF_TRANSCRIPT: [&str; 3] = ["batched_verify_embedded", "verify_batch", "check_eof"];
+/// Calls that hand the caller's transcript to a protocol outside the scanned
+/// crates. Calls between scanned crates (`verify_batch`) are already covered
+/// by their callee's sites, and `check_eof` neither absorbs nor draws.
+const HANDS_OFF_TRANSCRIPT: [&str; 1] = ["batched_verify_embedded"];
 
 fn hands_off_transcript(name: &str) -> bool {
     HANDS_OFF_TRANSCRIPT.contains(&name)

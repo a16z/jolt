@@ -29,18 +29,18 @@ pub struct Stage8ZkOutput<F: JoltField, C, H> {
     pub hiding_evaluation_commitment: H,
 }
 
+#[cfg(not(feature = "akita"))]
 #[derive(Clone, Debug)]
 pub enum Stage8Output<F: JoltField, C, H> {
-    #[cfg(not(feature = "akita"))]
     Clear(Stage8ClearOutput<F, C>),
     Zk(Stage8ZkOutput<F, C, H>),
 }
 
+#[cfg(not(feature = "akita"))]
 impl<F: JoltField, C, H> Stage8Output<F, C, H> {
     pub fn zk(&self) -> Result<&Stage8ZkOutput<F, C, H>, crate::VerifierError> {
         match self {
             Self::Zk(output) => Ok(output),
-            #[cfg(not(feature = "akita"))]
             Self::Clear(_) => Err(crate::VerifierError::ExpectedCommittedProof { field: "stage8" }),
         }
     }

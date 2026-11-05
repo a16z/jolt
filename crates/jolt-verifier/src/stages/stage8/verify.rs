@@ -660,6 +660,9 @@ mod tests {
     }
 }
 
+/// Runs the Akita opening on the caller's transcript. `Ok` does not mean the
+/// opening was accepted: the caller must pass the returned token and its
+/// transcript to [`GroupBatchOpening::check_eof`] after its own last message.
 #[cfg(feature = "akita")]
 #[expect(
     clippy::too_many_arguments,
