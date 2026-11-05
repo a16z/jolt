@@ -72,6 +72,8 @@ unchanged. See `book/src/usage/profiling/benchmark_history.md` and the producer'
 # Must pass in both standard and ZK modes
 cargo clippy --all --features host -q --all-targets -- -D warnings
 cargo clippy --all --features host,zk -q --all-targets -- -D warnings
+# Whiteout (zk over Akita) is not in the workspace lanes; lint it explicitly
+cargo clippy -p jolt-verifier -p jolt-prover --features whiteout,prover-fixtures -q --all-targets -- -D warnings
 cargo fmt -q
 ```
 
@@ -101,6 +103,7 @@ cargo nextest run -p jolt-verifier standard_muldiv --features prover-fixtures --
 cargo nextest run -p jolt-prover --features prover-fixtures --cargo-quiet
 cargo nextest run -p jolt-prover --features prover-fixtures,zk --cargo-quiet
 cargo nextest run -p jolt-prover --features akita,prover-fixtures --cargo-quiet
+cargo nextest run -p jolt-prover --features whiteout,prover-fixtures --test whiteout_e2e --cargo-quiet
 ```
 
 ### Building
@@ -151,7 +154,7 @@ The proof system is split into focused crates under `crates/`. Top-level crates 
 
 Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shout`, pinned in the root `Cargo.toml`.
 
-**jolt-prover** — Prover orchestration for the staged Jolt protocol; Dory is the default PCS, `akita` selects the native lattice batching path, and `zk` enables BlindFold.
+**jolt-prover** — Prover orchestration for the staged Jolt protocol; Dory is the default PCS, `akita` selects the native lattice batching path, and `zk` enables BlindFold over Dory; Whiteout (zero knowledge over Akita) needs the explicit `whiteout` feature.
 
 **jolt-verifier / jolt-claims** — Verifier staging and the symbolic protocol relations shared with the prover.
 
@@ -169,7 +172,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 **common** — Shared constants (`XLEN`, `REGISTER_COUNT`, thresholds) and `JoltDevice`/`MemoryLayout` types
 
-The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `akita` selects the native lattice batching protocol and is mutually exclusive with `zk`.
+The SDK's `host` feature enables native build/prove APIs. On `jolt-prover`, `akita` selects the native lattice batching protocol. `whiteout` (implies `zk` and `akita`) proves Whiteout (`specs/whiteout-jolt-integration.md`); `zk` with `akita` but without `whiteout` is a compile error while Whiteout's constant-time claim is unverified on some platforms.
 
 ### Key Type Parameters
 
@@ -217,6 +220,11 @@ After stage 8, `jolt-prover/src/blindfold.rs` replays the assembled shell throug
 the verifier's own stages and lowers those outputs with
 `jolt-verifier/src/stages/zk/`. It checks that the replay transcript exactly equals
 the forward prover transcript before constructing the BlindFold witness.
+
+With `whiteout`, the Akita build proves Whiteout instead (`specs/whiteout-jolt-integration.md`).
+`jolt-prover/src/akita/whiteout.rs` proves the masked stages, opens every committed
+group through `jolt_zk::whiteout::MaskedGroupOpening`, and replays its shell through
+`jolt-verifier/src/whiteout.rs` before the Σ-protocol and Akita's response proof.
 
 **Critical invariant:** a relation's input and output expressions have one owner
 in `jolt-claims`. Prover evaluation, verifier checking, and BlindFold lowering must
