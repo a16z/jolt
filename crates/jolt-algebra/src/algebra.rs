@@ -661,7 +661,9 @@ impl<
 pub const LIFT_BIAS: u64 = 1 << 63;
 
 /// `x + 2^63` as a field element, by flipping `x`'s top bit: an unsigned
-/// value that is nonzero for every `x > i64::MIN` and carries no sign.
+/// value that is nonzero for every `x > i64::MIN` (in a field with
+/// `p > 2^64`). Its top bit is still `x`'s inverted sign, but the multiplier
+/// never sees a zero or a 0/1 sign selector.
 ///
 /// For a product with a secret integer, multiply this and subtract
 /// `F(LIFT_BIAS)` times the factor: the multiplier then never sees a zero or

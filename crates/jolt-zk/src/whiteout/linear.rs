@@ -139,8 +139,8 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
     /// (the Gaussian tail cut for a mask), never a statistical one.
     ///
     /// Constant time in `x`: the Ajtai map is, and the gadget term is
-    /// branch-free with biased multiplier operands ([`lift_biased`]). `N·x` is as secret as `x` (a mask), so it is zeroed
-    /// when dropped.
+    /// branch-free with biased multiplier operands ([`lift_biased`]). `N·x`
+    /// is as secret as `x` (a mask), so it is zeroed when dropped.
     pub fn apply(
         &self,
         x: &[i64],

@@ -699,11 +699,17 @@ production monomorphization.
     inhomogeneous SIS instance. The chunk width keeps one column of CRT
     capacity for `K`. Outputs are unchanged, and the frozen `apply_centered`
     digests still pass.
+    An honest mask is unlikely to produce an all-zero limb plane: with
+    σ ≈ 2^35.7 that needs about 4096 or more coefficients all below 2^29
+    (each about 2^−7). The blind therefore defends against the dudect
+    classes, not against an observed leak on honest Σ runs.
   - **Sign-selected multiplies removed (hardening, no measured effect).**
     `lift_ct`, `digits_to_field_ct`, the gadget term of `N·y` and the claim
     sums multiplied by `F(sign)`, which is 0 for every non-negative input.
     They now multiply by `lift_biased(x) = x + 2^63`, which is never zero
-    and carries no sign, and subtract the constant bias times the factor.
+    for `x > i64::MIN` while `p > 2^64` (its top bit is still the inverted
+    sign, but no operand is zero or a 0/1 selector), and subtract the
+    constant bias times the factor.
     Alone, this left `L·y` fixed 0 at |t| 5.7–13.7.
   - **Open: N·y residual.** After the blind, `N·y` still fails for
     constant non-negative masks (0, +1, +B) at |t| 4.5–11 in crops, raw
