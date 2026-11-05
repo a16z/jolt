@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793911217683,
+  "lastUpdate": 1793912589008,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -230890,6 +230890,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 781728,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fb89d196bf9055afeffd26a5f6b59557d88ca4e6",
+          "message": "feat(jolt-prover): check known eager storage requests before proving (#2122)\n\n* feat(jolt-prover): check known eager storage requests on the original backend\n\nAn explicit MemoryBudget, taken by jolt_sdk::prove_program and the\nprofile CLI's --memory-budget, is checked after tracing and before the\nwitness, proving and profile PCS setup. A request below the trace buffer\ncapacity plus the largest priced stage-1-3 envelope fails with\nProverError::MemoryBudgetExceeded; no budget skips the check and leaves\nthe original kernels, slots and tracer unchanged.\n\nEach envelope folds the verifier's stage member lists over the eager\nkernels' own peak_bytes (Spartan outer and product remainders, shift,\ninstruction input, register claim reduction). Stages 2 and 3 add one\ngeneration of the original RAM access columns: the shared u32 address\ncolumn, counted once, and the two u64 value columns, which stage 3 keeps\nreserved because no stage boundary waits for their queued drop.\n\nThe check covers a named subset only: passing it does not mean the proof\nfits, it is not a lower bound, and stage 4's second column collection,\nunpriced members and later stages stay outside it.\n\n* feat(jolt-prover): reserve stage-4/5 register storage in the eager check\n\nExtend MemoryBudget::check_known_eager from the stage-1-3 envelope to\nstages 1-5 on the original backend. Stage 4 prices the register\nread/write kernel of the configured phase order with the rd indices it\nparks, at three entries per cycle and with the second cycle bind's T/4\nincrement allocation retained; stage 5 prices the value evaluation that\ntakes the indices over.\n\nRAM access columns are priced per stage from one helper beside the real\ncollectors: the shared u32 address backing once, plus one u64 value pair\nper generation that may still be held. Stages 2, 3 and 5 reserve the\nstage-2 generation (its drop is queued, never joined); stage 4 adds the\nvalue check's own pair, which it drops synchronously at its second bind.\n\nThe check remains a partial request reservation: passing does not mean\nthe proof fits, and the documentation lists the owners it omits.\n\n* fix(jolt-kernels): bound coefficient LUT saturation by the square root\n\nOn 32-bit targets such as wasm32, lut_saturated squared the read LUT's\nsaturated length, 2^16, in usize, which overflows. With overflow checks\n(cargo check) the const assertion beside it fails on the overflow;\nwithout them (the release wasm32 builds) the square wraps to 0, a\n2^16-entry LUT reads as unsaturated, and the assertion itself fails.\n\nCompare the length with MAX_LUT_VALUES.isqrt() instead: v > isqrt(M)\nholds exactly when v * v > M, without forming the product. On 64-bit\ntargets the predicate is unchanged for every length below 2^32, which\nincludes every length the schedule reaches (2, 4, 16, 256 and 65536),\nso the LUT schedule and CycleState::peak_bytes, which reads only\nlut_len, are unchanged.\n\n* fix(jolt-prover): reject eager reservations past the address space\n\nThe eager prices used saturating arithmetic, so a reservation past\nusize::MAX saturated to usize::MAX and a usize::MAX budget admitted it.\nEvery price is now checked: a stage reservation or trace sum past\nusize::MAX fails every budget with\nProverError::MemoryReservationOverflow, while a representable\nreservation still passes at exactly the reported requirement.\n\nThe regression prices 2^(usize::BITS - 7) proof rows (2^25 on wasm32),\nwhere stage 1's Az and Bz alone need 2^BITS bytes, without allocating.\n\n* fix(jolt-kernels): price the LT tables' dense switch\n\nWith kernels priced over the trace's proof rows, a short prefix no longer\ncovers the √T-entry tables built from a sumcheck point. SplitLt::peak_bytes\nnow counts the dense table the last lt_lo bind builds beside the three split\ntables, which the register value evaluation reserves, and the docs list the\neq factor tables that the prices leave out instead of claiming that later\nphases hold less.\n\n* test(jolt-prover): count the value check's collection in the stage-4 floors\n\nSince the main merge, stage 4 also reserves what the value check's\ncollection holds until it truncates. The register read/write floors left\nthat allowance out, so their 32,784 bytes of slack exceeded the 32,768-byte\nincrement allocation the cycle-first floor is meant to catch. The floors\nnow carry stage 4's whole RAM term.\n\n* docs(jolt-kernels): describe the remainder allowance after factored opening weights\n\n* refactor(sdk): defer proof budget opt-in to limited tracing",
+          "timestamp": "2026-11-05T12:58:55-07:00",
+          "tree_id": "6fb1ae32b8199585d198c6897edcce535f7e7570",
+          "url": "https://github.com/a16z/jolt/commit/fb89d196bf9055afeffd26a5f6b59557d88ca4e6"
+        },
+        "date": 1793912583493,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.3281,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 783860,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.3444,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 428356,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 428172,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 426344,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.661,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 426144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5177,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 428492,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.0282,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 425032,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.8532,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131248,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.6071,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 784012,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5123,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 426244,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3768,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.2526,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 428400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.3252,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 428212,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 28.753,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 697744,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.6879,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 627732,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 59.0743,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 626648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4619,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 425160,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6962,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 428896,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.2927,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 784160,
             "unit": "KB",
             "extra": ""
           }
