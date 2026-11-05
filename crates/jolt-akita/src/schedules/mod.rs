@@ -16,7 +16,7 @@ pub mod emit {
     use std::path::{Path, PathBuf};
 
     use akita_config::recursive_commitment::{RecursiveCommitmentConfig, RecursiveScheduleConfig};
-    use akita_config::{policy_of, CommitmentConfig};
+    use akita_config::{admission_of, policy_of, CommitmentConfig};
     use akita_params::MultiChunkProfileId;
     use akita_params::{
         ChunkedWitnessCfg, OpeningClaimsLayout, PolynomialGroupLayout, ScheduleLookupKey,
@@ -233,6 +233,7 @@ pub mod emit {
                 family_name: Cfg::schedule_family_name(),
                 policy: policy_of::<Cfg>(chunking),
                 source_contract: Cfg::committed_source_contract()?,
+                admission: admission_of::<Cfg>()?,
                 keys,
                 grouped_requests: Vec::new(),
                 preplanned: Vec::new(),
