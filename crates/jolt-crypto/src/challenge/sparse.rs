@@ -18,12 +18,25 @@ use crate::CryptoError;
 use jolt_algebra::{ExtField, Field, Ring};
 use smallvec::SmallVec;
 
-use crate::challenge::{D64_PRODUCTION_PM1_COUNT, D64_PRODUCTION_PM2_COUNT};
+use crate::challenge::{
+    D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT, D64_PRODUCTION_PM1_COUNT,
+    D64_PRODUCTION_PM2_COUNT,
+};
 use crate::lattice::CHALLENGE_RING_DIM;
 
-/// Inline capacity chosen for the heaviest production family, D64 `(31, 10)`.
-/// Every other production ring dimension has weight at most 31 and also fits.
-pub const INLINE_SPARSE_WEIGHT: usize = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+/// Inline capacity chosen for the heaviest D64 family: the larger of the
+/// production `(31, 10)` and the selective-L2 operator-norm `(31, 11)`, which
+/// Whiteout's constant-time sampler draws without allocating. Every other
+/// production ring dimension has weight at most 31 and also fits.
+pub const INLINE_SPARSE_WEIGHT: usize = {
+    let production = D64_PRODUCTION_PM1_COUNT + D64_PRODUCTION_PM2_COUNT;
+    let l2_op_norm = D64_L2_OP_NORM_PM1_COUNT + D64_L2_OP_NORM_PM2_COUNT;
+    if production > l2_op_norm {
+        production
+    } else {
+        l2_op_norm
+    }
+};
 
 /// Public storage type for sparse challenge positions.
 pub type SparseChallengePositions = SmallVec<[u32; INLINE_SPARSE_WEIGHT]>;
@@ -382,6 +395,23 @@ mod tests {
                 Err(CryptoError::InvalidInput(message)) if message.contains("non-zero")
             ));
         }
+    }
+
+    #[test]
+    fn scatter_places_each_coefficient() {
+        let dense = scatter_ct(&[3, 0, 63], &[-2, 1, -1]);
+        let mut expected = [0i8; CHALLENGE_RING_DIM];
+        expected[3] = -2;
+        expected[0] = 1;
+        expected[63] = -1;
+        assert_eq!(dense, expected);
+    }
+
+    #[test]
+    fn scatter_adds_repeated_positions() {
+        let dense = scatter_ct(&[5, 5, 9], &[1, -2, 2]);
+        assert_eq!((dense[5], dense[9]), (-1, 2));
+        assert_eq!(dense.iter().filter(|&&coeff| coeff != 0).count(), 2);
     }
 
     #[test]

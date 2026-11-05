@@ -26,13 +26,15 @@ use super::{D64_SELECTIVE_L2_OP_NORM_TABLE, MAX_OP_NORM_ATTEMPTS};
 use crate::challenge::sparse::{eq_mask, scatter_ct};
 use crate::challenge::{
     OperatorNormRejection, SparseChallenge, D64_L2_OP_NORM_PM1_COUNT, D64_L2_OP_NORM_PM2_COUNT,
-    D64_SELECTIVE_L2_CHALLENGE_CONFIG,
+    D64_SELECTIVE_L2_CHALLENGE_CONFIG, INLINE_SPARSE_WEIGHT,
 };
 use crate::lattice::CHALLENGE_RING_DIM;
 use crate::CryptoError;
 
 /// Nonzero coefficients of every attempt challenge.
 const WEIGHT: usize = D64_L2_OP_NORM_PM1_COUNT + D64_L2_OP_NORM_PM2_COUNT;
+// The returned challenge's storage must not spill to the heap.
+const _: () = assert!(WEIGHT <= INLINE_SPARSE_WEIGHT);
 
 /// The D = 64 selective-L2 challenge that
 /// `sample_indexed_challenges_from_seed(seed, 64, 1, &D64_SELECTIVE_L2_CHALLENGE_CONFIG,
