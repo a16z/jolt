@@ -60,6 +60,11 @@ pub trait CommitmentScheme: Commitment {
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
 
+    /// Per-verification state, separate from reusable keys and proof transport.
+    /// The default context must perform complete verification. Backends without
+    /// additional verification state use `()`.
+    type VerificationContext<'a>: Default;
+
     /// Auxiliary data from commit reused during opening (e.g. Dory row commitments).
     type OpeningHint: Clone + Send + Sync + Default;
 
@@ -143,6 +148,7 @@ pub trait GroupBatchOpening: CommitmentScheme {
         final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
         proof: &Self::Proof,
         transcript: &mut VerifierState<'_, Self::Sponge>,
+        context: &mut Self::VerificationContext<'_>,
     ) -> Result<Self::PendingEof, OpeningsError>;
 
     /// Completes a verification: checks that the whole argument string was

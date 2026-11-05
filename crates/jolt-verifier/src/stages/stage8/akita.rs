@@ -263,6 +263,7 @@ pub fn verify<'a, PCS, VC, T>(
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
+    context: &mut PCS::VerificationContext<'_>,
 ) -> Result<PCS::PendingEof, VerifierError>
 where
     PCS: CommitmentScheme + GroupBatchOpening,
@@ -419,6 +420,7 @@ where
         &main_group,
         proof,
         BorrowMut::<VerifierState<'a, PCS::Sponge>>::borrow_mut(transcript),
+        context,
     )
     .map_err(opening_failed)
 }

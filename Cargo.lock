@@ -3301,6 +3301,7 @@ dependencies = [
  "akita-params",
  "akita-pcs",
  "akita-planner",
+ "akita-prover",
  "akita-schedules",
  "akita-transcript",
  "akita-types",
@@ -3310,6 +3311,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-field",
  "jolt-openings",
+ "jolt-platform",
  "jolt-poly",
  "jolt-transcript",
  "rayon",
@@ -3317,6 +3319,85 @@ dependencies = [
  "serde_bytes",
  "serde_json",
  "tracing",
+]
+
+[[package]]
+name = "jolt-akita-advice-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-akita",
+ "jolt-akita-external",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "jolt-akita-external"
+version = "0.1.0"
+dependencies = [
+ "akita-types",
+ "anyhow",
+ "bincode 2.0.1",
+ "common",
+ "jolt-akita",
+ "jolt-akita-recursion",
+ "jolt-field",
+ "jolt-host",
+ "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
+ "jolt-verifier",
+ "postcard",
+ "serde",
+ "serde_json",
+ "tracer",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-akita-external-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-akita",
+ "jolt-akita-external",
+ "jolt-sdk",
+]
+
+[[package]]
+name = "jolt-akita-recursion"
+version = "0.1.0"
+dependencies = [
+ "akita-params",
+ "akita-planner",
+ "akita-types",
+ "bincode 2.0.1",
+ "clap",
+ "common",
+ "jolt-akita",
+ "jolt-crypto",
+ "jolt-host",
+ "jolt-inlines-blake2",
+ "jolt-inlines-keccak256",
+ "jolt-inlines-sha2",
+ "jolt-openings",
+ "jolt-program",
+ "jolt-prover",
+ "jolt-verifier",
+ "jolt-witness",
+ "postcard",
+ "serde",
+ "serde_json",
+ "tracer",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "jolt-akita-recursion-guest"
+version = "0.1.0"
+dependencies = [
+ "jolt-akita",
+ "jolt-akita-recursion",
+ "jolt-sdk",
 ]
 
 [[package]]

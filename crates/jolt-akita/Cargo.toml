@@ -34,8 +34,9 @@ akita-planner.workspace = true
 akita-schedules.workspace = true
 akita-transcript.workspace = true
 akita-types.workspace = true
-akita-params.workspace = true
 akita-verifier.workspace = true
+akita-prover.workspace = true
+akita-params.workspace = true
 # Canonical trace geometry without selecting the Akita PIOP feature.
 jolt-claims.workspace = true
 jolt-crypto = { path = "../jolt-crypto", default-features = false, features = [
@@ -48,6 +49,7 @@ jolt-openings = { path = "../jolt-openings", default-features = false, features 
   "parallel",
 ] }
 jolt-poly.workspace = true
+jolt-platform.workspace = true
 jolt-transcript = { path = "../jolt-transcript", default-features = false, features = [
   "solinas",
 ] }

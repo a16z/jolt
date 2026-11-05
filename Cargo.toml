@@ -109,6 +109,11 @@ members = [
   "examples/backtrace",
   "examples/backtrace/guest-nostd",
   "examples/backtrace/guest-std",
+  "examples/akita-recursion",
+  "examples/akita-recursion/guest",
+  "examples/akita-recursion/replay",
+  "examples/akita-recursion/external-guest",
+  "examples/akita-recursion/advice-guest",
   "examples/recursion",
   "examples/recursion/guest",
   "examples/recover-ecdsa",
@@ -316,6 +321,7 @@ akita-challenges = { git = "https://github.com/LayerZero-Labs/akita.git", rev = 
 akita-types = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "8d5821f451e62547113d23fc709c6e806c10d590", default-features = false }
 akita-params = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "8d5821f451e62547113d23fc709c6e806c10d590", default-features = false }
 akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "8d5821f451e62547113d23fc709c6e806c10d590", default-features = false }
+akita-prover = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "8d5821f451e62547113d23fc709c6e806c10d590", default-features = false }
 akita-verifier = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "8d5821f451e62547113d23fc709c6e806c10d590", default-features = false }
 
 # Core Utilities

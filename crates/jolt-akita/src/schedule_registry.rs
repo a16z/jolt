@@ -527,7 +527,9 @@ mod tests {
                 .unwrap();
             for row in catalog.rows() {
                 let key = ScheduleLookupKey {
-                    root_accumulated_setup_prefix_len: 0,
+                    root_accumulated_setup_prefix_len: row
+                        .schedule()
+                        .root_accumulated_setup_prefix_len,
                     final_group: row.profiles().final_group.group,
                     precommitteds: row.profiles().precommitteds.clone(),
                 };

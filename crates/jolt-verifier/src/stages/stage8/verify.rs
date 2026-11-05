@@ -679,6 +679,7 @@ pub fn verify<'a, F, PCS, VC, T, ZkProof>(
     stage4: &Stage4Output<F, VC::Output>,
     stage6: &Stage6bOutput<F, VC::Output>,
     stage7: &Stage7Output<F, VC::Output>,
+    context: &mut PCS::VerificationContext<'_>,
 ) -> Result<PCS::PendingEof, VerifierError>
 where
     F: JoltField,
@@ -705,5 +706,6 @@ where
         stage4.clear()?,
         stage6.clear()?,
         stage7.clear()?,
+        context,
     )
 }

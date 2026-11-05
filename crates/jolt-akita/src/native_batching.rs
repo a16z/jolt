@@ -18,6 +18,7 @@
 //! and single-polynomial paths run Akita standalone (see
 //! [`standalone_session`]).
 
+use crate::deferred::SetupMode;
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{BasisMode, OpeningScheduleSelection};
 use akita_pcs::{AkitaError, SelectedProverOpeningData};
@@ -41,6 +42,7 @@ use crate::adapters::{
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::scheme::validate_group_order;
+use crate::AkitaVerificationContext;
 
 /// Marker adapter selecting Akita's native batched opening as the Jolt batch
 /// opening protocol.
@@ -200,9 +202,9 @@ fn validate_trace_batch_statement(
     Ok(())
 }
 
-fn prove_one_hot_opening(
-    setup: &AkitaProverSetup,
-    opening: AkitaOpening<'_>,
+fn prove_one_hot_opening<'a>(
+    setup: &'a AkitaProverSetup,
+    opening: AkitaOpening<'a>,
     session: &[u8],
 ) -> Result<Vec<u8>, OpeningsError> {
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
@@ -331,7 +333,11 @@ impl AkitaNativeBatching {
                 claims,
                 handles,
                 scheme.schedules(),
-            )
+            ).and_then(|opening| {
+                if let Some(inherited) = &setup.inherited_setup {
+                    opening.with_setup_batch(inherited.level, &inherited.statement, scheme.schedules())
+                } else { Ok(opening) }
+            })
         })
         .map_err(akita_error)?;
         let selection = opening.selection();
@@ -360,6 +366,7 @@ impl AkitaNativeBatching {
         main: &GroupOpeningClaim<AkitaField, AkitaCommitment>,
         proof: &AkitaBatchProof,
         transcript: &mut VerifierChannel<'_>,
+        context: &mut AkitaVerificationContext<'_>,
     ) -> Result<PendingEof, OpeningsError> {
         validate_trace_batch_statement(setup, auxiliary_groups, main)?;
         // Akita's argument lives in Jolt's argument string. Bytes here would be
@@ -403,15 +410,33 @@ impl AkitaNativeBatching {
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
         let statement = GroupBatchStatement::new(proof.selection(), claims).map_err(akita_error)?;
         let verifier = setup.one_hot_verifier()?;
-        with_backend_pool(|| {
+        let verified = if let Some(accumulator) = context.accumulator.as_mut() {
+            let policy = match context.mode {
+                SetupMode::Check => SetupPolicy::Check(Some(accumulator)),
+                SetupMode::Defer => SetupPolicy::Defer(accumulator),
+            };
             with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify_embedded(
                 transcript,
                 statement,
                 BasisMode::Lagrange,
-                SetupPolicy::Check(None),
+                policy,
             ))
-        })
-        .map_err(|_| OpeningsError::VerificationFailed)
+        } else {
+            if context.mode == SetupMode::Defer {
+                return Err(invalid_batch(
+                    "deferred setup verification requires an accumulator",
+                ));
+            }
+            with_backend_pool(|| {
+                with_one_hot_family!(verifier verifier, |verifier| verifier.batched_verify_embedded(
+                    transcript,
+                    statement,
+                    BasisMode::Lagrange,
+                    SetupPolicy::Check(None),
+                ))
+            })
+        };
+        verified.map_err(|_| OpeningsError::VerificationFailed)
     }
 }
 
@@ -574,7 +599,11 @@ fn prove_one_hot(
             evaluations,
             backend_commitment,
             backend_hint,
-        )
+        ).and_then(|opening| {
+            if let Some(inherited) = &setup.inherited_setup {
+                opening.with_setup_batch(inherited.level, &inherited.statement, scheme.schedules())
+            } else { Ok(opening) }
+        })
     })
     .map_err(akita_error)?;
     let selection = opening.selection();

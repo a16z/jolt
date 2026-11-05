@@ -128,6 +128,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
             &main,
             &proof,
             &mut verifier_state,
+            &mut Default::default(),
         )
         .expect("grouped opening should verify");
         assert_eq!(prover_tail, verifier_state.verifier_message::<[u8; 32]>());
@@ -142,6 +143,7 @@ fn grouped_opening_proves_advice_larger_than_the_trace_group() {
         &main,
         &proof,
         &mut other_context,
+        &mut Default::default(),
     )
     .is_err());
 }
