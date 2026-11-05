@@ -200,12 +200,6 @@ pub trait Field: Ring {
             .zip(b)
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
     }
-    crate::terminal_contraction::field_methods!();
-    #[cfg(feature = "signed-byte-sum")]
-    crate::signed_byte_sum::field_methods!();
-    crate::algebra::fill_ingress_field_method!();
-    #[cfg(feature = "setup-weight-tiles")]
-    crate::setup_weight_tiles::field_methods!();
     /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
     /// otherwise. Fields with a batched guest path (a register-resident sum
     /// read out once) override this.
@@ -369,17 +363,6 @@ pub trait CanonicalBytes {
 
     /// Writes the canonical little-endian encoding into `out`.
     fn to_bytes_le(&self, out: &mut [u8]);
-
-    /// Writes the canonical encoding in big-endian byte order into `out`.
-    ///
-    /// `out` must have length [`NUM_BYTES`](Self::NUM_BYTES). This is the
-    /// byte reversal of [`to_bytes_le`](Self::to_bytes_le), including for
-    /// non-field encodings.
-    #[inline]
-    fn to_bytes_be(&self, out: &mut [u8]) {
-        self.to_bytes_le(out);
-        out.reverse();
-    }
 
     /// Returns the canonical little-endian encoding as a vector.
     #[inline]
@@ -672,33 +655,3 @@ impl<
     > JoltField for T
 {
 }
-
-pub(crate) fn signed_i16_dot_fold<F: Field>(
-    weights: &[F],
-    coefficients: impl IntoIterator<Item = i16>,
-) -> F {
-    weights
-        .iter()
-        .zip(coefficients)
-        .fold(F::zero(), |sum, (&weight, value)| {
-            sum + weight * F::from_i64(i64::from(value))
-        })
-}
-
-// `Field::scale_slice_into` computes the
-// slice product `dst[i] = src[i] * scale` over the shorter of the two slices.
-// The default multiplies in software; a field with a field-inline guest path
-// overrides it to load the scale once per call. The trait gains the method
-// from this macro, invoked inside the trait.
-macro_rules! fill_ingress_field_method {
-    () => {
-        /// `dst[i] = src[i] * scale` over the shorter of the two slices.
-        #[inline]
-        fn scale_slice_into(scale: Self, src: &[Self], dst: &mut [Self]) {
-            dst.iter_mut()
-                .zip(src)
-                .for_each(|(value, &low_value)| *value = low_value * scale);
-        }
-    };
-}
-pub(crate) use fill_ingress_field_method;

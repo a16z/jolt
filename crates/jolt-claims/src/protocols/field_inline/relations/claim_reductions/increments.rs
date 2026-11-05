@@ -58,6 +58,7 @@ pub struct ClaimReduction {
 
 twist::instantiate_increment_reduction! {
     relation = ClaimReduction,
+    recipe = { crate::immutable_symbolic_recipe!(26, FIELD, Field; shape); },
     id = FieldInlineRelationId::FieldRegistersIncClaimReduction,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
     dimensions = FieldRegistersTraceDimensions,
@@ -75,10 +76,7 @@ twist::instantiate_increment_reduction! {
     gamma = FieldRegistersIncClaimReductionChallenge::Gamma,
 }
 
-macro_rules! immutable_twist_recipe {
-    (ClaimReduction) => { crate::immutable_symbolic_recipe!(26, FIELD, Field; shape); };
-}
-pub(crate) use immutable_twist_recipe;
+
 
 #[cfg(test)]
 mod tests {

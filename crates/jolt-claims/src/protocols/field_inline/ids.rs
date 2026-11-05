@@ -140,7 +140,7 @@ pub enum FieldInlineDerivedId {
 }
 
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldInlineRelationId {
+crate::recipe_id! { FieldInlineRelationId {
     FieldRegistersSpartanOuter = 0,
     FieldRegistersClaimReduction = 1,
     FieldRegistersProduct = 2,
@@ -149,41 +149,41 @@ crate::recipe_id! { crate::protocols::field_inline; FieldInlineRelationId {
     FieldRegistersIncClaimReduction = 5,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldRegistersClaimReductionChallenge {
+crate::recipe_id! { FieldRegistersClaimReductionChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldRegistersClaimReductionPublic {
+crate::recipe_id! { FieldRegistersClaimReductionPublic {
     EqSpartan = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldRegistersReadWriteChallenge {
+crate::recipe_id! { FieldRegistersReadWriteChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldRegistersReadWritePublic {
+crate::recipe_id! { FieldRegistersReadWritePublic {
     EqCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldRegistersValEvaluationPublic {
+crate::recipe_id! { FieldRegistersValEvaluationPublic {
     LtCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldRegistersIncClaimReductionChallenge {
+crate::recipe_id! { FieldRegistersIncClaimReductionChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldInlineChallengeId {
+crate::recipe_id! { FieldInlineChallengeId {
     FieldRegistersClaimReduction(value0: FieldRegistersClaimReductionChallenge) = 0,
     FieldRegistersReadWrite(value0: FieldRegistersReadWriteChallenge) = 1,
     FieldRegistersIncClaimReduction(value0: FieldRegistersIncClaimReductionChallenge) = 2,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldInlineCommittedPolynomial {
+crate::recipe_id! { FieldInlineCommittedPolynomial {
     FieldRdInc = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldInlineVirtualPolynomial {
+crate::recipe_id! { FieldInlineVirtualPolynomial {
     FieldRs1Value = 0,
     FieldRs2Value = 1,
     FieldRdValue = 2,
@@ -195,21 +195,21 @@ crate::recipe_id! { crate::protocols::field_inline; FieldInlineVirtualPolynomial
     FieldRegistersVal = 8,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldInlinePolynomialId {
+crate::recipe_id! { FieldInlinePolynomialId {
     Committed(value0: FieldInlineCommittedPolynomial) = 0,
     Virtual(value0: FieldInlineVirtualPolynomial) = 1,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldInlineOpeningId {
+crate::recipe_id! { FieldInlineOpeningId {
     Polynomial { polynomial: FieldInlinePolynomialId, relation: FieldInlineRelationId } = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldRegistersIncClaimReductionPublic {
+crate::recipe_id! { FieldRegistersIncClaimReductionPublic {
     EqReadWrite = 0,
     EqValEvaluation = 1,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::field_inline; FieldInlineDerivedId {
+crate::recipe_id! { FieldInlineDerivedId {
     FieldRegistersClaimReduction(value0: FieldRegistersClaimReductionPublic) = 0,
     FieldRegistersReadWrite(value0: FieldRegistersReadWritePublic) = 1,
     FieldRegistersValEvaluation(value0: FieldRegistersValEvaluationPublic) = 2,

@@ -86,8 +86,3 @@ twist::instantiate_increment_reduction! {
     ],
     gamma = IncClaimReductionChallenge::Gamma,
 }
-
-macro_rules! immutable_twist_recipe {
-    (ClaimReduction) => {};
-}
-pub(crate) use immutable_twist_recipe;

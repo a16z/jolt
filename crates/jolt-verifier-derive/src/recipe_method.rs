@@ -87,6 +87,24 @@ pub(crate) fn expand(arguments: TokenStream, original: TokenStream) -> Result<To
             ),
         ));
     }
+    if expected.is_empty() {
+        let name = &selected.sig.ident;
+        let mut arguments = Vec::new();
+        for input in &selected.sig.inputs {
+            if let FnArg::Typed(argument) = input {
+                let syn::Pat::Ident(pattern) = &*argument.pat else {
+                    return Err(Error::new_spanned(argument, "expected named argument"));
+                };
+                arguments.push(&pattern.ident);
+            }
+        }
+        let call = if matches!(selected.sig.inputs.first(), Some(FnArg::Receiver(_))) {
+            quote!(self.#name(#(#arguments),*))
+        } else {
+            quote!(Self::#name(#(#arguments),*))
+        };
+        selected.block = parse_quote!({ #call });
+    }
     selected.sig.ident = format_ident!("{}_with_recipes", selected.sig.ident);
     let offset = usize::from(matches!(
         selected.sig.inputs.first(),
