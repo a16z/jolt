@@ -55,6 +55,7 @@ mod ops;
 #[cfg(test)]
 mod tests;
 
+pub use convert::RADIX_SUM_BITS;
 pub use lut::{CenteredMontLut, DigitMontLut};
 pub use mixed::{
     cyclic_ntt_with_i16_tail_to_ring, mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring,
