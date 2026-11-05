@@ -1,5 +1,5 @@
 #![cfg(feature = "akita")]
-//! Verify one saved outer proof, consume its input batch, and export its direct-fold obligations.
+//! Verify an accumulated outer proof, consume its input batch, and export its direct-fold obligations.
 use akita_types::setup_claims::{SetupBatchStatement, SetupClaim, SetupQuery};
 use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
 use jolt_akita::{AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext};
@@ -43,7 +43,7 @@ impl ExternalInput {
         mut observe: impl FnMut(Event),
     ) -> Result<SetupBatchStatement<AkitaField>, String> {
         if self.outer.io.panic {
-            return Err("saved outer guest panicked".into());
+            return Err("outer guest panicked".into());
         }
         observe(Event::PrepareStart);
         let statement = self.inherited()?;

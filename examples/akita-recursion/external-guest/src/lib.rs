@@ -48,7 +48,7 @@ fn verify_external(bytes: UntrustedAdvice<Vec<u8>>) -> Vec<u8> {
     let mut tape = Tape(input.answers.iter());
     let statement = input
         .replay(SetupMode::Defer, &mut tape, observe)
-        .expect("saved outer deferred verification");
+        .expect("outer deferred verification");
     assert!(tape.0.next().is_none(), "unused setup advice");
     assert_eq!(
         statement.claims().len(),

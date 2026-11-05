@@ -111,61 +111,31 @@ an explicit `AkitaVerificationContext` accumulator in the outer opening.
 Acceptance also requires an empty pending collection after outer verification. Setup answers remain advice
 until that discharge. This trace harness does not claim to perform that outer proof.
 
+## Fresh proof replay
 
-## Replay the saved accumulated outer proof
+Like `examples/recursion`, this example generates its inputs with the current
+checkout before executing a verifier guest. Proofs and verifier preprocessing
+are version-specific; regenerate the pair after changing Jolt or Akita.
+There is no checked-in proof bundle.
 
-This fixture and the measurements below are archived under Akita
-`4bdb8ff3ff03397c5cfbf8f5221cf105cda21e74`. Akita's current `main` changes the
-terminal proof encoding, so the unchanged fixture requires its original Jolt
-checkout, `88c38e0e4ae0d671e3fb8e08abf138da4c5e5520`. Generate fresh proofs for
-experiments with the current pin.
+The archived accumulated-proof measurements and original fixture are available
+at [Jolt commit 88c38e0e](https://github.com/a16z/jolt/tree/88c38e0e4ae0d671e3fb8e08abf138da4c5e5520/examples/akita-recursion).
+They require that checkout and its Akita pin; they are not current-code
+performance claims. The current harness generates inner proofs and executes
+verifier guests. It does not generate an accumulated outer proof.
 
-The saved fixture verifies two distinct committed SHA2-chain inner executions
-with padded traces of `2^26`. Its outer execution is 955,732,363 cycles, padded
-to `2^30`, with setup offloading, W8R4/K16 and eight active witness units.
-The external guest verifies that outer proof in Defer mode. It decodes A from
-the outer public output, consumes all twelve inherited claims through the
-existing batched Stage 3 and exports B from the eight direct folds. No separate
-copy of A is supplied. The guest image fixes the expected verifier and its
-seed-derived key and terminal material; advice contains only the proof bundle,
-output domain and candidate setup answers.
-
-Run from a checkout with the normal Jolt guest toolchain and CLI installed:
+The local smoke command lints both host packages with `recursion-host`, generates
+a small pair with `--trace-log 14 --iterations 6`, checks native Check/Defer
+replay and rejection of false setup advice and altered public output, and builds
+all three guest crates with the guest toolchain. Like `examples/recursion`, it has
+no dedicated CI job. Run it after installing the current CLI:
 
 ```bash
-bash examples/akita-recursion/saved-outer-benchmark.sh
+bash examples/akita-recursion/smoke.sh
 ```
 
-This uses the checked-in `fixtures/outer-2p30.bundle` and its expected output.
-It prepares the fixed verifier material, measures native Check/Defer with one
-resource preparation and two warmups plus eight measured iterations per mode,
-and counts the complete external guest without retaining a witness trace.
-Check must leave zero unresolved claims; Defer must consume the answer tape
-and export the count derived from the actual selected catalog row. Corrupted
-setup advice and altered public output are rejected. The runner refuses to
-replace an existing result directory.
-
-The archived replay verifies a saved proof for a `2^30`-cycle execution in
-**962,012,241 complete-guest cycles**, padded to `2^30`: 792,449,500 in Akita,
-117,690,729 in other Jolt verification, and 51,872,012 in transport, output
-and cleanup. Relative to the original 12,684,355,371-cycle complete-stack
-measurement, this is 92.42% fewer cycles (13.19x), with the padded verifier
-trace falling from `2^34` to `2^30`. These are complete-stack measurements,
-not isolated gains for an individual change.
-
-The field backend uses the shared signed-sum implementation. An isolated
-comparison with the former `Fp128` override removed measured native medians
-of 45.80 ms Check and 27.51 ms Defer, versus 60.54 ms and 29.53 ms with the
-override. Native results summarize three rounds, each with one resource
-preparation, two warmups and eight measured verifications per mode.
-The override saved 1.11% of guest cycles; both versions stayed below one
-billion cycles and produced byte-identical output. The runner records fresh
-counts in `cycles.json`; source and compiler changes can affect exact counts.
-The verifier optimizations are included in Akita remote `main`, so no local
-source patches are required for this example.
-
-To generate a separate pair of committed CPU inner proofs, select direct
-setup checking by default or add `--offload`:
+To generate committed CPU inner proofs, select direct setup checking by default
+or add `--offload`:
 
 ```bash
 cargo run --profile ci -p jolt-akita-recursion --features recursion-host -- \
@@ -186,9 +156,11 @@ The `advice-guest` is the separate new outer layout with fixed verifier
 identity. Its output is A. An enclosing prover must read A from actual guest
 output, validate the full canonical statement and supply it through
 `InheritedSetupClaims::from_public_output`; the public output retains A.
-This separate layout does not regenerate or modify the saved outer fixture.
-The `external-guest` similarly exports B for an enclosing setup-offloaded
-opening. Final verification uses Check and requires no pending claims.
+
+The `external-guest` accepts an application-supplied accumulated outer proof and
+exports B for an enclosing setup-offloaded opening. The local smoke command
+compiles it; execution requires that separately generated outer proof. Final
+verification uses Check and requires no pending claims.
 
 ## Verification context
 

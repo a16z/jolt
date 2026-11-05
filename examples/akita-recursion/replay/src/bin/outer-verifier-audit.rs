@@ -1,4 +1,4 @@
-//! Native timing and compatibility audit against an immutable saved outer bundle.
+//! Native verification and guest-material preparation for generated proof bundles.
 use akita_types::setup_claims::SetupBatchStatement;
 use anyhow::{anyhow, ensure, Result};
 use jolt_akita::deferred::SetupMode;
@@ -214,10 +214,21 @@ fn prepare(input: ExternalInput, dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn prepare_pair(pair: ProofPair, dir: &Path) -> Result<()> {
+fn prepare_pair(mut pair: ProofPair, dir: &Path) -> Result<()> {
     use jolt_akita_external::pair_api::AnswerTape;
     ensure!(!dir.exists(), "choose a fresh preparation directory");
     let _resources = AkitaVerifierResources::prepare([Ok(pair.preprocessing.pcs_setup.clone())])?;
+    let checked = pair
+        .replay(
+            SetupMode::Check,
+            &mut AnswerTape(pair.answers.iter()),
+            |_| {},
+        )
+        .map_err(|e| anyhow!(e))?;
+    ensure!(
+        checked.claims().is_empty(),
+        "unresolved pair claims in Check"
+    );
     let mut tape = AnswerTape(pair.answers.iter());
     let statement = pair
         .replay(SetupMode::Defer, &mut tape, |_| {})
@@ -250,6 +261,35 @@ fn prepare_pair(pair: ProofPair, dir: &Path) -> Result<()> {
         statement.claims().len() == expected,
         "pair schedule/accumulator mismatch"
     );
+    *pair
+        .answers
+        .first_mut()
+        .ok_or_else(|| anyhow!("pair has no setup answers"))? += AkitaField::from_u64(1);
+    ensure!(
+        pair.replay(
+            SetupMode::Defer,
+            &mut AnswerTape(pair.answers.iter()),
+            |_| {}
+        )
+        .is_err(),
+        "false pair setup advice accepted"
+    );
+    pair.answers[0] -= AkitaField::from_u64(1);
+    *pair.inner[0]
+        .io
+        .outputs
+        .first_mut()
+        .ok_or_else(|| anyhow!("pair has no public output"))? ^= 1;
+    ensure!(
+        pair.replay(
+            SetupMode::Check,
+            &mut AnswerTape(pair.answers.iter()),
+            |_| {}
+        )
+        .is_err(),
+        "altered pair public output accepted"
+    );
+    pair.inner[0].io.outputs[0] ^= 1;
     let (key, terminal) = pair
         .preprocessing
         .pcs_setup

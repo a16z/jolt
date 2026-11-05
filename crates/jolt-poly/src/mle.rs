@@ -1,7 +1,7 @@
 use jolt_field::JoltField;
 use thiserror::Error;
 
-use crate::eq_index_msb;
+use crate::{eq_index_msb, EqPolynomial};
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
 pub enum MleError {
@@ -29,50 +29,45 @@ pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
 where
     F: JoltField,
     I: IntoIterator<Item = (u128, &'a [u64])>,
+    I::IntoIter: Clone,
 {
-    let segments: Vec<_> = segments.into_iter().collect();
-    let entries = segments
-        .iter()
-        .fold(0usize, |n, (_, values)| n.saturating_add(values.len()));
+    let segments = segments.into_iter();
+    let (entries, end_overflow) =
+        segments
+            .clone()
+            .fold((0usize, false), |(entries, overflow), (start, values)| {
+                (
+                    entries.saturating_add(values.len()),
+                    overflow || start.checked_add(values.len() as u128).is_none(),
+                )
+            });
+    if entries == 0 {
+        return F::zero();
+    }
     let scalar = || {
         segments
-            .iter()
+            .clone()
             .map(|(start, values)| {
                 values
                     .iter()
                     .enumerate()
                     .map(|(offset, value)| {
-                        F::from_u64(*value) * eq_index_msb(point, *start + offset as u128)
+                        eq_index_msb(point, start + offset as u128).mul_u64(*value)
                     })
                     .sum::<F>()
             })
             .sum::<F>()
     };
-    if entries < 128
-        || point.is_empty()
-        || segments
-            .iter()
-            .any(|(start, values)| start.checked_add(values.len() as u128).is_none())
-    {
+    if point.is_empty() || end_overflow {
         return scalar();
     }
     // A bounded low table is shared by all contiguous public-memory segments.
     // Each high-address factor is constant for a whole table-width chunk.
-    // No inversion is used, so Boolean challenge coordinates are supported.
-    let low_bits = point.len().min(10);
+    let entry_bits = (usize::BITS - (entries - 1).leading_zeros()) as usize;
+    let low_bits = point.len().min(10).min(entry_bits);
     let split = point.len() - low_bits;
     let width = 1usize << low_bits;
-    let mut low = Vec::with_capacity(width);
-    low.push(F::one());
-    for &r in &point[split..] {
-        let n = low.len();
-        low.resize(n * 2, F::zero());
-        for index in (0..n).rev() {
-            let value = low[index];
-            low[2 * index] = value * (F::one() - r);
-            low[2 * index + 1] = value * r;
-        }
-    }
+    let low = EqPolynomial::<F>::evals(&point[split..], None);
     let mut value = F::zero();
     for (mut address, mut words) in segments {
         while !words.is_empty() {
@@ -84,7 +79,7 @@ where
                     .iter()
                     .zip(&low[residue..residue + take])
                     .filter(|(word, _)| **word != 0)
-                    .map(|(&word, &weight)| F::from_u64(word) * weight)
+                    .map(|(&word, &weight)| weight.mul_u64(word))
                     .sum();
                 value += high * dot;
             }
@@ -370,9 +365,15 @@ mod tests {
 #[cfg(test)]
 mod sparse_segment_table_tests {
     use super::*;
-    use jolt_field::{Prime128OffsetA7F7 as F, Ring};
+    use jolt_field::{Fr, Prime128OffsetA7F7};
+
     #[test]
     fn bounded_low_tables_match_scalar_mle_for_offsets_and_boolean_points() {
+        check_sparse_segments::<Fr>();
+        check_sparse_segments::<Prime128OffsetA7F7>();
+    }
+
+    fn check_sparse_segments<F: JoltField>() {
         for arity in [0, 1, 7, 11, 25, 129] {
             for kind in 0..3 {
                 let point: Vec<F> = (0..arity)
@@ -384,31 +385,37 @@ mod sparse_segment_table_tests {
                         })
                     })
                     .collect();
-                let words: Vec<u64> = (0..2301)
-                    .map(|i| {
-                        if i % 7 == 0 {
-                            0
-                        } else {
-                            (i as u64).wrapping_mul(0x000D_EADB_EEF1_2345)
-                        }
-                    })
-                    .collect();
-                for base in [0, 1, 31, 1023, 2048, 8191] {
-                    let expected: F = words
-                        .iter()
-                        .enumerate()
-                        .map(|(i, &word)| {
-                            F::from_u64(word) * eq_index_msb(&point, base + i as u128)
+                for len in [0, 1, 2, 127, 128, 1023, 2301] {
+                    let words: Vec<u64> = (0..len)
+                        .map(|i| {
+                            if i % 7 == 6 {
+                                0
+                            } else {
+                                (i as u64 + 1).wrapping_mul(0x000D_EADB_EEF1_2345)
+                            }
                         })
-                        .sum();
-                    assert_eq!(sparse_mle_msb(base, &words, &point), expected);
-                    assert_eq!(
-                        sparse_segments_mle_msb(
-                            [(base, &words[..1023]), (base + 1023, &words[1023..])],
-                            &point
-                        ),
-                        expected
-                    );
+                        .collect();
+                    for base in [0, 1, 31, 1023, 2048, 8191] {
+                        let expected: F = words
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &word)| {
+                                F::from_u64(word) * eq_index_msb(&point, base + i as u128)
+                            })
+                            .sum();
+                        assert_eq!(sparse_mle_msb(base, &words, &point), expected);
+                        let split = len.min(1023);
+                        assert_eq!(
+                            sparse_segments_mle_msb(
+                                [
+                                    (base, &words[..split]),
+                                    (base + split as u128, &words[split..])
+                                ],
+                                &point
+                            ),
+                            expected
+                        );
+                    }
                 }
             }
         }
