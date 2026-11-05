@@ -62,7 +62,7 @@ fn evaluate<S: SymbolicSumcheck, F: Ring>(
         }
     }
     let expression = canonical();
-    #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+    #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
     if permits_full {
         symbolic.immutable_record_expression(phase, &expression);
     }
@@ -93,7 +93,7 @@ where
         }
     }
     let openings = symbolic.expected_output_openings::<F>();
-    #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+    #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
     if permits_full {
         symbolic.immutable_record_support::<F>(&openings);
     }

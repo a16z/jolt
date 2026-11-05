@@ -23,10 +23,6 @@ immutable-recipes = [
   "jolt-claims/immutable-recipes",
   "jolt-verifier-derive/immutable-recipes",
 ]
-immutable-recipes-record = [
-  "immutable-recipes",
-  "jolt-claims/immutable-recipes-record",
-]
 fuzzing = []
 field-inline = [
   "common/field-inline",
