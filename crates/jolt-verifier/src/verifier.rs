@@ -614,20 +614,14 @@ where
     F: JoltField,
 {
     // A masked proof carries its rounds on the masked tape, so its per-stage
-    // sumcheck proofs are empty; a clear proof's are clear. Committed rounds
+    // sumcheck proofs are the one empty encoding, `ClearProof::default()`
+    // (an empty `Full` proof): an empty `Compressed` one would be a second
+    // encoding of the same proof. A clear proof's are clear. Committed rounds
     // belong to no protocol this verifier runs.
     let Some(clear) = proof.as_clear() else {
         return Err(VerifierError::ExpectedClearProof { field });
     };
-    let empty = match clear {
-        ClearProof::Full(proof) => {
-            proof.round_polynomials.is_empty() && proof.pow_nonces.is_empty()
-        }
-        ClearProof::Compressed(proof) => {
-            proof.round_polynomials.is_empty() && proof.pow_nonces.is_empty()
-        }
-    };
-    if masked && !empty {
+    if masked && *clear != ClearProof::default() {
         return Err(VerifierError::ExpectedMaskedProof { field });
     }
     Ok(())

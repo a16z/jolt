@@ -260,7 +260,7 @@ where
         let shell = JoltProof {
             protocol: JoltProtocolConfig::for_zk(SELECTED_ZK_CONFIG),
             commitments: stage0.commitments,
-            stages,
+            stages: JoltStageProofs::masked(stages.pow_nonces),
             joint_opening_proof: stage8.joint_opening_proof,
             untrusted_advice_commitment: stage0.untrusted_advice_commitment,
             claims: JoltProofClaims::Zk {

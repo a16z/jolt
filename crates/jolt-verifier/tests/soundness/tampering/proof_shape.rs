@@ -82,6 +82,17 @@ fn clear_stage_in_zk_proof_rejects_now() {
     support::assert_zk_rejects(case.verify());
 }
 
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+#[test]
+fn empty_compressed_stage_in_zk_proof_rejects() {
+    let mut case = crate::support::verifier_fixtures::zk_muldiv_case();
+    // An empty masked stage proof has one encoding, the empty `Full` proof.
+    case.proof.stages.stage3_sumcheck_proof =
+        SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()));
+
+    support::assert_zk_rejects(case.verify());
+}
+
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 fn empty_blindfold_proof() -> BlindFoldProof<Fr, Bn254G1> {
     let zero = Fr::from_u64(0);

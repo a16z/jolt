@@ -1111,6 +1111,10 @@ fn whiteout_statement_and_mode_tampers() {
                 pow_nonces: Vec::new(),
             }));
     });
+    assert_rejects(case, "an empty compressed stage proof", |proof| {
+        proof.stages.stage3_sumcheck_proof =
+            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()));
+    });
     let mut io = case.public_io.clone();
     if let Some(byte) = io.outputs.first_mut() {
         *byte ^= 1;
