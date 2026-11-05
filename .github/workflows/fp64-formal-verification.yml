@@ -93,6 +93,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.95.0"
 
       - name: Validate the matrix and artifact checker
         run: |
@@ -133,6 +136,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.95.0"
 
       - name: Install proof dependencies
         run: |
@@ -179,6 +185,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.95.0"
 
       - name: Confirm the native target
         run: |
@@ -234,6 +243,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2
+        with:
+          # Must match proofs/hol-light/fp64-certified-builds.json.
+          toolchain: "1.95.0"
 
       - name: Install proof dependencies
         run: |

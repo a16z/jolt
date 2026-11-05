@@ -175,7 +175,7 @@ function. The Python checker compares those bytes with the matching standalone
 object. HOL Light independently checks the bytes that it imports from that
 object.
 
-The pinned Rust 1.95.0 toolchain emits different AArch64 schedules on Darwin
+The certified Rust 1.95.0 toolchain emits different AArch64 schedules on Darwin
 and Linux. The formulas are the same, but the order of independent
 instructions and the temporary registers differ. Jolt keeps a separate exact
 object and a separate machine proof for each sequence. The checker does not

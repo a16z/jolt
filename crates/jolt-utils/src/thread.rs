@@ -123,7 +123,7 @@ mod tests {
     fn par_concat_preserves_order() {
         let parts = vec![vec![1, 2, 3], vec![], vec![4], vec![5, 6]];
         assert_eq!(par_concat(&parts), parts.concat());
-        assert!(par_concat::<u8>(&[]).is_empty());
+        assert_eq!(par_concat::<u8>(&[]), [] as [u8; 0]);
     }
 
     #[test]

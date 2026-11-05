@@ -739,11 +739,11 @@ fn batched_dot_kernels_match_per_term_sums() {
             .fold(B::zero(), |acc, (x, y)| acc + *x * *y);
         assert_eq!(B::dot_product(&a, &xs), per_term);
     }
-    let triples: Vec<[B; 3]> = xs.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+    let triples = xs.as_chunks::<3>().0;
     let products = triples
         .iter()
         .fold(B::zero(), |acc, [a, b, c]| acc + *a * *b * *c);
-    assert_eq!(B::sum_of_products(&triples), products);
+    assert_eq!(B::sum_of_products(triples), products);
     assert_eq!(B::sum_of_products::<0>(&[[], []]), B::one() + B::one());
     let signed =
         xs.iter().enumerate().fold(

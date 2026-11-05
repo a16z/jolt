@@ -915,7 +915,9 @@ mod prefix_tests {
                 let challenge = F::from_u64([0, 1, 13, 29, 41, 53, 67][round % 7]);
                 for values in &mut dense {
                     *values = values
-                        .chunks_exact(2)
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
                         .map(|p| p[0] + challenge * (p[1] - p[0]))
                         .collect();
                 }
