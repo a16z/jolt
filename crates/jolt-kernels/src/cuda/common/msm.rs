@@ -1034,7 +1034,7 @@ impl CudaKernelContext {
         })
     }
 
-    fn resident_span_end(
+    pub(crate) fn resident_span_end(
         offset: usize,
         count: usize,
         words: usize,

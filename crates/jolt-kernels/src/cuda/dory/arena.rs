@@ -14,6 +14,12 @@
 //! retirement cutoff is below the MSM split threshold so larger pairing
 //! batches can still use the mirrors.
 //!
+//! After retirement, small MSMs wait until their results are needed. An
+//! independent pairing batch copies just its inputs to GPU 1 and runs there
+//! while GPU 0 computes the MSMs. Reads, mutations, and dependent requests
+//! resolve pending MSMs first, preserving their input values and transcript
+//! order. Pairing scratch is released after the batch; full mirrors stay retired.
+//!
 //! Dory's group traits cannot return storage errors. Handle failures therefore
 //! poison this arena. `CudaDoryScheme::open` checks that flag after proving,
 //! before resolving the final proof's handles.
@@ -60,6 +66,11 @@ struct Arena {
     capacity: usize,
     frozen: usize,
     frozen_host: Vec<u64>,
+}
+
+struct PairingInput {
+    points: CudaSlice<u64>,
+    offsets: Vec<usize>,
 }
 
 impl Arena {
@@ -120,6 +131,61 @@ impl Arena {
         Ok(offset)
     }
 
+    fn copy_pairing_input(
+        &self,
+        context: &CudaKernelContext,
+        starts: impl IntoIterator<Item = usize>,
+        count: usize,
+    ) -> Result<PairingInput, CudaError> {
+        let source = self.primary()?;
+        let mut unique = Vec::new();
+        let mut offsets = Vec::new();
+        for start in starts {
+            CudaKernelContext::resident_span_end(start, count, self.words, source)?;
+            let index = if let Some(index) = unique.iter().position(|&offset| offset == start) {
+                index
+            } else {
+                unique.push(start);
+                unique.len() - 1
+            };
+            offsets.push(
+                index
+                    .checked_mul(count)
+                    .ok_or(CudaError::InvariantViolation {
+                        reason: "a Dory pairing input offset overflowed",
+                    })?,
+            );
+        }
+        let words = unique
+            .len()
+            .checked_mul(count)
+            .and_then(|points| points.checked_mul(self.words))
+            .ok_or(CudaError::InvariantViolation {
+                reason: "a Dory pairing input buffer overflowed",
+            })?;
+        let mut points = context.alloc_u64(words)?;
+        let copied = (|| {
+            for (index, &start) in unique.iter().enumerate() {
+                let source_start = start * self.words;
+                let target_start = index * count * self.words;
+                let words = count * self.words;
+                xfer_stats::timed(Phase::D2d, words * size_of::<u64>(), || {
+                    context.stream().memcpy_dtod(
+                        &source.slice(source_start..source_start + words),
+                        &mut points.slice_mut(target_start..target_start + words),
+                    )
+                })?;
+            }
+            Ok::<_, CudaError>(())
+        })();
+        // Cudarc does not record peer reads on the source allocation. Complete
+        // all submitted copies, including on error, before an MSM can write it.
+        let completed = context.stream().synchronize();
+        copied?;
+        completed?;
+        Ok(PairingInput { points, offsets })
+    }
+
     #[tracing::instrument(skip_all, name = "cuda_dory_exchange")]
     fn exchange(&mut self, offset: usize, chunks: &[Range<usize>]) -> Result<(), CudaError> {
         for (source_ordinal, chunk) in chunks.iter().enumerate() {
@@ -161,7 +227,46 @@ impl Arena {
 thread_local! {
     static G1_ARENA: RefCell<Option<Arena>> = const { RefCell::new(None) };
     static G2_ARENA: RefCell<Option<Arena>> = const { RefCell::new(None) };
+    static PENDING_MSMS: RefCell<Vec<MsmRequest>> = const { RefCell::new(Vec::new()) };
     static POISONED: Cell<bool> = const { Cell::new(false) };
+}
+
+struct MsmRequest {
+    family: Family,
+    bases: Range<usize>,
+    out: usize,
+    scalars: Vec<Fr>,
+}
+
+impl MsmRequest {
+    #[tracing::instrument(skip_all, name = "cuda_dory_pending_msm", fields(family = ?self.family, len = self.bases.len()))]
+    fn run(&self, arena: &mut Arena) -> Result<(), CudaError> {
+        let buffer = arena.buffers.first_mut().ok_or_else(closed)?;
+        match self.family {
+            Family::G1 => device(0)?.g1_msm_in_place(
+                buffer,
+                self.bases.start,
+                self.out,
+                self.bases.len(),
+                &self.scalars,
+            ),
+            Family::G2 => device(0)?.g2_msm_in_place(
+                buffer,
+                self.bases.start,
+                self.out,
+                self.bases.len(),
+                &self.scalars,
+            ),
+        }
+    }
+}
+
+fn flush_msms() -> Result<(), CudaError> {
+    let requests = PENDING_MSMS.with_borrow_mut(std::mem::take);
+    for request in requests {
+        with_arena(request.family, |arena| request.run(arena)).ok_or_else(closed)??;
+    }
+    Ok(())
 }
 
 pub(super) fn poison(reason: &'static str) {
@@ -199,6 +304,7 @@ pub(super) struct ArenaGuard;
 
 impl Drop for ArenaGuard {
     fn drop(&mut self) {
+        PENDING_MSMS.with_borrow_mut(Vec::clear);
         G1_ARENA.with_borrow_mut(|slot| *slot = None);
         G2_ARENA.with_borrow_mut(|slot| *slot = None);
     }
@@ -209,6 +315,7 @@ pub(super) fn open(g1_capacity: usize, g2_capacity: usize) -> Result<ArenaGuard,
     let g2 = Arena::new(Family::G2, g2_capacity)?;
     G1_ARENA.with_borrow_mut(|slot| *slot = Some(g1));
     G2_ARENA.with_borrow_mut(|slot| *slot = Some(g2));
+    PENDING_MSMS.with_borrow_mut(Vec::clear);
     POISONED.set(false);
     Ok(ArenaGuard)
 }
@@ -219,6 +326,7 @@ pub(super) fn reserve(family: Family, count: usize) -> Result<usize, CudaError> 
 
 /// Copy already-reserved points into a fresh contiguous span in every mirror.
 pub(super) fn gather(family: Family, offsets: &[u32]) -> Result<usize, CudaError> {
+    flush_msms()?;
     with_arena(family, |arena| {
         if offsets.iter().any(|&offset| offset as usize >= arena.used) {
             return Err(CudaError::InvariantViolation {
@@ -253,6 +361,7 @@ pub(super) fn gather(family: Family, offsets: &[u32]) -> Result<usize, CudaError
 }
 
 pub(super) fn freeze(family: Family, count: usize, limbs: &[u64]) -> Result<(), CudaError> {
+    flush_msms()?;
     with_arena(family, |arena| {
         if count * arena.words != limbs.len() {
             return Err(CudaError::LengthMismatch {
@@ -268,6 +377,7 @@ pub(super) fn freeze(family: Family, count: usize, limbs: &[u64]) -> Result<(), 
 }
 
 pub(super) fn write(family: Family, offset: usize, limbs: &[u64]) -> Result<(), CudaError> {
+    flush_msms()?;
     with_arena(family, |arena| {
         if offset < arena.frozen {
             return Err(CudaError::InvariantViolation {
@@ -302,6 +412,7 @@ fn read_from(
     offset: usize,
     count: usize,
 ) -> Result<Vec<u64>, CudaError> {
+    flush_msms()?;
     let context = device(ordinal)?;
     with_arena(family, |arena| {
         let start = offset * arena.words;
@@ -327,6 +438,7 @@ fn read_from(
 }
 
 pub(super) fn axpy(family: Family, span: ResidentAxpy, scalar: Fr) -> Result<(), CudaError> {
+    flush_msms()?;
     with_arena(family, |arena| {
         if span.out_offset < arena.frozen {
             return Err(CudaError::InvariantViolation {
@@ -408,9 +520,6 @@ fn base_chunks(count: usize, devices: usize, floor: usize) -> Vec<Range<usize>> 
     chunks
 }
 
-/// Each device reduces its own contiguous slice of the bases into ITS OWN copy
-/// of `out_offset`, so the mirrors diverge for the duration of the fan-out;
-/// `reduce` sums the partials and re-broadcasts the total before returning.
 fn msm(
     family: Family,
     base_offset: usize,
@@ -418,6 +527,55 @@ fn msm(
     count: usize,
     scalars: &[Fr],
 ) -> Result<(), CudaError> {
+    if count > 0 && count < MIRROR_RETIRE_LEN && device_count() > 1 {
+        if count != scalars.len() {
+            return Err(CudaError::LengthMismatch {
+                expected: count,
+                got: scalars.len(),
+            });
+        }
+        with_arena(family, |arena| {
+            if out_offset < arena.frozen {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a resident MSM targeted the frozen setup prefix",
+                });
+            }
+            CudaKernelContext::resident_span_end(
+                base_offset,
+                count,
+                arena.words,
+                arena.primary()?,
+            )?;
+            CudaKernelContext::resident_span_end(out_offset, 1, arena.words, arena.primary()?)?;
+            arena.buffers.truncate(1);
+            Ok::<_, CudaError>(())
+        })
+        .ok_or_else(closed)??;
+        let bases = base_offset..base_offset + count;
+        let dependent = PENDING_MSMS.with_borrow(|requests| {
+            requests.iter().any(|request| {
+                request.family == family
+                    && (bases.contains(&request.out)
+                        || request.bases.contains(&out_offset)
+                        || request.out == out_offset)
+            })
+        });
+        if dependent {
+            flush_msms()?;
+        }
+        PENDING_MSMS.with_borrow_mut(|requests| {
+            requests.push(MsmRequest {
+                family,
+                bases,
+                out: out_offset,
+                scalars: scalars.to_vec(),
+            });
+        });
+        return Ok(());
+    }
+    flush_msms()?;
+    // Each device writes its partial into its own copy of `out_offset`.
+    // `reduce` restores agreement before any mirror can be consumed.
     let split = with_arena(family, |arena| -> Result<bool, CudaError> {
         if out_offset < arena.frozen {
             return Err(CudaError::InvariantViolation {
@@ -531,6 +689,56 @@ pub(super) fn multi_miller_batch(
     segments: &[(usize, usize)],
     count: usize,
 ) -> Result<Vec<u64>, CudaError> {
+    let independent = count > 0
+        && count < MIRROR_RETIRE_LEN
+        && !segments.is_empty()
+        && PENDING_MSMS.with_borrow(|requests| {
+            !requests.is_empty()
+                && requests.iter().all(|request| {
+                    segments.iter().all(|&(g1, g2)| {
+                        let start = match request.family {
+                            Family::G1 => g1,
+                            Family::G2 => g2,
+                        };
+                        !(start..start.saturating_add(count)).contains(&request.out)
+                    })
+                })
+        });
+    if independent && mirrors(Family::G1) == 1 && mirrors(Family::G2) == 1 {
+        let _span = tracing::info_span!(
+            "cuda_dory_tail_overlap",
+            pairs = count,
+            lanes = segments.len()
+        )
+        .entered();
+        return G1_ARENA.with_borrow_mut(|g1| {
+            G2_ARENA.with_borrow_mut(|g2| {
+                let g1 = g1.as_mut().ok_or_else(closed)?;
+                let g2 = g2.as_mut().ok_or_else(closed)?;
+                let context = device(1)?;
+                let ps = g1.copy_pairing_input(context, segments.iter().map(|&(p, _)| p), count)?;
+                let qs = g2.copy_pairing_input(context, segments.iter().map(|&(_, q)| q), count)?;
+                let spans: Vec<_> = ps.offsets.into_iter().zip(qs.offsets).collect();
+                let requests = PENDING_MSMS.with_borrow_mut(std::mem::take);
+                let tasks: Vec<DeviceTask<'_, Vec<u64>, CudaError>> = vec![
+                    Box::new(move || {
+                        for request in requests {
+                            request.run(match request.family {
+                                Family::G1 => g1,
+                                Family::G2 => g2,
+                            })?;
+                        }
+                        Ok(Vec::new())
+                    }),
+                    Box::new(move || {
+                        context.multi_miller_batch(&ps.points, &qs.points, &spans, count)
+                    }),
+                ];
+                Ok(fan_out(tasks)?.concat())
+            })
+        });
+    }
+    flush_msms()?;
     G1_ARENA.with_borrow(|g1| {
         G2_ARENA.with_borrow(|g2| match (g1.as_ref(), g2.as_ref()) {
             (Some(g1), Some(g2)) => miller_batch(g1, g2, segments, count),
@@ -576,6 +784,7 @@ pub(super) fn g2_fixed_base(
     out_offset: usize,
     scalars: &[Fr],
 ) -> Result<(), CudaError> {
+    flush_msms()?;
     with_arena(Family::G2, |arena| {
         if out_offset < arena.frozen {
             return Err(CudaError::InvariantViolation {
@@ -1197,6 +1406,82 @@ mod tests {
                 *value, expected,
                 "lane {lane} of a {lanes}-lane x {count}-pair split batch diverged from arkworks",
             );
+        }
+    }
+
+    #[test]
+    fn small_round_msms_preserve_pairings_and_input_snapshots() {
+        if shared_context().is_none() {
+            return;
+        }
+        for count in [17usize, 129] {
+            let _guard = open(4 * count + 16, 4 * count + 16).expect("arena");
+            let g1 = G1Projective::generator();
+            let g2 = G2Projective::generator();
+            let p_scalars: Vec<_> = (0..2 * count).map(|i| Fr::from((i % 23) as u64)).collect();
+            let q_scalars: Vec<_> = (0..2 * count).map(|i| Fr::from((i % 19) as u64)).collect();
+            let ps: Vec<_> = p_scalars.iter().map(|s| g1 * s).collect();
+            let qs: Vec<_> = q_scalars.iter().map(|s| g2 * s).collect();
+            let hp = store_all(&ps);
+            let hq = store_all_g2(&qs);
+            let weights = scalars(count, 4_501);
+            let p = CudaG1Routines::msm(&hp[..count], &weights);
+            let q = CudaG2Routines::msm(&hq[..count], &weights);
+            let p_start = span(&hp).expect("p span");
+            let q_start = span_g2(&hq).expect("q span");
+            let lanes = [(0, 0), (count, 0), (0, count), (count, count)];
+            let segments: Vec<_> = lanes
+                .iter()
+                .map(|&(a, b)| (p_start + a, q_start + b))
+                .collect();
+            let paired = multi_miller_batch(&segments, count).expect("pairings with pending MSMs");
+            assert_eq!(paired.len(), lanes.len() * FQ12_LIMBS);
+            for ((a, b), limbs) in lanes.into_iter().zip(paired.chunks_exact(FQ12_LIMBS)) {
+                let scalar: Fr = p_scalars[a..a + count]
+                    .iter()
+                    .zip(&q_scalars[b..b + count])
+                    .map(|(p, q)| *p * q)
+                    .sum();
+                assert_eq!(
+                    Bn254::final_exponentiation(MillerLoopOutput(fq12(limbs))).expect("final exp"),
+                    Bn254::pairing(g1 * scalar, g2),
+                );
+            }
+            let p_sum: Fr = p_scalars[..count]
+                .iter()
+                .zip(&weights)
+                .map(|(p, s)| *p * s.0)
+                .sum();
+            let q_sum: Fr = q_scalars[..count]
+                .iter()
+                .zip(&weights)
+                .map(|(q, s)| *q * s.0)
+                .sum();
+            assert_eq!(p.load(), g1 * p_sum);
+            assert_eq!(q.load(), g2 * q_sum);
+
+            let pending = CudaG1Routines::msm(&hp[..count], &weights);
+            let dependent =
+                multi_miller_batch(&[(span(&[pending]).expect("result"), q_start + 1)], 1)
+                    .expect("pairing consumes an MSM");
+            assert_eq!(
+                Bn254::final_exponentiation(MillerLoopOutput(fq12(&dependent))).expect("final exp"),
+                Bn254::pairing(g1 * p_sum, qs[1]),
+            );
+            let pending = CudaG2Routines::msm(&hq[..count], &weights);
+            hq[1].overwrite(&(g2 + g2));
+            assert_eq!(pending.load(), g2 * q_sum);
+            assert_eq!(hq[1].load(), g2 + g2);
+
+            let pending = CudaG1Routines::msm(&hp[..count], &weights);
+            let dependent = CudaG1Routines::msm(&[pending], &weights[..1]);
+            assert_eq!(dependent.load(), g1 * (p_sum * weights[0].0));
+
+            let pending = CudaG1Routines::msm(&hp[..count], &weights);
+            let _ = CudaG2Routines::msm(&hq[..count], &weights);
+            assert!(multi_miller_batch(&[(usize::MAX, q_start)], 1).is_err());
+            assert_eq!(pending.load(), g1 * p_sum);
+            assert!(!poisoned());
         }
     }
 

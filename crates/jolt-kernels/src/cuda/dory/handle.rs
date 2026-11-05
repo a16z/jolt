@@ -5,6 +5,7 @@
 //! repeated identity handles from Dory's rectangular padding. Individual group
 //! operators load points, use Arkworks arithmetic,
 //! and store their results; serialization also resolves handles to host values.
+//! MSM outputs may be pending; arena reads resolve them before accessing storage.
 //! Handle validity is limited to the current thread's arena lifetime.
 
 use std::ops::{Add, Mul, Neg, Sub};
@@ -14,6 +15,7 @@ use ark_serialize::{Read, Write};
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
 use dory::primitives::arithmetic::Group as DoryGroup;
 use dory::primitives::{Compress, DoryDeserialize, DorySerialize, SerializationError, Validate};
+use jolt_field::Fr;
 
 use crate::cuda::common::error::CudaError;
 
@@ -27,7 +29,8 @@ macro_rules! device_handle {
         $projective:ty,
         $ark:ident,
         $limbs:path,
-        $point:path
+        $point:path,
+        $msm:path
     ) => {
         #[derive(Clone, Copy, Debug)]
         pub struct $name {
@@ -35,6 +38,17 @@ macro_rules! device_handle {
         }
 
         impl $name {
+            pub(super) fn msm(base_offset: usize, scalars: &[Fr]) -> Result<Self, CudaError> {
+                // The MSM initializes this slot. Arena reads resolve deferred
+                // MSMs before the handle can expose the slot's contents.
+                let offset = arena::reserve($family, 1)?;
+                $msm(base_offset, offset, scalars.len(), scalars)?;
+                let offset = u32::try_from(offset).map_err(|_| CudaError::InvariantViolation {
+                    reason: "a Dory arena offset exceeded the handle's 32-bit width",
+                })?;
+                Ok(Self { offset })
+            }
+
             pub(super) fn store(point: &$projective) -> Self {
                 let limbs = $limbs(point);
                 let stored = arena::reserve($family, 1).and_then(|offset| {
@@ -195,7 +209,8 @@ device_handle!(
     G1Projective,
     ArkG1,
     arena::g1_limbs,
-    arena::g1_point
+    arena::g1_point,
+    arena::g1_msm
 );
 
 device_handle!(
@@ -205,7 +220,8 @@ device_handle!(
     G2Projective,
     ArkG2,
     arena::g2_limbs,
-    arena::g2_point
+    arena::g2_point,
+    arena::g2_msm
 );
 
 const _: () = assert!(G1_WORDS == 12);

@@ -2,12 +2,13 @@
 //!
 //! MSMs and vector multiply-adds gather noncontiguous inputs on device; mutable
 //! vectors retain the resulting contiguous storage for later rounds.
+//! Small MSMs may be deferred by the arena to overlap independent pairings;
+//! loading a result or mutating its inputs resolves them first.
 //! A declined operation delegates to `jolt-dory`'s host routines
 //! and writes the result back into the arena. G1 fixed-base vectors and
 //! field-vector folds remain on the CPU, as do scalar group operations
 //! implemented by the handles. G2 fixed-base vectors use a device kernel.
 
-use ark_bn254::G1Projective;
 use ark_bn254::G2Projective;
 use dory::backends::arkworks::{ArkFr, ArkG1, ArkG2};
 use jolt_field::Fr;
@@ -113,17 +114,8 @@ fn resident_msm(bases: &[DeviceG1], scalars: &[ArkFr]) -> Result<DeviceG1, CudaE
         });
     }
     let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
-    let out = store_all(&[G1Projective::default()]);
     let base_offset = contiguous_span(bases)?;
-    let Some(out_offset) = span(&out) else {
-        return Err(CudaError::InvariantViolation {
-            reason: "a resident G1 MSM needs an output slot",
-        });
-    };
-    arena::g1_msm(base_offset, out_offset, bases.len(), &weights)?;
-    out.first().copied().ok_or(CudaError::InvariantViolation {
-        reason: "a resident G1 MSM lost its output handle",
-    })
+    DeviceG1::msm(base_offset, &weights)
 }
 
 impl DoryRoutines<DeviceG1> for CudaG1Routines {
@@ -228,17 +220,8 @@ fn resident_msm_g2(bases: &[DeviceG2], scalars: &[ArkFr]) -> Result<DeviceG2, Cu
         });
     }
     let weights: Vec<Fr> = scalars.iter().map(|scalar| Fr::from(scalar.0)).collect();
-    let out = store_all_g2(&[G2Projective::default()]);
     let base_offset = contiguous_span_g2(bases)?;
-    let Some(out_offset) = span_g2(&out) else {
-        return Err(CudaError::InvariantViolation {
-            reason: "a resident G2 MSM needs an output slot",
-        });
-    };
-    arena::g2_msm(base_offset, out_offset, bases.len(), &weights)?;
-    out.first().copied().ok_or(CudaError::InvariantViolation {
-        reason: "a resident G2 MSM lost its output handle",
-    })
+    DeviceG2::msm(base_offset, &weights)
 }
 
 impl DoryRoutines<DeviceG2> for CudaG2Routines {
