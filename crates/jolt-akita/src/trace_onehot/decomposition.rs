@@ -54,7 +54,21 @@ pub(super) struct PreparedSparseChallenge {
 
 struct PreparedByteChallenge {
     doubled: [i8; 1024],
-    weight: usize,
+    num_positions: usize,
+}
+
+#[inline(always)]
+fn add_scaled_byte_windows<const SCALE: i8>(
+    partial: &mut [i8; 512],
+    input: &[i8; 1024],
+    positions: &[u16],
+) {
+    for &position in positions {
+        let window = &input[512 - usize::from(position)..][..512];
+        for (dst, &value) in partial.iter_mut().zip(window) {
+            *dst += value * SCALE;
+        }
+    }
 }
 
 impl PreparedSparseChallenge {
@@ -114,7 +128,7 @@ impl PreparedSparseChallenge {
         {
             let mut byte = Box::new(PreparedByteChallenge {
                 doubled: [0; 1024],
-                weight: challenge.positions.len(),
+                num_positions: challenge.positions.len(),
             });
             for (&position, &coefficient) in challenge.positions.iter().zip(&challenge.coeffs) {
                 byte.doubled[position as usize] = -coefficient;
@@ -139,12 +153,15 @@ impl PreparedSparseChallenge {
         let Some(byte) = &self.byte else {
             return false;
         };
-        // The row visitor validates digits into disjoint one-hot blocks. Choose
-        // the convolution direction with fewer rotations. Distinct input shifts
-        // make each output a signed subset sum of challenge coefficients, so the
-        // challenge's L1 bound keeps every byte partial in [-127, 127].
+        // Choose the convolution direction with fewer rotations. The row
+        // visitor enforces `hot < K`, so input shifts are distinct, and
+        // `SparseChallenge::validate` makes challenge positions distinct. Each
+        // output is then a signed subset sum of challenge coefficients, so the
+        // challenge's L1 bound keeps every byte partial in [-127, 127]. The
+        // forward direction needs distinct shifts for this; the reverse
+        // direction is bounded by L1 alone.
         let mut partial = [0i8; 512];
-        if coefficients.len() <= byte.weight {
+        if coefficients.len() <= byte.num_positions {
             for &coefficient in coefficients {
                 let window = &byte.doubled[D - coefficient..][..D];
                 for (dst, &value) in partial.iter_mut().zip(window) {
@@ -158,33 +175,14 @@ impl PreparedSparseChallenge {
                 input[D + coefficient] = 1;
             }
             for class in &self.classes {
-                if class.coefficient == 2 {
-                    for &position in &class.positions {
-                        let window = &input[D - usize::from(position)..][..D];
-                        for (dst, &value) in partial.iter_mut().zip(window) {
-                            *dst += value * 2;
-                        }
-                    }
-                } else if class.coefficient == -2 {
-                    for &position in &class.positions {
-                        let window = &input[D - usize::from(position)..][..D];
-                        for (dst, &value) in partial.iter_mut().zip(window) {
-                            *dst -= value * 2;
-                        }
-                    }
-                } else if class.coefficient > 0 {
-                    for &position in &class.positions {
-                        let window = &input[D - usize::from(position)..][..D];
-                        for (dst, &value) in partial.iter_mut().zip(window) {
-                            *dst += value;
-                        }
-                    }
-                } else {
-                    for &position in &class.positions {
-                        let window = &input[D - usize::from(position)..][..D];
-                        for (dst, &value) in partial.iter_mut().zip(window) {
-                            *dst -= value;
-                        }
+                let positions = class.positions.as_slice();
+                match class.coefficient {
+                    2 => add_scaled_byte_windows::<2>(&mut partial, &input, positions),
+                    1 => add_scaled_byte_windows::<1>(&mut partial, &input, positions),
+                    -1 => add_scaled_byte_windows::<-1>(&mut partial, &input, positions),
+                    -2 => add_scaled_byte_windows::<-2>(&mut partial, &input, positions),
+                    _ => {
+                        unreachable!("byte challenges admit only coefficients in {{-2, -1, 1, 2}}")
                     }
                 }
             }
