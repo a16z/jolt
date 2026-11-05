@@ -57,7 +57,8 @@ use crate::round_proof::RoundMessage;
 /// through the terminal [`finish_rounds`](Self::finish_rounds).
 pub trait ProveRounds<F: Field> {
     /// Opt into concurrent scheduling. The returned view must operate on the
-    /// same round state as this object. Sequential implementations need not opt in.
+    /// same round state as this object. This query must not advance the prover.
+    /// Sequential implementations need not opt in.
     fn parallel_rounds(&mut self) -> Option<&mut (dyn ProveRounds<F> + Send)> {
         None
     }

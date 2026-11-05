@@ -87,7 +87,6 @@ mod rw_matrix;
 pub mod spartan_outer;
 pub mod spartan_product;
 pub mod spartan_shift;
-
 pub(crate) mod support;
 
 pub use bytecode_read_raf::{OptimizedBytecodeReadRafAddress, OptimizedBytecodeReadRafCycle};
@@ -137,6 +136,7 @@ where
     /// Packed commitment schemes use native group commitment/opening paths, so
     /// they cannot satisfy [`jolt_openings::StreamingCommitment`] and must retain their own
     /// boundary slots while sharing the optimized stage 1–7 kernels.
+    ///
     /// With parallel execution enabled, also schedules independent sum-check
     /// members concurrently when every member opts in.
     pub fn with_optimized_compute(mut self) -> Self {
