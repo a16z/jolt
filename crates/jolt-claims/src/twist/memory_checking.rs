@@ -96,6 +96,7 @@ pub fn val_evaluation_output<F: Ring, S: ValEvaluationIds>(
 macro_rules! instantiate_read_write_checking {
     (
         relation = $relation:ident,
+        $(recipe = { $($recipe:tt)* },)?
         id = $id:expr,
         ids = ($relation_id:ty, $opening_id:ty, $derived_id:ty, $challenge_id:ty),
         dimensions = $dimensions:ty,
@@ -159,7 +160,7 @@ macro_rules! instantiate_read_write_checking {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-            self::immutable_twist_recipe!($relation);
+            $($($recipe)*)?
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }
@@ -194,6 +195,7 @@ pub(crate) use instantiate_read_write_checking;
 macro_rules! instantiate_val_evaluation {
     (
         relation = $relation:ident,
+        $(recipe = { $($recipe:tt)* },)?
         id = $id:expr,
         ids = ($relation_id:ty, $opening_id:ty, $derived_id:ty, $challenge_id:ty),
         dimensions = $dimensions:ty,
@@ -233,7 +235,7 @@ macro_rules! instantiate_val_evaluation {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-            self::immutable_twist_recipe!($relation);
+            $($($recipe)*)?
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }

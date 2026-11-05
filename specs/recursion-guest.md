@@ -141,7 +141,7 @@ field-inline instructions (`field_inline.rs`).
   transcript, descriptor digests, layout digests, and the preprocessing digest
   hash through it, with the same bytes as the `blake2` crate. Akita's
   transcript is spongefish's own `Hash` sponge over that adapter.
-- **Keccak inline** for Akita's SHAKE challenge sampler (`keccak-inline`).
+- **Blake2b inline** for the Jolt-owned Akita transcript (`blake2-inline`).
 - **64-point i32 NTT and six-product pointwise dot** (`jolt-inlines-ntt`).
   These expand into existing proved integer instructions, with no advice and no
   new constraints. Akita's `ntt-inline` feature dispatches the 64-dimension CRT

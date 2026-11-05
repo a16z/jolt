@@ -46,6 +46,3 @@ bench = false
 jolt-field = { path = "../../jolt-field" }
 jolt-transcript = { path = "../../jolt-transcript" }
 jolt-poly = { path = "../../jolt-poly" }
-jolt-inlines-blake2 = { path = "../../../jolt-inlines/blake2" }
-jolt-inlines-ntt = { path = "../../../jolt-inlines/ntt" }
-jolt-inlines-keccak256 = { path = "../../../jolt-inlines/keccak256" }

@@ -165,12 +165,13 @@ impl SymbolicSumcheck for ProductUniskip {
         lift(self.base.output_expression())
     }
 }
-crate::immutable_recipe_items! {
 #[derive(Clone)]
 pub struct ProductRemainder {
     base: base::ProductRemainder,
 }
 impl SymbolicSumcheck for ProductRemainder {
+    #[cfg(feature = "immutable-recipes")]
+    crate::immutable_base_recipe!(3, COMPOSED, Composed);
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
@@ -230,6 +231,8 @@ where
         Shape = BytecodeReadRafDimensions,
     >,
 {
+    #[cfg(feature = "immutable-recipes")]
+    crate::immutable_base_recipe!(18, COMPOSED, Composed);
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
@@ -258,7 +261,6 @@ where
     fn output_expression<F: Ring>(&self) -> ComposedExpr<F> {
         lift(self.base.output_expression())
     }
-}
 }
 impl<B> ReadRafAddressPhase<B> {
     fn bytecode_input_extension_expr<F: Ring>() -> ComposedExpr<F> {
