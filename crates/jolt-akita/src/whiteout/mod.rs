@@ -33,8 +33,10 @@ use akita_pcs::zk::{
 use akita_pcs::SelectedProverOpeningData;
 use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier, TrustedTerminalCache};
 #[cfg(feature = "zk-prover")]
-use akita_pcs::{CommitOutput, GroupContext, SourceHandle};
+use akita_pcs::{CommitOutput, GroupContext, HidingRandomness, SourceHandle};
 use akita_schedules::digit_commitment_min_rank;
+#[cfg(feature = "zk-prover")]
+use akita_types::Commitment;
 use akita_types::{
     sample_akita_setup_seed, CommittedGroup, GroupBatchStatement, OpeningClaims,
     PolynomialGroupClaims,
@@ -273,6 +275,28 @@ impl PrecommittedRow {
         match &self.catalog {
             PrecommittedCatalog::Bounded(catalog) => backend.commit(catalog, source, context),
             PrecommittedCatalog::FullField(catalog) => backend.commit(catalog, source, context),
+        }
+    }
+
+    /// Rebuilds the commitment `expected` of `source` under the hiding
+    /// profile from the randomness it was made with; fails unless the
+    /// rebuilt commitment is `expected`.
+    #[cfg(feature = "zk-prover")]
+    fn recommit(
+        &self,
+        backend: &AkitaBackend,
+        source: &SourceHandle<F, F>,
+        randomness: &HidingRandomness,
+        expected: &Commitment<F>,
+    ) -> Result<CommitOutput<F, F>, AkitaError> {
+        let context = GroupContext::explicit(&self.profile);
+        match &self.catalog {
+            PrecommittedCatalog::Bounded(catalog) => {
+                backend.recommit_hiding(catalog, source, context, randomness, expected)
+            }
+            PrecommittedCatalog::FullField(catalog) => {
+                backend.recommit_hiding(catalog, source, context, randomness, expected)
+            }
         }
     }
 }
@@ -696,6 +720,31 @@ impl WhiteoutCatalog {
             ))
         })?;
         let output = row.commit(self.backend()?, source)?;
+        Ok((output.committed_group, output.private_handle))
+    }
+
+    /// Rebuilds the hiding commitment `expected` of `source`, a precommitted
+    /// group of `shape`, from the randomness it was made with (`specs/whiteout-jolt-integration.md` §5).
+    ///
+    /// # Errors
+    ///
+    /// [`AkitaError::InvalidInput`] unless (`source`, `randomness`) rebuild
+    /// exactly `expected`, and [`commit_precommitted`](Self::commit_precommitted)'s
+    /// errors.
+    #[cfg(feature = "zk-prover")]
+    pub fn recommit_precommitted(
+        &self,
+        shape: PrecommittedShape,
+        source: &SourceHandle<F, F>,
+        randomness: &HidingRandomness,
+        expected: &Commitment<F>,
+    ) -> Result<(CommittedGroup<F>, AkitaBackendHint), AkitaError> {
+        let row = self.precommitted.get(&shape).ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(format!(
+                "no admitted Whiteout opening folds a precommitted group of {shape:?}"
+            ))
+        })?;
+        let output = row.recommit(self.backend()?, source, randomness, expected)?;
         Ok((output.committed_group, output.private_handle))
     }
 }
