@@ -15,6 +15,8 @@ use thiserror::Error as ThisError;
 #[cfg(feature = "prover")]
 use super::CommittedPads;
 use super::{CommittedPadsView, PadLayout, ResidualRelation};
+#[cfg(feature = "whiteout")]
+use crate::whiteout::WhiteoutError;
 
 /// What [`ZkBackend::commit_pads`] returns: the prover's pads and the
 /// commitment the proof carries.
@@ -24,13 +26,14 @@ pub type CommittedPadsWith<F, B> = (
     <B as ZkBackend<F>>::PadCommitment,
 );
 
-/// A field-generic source error (a sumcheck error), erased so
+/// A field-generic source error (a sumcheck or Whiteout error), erased so
 /// that [`ZkError`] stays field-independent like the verifier's error type.
 /// Callers recover the typed error with `downcast_ref`.
 pub type ErasedSource = Box<dyn Error + Send + Sync + 'static>;
 
-/// Why masking or a back end failed: an invariant violation or a rejected
-/// proof.
+/// Why masking or a back end failed. Every variant is an invariant violation
+/// or a rejected proof, except [`ZkError::FoldOverflow`], after which the
+/// caller may rerun the whole proof with fresh randomness.
 #[derive(Debug, ThisError)]
 pub enum ZkError {
     #[error("the ZK transcript rejected a read, a challenge or a proof of work")]
@@ -69,6 +72,54 @@ pub enum ZkError {
     /// A `SumcheckError<F>`.
     #[error("masked sumcheck: {0}")]
     Sumcheck(#[source] ErasedSource),
+    /// A Whiteout `WhiteoutError`, erased so the variant exists whether or
+    /// not the `whiteout` feature is on (feature additivity: dependents match
+    /// `ZkError` exhaustively).
+    #[error("Whiteout: {0}")]
+    Whiteout(#[source] ErasedSource),
+    /// The lattice PCS's one-shot fold response at masked level `level`
+    /// fell outside its digit range (Akita `AkitaError::FoldOverflow`). The
+    /// proof is aborted; a rerun draws all of its randomness fresh. Akita
+    /// maps its error to this variant, since jolt-zk cannot name Akita's
+    /// error type.
+    #[error("fold response overflowed its digit range at masked level {level}")]
+    FoldOverflow { level: u32 },
+}
+
+#[cfg(feature = "whiteout")]
+impl ZkError {
+    /// Whether a fresh rerun of the whole proof may succeed: a fold overflow
+    /// or exhausted Σ attempts, both independent of the witness. Every other
+    /// error is final.
+    pub fn is_rerunnable(&self) -> bool {
+        match self {
+            Self::FoldOverflow { .. } => true,
+            Self::Whiteout(source) => matches!(
+                source.downcast_ref::<WhiteoutError>(),
+                Some(WhiteoutError::AttemptsExhausted)
+            ),
+            Self::TranscriptRejected
+            | Self::ChallengeRejected
+            | Self::MaskedTapeExhausted
+            | Self::MaskedTapeTrailing
+            | Self::PadsExhausted { .. }
+            | Self::PadCountMismatch { .. }
+            | Self::InvalidLayout { .. }
+            | Self::OperandPadsMismatch
+            | Self::RoundWidthMismatch { .. }
+            | Self::RoundCountMismatch { .. }
+            | Self::InvalidRelation { .. }
+            | Self::ClaimMismatch(_)
+            | Self::Sumcheck(_) => false,
+        }
+    }
+}
+
+#[cfg(feature = "whiteout")]
+impl From<WhiteoutError> for ZkError {
+    fn from(error: WhiteoutError) -> Self {
+        Self::Whiteout(Box::new(error))
+    }
 }
 
 /// A transcript failure surfaces as [`ZkError::TranscriptRejected`], and a

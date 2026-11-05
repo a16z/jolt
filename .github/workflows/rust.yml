@@ -148,17 +148,25 @@ jobs:
           cargo clippy -p jolt-crypto --all-targets --no-default-features --features lattice,parallel
           cargo clippy -p jolt-crypto --all-targets --no-default-features --features lattice,sample-diagnostics
           cargo clippy -p jolt-crypto --all-targets --no-default-features --features ont-static-base
-      # jolt-crypto's `sample` feature (the constant-time Gaussian sampler and
-      # rejection rule) is prover-only; no verifier graph may enable it.
-      - name: Check the verifier graph leaves out the Gaussian sampler
+      # The prover's samplers (jolt-crypto's `sample`, jolt-zk's
+      # `whiteout-prover`, jolt-dit) are prover-only; no verifier graph may
+      # enable them.
+      - name: Check the verifier graph leaves out the prover samplers
         run: |
           for features in "" "--features zk" "--features akita" "--all-features"; do
             if cargo tree -p jolt-verifier $features -e normal,features --prefix none \
-                 | grep -E 'jolt-crypto feature "sample'; then
-              echo "jolt-verifier $features enables jolt-crypto/sample" >&2
+                 | grep -E 'jolt-crypto feature "sample|jolt-zk feature "whiteout-prover|^jolt-dit'; then
+              echo "jolt-verifier $features enables a prover sampler" >&2
               exit 1
             fi
           done
+      # jolt-zk's Whiteout building blocks: the verifier-side feature alone
+      # (gating), then with the prover side and its test support.
+      - name: cargo clippy -p jolt-zk --features whiteout / whiteout-prover / whiteout-test-support
+        run: |
+          cargo clippy -p jolt-zk --all-targets --features whiteout
+          cargo clippy -p jolt-zk --all-targets --features whiteout-prover
+          cargo clippy -p jolt-zk --all-targets --features whiteout-test-support
       # No workspace crate enables jolt-crypto's `sample` feature yet.
       - name: cargo clippy -p jolt-crypto --features sample
         run: cargo clippy -p jolt-crypto --all-targets --features sample
@@ -891,6 +899,11 @@ jobs:
       - name: Test jolt-crypto with the Gaussian sampler
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-crypto --features sample --cargo-quiet
+      # jolt-zk's Whiteout Σ-protocol and its prover sit behind non-default
+      # features.
+      - name: Test jolt-zk with the Whiteout prover
+        if: matrix.shard == 2
+        run: cargo nextest run -p jolt-zk --features whiteout-test-support --cargo-quiet
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed,prover --cargo-quiet
