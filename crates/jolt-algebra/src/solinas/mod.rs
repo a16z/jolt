@@ -4,11 +4,6 @@
 //! algebra; `fp128.rs` is the hand-written two-limb field; this module holds
 //! the family trait, the `2^k − offset` registry, and shared helpers.
 
-#![expect(
-    clippy::manual_bit_width,
-    reason = "The certified Fp64 builds require Rust 1.95.0, before bit_width stabilized"
-)]
-
 mod ext;
 mod fp128;
 mod packed;

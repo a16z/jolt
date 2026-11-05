@@ -170,6 +170,9 @@ ordinary test coverage as described in the Book chapter.
 
 ## Scalar Fp64 checks
 
+The runners select the Rust toolchain recorded in `fp64-certified-builds.json`.
+An explicit `RUSTUP_TOOLCHAIN` override must match that matrix's compiler identity.
+
 Run the fast Fp64 byte check with
 
 ```sh

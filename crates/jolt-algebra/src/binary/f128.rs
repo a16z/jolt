@@ -115,7 +115,7 @@ impl CanonicalEncoding for F128 {
     }
 
     fn num_bits(&self) -> u32 {
-        self.0.bit_width()
+        u128::BITS - self.0.leading_zeros()
     }
 }
 
