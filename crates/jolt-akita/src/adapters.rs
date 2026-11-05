@@ -1167,26 +1167,6 @@ impl AkitaBatchProof {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AkitaHidingCommitment {
-    pub(crate) eval: Vec<u8>,
-}
-
-impl AkitaHidingCommitment {
-    pub(crate) fn new(eval: Vec<u8>) -> Self {
-        Self { eval }
-    }
-}
-
-impl Encoding for AkitaHidingCommitment {
-    fn encode(&self) -> impl AsRef<[u8]> {
-        let mut out = Vec::new();
-        out.extend_from_slice(BytesMsg(&self.eval).encode().as_ref());
-        out
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct AkitaProverHint {
     pub(crate) commitment: AkitaCommitment,
@@ -1436,12 +1416,6 @@ pub(crate) fn commit_failed(error: impl ToString) -> OpeningsError {
 
 pub(crate) fn prove_failed(error: impl ToString) -> OpeningsError {
     OpeningsError::ProveFailed(error.to_string())
-}
-
-pub(crate) fn transparent_zk_error() -> OpeningsError {
-    OpeningsError::InvalidBatch(
-        "Akita backend adapter is transparent-only and does not support ZK openings yet".to_owned(),
-    )
 }
 
 #[cfg(test)]
