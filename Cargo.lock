@@ -160,7 +160,7 @@ name = "akita-error"
 version = "0.1.0"
 source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1160b0a8d574f7090bf47adfa026658a5099787a#1160b0a8d574f7090bf47adfa026658a5099787a"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -255,7 +255,7 @@ source = "git+https://github.com/LayerZero-Labs/akita.git?rev=1160b0a8d574f7090b
 dependencies = [
  "jolt-field",
  "jolt-poly",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -422,7 +422,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -449,7 +449,7 @@ dependencies = [
  "alloy-rlp",
  "crc",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -475,7 +475,7 @@ dependencies = [
  "borsh",
  "k256",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -489,7 +489,7 @@ dependencies = [
  "borsh",
  "once_cell",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -502,7 +502,7 @@ dependencies = [
  "alloy-rlp",
  "borsh",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -639,7 +639,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_with",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -735,7 +735,7 @@ dependencies = [
  "nybbles",
  "serde",
  "smallvec",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -1575,7 +1575,7 @@ dependencies = [
  "semver 1.0.27",
  "serde",
  "serde_json",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1720,7 +1720,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fa961b519f0b462e3a3b4a34b64d119eeaca1d59af726fe450bbba07a9fc0a1"
 dependencies = [
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2321,7 +2321,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -3335,7 +3335,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3359,7 +3359,7 @@ dependencies = [
  "rand_core 0.6.4",
  "serde",
  "sha3 0.12.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3499,7 +3499,7 @@ dependencies = [
  "rayon",
  "serde",
  "spongefish 0.8.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3529,7 +3529,7 @@ dependencies = [
  "jolt-poly",
  "jolt-transcript",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3698,7 +3698,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -3743,7 +3743,7 @@ dependencies = [
  "objc2-foundation",
  "objc2-metal",
  "rayon",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3758,7 +3758,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -3805,7 +3805,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rayon",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -3821,7 +3821,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sysinfo",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "tracing-chrome",
  "tracing-subscriber",
@@ -3840,7 +3840,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3881,7 +3881,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "sha3 0.12.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracer",
  "tracing",
 ]
@@ -3892,7 +3892,7 @@ version = "0.1.0"
 dependencies = [
  "jolt-field",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3903,7 +3903,7 @@ dependencies = [
  "serde",
  "serde_json",
  "strum 0.28.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3972,7 +3972,7 @@ dependencies = [
  "jolt-transcript",
  "serde",
  "sha3 0.12.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3987,7 +3987,7 @@ dependencies = [
  "jolt-transcript",
  "rand_core 0.6.4",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -4069,7 +4069,7 @@ dependencies = [
  "serde_json",
  "sha3 0.12.0",
  "syn 3.0.9",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracer",
 ]
 
@@ -4095,7 +4095,7 @@ dependencies = [
  "jolt-utils",
  "jolt-witness-derive",
  "rayon",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
@@ -5249,7 +5249,7 @@ dependencies = [
  "spin 0.10.1",
  "symbolic-demangle",
  "tempfile",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -5816,7 +5816,7 @@ dependencies = [
  "revm-state",
  "secp256k1 0.30.0",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6989,11 +6989,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl 2.0.20",
+ "thiserror-impl 2.0.21",
 ]
 
 [[package]]
@@ -7009,9 +7009,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.20"
+version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+checksum = "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7166,7 +7166,7 @@ dependencies = [
  "serde_json",
  "strum 0.28.0",
  "strum_macros 0.28.0",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
  "tracing",
  "tracing-subscriber",
 ]
