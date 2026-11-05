@@ -106,18 +106,19 @@ impl<const D: usize> DigitWindows<D> {
             return;
         }
         for (tile, out) in dst.chunks_exact_mut(TILE).enumerate() {
-            let mut sums = [[0u32; 8]; TILE];
+            // Start with the destination so the tile needs no final addition pass.
+            // Each digit is non-negative, so every intermediate sum lies between
+            // the original destination and the bounded final accumulator.
+            let mut sums: [[i32; 8]; TILE] = std::array::from_fn(|i| out[i].0);
             for view in views {
                 for (sum, digits) in sums.iter_mut().zip(&view[tile * TILE..][..TILE]) {
                     for (sum, &digit) in sum.iter_mut().zip(digits) {
-                        *sum += u32::from(digit);
+                        *sum += i32::from(digit);
                     }
                 }
             }
             for (out, sum) in out.iter_mut().zip(sums) {
-                for (lane, sum) in out.0.iter_mut().zip(sum) {
-                    *lane += sum as i32;
-                }
+                out.0 = sum;
             }
         }
     }
