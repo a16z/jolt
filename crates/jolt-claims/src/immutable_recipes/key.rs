@@ -43,7 +43,7 @@ impl KeyVisit for () {
 
 #[macro_export]
 macro_rules! recipe_shape {
-    ($ty:ty { $($field:ident),* $(,)? }) => {
+    ($module:path; $ty:ty { $($field:ident),* $(,)? }) => {
         #[cfg(feature = "immutable-recipes")]
         impl $crate::immutable_recipes::KeyVisit for $ty {
             fn visit(&self, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
@@ -78,7 +78,7 @@ macro_rules! recipe_id {
                 }
             }
         }
-        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
         impl $crate::immutable_recipes::record::RenderId for $ty {
             fn render(&self, writer: &mut dyn ::std::fmt::Write) -> ::std::fmt::Result {
                 match self {
