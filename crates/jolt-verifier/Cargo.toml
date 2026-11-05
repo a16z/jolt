@@ -82,6 +82,7 @@ jolt-prover.workspace = true
 jolt-witness.workspace = true
 jolt-akita.workspace = true
 akita-params.workspace = true
+akita-verifier = { workspace = true, features = ["test-support"] }
 akita-transcript.workspace = true
 tracer.workspace = true
 jolt-dory = { path = "../jolt-dory" }

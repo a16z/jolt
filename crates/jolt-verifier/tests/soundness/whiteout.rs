@@ -1244,8 +1244,9 @@ mod shifts {
     /// spec's prototype deltas with the new argument, then this test.
     ///
     /// N1: a shift of the final-opening claims that Jolt's rows cannot see
-    /// meets Akita's rows only through one functional, drawn by Akita's
-    /// EvaluationBatch after t_p and every masked value. So a shift in that
+    /// meets Akita's rows only through one functional, scale·gain_i·γ_i,
+    /// where γ are Akita's EvaluationBatch challenges, drawn after t_p and
+    /// every masked value. So a shift in that
     /// functional's kernel passes every row: the binding is Schwartz–Zippel
     /// over the batch challenges, not a row the shift could not satisfy.
     /// The functional weights every claim and is fresh per proof: a rerun of
@@ -1438,6 +1439,21 @@ mod shifts {
             phi_of.iter().all(|coefficient| !coefficient.is_zero()),
             "Akita's functional weights every claim"
         );
+        // That functional is the EvaluationBatch challenges, up to one scale.
+        let batch = prefix.batch_coefficients();
+        assert_eq!(
+            batch.len(),
+            claims.len(),
+            "one EvaluationBatch coefficient per claim"
+        );
+        let scale = phi_of[0] * (gains[0] * batch[0]).inverse().expect("nonzero challenge");
+        for (claim, coefficient) in batch.iter().enumerate() {
+            assert_eq!(
+                phi_of[claim],
+                scale * gains[claim] * *coefficient,
+                "claim {claim}"
+            );
+        }
         let phi = |delta: &[F]| -> F {
             delta
                 .iter()
