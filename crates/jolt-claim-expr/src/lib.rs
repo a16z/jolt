@@ -13,11 +13,13 @@
 )]
 
 mod claims;
+mod factored;
 pub mod formula_error;
 mod ops;
 mod sumcheck;
 mod symbolic;
 
 pub use claims::{challenge, constant, derived, opening, Expr, Source, Term};
+pub use factored::{FactoredExpr, FactoredTerm};
 pub use sumcheck::SumcheckDomain;
 pub use symbolic::{referenced_openings, SymbolicSumcheck};
