@@ -409,3 +409,26 @@ fn five_limb_reduction_extreme_offsets_match_long_division() {
     check::<{ u128::MAX - 2 }>();
     check::<{ u128::MAX - (u32::MAX as u128 - 1) }>();
 }
+
+/// The branch-free lifts against the canonical residue `x mod p`, at the
+/// sign and magnitude edges.
+#[test]
+fn lift_ct_and_lift_biased_match_the_residue() {
+    type F = two::Prime128OffsetA7F7;
+    let p = u128::MAX - 0xFFFF_A7F6;
+    let mut rng = rng();
+    let edges = [0, 1, -1, i64::MAX, i64::MIN + 1, 1 << 40, -(1 << 40)];
+    for x in edges
+        .into_iter()
+        .chain((0..1000).map(|_| rng.gen::<i64>() | 1))
+    {
+        let residue = if x < 0 {
+            p - u128::from(x.unsigned_abs())
+        } else {
+            x as u128
+        };
+        assert_eq!(two::lift_ct::<F>(x).to_canonical_u128(), residue, "{x}");
+        let biased = (i128::from(x) + (1 << 63)) as u128;
+        assert_eq!(two::lift_biased::<F>(x).to_canonical_u128(), biased, "{x}");
+    }
+}

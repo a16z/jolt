@@ -657,12 +657,27 @@ impl<
 {
 }
 
-/// `x` as a field element, from its magnitude and sign by arithmetic: no
-/// branch on `x`, unlike [`Field::from_i64`]. The lift for secret values
-/// (Whiteout's response digits).
+/// The offset of [`lift_biased`].
+pub const LIFT_BIAS: u64 = 1 << 63;
+
+/// `x + 2^63` as a field element, by flipping `x`'s top bit: an unsigned
+/// value that is nonzero for every `x > i64::MIN` and carries no sign.
+///
+/// For a product with a secret integer, multiply this and subtract
+/// `F(LIFT_BIAS)` times the factor: the multiplier then never sees a zero or
+/// sign-selected operand. An Apple M4 times a dependent multiply-add chain
+/// differently when an operand is a loaded zero, even under DIT (U1b in
+/// `specs/whiteout-optimization-campaign.md`).
+#[inline]
+pub fn lift_biased<F: Field>(x: i64) -> F {
+    F::from_u64((x as u64) ^ LIFT_BIAS)
+}
+
+/// `x` as a field element with no branch on `x`, unlike
+/// [`Field::from_i64`], and no multiplication: [`lift_biased`] minus the
+/// constant bias. The lift for secret values (Whiteout's masks and response
+/// digits).
 #[inline]
 pub fn lift_ct<F: Field>(x: i64) -> F {
-    let sign = x >> 63;
-    let magnitude = F::from_u64(((x ^ sign).wrapping_sub(sign)) as u64);
-    magnitude - (magnitude + magnitude) * F::from_u64((sign & 1) as u64)
+    lift_biased::<F>(x) - F::from_u64(LIFT_BIAS)
 }

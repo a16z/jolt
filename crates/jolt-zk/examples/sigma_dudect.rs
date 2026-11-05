@@ -10,10 +10,14 @@
 //! interleaved at random, every input of a chunk written into preallocated
 //! slots before the chunk is timed. As in dudect, the statistic is also computed on measurements
 //! cropped at ten percentiles (taken from a first batch); a test passes if
-//! every `|t| < 4.5`. Fixed classes are extremes: all zero, all `+B`, all
-//! `−B` for masks (`B` the prover's tail cut `14k`, about `2^{39.5}`, which
-//! takes the Ajtai map's two-limb path); zero and `−1` for `V`; zero, all `+2` and
-//! all `−2` for `c`.
+//! every `|t| < 4.5`. Fixed classes for masks: all 0, all +1, all `+B`, all
+//! `−B` (`B` the prover's tail cut `14k`, about `2^{39.5}`, which takes the
+//! Ajtai map's two-limb path), one repeated bell-shaped mask, and fresh
+//! magnitudes with every sign positive, against uniform masks in
+//! `[−B, B]`. The constant and sign classes catch degenerate data, such as
+//! an all-zero limb, which the M4 can time differently even under DIT (P7
+//! in §2.8 of `specs/whiteout-sigma.md`). For `V`: zero and `−1`; for `c`:
+//! zero, all `+2` and all `−2`.
 //!
 //! Steps, at `D = 64` and at the stride case `D = 256`: the linear parts of y
 //! (the lift, witness-claim sums and dense forms), `Q_μ(0, y)`, the polar
@@ -177,25 +181,58 @@ fn fixed_vs_random<T>(
     test
 }
 
-/// Writes a mask into `y`: the Gaussian ranges get `fixed` if given, else
-/// uniform values in `[−B, B]`; public coordinates stay zero. A random value
-/// is drawn either way and the fixed one selected without a branch, so both
-/// classes leave the same state behind.
+/// A mask's fixed class.
+#[derive(Clone, Copy)]
+enum MaskClass {
+    /// Every Gaussian coordinate equal to this value.
+    Constant(i64),
+    /// One bell-shaped mask (a sum of four uniforms), drawn once and
+    /// repeated.
+    Bell,
+    /// Fresh uniform magnitudes, every sign positive.
+    NonNegative,
+}
+
+/// Writes a mask into `y`: the Gaussian ranges get `fixed`'s values if
+/// given, else uniform values in `[−B, B]`; public coordinates stay zero. A
+/// random value is drawn either way and the fixed one selected without a
+/// branch, so both classes leave the same state behind. `bell` is the
+/// [`MaskClass::Bell`] mask, laid out like `y`.
 fn fill_mask(
     y: &mut [i64],
     ranges: &[Range<usize>],
     bound: i64,
-    fixed: Option<i64>,
+    fixed: Option<MaskClass>,
+    bell: &[i64],
     rng: &mut ChaCha20Rng,
 ) {
     let keep_random = -i64::from(fixed.is_none());
-    let fixed = fixed.unwrap_or(0);
     for range in ranges {
-        for slot in &mut y[range.clone()] {
+        for (slot, &bell) in y[range.clone()].iter_mut().zip(&bell[range.clone()]) {
             let random = (rng.next_u64() % (2 * bound as u64 + 1)) as i64 - bound;
+            let fixed = match fixed {
+                Some(MaskClass::Constant(value)) => value,
+                Some(MaskClass::Bell) => bell,
+                Some(MaskClass::NonNegative) => random.abs(),
+                None => 0,
+            };
             *slot = (random & black_box(keep_random)) | (fixed & !black_box(keep_random));
         }
     }
+}
+
+/// A bell-shaped mask within `[−B, B]` on the Gaussian ranges.
+fn bell_mask(len: usize, ranges: &[Range<usize>], bound: i64, rng: &mut ChaCha20Rng) -> Vec<i64> {
+    let quarter = bound / 4;
+    let mut y = vec![0i64; len];
+    for range in ranges {
+        for slot in &mut y[range.clone()] {
+            *slot = (0..4)
+                .map(|_| (rng.next_u64() % (2 * quarter as u64 + 1)) as i64 - quarter)
+                .sum();
+        }
+    }
+    y
 }
 
 fn run_dimension<const D: usize>(
@@ -213,10 +250,18 @@ fn run_dimension<const D: usize>(
     let mask_bound = bound as i64;
     harness
         .steps(|steps| {
-            for (label, value) in [("0", 0), ("+B", mask_bound), ("−B", -mask_bound)] {
+            let bell = bell_mask(len, &ranges, mask_bound, &mut rng);
+            for (label, class) in [
+                ("0", MaskClass::Constant(0)),
+                ("+1", MaskClass::Constant(1)),
+                ("+B", MaskClass::Constant(mask_bound)),
+                ("−B", MaskClass::Constant(-mask_bound)),
+                ("bell", MaskClass::Bell),
+                ("≥ 0", MaskClass::NonNegative),
+            ] {
                 let slot = || vec![0i64; len];
                 let fill = |y: &mut Vec<i64>, fixed: bool, rng: &mut ChaCha20Rng| {
-                    fill_mask(y, &ranges, mask_bound, fixed.then_some(value), rng);
+                    fill_mask(y, &ranges, mask_bound, fixed.then_some(class), &bell, rng);
                 };
                 let test = fixed_vs_random(measurements, &mut rng, slot, fill, |y| {
                     let _ = black_box(steps.linear_parts(y));
@@ -235,9 +280,9 @@ fn run_dimension<const D: usize>(
                 });
                 report(&format!("L·y, fixed {label}"), &test, failures);
             }
-            let new_mask = |fixed: Option<i64>, rng: &mut ChaCha20Rng| {
+            let new_mask = |fixed: Option<MaskClass>, rng: &mut ChaCha20Rng| {
                 let mut y = vec![0i64; len];
-                fill_mask(&mut y, &ranges, mask_bound, fixed, rng);
+                fill_mask(&mut y, &ranges, mask_bound, fixed, &bell, rng);
                 y
             };
             // Q_μ(0, y) and the polar form, on precomputed parts.
@@ -247,7 +292,9 @@ fn run_dimension<const D: usize>(
             // As many separate copies of the fixed class, so both classes
             // cycle through the same amount of memory.
             let fixed_parts: Vec<_> = (0..64)
-                .map(|_| steps.linear_parts(&new_mask(Some(mask_bound), &mut rng)))
+                .map(|_| {
+                    steps.linear_parts(&new_mask(Some(MaskClass::Constant(mask_bound)), &mut rng))
+                })
                 .collect::<Result<_, _>>()?;
             let mut test = Cropped::default();
             let mut first = Vec::new();
