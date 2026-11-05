@@ -195,8 +195,8 @@ The disposable GitHub-hosted builder checks for 40 GB of free disk space, then
 adds a 24 GB swap file, reserving 16 GB of disk space for the build. It uses one
 Cargo job and retains the repository's release profile, including fat LTO and
 debug information. Its existing 120-minute job timeout is separate from the
-target's 120-minute PR build-plus-run timeout. Main/nightly target jobs allow
-180 minutes. These are failure limits, not duration estimates.
+target's 120-minute PR build-plus-run timeout. Main/nightly/calibration target
+jobs allow 180 minutes. These are failure limits, not duration estimates.
 
 ## Manual commands
 
@@ -578,8 +578,8 @@ boundary; consumers must keep that provenance limit explicit.
 
 ## Execution through the Pika App
 
-GitHub-hosted jobs plan each run and build main/nightly artifacts. Their final
-job uploads `jolt-e2e-dispatch-RUN_ID-RUN_ATTEMPT/dispatch.json`. The Pika GitHub
+GitHub-hosted jobs plan each run and build main/nightly/calibration artifacts.
+Their final job uploads `jolt-e2e-dispatch-RUN_ID-RUN_ATTEMPT/dispatch.json`. The Pika GitHub
 App lists that run's artifacts and downloads only the exact plan, dispatch and
 optional builds names for the same attempt. It moves bytes; it never checks out,
 builds or executes Jolt code on the daemon host. A run with no dispatch artifact
@@ -608,8 +608,8 @@ are the submitted PR's; the payload PR's base ref binds it to main.
 The App connects to `jolt-bench` as `runner` with a dedicated forced-command SSH
 key. Its root-owned entry accepts only `submit`, `status`, `fetch` and `remove`
 with a bounded job ID. Submission carries an uncompressed POSIX tar containing
-only `dispatch.json`, `plan.zip` and, for main/nightly, `builds.zip`. The entry
-limits those files to 1 MiB, 8 MiB and 32 GiB, respectively, rejects links,
+only `dispatch.json`, `plan.zip` and, for main/nightly/calibration, `builds.zip`.
+The entry limits those files to 1 MiB, 8 MiB and 32 GiB, respectively, rejects links,
 duplicates and traversal, and caps extracted builds at 64 GiB. It fetches the
 planned harness SHA anonymously from `https://github.com/a16z/jolt`. The worker runs in a transient `runner` systemd user unit named
 `jolt-bench-JOB.service`, so SSH disconnects and daemon restarts do not restart it.
@@ -621,15 +621,15 @@ re-executing it. A reboot that loses the transient unit reports `lost`.
 
 The worker uses a fixed environment with the `runner` Rust and uv directories
 on PATH and no inherited GitHub, SSH, cloud or Pika credentials. It calls
-`ci.py target`, which uses `local` for PRs and `execute` for main/nightly, then
-always finalizes the result. The PR path anonymously rechecks the same label,
+`ci.py target`, which uses `local` for PRs and `execute` for
+main/nightly/calibration, then always finalizes the result. The PR path anonymously rechecks the same label,
 branch and head after acquiring the kernel lock and again before proving.
 Removing the label does not terminate a build or proof already running. The App
 submits one job at a time in FIFO order; the kernel lock also serializes manual
 target commands. Submission is size-capped and staged before acquiring the jobs
 lock, so an incomplete upload cannot block status/fetch/remove. PR timeouts are
-120 minutes; main/nightly timeouts are 180. Results include an `executor.log` tail
-of at most 8 MiB from the unit journal and capped per-build logs. Normal completion
+120 minutes; main/nightly/calibration timeouts are 180. Results include an
+`executor.log` tail of at most 8 MiB from the unit journal and capped per-build logs. Normal completion
 finalizes in the worker; systemd finalizes a killed/timed-out worker after its
 process tree has stopped.
 
@@ -727,12 +727,14 @@ means partial results or unavailable comparisons. A complete PR without an
 authenticated matching reference is neutral. Measured
 deltas and calibration context never produce a regression verdict. An ingest
 failure or missing/invalid `check.json` fails the check with the ingest link.
+Bootstrap checks succeed with the validated reference SHA, or fail with the
+reference-unavailable reason; executor failures remain failures. Published
+bootstrap acceptance then requires all 17 probe bands.
 No GitHub Actions comment or separate comment-enable variable exists. Executor
 failures before a result and failed ingests leave no history record; their App
 check or hosted workflow failure is the visible outcome.
 
-The companion history publisher must merge after #2215. It collects the ingest
-workflow's canonical artifacts, keeps PR comparisons separate, and appends only
+The history publisher collects the ingest workflow's canonical artifacts, keeps PR comparisons separate, and appends only
 under `dev/prover-history/` on the existing `gh-pages` source. It never modifies
 `dev/bench/`. Nightly remains at 07:00 UTC. An interrupted or missing result is
 unavailable, never a pass.

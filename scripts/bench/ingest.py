@@ -211,8 +211,6 @@ def calibration_reference(files, root, plan, dispatch, config, receipt):
         'expected_builds': plan['expected_builds'], 'manifest_digests': dispatch['manifest_digests'],
         'revisions': {'base': tip, 'head': tip, 'merge': None, 'harness': plan['harness']}}
     publication.validate(result, expected, config)
-    if plan['tier'] == 'pr':
-        raise ValueError('PRs cannot produce calibration references')
     if plan['tier'] == 'calibration':
         probe_path = 'calibration/probe/benchmark-results.json'
         probe_descriptor = root.get('calibration_evidence', {}).get('probe')
@@ -220,8 +218,10 @@ def calibration_reference(files, root, plan, dispatch, config, receipt):
             raise ValueError('bootstrap probe descriptor mismatch')
         probe = bench.parse_json(files[probe_path].decode())
         expected.update(sampling={'warmups': 1, 'repetitions': 3}, scope=ci.LOCAL_SCOPE,
-                        manifest_digests=None, own_harness_files=plan.get('own_harness_files', {}))
+                        manifest_digests=None)
         publication.validate(probe, expected, config)
+        if probe['status'] != 'complete':
+            raise ValueError('bootstrap probe did not complete')
         if {k: v for k, v in root.items() if k != 'calibration_evidence'} != probe:
             raise ValueError('bootstrap root differs from probe')
     return calibration.reference(raw, result, dict(receipt,
@@ -235,7 +235,7 @@ def check_result(job_id, documents, exit_code, summary):
         conclusion, title = 'failure', 'Benchmark execution failed'
     elif any(item is None or item['status'] != 'complete' for item in documents):
         conclusion, title = 'neutral', 'Benchmark results are partial'
-    elif any(item['tier'] == 'pr' and any(bench.calibration_for_case(item, case)[1]
+    elif any(item['tier'] == 'pr' and any(calibration.for_case(item, case)[1]
              for case in item['cases'] if case['status'] == 'complete') for item in documents):
         conclusion, title = 'neutral', 'Benchmark results validated; comparison reference unavailable'
     else:
@@ -260,7 +260,7 @@ def main():
     if hashlib.sha256(raw).hexdigest() != args.result_sha256:
         raise ValueError('result download SHA-256 mismatch')
     files = result_files(raw)
-    for name in ('calibration/reference.json', 'comparison.json', 'ingest.json'):
+    for name in ('calibration/reference.json', 'calibration/unavailable.json', 'comparison.json', 'ingest.json'):
         files.pop(name, None)
     documents = validate_results(files, plan, dispatch, config, receipt)
     root = documents[-1]
@@ -268,11 +268,14 @@ def main():
         plan_run_attempt=args.plan_run_attempt, result_sha256=args.result_sha256,
         executor_exit_code=args.executor_exit_code, ingest_run_id=int(os.environ['GITHUB_RUN_ID']),
         ingest_run_attempt=int(os.environ['GITHUB_RUN_ATTEMPT']))
+    reference = None
     if plan['tier'] != 'pr':
         try:
             reference = calibration_reference(files, root, plan, dispatch, config, receipt)
             if reference:
                 files['calibration/reference.json'] = calibration.encoded(reference)
+            elif plan['tier'] == 'calibration':
+                raise ValueError('bootstrap has no completed calibration raw evidence')
         except (ValueError, KeyError, TypeError, StopIteration) as error:
             files['calibration/unavailable.json'] = calibration.encoded({'reason': str(error)})
     else:
@@ -280,11 +283,16 @@ def main():
         documents[-1] = root
     summary_path = args.out / 'summary.md'
     summary_path.parent.mkdir(parents=True, exist_ok=True)
-    if root['tier'] == 'pr':
+    if plan['tier'] == 'calibration':
+        summary = ('Calibration reference SHA-256: `' + calibration.digest(reference) + '`.' if reference
+                   else 'Calibration unavailable: ' + bench.parse_json(files['calibration/unavailable.json'])['reason'])
+        if args.executor_exit_code:
+            summary = f'Benchmark executor exited {args.executor_exit_code}. ' + summary
+    elif root['tier'] == 'pr':
         bench.render_comment(root, summary_path)
         summary = summary_path.read_text()
         files['comparison.json'] = calibration.encoded({'references': root.get('comparison_references', {}),
-            'availability': {case['id']: bench.calibration_for_case(root, case)[1] for case in root['cases']},
+            'availability': {case['id']: calibration.for_case(root, case)[1] for case in root['cases']},
             'catalog_revision': root.get('external_references', {}).get('catalog_revision'), 'summary': summary})
         files['pr-comment.md'] = summary.encode()
     else:
@@ -295,8 +303,12 @@ def main():
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     bench.write_json(args.out / 'result/ingest.json', receipt)
-    bench.write_json(args.out / 'check/check.json', check_result(args.job_id, documents,
-                     args.executor_exit_code, summary))
+    check = check_result(args.job_id, documents, args.executor_exit_code, summary)
+    if plan['tier'] == 'calibration':
+        success = reference is not None and args.executor_exit_code == 0
+        check.update(conclusion='success' if success else 'failure',
+                     title='Calibration reference validated' if success else 'Calibration failed')
+    bench.write_json(args.out / 'check/check.json', check)
 
 
 if __name__ == '__main__':

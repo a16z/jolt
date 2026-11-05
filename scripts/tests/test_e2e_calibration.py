@@ -2,6 +2,7 @@ import copy
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -296,3 +297,53 @@ class CalibrationTests(unittest.TestCase):
             reference['source']['tier'] = 'main'
             with self.assertRaisesRegex(ValueError, 'bootstrap calibration reference'):
                 publication.main()
+
+    def test_bootstrap_check_uses_reference_or_unavailable_outcome(self):
+        raw_result, plan, dispatch, config, receipt = null_fixture()
+        plan['tier'] = dispatch['tier'] = 'calibration'
+        plan['provenance']['event'] = raw_result['provenance']['event'] = 'workflow_dispatch'
+        raw = json.dumps(raw_result).encode()
+        probe = copy.deepcopy(raw_result)
+        probe['suite']['repetitions'] = 3
+        probe['wall_time']['scope'] = ingest.ci.LOCAL_SCOPE
+        probe.update(started_at='2026-11-05T11:00:00Z', finished_at='2026-11-05T11:10:00Z')
+        for case in probe['cases']:
+            case['samples'] = case['samples'][:8]
+        for outcome, code in [('reference', 0), ('missing', 0), ('partial-probe', 0), ('executor-failed', 7)]:
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
+                measured = copy.deepcopy(probe)
+                if outcome == 'partial-probe':
+                    measured['status'] = 'incomplete'
+                    measured['cases'][0].update(status='missing', samples=[])
+                probe_raw = json.dumps(measured).encode()
+                descriptor = {'probe': dict(path='calibration/probe/benchmark-results.json',
+                                           sha256=hashlib.sha256(probe_raw).hexdigest())}
+                if outcome != 'missing':
+                    descriptor['raw'] = dict(path='calibration/raw/benchmark-results.json',
+                                             sha256=hashlib.sha256(raw).hexdigest())
+                root = dict(measured, calibration_evidence=descriptor)
+                files = {'benchmark-results.json': json.dumps(root),
+                         'calibration/raw/benchmark-results.json': raw,
+                         'calibration/probe/benchmark-results.json': probe_raw}
+                archive = zipped(files)
+                digest = hashlib.sha256(archive).hexdigest()
+                out = Path(directory) / 'ingested'
+                argv = ['ingest.py', '--job-id', '123-1', '--plan-run-id', '123', '--plan-run-attempt', '1',
+                    '--result-url', f'https://fixture.invalid/{digest}.zip', '--result-sha256', digest,
+                    '--executor-exit-code', str(code), '--out', str(out)]
+                with patch.object(sys, 'argv', argv), patch.dict(os.environ, GITHUB_ACTOR=ingest.APP,
+                        GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='456', GITHUB_RUN_ATTEMPT='1'), \
+                        patch.object(ingest, 'trusted_plan', return_value=(plan, dispatch, config, copy.deepcopy(receipt))), \
+                        patch.object(ingest, 'download', return_value=archive):
+                    ingest.main()
+                check = json.loads((out / 'check/check.json').read_text())
+                self.assertEqual(check['conclusion'], 'success' if outcome == 'reference' else 'failure')
+                if outcome in ('reference', 'executor-failed'):
+                    payload = (out / 'result/calibration/reference.json').read_bytes()
+                    self.assertIn(hashlib.sha256(payload).hexdigest(), check['summary'])
+                    if code:
+                        self.assertIn('executor exited 7', check['summary'])
+                else:
+                    reason = json.loads((out / 'result/calibration/unavailable.json').read_text())['reason']
+                    self.assertIn(reason, check['summary'])
+                    self.assertFalse((out / 'result/calibration/reference.json').exists())

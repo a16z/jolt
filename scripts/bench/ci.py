@@ -19,6 +19,7 @@ import run as bench
 
 
 TARGET_CPU = 'znver4'
+TIERS = ('pr', 'main', 'nightly', 'calibration')
 RUN_ONLY_SCOPE = 'artifact-verification-through-results-on-this-host'
 LOCAL_SCOPE = 'sequential-build-preparation-through-results-on-this-host'
 
@@ -129,7 +130,7 @@ def plan(args):
             'harness': None, 'runs': [], 'provenance': bench.provenance()[0],
             'config': bench.bundle_file(args.config.resolve(), bench.ROOT), 'expected_builds': {}}
     try:
-        if tier not in ('pr', 'main', 'nightly', 'calibration') or os.environ['GITHUB_REF'] != 'refs/heads/main':
+        if tier not in TIERS or os.environ['GITHUB_REF'] != 'refs/heads/main':
             raise ValueError('benchmark tiers require main')
         if not enabled:
             raise ValueError('benchmark execution is disabled; complete scripts/bench/README.md before enablement')
@@ -171,7 +172,7 @@ def plan(args):
                                         'sha256': hashlib.sha256(git_file(revision, path)).hexdigest()}
                                        for path in schedules if Path(path).suffix == '.aks'],
                 }
-                if tier in ('pr', 'calibration'):
+                if tier == 'pr':
                     plan.setdefault('own_harness_files', {})[revision] = bench.harness_files(revision)
         plan['enabled'] = True
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
@@ -225,7 +226,7 @@ awk '$1 == "oom_kill" { print "kernel", $0 }' /proc/vmstat
                 options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier=None,
                     out=out / revision, revision=revision, harness_revision=plan['harness'],
                     target_cpu=plan['target_cpu'], profile='release', workload=[], case=[],
-                    allow_harness_fallback=plan['tier'] == 'pr' or (plan['tier'] == 'calibration' and locked))
+                    allow_harness_fallback=plan['tier'] == 'pr')
                 manifest = bench.build(options)
                 if manifest['status'] != 'complete':
                     raise ValueError(f'build preparation failed for {revision}: {manifest["reason"]}')
@@ -265,8 +266,7 @@ def verified_bundles(args, plan, revisions):
         expected = dict(plan['expected_builds'][revision])
         native = manifest['native_harness_revision']
         if native != expected['harness_revision']:
-            if ((plan['tier'] != 'pr' and not (plan['tier'] == 'calibration' and getattr(args, 'local', False)))
-                    or native != revision or not manifest.get('harness_fallback_reason')):
+            if (plan['tier'] != 'pr' or native != revision or not manifest.get('harness_fallback_reason')):
                 raise ValueError('build uses an unplanned native harness')
             expected['harness_files'] = plan['own_harness_files'][revision]
         for key, value in expected.items():
@@ -369,7 +369,7 @@ def calibration_phase(args, plan):
             preparation = argparse.Namespace(plan=args.plan, out=args.out / 'builds')
             prepare(preparation, locked=True)
             build_s = time.perf_counter() - begin
-            local_args = argparse.Namespace(**dict(vars(args), local=True, bundles=preparation.out,
+            local_args = argparse.Namespace(**dict(vars(args), bundles=preparation.out,
                 index_sha256=bench.sha256(preparation.out / 'builds.json')))
             manifest = verified_bundles(local_args, plan, {tip})[tip]
             repetitions, scope = 3, LOCAL_SCOPE
@@ -491,7 +491,7 @@ def finalize(args):
                 partial['finished_at'] = bench.utc_now()
                 partial['artifacts'] = artifacts
                 if 'wall_time' in partial:
-                    partial['wall_time']['scope'] = LOCAL_SCOPE if plan['tier'] == 'pr' else RUN_ONLY_SCOPE
+                    partial['wall_time']['scope'] = LOCAL_SCOPE if plan['tier'] in ('pr', 'calibration') else RUN_ONLY_SCOPE
                 bench.write_json(path, partial)
     if root.exists():
         result = bench.parse_json(root.read_text())
@@ -506,11 +506,13 @@ def finalize(args):
     result['run_id'] = plan['provenance'].get('run_id')
     if plan['runs']:
         item = plan['runs'][-1]
-        result['revisions'] = {'base': item['base'], 'head': item['submitted_head'],
+        result['revisions'] = {'base': item['head'] if plan['tier'] == 'calibration' else item['base'],
+                              'head': item['submitted_head'],
                               'merge': item['head'] if plan['tier'] == 'pr' else None,
                               'harness': plan['harness']}
-    result['kind'] = 'comparison' if plan['tier'] == 'pr' else 'history'
-    if plan['tier'] == 'pr':
+    result['kind'] = ('null' if plan['tier'] == 'calibration' else
+                      'comparison' if plan['tier'] == 'pr' else 'history')
+    if plan['tier'] in ('pr', 'calibration'):
         result['wall_time']['scope'] = LOCAL_SCOPE
     else:
         result['wall_time']['scope'] = RUN_ONLY_SCOPE

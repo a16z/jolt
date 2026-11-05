@@ -25,10 +25,11 @@ finally:
 
 class E2eCiTests(unittest.TestCase):
     def test_dispatch_and_target_bind_each_tier(self):
-        for tier in ('pr', 'main', 'nightly'):
+        for tier in ('pr', 'main', 'nightly', 'calibration'):
             plan = {'enabled': True, 'tier': tier,
                 'provenance': {'run_id': '123', 'run_attempt': '2', 'pr_number': 7,
-                    'workflow': ci.bench.WORKFLOW, 'event': 'pull_request_target' if tier == 'pr' else 'push',
+                    'workflow': ci.bench.WORKFLOW, 'event': {'pr': 'pull_request_target', 'main': 'push',
+                        'nightly': 'schedule', 'calibration': 'workflow_dispatch'}[tier],
                     'ref': 'refs/heads/main'},
                 'runs': [{'submitted_head': 'b' * 40, 'head': 'c' * 40}],
                 'admission': {'label_event_id': 11, 'label_actor': 'maintainer'},

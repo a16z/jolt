@@ -35,7 +35,15 @@ def zipped(files):
 def inputs(tier='pr'):
     result, expected, config = fixture()
     spec = json.loads(config)
-    if tier != 'pr':
+    if tier == 'calibration':
+        result.update(kind='null')
+        result['provenance'].update(event='workflow_dispatch', pr_number=None)
+        result['revisions'].update(base='c' * 40, head='c' * 40, merge=None, harness='c' * 40)
+        for build in result['builds']:
+            build.update(revision='c' * 40, harness_revision='c' * 40, native_harness_revision='c' * 40)
+        for sample in result['cases'][0]['samples']:
+            sample['revision'] = 'c' * 40
+    elif tier != 'pr':
         result.update(tier=tier, kind='history')
         result['provenance'].update(event='push' if tier == 'main' else 'schedule', pr_number=None)
         result['revisions'].update(base=None, head='c' * 40, merge=None)
@@ -47,7 +55,7 @@ def inputs(tier='pr'):
         config = json.dumps(spec).encode()
         result['suite']['config_sha256'] = hashlib.sha256(config).hexdigest()
         result['wall_time'].update(scope=ingest.ci.RUN_ONLY_SCOPE, build_s=0)
-    plan = {'tier': tier, 'enabled': True, 'harness': 'd' * 40, 'push_before': 'a' * 40,
+    plan = {'tier': tier, 'enabled': True, 'harness': result['revisions']['harness'], 'push_before': 'a' * 40,
             'push_after': 'c' * 40, 'provenance': result['provenance'],
             'config': {'path': 'scripts/bench/suites.json', 'sha256': hashlib.sha256(config).hexdigest()},
             'admission': {'label_event_id': 11, 'label_actor': 'maintainer', 'head_ref': 'candidate'},
@@ -68,7 +76,7 @@ def inputs(tier='pr'):
 
 class IngestTests(unittest.TestCase):
     def test_hosted_validation_accepts_each_tier_and_refuses_result_or_build_substitution(self):
-        for tier in ('pr', 'main', 'nightly'):
+        for tier in ('pr', 'main', 'nightly', 'calibration'):
             result, plan, dispatch, config, receipt, _ = inputs(tier)
             files = {'benchmark-results.json': json.dumps(result).encode()}
             documents = ingest.validate_results(files, plan, dispatch, config, receipt)
@@ -215,7 +223,7 @@ class IngestTests(unittest.TestCase):
                 self.assertEqual(len(check['summary']), 60000)
 
     def test_a_finalized_missing_target_result_is_valid_partial_data_for_each_tier(self):
-        for tier in ('pr', 'main', 'nightly'):
+        for tier in ('pr', 'main', 'nightly', 'calibration'):
             result, plan, dispatch, config, receipt, plan_raw = inputs(tier)
             with tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)

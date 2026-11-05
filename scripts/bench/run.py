@@ -791,9 +791,6 @@ def run(args):
     return result
 
 
-calibration_for_case = calibration.for_case
-
-
 def render_comment(result, out):
     import html
     import statistics
@@ -860,7 +857,7 @@ def render_comment(result, out):
         base, head = medians['base'], medians['head']
         changes = {key: f'{(head[key] / base[key] - 1) * 100:+.2f}%' if base[key] else 'unavailable (zero base)'
                    for key in base}
-        calibrated, reason = calibration_for_case(result, case)
+        calibrated, reason = calibration.for_case(result, case)
         basis = {key: (f"{calibrated[key]['threshold_pct']:.2f}% "
                        f"(max symmetric null {calibrated[key]['max_symmetric_window_delta_pct']:.2f}%)"
                        if calibrated else f'unavailable: {text(reason)}') for key in base}
@@ -880,8 +877,8 @@ def render_comment(result, out):
             guests.append(text((build.get('guests', {}).get(name, {}).get('elf', {}).get('sha256') or 'unavailable')[:12]))
         identities.append(f"| {name} / {case['pcs']} / {case['physical_cores']} | {' / '.join(rows)} | "
                           f"{' / '.join(binaries)} | {' / '.join(guests)} |")
-    calibration = result['suite'].get('calibration') or {}
-    source = calibration.get('source') or {}
+    manual = result['suite'].get('calibration') or {}
+    source = manual.get('source') or {}
     if len(identities) > 2:
         lines += ['', 'Identity SHA256s below are abbreviated to 12 characters; raw JSON retains the full hashes.', '', *identities]
     if result.get('external_references') is not None:
@@ -894,8 +891,8 @@ def render_comment(result, out):
             run_id, attempt = reference_source['ingest_run_id'], reference_source['ingest_run_attempt']
             lines += [f"Reference `{sha}`: [authenticated ingest {run_id}/{attempt}]"
                       f"(https://github.com/a16z/jolt/actions/runs/{run_id}/attempts/{attempt})."]
-    elif calibration.get('status') == 'measured':
-        lines += ['', f"Supplied reference method: `{text(calibration.get('method'))}`. "
+    elif manual.get('status') == 'measured':
+        lines += ['', f"Supplied reference method: `{text(manual.get('method'))}`. "
                   'The supported v2 method requires 10 same-binary null pairs and eight overlapping 3-pair windows, '
                   'which are not independent. Each window takes each leg’s median, then the larger '
                   'of the head/base and base/head percentage increases. The displayed reference is '
@@ -908,7 +905,7 @@ def render_comment(result, out):
                   f"`{text(source.get('native_harness_revision'))}`; collector SHA256: "
                   f"`{text(source.get('collector_sha256'))}`."]
     else:
-        lines += ['', f"Calibration unavailable: {text(calibration.get('reason') or 'reference not measured')}."]
+        lines += ['', f"Calibration unavailable: {text(manual.get('reason') or 'reference not measured')}."]
     revisions = {key: value or 'unavailable' for key, value in result['revisions'].items()}
     collector = builds.get('base', builds.get('head', {})).get('runner', {}).get('sha256')
     total = result['wall_time']['total_s']

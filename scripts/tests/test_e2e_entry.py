@@ -58,6 +58,11 @@ class ExecutorTests(unittest.TestCase):
         self.home = Path(temporary.name)
         self.job = self.home / '123-1'
 
+    def test_executor_tiers_cover_every_planner_tier(self):
+        from scripts.tests.test_e2e_ci import ci
+        self.assertEqual(set(entry.TIMEOUTS), set(ci.TIERS))
+        self.assertEqual(entry.TIMEOUTS['calibration'], 180 * 60)
+
     def test_forced_command_refuses_shell_syntax_extra_arguments_and_invalid_job_ids(self):
         for command in ('', 'submit ../x', 'submit A', 'status a;id', 'fetch a b',
                         'remove a\n', 'submit ' + 'a' * 65, '--worker 123-1'):
@@ -87,15 +92,17 @@ class ExecutorTests(unittest.TestCase):
         with patch.dict(entry.LIMITS, {'dispatch.json': 1}), self.assertRaises(ValueError):
             entry.submit(self.job, request(), self.home)
 
-    def harness(self, code):
+    def harness(self, code, files=None):
         harness = self.home / 'fixture'
         script = harness / 'scripts/bench/ci.py'
         script.parent.mkdir(parents=True)
         script.write_text(code)
+        for name, content in (files or {}).items():
+            script.with_name(name).write_text(content)
         subprocess.run(['git', 'init', '-q', str(harness)], check=True)
-        subprocess.run(['git', '-C', str(harness), 'add', 'scripts/bench/ci.py'], check=True)
+        subprocess.run(['git', '-C', str(harness), 'add', 'scripts/bench'], check=True)
         subprocess.run(['git', '-C', str(harness), '-c', 'user.name=fixture', '-c',
-                        'user.email=fixture@example.invalid', 'commit', '-qm', 'test: local harness fixture'], check=True)
+                        'user.email=fixture@example.invalid', '-c', 'core.hooksPath=/dev/null', 'commit', '-qm', 'test: local harness fixture'], check=True)
         revision = subprocess.check_output(['git', '-C', str(harness), 'rev-parse', 'HEAD'], text=True).strip()
         return harness, revision
 
@@ -159,6 +166,61 @@ else:
             self.assertEqual(set(result.namelist()), {'benchmark-results.json', 'finalized', 'builds/fixture/build.log', 'executor.log'})
             self.assertEqual(result.read('builds/fixture/build.log'), b'owned failed build output')
             self.assertIn(b'owned worker journal output', result.read('executor.log'))
+
+    def test_calibration_setup_failure_is_finalized_fetched_and_ingested(self):
+        from scripts.tests.test_e2e_ingest import ingest
+        self.native_manager()
+        run_id = uuid.uuid4().int
+        self.job = self.home / f'{run_id}-1'
+        self.addCleanup(entry.remove, self.job)
+        files = {name: SCRIPT.with_name(name).read_text() for name in
+                 ('ci.py', 'run.py', 'calibration.py', 'suites.json')}
+        files['ci_impl.py'] = files.pop('ci.py')
+        harness, revision = self.harness('''from pathlib import Path
+from unittest.mock import patch
+import ci_impl
+with patch.object(ci_impl.bench, 'cache_root', return_value=Path(__file__).resolve().parents[2] / 'cache'):
+    raise SystemExit(ci_impl.main())
+''', files=files)
+        config = files['suites.json'].encode()
+        plan = dict(enabled=True, tier='calibration', harness=revision, push_before=None, push_after=None,
+            config={'path': 'scripts/bench/suites.json', 'sha256': ingest.hashlib.sha256(config).hexdigest()},
+            expected_builds={revision: {}}, runs=[dict(base=None, head=revision, submitted_head=revision)],
+            provenance=dict(workflow=ingest.bench.WORKFLOW, workflow_file=ingest.bench.WORKFLOW_FILE,
+                run_id=str(run_id), run_attempt='1', event='workflow_dispatch', ref='refs/heads/main', pr_number=None))
+        dispatch = ingest.ci.dispatch_manifest(plan, run_id, 1, artifact_id=44,
+            index_sha256='0' * 64, digests={revision: '1' * 64})
+        payload = request(tier='calibration', harness=revision, run_id=run_id, extra={
+            'plan.zip': zipped({'plan.json': json.dumps(plan)}), 'dispatch.json': json.dumps(dispatch).encode()})
+        run = subprocess.run
+        def local_remote(argv, **kwargs):
+            if argv[-1] == 'https://github.com/a16z/jolt.git':
+                argv = [*argv[:-1], str(harness)]
+            return run(argv, **kwargs)
+        with patch.object(entry.subprocess, 'run', side_effect=local_remote):
+            self.assertEqual(entry.submit(self.job, payload, self.home), {'state': 'submitted'})
+        self.assertEqual(self.finished(), {'state': 'finished', 'exit_code': 1})
+        archive = io.BytesIO()
+        entry.fetch(self.job, archive)
+        raw = archive.getvalue()
+        receipt = {'plan_sha256': ingest.bench.sha256(self.job / 'plan.json')}
+        out = self.home / 'ingested'
+        digest = ingest.hashlib.sha256(raw).hexdigest()
+        argv = ['ingest.py', '--job-id', f'{run_id}-1', '--plan-run-id', str(run_id), '--plan-run-attempt', '1',
+            '--result-url', f'https://fixture.invalid/{digest}.zip', '--result-sha256', digest,
+            '--executor-exit-code', '1', '--out', str(out)]
+        with patch.object(sys, 'argv', argv), patch.dict(os.environ, GITHUB_ACTOR=ingest.APP,
+                GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='456', GITHUB_RUN_ATTEMPT='1'), \
+                patch.object(ingest, 'trusted_plan', return_value=(plan, dispatch, config, receipt)), \
+                patch.object(ingest, 'download', return_value=raw):
+            ingest.main()
+        result = json.loads((out / 'result/benchmark-results.json').read_text())
+        self.assertEqual((result['status'], result['kind'], result['wall_time']['scope']),
+                         ('incomplete', 'null', ingest.ci.LOCAL_SCOPE))
+        self.assertEqual(result['revisions']['base'], revision)
+        check = json.loads((out / 'check/check.json').read_text())
+        self.assertEqual(check['conclusion'], 'failure')
+        self.assertIn('no completed calibration raw evidence', check['summary'])
 
     def test_native_timeout_kills_separate_session_descendants_and_preserves_finalization(self):
         self.native_manager()
