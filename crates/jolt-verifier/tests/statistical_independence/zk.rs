@@ -14,13 +14,19 @@ use std::collections::BTreeMap;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use ark_serialize::CanonicalSerialize;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_crypto::{Bn254G1, Pedersen};
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_field::{CanonicalBytes, Fr};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_sumcheck::SumcheckProof;
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_transcript::{prover_transcript, Encoding, FieldTranscript, Keccak, Transcript};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_verifier::proof::JoltStageProofs;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_zk::BlindFoldProof;
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 const DEFAULT_SAMPLES: usize = 64;
@@ -202,7 +208,7 @@ struct BlindFoldProofShape {
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 impl BlindFoldProofShape {
-    fn from_proof(proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>) -> Self {
+    fn from_proof(proof: &BlindFoldProof<Fr, Bn254G1>) -> Self {
         Self {
             auxiliary_rows: proof.auxiliary_row_commitments.len(),
             random_round_commitment_rows: proof.random_round_commitments.len(),
@@ -237,7 +243,7 @@ impl DoryOpeningProofShape {
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 fn committed_stage_shapes(
-    stages: &jolt_verifier::proof::JoltStageProofs<Fr, jolt_crypto::Pedersen<jolt_crypto::Bn254G1>>,
+    stages: &JoltStageProofs<Fr, Pedersen<Bn254G1>>,
 ) -> Vec<CommittedStageShape> {
     [
         &stages.stage1_uni_skip_first_round_proof,
@@ -431,10 +437,7 @@ fn collect_dory_opening_statistics(proof: &jolt_dory::DoryProof, tracker: &mut B
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn collect_blindfold_statistics(
-    proof: &jolt_blindfold::BlindFoldProof<Fr, jolt_crypto::Bn254G1>,
-    tracker: &mut BucketTracker,
-) {
+fn collect_blindfold_statistics(proof: &BlindFoldProof<Fr, Bn254G1>, tracker: &mut BucketTracker) {
     tracker.record_canonical("blindfold.random.u", &proof.random_u);
     tracker.record_append_positions(
         "blindfold.random.round_commitment",

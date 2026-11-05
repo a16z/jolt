@@ -1,10 +1,10 @@
-use jolt_blindfold::BlindFoldProof;
 pub use jolt_claims::protocols::jolt::TracePolynomialOrder;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_crypto::{Commitment, VectorCommitment};
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_sumcheck::SumcheckProof;
+use jolt_zk::BlindFoldProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
