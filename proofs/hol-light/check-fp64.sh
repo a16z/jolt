@@ -114,7 +114,7 @@ CARGO_BUILD_ARGS=(
   --config "profile.release.rpath=$RELEASE_RPATH"
   --config "profile.release.incremental=$RELEASE_INCREMENTAL"
   --config "profile.release.panic=\"$RELEASE_PANIC\""
-  build --locked -p jolt-field --release --target "$TARGET_TRIPLE"
+  build --locked -p jolt-algebra --release --target "$TARGET_TRIPLE"
 )
 
 if $CLEAN; then
@@ -243,8 +243,8 @@ if [[ "$ARCHITECTURE" == x86_64 && "$(uname -s)" == Darwin ]]; then
   mkdir -p "$ELF_OBJECT_DIR"
   for operation in add sub mul mul_bmi2; do
     clang --target=x86_64-unknown-linux-gnu \
-      -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-      "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp64_$operation.S" \
+      -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+      "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp64_$operation.S" \
       -o "$ELF_OBJECT_DIR/fp64_$operation.o"
   done
   ADD_PROOF_OBJECT="$ELF_OBJECT_DIR/fp64_add.o"

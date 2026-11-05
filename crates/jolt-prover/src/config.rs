@@ -46,6 +46,19 @@ pub struct ProverConfig {
 }
 
 impl ProverConfig {
+    /// Reserve the final no-op row and select the protocol's padded trace domain.
+    pub fn padded_trace_length<F: JoltField>(
+        executed_rows: usize,
+    ) -> Result<usize, ProverError<F>> {
+        executed_rows
+            .checked_add(1)
+            .and_then(usize::checked_next_power_of_two)
+            .map(|length| length.max(MIN_PADDED_TRACE_LENGTH))
+            .ok_or(ProverError::Unsupported {
+                reason: "trace length overflows the padded domain",
+            })
+    }
+
     /// Derive the proof shape from execution facts without accessing trace rows.
     /// Pad the trace length past its final no-op, size RAM to cover accessed
     /// addresses and the program image, and select chunking policies.
@@ -60,14 +73,7 @@ impl ProverConfig {
         if dimensions.trace_length != 0 && !dimensions.ends_in_jump {
             return Err(ProverError::TraceDoesNotEndInJump);
         }
-        let trace_length = dimensions
-            .trace_length
-            .checked_add(1)
-            .and_then(usize::checked_next_power_of_two)
-            .ok_or(ProverError::Unsupported {
-                reason: "trace length overflows the padded domain",
-            })?
-            .max(MIN_PADDED_TRACE_LENGTH);
+        let trace_length = Self::padded_trace_length::<F>(dimensions.trace_length)?;
         if let Some(min) = dimensions.ram_bounds.min() {
             let _ = checked_remap_address(min, memory_layout)
                 .map_err(|reason| ProverError::Unsupported { reason })?;
@@ -89,9 +95,13 @@ impl ProverConfig {
             .ok_or(ProverError::Unsupported {
                 reason: "program image extent overflows the RAM domain",
             })?;
+        // The RAM table holds word indices `0..ram_k`, so it must reach one past
+        // the highest touched index; rounding `touched` itself to a power of two
+        // leaves that word out when `touched` is already a power of two.
         let ram_k = touched
-            .max(image_end)
-            .checked_next_power_of_two()
+            .checked_add(1)
+            .map(|words| words.max(image_end))
+            .and_then(u64::checked_next_power_of_two)
             .and_then(|domain| usize::try_from(domain).ok())
             .ok_or(ProverError::Unsupported {
                 reason: "RAM domain does not fit the host address space",
@@ -362,6 +372,9 @@ mod dimension_tests {
         assert_eq!(touched.ram_K, 1024);
         let image = derive(7, None, 1024);
         assert_eq!(image.ram_K, 2048);
+        // A highest touched index that is itself a power of two needs the next one.
+        let power_of_two = derive(7, Some(lowest + 8 * 1024), 3);
+        assert_eq!(power_of_two.ram_K, 2048);
         assert_eq!(
             derive((1 << 25) - 1, None, 0).one_hot_config.log_k_chunk,
             if cfg!(feature = "akita") { 4 } else { 8 }

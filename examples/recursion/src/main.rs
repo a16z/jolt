@@ -4,10 +4,12 @@ use bounded::RecordLimits;
 
 use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheme, TrustedBytes};
+use jolt_akita::{
+    AkitaChunkProfile, AkitaField, AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript,
+    TrustedBytes,
+};
 use jolt_field::Ring;
 use jolt_inlines_blake2::Blake2b;
-use jolt_inlines_keccak256 as _;
 #[cfg(feature = "ntt-inline")]
 use jolt_inlines_ntt as _;
 use jolt_poly::{CompressedPoly, UnivariatePoly};
@@ -21,13 +23,12 @@ use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProg
 use jolt_sdk::jolt_verifier::proof::JoltProofClaims;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
-#[cfg(feature = "akita")]
-use jolt_sdk::ProofTranscript;
-use jolt_sdk::{
-    JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode, VerifierTranscript,
-};
+use jolt_sdk::{JoltDevice, MemoryConfig, MemoryLayout, ProgramPreprocessingMode};
 #[cfg(not(feature = "akita"))]
-use jolt_sdk::{JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof, VerifierField};
+use jolt_sdk::{
+    JoltProverPreprocessing, JoltVerifierPreprocessing, RV64IMACProof, VerifierField,
+    VerifierTranscript,
+};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
@@ -549,7 +550,7 @@ fn collect_guest_proofs(
         #[cfg(feature = "field-inline")]
         let witness = witness.with_field_inline().expect("field witness");
         let now = Instant::now();
-        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProofTranscript>(
+        let proof = akita::prove::<AkitaField, AkitaScheme, AkitaVc, AkitaProverTranscript>(
             JoltBackend::optimized().with_witness(&witness),
             &prover_preprocessing,
             &config,
@@ -606,7 +607,7 @@ fn collect_guest_proofs(
             AkitaField,
             AkitaScheme,
             AkitaVc,
-            VerifierTranscript<'_>,
+            AkitaVerifierTranscript<'_>,
         >(&attached, public_io, proof, None)
         .expect("verify proof against prepared guest setup");
         info!("  Verification result: true");
@@ -1040,20 +1041,9 @@ fn tamper_proof(
                 TamperTarget::Empty => unreachable!(),
                 #[cfg(feature = "akita")]
                 TamperTarget::Opening => {
-                    // AkitaBatchProof encodes a fixed selection followed by a byte body.
-                    // Decode the envelope so the mutation cannot hit a length prefix.
-                    let config = bincode::config::standard();
-                    let encoded =
-                        bincode::serde::encode_to_vec(&proof.joint_opening_proof, config).unwrap();
-                    let ((selection, mut body), consumed): (([u8; 32], Vec<u8>), _) =
-                        bincode::serde::decode_from_slice(&encoded, config).unwrap();
-                    assert_eq!(consumed, encoded.len());
-                    let middle = body.len() / 2;
-                    *body.get_mut(middle).expect("opening proof body") ^= 1;
-                    let encoded = bincode::serde::encode_to_vec((selection, body), config).unwrap();
-                    proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config)
-                        .unwrap()
-                        .0;
+                    // Akita's opening is the argument string's suffix: nothing
+                    // is written after it.
+                    *proof.narg.last_mut().expect("Akita argument string") ^= 1;
                 }
             }
         }
