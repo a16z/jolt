@@ -35,15 +35,17 @@ A push voids the line. After every push, review the new head and post a new line
 
 ### Opt-in prover benchmarks
 
-When the restricted `jolt-bench` runner is registered and the `JOLT_E2E_ENABLED`
-repository variable is `true` (setup in `scripts/bench/README.md`), a maintainer or
-administrator can add the `benchmark` label to a same-repository PR. The label
+When the Pika App dispatcher and forced-command target are configured and the
+`JOLT_E2E_ENABLED` repository variable is `true` (setup in
+`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a same-repository PR. The label
 persists across pushes: each admitted run builds base and candidate locally with
 release/znver4, then runs the 17-cell suite at 1, 8, and 24 physical cores. Forks
 and labels applied by write-only contributors are not admitted. While the label
 remains, any later push to the branch, by anyone who can push to it, runs its code
 (including `build.rs`) on the benchmark machine's persistent account without new
-approval. Results are in the **End-to-end prover benchmarks** run's `jolt-e2e-*`
+approval. Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
+The App rechecks admission before dispatch and publishes an **End-to-end benchmark**
+check. Results are in the **End-to-end benchmark ingest** run's `jolt-e2e-*`
 artifact and the dashboard's **Pull requests** view at
 `https://a16z.github.io/jolt/dev/prover-history/`. Main commits and nightly runs
 need no label: their builds run on GitHub-hosted runners and only verified

@@ -16,10 +16,7 @@ on:
         options: [main, nightly]
         default: main
 
-permissions:
-  contents: read
-  actions: read
-  pull-requests: read
+permissions: {}
 
 jobs:
   plan:
@@ -31,6 +28,10 @@ jobs:
         (github.event.action == 'synchronize' || github.event.label.name == 'benchmark')))
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
     outputs:
       enabled: ${{ steps.plan.outputs.enabled }}
       tier: ${{ steps.plan.outputs.tier }}
@@ -123,89 +124,20 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  measure:
+  dispatch:
     needs: [plan, prepare]
     if: >-
       !cancelled() && needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main' &&
       (needs.plan.outputs.tier == 'pr' || needs.prepare.result == 'success')
-    runs-on:
-      group: jolt-bench
-      labels: jolt-bench
-    timeout-minutes: ${{ needs.plan.outputs.tier == 'pr' && 120 || 180 }}
-    concurrency:
-      group: jolt-bench-host
-      queue: max
-    permissions:
-      contents: read
-      actions: read
-    outputs:
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
-      index_sha256: ${{ steps.local.outputs.index_sha256 }}
-      manifest_digests: ${{ steps.local.outputs.manifest_digests }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ needs.plan.outputs.harness }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.plan.outputs.artifact_id }}
-          path: ${{ runner.temp }}/e2e-plan
-          merge-multiple: true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: needs.plan.outputs.tier != 'pr'
-        with:
-          artifact-ids: ${{ needs.prepare.outputs.artifact_id }}
-          path: ${{ runner.temp }}/e2e-builds
-          merge-multiple: true
-      - name: Verify artifacts and run proofs without Cargo or a toolchain
-        if: needs.plan.outputs.tier != 'pr'
-        env:
-          BUILD_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
-          BUILD_INDEX_SHA256: ${{ needs.prepare.outputs.index_sha256 }}
-        run: |
-          uv run --no-project python scripts/bench/ci.py execute \
-            --plan "$RUNNER_TEMP/e2e-plan/plan.json" --bundles "$RUNNER_TEMP/e2e-builds" \
-            --artifact-id "$BUILD_ARTIFACT_ID" --index-sha256 "$BUILD_INDEX_SHA256" \
-            --out "$RUNNER_TEMP/e2e-out"
-      - name: Recheck the PR label, then build and prove using local Cargo state
-        if: needs.plan.outputs.tier == 'pr'
-        id: local
-        run: uv run --no-project python scripts/bench/ci.py local --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-out"
-      - name: Preserve an interrupted or failed root result
-        if: always()
-        run: uv run --no-project python scripts/bench/ci.py finalize --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-out"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        id: upload
-        if: always()
-        with:
-          name: jolt-e2e-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/e2e-out
-            !${{ runner.temp }}/e2e-out/**/runtime-cache/**
-            !${{ runner.temp }}/e2e-out/builds/**
-          if-no-files-found: error
-          retention-days: 30
-
-  validate-comment:
-    needs: [plan, prepare, measure]
-    if: always() && needs.plan.outputs.tier == 'pr' && needs.measure.outputs.artifact_id != '' && vars.JOLT_E2E_COMMENTS_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read
-      pull-requests: read
-    outputs:
-      publish: ${{ steps.validate.outputs.publish }}
-      pr_number: ${{ steps.validate.outputs.pr_number }}
-      head: ${{ steps.validate.outputs.head }}
-      merge: ${{ steps.validate.outputs.merge }}
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ needs.plan.outputs.harness }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -213,72 +145,19 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           artifact-ids: ${{ needs.plan.outputs.artifact_id }}
-          path: ${{ runner.temp }}/trusted-plan
+          path: ${{ runner.temp }}/e2e-plan
           merge-multiple: true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.measure.outputs.artifact_id }}
-          path: ${{ runner.temp }}/untrusted-results
-          merge-multiple: true
-      - name: Validate provenance and render without executing artifact code
-        id: validate
+      - name: Publish the target request for the Pika App
         env:
-          GH_TOKEN: ${{ github.token }}
-          PLAN_ARTIFACT: ${{ needs.plan.outputs.artifact_id }}
-          RESULT_ARTIFACT: ${{ needs.measure.outputs.artifact_id }}
-          BUILD_INDEX_SHA256: ${{ needs.measure.outputs.index_sha256 }}
-          BUILD_MANIFEST_DIGESTS: ${{ needs.measure.outputs.manifest_digests }}
-        run: |
-          uv run --no-project python scripts/bench/publication.py \
-            --plan "$RUNNER_TEMP/trusted-plan/plan.json" \
-            --plan-artifact-id "$PLAN_ARTIFACT" --result-artifact-id "$RESULT_ARTIFACT" \
-            --index-sha256 "$BUILD_INDEX_SHA256" \
-            --results "$RUNNER_TEMP/untrusted-results/benchmark-results.json" \
-            --out "$RUNNER_TEMP/validated/pr-comment.md"
+          BUILD_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
+          BUILD_INDEX_SHA256: ${{ needs.prepare.outputs.index_sha256 }}
+          BUILD_MANIFEST_DIGESTS: ${{ needs.prepare.outputs.manifest_digests }}
+        run: >-
+          uv run --no-project python scripts/bench/ci.py dispatch
+          --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-dispatch"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        id: upload
-        if: steps.validate.outputs.publish == 'true'
         with:
-          name: jolt-e2e-validated-comment-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/validated/pr-comment.md
+          name: jolt-e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-dispatch/dispatch.json
           if-no-files-found: error
-
-  comment:
-    needs: validate-comment
-    if: needs.validate-comment.outputs.publish == 'true' && vars.JOLT_E2E_COMMENTS_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      actions: read
-      pull-requests: write
-    steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          artifact-ids: ${{ needs.validate-comment.outputs.artifact_id }}
-          path: ${{ runner.temp }}/validated
-          merge-multiple: true
-      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
-        env:
-          COMMENT_PATH: ${{ runner.temp }}/validated/pr-comment.md
-          PR_NUMBER: ${{ needs.validate-comment.outputs.pr_number }}
-          EXPECTED_HEAD: ${{ needs.validate-comment.outputs.head }}
-          EXPECTED_MERGE: ${{ needs.validate-comment.outputs.merge }}
-        with:
-          script: |
-            const issue_number = Number(process.env.PR_NUMBER);
-            const request = {...context.repo, pull_number: issue_number};
-            const {data: pr} = await github.rest.pulls.get(request);
-            if (pr.state !== 'open' || pr.head.sha !== process.env.EXPECTED_HEAD || pr.merge_commit_sha !== process.env.EXPECTED_MERGE) {
-              core.notice('The PR changed after validation; no stale comment was posted.');
-              return;
-            }
-            const body = require('fs').readFileSync(process.env.COMMENT_PATH, 'utf8');
-            const marker = '<!-- jolt-e2e-benchmark-v1 -->';
-            if (!body.startsWith(marker)) throw new Error('Invalid validated comment marker');
-            const comments = await github.paginate(github.rest.issues.listComments, {...context.repo, issue_number, per_page: 100});
-            const previous = comments.find(c => c.user?.login === 'github-actions[bot]' && c.body?.startsWith(marker));
-            if (previous) {
-              await github.rest.issues.updateComment({...context.repo, comment_id: previous.id, body});
-            } else {
-              await github.rest.issues.createComment({...context.repo, issue_number, body});
-            }
+          retention-days: 14

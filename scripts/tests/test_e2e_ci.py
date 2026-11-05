@@ -24,17 +24,44 @@ finally:
 
 
 class E2eCiTests(unittest.TestCase):
-    def test_workflow_timeout_matches_configured_tiers(self):
-        workflow = (DIRECTORY.parents[1] / '.github/workflows/e2e-bench.yml').read_text()
-        measure = re.search(r'(?ms)^  measure:\n(.*?)(?=^  [^ ]|\Z)', workflow).group(1)
-        timeout = re.search(
-            r"^    timeout-minutes: \$\{\{ needs\.plan\.outputs\.tier == '([^']+)' && (\d+) \|\| (\d+) \}\}$",
-            measure, re.M)
-        self.assertIsNotNone(timeout)
-        self.assertIn('      tier: ${{ steps.plan.outputs.tier }}', workflow)
-        tiers = json.loads(ci.bench.DEFAULT_CONFIG.read_text())['tiers']
-        actual = {tier: int(timeout[2] if tier == timeout[1] else timeout[3]) for tier in tiers}
-        self.assertEqual(actual, {'pr': 120, 'main': 180, 'nightly': 180})
+    def test_dispatch_and_target_bind_each_tier_and_always_finalize(self):
+        for tier in ('pr', 'main', 'nightly'):
+            plan = {'enabled': True, 'tier': tier,
+                'provenance': {'run_id': '123', 'run_attempt': '2', 'pr_number': 7,
+                    'workflow': ci.bench.WORKFLOW, 'event': 'pull_request_target' if tier == 'pr' else 'push',
+                    'ref': 'refs/heads/main'},
+                'runs': [{'submitted_head': 'b' * 40, 'head': 'c' * 40}],
+                'admission': {'label_event_id': 11, 'label_actor': 'maintainer'},
+                'expected_builds': {'c' * 40: {}}}
+            manifest = ci.dispatch_manifest(plan, 123, 2, artifact_id=456,
+                index_sha256='1' * 64, digests={'c' * 40: '2' * 64})
+            self.assertEqual(manifest['plan_artifact'], 'jolt-e2e-plan-123-2')
+            self.assertEqual(manifest['check_sha'], ('b' if tier == 'pr' else 'c') * 40)
+            self.assertEqual(manifest['builds_artifact'], None if tier == 'pr' else 'jolt-e2e-builds-123-2')
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                request = root / 'dispatch.json'
+                request.write_text(json.dumps(manifest))
+                options = argparse.Namespace(plan=root / 'plan.json', dispatch=request,
+                                             bundles=root / 'bundles', out=root / 'out')
+                with patch.object(ci, 'load_plan', return_value=plan), patch.dict(os.environ), \
+                        patch.object(ci, 'local', return_value=0) as local, \
+                        patch.object(ci, 'execute', return_value=0) as execute, \
+                        patch.object(ci, 'finalize') as finalize:
+                    self.assertEqual(ci.target(options), 0)
+                    self.assertEqual(local.called, tier == 'pr')
+                    self.assertEqual(execute.called, tier != 'pr')
+                    if tier != 'pr':
+                        self.assertEqual(execute.call_args.args[0].index_sha256, '1' * 64)
+                    finalize.assert_called_once()
+                    finalize.reset_mock()
+                    (local if tier == 'pr' else execute).side_effect = ValueError('owned failure')
+                    with self.assertRaisesRegex(ValueError, 'owned failure'):
+                        ci.target(options)
+                    finalize.assert_called_once()
+            for field, value in [('run_attempt', 1), ('tier', 'other'), ('check_sha', 'f' * 40)]:
+                with self.subTest(tier=tier, field=field), self.assertRaises(ValueError):
+                    ci.check_dispatch(dict(manifest, **{field: value}), plan)
 
     def test_pr_admission_rejects_unlabelled_fork_nonmaintainer_and_stale_events(self):
         pr = {'number': 7, 'state': 'open', 'labels': [{'name': 'benchmark'}],

@@ -129,7 +129,7 @@ def plan(args):
             'config': bench.bundle_file(args.config.resolve(), bench.ROOT), 'expected_builds': {}}
     try:
         if not enabled:
-            raise ValueError('benchmark runner is disabled; an admin must complete scripts/bench/README.md')
+            raise ValueError('benchmark execution is disabled; complete scripts/bench/README.md before enablement')
         plan['harness'], plan['runs'], pr, plan['admission'] = resolve(
             name, event, os.environ['GITHUB_REPOSITORY'], os.environ['GITHUB_SHA'])
         plan['provenance'].update(pr_number=pr)
@@ -352,13 +352,72 @@ def local(args):
         build_s = time.perf_counter() - begin
         execution = argparse.Namespace(plan=args.plan, out=args.out, bundles=preparation.out,
             index_sha256=bench.sha256(preparation.out / 'builds.json'), artifact_id=None)
-        failed = execute(execution, locked=True)
-        result = bench.parse_json((args.out / 'benchmark-results.json').read_text())
-        result['started_at'] = started
-        result['wall_time'].update(build_s=build_s, total_s=time.perf_counter() - begin, scope=LOCAL_SCOPE)
-        bench.write_json(args.out / 'benchmark-results.json', result)
-        bench.render_comment(result, args.out / 'pr-comment.md')
+        try:
+            failed = execute(execution, locked=True)
+        finally:
+            path = args.out / 'benchmark-results.json'
+            if path.exists():
+                result = bench.parse_json(path.read_text())
+                result['started_at'] = started
+                result['wall_time'].update(build_s=build_s, total_s=time.perf_counter() - begin, scope=LOCAL_SCOPE)
+                bench.write_json(path, result)
+                bench.render_comment(result, args.out / 'pr-comment.md')
     return failed
+
+
+def dispatch_manifest(plan, run_id, attempt, *, artifact_id=None, index_sha256=None, digests=None):
+    if not plan['enabled'] or (str(plan['provenance']['run_id']), str(plan['provenance']['run_attempt'])) != (
+            str(run_id), str(attempt)):
+        raise ValueError('dispatch requires an enabled plan from this run and attempt')
+    pr = None
+    if plan['tier'] == 'pr':
+        pr = dict(number=plan['provenance']['pr_number'], head_sha=plan['runs'][0]['submitted_head'],
+                  **{key: plan['admission'][key] for key in ('label_event_id', 'label_actor')})
+    elif (type(artifact_id) is not int or artifact_id <= 0
+            or not re.fullmatch('[0-9a-f]{64}', index_sha256 or '')
+            or not isinstance(digests, dict) or set(digests) != set(plan['expected_builds'])
+            or any(not re.fullmatch('[0-9a-f]{64}', value) for value in digests.values())):
+        raise ValueError('main/nightly dispatch requires the hosted build receipts')
+    return {'schema': 1, 'tier': plan['tier'], 'run_id': int(run_id), 'run_attempt': int(attempt),
+            'plan_artifact': f'jolt-e2e-plan-{run_id}-{attempt}',
+            'builds_artifact': None if pr else f'jolt-e2e-builds-{run_id}-{attempt}',
+            'check_sha': pr['head_sha'] if pr else plan['runs'][-1]['head'], 'pr': pr,
+            'build_artifact_id': None if pr else artifact_id,
+            'build_index_sha256': None if pr else index_sha256,
+            'manifest_digests': None if pr else digests}
+
+
+def check_dispatch(manifest, plan):
+    expected = dispatch_manifest(plan, manifest['run_id'], manifest['run_attempt'],
+        artifact_id=manifest.get('build_artifact_id'), index_sha256=manifest.get('build_index_sha256'),
+        digests=manifest.get('manifest_digests'))
+    if any(manifest.get(key) != value for key, value in expected.items()):
+        raise ValueError('dispatch differs from its trusted plan')
+
+
+def dispatch(args):
+    plan = bench.parse_json(args.plan.read_text())
+    manifest = dispatch_manifest(plan, os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT'],
+        artifact_id=int(os.environ['BUILD_ARTIFACT_ID']) if os.environ.get('BUILD_ARTIFACT_ID') else None,
+        index_sha256=os.environ.get('BUILD_INDEX_SHA256'),
+        digests=bench.parse_json(os.environ.get('BUILD_MANIFEST_DIGESTS') or 'null'))
+    bench.write_json(args.out / 'dispatch.json', manifest)
+
+
+def target(args):
+    try:
+        plan = load_plan(args.plan)
+        manifest = bench.parse_json(args.dispatch.read_text())
+        check_dispatch(manifest, plan)
+        for key, name in [('run_id', 'GITHUB_RUN_ID'), ('run_attempt', 'GITHUB_RUN_ATTEMPT'),
+                          ('workflow', 'GITHUB_WORKFLOW'), ('event', 'GITHUB_EVENT_NAME'), ('ref', 'GITHUB_REF')]:
+            os.environ[name] = str(plan['provenance'][key])
+        if plan['tier'] == 'pr':
+            return local(args)
+        return execute(argparse.Namespace(plan=args.plan, out=args.out, bundles=args.bundles,
+            artifact_id=manifest['build_artifact_id'], index_sha256=manifest['build_index_sha256']))
+    finally:
+        finalize(args)
 
 
 def verify(args):
@@ -372,6 +431,11 @@ def verify(args):
 def finalize(args):
     root = args.out / 'benchmark-results.json'
     plan = json.loads(args.plan.read_text())
+    manifest = bench.parse_json(args.dispatch.read_text()) if getattr(args, 'dispatch', None) else {}
+    index = args.out / 'builds/builds.json'
+    artifacts = {'id': manifest.get('build_artifact_id'),
+                 'index_sha256': bench.sha256(index) if plan['tier'] == 'pr' and index.exists()
+                 else manifest.get('build_index_sha256'), 'plan_sha256': bench.sha256(args.plan)}
     for item in plan['runs']:
         path = (root if item == plan['runs'][-1]
                 else args.out / 'commits' / item['head'] / 'benchmark-results.json')
@@ -380,6 +444,9 @@ def finalize(args):
             if partial['status'] == 'incomplete':
                 partial['reason'] = partial['reason'] or 'suite interrupted before all planned samples finished'
                 partial['finished_at'] = bench.utc_now()
+                partial['artifacts'] = artifacts
+                if 'wall_time' in partial:
+                    partial['wall_time']['scope'] = LOCAL_SCOPE if plan['tier'] == 'pr' else RUN_ONLY_SCOPE
                 bench.write_json(path, partial)
     if root.exists():
         return
@@ -387,6 +454,7 @@ def finalize(args):
                                   status='incomplete', reason='the planned target job did not produce a root result')
     result = bench.disabled(options)
     result['provenance'] = plan['provenance']
+    result['run_id'] = plan['provenance'].get('run_id')
     if plan['runs']:
         item = plan['runs'][-1]
         result['revisions'] = {'base': item['base'], 'head': item['submitted_head'],
@@ -395,7 +463,9 @@ def finalize(args):
     result['kind'] = 'comparison' if plan['tier'] == 'pr' else 'history'
     if plan['tier'] == 'pr':
         result['wall_time']['scope'] = LOCAL_SCOPE
-        result['artifacts'] = {'id': None, 'index_sha256': None, 'plan_sha256': bench.sha256(args.plan)}
+    else:
+        result['wall_time']['scope'] = RUN_ONLY_SCOPE
+    result['artifacts'] = artifacts
     bench.write_json(root, result)
 
 
@@ -421,12 +491,22 @@ def main():
     finalization = commands.add_parser('finalize')
     finalization.add_argument('--plan', type=Path, required=True)
     finalization.add_argument('--out', type=Path, required=True)
+    finalization.add_argument('--dispatch', type=Path)
     local_run = commands.add_parser('local', help='build and prove an admitted PR under one host lock')
     local_run.add_argument('--plan', type=Path, required=True)
     local_run.add_argument('--out', type=Path, required=True)
+    dispatching = commands.add_parser('dispatch', help='publish the App executor manifest')
+    dispatching.add_argument('--plan', type=Path, required=True)
+    dispatching.add_argument('--out', type=Path, required=True)
+    targeting = commands.add_parser('target', help='execute and finalize one App-dispatched plan')
+    targeting.add_argument('--dispatch', type=Path, required=True)
+    targeting.add_argument('--plan', type=Path, required=True)
+    targeting.add_argument('--bundles', type=Path)
+    targeting.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     return {'prepare': prepare, 'verify': verify, 'execute': execute,
-            'local': local, 'plan': plan, 'finalize': finalize}[args.command](args)
+            'local': local, 'plan': plan, 'finalize': finalize,
+            'dispatch': dispatch, 'target': target}[args.command](args)
 
 
 if __name__ == '__main__':

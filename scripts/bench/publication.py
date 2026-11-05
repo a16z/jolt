@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-"""Validate a PR result against GitHub records before rendering trusted Markdown."""
+"""Validate executor results against the hosted plan before publication."""
 
-import argparse
-import base64
 import hashlib
-from pathlib import Path
 import re
-import os
 
 import ci
 import run as bench
@@ -17,8 +13,9 @@ STATUSES = {'complete', 'failed', 'incomplete', 'unsupported', 'missing'}
 def validate(result, expected, config_bytes):
     if result.get('schema_version') != 1 or result.get('repository') != 'a16z/jolt':
         raise ValueError('unsupported schema or repository')
-    if result['tier'] != 'pr' or result['kind'] != 'comparison':
-        raise ValueError('only full PR comparisons can update the sticky comment')
+    paired = expected['tier'] == 'pr'
+    if result['tier'] != expected['tier'] or result['kind'] != ('comparison' if paired else 'history'):
+        raise ValueError('result tier or purpose differs from the plan')
     if result['status'] not in {'complete', 'failed', 'incomplete', 'unsupported'}:
         raise ValueError('result does not describe executed measurements')
     for key in ('workflow', 'workflow_file', 'run_id', 'run_attempt', 'event', 'ref', 'pr_number'):
@@ -28,7 +25,7 @@ def validate(result, expected, config_bytes):
         raise ValueError('unexpected producer workflow')
     for key in ('base', 'head', 'merge', 'harness'):
         value = result['revisions'][key]
-        if not re.fullmatch('[0-9a-f]{40}', value or '') or value != expected['revisions'][key]:
+        if value != expected['revisions'][key] or (value is not None and not re.fullmatch('[0-9a-f]{40}', value)):
             raise ValueError(f'revision mismatch: {key}')
     if str(result['run_id']) != str(expected['provenance']['run_id']):
         raise ValueError('run identity differs from the actual GitHub run')
@@ -38,17 +35,17 @@ def validate(result, expected, config_bytes):
     for key in ('calibration', 'calibration_sha256'):
         if result['suite'].get(key) != config.get(key):
             raise ValueError(f'{key} differs from the pinned suite configuration')
-    tier = config['tiers']['pr']
+    tier = config['tiers'][expected['tier']]
     for key in ('warmups', 'repetitions'):
         if result['suite'][key] != tier[key]:
-            raise ValueError(f'unapproved PR sampling override: {key}')
+            raise ValueError(f'unapproved sampling override: {key}')
     if (result['suite']['metric_contract'] != 1 or result['suite']['id'] != config['id']
             or result['suite'].get('selected_cases')):
-        raise ValueError('PR suite identity or case selection differs')
+        raise ValueError('suite identity or case selection differs')
     if result.get('artifacts') != expected['artifacts']:
         raise ValueError('result uses different build index or plan bytes')
-    if result['wall_time']['scope'] != ci.LOCAL_SCOPE:
-        raise ValueError('PR publication requires the local build-through-measurement interval')
+    if result['wall_time']['scope'] != (ci.LOCAL_SCOPE if paired else ci.RUN_ONLY_SCOPE):
+        raise ValueError('wall-time scope differs from the execution tier')
     for key in ('build_s', 'benchmark_s', 'total_s'):
         value = result['wall_time'][key]
         if value is None and result['status'] == 'complete':
@@ -63,26 +60,38 @@ def validate(result, expected, config_bytes):
     expected_cases = {case['id']: case for case in tier['cases']}
     cases = result['cases']
     if len(cases) != len(expected_cases) or {case['id'] for case in cases} != set(expected_cases):
-        raise ValueError('expected PR cases are missing or duplicated')
+        raise ValueError('expected cases are missing or duplicated')
     builds = {build['leg']: build for build in result['builds']}
-    if len(result['builds']) != 2 or set(builds) != {'base', 'head'}:
-        raise ValueError('expected exactly one build manifest per leg')
-    for leg, revision in [('base', expected['revisions']['base']), ('head', expected['revisions']['merge'])]:
-        build = builds[leg]
+    legs = {'base': expected['revisions']['base'], 'head': expected['revisions']['merge']} if paired else {
+        'head': expected['revisions']['head']}
+    if (len(builds) != len(result['builds']) or not set(builds) <= set(legs)
+            or (result['status'] == 'complete' and set(builds) != set(legs))):
+        raise ValueError('build legs differ from the planned measurement')
+    for leg, build in builds.items():
+        revision = legs[leg]
         if build['revision'] != revision or build['harness_revision'] != expected['revisions']['harness']:
             raise ValueError('build manifest is not for the measured revisions')
         native = build['native_harness_revision']
-        if native not in (build['harness_revision'], revision) or (
-                native != build['harness_revision'] and not build.get('harness_fallback_reason')):
+        if native != build['harness_revision'] and (not paired or native != revision
+                or not build.get('harness_fallback_reason')):
             raise ValueError('build uses an unplanned native harness')
-    for key in ('rustflags', 'target_cpu', 'profile', 'profile_config'):
-        if builds['base'][key] != builds['head'][key]:
-            raise ValueError(f'paired build mismatch: {key}')
-    for build in builds.values():
-        manifest = {key: value for key, value in build.items() if key != 'leg'}
-        if ci.manifest_digest(manifest) != expected['manifest_digests'][build['revision']]:
-            raise ValueError('result build manifest differs from the builder output')
-    topology = {row['cpu']: row for row in result['host']['topology']}
+        if expected.get('expected_builds'):
+            planned = dict(expected['expected_builds'][revision])
+            if native != build['harness_revision']:
+                planned['harness_files'] = expected['own_harness_files'][revision]
+            if any(build.get(key) != value for key, value in planned.items()):
+                raise ValueError('build differs from the planned native inputs')
+        if expected.get('manifest_digests') is not None:
+            manifest = {key: value for key, value in build.items() if key != 'leg'}
+            if ci.manifest_digest(manifest) != expected['manifest_digests'][revision]:
+                raise ValueError('result build manifest differs from the builder output')
+    if paired and set(builds) == set(legs):
+        for key in ('rustflags', 'target_cpu', 'profile', 'profile_config'):
+            if builds['base'][key] != builds['head'][key]:
+                raise ValueError(f'paired build mismatch: {key}')
+    if result['host'] is None and any(case['samples'] for case in cases):
+        raise ValueError('measured samples have no host identity')
+    topology = {row['cpu']: row for row in (result['host'] or {}).get('topology', [])}
     orders = set()
     for case in cases:
         spec = expected_cases[case['id']]
@@ -116,7 +125,8 @@ def validate(result, expected, config_bytes):
                 raise ValueError('sample is not for its actual measured revision')
             count = tier['warmups'] if phase == 'warmup' else tier['repetitions']
             repetition = sample['repetition']
-            if type(repetition) is not int or not 0 <= repetition < count or sample['pair_index'] != repetition:
+            if (type(repetition) is not int or not 0 <= repetition < count
+                    or sample['pair_index'] != (repetition if paired else None)):
                 raise ValueError('invalid repetition or pair index')
             key = (leg, phase, repetition)
             if type(sample['order']) is not int or sample['order'] < 0 or key in observed or sample['order'] in orders:
@@ -141,92 +151,15 @@ def validate(result, expected, config_bytes):
             elif sample['metrics'] is not None:
                 raise ValueError('failed or missing sample contains fabricated metrics')
         if case['status'] == 'complete':
-            if len(observed) != 2 * (tier['warmups'] + tier['repetitions']) or any(
+            if len(observed) != len(legs) * (tier['warmups'] + tier['repetitions']) or any(
                     sample['status'] != 'complete' for sample in case['samples']):
                 raise ValueError('complete case has missing or failed samples')
             actual_order = [(s['leg'], s['phase'], s['repetition']) for s in case['samples']]
             expected_order = [(s['leg'], s['phase'], s['repetition']) for s in
-                              bench.sample_order(True, tier['warmups'], tier['repetitions'])]
+                              bench.sample_order(paired, tier['warmups'], tier['repetitions'])]
             if actual_order != expected_order:
                 raise ValueError('paired processes did not use the declared alternating order')
     if result['status'] == 'complete' and (not any(case['status'] == 'complete' for case in cases)
             or any(case['status'] not in ('complete', 'unsupported') for case in cases)):
         raise ValueError('complete run has no results or contains incomplete cases')
     return result
-
-
-def expected_from_github(plan, args):
-    run_id, attempt = os.environ['GITHUB_RUN_ID'], os.environ['GITHUB_RUN_ATTEMPT']
-    actual = ci.github(f'actions/runs/{run_id}')
-    if (actual['name'] != bench.WORKFLOW or actual['path'] != bench.WORKFLOW_FILE
-            or actual['event'] != 'pull_request_target'
-            or actual['head_repository']['full_name'] != 'a16z/jolt'
-            or actual['head_branch'] != plan['admission']['head_ref']
-            or actual['head_sha'] != plan['runs'][0]['submitted_head']
-            or actual['run_attempt'] != int(attempt)):
-        raise ValueError('actual producer is not the planned trusted main-branch run')
-    for artifact_id, prefix in [(args.plan_artifact_id, 'jolt-e2e-plan'),
-                               (args.result_artifact_id, 'jolt-e2e')]:
-        artifact = ci.github(f'actions/artifacts/{artifact_id}')
-        if (artifact['name'] != f'{prefix}-{run_id}-{attempt}' or artifact['expired']
-                or artifact['workflow_run']['id'] != int(run_id)):
-            raise ValueError('artifact is not from the actual producer run and attempt')
-    prov = plan['provenance']
-    if str(prov['run_id']) != run_id or str(prov['run_attempt']) != attempt or len(plan['runs']) != 1:
-        raise ValueError('stale plan or unexpected number of PR comparisons')
-    number = prov['pr_number']
-    if type(number) is not int:
-        raise ValueError('invalid PR number')
-    item = plan['runs'][0]
-    try:
-        pr, admission = ci.labelled_pr(number, authenticated=True)
-    except ValueError:
-        return None
-    if (pr['state'] != 'open' or pr['head']['repo']['full_name'] != 'a16z/jolt'
-            or pr['head']['sha'] != item['submitted_head']
-            or pr['base']['ref'] != 'main' or pr['merge_commit_sha'] != item['head']
-            or admission != plan['admission']):
-        return None
-    commit = ci.github(f'commits/{item["head"]}')
-    if [parent['sha'] for parent in commit['parents']] != [item['base'], item['submitted_head']]:
-        raise ValueError('measured merge has different parents')
-    config = ci.github(f'contents/scripts/bench/suites.json?ref={plan["harness"]}')
-    if config['encoding'] != 'base64' or config['type'] != 'file':
-        raise ValueError('expected a committed suite configuration file')
-    digests = bench.parse_json(os.environ['BUILD_MANIFEST_DIGESTS'])
-    if set(digests) != {item['base'], item['head']} or any(
-            not re.fullmatch('[0-9a-f]{64}', digest) for digest in digests.values()):
-        raise ValueError('manifest digests do not match the planned revisions')
-    expected = {'provenance': prov, 'manifest_digests': digests,
-                'artifacts': {'id': None, 'index_sha256': args.index_sha256,
-                              'plan_sha256': bench.sha256(args.plan)},
-                'revisions': {'base': item['base'], 'head': item['submitted_head'],
-                              'merge': item['head'], 'harness': plan['harness']}}
-    return expected, base64.b64decode(config['content'], validate=False)
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--results', type=Path, required=True)
-    parser.add_argument('--plan', type=Path, required=True)
-    parser.add_argument('--plan-artifact-id', type=int, required=True)
-    parser.add_argument('--result-artifact-id', type=int, required=True)
-    parser.add_argument('--index-sha256', required=True)
-    parser.add_argument('--out', type=Path, required=True)
-    args = parser.parse_args()
-    if args.results.stat().st_size > 8 * 1024 * 1024:
-        raise ValueError('PR result exceeds the 8 MiB JSON limit')
-    expected = expected_from_github(bench.parse_json(args.plan.read_text()), args)
-    if expected is None:
-        print('The PR or its main base has advanced; no stale comment will be posted.')
-        return
-    result = validate(bench.parse_json(args.results.read_text()), *expected)
-    bench.render_comment(result, args.out)
-    with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
-        output.write(f'publish=true\npr_number={expected[0]["provenance"]["pr_number"]}\n')
-        output.write(f'head={expected[0]["revisions"]["head"]}\n')
-        output.write(f'merge={expected[0]["revisions"]["merge"]}\n')
-
-
-if __name__ == '__main__':
-    main()

@@ -16,8 +16,7 @@ The PR matrix has 17 cells and launches 136 proof processes, including warmups.
 `pr-baseline.json` preserves the initial three-cell, 24-proof matrix. Measured
 timing and noise references apply to their exact artifact inputs, not to an
 unmeasured later kernel or a future run. Automatic PR calibration is unavailable;
-the measured bands below belong to the pinned manual experiment. No runner
-registration, target setting change, or comment publication is part of this draft.
+the measured bands below belong to the pinned manual experiment. No host installation, target setting change, or live check publication is part of this draft.
 
 ## Workloads and tiers
 
@@ -434,7 +433,7 @@ The schema-1 `benchmark-results.json` contains the expected `cases`, each with a
 raw warmup and measured `samples`. A successful sample is `complete`, exit code
 zero, and has all numeric metrics. Failed, incomplete, unsupported, and missing
 points are explicit, with reasons and null metrics. Non-executed workflows emit
-a `disabled` result instead of scheduling an absent runner. The CI artifact keeps
+a `disabled` result and no dispatch request. The CI artifact keeps
 raw sample logs, embedded manifests, compiler flags, toolchain and lockfile
 hashes, binary/guest hashes, CPU topology, and host settings. It excludes the
 runtime URS cache and local build payloads. For main/nightly, the separate
@@ -442,11 +441,11 @@ runtime URS cache and local build payloads. For main/nightly, the separate
 the actual binaries, guest ELFs, fixed inputs, Akita schedules and construction
 logs. `builds.json` binds their manifest hashes to the exact plan bytes.
 
-If hosted preparation fails, the target job is skipped and no result artifact or
-failure comment is produced. A prior comment retains its old submitted-head
-identity; history consumers treat the absent artifact as unknown. Producing a
-build-failure receipt remains debt to resolve before enabling target execution
-and comment publication.
+If hosted preparation fails, no dispatch artifact is published and no target job
+or App check is created. The hosted workflow failure remains visible. Producing
+a separate build-failure receipt remains debt to resolve before enabling target
+execution. Target execution failures with a result go through validation; failures
+before any result complete the App check directly.
 
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
@@ -504,171 +503,148 @@ or interrupted batch keeps missing documents visible in that index. An ancestry
 check alone cannot independently attest that `push_before` matches GitHub's event
 boundary; consumers must keep that provenance limit explicit.
 
-## Administrator enablement
+## Execution through the Pika App
 
-The draft adds no runner, setting, secret, or live comment. Keep
-`JOLT_E2E_ENABLED` unset until steps 1–3 are satisfied. Step 4 enables controlled
-acceptance runs; it is not evidence that the time budget has passed.
+GitHub-hosted jobs plan each run and build main/nightly artifacts. Their final
+job uploads `jolt-e2e-dispatch-RUN_ID-RUN_ATTEMPT/dispatch.json`. The Pika GitHub
+App lists that run's artifacts and downloads only the exact plan, dispatch and
+optional builds names for the same attempt. It moves bytes; it never checks out,
+builds or executes Jolt code on the daemon host. A run with no dispatch artifact
+starts no target work. No self-hosted GitHub runner or organization registration
+token is needed.
 
-1. Use a dedicated Linux runner account and the observed target machine. That
-   account must have no write-capable GitHub, SSH, cloud, or Pika credentials in
-   its environment, home, helpers, or accessible files. Do not use a general
-   development account. Confirm CPU topology/ISA and host storage readiness.
-2. Create or select organization runner group `jolt-bench`. Set `visibility` to
-   `selected` and its repository access list to **only `a16z/jolt`**. Set
-   `allows_public_repositories=true` because this repository is public. Set
-   `restricted_to_workflows=true` and `selected_workflows` to **only**
-   `a16z/jolt/.github/workflows/e2e-bench.yml@refs/heads/main`. Register the runner
-   into that organization group with label `jolt-bench`, as shown below. If this
-   restriction is unavailable for the account, leave execution disabled: a
-   PR-editable YAML `if` is not a security boundary. GitHub documents these
-   fields in its [runner-group API](https://docs.github.com/en/rest/actions/self-hosted-runner-groups#update-a-self-hosted-runner-group-for-an-organization).
-3. Install the build and run prerequisites above and `uv` through the normal
-   administrator process. Confirm that the target supports the fixed `znver4`
-   ISA. Keep the runner cache outside the action workspace, with ownership
-   restricted to that account. Resolve and validate the automatic-calibration
-   lifecycle described above before enablement. The saved manual null experiment
-   does not satisfy that requirement; committing a refreshed JSON reference is
-   not a working refresh procedure.
-4. Enable `JOLT_E2E_ENABLED=true`, then have a maintainer/admin apply `benchmark`
-   to a same-repository PR for an actual changed-source workflow run.
-   Inspect every expected point, physical affinity, hashes and verified exits.
-   Measure the target-job interval, including checkout, local compilation,
-   verification and result processing. For main/nightly, report hosted
-   compilation separately. The earlier artifact-only interval is not a timing
-   promise for local PR builds.
-5. After reviewing trusted publication separately, optionally set
-   `JOLT_E2E_COMMENTS_ENABLED=true`. Until then, comments are rendered artifacts
-   only. This task does not enable or post them.
+The hosted planner reads the current PR and all issue-event pages. It requires
+an open same-repository PR into main, its current `benchmark` label application,
+and an applier whose current API `role_name` is `maintain` or `admin`, not merely
+`write`. It resolves and pins the current main base, submitted head and merge
+parents. Replays older than the label application are refused. Later pushes
+remain admitted while the same label application stays current.
 
-### Registration uses the organization group
+The App repeats admission when enqueueing and immediately before submitting.
+Every request must be a successful `.github/workflows/e2e-bench.yml` run whose
+repository and head repository are `a16z/jolt`. Main push, schedule and manual
+requests must have head branch `main`; the API comparison of the measured SHA
+against main must be `identical` or `ahead`. PR requests must have exactly one
+payload PR with base `main` and the dispatch's PR number. The App rechecks the
+open PR, same-repository head, main base, exact head SHA and current label. All
+issue-event pages must identify the dispatch's latest label event and actor,
+with no later removal. The actor must still hold `maintain` or `admin`. API
+errors refuse admission. For `pull_request_target`, the run's head SHA and branch
+are the submitted PR's; the payload PR's base ref binds it to main.
 
-These are proposed administrator commands, not actions performed by this task.
-Wait for the benchmark lead to release the host for administration. Configure
-the group in step 2 before registering. Use an authorized administrator
-workstation for GitHub API commands; do not put its credentials on the runner.
-For an existing group, repository selection uses the separate
-[repository-access API](https://docs.github.com/en/rest/actions/self-hosted-runner-groups#set-repository-access-for-a-self-hosted-runner-group-in-an-organization),
-not the group-update payload. Read back the group and its selected repositories:
+The App connects to `jolt-bench` as `runner` with a dedicated forced-command SSH
+key. Its root-owned entry accepts only `submit`, `status`, `fetch` and `remove`
+with a bounded job ID. Submission carries an uncompressed POSIX tar containing
+only `dispatch.json`, `plan.zip` and, for main/nightly, `builds.zip`. The entry
+limits those files to 1 MiB, 8 MiB and 32 GiB, respectively, rejects links,
+duplicates and traversal, and caps extracted builds at 64 GiB. It fetches the
+planned harness SHA anonymously from `https://github.com/a16z/jolt`. The worker
+has a separate session and durable PID/exit records, so SSH disconnects and
+daemon restarts do not restart it. A repeated job ID returns `exists` without
+re-executing it. A reboot without an exit record reports `lost`.
 
-```bash
-jolt_bench_group_id=$(gh api --paginate orgs/a16z/actions/runner-groups \
-  --jq '.runner_groups[] | select(.name == "jolt-bench") | .id')
-gh api "orgs/a16z/actions/runner-groups/$jolt_bench_group_id" \
-  --jq '{id, name, visibility, allows_public_repositories, restricted_to_workflows, selected_workflows}'
-gh api --paginate "orgs/a16z/actions/runner-groups/$jolt_bench_group_id/repositories" \
-  --jq '.repositories[].full_name'
+The worker uses a fixed environment with the `runner` Rust and uv directories
+on PATH and no inherited GitHub, SSH, cloud or Pika credentials. It calls
+`ci.py target`, which uses `local` for PRs and `execute` for main/nightly, then
+always finalizes the result. The PR path anonymously rechecks the same label,
+branch and head after acquiring the kernel lock and again before proving.
+Removing the label does not terminate a build or proof already running. The App
+submits one job at a time in FIFO order; the kernel lock also serializes manual
+target commands. PR timeouts are 120 minutes; main/nightly timeouts are 180.
+
+PR source, including `build.rs`, executes only on `jolt-bench` as `runner`.
+While a label remains, anyone able to push that same-repository branch can change
+the code that runs without a new label application. Environment filtering is
+not a sandbox: PR code can change that account's files, warm Cargo state and
+future measurements. Hash validation authenticates neither a persistent host nor
+locally produced PR binaries. This remains accepted persistent-account trust
+debt. The account must have no write-capable GitHub, SSH, cloud or Pika credentials
+in its environment, home, helpers or accessible files. Pika agents never run there.
+
+### One-time host installation
+
+The `jolt-bench` operator installs the reviewed entry and the dispatcher's public
+key. No a16z organization administrator is involved. Keep the private key only
+on the daemon host. Supply the reviewed script as `/root/jolt-bench-entry.reviewed`
+and its dedicated Ed25519 public key as `/root/jolt-bench-dispatch.pub`, then run
+these commands in a root shell on `jolt-bench`:
+
+```sh
+set -eu
+install -d -o root -g root -m 0755 /usr/local/libexec
+install -o root -g root -m 0755 /root/jolt-bench-entry.reviewed /usr/local/libexec/jolt-bench-entry
+install -d -o root -g root -m 0755 /etc/ssh/authorized_keys
+read -r jolt_key_type jolt_key_blob jolt_key_comment < /root/jolt-bench-dispatch.pub
+test "$jolt_key_type" = ssh-ed25519
+printf 'restrict,command="/usr/local/libexec/jolt-bench-entry" %s %s\n' \
+  "$jolt_key_type" "$jolt_key_blob" > /etc/ssh/authorized_keys/jolt-bench-runner
+chown root:root /etc/ssh/authorized_keys/jolt-bench-runner
+chmod 0600 /etc/ssh/authorized_keys/jolt-bench-runner
+cat > /etc/ssh/sshd_config.d/60-jolt-bench-runner.conf <<'SSH_CONFIG'
+Match User runner
+    AuthorizedKeysFile /etc/ssh/authorized_keys/jolt-bench-runner
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+Match all
+SSH_CONFIG
+chown root:root /etc/ssh/sshd_config.d/60-jolt-bench-runner.conf
+chmod 0600 /etc/ssh/sshd_config.d/60-jolt-bench-runner.conf
+/usr/sbin/sshd -t
+systemctl reload ssh
 ```
 
-Require the exact settings in step 2 and only `a16z/jolt` in the repository
-readback. If the group or workflow restriction is unavailable, leave execution
-disabled. On the administrator workstation, obtain an organization registration
-token using the [documented API](https://docs.github.com/en/rest/actions/self-hosted-runners#create-a-registration-token-for-an-organization).
-It expires after one hour:
+The root-owned authorized-key path prevents PR code from changing this key's
+restrictions through the account's home directory. It does not prevent code
+already running as `runner` from modifying other account state. The entry stores
+private jobs under `/home/runner/.local/share/jolt-bench/jobs/`; no persistent
+service unit is installed.
 
-```bash
-gh api --method POST orgs/a16z/actions/runners/registration-token --jq .token
-```
+Install the build and run prerequisites above and uv through the normal host
+operator process. Confirm the fixed `znver4` ISA and physical CPU topology. Resolve
+and validate the automatic-calibration lifecycle described above before enablement.
+The saved manual null experiment does not satisfy that requirement; committing a
+refreshed JSON reference is not a working refresh procedure.
 
-Then, in an interactive root terminal on the prepared host, register as the
-dedicated `runner` account (home `/home/runner`):
+### Enablement and result publication
 
-```bash
-runuser -u runner -- bash -lc '
-  cd /home/runner/actions-runner &&
-  ./config.sh --url https://github.com/a16z \
-    --runnergroup jolt-bench --name jolt-bench \
-    --labels jolt-bench,jolt-bench-cherry-9254p --work _work
-'
-```
+After those prerequisites, a repository maintainer sets `JOLT_E2E_ENABLED=true`.
+The daemon operator configures the App dispatcher for `a16z/jolt`, host
+`jolt-bench`, SSH user `runner`, the dedicated private key and pinned host key,
+and a public base URL for immutable result downloads. App registration permissions
+and subscribed events stay unchanged. This source change installs nothing and
+sets no live variable or daemon setting.
 
-Supply an **organization** registration token at the runner's masked local
-prompt. Omitting `--unattended` and `--token` keeps the token out of the command
-line; do not store it as a repository secret or supply an administrator PAT on
-this account. Runner 2.338.2 supports
-[`--runnergroup`](https://github.com/actions/runner/blob/d1eb12d4b115c301201de27d667284e1a80f2ab5/src/Runner.Listener/Runner.cs#L1141-L1148)
-and its [secret prompt](https://github.com/actions/runner/blob/d1eb12d4b115c301201de27d667284e1a80f2ab5/src/Runner.Listener/CommandSettings.cs#L389-L425).
-The organization URL is intentional: repository-scoped registration at
-`https://github.com/a16z/jolt` does not select this organization group. The
-hardware label is additional; `jolt-bench` is the workflow's required label.
+The App creates **End-to-end benchmark** on the PR head or measured main commit,
+queued at admission and in progress at submission. It fetches the finished
+result ZIP, excluding `runtime-cache` and `builds`, and serves it for 14 days at
+`<public_base_url>/github-bench/<sha256>.zip`. It dispatches
+`e2e-bench-ingest.yml` on main with the job, producer run/attempt, URL, digest and
+executor exit code. The ingest workflow accepts only `0xandoroid-ai-agent[bot]`
+on main. It caps the download at 1 GiB, verifies SHA-256 before opening the ZIP,
+and treats all downloaded files as data.
 
-After registration succeeds, use the same root terminal to install and start the
-native runner service as `runner`, then inspect its status. Runner 2.338.2's
-[service script](https://github.com/actions/runner/blob/d1eb12d4b115c301201de27d667284e1a80f2ab5/src/Misc/layoutbin/systemd.svc.sh.template#L48-L108)
-requires root and accepts the service account as the `install` argument:
+The default branch's `publication.py` validates provenance, planned revisions,
+build inputs, matrix, sampling, physical affinity and successful metrics. The
+plan and dispatch come from that producer attempt's own artifacts. Main/nightly
+manifest and index digests come from the hosted dispatch. PR manifests are checked
+against the plan's pinned native inputs; their binary hashes are target observations,
+not independent hosted-build attestations. The ingest run publishes canonical
+`jolt-e2e-INGEST_RUN_ID-ATTEMPT` results, including `ingest.json` binding them to
+the original plan, and `jolt-e2e-check-INGEST_RUN_ID-ATTEMPT/check.json`.
 
-```bash
-cd /home/runner/actions-runner &&
-./svc.sh install runner &&
-./svc.sh start &&
-./svc.sh status
-```
+The App completes its check with validated Markdown. `success` means complete
+validated results; `failure` means execution or validation failed; `neutral`
+means partial results or unavailable comparisons. Automatic PR calibration is
+currently unavailable, so otherwise complete PR results are neutral. Measured
+deltas and calibration context never produce a regression verdict. An ingest
+failure or missing/invalid `check.json` fails the check with the ingest link.
+No GitHub Actions comment or separate comment-enable variable exists.
 
-Back on the administrator workstation, read the group's actual runner membership
-and labels. Before enabling execution, repeat the group/repository readbacks
-above and require runner `jolt-bench` in this group, online, with label `jolt-bench`:
-
-```bash
-gh api --paginate "orgs/a16z/actions/runner-groups/$jolt_bench_group_id/runners" \
-  --jq '.runners[] | select(.name == "jolt-bench") | {id, name, status, labels: [.labels[].name]}'
-```
-
-The contract-test workflow runs on PR code on disposable hosted runners; it has
-no authority to schedule target work. The producer uses `pull_request_target`
-with `labeled` and `synchronize`, so its workflow and admission code come from the
-default branch. A hosted read-only plan job checks the current PR, same-repository
-head, main base, current label application and its actual applier's API
-`role_name`: only `maintain` and `admin` qualify (`write` does not). It resolves
-the exact current-main merge parents and records the label event ID and actor.
-A replay created before the current label application is refused. Reruns use a
-new attempt and repeat admission; old attempt plans cannot execute.
-
-After waiting for the shared runner queue and host lock, the target uses public,
-unauthenticated API reads to recheck the same label event, the open same-repository
-PR into main, its head branch and its head SHA. It builds the planned base and
-merge commits, so a main advance during the wait does not refuse the run.
-Removal/reapplication or a changed head refuses stale work before building;
-it checks again before proving. Removing a label does not kill an already
-running build or proof. Permission is checked in the hosted planner for each
-new run/attempt, not continuously during execution. API failures fail closed.
-No PR-controlled workflow or harness authorizes itself. No repository secrets or
-publication credentials are sent to the target; trusted checkout/artifact
-actions keep their runtime access, which includes uploading artifacts to this run.
-Build/proof subprocess environments exclude tokens; `RUNNER_TRACKING_ID` remains
-for cancellation cleanup.
-
-A maintainer's label admits arbitrary same-repository source, including
-`build.rs`, on a persistent account with warm Cargo/bundle state. While the label
-remains, any later push to the PR branch, by anyone who can push to it, runs there
-without new approval. Environment filtering is not a sandbox: that code may change
-the account's files and future build state, and so affect later main/nightly
-measurements, uploaded artifacts and the runner registration. This expands the
-prior hosted same-repository cache exposure to the persistent target. Use the
-restricted runner group above; do not treat the label or file hashes as host
-isolation. No exploit or credential access was attempted. This remains accepted
-trust debt.
-
-Main/nightly plan and build bundles transfer by captured immutable artifact IDs.
-The target checks the builder's index hash, then manifests and payloads against
-the exact planned input set. PR-local builds use the same plan and byte checks.
-The hosted read-only comment validator checks actual workflow/artifact/PR
-records, build digests, revisions, matrix, sampling, affinity and metrics.
-Optional sticky comments remain behind `JOLT_E2E_COMMENTS_ENABLED`; a separate
-hosted write-token job receives only validated text and rechecks the PR head and
-test merge.
-The history publisher in the companion draft appends JSON and presents PRs
-separately at `dev/prover-history/`, without modifying `dev/bench/`.
-
-All target jobs share `jolt-bench-host` with `concurrency.queue: max` and no
-cancellation. The kernel file lock also covers local preparation through proofs.
-Hosted builds may overlap; target builds and proof processes may not. Main pushes
-retain each new first-parent commit in their result index. GitHub's native queue
-holds at most 100 pending jobs, ordered by entry into that queue rather than push
-time; overflow cancels a job and requires an explicit rerun. This is a provider
-capacity limit, not silent single-pending replacement or unlimited coverage.
-[GitHub concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)
-Nightly remains at 07:00 UTC. Target timeouts are 120 minutes for PRs, 180 for
-main/nightly. An interrupted or missing result is unavailable, never a pass.
+The companion history publisher must merge after #2215. It collects the ingest
+workflow's canonical artifacts, keeps PR comparisons separate, and appends only
+under `dev/prover-history/` on the existing `gh-pages` source. It never modifies
+`dev/bench/`. Nightly remains at 07:00 UTC. An interrupted or missing result is
+unavailable, never a pass.
 
 The measured pilot ran each of the 60 supported nightly cases once. It does not establish the full
 nightly suite's duration, variation between runs, or completion within 180
@@ -682,7 +658,8 @@ Focused checks, without proof timings:
 ```bash
 uv run --no-project python -m unittest \
   scripts.tests.test_e2e_bench scripts.tests.test_e2e_ci \
-  scripts.tests.test_e2e_publication -v
+  scripts.tests.test_e2e_publication scripts.tests.test_e2e_entry \
+  scripts.tests.test_e2e_ingest -v
 ```
 
 Process fixtures own and reap their children. They await completed readiness

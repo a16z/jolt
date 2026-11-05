@@ -29,13 +29,13 @@ jobs:
         with:
           enable-cache: false
       - name: Check benchmark contracts without proving
-        run: uv run --no-project python -m unittest scripts.tests.test_e2e_bench scripts.tests.test_e2e_ci scripts.tests.test_e2e_publication -v
-      - name: Report runner enablement
+        run: uv run --no-project python -m unittest scripts.tests.test_e2e_bench scripts.tests.test_e2e_ci scripts.tests.test_e2e_publication scripts.tests.test_e2e_entry scripts.tests.test_e2e_ingest -v
+      - name: Report App execution enablement
         env:
           ENABLED: ${{ vars.JOLT_E2E_ENABLED }}
         run: |
           if [ "$ENABLED" = true ]; then
-            echo 'Benchmarking requires a maintainer-applied benchmark label. The trusted default-branch workflow checks admission; this job cannot authorize execution.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Benchmarking requires a maintainer-applied benchmark label. The trusted workflow plans the run and the Pika App rechecks admission before dispatch; this job cannot authorize execution.' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo 'Target execution is disabled. An administrator must complete scripts/bench/README.md before enabling it.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'Target execution is disabled. Complete the host/operator and Pika App setup in scripts/bench/README.md; a maintainer can then enable JOLT_E2E_ENABLED.' >> "$GITHUB_STEP_SUMMARY"
           fi
