@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793912589008,
+  "lastUpdate": 1793912689910,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -231154,6 +231154,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 784160,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "qvd@andrew.cmu.edu",
+            "name": "Quang Dao",
+            "username": "quangvdao"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2348b9417c84aade3c24f1a7d237b9b4666d7c37",
+          "message": "feat(akita)!: run Akita's opening inside Jolt's Fiat-Shamir sponge (#2111)\n\n* feat(transcript)!: one sealed transcript over spongefish 0.8 states\n\nReplaces the transcript stack (J1-J9) with its final form in one change.\n\n- jolt-transcript: a sealed Transcript/FieldTranscript over spongefish\n  ProverState/VerifierState. Absorbs are positional and word-aligned with\n  no labels; sessions are 32-byte protocol tags and a SHAKE128 session id;\n  bound digests are SHA3-256 (Keccak-256 behind `keccak256-digests`).\n- Challenges: full-width BN254 scalars; Dory's group-scalar challenges are\n  short, sized from their loss.\n- Proof-of-work mechanism only (no protocol site uses it yet): one u64 nonce\n  word, MAX_POW_BITS = 57, difficulty priced from the challenge-set size,\n  and a sequential search through an owned `verifier_message_oracle`.\n- Sumcheck, openings, Dory, HyperKZG, Akita, BlindFold, the verifier and\n  prover, SDK, examples, jolt-eval and fuzz targets run on it.\n- Akita grouped statements carry a role code for main's fused-increment\n  group.\n- FS inventories re-blessed; verifier fuzz bundles regenerated.\n\n* chore(jolt-eval): drop rayon from jolt-transcript in the fuzz lockfile\n\n* feat(akita): run Akita's opening inside Jolt's Fiat-Shamir sponge (J8)\n\nJolt's trace batch now runs Akita's argument on Jolt's own transcript\nstate instead of bridging to a standalone Akita session: Akita binds its\ninstance descriptor and writes its messages into Jolt's argument string,\nand the verifier checks end-of-string once, after the opening.\n\n- jolt-openings: GroupBatchOpening carries the grouped prove/verify\n  entry points on the concrete spongefish states, with a PendingEof the\n  verifier hands back for check_eof.\n- jolt-akita: the trace batch calls batched_prove_embedded /\n  batched_verify_embedded. append_verifier_setup, append_batch_statement\n  and bridged_akita_session go away; Akita's descriptor binds the setup,\n  schedule row and layout. A trace-batch proof that also carries a\n  standalone backend proof is rejected. The generic BatchOpeningScheme\n  and single-polynomial paths still run Akita standalone.\n- Schedule catalogs regenerated for Akita's descriptor v6 (epoch 6).\n- jolt-prover / jolt-verifier stage 8 pass the state through, and the\n  FS inventories are re-blessed.\n\nThe Akita pin in Cargo.toml is a placeholder (Akita main) until\nLayerZero-Labs/akita#254 lands; see the TODO there.\n\n* chore(akita): pin Akita to #254's head 4fba41edb\n\nThe Akita stack merged main (#212, #213, #223), dropped an unused\ndev-dependency, kept the transcript event log across fold previews and\nregenerated its planner-cost snapshots. Akita's own schedule catalogs are\nunchanged.\n\n* ci: fix the Rust workflow's duplicated run key\n\nMerging main left the old jolt-sumcheck command under the new\n\"Test jolt-blindfold with its prover\" step, so the step had two run keys\nand GitHub rejected the whole workflow without running it. Also drop the\nremoved jolt-transcript parallel feature from the every-sponge test and\nupdate the clippy comment that referred to it.\n\n* docs(transcript): spec and book chapter for the sealed spongefish transcript\n\n* docs(transcript): Akita's opening runs in Jolt's sponge\n\n* style: import Ordering, Encoding and Transcript; allow hex \"ba\" in Rust\n\n* style: use the imported protocol_tag in Akita's batching tests\n\n* docs(transcript): scope the Fiat-Shamir chapter by configuration and enforcement\n\n* test: end the misaligned-access assert with a semicolon\n\n* refactor(transcript)!: draw Dory's challenges full width\n\nDrops challenge_short_scalar, challenge_bits_for_loss, the Dory loss\ntable and its burst test, and the exact dory-pcs pin. Curve verifier time\nis not a priority, and #2174's Dory verifier optimizations more than\noffset the cost.\n\n* test: re-bless FS inventories and regenerate verifier fuzz bundles\n\n* test(verifier): bump FIXTURE_MAGIC for the new proof format\n\nEvery transcript byte changes in this PR, but the cached verifier fixtures\nkept JVCF0008, the value main writes, and cached fixtures load without an\nacceptance check. JVCF0011 is unused by any branch (#2137 uses JVCF0010).\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test(field): check the Solinas word fold against big-integer reduction\n\nThe oracle was a test-only copy of the byte-at-a-time fold that the word\nfold replaced. Compare with num-bigint `% p` instead, as\nbn254_differential.rs does.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* style(verifier): drop a duplicated cfg on Stage8BatchEntry\n\nLeft behind when the LabelWithCount import was removed.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* refactor(sumcheck): delete the test-only CompressedRoundPoly wrapper\n\nProduction absorbs compressed rounds through append_compressed_round and\nverifies them with CompressedSumcheckProof. The wrapper had no production\ncaller and carried its own compressed-round checks.\n\nhonest_prove_compressed and the compressed roundtrip now absorb through\nappend_compressed_round and verify a CompressedSumcheckProof against the\npolynomial's evaluation. The tests that only exercised the wrapper are\nremoved, and the FS absorb inventory loses the wrapper's site.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n* test: re-bless FS inventories and regenerate verifier fuzz bundles\n\n* fix(sumcheck)!: bind the committed output-claim count\n\nThe committed sumcheck's output-claim commitments were absorbed with no\ncount, so a public caller that accepted any count could move a commitment\nacross the message boundary without changing a challenge. Absorb the count\nas a u64 word ahead of the commitments, as main's LabelWithCount did.\n\n* test: regenerate verifier fuzz bundles\n\n* test: regenerate verifier fuzz bundles\n\n* test: regenerate verifier fuzz bundles\n\n* chore(deps): pin Akita to the stack tip\n\n* test(fuzz): regenerate zk verifier bundles on merged main\n\n* chore(deps): pin Akita to the corrected stack tip\n\n* chore(deps): pin Akita to the merged stack tip 9f8ad8a91\n\n* fix(jolt-akita): pin the K=256 one-hot chunk size and regenerate schedules\n\nAkita #258 switched DEFAULT_UNIT_ONEHOT_SOURCE_CHUNK_SIZE to 16.\nJoltOneHotK256Direct inherited it through OneHot's committed_source_class,\nso K=256 rows were priced for one hot position per 16 coefficients and the\nbackend rejected Jolt's K=256 sources. Declare the class explicitly, as the\nK=16 policy already does, and regenerate every catalog at the new pin.\n\n* test(jolt-verifier): regenerate fuzz bundles and the FS inventory\n\nThe clear bundles came from main under its transcript; regenerate them on\nthe merged tree. The inventory records the SetupPolicy argument now passed\nto batched_verify_embedded.\n\n* test(jolt-transcript): gate the whole-word absorb helper with its caller\n\nappend_values_matches_per_value_absorbs and the Encoding import were\ncompiled, unused, under feature sets without solinas and bn254.\n\n* style(recursion): taplo-format the guest hash-inlines feature\n\n* fix(akita): address review of the embedded Akita opening\n\n- book: name the pinned Akita revision (8d5821f45), not 9f8ad8a91, which\n  is not an ancestor of the pin; same for the policy-spec link.\n- book: Akita's sparse ring challenges are drawn on Jolt's sponge, so\n  \"every challenge on Jolt's transcript is full width\" is now scoped to\n  Jolt's own draws.\n- jolt-transcript: the `prover-grinding` comment said verifier builds\n  leave `yolocrypto` off; every Akita build has it through akita-prover.\n- profile: the trace batch's `backend_proof` is always empty, so the\n  Akita size telemetry reported 0. Report the argument-string size and\n  drop the callerless `AkitaBatchProof::unframed_payload_size`. Document\n  that `backend_proof` is empty for the trace batch.\n- recursion: `tamper-opening` flipped a byte of the empty `backend_proof`\n  and panicked; it now flips the argument string's last byte, which is\n  Akita's. Drop the guest's dead BLAKE2b jolt-transcript edge and the\n  host's unused Keccak inline registration.\n- jolt-verifier: `Stage8Output` is gated off the Akita build, where it had\n  only a never-constructed variant. Document that the Akita stage-8\n  `verify` and `GroupBatchOpening::verify_batch` return before acceptance.\n- FS scanner: only `batched_verify_embedded` leaves the scanned crates.\n  `verify_batch` calls between scanned crates and `check_eof` were\n  recorded as absorb and challenge sites; re-bless drops those 10 entries.\n- tests: `akita_schedule_selection_tampers_reject` covers the selection on\n  the embedded path (flipped digests and other fixtures' valid rows);\n  `proof.narg` joins the tamper manifest; the streamed-batch comment no\n  longer claims the setup-mismatch cases reach Akita's descriptor.\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Michael Zhu <mchl.zhu.96@gmail.com>\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>\nCo-authored-by: sumchecker <241190306+sumchecker@users.noreply.github.com>\nCo-authored-by: Markos Georghiades <mgeorghiades@a16z.com>",
+          "timestamp": "2026-11-05T14:45:45-05:00",
+          "tree_id": "86f1eaff07486c2f8cfd415ea5bc49fbd7a3b246",
+          "url": "https://github.com/a16z/jolt/commit/2348b9417c84aade3c24f1a7d237b9b4666d7c37"
+        },
+        "date": 1793912683644,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.1079,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 782864,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.7244,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 428200,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 428128,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 425144,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8629,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 424772,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871688,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.9703,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425988,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.9236,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 425736,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.9382,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131932,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 2.0658,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 781964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6576,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 428240,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4946,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428420,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 26.2124,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425096,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.0309,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 428604,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 37.0291,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699300,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.9444,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 612708,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 75.5558,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 630720,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.9083,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 424992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.1804,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 425892,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 18.6519,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 781952,
             "unit": "KB",
             "extra": ""
           }
