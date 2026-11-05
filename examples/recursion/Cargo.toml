@@ -12,9 +12,8 @@ immutable-recipes = [
   "akita",
   "field-inline",
   "jolt-sdk/immutable-recipes",
-  "jolt-sdk/immutable-recipes-record",
   "dep:jolt-claims",
-  "jolt-claims/immutable-recipes-record",
+  "jolt-claims/immutable-recipes",
   "dep:sha2",
   "dep:hex",
 ]
