@@ -13,8 +13,10 @@
 //! execution (chunk replay stays unchecked), fails before setup when the
 //! budget cannot hold its setup requests (over 1 GiB by default), and keeps
 //! its row reserve in the trace, which [`TraceData::heap_bytes`] counts here;
-//! budgets below that floor never reach this check. The SDK's
-//! `compute_advice_tape` trace is not budgeted.
+//! budgets below that floor never reach this check. A generated SDK prover
+//! given a budget also runs the compute-advice guest without a trace under
+//! its bytes (`TracerBackend::execute_advice_tape`), checking named setup
+//! requests and advice writes, before the proof's trace.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::JoltField;
