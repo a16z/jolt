@@ -8,7 +8,7 @@
 //!
 //! The visits sum each column's two to four lookups with plain field
 //! additions: a deferred `F::Accumulator` reduction costs more than it saves
-//! at that length, and Booleanity calls these visits every round.
+//! at that length, and the round messages call these visits every row.
 
 use std::ops::Range;
 
@@ -20,6 +20,8 @@ use super::ChunkIndexSource;
 pub(super) const PAIR_ADDRESSES: usize = 16;
 const RADIX: usize = PAIR_ADDRESSES + 1;
 const STATES: usize = RADIX * RADIX;
+/// Building the tables must cost at most one entry per this many live rows.
+const MIN_ROWS_PER_CACHED_VALUE: usize = 16;
 
 pub(crate) struct PairedBranchTables<F> {
     tables: Vec<Vec<F>>,
@@ -120,5 +122,172 @@ impl<F: JoltField> PairedBranchTables<F> {
                 visit(column, sum);
             }
         }
+    }
+}
+
+/// `(lo, hi)` row pairs of a single-factor lazy set at branch width four or
+/// eight, read through adjacent-branch sum tables.
+pub(crate) struct PairedLoHi<'a, F: JoltField, S> {
+    source: &'a S,
+    width: PairWidth,
+    tables: PairedBranchTables<F>,
+}
+
+#[derive(Clone, Copy)]
+enum PairWidth {
+    Four,
+    Eight,
+}
+
+impl<'a, F: JoltField, S: ChunkIndexSource> PairedLoHi<'a, F, S> {
+    /// `tables` are leading columns of a single-factor lazy set at `width`
+    /// branches over `source`.
+    pub(super) fn new(tables: &[Vec<F>], width: usize, source: &'a S) -> Option<Self> {
+        let pair_width = match width {
+            4 => PairWidth::Four,
+            8 => PairWidth::Eight,
+            _ => return None,
+        };
+        if tables
+            .iter()
+            .any(|table| table.len() != width * PAIR_ADDRESSES)
+            || PairedBranchTables::<F>::entries(width)
+                > source.constant_suffix_start() / MIN_ROWS_PER_CACHED_VALUE
+        {
+            return None;
+        }
+        Some(Self {
+            source,
+            width: pair_width,
+            tables: PairedBranchTables::new(tables),
+        })
+    }
+
+    #[inline]
+    pub(crate) fn gather(&self, row: usize, out: &mut [(F, F)]) {
+        match self.width {
+            PairWidth::Four => self.gather_width::<4>(row, out),
+            PairWidth::Eight => self.gather_width::<8>(row, out),
+        }
+    }
+
+    #[inline(always)]
+    fn gather_width<const WIDTH: usize>(&self, row: usize, out: &mut [(F, F)]) {
+        for side in 0..2 {
+            self.source.visit_paired_branches::<F, WIDTH>(
+                &self.tables,
+                (2 * row + side) * WIDTH,
+                |column, value| {
+                    if side == 0 {
+                        out[column].0 = value;
+                    } else {
+                        out[column].1 = value;
+                    }
+                },
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "checked selector fixtures")]
+mod tests {
+    use super::super::LazyFoldedRa;
+    use crate::optimized::constant_suffix::ConstantSuffix;
+    use crate::optimized::instruction_read_raf::{InstructionCycleRow, LookupIndexChunks};
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Fr, JoltField};
+    #[cfg(feature = "akita")]
+    use jolt_witness::witnesses::FusedInc;
+    use std::sync::Arc;
+
+    fn check<F: JoltField>() {
+        let cycles = 1 << 15;
+        for prefix in [cycles - 5, cycles] {
+            let indices: Vec<u128> = (0..prefix + usize::from(prefix < cycles))
+                .map(|i| (i as u128 + 1).wrapping_mul(0xe387_9fb3_4ce9_ba74_1923_873a_e9b9_8379))
+                .collect();
+            let rows = Arc::new(ConstantSuffix::new(
+                indices
+                    .iter()
+                    .map(|&index| {
+                        InstructionCycleRow::new(
+                            index,
+                            None,
+                            false,
+                            0,
+                            None,
+                            #[cfg(feature = "akita")]
+                            FusedInc::default(),
+                        )
+                    })
+                    .collect(),
+                cycles,
+            ));
+            let tables: Vec<Vec<F>> = (0..32)
+                .map(|column| {
+                    (0..16)
+                        .map(|address| {
+                            F::from_u128(
+                                (column * 16 + address + 1) as u128 * 0xa6a7_c3d2_3fa2_41e1,
+                            )
+                        })
+                        .collect()
+                })
+                .collect();
+            for challenges in [
+                [F::from_u64(17), F::from_u64(31), F::from_u64(43)],
+                [F::zero(), F::one(), F::zero()],
+            ] {
+                let mut lazy = LazyFoldedRa::new(
+                    tables.clone(),
+                    LookupIndexChunks::new(Arc::clone(&rows), 32, 4),
+                );
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    lazy.bind(challenge);
+                    let width = 1 << (round + 1);
+                    if width == 2 {
+                        assert!(lazy.paired_lo_hi(32).is_none());
+                        continue;
+                    }
+                    let paired = lazy.paired_lo_hi(32).unwrap();
+                    for row in [0, 17, (prefix - 1) / (2 * width), cycles / (2 * width) - 1] {
+                        let mut actual = vec![(F::zero(), F::zero()); 32];
+                        paired.gather(row, &mut actual);
+                        for (column, pair) in actual.iter().enumerate() {
+                            for (side, got) in [pair.0, pair.1].into_iter().enumerate() {
+                                let mut expected = F::zero();
+                                for branch in 0..width {
+                                    let cycle = (2 * row + side) * width + branch;
+                                    let key = indices[cycle.min(prefix)];
+                                    let digit = ((key >> (4 * (31 - column))) & 15) as usize;
+                                    let weight = challenges[..=round].iter().enumerate().fold(
+                                        F::one(),
+                                        |weight, (bit, &r)| {
+                                            weight
+                                                * if branch & (1 << bit) == 0 {
+                                                    F::one() - r
+                                                } else {
+                                                    r
+                                                }
+                                        },
+                                    );
+                                    expected += weight * tables[column][digit];
+                                }
+                                assert_eq!(got, expected, "prefix {prefix}, width {width}, row {row}, column {column}, side {side}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn paired_instruction_gathers_match_multilinear_definition() {
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 }
