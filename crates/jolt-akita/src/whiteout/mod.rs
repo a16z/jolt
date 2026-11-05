@@ -23,9 +23,7 @@ use std::fmt::{Debug, Formatter, Result as FmtResult};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use akita_config::proof_optimized::fp128::ResponseDigits;
-use akita_config::{
-    policy_of, CommitmentConfig, RecursiveCommitmentConfig, TrustedScheduleCatalog,
-};
+use akita_config::{policy_of, CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::sis::sigma_binding::sigma_binding_min_rank;
 use akita_params::sis::CommittedSourceContract;
 use akita_params::zk::{
@@ -91,8 +89,10 @@ type F = AkitaField;
 /// The zero-knowledge configuration of Jolt's K=16 trace group.
 pub type WhiteoutOneHot = ZkCommitmentConfig<JoltOneHotK16>;
 
-/// The response proof's configuration (`specs/whiteout-akita.md` §5).
-pub type WhiteoutResponse = RecursiveCommitmentConfig<ResponseDigits>;
+/// The response proof's configuration (`specs/whiteout-akita.md` §5). Direct-only:
+/// recursive setup planning ranks setup envelope before proof bytes and keeps
+/// a one-fold row at `ν = 24` (muldiv) whose proof is 2.3x larger.
+pub type WhiteoutResponse = ResponseDigits;
 
 /// Runs `$body` with `$D` the const ring dimension `$d` of a residual.
 macro_rules! with_ring_dim {
