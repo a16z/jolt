@@ -68,9 +68,8 @@ fn evaluate<S: SymbolicSumcheck, F: Ring>(
     }
     if permits_full {
         if let Some(field) = F::immutable_recipe_field() {
-            return evaluate_canonical(&expression, field, opening, challenge, derived).map_err(
-                evaluation_error,
-            );
+            return evaluate_canonical(&expression, field, opening, challenge, derived)
+                .map_err(evaluation_error);
         }
     }
     expression.try_evaluate(opening, challenge, derived)

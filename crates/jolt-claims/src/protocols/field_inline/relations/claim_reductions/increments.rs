@@ -76,8 +76,6 @@ twist::instantiate_increment_reduction! {
     gamma = FieldRegistersIncClaimReductionChallenge::Gamma,
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
