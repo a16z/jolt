@@ -369,6 +369,41 @@ impl LookupIndexChunks {
             chunk_bits,
         }
     }
+
+    /// `gather_pairs` at `bits`-wide chunks. Always inlined, so a caller
+    /// passing a literal `bits` gets immediate shifts instead of the generic
+    /// u128 shift by a runtime amount.
+    #[inline(always)]
+    fn gather_chunk_pairs<F: JoltField>(
+        &self,
+        bits: usize,
+        tables: &[Vec<F>],
+        width: usize,
+        row: usize,
+        out: &mut [(F, F)],
+    ) {
+        let mask = (1u128 << bits) - 1;
+        let stride = 1usize << bits;
+        for branch in 0..width {
+            let mut lo = self.rows[2 * row * width + branch].lookup_index();
+            let mut hi = self.rows[(2 * row + 1) * width + branch].lookup_index();
+            let base = branch * stride;
+            for (out, table) in out.iter_mut().zip(tables).rev() {
+                let pair = (
+                    table[base + (lo & mask) as usize],
+                    table[base + (hi & mask) as usize],
+                );
+                if branch == 0 {
+                    *out = pair;
+                } else {
+                    out.0 += pair.0;
+                    out.1 += pair.1;
+                }
+                lo >>= bits;
+                hi >>= bits;
+            }
+        }
+    }
 }
 
 impl ChunkIndexSource for LookupIndexChunks {
@@ -447,26 +482,10 @@ impl ChunkIndexSource for LookupIndexChunks {
         row: usize,
         out: &mut [(F, F)],
     ) {
-        let mask = (1u128 << self.chunk_bits) - 1;
-        let stride = 1usize << self.chunk_bits;
-        for branch in 0..width {
-            let mut lo = self.rows[2 * row * width + branch].lookup_index();
-            let mut hi = self.rows[(2 * row + 1) * width + branch].lookup_index();
-            let base = branch * stride;
-            for (out, table) in out.iter_mut().zip(tables).rev() {
-                let pair = (
-                    table[base + (lo & mask) as usize],
-                    table[base + (hi & mask) as usize],
-                );
-                if branch == 0 {
-                    *out = pair;
-                } else {
-                    out.0 += pair.0;
-                    out.1 += pair.1;
-                }
-                lo >>= self.chunk_bits;
-                hi >>= self.chunk_bits;
-            }
+        match self.chunk_bits {
+            4 => self.gather_chunk_pairs(4, tables, width, row, out),
+            16 => self.gather_chunk_pairs(16, tables, width, row, out),
+            bits => self.gather_chunk_pairs(bits, tables, width, row, out),
         }
     }
 }
