@@ -410,6 +410,10 @@ const RA_BOTH: u8 = 3;
 const WA_ZERO: u8 = 0;
 const WA_HOT: u8 = 1;
 
+/// Seed entries a cycle contributes at most: one per distinct register
+/// operand (`rs1`, `rs2`, `rd`).
+pub(in crate::optimized::registers_read_write) const MAX_ENTRIES_PER_CYCLE: usize = 3;
+
 impl RegisterCycleRow {
     #[cfg(feature = "parallel")]
     pub(in crate::optimized::registers_read_write) fn entry_count(&self) -> usize {
@@ -430,7 +434,7 @@ impl RegisterCycleRow {
     pub(in crate::optimized::registers_read_write) fn entries(
         &self,
         row: u32,
-    ) -> ([SeedEntry; 3], usize) {
+    ) -> ([SeedEntry; MAX_ENTRIES_PER_CYCLE], usize) {
         let empty = SeedEntry {
             ra: RA_ZERO,
             wa: WA_ZERO,
@@ -439,7 +443,7 @@ impl RegisterCycleRow {
             row,
             col: 0,
         };
-        let mut out = [empty; 3];
+        let mut out = [empty; MAX_ENTRIES_PER_CYCLE];
         let mut len = 0usize;
 
         if let Some((rs1, rs1_val)) = self.rs1 {

@@ -4,8 +4,7 @@
 use super::{BooleanityChunks, ChunkIndexSource};
 use jolt_field::JoltField;
 
-use crate::optimized::instruction_read_raf::visit_paired_four_bit_values;
-use crate::optimized::lazy_ra::{visit_paired_columns, PAIRED_MATERIALIZE_BRANCHES};
+use crate::optimized::lazy_ra::PairedBranchTables;
 
 impl BooleanityChunks {
     #[inline(always)]
@@ -95,25 +94,32 @@ impl ChunkIndexSource for BooleanityChunks {
         }
     }
 
-    fn visit_paired_values<F: JoltField>(
+    #[inline(always)]
+    fn visit_paired_branches<F: JoltField, const BRANCHES: usize>(
         &self,
-        tables: &[Vec<F>],
-        row: usize,
+        tables: &PairedBranchTables<F>,
+        start: usize,
         mut visit: impl FnMut(usize, F),
     ) {
-        let instruction = if self.chunk_bits == 4 {
-            self.instruction_chunks
+        const FOUR_BIT: usize = 4;
+        let columns = tables.columns();
+        // Four-bit instruction digits take the packed walk; instruction
+        // column `instruction - 1` lands in the lowest digit after `skip`.
+        let (instruction, skip) = if self.chunk_bits == FOUR_BIT {
+            let instruction = columns.min(self.instruction_chunks);
+            (
+                instruction,
+                (self.instruction_chunks - instruction) * FOUR_BIT,
+            )
         } else {
-            0
+            (0, 0)
         };
-        if instruction != 0 {
-            visit_paired_four_bit_values(
-                |branch| self.rows[row * PAIRED_MATERIALIZE_BRANCHES + branch].lookup_index(),
-                &tables[..instruction],
-                &mut visit,
-            );
-        }
-        visit_paired_columns(self, &tables[instruction..], row, visit, instruction);
+        tables.visit_four_bit::<BRANCHES>(
+            instruction,
+            |branch| self.rows[start + branch].lookup_index() >> skip,
+            &mut visit,
+        );
+        tables.visit_indexed(self, instruction..columns, start, BRANCHES / 2, visit);
     }
 
     #[inline]
@@ -411,5 +417,106 @@ mod tests {
     #[test]
     fn materialized_families_match_multilinear_weights_fp128() {
         check_materialized::<Prime128OffsetA7F7>(32);
+    }
+
+    fn check_paired<F: JoltField>() {
+        let cycles = 1 << 15;
+        for prefix in [cycles - 11, cycles] {
+            for width in [4usize, 8] {
+                let rows = (0..prefix + usize::from(prefix < cycles))
+                    .map(|row| {
+                        let value = (row as u128 + 1)
+                            .wrapping_mul(0xe387_9fb3_4ce9_ba74_1923_873a_e9b9_8379);
+                        InstructionCycleRow::new(
+                            value,
+                            None,
+                            false,
+                            row % 65536,
+                            if row % 3 == 0 {
+                                None
+                            } else {
+                                Some((row % 4096) as u64)
+                            },
+                            #[cfg(feature = "akita")]
+                            FusedInc::default(),
+                        )
+                    })
+                    .collect();
+                let selectors = (0..32)
+                    .map(|i| ColumnSelector::Instruction(RaChunkSelector::new(i, 32, 4).unwrap()))
+                    .chain(
+                        (0..4).map(|i| {
+                            ColumnSelector::Bytecode(RaChunkSelector::new(i, 4, 4).unwrap())
+                        }),
+                    )
+                    .chain(
+                        (0..3).map(|i| ColumnSelector::Ram(RaChunkSelector::new(i, 3, 4).unwrap())),
+                    )
+                    .collect();
+                let source = BooleanityChunks {
+                    rows: Arc::new(ConstantSuffix::new(rows, cycles)),
+                    prefix_len: prefix,
+                    selectors,
+                    instruction_chunks: 32,
+                    chunk_bits: 4,
+                };
+                let tables = (0..39)
+                    .map(|column| {
+                        (0..16)
+                            .map(|address| {
+                                F::from_u128(
+                                    (column * 16 + address + 1) as u128 * 0xa6a7_c3d2_3fa2_41e1,
+                                )
+                            })
+                            .collect()
+                    })
+                    .collect();
+                let mut lazy = LazyFoldedRa::new(tables, source);
+                for round in 0..width.ilog2() {
+                    lazy.bind(F::from_u128(u128::MAX - u128::from(round)));
+                }
+                let LazyFoldedRa::Lazy { tables, source, .. } = &lazy else {
+                    unreachable!()
+                };
+                for columns in [1, 31, 32, 33, 39] {
+                    let paired = lazy.paired_lo_hi(columns).unwrap();
+                    for row in [
+                        0,
+                        1,
+                        13,
+                        31,
+                        255,
+                        (prefix - 1) / (2 * width),
+                        cycles / (2 * width) - 1,
+                    ] {
+                        let mut actual = vec![(F::zero(), F::zero()); columns];
+                        paired.gather(row, &mut actual);
+                        for column in 0..columns {
+                            let expected: [F; 2] = std::array::from_fn(|side| {
+                                (0..width)
+                                    .filter_map(|branch| {
+                                        source
+                                            .index(column, (2 * row + side) * width + branch)
+                                            .map(|index| tables[column][branch * 16 + index])
+                                    })
+                                    .sum()
+                            });
+                            assert_eq!(actual[column], (expected[0], expected[1]));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn paired_branches_match_defining_sum_fr() {
+        check_paired::<Fr>();
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn paired_branches_match_defining_sum_fp128() {
+        check_paired::<Prime128OffsetA7F7>();
     }
 }

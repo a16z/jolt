@@ -26,7 +26,7 @@ wrapper policy, proof files, and theorem names. The expected instruction bytes
 remain independent constants in the artifact checker and the HOL Light
 imports. This prevents a matrix edit from approving changed code by itself.
 
-The assembly kernels are opt-in through the `jolt-field/asm` feature. Builds
+The assembly kernels are opt-in through the `jolt-algebra/asm` feature. Builds
 that enable `solinas` without `asm` use the portable Rust implementation on
 every architecture. The inspection-only `fp128-proof-linkage` feature implies
 `asm`, so the byte checker always inspects the assembly path it is intended to
@@ -115,7 +115,7 @@ compares the assembly square and fused multiply-add kernels. CI fuzzes the
 target natively on AArch64, on baseline x86-64 through the general fuzz
 workflow, and on x86-64 with BMI2 and ADX enabled through this proof workflow.
 
-Run it locally from `crates/jolt-field` on a supported architecture.
+Run it locally from `crates/jolt-algebra` on a supported architecture.
 
 ```sh
 cargo +nightly-2026-08-24 fuzz run fp128-asm-differential -- -max_total_time=120

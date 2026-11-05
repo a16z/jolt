@@ -58,12 +58,15 @@ pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIF
 pub use error::VerifierError;
 pub use preprocessing::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
+    VerifierPreprocessingWire,
 };
 pub use proof::{ClearProofClaims, JoltProof, JoltProofClaims};
 #[cfg(feature = "akita")]
 pub use verifier::absorb_akita_commitments;
 #[cfg(not(feature = "akita"))]
 pub use verifier::absorb_transcript_commitments;
+#[cfg(feature = "akita")]
+pub use verifier::verify_with_context;
 pub use verifier::{
     absorb_committed_program_commitments, validate_and_seed_transcript, validate_inputs_from_parts,
     verify, CheckedInputs, JoltStatement, ProofTranscriptConfig, JOLT_SESSION,

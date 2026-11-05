@@ -1099,6 +1099,10 @@ impl Cpu {
                     let total = self.trace_len - mark.start_trace_len;
                     let virtual_instrs = total - real as usize;
                     info!(
+                        marker = label.as_str(),
+                        real_cycles = real,
+                        virtual_instructions = virtual_instrs as u64,
+                        total_cycles = total as u64,
                         "\"{label}\": {real} RV64IMAC cycles + {virtual_instrs} virtual instructions = {total} total cycles"
                     );
                 } else {

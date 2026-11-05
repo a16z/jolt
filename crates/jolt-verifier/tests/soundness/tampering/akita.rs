@@ -80,7 +80,7 @@ use crate::support::akita_fixtures::{
     akita_advice_case, akita_committed_muldiv_case, akita_muldiv_case, AkitaFixtureCase,
     AkitaJoltProof,
 };
-use crate::support::assert_rejects;
+use crate::support::{assert_rejects, tamper_manifest};
 
 type AkitaCommitment = <AkitaScheme as jolt_crypto::Commitment>::Output;
 
@@ -745,6 +745,73 @@ fn akita_proof_shape_tampers_reject() {
         &committed.proof,
         None,
     ));
+}
+
+/// Akita writes its opening into Jolt's argument string, so the verifier
+/// must read all of it: an appended byte fails the end-of-proof check, and a
+/// flipped byte inside Akita's messages fails the opening.
+#[test]
+fn akita_argument_string_tampers_reject() {
+    let _ = tamper_manifest::required_target("proof.narg");
+    let muldiv = akita_muldiv_case();
+    assert!(
+        !muldiv.proof.narg.is_empty(),
+        "the embedded Akita opening must write into the argument string"
+    );
+
+    let mut proof = muldiv.proof.clone();
+    proof.narg.push(0);
+    assert!(
+        matches!(
+            muldiv.verify_proof(&proof),
+            Err(VerifierError::NargNotConsumed)
+        ),
+        "an appended argument-string byte must fail the end-of-proof check"
+    );
+
+    let mut proof = muldiv.proof.clone();
+    let middle = proof.narg.len() / 2;
+    proof.narg[middle] ^= 1;
+    assert_rejects(muldiv.verify_proof(&proof));
+
+    let mut proof = muldiv.proof.clone();
+    let _ = proof.narg.pop();
+    assert_rejects(muldiv.verify_proof(&proof));
+}
+
+fn with_schedule_selection(proof: &AkitaJoltProof, selection: [u8; 32]) -> AkitaJoltProof {
+    let mut opening =
+        serde_json::to_value(&proof.joint_opening_proof).expect("opening proof should serialize");
+    *opening
+        .get_mut("schedule_selection")
+        .expect("opening proof should expose its schedule selection") =
+        serde_json::to_value(selection).expect("selection should serialize");
+    let mut tampered = proof.clone();
+    tampered.joint_opening_proof =
+        serde_json::from_value(opening).expect("changed opening proof should deserialize");
+    tampered
+}
+
+/// The trace batch's schedule row is the prover's choice; Jolt no longer
+/// absorbs it, so the verifier must reject any row other than the one the
+/// opening was proved under: a digest outside the catalog, and another
+/// fixture's valid row.
+#[test]
+fn akita_schedule_selection_tampers_reject() {
+    let muldiv = akita_muldiv_case();
+    let honest = muldiv.proof.joint_opening_proof.schedule_row_digest();
+
+    for byte in [0, 31] {
+        let mut selection = honest;
+        selection[byte] ^= 1;
+        assert_rejects(muldiv.verify_proof(&with_schedule_selection(&muldiv.proof, selection)));
+    }
+
+    for donor in [akita_advice_case(), akita_committed_muldiv_case()] {
+        let selection = donor.proof.joint_opening_proof.schedule_row_digest();
+        assert_ne!(selection, honest, "the donor must select a different row");
+        assert_rejects(muldiv.verify_proof(&with_schedule_selection(&muldiv.proof, selection)));
+    }
 }
 
 /// The advice case fails closed when its trusted-advice commitment is absent:

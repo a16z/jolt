@@ -131,23 +131,24 @@ impl DoryScheme {
         let canonical_max_num_vars = canonical_setup_log_n(max_num_vars);
         #[cfg(not(target_arch = "wasm32"))]
         let setup = {
-            // dory persists a freshly OsRng-generated URS with an unlocked
-            // truncating write, so concurrent processes generate different
-            // random SRS and last-writer-wins. A single run calls setup more
-            // than once, so it can commit under its own SRS and then load a
-            // sibling process's, diverging the generators mid-proof.
+            // dory publishes a freshly OsRng-generated URS first-writer-wins
+            // via hard_link, but falls back to last-writer-wins rename on
+            // filesystems without hard links. A single run calls setup more
+            // than once, so a lost race there can commit under its own SRS and
+            // then load a sibling process's, diverging the generators
+            // mid-proof. The lock also stops concurrent processes from each
+            // generating a URS.
             let _urs_lock = crate::urs_lock::lock_urs_cache();
             ArkworksProverSetup::new_from_urs(canonical_max_num_vars)
         };
         #[cfg(target_arch = "wasm32")]
         let setup = ArkworksProverSetup::new(canonical_max_num_vars);
 
-        // Deliberately NOT priming dory's global prepared-point cache (the
-        // legacy prover does): the cache only grows and its consumers
-        // prefix-match blindly, so any process touching two setup sizes —
-        // the URS seeds generators on the exact size — silently pairs
-        // against the wrong generators. The saving is ~0.2 s wall of G2
-        // Miller preprocessing per 2^20 proof; not worth the footgun.
+        // Deliberately NOT priming dory's global prepared-point cache: it
+        // holds one setup's points, so a process touching two setup sizes
+        // (the URS seeds generators on the exact size) would thrash it, and
+        // every hit pays a full prefix comparison. The saving is ~0.2 s wall
+        // of G2 Miller preprocessing per 2^20 proof.
         DoryProverSetup(setup)
     }
 
@@ -203,6 +204,7 @@ impl CommitmentScheme for DoryScheme {
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
+    type VerificationContext<'a> = ();
     type OpeningHint = DoryHint;
     type SetupParams = usize;
 
@@ -313,11 +315,10 @@ impl AdditivelyHomomorphic for DoryScheme {
     fn combine(commitments: &[Self::Output], scalars: &[Self::Field]) -> Self::Output {
         assert_eq!(commitments.len(), scalars.len());
 
-        let combined = commitments
-            .par_iter()
-            .zip(scalars.par_iter())
-            .map(|(c, s)| jolt_fr_to_ark(s) * jolt_gt_to_ark(&c.0))
-            .reduce(ArkGT::identity, |acc, x| acc + x);
+        let ark_commitments: Vec<ArkGT> =
+            commitments.iter().map(|c| jolt_gt_to_ark(&c.0)).collect();
+        let ark_scalars: Vec<ArkFr> = scalars.iter().map(jolt_fr_to_ark).collect();
+        let combined = InnerBN254::gt_msm(&ark_commitments, &ark_scalars);
 
         DoryCommitment(ark_to_jolt_gt(&combined))
     }

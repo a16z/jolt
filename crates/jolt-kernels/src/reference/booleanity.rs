@@ -24,7 +24,9 @@ use std::collections::BTreeMap;
 
 use crate::ProverInputs;
 use jolt_claims::protocols::jolt::geometry::booleanity::BooleanityDimensions;
+use jolt_claims::protocols::jolt::geometry::claim_reductions::hamming_weight::gamma_pow;
 use jolt_claims::protocols::jolt::{BooleanityPublic, JoltDerivedId, JoltRelationId};
+use jolt_claims::{Source, SymbolicSumcheck};
 use jolt_field::JoltField;
 use jolt_poly::{try_eq_mle, BindingOrder, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -268,6 +270,23 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 Polynomial::new(address_fold(witness, opening, dimensions.log_t, r_address)?),
             );
         }
+        let mut derived_tables = BTreeMap::new();
+        for term in &relation.symbolic().output_expression::<F>().terms {
+            for factor in &term.factors {
+                if let Source::Derived(
+                    id @ JoltDerivedId::Booleanity(BooleanityPublic::GammaPow { exponent }),
+                ) = factor
+                {
+                    let _ = derived_tables.entry(*id).or_insert_with(|| {
+                        Polynomial::new(vec![
+                            gamma_pow(inputs.challenges.gamma, *exponent);
+                            1 << dimensions.log_t
+                        ])
+                    });
+                }
+            }
+        }
+
         // The fixed address eq factor: both vectors pair positionally in the
         // verifier's `derive_output_term` (each side reversed, so the product
         // is the same either way).
@@ -276,7 +295,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                 reason: "booleanity address point and reference length mismatch",
             }
         })?;
-        let derived_tables = BTreeMap::from([(
+        let _ = derived_tables.insert(
             JoltDerivedId::from(BooleanityPublic::EqAddressCycle),
             Polynomial::new(
                 eq_table(reference_cycle)
@@ -284,7 +303,7 @@ impl<F: JoltField> PrepareKernel<F, Booleanity<F>> for ReferenceBackend {
                     .map(|eq| address_scalar * eq)
                     .collect::<Vec<_>>(),
             ),
-        )]);
+        );
 
         Ok(Box::new(NaiveSumcheckProver::new(
             &inputs,

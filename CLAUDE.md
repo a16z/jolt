@@ -12,6 +12,25 @@ Jolt is a zkVM (zero-knowledge virtual machine) for RISC-V (RV64IMAC) that effic
 - Treat follow-up messages as updates to the active task unless the user cancels or replaces it.
 - Lead with the result. Keep explanations concise and concrete; report checks actually run, their results, and any remaining blocker. Preserve required output formats in automated workflows.
 
+## Pull Request Review and Merging
+
+A pull request into `main` merges with an approving review from a person with write access, or with the AI merge gate's approval of its current head. [`.github/ai-merge-gate.md`](.github/ai-merge-gate.md) is the full policy. The gate approves a head only when all of these hold:
+
+- a maintainer (listed in the gate's maintainer variable and currently holding write access) wrote the pull request;
+- the pull request is ready for review and has no standing change request from a maintainer or writer;
+- the highest per-path risk returned by the classifier is `risk-1`, `risk-2` or `risk-3`;
+- the Pika App bot or a maintainer posted a PR comment attesting a clean review of that head.
+
+The gate never approves `risk-4`; there the policy asks for a current-head approval from a maintainer other than the author.
+
+A reviewer who finds no issues in the exact current head, posting as the Pika App bot or a maintainer, attests it with a PR comment containing this standalone line. Fill in the PR number, the full 40-character head SHA, and the skill, model and reasoning effort actually used; the model and effort must be a pair the gate guide accepts.
+
+```text
+This pull request #<number> has been reviewed at commit <full 40-char head SHA> using skill <skill name> and model <model name> with <effort> reasoning effort, and no issues were found.
+```
+
+A push voids the line. After opening a pull request and after every push, review the current head and post a new line only once that review is clean; never copy or edit an earlier line.
+
 ## Essential Commands
 
 ### Linting and Formatting
@@ -107,7 +126,7 @@ Arkworks dependencies use a fork: `a16z/arkworks-algebra` branch `dev/twist-shou
 
 **jolt-host / jolt-program** — Guest builds, tracing entry points, bytecode expansion, and shared program preprocessing.
 
-**jolt-field / jolt-poly / jolt-sumcheck / jolt-openings** — Field, polynomial, sumcheck, and PCS abstractions.
+**jolt-algebra / jolt-poly / jolt-sumcheck / jolt-openings** — Field, polynomial, sumcheck, and PCS abstractions.
 
 **tracer** — RISC-V emulator producing execution traces (`Cycle` per instruction)
 
