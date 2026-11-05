@@ -238,7 +238,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: bnjbvr/cargo-machete@fb7ff0f4aa2a60cf75ab656d27f67d47d719b830 # main
+      - uses: bnjbvr/cargo-machete@22eb7be1d0a498d00a4e5954fbf71ebfbd266a0c # main
       - name: cargo machete
         run: cargo machete --with-metadata
 
