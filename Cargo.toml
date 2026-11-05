@@ -301,7 +301,7 @@ sha3 = "=0.12.0"
 shake = { version = "=0.1.0", default-features = false }
 blake2 = "0.11.0-rc.6"
 blake3 = { version = "1.8.5" }
-light-poseidon = "0.4"
+light-poseidon = "0.5"
 digest = "0.11"
 spongefish = { version = "=0.8.0", default-features = false }
 jolt-optimizations = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
