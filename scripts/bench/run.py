@@ -20,6 +20,8 @@ import sys
 import time
 import tomllib
 
+import calibration
+
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = Path(__file__).with_name('suites.json')
 WORKFLOW = 'End-to-end prover benchmarks'
@@ -320,6 +322,9 @@ def build_attempt(args, native_harness, fallback_reason=None):
     runner_source = subprocess.check_output(['git', 'show', f'{harness}:scripts/bench/run.py'], cwd=ROOT)
     if hashlib.sha256(runner_source).hexdigest() != sha256(__file__):
         raise ValueError('build must use the committed runner at --harness-revision')
+    helper_source = subprocess.check_output(['git', 'show', f'{harness}:scripts/bench/calibration.py'], cwd=ROOT)
+    if hashlib.sha256(helper_source).hexdigest() != sha256(calibration.__file__):
+        raise ValueError('build must use the committed calibration helper')
     source_manifest = subprocess.check_output(['git', 'show', f'{revision}:Cargo.toml'], cwd=ROOT)
     profile_config = tomllib.loads(source_manifest.decode())['profile'][args.profile]
     toolchain = capture(['rustc', '--version', '--verbose'])
@@ -403,12 +408,14 @@ def build_attempt(args, native_harness, fallback_reason=None):
             manifest['suite_config_sha256'] = sha256(args.config)
             manifest['runner'] = {'path': 'scripts/bench/run.py',
                                   'sha256': hashlib.sha256(runner_source).hexdigest()}
+            manifest['calibration_helper'] = {'path': 'scripts/bench/calibration.py',
+                                              'sha256': hashlib.sha256(helper_source).hexdigest()}
             identity = {key: manifest[key] for key in (
                 'revision', 'harness_revision', 'native_harness_revision', 'toolchain', 'cargo_version', 'target_cpu',
                 'target_triple', 'target_features', 'profile', 'profile_config', 'guest_builder_profile',
                 'guest_builder_rustflags', 'native_tools', 'rustup_components',
                 'rustflags', 'source_cargo_lock_sha256',
-                'cargo_lock_sha256', 'harness_files', 'suite_config_sha256', 'runner')}
+                'cargo_lock_sha256', 'harness_files', 'suite_config_sha256', 'runner', 'calibration_helper')}
             bucket = cache_root() / 'bundles' / hashlib.sha256(
                 json.dumps(identity, sort_keys=True).encode()).hexdigest()
             for cached_path in sorted(bucket.glob('*/manifest.json')):
@@ -423,7 +430,7 @@ def build_attempt(args, native_harness, fallback_reason=None):
                         if not set(map(str, counts)).issubset(cached['guests'].get(name, {}).get('inputs', {})):
                             raise ValueError(f'cached bundle lacks required inputs for {name}: {counts}')
                     entries = [cached['binaries'][pcs] for pcs in cached['binaries']]
-                    entries += [cached['runner'], *cached['akita_schedules']]
+                    entries += [cached['runner'], cached['calibration_helper'], *cached['akita_schedules']]
                     for guest in cached['guests'].values():
                         entries += [guest['elf'], *guest['inputs'].values()]
                     for entry in entries:
@@ -468,7 +475,7 @@ def build_attempt(args, native_harness, fallback_reason=None):
                         '--features', features], source, env, log)
                 binary = out / f'jolt-prover-{pcs}'
                 shutil.copy2(source / 'target' / triple / args.profile / 'jolt-prover', binary)
-                manifest['binaries'][pcs] = bundle_file(binary, out)
+                manifest['binaries'][pcs] = dict(bundle_file(binary, out), normalized=calibration.normalized(binary))
             manifest['requested_workloads'] = sorted(inputs)
             schedules = out / 'akita-schedules'
             schedules.mkdir()
@@ -480,6 +487,7 @@ def build_attempt(args, native_harness, fallback_reason=None):
             runner = out / 'scripts/bench/run.py'
             runner.parent.mkdir(parents=True)
             runner.write_bytes(runner_source)
+            runner.with_name('calibration.py').write_bytes(helper_source)
             shutil.copy2(args.config, runner.with_name('suites.json'))
             manifest['runner'] = bundle_file(runner, out)
             manifest['status'] = 'complete'
@@ -687,7 +695,8 @@ def run(args):
     apply_calibration(result, getattr(args, 'calibration', None))
     result['started_at'] = started
     for _, manifest in bundles.values():
-        if manifest.get('runner', {}).get('sha256') != sha256(__file__):
+        if (manifest.get('runner', {}).get('sha256') != sha256(__file__)
+                or manifest.get('calibration_helper', {}).get('sha256') != sha256(calibration.__file__)):
             raise ValueError('run this build bundle with its pinned scripts/bench/run.py')
     cache = out / 'runtime-cache'
     cache.mkdir()
@@ -772,6 +781,7 @@ def run(args):
     result['status'] = ('failed' if 'failed' in statuses else 'incomplete' if 'missing' in statuses
                         else 'unsupported' if statuses == {'unsupported'} else 'complete')
     result['runtime_cache']['files'] = [bundle_file(path, out) for path in sorted(cache.rglob('*.urs'))]
+    result['host_after'] = host_snapshot()
     result['finished_at'] = utc_now()
     seconds = time.perf_counter() - begin
     result['wall_time'].update(benchmark_s=seconds, total_s=seconds)
@@ -781,87 +791,7 @@ def run(args):
     return result
 
 
-def calibration_for_case(result, case):
-    calibration = result['suite'].get('calibration') or {}
-    if not isinstance(calibration, dict):
-        return None, 'calibration is not an object'
-    if calibration.get('status') != 'measured':
-        return None, calibration.get('reason') or 'reference not measured'
-    try:
-        for key, value in {'method': 'null-median3-symmetric-envelope-v2', 'metric_contract': 1,
-                           'window_pairs': 3, 'windows_overlap': True, 'independent_windows': False,
-                           'floor_pct': {'e2e_s': 3.0, 'peak_rss_bytes': 2.0},
-                           'envelope_multiplier': 1.5, 'rounding_pp': 0.5}.items():
-            if calibration.get(key) != value:
-                raise ValueError(f'calibration {key} differs from the supported method')
-        if result['suite']['repetitions'] != calibration['window_pairs']:
-            raise ValueError('measured repetitions differ from the 3-pair reference estimator')
-        reference = calibration['cases'].get(case['id'])
-        if reference is None:
-            raise ValueError('case is absent from the reference')
-        if reference['status'] != 'measured':
-            raise ValueError(reference.get('reason') or 'reference case not measured')
-        if reference['n_pairs'] != 10 or reference['n_windows'] != 8:
-            raise ValueError('reference case lacks 10 pairs and 8 windows')
-        source, host = calibration['source'], result['host']
-        base = next((build for build in result['builds'] if build['leg'] == 'base'), None)
-        if base is None:
-            raise ValueError('base build is missing')
-        for key in ('run_id', 'started_at', 'finished_at', 'native_harness_revision', 'result_sha256'):
-            if not source.get(key):
-                raise ValueError(f'missing reference source.{key}')
-        for key, length in [('native_harness_revision', 40), ('result_sha256', 64)]:
-            if not re.fullmatch(f'[0-9a-f]{{{length}}}', str(source[key])):
-                raise ValueError(f'invalid reference source.{key}')
-        guest = base.get('guests', {}).get(case['workload'], {})
-        comparisons = [('metric_contract', calibration['metric_contract'], result['suite']['metric_contract']),
-                       ('base.revision', source.get('revision'), base.get('revision')),
-                       ('collector_sha256', source.get('collector_sha256'), base.get('runner', {}).get('sha256')),
-                       ('input_sha256', reference.get('input_sha256'), case['input'].get('sha256')),
-                       ('base.guest_elf_sha256', reference.get('guest_elf_sha256'), guest.get('elf', {}).get('sha256')),
-                       ('base.binary_sha256', reference.get('base_binary_sha256'),
-                        base.get('binaries', {}).get(case['pcs'], {}).get('sha256'))]
-        comparisons += [(key, reference.get(key), case.get(key)) for key in (
-            'workload', 'pcs', 'backend', 'physical_cores', 'cpu_ids', 'scale_log2')]
-        comparisons += [(f'base.{key}', source.get(key), base.get(key)) for key in (
-            'toolchain', 'target_cpu', 'target_triple', 'rustflags', 'profile', 'cargo_lock_sha256')]
-        comparisons += [(f'host.{key}', source.get('host_id' if key == 'id' else key), host.get(key))
-                        for key in ('id', 'kernel', 'microcode')]
-        comparisons += [(f'host.control_plane.{key}', source['control_plane'].get(key),
-                         (host.get('control_plane') or {}).get(key))
-                        for key in ('version', 'cli_sha256', 'node_sha256')]
-        comparisons += [(f'host.settings.{key}', source['settings'].get(key), host.get('settings', {}).get(key))
-                        for key in ('boost', 'smt', 'governor', 'transparent_huge_pages', 'swap_total_bytes')]
-        for label, expected, actual in comparisons:
-            if expected is None or actual is None or expected == '' or actual == '':
-                raise ValueError(f'missing {label}')
-            if label.endswith('sha256') and not re.fullmatch('[0-9a-f]{64}', str(expected)):
-                raise ValueError(f'invalid reference {label}')
-            if label == 'host.settings.governor' and (not expected or not actual or
-                    any(value in (None, '') for value in [*expected.values(), *actual.values()])):
-                raise ValueError(f'missing {label}')
-            if expected != actual:
-                raise ValueError(f'mismatch: {label}')
-        samples = [sample['metrics'] for sample in case['samples']
-                   if sample['leg'] == 'base' and sample['phase'] == 'measure']
-        for key in ('trace_rows', 'padded_trace_rows'):
-            if reference.get(key) is None or not samples:
-                raise ValueError(f'missing base.{key}')
-            if any(sample[key] != reference[key] for sample in samples):
-                raise ValueError(f'mismatch: base.{key}')
-        for metric, unit in [('e2e_s', 'seconds'), ('peak_rss_bytes', 'bytes')]:
-            value = reference['metrics'][metric]
-            if value['unit'] != unit:
-                raise ValueError(f'mismatch: {metric} unit')
-            for key in ('threshold_pct', 'max_symmetric_window_delta_pct'):
-                if (type(value.get(key)) not in (int, float) or not math.isfinite(value[key])
-                        or value[key] < 0):
-                    raise ValueError(f'missing or invalid {metric}.{key}')
-        return reference['metrics'], None
-    except (KeyError, TypeError, AttributeError) as error:
-        return None, f'missing or invalid calibration evidence: {error}'
-    except ValueError as error:
-        return None, str(error)
+calibration_for_case = calibration.for_case
 
 
 def render_comment(result, out):
@@ -954,7 +884,17 @@ def render_comment(result, out):
     source = calibration.get('source') or {}
     if len(identities) > 2:
         lines += ['', 'Identity SHA256s below are abbreviated to 12 characters; raw JSON retains the full hashes.', '', *identities]
-    if calibration.get('status') == 'measured':
+    if result.get('external_references') is not None:
+        external = result['external_references']
+        lines += ['', 'External reference method: null-median3-symmetric-envelope-v2. '
+                  'Ten pairs produce eight overlapping median-of-three windows; informational bands only.',
+                  f"Catalog revision: `{text(external['catalog_revision'])}`."]
+        applied = {item['sha256']: item['source'] for item in result.get('comparison_references', {}).values()}
+        for sha, reference_source in sorted(applied.items()):
+            run_id, attempt = reference_source['ingest_run_id'], reference_source['ingest_run_attempt']
+            lines += [f"Reference `{sha}`: [authenticated ingest {run_id}/{attempt}]"
+                      f"(https://github.com/a16z/jolt/actions/runs/{run_id}/attempts/{attempt})."]
+    elif calibration.get('status') == 'measured':
         lines += ['', f"Supplied reference method: `{text(calibration.get('method'))}`. "
                   'The supported v2 method requires 10 same-binary null pairs and eight overlapping 3-pair windows, '
                   'which are not independent. Each window takes each leg’s median, then the larger '

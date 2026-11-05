@@ -4,7 +4,7 @@
   "metric_contract": 1,
   "calibration": {
     "status": "unavailable",
-    "reason": "Automatic PR calibration is unavailable; native-build identity and measurement scheduling must be resolved before enablement."
+    "reason": "External references are authenticated and applied by trusted ingest; raw target output contains no reference override."
   },
   "tiers": {
     "pr": {

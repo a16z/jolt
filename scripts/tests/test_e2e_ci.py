@@ -255,7 +255,7 @@ class E2eCiTests(unittest.TestCase):
             actual = {'event': 'pull_request_target', 'path': ci.bench.WORKFLOW_FILE, 'head_sha': 'b' * 40,
                       'run_attempt': 2, 'created_at': '2026-11-02T18:00:01Z'}
             with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME='pull_request_target',
-                    GITHUB_REPOSITORY='a16z/jolt', GITHUB_SHA='a' * 40, GITHUB_RUN_ID='123',
+                    GITHUB_REPOSITORY='a16z/jolt', GITHUB_REF='refs/heads/main', GITHUB_SHA='a' * 40, GITHUB_RUN_ID='123',
                     GITHUB_RUN_ATTEMPT='2', JOLT_E2E_ENABLED='true', GITHUB_OUTPUT=str(root / 'outputs'),
                     GITHUB_STEP_SUMMARY=str(root / 'summary')), patch.object(ci, 'resolve', return_value=resolved), \
                     patch.object(ci, 'github', return_value=actual), patch.object(ci, 'git_file') as source:
@@ -272,7 +272,7 @@ class E2eCiTests(unittest.TestCase):
             event.write_text('{}')
             options = argparse.Namespace(config=ci.bench.DEFAULT_CONFIG, out=root / 'unsupported')
             with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event),
-                    GITHUB_EVENT_NAME='pull_request_target', GITHUB_REPOSITORY='a16z/jolt',
+                    GITHUB_EVENT_NAME='pull_request_target', GITHUB_REPOSITORY='a16z/jolt', GITHUB_REF='refs/heads/main',
                     GITHUB_SHA='a' * 40, JOLT_E2E_ENABLED='true',
                     GITHUB_OUTPUT=str(root / 'outputs'), GITHUB_STEP_SUMMARY=str(root / 'summary')), \
                     patch.object(ci, 'resolve', side_effect=ValueError('unsupported fixture request')):
@@ -386,6 +386,7 @@ class E2eCiTests(unittest.TestCase):
                 'source_cargo_lock_sha256': '0' * 64, 'cargo_lock_sha256': '0' * 64,
                 'harness_files': {}, 'akita_schedules': [], 'suite_config_sha256': ci.bench.sha256(config_path),
                 'runner': {'path': 'scripts/bench/run.py', 'sha256': ci.bench.sha256(script)},
+                'calibration_helper': {'path': 'scripts/bench/calibration.py', 'sha256': ci.bench.sha256(ci.bench.calibration.__file__)},
                 'host': {}, 'started_at': '2026-11-01T00:00:00Z', 'finished_at': '2026-11-01T00:00:01Z',
                 'build_s': 1, 'reason': None, 'cache': {}}
             expected = {}
@@ -395,6 +396,7 @@ class E2eCiTests(unittest.TestCase):
                 files = {'guests/fibonacci/guest.elf': b'owned guest',
                          'guests/fibonacci/input-1.bin': b'\x01',
                          'scripts/bench/run.py': script.read_bytes(),
+                         'scripts/bench/calibration.py': Path(ci.bench.calibration.__file__).read_bytes(),
                          'scripts/bench/suites.json': config_path.read_bytes()}
                 for name, contents in files.items():
                     path = bundle / name
@@ -505,3 +507,83 @@ Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CalibrationSchedulingTests(unittest.TestCase):
+    def test_main_nightly_and_bootstrap_use_tip_null_before_optional_local_probe(self):
+        for tier in ('main', 'nightly', 'calibration'):
+            with self.subTest(tier=tier), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                args = argparse.Namespace(plan=root / 'plan.json', out=root / 'out',
+                    bundles=root / 'hosted', artifact_id=44, index_sha256='a' * 64)
+                args.plan.write_text('{}')
+                plan = dict(tier=tier, config={'path': 'scripts/bench/suites.json'}, provenance={},
+                            runs=[{'head': 'a' * 40}, {'head': 'b' * 40}])
+                events = []
+                def prove(options):
+                    events.append((options.kind, options.tier, options.warmups, options.repetitions,
+                                   options.base, options.head, len(ci.bench.config_cases(options.config, 'pr')[1])))
+                    return dict(status='complete', wall_time={'benchmark_s': 0})
+                def prepare(options, **kwargs):
+                    events.append('local-build')
+                    ci.bench.write_json(options.out / 'builds.json', {})
+                with patch.object(ci, 'verified_bundles', side_effect=lambda options, *_:
+                        {'b' * 40: options.bundles / 'manifest.json'}), \
+                        patch.object(ci.bench, 'run', side_effect=prove), patch.object(ci, 'prepare', side_effect=prepare):
+                    self.assertFalse(ci.calibration_phase(args, plan))
+                self.assertEqual(events[0], ('null', 'pr', 1, 10,
+                    args.bundles / 'manifest.json', args.bundles / 'manifest.json', 17))
+                if tier == 'calibration':
+                    self.assertEqual(events[1], 'local-build')
+                    self.assertEqual(events[2][0:4], ('null', 'pr', 1, 3))
+                    self.assertNotEqual(events[2][4], events[0][4])
+                    self.assertTrue((args.out / 'benchmark-results.json').exists())
+                else:
+                    self.assertEqual(len(events), 1)
+
+    def test_failed_refresh_preserves_every_planned_first_parent_history_result(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            plan = dict(tier='main', harness='d' * 40, config={'path': 'scripts/bench/suites.json'},
+                provenance={}, push_before='a' * 40,
+                runs=[dict(base=None, head=sha, submitted_head=sha) for sha in ('b' * 40, 'c' * 40)])
+            args = argparse.Namespace(plan=root / 'plan.json', out=root / 'out',
+                bundles=root / 'bundles', artifact_id=44, index_sha256='e' * 64)
+            args.plan.write_text('{}')
+            def prove(options):
+                return dict(status='complete', reason=None, revisions={'head': options.head.name}, wall_time={})
+            with patch.object(ci, 'load_plan', return_value=plan), \
+                    patch.object(ci, 'calibration_phase', side_effect=ValueError('incomplete null')), \
+                    patch.object(ci, 'verified_bundles', return_value={sha: root / sha for sha in ('b' * 40, 'c' * 40)}), \
+                    patch.object(ci.bench, 'host_lock', side_effect=contextlib.nullcontext), \
+                    patch.object(ci.bench, 'run', side_effect=prove):
+                self.assertEqual(ci.execute(args), 0)
+            self.assertTrue((args.out / 'commits' / ('b' * 40) / 'benchmark-results.json').exists())
+            self.assertEqual(json.loads((args.out / 'benchmark-results.json').read_text())['status'], 'complete')
+            self.assertEqual(len(json.loads((args.out / 'index.json').read_text())['documents']), 2)
+
+    def test_only_main_calibration_dispatch_bypasses_ordinary_enablement(self):
+        for tier, ref, enabled in [('calibration', 'refs/heads/main', True),
+                                   ('main', 'refs/heads/main', False),
+                                   ('calibration', 'refs/heads/other', False)]:
+            with self.subTest(tier=tier, ref=ref), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                event = root / 'event.json'
+                event.write_text(json.dumps({'inputs': {'tier': tier}}))
+                def git_file(_, name):
+                    if name == 'scripts/bench/suites.json':
+                        return ci.bench.DEFAULT_CONFIG.read_bytes()
+                    if name == 'Cargo.toml':
+                        return b'[profile.release]\nlto="fat"\n'
+                    return b'owned pinned source fixture'
+                with patch.dict(os.environ, GITHUB_EVENT_PATH=str(event), GITHUB_EVENT_NAME='workflow_dispatch',
+                        GITHUB_REF=ref, GITHUB_REPOSITORY='a16z/jolt', GITHUB_SHA='c' * 40,
+                        JOLT_E2E_ENABLED='false', GITHUB_OUTPUT=str(root / 'outputs'),
+                        GITHUB_STEP_SUMMARY=str(root / 'summary')), \
+                        patch.object(ci, 'resolve', return_value=('d' * 40,
+                            [dict(base=None, head='c' * 40, submitted_head='c' * 40)], None, None)), \
+                        patch.object(ci, 'git_file', side_effect=git_file), \
+                        patch.object(ci.bench, 'harness_files', return_value={'profile.rs': 'e' * 64}), \
+                        patch.object(ci.bench, 'capture', return_value=''):
+                    ci.plan(argparse.Namespace(config=ci.bench.DEFAULT_CONFIG, out=root / 'plan'))
+                self.assertEqual(json.loads((root / 'plan/plan.json').read_text())['enabled'], enabled)

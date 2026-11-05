@@ -14,7 +14,11 @@ from unittest.mock import patch
 SCRIPT = Path(__file__).parents[1] / 'bench/run.py'
 SPEC = importlib.util.spec_from_file_location('e2e_bench', SCRIPT)
 bench = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(bench)
+sys.path.insert(0, str(SCRIPT.parent))
+try:
+    SPEC.loader.exec_module(bench)
+finally:
+    sys.path.pop(0)
 
 
 class E2eBenchTests(unittest.TestCase):
@@ -217,6 +221,7 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
                             'started_at': '2026-10-31T00:00:00Z', 'finished_at': '2026-10-31T00:00:01Z',
                             'build_s': 1.0, 'reason': None, 'cache': {},
                             'runner': {'sha256': bench.sha256(SCRIPT)},
+                            'calibration_helper': {'sha256': bench.sha256(bench.calibration.__file__)},
                             'host': {'architecture': bench.platform.machine()},
                             'target_triple': bench.platform.machine() + '-unknown-linux-gnu',
                             'target_features': [],
@@ -298,6 +303,7 @@ class BuildCacheTests(unittest.TestCase):
             'crates/jolt-prover/src/profile.rs': 'fn fixture() {}\n',
             'crates/jolt-akita/schedules/fixture.aks': 'owned schedule fixture',
             'scripts/bench/run.py': SCRIPT.read_text(),
+            'scripts/bench/calibration.py': Path(bench.calibration.__file__).read_text(),
         }
         self.config = self.workspace / 'scripts/bench/suites.json'
         config = {'schema_version': 1, 'metric_contract': 1, 'tiers': {}}

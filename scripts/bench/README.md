@@ -15,8 +15,8 @@ profile (fat LTO and debug information) and explicit `-C target-cpu=znver4`.
 The PR matrix has 17 cells and launches 136 proof processes, including warmups.
 `pr-baseline.json` preserves the initial three-cell, 24-proof matrix. Measured
 timing and noise references apply to their exact artifact inputs, not to an
-unmeasured later kernel or a future run. Automatic PR calibration is unavailable;
-the measured bands below belong to the pinned manual experiment. No host installation, target setting change, or live check publication is part of this draft.
+unmeasured later kernel or a future run. Automatic references use the exact-base
+lifecycle below; the measured bands below belong to the pinned manual experiment. No host installation, target setting change, or live check publication is part of this draft.
 
 ## Workloads and tiers
 
@@ -418,8 +418,7 @@ Keep the suite configuration and bundles unchanged when adding observations.
 This option is manual-only. It can render a saved comparison against its exact
 measured reference without changing the original results or build manifests.
 It does not refresh calibration for the trusted workflow. Committing a reference
-or rebuilding its base cannot repair the current commit-bound lifecycle described
-below. A separately authorized local build remains only the off-host equivalence
+is not the external refresh procedure described below. A separately authorized local build remains only the off-host equivalence
 control, not a replacement for the hosted base.
 
 The source revisions, native harness revision, collector hash and calibration
@@ -453,19 +452,93 @@ Only the configured measured repetitions contribute; warmups are excluded.
 Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
 
-`suites.json` explicitly marks automatic PR calibration unavailable. The trusted
-PR producer requires the current main revision as its base and the suite
-configuration committed at its harness revision. That configuration is part of
-build identity. Reference matching requires the exact base revision, and trusted
-publication accepts only calibration from the same committed configuration.
-Committing a measured reference therefore advances the base before that reference
-can be used. An unapproved manual override is rejected, even if the artifact
-claims the trusted suite hash.
+### External calibration lifecycle
 
-Automatic calibration needs a later native-build-identity and measurement-scheduling
-design before enablement. This draft does not implement that design or relax any
-identity check. Until then, automatic comparisons show measured medians and
-signed deltas with an unavailable reference, not calibrated regression thresholds.
+Every main push calibrates its tip once, before measuring all new first-parent
+commits. Nightly and manual main/nightly runs refresh their pinned tip. The null
+uses the verified hosted tip bundle for both legs and the 17 PR cells, with one
+warmup and ten measured pairs per cell: 374 proof processes. There is no extra
+build or timeout increase for ordinary refreshes. Failed calibration preserves
+independent history results; only a complete null produces a reference.
+
+The target binds `calibration/raw/benchmark-results.json` by path and SHA256 in
+its root result. Trusted ingest validates the plan, hosted manifest digests,
+identical legs, all 374 zero-exit samples, alternating order, affinity and metrics.
+It recomputes eight overlapping three-pair windows. For each metric and window,
+`d = 100 * (max(median(A)/median(B), median(B)/median(A)) - 1)`; nonpositive
+denominators are unavailable. The envelope is `0.5 * ceil(max(floor, 1.5 * max(d))
+/ 0.5)`, with time/RSS floors of 3%/2%. Rational arithmetic keeps rounding exact
+at half-percentage-point boundaries. Method: `null-median3-symmetric-envelope-v2`.
+These are observed informational bands, not confidence intervals or verdicts.
+
+Each schema-1 cell key is SHA256 of compact, sorted JSON with no nonfinite
+numbers. Matching requires the exact base revision, metric contract, collector,
+calibration helper and committed suite hashes; Rust/Cargo versions, target ISA,
+flags, profile/config, effective lockfile, native harness hashes and schedules;
+cell/input/guest identities, ordered physical CPU IDs, and every measured base
+sample's trace and padded-row counts. Host identity includes machine ID, kernel,
+microcode, Pika management version and CLI/node hashes, boost, SMT, the complete
+governor map, THP and total swap. These must agree before and after both
+measurements. The host's management node is not a benchmark agent; a Pika update
+invalidates existing references. Missing or unreadable identity evidence makes
+references unavailable. Construction hostname, compiler/linker labels,
+transient free swap, random URS hashes and harness Git SHA alone do not bind;
+the initially empty suite-local Dory cache policy does.
+
+For lookup only, `elf-no-build-id-comment-v1` uses GNU objcopy to remove exactly
+`.note.gnu.build-id` and `.comment` on a copy, refusing either section if writable
+or executable. Hash that copy; execute and byte-verify the untouched originals.
+Normalization failure makes the reference unavailable. This admits metadata
+differences, not RSS equivalence; the measured one-core secp256k1 discrepancy
+above remains unresolved.
+
+Ingest stores recomputed `calibration/reference.json` with full keys, envelopes,
+raw hash, measurement times, producer/ingest identities and plan/build digests.
+Canonical ingest artifacts are retained 30 days. The history publisher archives
+reference and raw evidence under `dev/prover-history/calibration/<reference-sha>/`
+and appends `calibration/index.json`. The catalog is discovery-only. PR ingest
+captures its gh-pages commit, fetches candidates by immutable artifact ID, checks
+successful main App ingest metadata and attempt, follows `ingest.json` to the
+trusted non-PR plan/dispatch, and validates the raw evidence and recomputed
+reference again. Catalog hashes alone grant no authority; expired artifacts have
+no fallback. No measured reference is committed into main or build identity.
+
+Choose the newest authenticated matching reference finished before comparison
+start and valid through comparison finish; ties use producer then ingest
+run/attempt. Expiry is 48 hours after calibration finished, not publication.
+Keep older references for queued older bases; never select the widest band.
+Apply references only to an in-memory rendering copy. Source result JSON stays
+unchanged; `comparison.json` archives the validated summary, reference SHA/source,
+catalog revision and availability reasons. Missing, expired, mismatched or
+unauthenticated references preserve medians and signed deltas, with an explicit
+unavailable reason. Target-supplied calibration overrides remain rejected.
+
+### Bootstrap acceptance before ordinary enablement
+
+With the trusted workflows and history publisher on main, a maintainer dispatches
+`e2e-bench.yml` on main with `tier=calibration`. This tier alone is permitted while
+`JOLT_E2E_ENABLED` is disabled. It runs the hosted null, then a three-pair
+same-source probe built with the local PR recipe: 374 + 136 = 510 proof processes
+plus a local build, with no PR source or comments. The root binds the probe
+sidecar too. Bootstrap probes do not enter ordinary history trends.
+
+After its ingest artifact has been published, run the trusted acceptance command
+with an Actions/Contents-read token in `GH_TOKEN`:
+
+```bash
+uv run --no-project python scripts/bench/publication.py verify-calibration \
+  --ingest-run-id "$INGEST_RUN_ID" --ingest-run-attempt "$INGEST_RUN_ATTEMPT"
+```
+
+It authenticates the bootstrap source and resolves/renders all 17 probe cells
+through the same published catalog/artifact path used by PR ingest. Acceptance
+requires all 17 reference cells, 374 verified exits, estimator contract vectors,
+matching reference/raw hashes, and all 17 probe bands. Record actual build,
+target and queue intervals; process counts are not timing acceptance evidence.
+After a real main advance, repeat bootstrap: the new reference must publish and
+resolve without a reference commit, and the old exact-base reference must refuse
+the new probe. Only then enable ordinary tiers. These live acceptance steps have
+not been performed by this source change.
 
 The verified manual reference remains evidence for the 17-cell hosted null at
 base `e37e6f24`, harness `535840a9` and collector `c6afb17a`. Its original JSON has
@@ -617,10 +690,9 @@ dedicated key to run `status preflight` through the forced command: it must retu
 `systemctl --user`, so an interactive-shell-only success is insufficient.
 
 Install the build and run prerequisites above and uv through the normal host
-operator process. Confirm the fixed `znver4` ISA and physical CPU topology. Resolve
-and validate the automatic-calibration lifecycle described above before enablement.
-The saved manual null experiment does not satisfy that requirement; committing a
-refreshed JSON reference is not a working refresh procedure.
+operator process. Confirm the fixed `znver4` ISA and physical CPU topology. Run
+the bootstrap acceptance steps above before ordinary enablement. The saved manual
+null experiment does not satisfy that requirement.
 
 ### Enablement and result publication
 
@@ -633,7 +705,7 @@ sets no live variable or daemon setting.
 
 The App creates **End-to-end benchmark** on the PR head or measured main commit,
 queued at admission and in progress at submission. It fetches the finished
-result ZIP, excluding `runtime-cache` and `builds`, and serves it for 14 days at
+result ZIP, excluding `runtime-cache` and build payloads but retaining build logs, and serves it for 14 days at
 `<public_base_url>/github-bench/<sha256>.zip`. It dispatches
 `e2e-bench-ingest.yml` on main with the job, producer run/attempt, URL, digest and
 executor exit code. The ingest workflow accepts only `0xandoroid-ai-agent[bot]`
@@ -651,8 +723,8 @@ the original plan, and `jolt-e2e-check-INGEST_RUN_ID-ATTEMPT/check.json`.
 
 The App completes its check with validated Markdown. `success` means complete
 validated results; `failure` means execution or validation failed; `neutral`
-means partial results or unavailable comparisons. Automatic PR calibration is
-currently unavailable, so otherwise complete PR results are neutral. Measured
+means partial results or unavailable comparisons. A complete PR without an
+authenticated matching reference is neutral. Measured
 deltas and calibration context never produce a regression verdict. An ingest
 failure or missing/invalid `check.json` fails the check with the ingest link.
 No GitHub Actions comment or separate comment-enable variable exists. Executor

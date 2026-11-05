@@ -66,4 +66,4 @@ jobs:
           name: jolt-e2e-check-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/e2e-ingest/check/check.json
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 30

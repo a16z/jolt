@@ -31,8 +31,8 @@ def manifest_digest(manifest):
     return hashlib.sha256(json.dumps(manifest, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
 
-def github(path, *, authenticated=True):
-    headers = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
+def github(path, *, authenticated=True, media='application/vnd.github+json'):
+    headers = {'Accept': media, 'X-GitHub-Api-Version': '2022-11-28'}
     if authenticated:
         headers['Authorization'] = 'Bearer ' + os.environ['GH_TOKEN']
     request = urllib.request.Request('https://api.github.com/repos/a16z/jolt/' + path,
@@ -122,12 +122,15 @@ def plan(args):
     name = os.environ['GITHUB_EVENT_NAME']
     tier = ('pr' if name == 'pull_request_target' else 'main' if name == 'push'
             else event.get('inputs', {}).get('tier', 'nightly'))
-    enabled = os.environ.get('JOLT_E2E_ENABLED') == 'true'
+    bootstrap = name == 'workflow_dispatch' and tier == 'calibration'
+    enabled = os.environ.get('JOLT_E2E_ENABLED') == 'true' or bootstrap
     plan = {'tier': tier, 'enabled': False, 'reason': None, 'target_cpu': TARGET_CPU,
             'push_before': event.get('before'), 'push_after': event.get('after'),
             'harness': None, 'runs': [], 'provenance': bench.provenance()[0],
             'config': bench.bundle_file(args.config.resolve(), bench.ROOT), 'expected_builds': {}}
     try:
+        if tier not in ('pr', 'main', 'nightly', 'calibration') or os.environ['GITHUB_REF'] != 'refs/heads/main':
+            raise ValueError('benchmark tiers require main')
         if not enabled:
             raise ValueError('benchmark execution is disabled; complete scripts/bench/README.md before enablement')
         plan['harness'], plan['runs'], pr, plan['admission'] = resolve(
@@ -162,17 +165,19 @@ def plan(args):
                     'harness_files': harness_files, 'suite_config_sha256': plan['config']['sha256'],
                     'runner': {'path': 'scripts/bench/run.py',
                                'sha256': hashlib.sha256(git_file(harness, 'scripts/bench/run.py')).hexdigest()},
+                    'calibration_helper': {'path': 'scripts/bench/calibration.py',
+                        'sha256': hashlib.sha256(git_file(harness, 'scripts/bench/calibration.py')).hexdigest()},
                     'akita_schedules': [{'path': f'akita-schedules/{Path(path).name}',
                                         'sha256': hashlib.sha256(git_file(revision, path)).hexdigest()}
                                        for path in schedules if Path(path).suffix == '.aks'],
                 }
-                if tier == 'pr':
+                if tier in ('pr', 'calibration'):
                     plan.setdefault('own_harness_files', {})[revision] = bench.harness_files(revision)
         plan['enabled'] = True
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         plan['reason'] = str(error)
         status = 'disabled' if not enabled else 'unsupported'
-        bench.disabled(argparse.Namespace(config=args.config, tier=tier, out=args.out,
+        bench.disabled(argparse.Namespace(config=args.config, tier='pr' if tier == 'calibration' else tier, out=args.out,
                                           status=status, reason=str(error)))
     bench.write_json(Path(args.out) / 'plan.json', plan)
     with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
@@ -220,7 +225,7 @@ awk '$1 == "oom_kill" { print "kernel", $0 }' /proc/vmstat
                 options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier=None,
                     out=out / revision, revision=revision, harness_revision=plan['harness'],
                     target_cpu=plan['target_cpu'], profile='release', workload=[], case=[],
-                    allow_harness_fallback=plan['tier'] == 'pr')
+                    allow_harness_fallback=plan['tier'] == 'pr' or (plan['tier'] == 'calibration' and locked))
                 manifest = bench.build(options)
                 if manifest['status'] != 'complete':
                     raise ValueError(f'build preparation failed for {revision}: {manifest["reason"]}')
@@ -250,7 +255,7 @@ def verified_bundles(args, plan, revisions):
     inventory = bench.parse_json((bench.ROOT / plan['config']['path']).read_text())
     inputs, required_pcs = bench.build_inputs(inventory)
     config = getattr(args, 'config', None) or bench.ROOT / plan['config']['path']
-    _, cases = bench.config_cases(config, plan['tier'])
+    _, cases = bench.config_cases(config, 'pr' if plan['tier'] == 'calibration' else plan['tier'])
     manifests = {}
     for revision in revisions:
         entry = index['builds'][revision]
@@ -260,13 +265,14 @@ def verified_bundles(args, plan, revisions):
         expected = dict(plan['expected_builds'][revision])
         native = manifest['native_harness_revision']
         if native != expected['harness_revision']:
-            if (plan['tier'] != 'pr' or native != revision or not manifest.get('harness_fallback_reason')):
+            if ((plan['tier'] != 'pr' and not (plan['tier'] == 'calibration' and getattr(args, 'local', False)))
+                    or native != revision or not manifest.get('harness_fallback_reason')):
                 raise ValueError('build uses an unplanned native harness')
             expected['harness_files'] = plan['own_harness_files'][revision]
         for key, value in expected.items():
             if manifest.get(key) != value:
                 raise ValueError(f'build differs from the planned input: {key}')
-        entries = [manifest['runner'], *manifest['akita_schedules'],
+        entries = [manifest['runner'], manifest['calibration_helper'], *manifest['akita_schedules'],
                    {'path': 'scripts/bench/suites.json', 'sha256': plan['config']['sha256']}]
         if set(manifest['binaries']) != required_pcs or set(manifest['guests']) != set(inputs):
             raise ValueError('bundle does not contain the planned binary and guest set')
@@ -316,6 +322,14 @@ def execute(args, *, locked=False):
     with (contextlib.nullcontext() if locked else bench.host_lock()):
         if plan['tier'] == 'pr':
             recheck_pr(plan)
+        else:
+            try:
+                calibration_failed = calibration_phase(args, plan)
+            except (ValueError, KeyError, OSError, subprocess.CalledProcessError) as error:
+                calibration_failed = True
+                bench.write_json(out / 'calibration/unavailable.json', {'reason': str(error)})
+            if plan['tier'] == 'calibration':
+                return int(calibration_failed)
         for item, entry in zip(plan['runs'], index['documents']):
             started, begin = bench.utc_now(), time.perf_counter()
             manifests = verified_bundles(args, plan, {rev for rev in (item['base'], item['head']) if rev})
@@ -338,6 +352,40 @@ def execute(args, *, locked=False):
                 bench.render_comment(result, run_out / 'pr-comment.md')
             failed |= result['status'] not in ('complete', 'unsupported')
     return int(failed)
+
+
+def calibration_phase(args, plan):
+    tip = plan['runs'][-1]['head']
+    started, begin = bench.utc_now(), time.perf_counter()
+    manifests = verified_bundles(args, plan, {tip})
+    artifacts = {'id': args.artifact_id, 'index_sha256': args.index_sha256,
+                 'plan_sha256': bench.sha256(args.plan)}
+    failed = False
+    for name in ('raw', 'probe') if plan['tier'] == 'calibration' else ('raw',):
+        manifest, repetitions, scope = manifests[tip], 10, RUN_ONLY_SCOPE
+        build_s = 0
+        if name == 'probe':
+            started, begin = bench.utc_now(), time.perf_counter()
+            preparation = argparse.Namespace(plan=args.plan, out=args.out / 'builds')
+            prepare(preparation, locked=True)
+            build_s = time.perf_counter() - begin
+            local_args = argparse.Namespace(**dict(vars(args), local=True, bundles=preparation.out,
+                index_sha256=bench.sha256(preparation.out / 'builds.json')))
+            manifest = verified_bundles(local_args, plan, {tip})[tip]
+            repetitions, scope = 3, LOCAL_SCOPE
+        options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier='pr',
+            out=args.out / 'calibration' / name, base=manifest, head=manifest, kind='null',
+            case=[], warmups=1, repetitions=repetitions,
+            context={'provenance': plan['provenance'], 'submitted_head': tip, 'is_pr': False})
+        result = bench.run(options)
+        result['artifacts'] = artifacts
+        result['started_at'] = started
+        result['wall_time'].update(build_s=build_s, total_s=time.perf_counter() - begin, scope=scope)
+        failed |= result['status'] != 'complete'
+        bench.write_json(options.out / 'benchmark-results.json', result)
+        if name == 'probe':
+            bench.write_json(args.out / 'benchmark-results.json', result)
+    return failed
 
 
 def local(args):
@@ -446,8 +494,12 @@ def finalize(args):
                     partial['wall_time']['scope'] = LOCAL_SCOPE if plan['tier'] == 'pr' else RUN_ONLY_SCOPE
                 bench.write_json(path, partial)
     if root.exists():
+        result = bench.parse_json(root.read_text())
+        result['calibration_evidence'] = {name: bench.bundle_file(path, args.out) for name in ('raw', 'probe')
+            if (path := args.out / 'calibration' / name / 'benchmark-results.json').exists()}
+        bench.write_json(root, result)
         return
-    options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier=plan['tier'], out=args.out,
+    options = argparse.Namespace(config=bench.ROOT / plan['config']['path'], tier='pr' if plan['tier'] == 'calibration' else plan['tier'], out=args.out,
                                   status='incomplete', reason='the planned target job did not produce a root result')
     result = bench.disabled(options)
     result['provenance'] = plan['provenance']

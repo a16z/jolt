@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 import zipfile
 
 import ci
+import calibration
 import publication
 import run as bench
 
@@ -88,6 +89,8 @@ def trusted_plan(run_id, attempt):
     plan, raw, plan_id = artifact_json(run_id, attempt, 'jolt-e2e-plan', 'plan.json')
     dispatch, dispatch_raw, dispatch_id = artifact_json(run_id, attempt, 'jolt-e2e-dispatch', 'dispatch.json')
     ci.check_dispatch(dispatch, plan)
+    if plan['tier'] == 'calibration' and actual['event'] != 'workflow_dispatch':
+        raise ValueError('bootstrap calibration requires workflow_dispatch on main')
     if (dispatch['run_id'], dispatch['run_attempt']) != (run_id, attempt):
         raise ValueError('dispatch is from another run attempt')
     prov = plan['provenance']
@@ -162,6 +165,7 @@ def validate_results(files, plan, dispatch, config, receipt):
             raise ValueError('result JSON exceeds 8 MiB')
         result = bench.parse_json(files[path].decode())
         paired = plan['tier'] == 'pr'
+        bootstrap = plan['tier'] == 'calibration'
         artifacts = {'id': dispatch['build_artifact_id'], 'index_sha256': dispatch['build_index_sha256'],
                      'plan_sha256': receipt['plan_sha256']}
         if paired:
@@ -169,11 +173,14 @@ def validate_results(files, plan, dispatch, config, receipt):
             if index_hash is not None and not re.fullmatch('[0-9a-f]{64}', index_hash):
                 raise ValueError('invalid local build index digest')
             artifacts['index_sha256'] = index_hash
-        expected = {'tier': plan['tier'], 'provenance': plan['provenance'], 'artifacts': artifacts,
+        expected = {'tier': 'pr' if bootstrap else plan['tier'], 'provenance': plan['provenance'], 'artifacts': artifacts,
             'manifest_digests': dispatch['manifest_digests'], 'expected_builds': plan['expected_builds'],
             'own_harness_files': plan.get('own_harness_files', {}),
             'revisions': {'base': item['base'], 'head': item['submitted_head'],
                           'merge': item['head'] if paired else None, 'harness': plan['harness']}}
+        if bootstrap:
+            expected.update(kind='null', scope=ci.LOCAL_SCOPE, manifest_digests=None)
+            expected['revisions'].update(base=item['head'], merge=None)
         publication.validate(result, expected, config)
         documents.append(result)
     if plan['tier'] == 'main':
@@ -185,6 +192,41 @@ def validate_results(files, plan, dispatch, config, receipt):
             raise ValueError('result index differs from the planned commit set')
         files['index.json'] = (json.dumps(expected_index) + '\n').encode()
     return documents
+
+
+def calibration_reference(files, root, plan, dispatch, config, receipt):
+    descriptor = root.get('calibration_evidence', {}).get('raw')
+    if descriptor is None:
+        return None
+    path = 'calibration/raw/benchmark-results.json'
+    if descriptor != {'path': path, 'sha256': hashlib.sha256(files[path]).hexdigest()}:
+        raise ValueError('calibration raw descriptor mismatch')
+    raw = files[path]
+    result = bench.parse_json(raw.decode())
+    tip = plan['runs'][-1]['head']
+    expected = {'tier': 'pr', 'kind': 'null', 'sampling': {'warmups': 1, 'repetitions': 10},
+        'scope': ci.RUN_ONLY_SCOPE, 'provenance': plan['provenance'],
+        'artifacts': {'id': dispatch['build_artifact_id'], 'index_sha256': dispatch['build_index_sha256'],
+                      'plan_sha256': receipt['plan_sha256']},
+        'expected_builds': plan['expected_builds'], 'manifest_digests': dispatch['manifest_digests'],
+        'revisions': {'base': tip, 'head': tip, 'merge': None, 'harness': plan['harness']}}
+    publication.validate(result, expected, config)
+    if plan['tier'] == 'pr':
+        raise ValueError('PRs cannot produce calibration references')
+    if plan['tier'] == 'calibration':
+        probe_path = 'calibration/probe/benchmark-results.json'
+        probe_descriptor = root.get('calibration_evidence', {}).get('probe')
+        if probe_descriptor != {'path': probe_path, 'sha256': hashlib.sha256(files[probe_path]).hexdigest()}:
+            raise ValueError('bootstrap probe descriptor mismatch')
+        probe = bench.parse_json(files[probe_path].decode())
+        expected.update(sampling={'warmups': 1, 'repetitions': 3}, scope=ci.LOCAL_SCOPE,
+                        manifest_digests=None, own_harness_files=plan.get('own_harness_files', {}))
+        publication.validate(probe, expected, config)
+        if {k: v for k, v in root.items() if k != 'calibration_evidence'} != probe:
+            raise ValueError('bootstrap root differs from probe')
+    return calibration.reference(raw, result, dict(receipt,
+        tier=plan['tier'], build_index_sha256=dispatch['build_index_sha256'],
+        manifest_digests=dispatch['manifest_digests']))
 
 
 def check_result(job_id, documents, exit_code, summary):
@@ -218,19 +260,36 @@ def main():
     if hashlib.sha256(raw).hexdigest() != args.result_sha256:
         raise ValueError('result download SHA-256 mismatch')
     files = result_files(raw)
+    for name in ('calibration/reference.json', 'comparison.json', 'ingest.json'):
+        files.pop(name, None)
     documents = validate_results(files, plan, dispatch, config, receipt)
     root = documents[-1]
-    summary_path = args.out / 'summary.md'
-    if root['tier'] == 'pr':
-        bench.render_comment(root, summary_path)
-        summary = summary_path.read_text()
-    else:
-        summary = '\n'.join(f'{item["revisions"]["head"]}: {item["status"]}' if item else
-                            'Planned commit result unavailable.' for item in documents)
     receipt.update(schema=1, job_id=args.job_id, plan_run_id=args.plan_run_id,
         plan_run_attempt=args.plan_run_attempt, result_sha256=args.result_sha256,
         executor_exit_code=args.executor_exit_code, ingest_run_id=int(os.environ['GITHUB_RUN_ID']),
         ingest_run_attempt=int(os.environ['GITHUB_RUN_ATTEMPT']))
+    if plan['tier'] != 'pr':
+        try:
+            reference = calibration_reference(files, root, plan, dispatch, config, receipt)
+            if reference:
+                files['calibration/reference.json'] = calibration.encoded(reference)
+        except (ValueError, KeyError, TypeError, StopIteration) as error:
+            files['calibration/unavailable.json'] = calibration.encoded({'reason': str(error)})
+    else:
+        root = publication.resolve_references(root)
+        documents[-1] = root
+    summary_path = args.out / 'summary.md'
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    if root['tier'] == 'pr':
+        bench.render_comment(root, summary_path)
+        summary = summary_path.read_text()
+        files['comparison.json'] = calibration.encoded({'references': root.get('comparison_references', {}),
+            'availability': {case['id']: bench.calibration_for_case(root, case)[1] for case in root['cases']},
+            'catalog_revision': root.get('external_references', {}).get('catalog_revision'), 'summary': summary})
+        files['pr-comment.md'] = summary.encode()
+    else:
+        summary = '\n'.join(f'{item["revisions"]["head"]}: {item["status"]}' if item else
+                            'Planned commit result unavailable.' for item in documents)
     for name, content in files.items():
         target = args.out / 'result' / name
         target.parent.mkdir(parents=True, exist_ok=True)

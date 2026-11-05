@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """Validate executor results against the hosted plan before publication."""
 
+import argparse
+import copy
 import hashlib
+from pathlib import Path
+import tempfile
 import re
+import zipfile
 
+import calibration
 import ci
 import run as bench
 
@@ -13,8 +19,10 @@ STATUSES = {'complete', 'failed', 'incomplete', 'unsupported', 'missing'}
 def validate(result, expected, config_bytes):
     if result.get('schema_version') != 1 or result.get('repository') != 'a16z/jolt':
         raise ValueError('unsupported schema or repository')
+    if {'external_references', 'comparison_references'} & result.keys():
+        raise ValueError('target cannot supply authenticated reference overrides')
     paired = expected['tier'] == 'pr'
-    if result['tier'] != expected['tier'] or result['kind'] != ('comparison' if paired else 'history'):
+    if result['tier'] != expected['tier'] or result['kind'] != expected.get('kind', 'comparison' if paired else 'history'):
         raise ValueError('result tier or purpose differs from the plan')
     if result['status'] not in {'complete', 'failed', 'incomplete', 'unsupported'}:
         raise ValueError('result does not describe executed measurements')
@@ -35,7 +43,7 @@ def validate(result, expected, config_bytes):
     for key in ('calibration', 'calibration_sha256'):
         if result['suite'].get(key) != config.get(key):
             raise ValueError(f'{key} differs from the pinned suite configuration')
-    tier = config['tiers'][expected['tier']]
+    tier = dict(config['tiers'][expected['tier']], **expected.get('sampling', {}))
     for key in ('warmups', 'repetitions'):
         if result['suite'][key] != tier[key]:
             raise ValueError(f'unapproved sampling override: {key}')
@@ -44,7 +52,7 @@ def validate(result, expected, config_bytes):
         raise ValueError('suite identity or case selection differs')
     if result.get('artifacts') != expected['artifacts']:
         raise ValueError('result uses different build index or plan bytes')
-    if result['wall_time']['scope'] != (ci.LOCAL_SCOPE if paired else ci.RUN_ONLY_SCOPE):
+    if result['wall_time']['scope'] != expected.get('scope', ci.LOCAL_SCOPE if paired else ci.RUN_ONLY_SCOPE):
         raise ValueError('wall-time scope differs from the execution tier')
     for key in ('build_s', 'benchmark_s', 'total_s'):
         value = result['wall_time'][key]
@@ -62,7 +70,7 @@ def validate(result, expected, config_bytes):
     if len(cases) != len(expected_cases) or {case['id'] for case in cases} != set(expected_cases):
         raise ValueError('expected cases are missing or duplicated')
     builds = {build['leg']: build for build in result['builds']}
-    legs = {'base': expected['revisions']['base'], 'head': expected['revisions']['merge']} if paired else {
+    legs = {'base': expected['revisions']['base'], 'head': expected['revisions']['merge'] or expected['revisions']['head']} if paired else {
         'head': expected['revisions']['head']}
     if (len(builds) != len(result['builds']) or not set(builds) <= set(legs)
             or (result['status'] == 'complete' and set(builds) != set(legs))):
@@ -163,3 +171,111 @@ def validate(result, expected, config_bytes):
             or any(case['status'] not in ('complete', 'unsupported') for case in cases)):
         raise ValueError('complete run has no results or contains incomplete cases')
     return result
+
+
+def canonical_artifact(artifact_id, run_id, attempt):
+    import ingest
+    actual = ci.github(f'actions/runs/{run_id}/attempts/{attempt}')
+    if (actual['id'] != run_id or actual['run_attempt'] != attempt
+            or actual['repository']['full_name'] != 'a16z/jolt'
+            or (actual['head_repository'] or {}).get('full_name') != 'a16z/jolt'
+            or actual['name'] != 'End-to-end benchmark ingest'
+            or actual['path'] != '.github/workflows/e2e-bench-ingest.yml'
+            or actual['event'] != 'workflow_dispatch' or actual['head_branch'] != 'main'
+            or actual['status'] != 'completed' or actual['conclusion'] != 'success'
+            or actual['actor']['login'] != ingest.APP):
+        raise ValueError('reference ingest producer is not trusted')
+    artifact = ci.github(f'actions/artifacts/{artifact_id}')
+    if (artifact['id'] != artifact_id or artifact['expired']
+            or artifact['name'] != f'jolt-e2e-{run_id}-{attempt}'
+            or artifact['workflow_run']['id'] != run_id
+            or artifact['workflow_run']['head_sha'] != actual['head_sha']
+            or artifact['size_in_bytes'] > ingest.MAX_RESULT):
+        raise ValueError('reference artifact identity, attempt, or retention mismatch')
+    raw = ingest.download(f'https://api.github.com/repos/a16z/jolt/actions/artifacts/{artifact_id}/zip',
+                          ingest.MAX_RESULT, authenticated=True)
+    files = ingest.result_files(raw)
+    receipt = bench.parse_json(files['ingest.json'].decode())
+    if (receipt['schema'] != 1 or receipt['ingest_run_id'] != run_id
+            or receipt['ingest_run_attempt'] != attempt
+            or receipt['job_id'] != f'{receipt["plan_run_id"]}-{receipt["plan_run_attempt"]}'
+            or actual['display_title'] != 'e2e-bench ingest ' + receipt['job_id']):
+        raise ValueError('reference ingest receipt mismatch')
+    plan, dispatch, config, source = ingest.trusted_plan(receipt['plan_run_id'], receipt['plan_run_attempt'])
+    if any(receipt.get(key) != value for key, value in source.items()) or plan['tier'] == 'pr':
+        raise ValueError('reference source plan or digest mismatch')
+    documents = ingest.validate_results(files, plan, dispatch, config, receipt)
+    reference = ingest.calibration_reference(files, documents[-1], plan, dispatch, config, receipt)
+    return files, reference
+
+
+def resolve_references(result):
+    rendered = copy.deepcopy(result)
+    external = rendered['external_references'] = {'references': [], 'catalog_revision': None, 'reason': None}
+    try:
+        revision = ci.github('commits/gh-pages')['sha']
+        external['catalog_revision'] = revision
+        index = ci.github(f'contents/dev/prover-history/calibration/index.json?ref={revision}',
+                          media='application/vnd.github.raw+json')
+        if index['schema'] != 1:
+            raise ValueError('unsupported calibration catalog')
+        errors = []
+        keys = set()
+        for case in result['cases']:
+            if case['status'] == 'complete':
+                try:
+                    keys.add(calibration.digest(calibration.cell_key(result, case)))
+                except (ValueError, KeyError, TypeError, StopIteration):
+                    continue
+        for item in index['references']:
+            if not keys.intersection(item['key_sha256s']):
+                continue
+            try:
+                files, reference = canonical_artifact(item['artifact_id'], item['ingest_run_id'], item['ingest_run_attempt'])
+                if (reference is None or calibration.digest(reference) != item['sha256']
+                        or calibration.encoded(reference) != files['calibration/reference.json']
+                        or reference['raw_sha256'] != item['raw_sha256']):
+                    raise ValueError('reference payload or raw digest mismatch')
+                external['references'].append(reference)
+            except (ValueError, KeyError, TypeError, AttributeError, OSError, zipfile.BadZipFile, RuntimeError, StopIteration) as error:
+                errors.append(str(error))
+        if not external['references']:
+            external['reason'] = '; '.join(errors) or 'catalog has no matching authenticated reference'
+    except (ValueError, KeyError, TypeError, AttributeError, OSError, zipfile.BadZipFile, RuntimeError, StopIteration) as error:
+        external['reason'] = str(error)
+    return rendered
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('command', choices=['verify-calibration'])
+    parser.add_argument('--ingest-run-id', type=int, required=True)
+    parser.add_argument('--ingest-run-attempt', type=int, required=True)
+    args = parser.parse_args()
+    run_id, attempt = args.ingest_run_id, args.ingest_run_attempt
+    artifacts, page = [], 1
+    while True:
+        batch = ci.github(f'actions/runs/{run_id}/artifacts?per_page=100&page={page}')['artifacts']
+        artifacts.extend(batch)
+        if len(batch) < 100:
+            break
+        page += 1
+    matches = [item for item in artifacts if item['name'] == f'jolt-e2e-{run_id}-{attempt}']
+    if len(matches) != 1:
+        raise ValueError('bootstrap canonical artifact missing or duplicated')
+    files, reference = canonical_artifact(matches[0]['id'], run_id, attempt)
+    if reference is None or reference['source']['tier'] != 'calibration':
+        raise ValueError('authenticated bootstrap calibration reference is unavailable')
+    probe = bench.parse_json(files['calibration/probe/benchmark-results.json'].decode())
+    rendered = resolve_references(probe)
+    reasons = {case['id']: calibration.for_case(rendered, case)[1] for case in rendered['cases']}
+    if len(reasons) != 17 or any(reasons.values()):
+        raise ValueError(f'bootstrap probe references unavailable: {reasons}')
+    with tempfile.TemporaryDirectory() as directory:
+        bench.render_comment(rendered, Path(directory) / 'summary.md')
+    print(calibration.encoded({'reference_sha256': calibration.digest(reference), 'resolved_cells': 17,
+                              'catalog_revision': rendered['external_references']['catalog_revision']}).decode())
+
+
+if __name__ == '__main__':
+    main()
