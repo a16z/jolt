@@ -114,7 +114,11 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[cfg(not(feature = "field-inline"))]
+mod b_folds;
 mod guard_groups;
+#[cfg(not(feature = "field-inline"))]
+use b_folds::PreparedBFolds;
 use guard_groups::{GuardEndpointGroup, GuardEndpoints, GuardGroups, GUARD_ENDPOINT_ENTRIES};
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
@@ -396,11 +400,9 @@ impl<'a, F> FieldInlineRowCursor<'a, F> {
 }
 
 impl SpartanOuterRow {
-    /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
-    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
-    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
-    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
-    fn group_values(&self) -> RowGroupValues {
+    /// Evaluate A guards without constructing the integer B values.
+    #[inline(always)]
+    fn guard_values(&self) -> ([i64; DOMAIN], [i64; SECOND_GROUP_LEN]) {
         let flag = |value: bool| i64::from(value);
         let load = flag(self.circuit_flags[CircuitFlags::Load]);
         let store = flag(self.circuit_flags[CircuitFlags::Store]);
@@ -437,6 +439,37 @@ impl SpartanOuterRow {
             1 - should_branch - jump,
         ];
 
+        let mut first = [0; DOMAIN];
+        let mut second = [0; SECOND_GROUP_LEN];
+        first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_a_first);
+        second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_a_second);
+        #[cfg(feature = "field-inline")]
+        {
+            first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
+                flag(self.circuit_flags[CircuitFlags::FieldAdd]),
+                flag(self.circuit_flags[CircuitFlags::FieldSub]),
+                flag(self.circuit_flags[CircuitFlags::FieldMul]),
+                flag(self.circuit_flags[CircuitFlags::FieldInv]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory]),
+            ]);
+            second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
+                flag(self.circuit_flags[CircuitFlags::FieldAssertEq]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister]),
+                flag(self.circuit_flags[CircuitFlags::FieldAssertZero]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadImm]),
+                flag(self.circuit_flags[CircuitFlags::FieldAdviceLimb]),
+            ]);
+        }
+        (first, second)
+    }
+
+    /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
+    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
+    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
+    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
+    fn group_values(&self) -> RowGroupValues {
+        let flag = |value: bool| i64::from(value);
+        let (a_first, a_second) = self.guard_values();
         let word = |value: u64| i128::from(value);
         let diff = |a: u64, b: u64| word(a) - word(b);
         let rv64_b_first = [
@@ -493,14 +526,12 @@ impl SpartanOuterRow {
         ];
 
         let mut values = RowGroupValues {
-            a_first: [0; DOMAIN],
-            a_second: [0; SECOND_GROUP_LEN],
+            a_first,
+            a_second,
             b_first: [0; DOMAIN],
             b_second_lo: [0; SECOND_GROUP_LEN],
             b_second_hi: [0; SECOND_GROUP_LEN],
         };
-        values.a_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_a_first);
-        values.a_second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_a_second);
         values.b_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_b_first);
         values.b_second_lo[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second_lo);
         values.b_second_hi[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second_hi);
@@ -509,20 +540,6 @@ impl SpartanOuterRow {
         // Nonzero field magnitudes are supplied by `field_group_values` below.
         #[cfg(feature = "field-inline")]
         {
-            values.a_first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
-                flag(self.circuit_flags[CircuitFlags::FieldAdd]),
-                flag(self.circuit_flags[CircuitFlags::FieldSub]),
-                flag(self.circuit_flags[CircuitFlags::FieldMul]),
-                flag(self.circuit_flags[CircuitFlags::FieldInv]),
-                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory]),
-            ]);
-            values.a_second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
-                flag(self.circuit_flags[CircuitFlags::FieldAssertEq]),
-                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister]),
-                flag(self.circuit_flags[CircuitFlags::FieldAssertZero]),
-                flag(self.circuit_flags[CircuitFlags::FieldLoadImm]),
-                flag(self.circuit_flags[CircuitFlags::FieldAdviceLimb]),
-            ]);
             let rd_write_value = word(self.rd_write_value.0);
             values.b_first[RV64_FIRST_GROUP_LEN + 3] = -1;
             values.b_first[RV64_FIRST_GROUP_LEN + 4] = -rd_write_value;
@@ -1091,6 +1108,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .map(|&variable| outer_opening(variable))
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
+        #[cfg(not(feature = "field-inline"))]
+        let b_folds = PreparedBFolds::new(&derived)?;
 
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
@@ -1131,16 +1150,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                     let bz = values.fold_b(lagrange);
                     (values, bz)
                 };
+                #[cfg(feature = "field-inline")]
+                let (a_first, a_second) = (values.a_first, values.a_second);
                 #[cfg(not(feature = "field-inline"))]
-                let values = row.group_values();
+                let (a_first, a_second) = row.guard_values();
                 #[cfg(not(feature = "field-inline"))]
-                let [bz_zero, bz_one] = values.fold_b(lagrange);
-                let [az_zero, az_one] = guard_endpoints.add(
-                    &values.a_first,
-                    &values.a_second,
-                    [bz_zero, bz_one],
-                    e_in[x_in],
-                );
+                let [bz_zero, bz_one] = b_folds.fold(&row);
+                let [az_zero, az_one] =
+                    guard_endpoints.add(&a_first, &a_second, [bz_zero, bz_one], e_in[x_in]);
                 az_chunk[2 * x_in] = az_zero;
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;
@@ -1596,7 +1613,7 @@ mod tests {
     use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
     use crate::ReferenceBackend;
 
-    fn variable_field_value(row: &SpartanOuterRow, index: usize) -> Fr {
+    fn variable_field_value<F: JoltField>(row: &SpartanOuterRow, index: usize) -> F {
         match index {
             0 => row.left_instruction_input.to_field(),
             1 => row.right_instruction_input.to_field(),
@@ -1619,52 +1636,52 @@ mod tests {
             18 => row.next_is_first_in_sequence.to_field(),
             19 => row.lookup_output.to_field(),
             20 => row.should_jump.to_field(),
-            21 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::AddOperands])),
-            22 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::SubtractOperands])),
-            23 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::MultiplyOperands])),
-            24 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Load])),
-            25 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Store])),
-            26 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Jump])),
-            27 => Fr::from_u64(u64::from(
+            21 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::AddOperands])),
+            22 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::SubtractOperands])),
+            23 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::MultiplyOperands])),
+            24 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Load])),
+            25 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Store])),
+            26 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Jump])),
+            27 => F::from_u64(u64::from(
                 row.circuit_flags[CircuitFlags::WriteLookupOutputToRD],
             )),
-            28 => Fr::from_u64(u64::from(
+            28 => F::from_u64(u64::from(
                 row.circuit_flags[CircuitFlags::VirtualInstruction],
             )),
-            29 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Assert])),
-            30 => Fr::from_u64(u64::from(
+            29 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Assert])),
+            30 => F::from_u64(u64::from(
                 row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC],
             )),
-            31 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::Advice])),
-            32 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsCompressed])),
-            33 => Fr::from_u64(u64::from(
+            31 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Advice])),
+            32 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsCompressed])),
+            33 => F::from_u64(u64::from(
                 row.circuit_flags[CircuitFlags::IsFirstInSequence],
             )),
-            34 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsLastInSequence])),
+            34 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsLastInSequence])),
             #[cfg(feature = "field-inline")]
-            35 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdd])),
+            35 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdd])),
             #[cfg(feature = "field-inline")]
-            36 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldSub])),
+            36 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldSub])),
             #[cfg(feature = "field-inline")]
-            37 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldMul])),
+            37 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldMul])),
             #[cfg(feature = "field-inline")]
-            38 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldInv])),
+            38 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldInv])),
             #[cfg(feature = "field-inline")]
-            39 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertEq])),
+            39 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertEq])),
             #[cfg(feature = "field-inline")]
-            40 => Fr::from_u64(u64::from(
+            40 => F::from_u64(u64::from(
                 row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
             )),
             #[cfg(feature = "field-inline")]
-            41 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertZero])),
+            41 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertZero])),
             #[cfg(feature = "field-inline")]
-            42 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldLoadImm])),
+            42 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldLoadImm])),
             #[cfg(feature = "field-inline")]
-            43 => Fr::from_u64(u64::from(
+            43 => F::from_u64(u64::from(
                 row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
             )),
             #[cfg(feature = "field-inline")]
-            44 => Fr::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdviceLimb])),
+            44 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdviceLimb])),
             _ => unreachable!("canonical R1CS inputs"),
         }
     }
@@ -2253,6 +2270,70 @@ mod tests {
         #[cfg(feature = "field-inline")]
         crate::optimized::field_registers_testing::structured_field_register_fixture(12)
             .with_plane(4, |backend| sample_case(backend, 4));
+    }
+
+    #[test]
+    #[cfg(not(feature = "field-inline"))]
+    fn prepared_b_folds_match_canonical_matrix() {
+        #[cfg(feature = "akita")]
+        use jolt_field::Prime128OffsetA7F7;
+        fn check<F: JoltField>() {
+            let mut rows = synthetic_rows(8, 0xB0_1D);
+            for negative in [false, true] {
+                let mut row = rows[0];
+                row.right_lookup_operand.0 = u128::MAX;
+                row.right_instruction_input.0 = if negative { i128::MIN } else { i128::MAX };
+                row.imm.0 = row.right_instruction_input.0;
+                row.product.0 = S128::new([u64::MAX; 2], !negative);
+                row.ram_address.0 = u64::MAX;
+                row.ram_read_value.0 = u64::MAX;
+                row.ram_write_value.0 = u64::MAX;
+                rows.push(row);
+            }
+            // Wide columns at the zero, `u64` and two-limb boundaries.
+            for (right_lookup, right_input, product) in [
+                (0u128, -1i128, S128::new([1, 0], false)),
+                (
+                    u128::from(u64::MAX),
+                    i128::from(u64::MAX),
+                    S128::new([u64::MAX, 0], true),
+                ),
+                (1u128 << 64, -(1i128 << 64), S128::new([0, 1], false)),
+            ] {
+                let mut row = rows[0];
+                row.right_lookup_operand.0 = right_lookup;
+                row.right_instruction_input.0 = right_input;
+                row.imm.0 = right_input;
+                row.product.0 = product;
+                rows.push(row);
+            }
+            let large = F::from_u128(u128::MAX) * F::from_u128(u128::MAX - 0x1234_5678);
+            for challenge in [F::zero(), F::one(), F::from_u64(19), -F::one(), large] {
+                let derived = OuterRemainderKernel::<F>::derived_weights(challenge).unwrap();
+                let folds = PreparedBFolds::new(&derived).unwrap();
+                for row in &rows {
+                    let expected = std::array::from_fn(|stream| {
+                        derived.bz_constant[stream]
+                            + derived.bz_weights[stream]
+                                .iter()
+                                .enumerate()
+                                .map(|(index, &weight)| {
+                                    weight * variable_field_value::<F>(row, index)
+                                })
+                                .sum::<F>()
+                    });
+                    assert_eq!(folds.fold(row), expected);
+                }
+                // A matrix that reads a column the fold does not support fails
+                // loudly instead of silently dropping it.
+                let mut changed = derived;
+                changed.bz_weights[0][1] = F::one();
+                assert!(PreparedBFolds::new(&changed).is_err());
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 
     /// The integer extension of each base-window basis vector is exactly the
