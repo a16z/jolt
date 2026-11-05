@@ -20,8 +20,6 @@ test-utils = []
 immutable-recipes = [
   "akita",
   "field-inline",
-  "jolt-field/immutable-recipes",
-  "jolt-field/solinas",
 ]
 
 [dependencies]
