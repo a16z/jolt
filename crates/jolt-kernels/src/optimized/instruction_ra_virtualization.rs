@@ -35,9 +35,6 @@
 //! exactly as the naive tier's bound `EqCycle` table is checked.
 
 mod categorical;
-mod paired;
-
-use paired::PairedInstructionGather;
 
 use std::sync::Arc;
 
@@ -221,7 +218,7 @@ impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
         }
         let num_committed = self.folded_ra.num_polys();
         let folded_ra = &self.folded_ra;
-        let paired = PairedInstructionGather::new(folded_ra);
+        let paired = folded_ra.paired_lo_hi(num_committed);
         let gather = |row, pairs: &mut [(F, F)]| {
             if let Some(paired) = &paired {
                 paired.gather(row, pairs);

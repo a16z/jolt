@@ -67,9 +67,7 @@ use jolt_witness::{stream_witnesses, JoltWitnessPlane, StreamConsumer, WitnessBu
 use rayon::prelude::*;
 
 use super::constant_suffix::ConstantSuffix;
-use super::lazy_ra::{
-    ChunkIndexSource, LazyFoldedRa, PairedBranchTables, PAIRED_MATERIALIZE_BRANCHES,
-};
+use super::lazy_ra::{ChunkIndexSource, LazyFoldedRa, PairedBranchTables};
 use super::support::{
     accumulate_product_grid, collect_par_map, map_indices, map_reduce_chunks,
     product_grid_scratch_len, repeat_hash, repeats_often, scan_chunk_size, BundleAccess,
@@ -402,27 +400,21 @@ impl ChunkIndexSource for LookupIndexChunks {
         }
     }
 
-    fn visit_paired_values<F: JoltField>(
+    #[inline(always)]
+    fn visit_paired_branches<F: JoltField, const BRANCHES: usize>(
         &self,
         tables: &PairedBranchTables<F>,
-        row: usize,
+        start: usize,
         visit: impl FnMut(usize, F),
     ) {
-        let start = row * PAIRED_MATERIALIZE_BRANCHES;
         if self.chunk_bits == 4 {
-            tables.visit_four_bit::<PAIRED_MATERIALIZE_BRANCHES>(
+            tables.visit_four_bit::<BRANCHES>(
                 tables.columns(),
                 |branch| self.packed_index(start + branch),
                 visit,
             );
         } else {
-            tables.visit_indexed(
-                self,
-                0..tables.columns(),
-                start,
-                PAIRED_MATERIALIZE_BRANCHES / 2,
-                visit,
-            );
+            tables.visit_indexed(self, 0..tables.columns(), start, BRANCHES / 2, visit);
         }
     }
 
