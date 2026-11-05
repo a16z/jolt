@@ -1078,13 +1078,13 @@ fn tamper_proof(
     save_proof_data(guest, &tampered, output);
 }
 
+const GUEST_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+
 /// Guest build settings: a higher LLVM inline threshold, one codegen unit and no
 /// debug information for the guest's release profile. Measured as the fewest
 /// trace rows of the guest build configurations screened at inner sizes 2^12
 /// and 2^20; the inner proofs are unchanged. A value the caller already set for
 /// any of these variables wins.
-const GUEST_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
-
 const GUEST_BUILD_SETTINGS: [(&str, &str); 3] = [
     (
         "ZEROOS_GUEST_RUSTFLAGS",
