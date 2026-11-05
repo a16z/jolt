@@ -26,7 +26,7 @@ use jolt_transcript::{
 };
 use jolt_zk::masking::{
     CommittedPadsView, MaskedReader, MaskedSession, OperandShapeDomain, PadLayout,
-    ResidualRelation, ResidualRows,
+    ResidualRelation, ResidualRows, ZkError,
 };
 use jolt_zk::whiteout::{
     LatticePadPayload, MaskedGroupClaim, MaskedGroupOpening, MaskedOpeningShape,
@@ -203,9 +203,9 @@ impl DerivedPadLayout {
 }
 
 /// The NARG bytes a pad-layout replay of Akita's masked levels starts with;
-/// doubled on failure up to [`MAX_LAYOUT_ZEROS`].
+/// doubled while the replay runs out of bytes, up to [`MAX_LAYOUT_ZEROS`].
 const LAYOUT_ZEROS: usize = 1 << 20;
-const MAX_LAYOUT_ZEROS: usize = 1 << 26;
+const MAX_LAYOUT_ZEROS: usize = 1 << 24;
 
 /// The pad layout of a Whiteout proof, from the masked verifier's own replay
 /// over `proof`'s shape: stages 1–7 read zeros from an unbounded masked tape
@@ -255,28 +255,39 @@ where
         &mut transcript,
     )?;
     let base = counter.pads.used();
-    let mut zeros = LAYOUT_ZEROS;
-    let (prefix, view) = loop {
-        let bytes = vec![0u8; zeros];
+    let (prefix, view) = count_on_zeros(|bytes| {
         let mut state = verifier_transcript::<<PCS as MaskedGroupOpening<F>>::Sponge>(
             &JOLT_SESSION,
             &0u64,
-            &bytes,
+            bytes,
         );
         let mut view = CommittedPadsView::counting();
         let _ = view.take(base)?;
-        match PCS::count_masked(&frame.shape, claims.clone(), &mut view, &mut state) {
-            Ok(prefix) => break (prefix, view),
-            Err(_) if zeros < MAX_LAYOUT_ZEROS => zeros <<= 1,
-            Err(error) => return Err(VerifierError::Masking(error)),
-        }
-    };
+        let prefix = PCS::count_masked(&frame.shape, claims.clone(), &mut view, &mut state)?;
+        Ok((prefix, view))
+    })?;
     let mut domain = OperandShapeDomain::new(view.used());
     PCS::prefix_shape(&prefix, &mut domain)?;
     Ok(DerivedPadLayout {
         layout: residual.shape(domain)?.layout()?,
         shape: frame.plan.shape(),
     })
+}
+
+/// Runs `count` over [`LAYOUT_ZEROS`] zero bytes, doubling them while it runs
+/// out ([`ZkError::TranscriptRejected`], see
+/// [`MaskedGroupOpening::count_masked`]) up to [`MAX_LAYOUT_ZEROS`]. Any other
+/// error returns at once: retrying cannot change a deterministic failure.
+fn count_on_zeros<R>(
+    mut count: impl FnMut(&[u8]) -> Result<R, ZkError>,
+) -> Result<R, VerifierError> {
+    let mut zeros = LAYOUT_ZEROS;
+    loop {
+        match count(&vec![0u8; zeros]) {
+            Err(ZkError::TranscriptRejected) if zeros < MAX_LAYOUT_ZEROS => zeros <<= 1,
+            result => return Ok(result?),
+        }
+    }
 }
 
 /// A Whiteout proof through stage 7 and stage 8's claims: the frame, the
@@ -515,4 +526,44 @@ where
         transcript.borrow_mut(),
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn layout_replay_retries_only_when_out_of_bytes() {
+        let mut lengths = Vec::new();
+        let result = count_on_zeros(|bytes| {
+            lengths.push(bytes.len());
+            Err::<(), _>(ZkError::InvalidLayout { reason: "fixed" })
+        });
+        assert!(matches!(
+            result,
+            Err(VerifierError::Masking(ZkError::InvalidLayout { .. }))
+        ));
+        assert_eq!(lengths, [LAYOUT_ZEROS]);
+
+        lengths.clear();
+        let needed = 3 * LAYOUT_ZEROS;
+        let result = count_on_zeros(|bytes| {
+            lengths.push(bytes.len());
+            if bytes.len() < needed {
+                Err(ZkError::TranscriptRejected)
+            } else {
+                Ok(())
+            }
+        });
+        assert!(result.is_ok());
+        assert_eq!(lengths, [LAYOUT_ZEROS, 2 * LAYOUT_ZEROS, 4 * LAYOUT_ZEROS]);
+
+        lengths.clear();
+        let result = count_on_zeros(|bytes| {
+            lengths.push(bytes.len());
+            Err::<(), _>(ZkError::TranscriptRejected)
+        });
+        assert!(matches!(result, Err(VerifierError::TranscriptRejected)));
+        assert_eq!(lengths.last(), Some(&MAX_LAYOUT_ZEROS));
+    }
 }

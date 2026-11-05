@@ -107,10 +107,13 @@ pub trait MaskedGroupOpening<F: JoltField> {
 
     /// The pad-layout replay of [`Self::verify_masked`], over a counting
     /// view: it counts the masked messages' pads and checks nothing.
+    /// `transcript` reads zero bytes.
     ///
     /// # Errors
     ///
-    /// [`ZkError`] if the replay cannot run the shape.
+    /// [`ZkError::TranscriptRejected`] if `transcript` rejected a read,
+    /// which on zero bytes means they ran out; the caller may retry with more.
+    /// Any other [`ZkError`] if the replay cannot run the shape.
     fn count_masked(
         shape: &Self::Shape,
         groups: Vec<MaskedGroupClaim<F, Self::GroupCommitment>>,

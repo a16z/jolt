@@ -132,7 +132,18 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         transcript: &mut VerifierState<'_, TranscriptSponge>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
         let (groups, forms) = decode(shape, groups)?;
-        Ok(shape.row().count_masked(&groups, forms, view, transcript)?)
+        // The counting replay checks no proof of work and reads zero bytes,
+        // so Akita's transcript rejection here is a short NARG string.
+        shape
+            .row()
+            .count_masked(&groups, forms, view, transcript)
+            .map_err(|error| {
+                if error == AkitaError::InvalidProof {
+                    ZkError::TranscriptRejected
+                } else {
+                    error.into()
+                }
+            })
     }
 
     fn prefix_shape(
