@@ -457,6 +457,11 @@ paper delta.
   with the IFMA path: `Ifma52Params::reconstruct` uses `rem_euclid` and
   a branch on the tail digit of the mat-vec output. x86_64 was
   clippy-checked and its release code inspected, not run.
+- **T0 resync, correction (2026-11-05).** Akita deb13c039 re-blessed
+  `artifacts/schedule-planner-cost.tsv` and attributed the change to "the
+  v8+dev search: fewer candidates". That cause is wrong. The changed rows
+  come from Whiteout's O2/O2b planner counters (76 rows) and from K = 16
+  (#258, 38 rows); the chosen schedules are unchanged.
 
 ## Not verified
 
