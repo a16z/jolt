@@ -125,3 +125,8 @@ required-features = ["sample", "parallel"]
 name = "crypto"
 harness = false
 required-features = ["bn254"]
+
+[[bench]]
+name = "gaussian"
+harness = false
+required-features = ["sample", "parallel"]
