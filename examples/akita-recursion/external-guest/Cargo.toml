@@ -7,9 +7,6 @@ publish = false
 guest = [
   "dep:jolt-akita-external",
   "dep:jolt-akita",
-  "dep:jolt-transcript",
-  "dep:akita-challenges",
-  "dep:akita-transcript",
   "jolt/guest-std",
   "jolt/stdout",
   "jolt/random",
@@ -21,15 +18,6 @@ jolt-akita-external = { path = "../replay", features = [
   "akita",
 ], optional = true }
 jolt-akita = { workspace = true, optional = true }
-jolt-transcript = { workspace = true, features = [
-  "blake2-inline",
-], optional = true }
-akita-challenges = { workspace = true, features = [
-  "keccak-inline",
-], optional = true }
-akita-transcript = { git = "https://github.com/LayerZero-Labs/akita.git", rev = "e1f722d5633af4575f0cb6aa57d93d69c9c66024", default-features = false, features = [
-  "blake2-inline",
-], optional = true }
 [lib]
 test = false
 doctest = false
@@ -38,7 +26,3 @@ name = "jolt-akita-external-guest"
 path = "src/main.rs"
 test = false
 bench = false
-
-# Direct dependencies select the guest transcript and challenge inlines.
-[package.metadata.cargo-machete]
-ignored = ["akita-challenges", "akita-transcript", "jolt-transcript"]

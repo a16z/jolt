@@ -13,7 +13,6 @@ akita = [
   "jolt-akita-recursion/akita",
   "dep:jolt-akita",
   "dep:jolt-verifier",
-  "dep:jolt-transcript",
   "dep:akita-types",
 ]
 recursion-host = [
@@ -34,9 +33,7 @@ postcard = { workspace = true, features = ["use-std"] }
 jolt-akita-recursion = { path = ".." }
 jolt-akita = { workspace = true, optional = true }
 jolt-verifier = { workspace = true, features = ["akita"], optional = true }
-jolt-transcript = { workspace = true, features = [
-  "transcript-blake2b",
-], optional = true }
+
 akita-types = { workspace = true, optional = true }
 anyhow.workspace = true
 serde_json.workspace = true

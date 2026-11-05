@@ -48,8 +48,9 @@ only that some nonempty batch verifies under the image's setup.
 
 `trace` requires the guest's verdict to match `--expect` (default `accept`); a
 guest panic is neither verdict. `tamper-opening` requires the Akita build and
-flips one bit inside the first PCS opening proof body, preserving its envelope
-and length prefixes. The stream still decodes and the guest must reject it:
+flips one bit in the last byte of the first proof's argument string, which
+belongs to Akita's opening. The stream still decodes and the guest must reject
+it:
 
 ```sh
 recursion generate --example fibonacci --workdir proofs

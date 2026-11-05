@@ -14,11 +14,10 @@ default = ["parallel"]
 # guest builds without it; Jolt's own prover kernels in this crate still link
 # rayon, which a guest verifier never calls.
 parallel = ["akita-pcs/parallel"]
-# Akita's transcript and NTT kernels over the jolt-inlines Blake2b and NTT
-# inlines, for a RISC-V guest verifier.
-blake2-inline = ["akita-pcs/blake2-inline"]
+# Akita's NTT kernels over the jolt-inlines NTT inline, for a RISC-V guest
+# verifier. Akita runs on Jolt's Keccak transcript sponge, for which
+# jolt-transcript has no guest inline.
 ntt-inline = ["akita-pcs/ntt-inline"]
-keccak-inline = ["akita-pcs/keccak-inline"]
 # Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 profiling = ["parallel"]
@@ -29,12 +28,11 @@ profiling = ["parallel"]
 akita-algebra.workspace = true
 akita-config.workspace = true
 akita-error.workspace = true
-akita-pcs = { workspace = true, default-features = false, features = [
-  "transcript-blake2b",
-] }
+akita-pcs = { workspace = true, features = ["transcript-keccak"] }
 akita-challenges.workspace = true
 akita-planner.workspace = true
 akita-schedules.workspace = true
+akita-transcript.workspace = true
 akita-types.workspace = true
 akita-verifier.workspace = true
 akita-prover.workspace = true

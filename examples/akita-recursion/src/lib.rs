@@ -3,9 +3,10 @@
 use akita_types::setup_claims::{SetupBatchStatement, SetupQuery};
 use common::jolt_device::JoltDevice;
 use jolt_akita::deferred::{SetupClaimAccumulator, SetupClaimAdvice, SetupMode};
-use jolt_akita::{AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext};
+use jolt_akita::{
+    AkitaError, AkitaField, AkitaScheme, AkitaVerificationContext, AkitaVerifierTranscript,
+};
 use jolt_crypto::NoVectorCommitment;
-use jolt_transcript::{Blake2b512, VerifierState};
 use jolt_verifier::verifier::verify_with_context;
 use jolt_verifier::{JoltProof, JoltVerifierPreprocessing};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -72,7 +73,7 @@ impl ProofPair {
                 "inner1_akita"
             });
             let verified =
-                verify_with_context::<AkitaField, AkitaScheme, Vc, VerifierState<Blake2b512>>(
+                verify_with_context::<AkitaField, AkitaScheme, Vc, AkitaVerifierTranscript<'_>>(
                     &self.preprocessing,
                     &inner.io,
                     &inner.proof,

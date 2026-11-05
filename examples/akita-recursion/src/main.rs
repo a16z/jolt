@@ -19,8 +19,8 @@ use common::constants::RAM_START_ADDRESS;
 use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_akita::deferred::{InheritedSetupClaims, SetupClaimAdvice, SetupMode};
 use jolt_akita::{
-    AkitaChunkProfile, AkitaError, AkitaField, AkitaProverSetup, AkitaScheduleArtifacts,
-    AkitaScheme, AkitaVerifierResources,
+    AkitaChunkProfile, AkitaError, AkitaField, AkitaProverSetup, AkitaProverTranscript,
+    AkitaScheduleArtifacts, AkitaScheme, AkitaVerifierResources, AkitaVerifierTranscript,
 };
 use jolt_akita_recursion::{decode_exact, AnswerTape, InnerProof, ProofPair, ReplayEvent, Vc};
 use jolt_host::{JoltProgramSource, Program};
@@ -35,7 +35,6 @@ use jolt_prover::{
     },
     JoltBackend, ProverConfig,
 };
-use jolt_transcript::{Blake2b512, ProverState, VerifierState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 use serde::Serialize;
 use tracer::execution_backend::TracerBackend;
@@ -219,7 +218,7 @@ fn prove(
             trace,
         ),
     );
-    let proof = akita::prove::<AkitaField, AkitaScheme, Vc, ProverState<Blake2b512>>(
+    let proof = akita::prove::<AkitaField, AkitaScheme, Vc, AkitaProverTranscript>(
         JoltBackend::optimized().with_witness(&witness),
         preprocessing,
         config,
@@ -321,7 +320,7 @@ fn generate(
         let mut checks = Vec::new();
         for _ in 0..9 {
             let verify_started = Instant::now();
-            jolt_verifier::verify::<AkitaField, AkitaScheme, Vc, VerifierState<Blake2b512>>(
+            jolt_verifier::verify::<AkitaField, AkitaScheme, Vc, AkitaVerifierTranscript<'_>>(
                 &prepared.verifier,
                 &inner.io,
                 &inner.proof,
