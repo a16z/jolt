@@ -1,20 +1,26 @@
 #![expect(clippy::unwrap_used, reason = "test module")]
 
 use std::collections::VecDeque;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 
-use common::jolt_device::MemoryConfig;
+use common::jolt_device::{JoltDevice, MemoryConfig};
 use jolt_platform::JOLT_ADVICE_WRITE_CALL_ID;
 use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineOperands,
 };
+#[cfg(feature = "field-inline")]
+use jolt_program::field_inline::FieldEncodedValue;
 #[cfg(not(feature = "field-inline"))]
 use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
 use jolt_riscv::{
     instructions::VirtualHostIO, InlineExtension, JoltInstructionKind as Kind,
-    JoltInstructionProfile,
+    JoltInstructionProfile, NormalizedOperands,
 };
 #[cfg(feature = "field-inline")]
-use jolt_riscv::{FieldInlineOp, RV64IMAC_JOLT_FIELD_INLINE};
+use jolt_riscv::{FieldInlineOp, FIELD_REGISTER_COUNT, RV64IMAC_JOLT_FIELD_INLINE};
+use rand::{rngs::StdRng, Rng, SeedableRng};
+use strum::IntoEnumIterator;
 
 use super::*;
 use crate::emulator::cpu::PrivilegeMode;
@@ -80,6 +86,36 @@ fn rejection<T>(result: Result<T, TraceError>) -> Option<(TraceAllocationPhase, 
     }
 }
 
+const ADDI: u32 = 0x0010_0093; // addi x1, x0, 1
+const STALL: u32 = 0x0000_006f; // j .
+
+/// Sets the initial cycle and row reserve of this test's process; nextest
+/// runs each test in its own.
+fn reserve_rows(rows: usize) {
+    std::env::set_var("JOLT_TRACER_CAPACITY_ROWS", rows.to_string());
+}
+
+/// What a limited trace of a guest without input buffers holds after setup
+/// besides its trace storage: the setup a refusal at limit 0 reports, less
+/// its row reserve, its pending window and the ELF copy setup frees.
+fn setup_bytes(program: &JoltProgram, inputs: &TraceInputs) -> usize {
+    let (_, required) = rejection(limited(0).trace(program, inputs.clone())).unwrap();
+    required
+        - crate::trace_capacity_reserve() * size_of::<JoltTraceRow>()
+        - pending_window(SERIAL_BATCH_ROWS).unwrap() * size_of::<Cycle>()
+        - program.elf_bytes().len()
+}
+
+/// The row capacity of a limited trace, whose merged field events fill their
+/// buffer.
+fn row_capacity(output: &TraceOutput) -> usize {
+    #[cfg(feature = "field-inline")]
+    let events = size_of_val(output.trace.field_events());
+    #[cfg(not(feature = "field-inline"))]
+    let events = 0;
+    (output.trace.heap_bytes() - events) / size_of::<JoltTraceRow>()
+}
+
 fn no_advice(
     _operands: FormatInline,
     _cpu: &mut dyn InlineAdviceContext,
@@ -87,18 +123,33 @@ fn no_advice(
     Ok(None)
 }
 
-/// A registered inline that fills the `u16` sequence length: these rows plus
-/// one reset row.
-fn longest_inline(
+/// A registered inline of `ROWS` rows: these increments plus one reset row.
+/// `u16::MAX` rows fill the sequence length.
+fn addi_inline<const ROWS: u16>(
     mut asm: InlineExpansionBuilder,
     _operands: InlineOperands,
 ) -> Result<ExpandedInstructionSequence, ExpansionError> {
     let register = asm.allocate_for_inline()?;
-    for _ in 1..u16::MAX {
+    for _ in 1..ROWS {
         asm.emit_i(Kind::ADDI, *register, 0, 1);
     }
     asm.release(register);
     asm.finalize()
+}
+
+/// A registered inline of two rows when first expanded and `u16::MAX` rows
+/// after: outside the text, where no expansion is cached, its tick emits
+/// more rows than its peek counted.
+fn growing_inline(
+    asm: InlineExpansionBuilder,
+    operands: InlineOperands,
+) -> Result<ExpandedInstructionSequence, ExpansionError> {
+    static EXPANDED: AtomicBool = AtomicBool::new(false);
+    if EXPANDED.swap(true, Ordering::Relaxed) {
+        addi_inline::<{ u16::MAX }>(asm, operands)
+    } else {
+        addi_inline::<2>(asm, operands)
+    }
 }
 
 /// A registered inline whose host advice write precedes a write of x5.
@@ -111,9 +162,11 @@ fn host_write_then_increment(
     asm.finalize()
 }
 
-// custom-1, funct3 6, rd x5; funct7 0x7d and 0x7c.
+// custom-1, funct3 6, rd x5; funct7 0x7d, 0x7c, 0x7a and 0x7b.
 const LONGEST_INLINE_WORD: u32 = 0xfa00_62ab;
 const HOST_WRITE_INLINE_WORD: u32 = 0xf800_62ab;
+const MID_INLINE_WORD: u32 = 0xf400_62ab;
+const MID_ROWS: u16 = 1 << 14;
 
 inventory::submit! {
     InlineRegistration {
@@ -122,7 +175,31 @@ inventory::submit! {
         funct7: 0x7d,
         extension: InlineExtension::Sha2,
         name: "TEST_LONGEST_INLINE",
-        build_sequence: longest_inline,
+        build_sequence: addi_inline::<{ u16::MAX }>,
+        build_advice: no_advice,
+    }
+}
+
+inventory::submit! {
+    InlineRegistration {
+        opcode: 0x2b,
+        funct3: 0x6,
+        funct7: 0x7a,
+        extension: InlineExtension::Sha2,
+        name: "TEST_MID_INLINE",
+        build_sequence: addi_inline::<MID_ROWS>,
+        build_advice: no_advice,
+    }
+}
+
+inventory::submit! {
+    InlineRegistration {
+        opcode: 0x2b,
+        funct3: 0x6,
+        funct7: 0x7b,
+        extension: InlineExtension::Sha2,
+        name: "TEST_GROWING_INLINE",
+        build_sequence: growing_inline,
         build_advice: no_advice,
     }
 }
@@ -334,10 +411,12 @@ fn field_merge_is_checked_beside_its_sources() {
         + heap_bytes(&trace.chunks)
         + 2 * sources;
     assert_eq!(
-        rejection(converted(needed - 1).finish(&memory, 0)),
+        rejection(converted(needed - 1).finish(FinalImage::Flat(memory.flat_image()), 0)),
         Some((TraceAllocationPhase::FieldMerge, needed))
     );
-    let (data, _, _) = converted(needed).finish(&memory, 0).unwrap();
+    let (data, _, _) = converted(needed)
+        .finish(FinalImage::Flat(memory.flat_image()), 0)
+        .unwrap();
     let events: Vec<_> = data
         .field_events()
         .iter()
@@ -349,8 +428,11 @@ fn field_merge_is_checked_beside_its_sources() {
 /// A guest loop of a field-inline load (a no-op in other builds), an unsigned
 /// division that expands into several rows, and a store: its limited trace
 /// equals its original trace in rows, field events, dimensions, device, final
-/// image and advice tape. Every division's tick overruns a three-row batch,
-/// and the other batch spans two parallel conversion slices.
+/// image and advice tape. It does so batching from the start, below the
+/// default reserve's cycles, where every division's tick overruns a
+/// three-row batch and the other batch spans two parallel conversion slices;
+/// converting once, at the end; and, with a 2^20-cycle reserve whose
+/// conversion fits for half of the run, batching from there.
 #[test]
 fn limited_trace_matches_the_original_trace() {
     #[cfg(feature = "field-inline")]
@@ -378,10 +460,7 @@ fn limited_trace_matches_the_original_trace() {
     let rows = original.trace.rows();
     let wide = 2 * PARALLEL_ROW_CONVERSION_THRESHOLD - 100;
     assert!(rows.len() > 4 * wide);
-    for batch_rows in [3, wide] {
-        let limited = TracerBackend::new()
-            .trace_limited(&program, inputs.clone(), usize::MAX, batch_rows)
-            .unwrap();
+    let matches = |limited: &TraceOutput| {
         assert_eq!(limited.trace.rows(), rows);
         assert_eq!(limited.dimensions, original.dimensions);
         assert_eq!(limited.device, original.device);
@@ -397,9 +476,32 @@ fn limited_trace_matches_the_original_trace() {
                     .map(|event| (event.cycle, event.data))
                     .collect::<Vec<_>>()
             };
-            assert_eq!(events(&limited), events(&original));
+            assert_eq!(events(limited), events(&original));
         }
+    };
+    let (cycle, row) = (size_of::<Cycle>(), size_of::<JoltTraceRow>());
+    let setup = setup_bytes(&program, &inputs);
+    let reserve = crate::trace_capacity_reserve();
+    for batch_rows in [3, wide] {
+        let window = pending_window(batch_rows).unwrap();
+        let limit = setup + reserve * row + window * cycle + (64 << 20);
+        assert!(limit < setup + reserve * cycle);
+        let limited = TracerBackend::new()
+            .trace_limited(&program, inputs.clone(), limit, batch_rows)
+            .unwrap();
+        matches(&limited);
+        assert_eq!(row_capacity(&limited), reserve);
     }
+    let eager = limited(usize::MAX).trace(&program, inputs.clone()).unwrap();
+    matches(&eager);
+    assert_eq!(row_capacity(&eager), rows.len());
+    reserve_rows(1 << 20);
+    let setup = setup_bytes(&program, &inputs);
+    let limit = setup + (cycle << 20) + rows.len() / 2 * row;
+    assert!(limit < setup + (row << 20) + pending_window(SERIAL_BATCH_ROWS).unwrap() * cycle);
+    let halfway = limited(limit).trace(&program, inputs.clone()).unwrap();
+    matches(&halfway);
+    assert_eq!(row_capacity(&halfway), 1 << 20);
     // Events fall in the first batch's second slice and in later batches.
     #[cfg(feature = "field-inline")]
     {
@@ -409,6 +511,414 @@ fn limited_trace_matches_the_original_trace() {
             .any(|event| (PARALLEL_ROW_CONVERSION_THRESHOLD..wide).contains(&event.cycle)));
         assert!(events.last().unwrap().cycle > 4 * wide);
     }
+}
+
+/// The first tick commits to accumulating by its own emission, not by the
+/// longest tick's. With a 2^15-cycle reserve, below the longest tick, the
+/// guests Y = [addi; j .; MID] and X = [MID; j .; addi], MID a 2^14-row
+/// inline, hold the same three words and so have equal setups. At the least
+/// limit at which Y runs, below the batched setup, Y keeps exact rows and X,
+/// whose first tick is MID, fails.
+#[test]
+fn exact_first_tick_admits_the_accumulation() {
+    reserve_rows(1 << 15);
+    assert!(usize::from(MID_ROWS) < 1 << 15 && 1 << 15 < MAX_EXPANDED_ROWS_PER_SOURCE);
+    let y = guest(&[ADDI, STALL, MID_INLINE_WORD]);
+    let x = guest(&[MID_INLINE_WORD, STALL, ADDI]);
+    assert_eq!(y.0.elf_bytes().len(), x.0.elf_bytes().len());
+    let run = |(program, inputs): &(JoltProgram, TraceInputs), limit| {
+        limited(limit).trace(program, inputs.clone())
+    };
+    let (_, batched) = rejection(run(&y, 0)).unwrap();
+    assert_eq!(rejection(run(&x, 0)).unwrap().1, batched);
+    let (mut refused, mut least) = (0, batched);
+    assert!(run(&y, least).is_ok());
+    while least - refused > 1 {
+        let middle = refused + (least - refused) / 2;
+        if run(&y, middle).is_ok() {
+            least = middle;
+        } else {
+            refused = middle;
+        }
+    }
+    assert!(least < batched);
+    let output = run(&y, least).unwrap();
+    let original = TracerBackend::new().trace(&y.0, y.1.clone()).unwrap();
+    assert_eq!(output.trace.rows(), original.trace.rows());
+    assert_eq!(row_capacity(&output), output.trace.rows().len());
+    assert!(matches!(
+        run(&x, least),
+        Err(TraceError::TraceAllocation(_))
+    ));
+    assert!(run(&x, batched).is_ok());
+}
+
+/// A run that accumulates a 2^14-row inline and must convert it before an
+/// equal second tick continues after the conversion: it keeps every row of
+/// the original trace, in rows grown to the 2^18-row reserve once the
+/// accumulated cycles drop.
+#[test]
+fn transition_before_an_equal_tick_continues_the_run() {
+    reserve_rows(1 << 18);
+    let (program, inputs) = guest(&[MID_INLINE_WORD, MID_INLINE_WORD, ADDI, STALL]);
+    let original = TracerBackend::new()
+        .trace(&program, inputs.clone())
+        .unwrap();
+    let mid = usize::from(MID_ROWS);
+    // Converting the first inline fits beside the reserved cycles; both do not.
+    let limit = setup_bytes(&program, &inputs)
+        + (size_of::<Cycle>() << 18)
+        + mid * size_of::<JoltTraceRow>()
+        + (64 << 10);
+    let output = limited(limit).trace(&program, inputs).unwrap();
+    assert_eq!(output.trace.rows(), original.trace.rows());
+    assert!(output.trace.rows().len() > 2 * mid);
+    assert_eq!(row_capacity(&output), 1 << 18);
+}
+
+/// A guest of `rows` one-row ticks, at least four: a countdown loop, an
+/// increment where `rows` is even, and a self-jump that writes x1.
+fn counted_guest(rows: usize) -> (JoltProgram, TraceInputs) {
+    let pad = (rows - 3) % 2;
+    let count = (rows - 3 - pad) / 2;
+    let high = (count + 0x800) >> 12;
+    let low = count.wrapping_sub(high << 12) as u32 & 0xfff;
+    let mut words = vec![
+        ((high as u32) << 12) | 0x2b7, // lui x5, high
+        (low << 20) | 0x2_8293,        // addi x5, x5, low
+        0xfff2_8293,                   // addi x5, x5, -1
+        0xfe02_9ee3,                   // bne x5, x0, -4
+    ];
+    words.extend([ADDI].repeat(pad));
+    words.push(0x0000_00ef); // jal x1, 0
+    guest(&words)
+}
+
+/// Ending ticks are peeked, not bounded by the longest tick, and a grown
+/// buffer converts what it holds. With a 2^16-cycle reserve, a run that
+/// fills it, its PC stall peeked as no row, keeps exact rows one byte below
+/// the reserve's growth, its old and new buffers together; a run two rows
+/// past it grows once and keeps exact rows within 1 MiB above that growth,
+/// below converting a full doubled buffer.
+#[test]
+fn ending_ticks_neither_grow_nor_collect_ahead() {
+    let capacity = 1 << 16;
+    reserve_rows(capacity);
+    let growth = 3 * capacity * size_of::<Cycle>();
+    for (rows, room) in [(capacity, 0), (capacity + 2, 1 << 20)] {
+        let (program, inputs) = counted_guest(rows);
+        let limit = setup_bytes(&program, &inputs) + growth + room - 1;
+        let output = limited(limit).trace(&program, inputs).unwrap();
+        assert_eq!(
+            (output.trace.rows().len(), row_capacity(&output)),
+            (rows, rows)
+        );
+    }
+}
+
+/// A 100_000-cycle reserve grows from its observed capacity by
+/// `growth_target`, to 200_000 and then 400_000 cycles, as longest inlines
+/// overrun it, and row anchors double from it. With room for the second
+/// growth the run keeps exact rows; one byte short of it, the run converts
+/// before the fourth inline into rows anchored at 400_000, not the 262_140
+/// it needs.
+#[test]
+fn growth_and_anchors_start_from_an_irregular_reserve() {
+    let initial = 100_000;
+    reserve_rows(initial);
+    let (program, inputs) = guest(&[[LONGEST_INLINE_WORD; 4].as_slice(), &[STALL]].concat());
+    let original = TracerBackend::new()
+        .trace(&program, inputs.clone())
+        .unwrap();
+    let rows = original.trace.rows().len();
+    let growth = setup_bytes(&program, &inputs) + 6 * initial * size_of::<Cycle>();
+    for (limit, capacity) in [(growth + (1 << 20), rows), (growth - 1, 4 * initial)] {
+        let output = limited(limit).trace(&program, inputs.clone()).unwrap();
+        assert_eq!(output.trace.rows(), original.trace.rows());
+        assert_eq!(row_capacity(&output), capacity);
+    }
+}
+
+/// A refused advice write fails the run at the tick that made it, before the
+/// run converts for the next tick, refreshes the allowance for it, or ends
+/// after a registered inline the refusal cut short. Each guest copies 1 MiB
+/// of itself to the tape where its accumulated ticks fit with half of that
+/// to spare; without a limit, each writes it all. The limited trace at the
+/// maximum limit shows that for the guests that write through their own host
+/// I/O. The registered inline's guest shows it through the tape-only run: its
+/// I-format host I/O row fails main's bytecode check once a trace converts it
+/// (see [`advice_writing_guest`]). A write may not take the conversion its
+/// tick reserved either: the last guest's write would fit beside the longest
+/// tick's conversion, which the limit funds, but not within it.
+#[test]
+fn refused_advice_write_outlives_the_next_tick() {
+    reserve_rows(1 << 18);
+    // The advice-write call: a0 its id, a1 this code, a2 1 MiB.
+    let call = [0x00ad_c537, 0xabe5_0513, 0x0000_0597, 0x0010_0637];
+    let host_io = 0x0000_205b;
+    let longest = (size_of::<JoltTraceRow>() + FIELD_EVENT_BYTES) * MAX_EXPANDED_ROWS_PER_SOURCE;
+    for (tail, room) in [
+        ([host_io, MID_INLINE_WORD], 512 << 10),
+        ([host_io, ADDI], 512 << 10),
+        ([HOST_WRITE_INLINE_WORD, STALL], 512 << 10),
+        ([host_io, STALL], longest + (1 << 20)),
+    ] {
+        let (program, inputs) = guest(&[&call[..], &tail, &[STALL]].concat());
+        let unlimited = if tail[0] == HOST_WRITE_INLINE_WORD {
+            TracerBackend::execute_advice_tape(&program, inputs.clone(), usize::MAX).unwrap()
+        } else {
+            let output = limited(usize::MAX).trace(&program, inputs.clone()).unwrap();
+            output.advice_tape.unwrap()
+        };
+        assert_eq!(unlimited.len(), 1 << 20);
+        let limit = setup_bytes(&program, &inputs) + (size_of::<Cycle>() << 18) + room;
+        let refusal = rejection(limited(limit).trace(&program, inputs));
+        assert_eq!(
+            refusal.map(|(phase, _)| phase),
+            Some(TraceAllocationPhase::AdviceWrite)
+        );
+    }
+}
+
+/// A tick that emits more cycles than its peek counted fails the run instead
+/// of growing the cycle buffer unchecked: the guest stores the growing
+/// inline past its text, where no expansion is cached, and jumps to it.
+#[test]
+fn uncounted_cycles_fail_the_run() {
+    reserve_rows(1 << 15);
+    let (program, inputs) = guest(&[
+        0x0000_1317, // auipc x6, 1
+        0xf600_63b7, // lui x7, 0xf6006
+        0x2ab3_8393, // addi x7, x7, 0x2ab: x7 holds the growing inline, 0xf600_62ab
+        0x0073_2023, // sw x7, 0(x6)
+        0x0003_0067, // jr x6
+    ]);
+    assert!(matches!(
+        limited(usize::MAX).trace(&program, inputs),
+        Err(TraceError::UncountedCycles { capacity }) if capacity == 1 << 15
+    ));
+}
+
+/// The transition converts the accumulated cycles into rows grown to the
+/// anchor and leaves a one-tick window, a batch of one cycle. A plan whose
+/// row growth does not fit holds a smaller batch and one tick within the
+/// rows, and a limit below one tick refuses the window.
+#[test]
+fn planned_windows_hold_their_batch_and_one_tick() {
+    let bytecode = BytecodePreprocessing::preprocess(Vec::new(), 0x8000_0000, PROFILE).unwrap();
+    // A CPU at its PC stall, whose next tick emits no row.
+    let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+    cpu.get_mut_mmu().init_memory(64);
+    cpu.get_mut_mmu().store_word(DRAM_BASE, STALL).unwrap();
+    cpu.update_pc(DRAM_BASE);
+    cpu.tick(None);
+    let mut trace = storage(usize::MAX, vec![Cycle::NoOp; 100], Vec::new());
+    trace.start_batches(&bytecode, 0, 1 << 18, 0).unwrap();
+    assert_eq!((trace.rows.len(), trace.rows.capacity()), (100, 1 << 18));
+    assert_eq!(trace.cycles.capacity(), MAX_EXPANDED_ROWS_PER_SOURCE);
+    let held = heap_bytes(&trace.rows) + heap_bytes(&trace.chunks);
+    trace.limit = held + ((size_of::<Cycle>() + FIELD_EVENT_BYTES) << 17);
+    let batch = trace.plan_batch(&mut cpu).unwrap();
+    assert!(1 < batch && batch < SERIAL_BATCH_ROWS, "{batch}");
+    assert_eq!(trace.cycles.capacity(), pending_window(batch).unwrap());
+    assert!(trace.rows.len() + trace.cycles.capacity() <= trace.rows.capacity());
+    let window = MAX_EXPANDED_ROWS_PER_SOURCE * size_of::<Cycle>();
+    trace.limit = held + window - 1;
+    assert_eq!(
+        rejection(trace.plan_batch(&mut cpu)),
+        Some((TraceAllocationPhase::CycleBuffer, held + window))
+    );
+}
+
+/// Rows that a one-tick batch overruns grow before its window, not beside it.
+/// With a one-cycle reserve, a longest inline converts into rows anchored at
+/// 2^16 before the first addi, which fills them; the second addi needs them
+/// doubled. The limit holds the doubled rows beside the old rows or beside
+/// the window, but not beside both.
+#[test]
+fn one_tick_rows_grow_before_its_window() {
+    reserve_rows(1);
+    let (program, inputs) = guest(&[LONGEST_INLINE_WORD, ADDI, ADDI, STALL]);
+    let original = TracerBackend::new()
+        .trace(&program, inputs.clone())
+        .unwrap();
+    let window = MAX_EXPANDED_ROWS_PER_SOURCE * size_of::<Cycle>();
+    let limit = setup_bytes(&program, &inputs) + (10 << 20) + window;
+    let output = limited(limit).trace(&program, inputs).unwrap();
+    assert_eq!(output.trace.rows(), original.trace.rows());
+    assert_eq!(row_capacity(&output), 1 << 17);
+}
+
+/// An accumulated trace ends image first, as the original trace does, where
+/// the image fits beside the flat memory and the cycles and the conversion
+/// then fits with the flat memory released: there the rows first would not
+/// fit. Otherwise it ends rows first, the cycles dropped before the field
+/// merge and the image last, beside the rows instead of the cycles.
+#[test]
+fn accumulated_trace_ends_image_first_where_it_fits() {
+    let bytecode = BytecodePreprocessing::preprocess(Vec::new(), 0x8000_0000, PROFILE).unwrap();
+    let final_memory = |bytes| {
+        let mut memory = Memory::empty();
+        memory.init(1 << 20);
+        for address in 0..bytes {
+            memory.write_byte(address, 1);
+        }
+        memory
+    };
+    let flat = final_memory(0).flat_heap_bytes();
+    let image = |bytes| final_memory(bytes).flat_image().bytes().unwrap();
+    let cycles = vec![Cycle::NoOp; 100];
+    let (pending, rows) = (heap_bytes(&cycles), 100 * size_of::<JoltTraceRow>());
+    let finish = |bytes, limit| {
+        let trace = LimitedTrace {
+            resident: flat,
+            ..storage(limit, cycles.clone(), Vec::new())
+        };
+        let finished = trace.finish_accumulated(&bytecode, final_memory(bytes), 0, 0);
+        finished.map(|(data, _, image)| (data.len(), image.bytes.len()))
+    };
+    let image_first = flat + pending + image(1);
+    assert_eq!(finish(1, image_first).unwrap(), (100, 1));
+    assert_eq!(
+        rejection(finish(1, image_first - 1)),
+        Some((TraceAllocationPhase::RowGrowth, flat + pending + rows))
+    );
+    let rows_first = flat + rows + image(1 << 12);
+    let limit = flat + pending + image(1 << 12) - 1;
+    assert_eq!(finish(1 << 12, limit).unwrap(), (100, 1 << 12));
+    assert_eq!(
+        rejection(finish(1 << 12, rows_first - 1)),
+        Some((TraceAllocationPhase::FinalMemory, rows_first))
+    );
+    #[cfg(feature = "field-inline")]
+    {
+        // The limit the last tick admitted: the merge fits once the cycles drop.
+        let (cycles, bytecode) = field_inline_cycles(&[0, 1], 100);
+        let events = 2 * size_of::<FieldEvent>();
+        let limit = flat + heap_bytes(&cycles) + rows + size_of::<ConvertedChunk>() + events;
+        let trace = LimitedTrace {
+            resident: flat,
+            ..storage(limit, cycles, Vec::new())
+        };
+        let (data, _, _) = trace
+            .finish_accumulated(&bytecode, final_memory(1 << 10), 0, 2)
+            .unwrap();
+        assert_eq!(data.field_events().len(), 2);
+    }
+}
+
+/// [`Instruction::emission`] is what the instruction's trace emits, in rows
+/// and field events, for every variant with random operands, also with
+/// `rd = x0` where it writes a register, and for the registered inlines
+/// above; `NoOp` and `UNIMPL`, whose traces panic, are errors. Each runs with
+/// its random register values, and with every integer register at `DRAM_BASE`
+/// and every field register at one, beside a filled advice tape. Runs whose
+/// trace panics are skipped, but every other variant traces.
+#[test]
+fn tick_emission_matches_trace_for_every_instruction() {
+    let mut rng = StdRng::from_seed([5; 32]);
+    let inlines = [LONGEST_INLINE_WORD, HOST_WRITE_INLINE_WORD, MID_INLINE_WORD];
+    let fresh_cpu = || {
+        let mut cpu = Cpu::new(Box::new(DefaultTerminal::default()));
+        let config = MemoryConfig {
+            program_size: Some(1024),
+            ..Default::default()
+        };
+        cpu.get_mut_mmu().jolt_device = Some(JoltDevice::new(&config));
+        cpu.get_mut_mmu().init_memory(1 << 20);
+        cpu.advice_tape = AdviceTape::from_bytes(vec![7; 64]);
+        cpu
+    };
+    assert!(Instruction::UNIMPL.emission(&mut fresh_cpu()).is_err());
+    let mut untraced = Vec::new();
+    for template in Cycle::iter() {
+        let mut traced = 0;
+        for _ in 0..32 {
+            let cycle = template.random(&mut rng);
+            let random = match template {
+                Cycle::INLINE(_) => {
+                    let word = inlines[rng.gen_range(0..inlines.len())];
+                    Instruction::from(INLINE::new(word, DRAM_BASE, false, false))
+                }
+                _ => cycle.instruction(),
+            };
+            // Decode admits only these CSRs, an advice load reads 1, 2, 4 or 8
+            // bytes, and a field load writes an integer register: these
+            // operands stand in.
+            let mut operands = random.source_instruction().row().operands;
+            match template {
+                Cycle::CSRRS(_) | Cycle::CSRRW(_) => operands.imm = 0x300,
+                Cycle::VirtualAdviceLoad(_) => operands.imm = 8,
+                #[cfg(feature = "field-inline")]
+                Cycle::FIELD_LOAD_ACCUMULATE_FROM_MEMORY(_) => {
+                    (operands.rd, operands.rs1, operands.rs2) = (Some(5), Some(6), Some(1));
+                }
+                _ => {}
+            }
+            let rewrite = |operands| {
+                let source = random.source_instruction().map_row(|mut row| {
+                    row.operands = operands;
+                    row
+                });
+                Instruction::try_from_source_instruction(source).unwrap()
+            };
+            let rd0 = operands.rd.map(|_| NormalizedOperands {
+                rd: Some(0),
+                ..operands
+            });
+            for instruction in std::iter::once(operands).chain(rd0).map(rewrite) {
+                for random_registers in [true, false] {
+                    let mut cpu = fresh_cpu();
+                    if random_registers {
+                        for (register, value) in
+                            [cycle.rs1_read(), cycle.rs2_read()].into_iter().flatten()
+                        {
+                            cpu.write_register(usize::from(register), value as i64);
+                        }
+                    } else {
+                        // Aligned with the immediate offset, within memory.
+                        let imm = instruction.source_instruction().row().operands.imm;
+                        let base = (i128::from(DRAM_BASE) + 4096 - imm.rem_euclid(8)) as i64;
+                        for register in 1..32 {
+                            cpu.write_register(register, base);
+                        }
+                        #[cfg(feature = "field-inline")]
+                        for register in 0..FIELD_REGISTER_COUNT {
+                            let one = FieldEncodedValue::from_u64(1);
+                            cpu.field_registers.write(register, one);
+                        }
+                    }
+                    if matches!(instruction, Instruction::NoOp) {
+                        assert!(instruction.emission(&mut cpu).is_err());
+                        continue;
+                    }
+                    let run = catch_unwind(AssertUnwindSafe(|| {
+                        let emission = instruction.emission(&mut cpu).ok();
+                        let mut cycles = Vec::new();
+                        instruction.trace(&mut cpu, Some(&mut cycles));
+                        (emission, cycles)
+                    }));
+                    let Ok((emission, cycles)) = run else {
+                        continue;
+                    };
+                    #[cfg(feature = "field-inline")]
+                    let field_events = field_event_count(&cycles);
+                    #[cfg(not(feature = "field-inline"))]
+                    let field_events = 0;
+                    let emitted = Emission {
+                        rows: cycles.len(),
+                        field_events,
+                    };
+                    assert_eq!(emission, Some(emitted), "{instruction:?}");
+                    traced += 1;
+                }
+            }
+        }
+        if traced == 0 && !matches!(template, Cycle::NoOp) {
+            untraced.push(template);
+        }
+    }
+    assert!(untraced.is_empty(), "{untraced:?}");
 }
 
 /// Within one tick, a registered inline's rows after a refused advice write do

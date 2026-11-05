@@ -67,7 +67,9 @@ Below it, one limited serial trace feeds the proof: it rejects parallel
 tracing (`TRACER_PARALLEL`), fails at the first covered trace-storage request
 the budget cannot hold (its setup alone requests over 1 GiB by default, so
 smaller budgets fail during tracing, before the checks below), and keeps its
-row reserve in the trace output those checks count. A run much shorter than
+rows' observed capacity in the trace output those checks count: a run holding
+every cycle to the end requests exactly its rows; a batched run keeps at least
+its row reserve, even when it converts only at the end. A run much shorter than
 its domain can take the limited trace although the original would fit, and a
 budget just above the proxy keeps an original trace whose unpriced requests
 can exceed it.
