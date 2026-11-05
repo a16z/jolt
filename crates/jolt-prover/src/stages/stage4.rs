@@ -181,18 +181,19 @@ where
         ),
         ram_val_check: RamValCheck::new(trace_dimensions, log_k, init_structure.decomposition()),
     };
-    // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
-    // then the RAM value-check gamma, in one squeeze run behind the stage-4 proof of work.
-    let pow_nonce = grind_pow::<F, _>(PowSite::Stage4, transcript)?;
-    let challenges = sumchecks.draw_challenges(transcript)?;
     // The RAM value-check input claim consumes the staged openings. A masked
-    // proof sends them, masked, before the batch; a clear proof carries them
-    // in its stage-4 claims.
+    // proof sends them, masked, before the stage-4 proof of work, so the nonce
+    // protects every draw up to the batch; a clear proof carries them in its
+    // stage-4 claims.
     #[cfg(feature = "zk")]
     mode.send_private(
         &ram_val_check_init.staged_openings().opening_values(),
         transcript,
     )?;
+    // Draws the registers gamma, under `field-inline` the field-register read-write gamma,
+    // then the RAM value-check gamma, in one squeeze run behind the stage-4 proof of work.
+    let pow_nonce = grind_pow::<F, _>(PowSite::Stage4, transcript)?;
+    let challenges = sumchecks.draw_challenges(transcript)?;
 
     let inputs = stage4_input_values_from_upstream(
         &stage2.output_values,

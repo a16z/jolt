@@ -168,10 +168,9 @@ where
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
     // the field-register read-write gamma, then the RAM value-check gamma, each a single
     // `challenge()` in one squeeze run behind the stage-4 proof of work.
-    check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
-    let challenges = sumchecks.draw_challenges(transcript)?;
-
     if !checked.zk.is_masked() {
+        check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
+        let challenges = sumchecks.draw_challenges(transcript)?;
         let claims = &proof.clear_claims()?.stage4;
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
@@ -215,15 +214,24 @@ where
     {
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
         // output points and init structure. The staged cells arrive masked
-        // before the batch, at their clear position.
+        // before the batch.
         let input_points = stage4_input_points_from_upstream(
             stage2.batch_output_points(),
             stage3.output_points(),
             &init_structure,
         );
+        // The staged cells are a prover message, so they precede the stage-4
+        // proof of work: the nonce then protects the gammas and the batch
+        // coefficients drawn after them (see `pow`).
         let staged_points = init_structure.staged_points();
+        let mut masked = masked;
+        let staged = RamValCheckStagedOpenings::receive_masked(
+            &staged_points,
+            &mut masked_channel(masked.as_deref_mut(), transcript)?,
+        )?;
+        check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
+        let challenges = sumchecks.draw_challenges(transcript)?;
         let mut channel = masked_channel(masked, transcript)?;
-        let staged = RamValCheckStagedOpenings::receive_masked(&staged_points, &mut channel)?;
         let mut batch = sumchecks.verify_masked(&input_points, &mut channel)?;
         batch.output_claims.received.extend(staged);
 
