@@ -46,6 +46,7 @@ impl MetricsMonitor {
                 let interval = Duration::from_millis(((interval_secs * 1000.0) as u64).max(50));
                 let mut system = System::new();
 
+                system.refresh_cpu_all();
                 thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
 
                 while !stop.load(Ordering::Acquire) {
