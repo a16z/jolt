@@ -6,10 +6,21 @@
 //! `count_pm1` coefficients at ±1 and `count_pm2` at ±2. The decoder lives in
 //! [`stream`]; this module holds the certified operator-norm predicates.
 
+#[cfg(feature = "sample")]
+mod constant_time;
+mod indexed;
 mod op_norm;
 mod op_norm_accumulate;
+mod position_sample;
+mod signed_sparse;
 mod stream;
+mod xof;
 
+#[cfg(feature = "sample")]
+pub use constant_time::sample_challenge_ct;
+#[cfg(feature = "sample-diagnostics")]
+pub use constant_time::sample_challenge_ct_counted;
+pub use indexed::sample_indexed_challenges_from_seed;
 pub use stream::{SparseChallengeShell, SparseChallengeStream};
 
 use crate::CryptoError;
@@ -23,6 +34,8 @@ use crate::challenge::{
 use op_norm::OpNormTable;
 
 const OP_NORM_PREDICATE_SCALE: u32 = 48;
+/// Draws an operator-norm-rejecting sampler makes per coordinate before it fails.
+const MAX_OP_NORM_ATTEMPTS: usize = 4096;
 static D64_SELECTIVE_L2_OP_NORM_TABLE: LazyLock<Result<Arc<OpNormTable>, &'static str>> =
     LazyLock::new(|| {
         let config = D64_SELECTIVE_L2_CHALLENGE_CONFIG;
