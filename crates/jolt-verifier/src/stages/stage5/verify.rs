@@ -163,6 +163,8 @@ where
         let instruction_r_address = batch.output_points.instruction_r_address();
 
         Ok(Stage5Output::Zk(Stage5ZkOutput {
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            members: sumchecks.masked_members(&input_points, &batch.output_points, &challenges)?,
             challenges,
             batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,

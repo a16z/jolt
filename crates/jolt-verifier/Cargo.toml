@@ -17,8 +17,13 @@ blake2-inline = ["jolt-claims/blake2-inline"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile
 # harness's per-stage SVGs).
 allocative = ["dep:allocative", "jolt-claims/allocative"]
-prover-fixtures = []
+# The fixture prover's test seams: Whiteout's pads and its forced-abort
+# fault seam (`jolt_prover::akita::{whiteout_secrets, whiteout_faults}`).
+prover-fixtures = ["jolt-prover/prover-fixtures"]
 fs-audit = []
+# Whiteout's census: Akita's prover-side record of the argument string's
+# message ranges, which the census classifies beside the masked tape.
+logging = ["akita-transcript/logging-transcript", "jolt-akita/logging"]
 fuzzing = []
 field-inline = [
   "common/field-inline",
@@ -31,16 +36,26 @@ field-inline = [
   "jolt-prover/field-inline",
 ]
 zk = ["jolt-prover/zk"]
+# Whiteout: zero knowledge over Akita. `zk` with `akita` alone is a compile
+# error; this feature is the explicit opt-in. Whiteout's Σ-protocol is not yet
+# shown constant time on every platform: a timing residual in its `N·y`
+# product is open (specs/whiteout-sigma.md, specs/whiteout-jolt-integration.md).
+whiteout = ["zk", "akita", "jolt-prover/whiteout"]
 # The Akita commitment mode: native one-hot trace columns and auxiliary
-# objects share one batch opening. Mutually exclusive with
-# `zk` — one PIOP per compiled verifier.
-akita = ["jolt-prover/akita", "jolt-claims/akita", "tracer/fp128-field-inline"]
+# objects share one batch opening. With `whiteout` it verifies Whiteout proofs
+# only — one PIOP per compiled verifier.
+akita = [
+  "jolt-prover/akita",
+  "jolt-claims/akita",
+  "tracer/fp128-field-inline",
+  # Whiteout's masked group opening seam (used under `whiteout`).
+  "jolt-zk/whiteout",
+]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
 bincode.workspace = true
 common.workspace = true
-jolt-zk.workspace = true
 jolt-claims.workspace = true
 jolt-claims-derive.workspace = true
 jolt-crypto.workspace = true
@@ -53,6 +68,7 @@ jolt-riscv = { workspace = true, features = ["serialization"] }
 jolt-sumcheck.workspace = true
 jolt-transcript.workspace = true
 jolt-verifier-derive.workspace = true
+jolt-zk.workspace = true
 num-traits.workspace = true
 serde.workspace = true
 sha3.workspace = true
@@ -69,9 +85,17 @@ jolt-host.workspace = true
 jolt-prover.workspace = true
 jolt-witness.workspace = true
 jolt-akita.workspace = true
+akita-params.workspace = true
+akita-verifier = { workspace = true, features = ["test-support"] }
+akita-transcript.workspace = true
 tracer.workspace = true
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
 serde_json = { workspace = true, features = ["std"] }
 quote.workspace = true
 syn = { workspace = true, features = ["visit"] }
+
+# akita-verifier is a dev-dependency only for its `test-support` feature: the
+# Whiteout shift probe reads the masked prefix's batch coefficients through it.
+[package.metadata.cargo-machete]
+ignored = ["akita-verifier"]

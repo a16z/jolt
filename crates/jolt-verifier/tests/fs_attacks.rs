@@ -183,7 +183,7 @@ fn dory_clear_final_opening_batch_requires_commitment_binding() {
     );
 }
 
-#[cfg(feature = "zk")]
+#[cfg(all(not(feature = "akita"), feature = "zk"))]
 #[test]
 fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
     use support::verifier_fixtures::zk_muldiv_case;
@@ -237,7 +237,7 @@ fn dory_zk_preprocessing_digest_requires_fiat_shamir_binding() {
     );
 }
 
-#[cfg(feature = "zk")]
+#[cfg(all(not(feature = "akita"), feature = "zk"))]
 #[test]
 fn dory_zk_final_opening_batch_requires_commitment_binding() {
     use support::verifier_fixtures::zk_muldiv_case;
@@ -291,7 +291,7 @@ fn dory_zk_final_opening_batch_requires_commitment_binding() {
     );
 }
 
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 #[test]
 fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
     use jolt_akita::{AkitaField, AkitaScheme};
@@ -344,7 +344,7 @@ fn akita_clear_preprocessing_digest_requires_fiat_shamir_binding() {
     );
 }
 
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 #[test]
 fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
     use jolt_akita::{AkitaField, AkitaScheme};
@@ -395,5 +395,54 @@ fn akita_clear_stage1_sumcheck_requires_fiat_shamir_challenges() {
     assert!(
         tape.first_value_divergence(&mutated_tape).is_some(),
         "stage-1 equivocation did not alter a production challenge"
+    );
+}
+
+/// The statement attack on Whiteout: the statement class is load-bearing. A verifier frozen
+/// on the honest challenges, proof-of-work checks and absorbs (so Akita's
+/// levels, which run on the sponge directly, draw the honest challenges too)
+/// accepts the proof under other preprocessing; the production verifier
+/// rejects it, because the digest moves a challenge.
+#[cfg(all(feature = "akita", feature = "zk"))]
+#[test]
+fn whiteout_preprocessing_digest_requires_fiat_shamir_binding() {
+    use jolt_akita::{AkitaField, AkitaScheme};
+    use jolt_prover::akita::preprocessing::AkitaVc;
+    use jolt_verifier::JoltVerifierPreprocessing;
+    use support::akita_fixtures::whiteout_muldiv_case;
+
+    let case = whiteout_muldiv_case();
+    let verify = |preprocessing: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc>| {
+        jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, AuditTranscript<'_, AkitaField>>(
+            preprocessing,
+            &case.public_io,
+            &case.proof,
+            case.trusted_advice_commitment.as_ref(),
+        )
+    };
+    let (honest, tape) = record_challenges::<AkitaField, _>(|| verify(&case.preprocessing));
+    assert!(
+        honest.is_ok(),
+        "honest Whiteout fixture rejected: {honest:?}"
+    );
+
+    let mut preprocessing = case.preprocessing.clone();
+    preprocessing.preprocessing_digest[0] ^= 1;
+    let frozen = replay_challenges(&tape, || verify(&preprocessing));
+    assert!(
+        frozen.output.is_ok(),
+        "frozen Whiteout verifier rejected the replay attack: {:?}",
+        frozen.output
+    );
+    assert_eq!(frozen.consumed, frozen.expected);
+
+    let (production, mutated_tape) = record_challenges::<AkitaField, _>(|| verify(&preprocessing));
+    assert!(
+        production.is_err(),
+        "production Whiteout verifier accepted a proof under different preprocessing"
+    );
+    assert!(
+        tape.first_value_divergence(&mutated_tape).is_some(),
+        "preprocessing mutation did not alter a production challenge"
     );
 }

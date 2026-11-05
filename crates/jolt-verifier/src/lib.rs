@@ -53,6 +53,8 @@ pub mod preprocessing;
 pub mod proof;
 pub mod stages;
 pub mod verifier;
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub mod whiteout;
 
 pub use config::{validate_proof_config, JoltProtocolConfig, ZkConfig, JOLT_VERIFIER_CONFIG};
 pub use error::VerifierError;
@@ -67,8 +69,9 @@ pub use verifier::absorb_akita_commitments;
 pub use verifier::absorb_transcript_commitments;
 #[cfg(not(feature = "akita"))]
 pub use verifier::pad_layout;
+#[cfg(not(all(feature = "akita", feature = "zk")))]
 pub use verifier::verify;
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 pub use verifier::verify_with_context;
 pub use verifier::{
     absorb_committed_program_commitments, validate_and_seed_transcript, validate_inputs_from_parts,
@@ -76,3 +79,5 @@ pub use verifier::{
 };
 #[cfg(not(feature = "akita"))]
 pub use verifier::{verify_stages_on, MaskedStages, VerifiedStages};
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub use whiteout::{pad_layout, verify};

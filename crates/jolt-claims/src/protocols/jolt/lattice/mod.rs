@@ -36,7 +36,7 @@ pub use geometry::{LatticeGeometryError, LATTICE_BYTECODE_VAL_STAGES};
 pub mod strategy;
 pub use packing::{
     advice_packing_plan, committed_program_packing_plan, one_hot_trace_columns, OneHotTraceShape,
-    PrecommittedPackingPlan, PrefixPackedObjectPlan, ADVICE_MAX_PHYSICAL_VARS,
+    PackedLeaves, PrecommittedPackingPlan, PrefixPackedObjectPlan, ADVICE_MAX_PHYSICAL_VARS,
     ADVICE_MIN_PHYSICAL_VARS, DIRECT_PROGRAM_MAX_PHYSICAL_VARS,
 };
 pub use strategy::{

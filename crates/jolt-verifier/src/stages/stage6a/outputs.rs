@@ -13,6 +13,8 @@ pub use super::bytecode_read_raf::BytecodeReadRafAddressPhaseOutputClaims;
 
 use super::booleanity::BooleanityAddressPhase;
 use super::bytecode_read_raf::BytecodeReadRafAddressPhase;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::zk::MaskedMember;
 use crate::VerifierError;
 
 /// Source-of-truth for stage 6a's two-instance address-phase sumcheck batch
@@ -105,6 +107,10 @@ pub struct Stage6aClearOutput<F: JoltField> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6aZkOutput<F: JoltField> {
+    /// Whiteout: each member's residual lowering, through the clear
+    /// verifier's own public-value owners (`ConcreteSumcheck::masked_member`).
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    pub members: Vec<MaskedMember<F>>,
     pub challenges: Stage6aCarriedChallenges<F>,
     pub rounds: BatchedMaskedRounds<F>,
     pub output_claims: MaskedClaims<F>,
