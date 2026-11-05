@@ -34,7 +34,8 @@ use unsupported as platform;
 use platform::Counter;
 pub(crate) use platform::Reading;
 
-/// P-core subset of a macOS V6 sample or interval, in hardware counter units.
+/// Instructions and cycles on the cores of `hw.perflevel0`, the highest
+/// performance level, in hardware counter units.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(
     feature = "summary",
@@ -47,12 +48,14 @@ pub struct CoreCounters {
 }
 
 /// Counter values for one sample or interval. Cycles are available on macOS;
-/// the P-core subset additionally requires the V6 resource-usage flavor.
+/// the `hw.perflevel0` subset additionally requires the V6 resource-usage
+/// flavor, which the backend selects only on hosts with several performance
+/// levels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CounterValues {
     pub instructions: u64,
     pub cycles: Option<u64>,
-    pub performance_cores: Option<CoreCounters>,
+    pub perflevel0: Option<CoreCounters>,
 }
 
 impl CounterValues {
@@ -60,16 +63,12 @@ impl CounterValues {
         Some(Self {
             instructions: self.instructions.checked_add(other.instructions)?,
             cycles: combine_optional(self.cycles, other.cycles, u64::checked_add).ok()?,
-            performance_cores: combine_optional(
-                self.performance_cores,
-                other.performance_cores,
-                |a, b| {
-                    Some(CoreCounters {
-                        instructions: a.instructions.checked_add(b.instructions)?,
-                        cycles: a.cycles.checked_add(b.cycles)?,
-                    })
-                },
-            )
+            perflevel0: combine_optional(self.perflevel0, other.perflevel0, |a, b| {
+                Some(CoreCounters {
+                    instructions: a.instructions.checked_add(b.instructions)?,
+                    cycles: a.cycles.checked_add(b.cycles)?,
+                })
+            })
             .ok()?,
         })
     }
@@ -79,16 +78,12 @@ impl CounterValues {
         Some(Self {
             instructions: self.instructions.checked_sub(earlier.instructions)?,
             cycles: combine_optional(self.cycles, earlier.cycles, u64::checked_sub).ok()?,
-            performance_cores: combine_optional(
-                self.performance_cores,
-                earlier.performance_cores,
-                |a, b| {
-                    Some(CoreCounters {
-                        instructions: a.instructions.checked_sub(b.instructions)?,
-                        cycles: a.cycles.checked_sub(b.cycles)?,
-                    })
-                },
-            )
+            perflevel0: combine_optional(self.perflevel0, earlier.perflevel0, |a, b| {
+                Some(CoreCounters {
+                    instructions: a.instructions.checked_sub(b.instructions)?,
+                    cycles: a.cycles.checked_sub(b.cycles)?,
+                })
+            })
             .ok()?,
         })
     }
@@ -218,7 +213,7 @@ mod tests {
         let before = CounterValues {
             instructions: 100,
             cycles: Some(200),
-            performance_cores: Some(CoreCounters {
+            perflevel0: Some(CoreCounters {
                 instructions: 40,
                 cycles: 80,
             }),
@@ -226,7 +221,7 @@ mod tests {
         let after = CounterValues {
             instructions: 150,
             cycles: Some(280),
-            performance_cores: before.performance_cores,
+            perflevel0: before.perflevel0,
         };
         let delta = after.checked_sub(before).unwrap();
         assert_eq!(
@@ -234,7 +229,7 @@ mod tests {
             CounterValues {
                 instructions: 50,
                 cycles: Some(80),
-                performance_cores: Some(CoreCounters {
+                perflevel0: Some(CoreCounters {
                     instructions: 0,
                     cycles: 0
                 }),
@@ -251,7 +246,7 @@ mod tests {
         );
         assert_eq!(
             after.checked_sub(CounterValues {
-                performance_cores: None,
+                perflevel0: None,
                 ..before
             }),
             None
@@ -264,10 +259,10 @@ mod tests {
             None
         );
         let v4 = CounterValues {
-            performance_cores: None,
+            perflevel0: None,
             ..before
         };
-        assert_eq!(v4.checked_sub(v4).unwrap().performance_cores, None);
+        assert_eq!(v4.checked_sub(v4).unwrap().perflevel0, None);
         let linux = CounterValues { cycles: None, ..v4 };
         assert_eq!(linux.checked_sub(linux).unwrap().cycles, None);
     }

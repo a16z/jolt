@@ -161,10 +161,10 @@ pub struct RootSummary {
     /// are summed over counted threads, not elapsed time or RISC-V cycles.
     #[serde(default)]
     pub cycles: Option<u64>,
-    /// The subset of instructions and cycles attributed to performance
-    /// cores; available with macOS rusage V6.
+    /// The subset of instructions and cycles on `hw.perflevel0` cores;
+    /// available with macOS rusage V6.
     #[serde(default)]
-    pub performance_cores: Option<CoreCounters>,
+    pub perflevel0: Option<CoreCounters>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -188,10 +188,10 @@ pub struct SpanAggregate {
     /// or any instance could not be measured.
     #[serde(default)]
     pub cycles: Option<u64>,
-    /// The subset of instructions and cycles attributed to performance
-    /// cores; available with macOS rusage V6 when every instance was measured.
+    /// The subset of instructions and cycles on `hw.perflevel0` cores;
+    /// available with macOS rusage V6 when every instance was measured.
     #[serde(default)]
-    pub performance_cores: Option<CoreCounters>,
+    pub perflevel0: Option<CoreCounters>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -215,10 +215,10 @@ pub struct StageSummary {
     /// are summed over counted threads, not elapsed time or RISC-V cycles.
     #[serde(default)]
     pub cycles: Option<u64>,
-    /// The subset of instructions and cycles attributed to performance
-    /// cores; available with macOS rusage V6.
+    /// The subset of instructions and cycles on `hw.perflevel0` cores;
+    /// available with macOS rusage V6.
     #[serde(default)]
-    pub performance_cores: Option<CoreCounters>,
+    pub perflevel0: Option<CoreCounters>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -487,7 +487,7 @@ pub(crate) fn aggregate_events(events: &[Value], root_span: &str) -> TraceAggreg
                     self_ns: 0,
                     instructions: None,
                     cycles: None,
-                    performance_cores: None,
+                    perflevel0: None,
                 });
                 entry.count += 1;
                 entry.total_ns += us_to_ns(dur_us);
@@ -580,7 +580,7 @@ pub fn build_summary(
             .and_then(|sampled| sampled.counters);
         span.instructions = counters.map(|values| values.instructions);
         span.cycles = counters.and_then(|values| values.cycles);
-        span.performance_cores = counters.and_then(|values| values.performance_cores);
+        span.perflevel0 = counters.and_then(|values| values.perflevel0);
     }
     let memory_points = aggregate.counter_points.get(MEMORY_COUNTER);
 
@@ -628,7 +628,7 @@ pub fn build_summary(
             peak_memory_gib: peak_within(memory_points, interval),
             instructions: counters.map(|values| values.instructions),
             cycles: counters.and_then(|values| values.cycles),
-            performance_cores: counters.and_then(|values| values.performance_cores),
+            perflevel0: counters.and_then(|values| values.perflevel0),
         }
     });
 
@@ -672,7 +672,7 @@ pub fn build_summary(
                 peak_memory_gib: peak_within(memory_points, interval),
                 instructions: counters.map(|values| values.instructions),
                 cycles: counters.and_then(|values| values.cycles),
-                performance_cores: counters.and_then(|values| values.performance_cores),
+                perflevel0: counters.and_then(|values| values.perflevel0),
                 label,
             }
         })

@@ -29,7 +29,7 @@ impl Reading {
         Some(CounterValues {
             instructions: self.count.checked_sub(earlier.count)?,
             cycles: None,
-            performance_cores: None,
+            perflevel0: None,
         })
     }
 }

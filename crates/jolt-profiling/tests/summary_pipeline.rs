@@ -33,7 +33,7 @@ fn fixture_samples() -> BoundarySamples {
     let root = CounterValues {
         instructions: 20_000_000,
         cycles: Some(10_000_000),
-        performance_cores: Some(CoreCounters {
+        perflevel0: Some(CoreCounters {
             instructions: 15_000_000,
             cycles: 8_000_000,
         }),
@@ -48,7 +48,7 @@ fn fixture_samples() -> BoundarySamples {
                 counters: Some(CounterValues {
                     instructions: 7_000_000,
                     cycles: Some(3_000_000),
-                    performance_cores: Some(CoreCounters {
+                    perflevel0: Some(CoreCounters {
                         instructions: 6_000_000,
                         cycles: 2_000_000,
                     }),
@@ -72,7 +72,7 @@ fn fixture_samples() -> BoundarySamples {
                     Some(CounterValues {
                         instructions: 500_000,
                         cycles: Some(200_000),
-                        performance_cores: Some(CoreCounters {
+                        perflevel0: Some(CoreCounters {
                             instructions: 0,
                             cycles: 0,
                         }),
@@ -86,7 +86,7 @@ fn fixture_samples() -> BoundarySamples {
                     Some(CounterValues {
                         instructions: 200_000,
                         cycles: Some(100_000),
-                        performance_cores: Some(CoreCounters {
+                        perflevel0: Some(CoreCounters {
                             instructions: 100_000,
                             cycles: 50_000,
                         }),
@@ -194,7 +194,7 @@ fn aggregation_computes_totals_self_and_dark_time() {
     assert_eq!(root.instructions, Some(20_000_000));
     assert_eq!(root.cycles, Some(10_000_000));
     assert_eq!(
-        root.performance_cores,
+        root.perflevel0,
         Some(CoreCounters {
             instructions: 15_000_000,
             cycles: 8_000_000,
@@ -233,7 +233,7 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage0.instructions, Some(7_000_000));
     assert_eq!(stage0.cycles, Some(3_000_000));
     assert_eq!(
-        stage0.performance_cores,
+        stage0.perflevel0,
         Some(CoreCounters {
             instructions: 6_000_000,
             cycles: 2_000_000,
@@ -248,7 +248,7 @@ fn stage_rollup_folds_boundary_rss_and_windowed_peaks() {
     assert_eq!(stage1.peak_memory_gib, Some(3.0));
     assert_eq!(stage1.instructions, None);
     assert_eq!(stage1.cycles, None);
-    assert_eq!(stage1.performance_cores, None);
+    assert_eq!(stage1.perflevel0, None);
 
     assert_eq!(summary.peak_rss_gib, Some(4.0));
     assert_eq!(summary.peak_footprint_gib, Some(6.0));
@@ -269,7 +269,7 @@ fn span_counters_require_every_instance_sampled() {
     assert_eq!(span("prove_batch").instructions, Some(500_000));
     assert_eq!(span("prove_batch").cycles, Some(200_000));
     assert_eq!(
-        span("prove_batch").performance_cores,
+        span("prove_batch").perflevel0,
         Some(CoreCounters {
             instructions: 0,
             cycles: 0,
@@ -283,7 +283,7 @@ fn span_counters_require_every_instance_sampled() {
     ] {
         assert_eq!(span(label).instructions, None, "{reason}");
         assert_eq!(span(label).cycles, None, "{reason}");
-        assert_eq!(span(label).performance_cores, None, "{reason}");
+        assert_eq!(span(label).perflevel0, None, "{reason}");
     }
 }
 
@@ -364,7 +364,7 @@ fn repeated_labels_pair_rows_by_occurrence() {
         counters: Some(CounterValues {
             instructions,
             cycles: None,
-            performance_cores: None,
+            perflevel0: None,
         }),
     };
     let samples = BoundarySamples {
@@ -400,7 +400,7 @@ fn repeated_labels_pair_rows_by_occurrence() {
     assert_eq!(root.wall_time_ns, 550_000);
     assert_eq!(root.instructions, Some(60));
     assert_eq!(root.cycles, None);
-    assert_eq!(root.performance_cores, None);
+    assert_eq!(root.perflevel0, None);
     assert_eq!(
         serde_json::to_value(summary.hardware_counters).unwrap(),
         serde_json::json!({
@@ -497,13 +497,13 @@ fn summary_deserializes_without_hardware_extensions() {
     let root = summary.root.unwrap();
     assert_eq!(root.instructions, Some(12));
     assert_eq!(root.cycles, None);
-    assert_eq!(root.performance_cores, None);
+    assert_eq!(root.perflevel0, None);
     assert_eq!(summary.spans["prove_stage0"].instructions, Some(12));
     assert_eq!(summary.spans["prove_stage0"].cycles, None);
-    assert_eq!(summary.spans["prove_stage0"].performance_cores, None);
+    assert_eq!(summary.spans["prove_stage0"].perflevel0, None);
     assert_eq!(summary.stages[0].instructions, Some(12));
     assert_eq!(summary.stages[0].cycles, None);
-    assert_eq!(summary.stages[0].performance_cores, None);
+    assert_eq!(summary.stages[0].perflevel0, None);
 }
 
 #[test]

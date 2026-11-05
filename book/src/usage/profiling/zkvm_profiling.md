@@ -167,9 +167,9 @@ jq '.stages | map({label, rss_delta_gib, peak_memory_gib})' $S
 jq '{hardware_counters, root: .root.instructions,
      stages: (.stages | map({label, instructions}))}' $S
 
-# Apple CPU cycles and V6 P-core diagnostics
-jq '{hardware_counters, root: (.root | {instructions, cycles, performance_cores}),
-     stages: (.stages | map({label, instructions, cycles, performance_cores}))}' $S
+# Apple CPU cycles and V6 perflevel0 diagnostics
+jq '{hardware_counters, root: (.root | {instructions, cycles, perflevel0}),
+     stages: (.stages | map({label, instructions, cycles, perflevel0}))}' $S
 
 # Top 10 span labels by instructions retired (orchestrating-thread spans only)
 jq '.spans | to_entries | map(select(.value.instructions != null))
@@ -218,7 +218,7 @@ for row in q:
   `memory_gib` and `root.peak_memory_gib` remain resident-set based.
 - **Hardware counts** (`root.instructions`, `stages[].instructions`,
   `spans.<label>.instructions`, and the corresponding `cycles` and
-  `performance_cores` fields) are sampled at every enter and exit of a span
+  `perflevel0` fields) are sampled at every enter and exit of a span
   on the orchestrating thread — the thread that set up tracing. Counts
   include parallel work during the interval and are inclusive, so nested
   spans are not additive. Spans inside rayon closures overlap their siblings
@@ -236,7 +236,7 @@ and `thread_scope`. Check it before comparing counts across runs:
 |---|---|---|---|
 | `linux_perf_event` | `user` | Opening thread and subsequently spawned descendants, including child processes; excludes pre-existing threads such as the chrome writer and monitor | `instructions` |
 | `macos_rusage_v4` | `user_and_kernel` | All threads in this process, including pre-existing workers and profiler threads; excludes child processes | `instructions`, `cycles` |
-| `macos_rusage_v6` | `user_and_kernel` | Same as V4 | `instructions`, `cycles`, `performance_cores: {instructions, cycles}` |
+| `macos_rusage_v6` | `user_and_kernel` | Same as V4 | `instructions`, `cycles`, `perflevel0: {instructions, cycles}` |
 
 The corresponding `thread_scope` values are `opening_thread_and_descendants`
 and `all_process_threads`. Unsupported hosts have `hardware_counters: null`;
@@ -248,12 +248,18 @@ excluded. It requires an exposed PMU and suitable permissions (normally
 yield `null`, rather than an incomplete count. Initialize tracing before the
 Rayon pool so worker instructions are included.
 
-macOS reads `proc_pid_rusage(getpid(), RUSAGE_INFO_V6, ...)`, falling back to
-V4 if the kernel rejects V6. The backend first requires
-`kern.monotonic.supported = 1`; a successful API call alone does not establish
-that counters are available. Both versions expose the same hardware-backed
-total instructions and cycles. V6 additionally reports the portion executed
-on performance cores. These are fixed CPU counter values attributed by
+macOS reads `proc_pid_rusage(getpid(), RUSAGE_INFO_V6, ...)` on hosts with at
+least two performance levels (`hw.nperflevels`), falling back to V4 if the
+kernel rejects V6; single-level hosts, such as Intel Macs, read V4. The
+backend first requires `kern.monotonic.supported = 1`; a successful API call
+alone does not establish that counters are available. Both versions expose the
+same hardware-backed total instructions and cycles. V6 additionally reports,
+as `perflevel0`, the portion executed on XNU's `CLUSTER_TYPE_P` cores, which
+`hw.perflevel0` describes: the highest performance level. Its name varies by
+chip (`sysctl hw.perflevel0.name`): "Performance" on M1 through M4, but
+"Super" on an M5 Max, whose "Performance" cores are `hw.perflevel1` and
+excluded. XNU leaves this subset at zero on single-level hosts, which is why
+they use V4. These are fixed CPU counter values attributed by
 XNU's [Recount subsystem](https://github.com/apple-oss-distributions/xnu/blob/main/doc/observability/recount.md),
 not estimates from elapsed time or configured `kpc` events. See Apple's
 [CPU counter documentation](https://github.com/apple-oss-distributions/xnu/blob/main/doc/observability/cpu_counters.md).
@@ -262,8 +268,8 @@ Apple's process snapshots are not simultaneous, instruction-exact boundaries
 across running workers. They include CPU work in the kernel and the profiler,
 and do not identify cache misses, branch misses, or stalls. Cycles sum CPU
 work across threads; they are not elapsed time. Core placement and frequency
-affect cycle comparisons, and a P-core cycle fraction is not a fraction of
-wall time. Compare repeated runs on the same machine with the same thread
+affect cycle comparisons, and a `perflevel0` cycle fraction is not a fraction
+of wall time. Compare repeated runs on the same machine with the same thread
 count and power settings. The profiler emits raw counts: a ratio of CPU
 cycles to guest instructions must use the actual live trace length, not the padded
 `2^scale` length.
@@ -285,7 +291,8 @@ test runs so unsupported CI hosts do not claim to validate the hardware path.
 
 ```bash
 sw_vers
-sysctl -n machdep.cpu.brand_string kern.monotonic.supported
+sysctl -n machdep.cpu.brand_string kern.monotonic.supported hw.nperflevels \
+    hw.perflevel0.name
 cargo nextest run -p jolt-profiling --cargo-quiet
 cargo nextest run -p jolt-profiling --cargo-quiet --run-ignored only \
     -E 'test(counters::macos::tests::counts_preexisting_workers)'
@@ -294,14 +301,16 @@ cargo nextest run -p jolt-profiling --cargo-quiet --run-ignored only \
 cargo install --path . --locked
 RAYON_NUM_THREADS=1 cargo run --release -p jolt-prover --features profiling -- \
     profile --name fibonacci --backend optimized --scale 16 --format chrome
-jq '{hardware_counters, root: (.root | {instructions, cycles, performance_cores}),
-     stages: (.stages | map({label, instructions, cycles, performance_cores}))}' \
+jq '{hardware_counters, root: (.root | {instructions, cycles, perflevel0}),
+     stages: (.stages | map({label, instructions, cycles, perflevel0}))}' \
     benchmark-runs/latest_modular_fibonacci_16_optimized/summary.json
 ```
 
-Expect `macos_rusage_v6` (or `macos_rusage_v4` on an older kernel) and positive
-root instruction and cycle counts. V4 leaves `performance_cores` null; a V6
-P-core count of zero is valid. Repeat with the normal worker count to exercise
+Expect `macos_rusage_v6` on Apple Silicon (`macos_rusage_v4` on a kernel
+without V6 or a single-level host) and positive root instruction and cycle
+counts. V4 leaves `perflevel0` null. Under V6, `perflevel0` stays within the
+totals and is zero only for intervals that ran entirely on lower performance
+levels. Repeat with the normal worker count to exercise
 parallel proving, then use the following procedure to check full-profiler
 overhead. Keep the worker count the same in each baseline/instrumented pair.
 

@@ -96,7 +96,7 @@ counters produce measurement errors, as do labels with any instance inside a
 rayon closure (only spans on the orchestrating thread are sampled).
 `RAYON_NUM_THREADS=1` reduces scheduling noise; see the book's
 [measurement semantics](../book/src/usage/profiling/zkvm_profiling.md#hardware-counter-scope).
-Apple cycle counts and V6 P-core counts are available in `summary.json` for
+Apple cycle counts and V6 `perflevel0` counts are available in `summary.json` for
 direct queries; they do not add new telemetry objective keys.
 
 ```bash

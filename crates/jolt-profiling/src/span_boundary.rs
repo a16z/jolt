@@ -175,13 +175,13 @@ where
                 rss_close_gib = row.rss_close_bytes as f64 / BYTES_PER_GIB,
                 instructions = row.counters.map(|values| values.instructions),
                 cycles = row.counters.and_then(|values| values.cycles),
-                p_instructions = row
+                perflevel0_instructions = row
                     .counters
-                    .and_then(|values| values.performance_cores)
+                    .and_then(|values| values.perflevel0)
                     .map(|values| values.instructions),
-                p_cycles = row
+                perflevel0_cycles = row
                     .counters
-                    .and_then(|values| values.performance_cores)
+                    .and_then(|values| values.perflevel0)
                     .map(|values| values.cycles),
                 "stage_boundary"
             );

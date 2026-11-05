@@ -1,3 +1,4 @@
+use std::ffi::CStr;
 use std::io::{Error, ErrorKind, Result};
 use std::mem::offset_of;
 
@@ -42,15 +43,20 @@ enum Flavor {
 }
 
 impl Flavor {
-    fn select(mut probe: impl FnMut(Self) -> Result<()>) -> Result<Self> {
-        match probe(Self::V6) {
-            Ok(()) => Ok(Self::V6),
-            Err(error) if error.raw_os_error() == Some(EINVAL) => {
-                probe(Self::V4)?;
-                Ok(Self::V4)
+    /// V6 is worth requesting only with at least two performance levels:
+    /// XNU fills its subset from `CLUSTER_TYPE_P` CPUs, which is
+    /// `hw.perflevel0` there and absent on single-level hosts such as Intel
+    /// Macs, where the subset would read as a constant zero.
+    fn select(perf_levels: c_int, mut probe: impl FnMut(Self) -> Result<()>) -> Result<Self> {
+        if perf_levels >= 2 {
+            match probe(Self::V6) {
+                Ok(()) => return Ok(Self::V6),
+                Err(error) if error.raw_os_error() == Some(EINVAL) => {}
+                Err(error) => return Err(error),
             }
-            Err(error) => Err(error),
         }
+        probe(Self::V4)?;
+        Ok(Self::V4)
     }
 }
 
@@ -69,44 +75,16 @@ impl Reading {
 
 impl Counter {
     pub(super) fn open() -> Result<Self> {
-        let mut supported: c_int = 0;
-        let mut len = size_of::<c_int>();
-        // SAFETY: the NUL-terminated name and writable int/length are live;
-        // a null newp makes this a read-only sysctl query.
-        let status = unsafe {
-            libc::sysctlbyname(
-                c"kern.monotonic.supported".as_ptr(),
-                (&raw mut supported).cast(),
-                &raw mut len,
-                std::ptr::null_mut(),
-                0,
-            )
-        };
-        if status != 0 {
-            let error = Error::last_os_error();
-            return Err(if error.raw_os_error() == Some(ENOENT) {
-                Error::new(
-                    ErrorKind::Unsupported,
-                    "macOS hardware counters unavailable",
-                )
-            } else {
-                error
-            });
-        }
-        if len != size_of::<c_int>() {
-            return Err(Error::new(
-                ErrorKind::InvalidData,
-                "unexpected kern.monotonic.supported size",
-            ));
-        }
-        if supported != 1 {
+        if sysctl_int(c"kern.monotonic.supported")? != Some(1) {
             return Err(Error::new(
                 ErrorKind::Unsupported,
                 "macOS hardware counters unavailable",
             ));
         }
-
-        let flavor = Flavor::select(|flavor| Self { flavor }.read().map(|_| ()))?;
+        // hw.nperflevels (macOS 12) predates V6 (macOS 13), so a kernel
+        // without it has no V6 subset to report.
+        let perf_levels = sysctl_int(c"hw.nperflevels")?.unwrap_or(1);
+        let flavor = Flavor::select(perf_levels, |flavor| Self { flavor }.read().map(|_| ()))?;
         Ok(Self { flavor })
     }
 
@@ -134,7 +112,7 @@ impl Counter {
         if status != 0 {
             return Err(Error::last_os_error());
         }
-        let performance_cores = match self.flavor {
+        let perflevel0 = match self.flavor {
             Flavor::V4 => None,
             Flavor::V6 => Some(CoreCounters {
                 instructions: usage.ri_pinstructions,
@@ -144,13 +122,44 @@ impl Counter {
         Ok(Reading(CounterValues {
             instructions: usage.v4.ri_instructions,
             cycles: Some(usage.v4.ri_cycles),
-            performance_cores,
+            perflevel0,
         }))
     }
 }
 
+/// Reads an `int` sysctl; `None` when this kernel lacks `name`.
+fn sysctl_int(name: &CStr) -> Result<Option<c_int>> {
+    let mut value: c_int = 0;
+    let mut len = size_of::<c_int>();
+    // SAFETY: the NUL-terminated name and writable int/length are live;
+    // a null newp makes this a read-only sysctl query.
+    let status = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            (&raw mut value).cast(),
+            &raw mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if status != 0 {
+        let error = Error::last_os_error();
+        return match error.raw_os_error() {
+            Some(ENOENT) => Ok(None),
+            _ => Err(error),
+        };
+    }
+    if len != size_of::<c_int>() {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            format!("unexpected {name:?} size {len}"),
+        ));
+    }
+    Ok(Some(value))
+}
+
 #[cfg(test)]
-#[expect(clippy::unwrap_used)]
+#[expect(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use std::hint::black_box;
     use std::io::Error;
@@ -161,10 +170,20 @@ mod tests {
     use super::{Counter, Flavor};
 
     #[test]
-    fn fallback_requires_unsupported_flavor() {
-        assert_eq!(Flavor::select(|_| Ok(())).unwrap(), Flavor::V6);
+    fn v6_requires_multiple_perf_levels_and_falls_back_only_on_einval() {
+        for perf_levels in [0, 1] {
+            assert_eq!(
+                Flavor::select(perf_levels, |flavor| match flavor {
+                    Flavor::V6 => panic!("V6 probed with {perf_levels} perf levels"),
+                    Flavor::V4 => Ok(()),
+                })
+                .unwrap(),
+                Flavor::V4,
+            );
+        }
+        assert_eq!(Flavor::select(2, |_| Ok(())).unwrap(), Flavor::V6);
         assert_eq!(
-            Flavor::select(|flavor| match flavor {
+            Flavor::select(2, |flavor| match flavor {
                 Flavor::V6 => Err(Error::from_raw_os_error(EINVAL)),
                 Flavor::V4 => Ok(()),
             })
@@ -172,7 +191,7 @@ mod tests {
             Flavor::V4,
         );
         assert_eq!(
-            Flavor::select(|flavor| match flavor {
+            Flavor::select(2, |flavor| match flavor {
                 Flavor::V6 => Err(Error::from_raw_os_error(EPERM)),
                 Flavor::V4 => Ok(()),
             })
@@ -181,7 +200,7 @@ mod tests {
             Some(EPERM),
         );
         assert_eq!(
-            Flavor::select(|flavor| match flavor {
+            Flavor::select(2, |flavor| match flavor {
                 Flavor::V6 => Err(Error::from_raw_os_error(EINVAL)),
                 Flavor::V4 => Err(Error::from_raw_os_error(EACCES)),
             })

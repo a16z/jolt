@@ -98,7 +98,7 @@
   ],
   "$defs": {
     "CoreCounters": {
-      "description": "P-core subset of a macOS V6 sample or interval, in hardware counter units.",
+      "description": "Instructions and cycles on the cores of `hw.perflevel0`, the highest\nperformance level, in hardware counter units.",
       "type": "object",
       "properties": {
         "cycles": {
@@ -259,8 +259,8 @@
           ],
           "format": "double"
         },
-        "performance_cores": {
-          "description": "The subset of instructions and cycles attributed to performance\ncores; available with macOS rusage V6.",
+        "perflevel0": {
+          "description": "The subset of instructions and cycles on `hw.perflevel0` cores;\navailable with macOS rusage V6.",
           "anyOf": [
             {
               "$ref": "#/$defs/CoreCounters"
@@ -349,8 +349,8 @@
           "default": null,
           "minimum": 0
         },
-        "performance_cores": {
-          "description": "The subset of instructions and cycles attributed to performance\ncores; available with macOS rusage V6 when every instance was measured.",
+        "perflevel0": {
+          "description": "The subset of instructions and cycles on `hw.perflevel0` cores;\navailable with macOS rusage V6 when every instance was measured.",
           "anyOf": [
             {
               "$ref": "#/$defs/CoreCounters"
@@ -415,8 +415,8 @@
           ],
           "format": "double"
         },
-        "performance_cores": {
-          "description": "The subset of instructions and cycles attributed to performance\ncores; available with macOS rusage V6.",
+        "perflevel0": {
+          "description": "The subset of instructions and cycles on `hw.perflevel0` cores;\navailable with macOS rusage V6.",
           "anyOf": [
             {
               "$ref": "#/$defs/CoreCounters"

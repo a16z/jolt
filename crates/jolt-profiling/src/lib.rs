@@ -7,7 +7,7 @@
 //! - **Memory profiling** — tracks memory deltas across proving stages via `memory-stats`.
 //! - **Hardware counters** — samples instructions at span boundaries on the
 //!   orchestrating thread (Linux `perf_event_open`, macOS `proc_pid_rusage`).
-//!   macOS also provides cycles and V6 P-core counts; output records each
+//!   macOS also provides cycles and V6 `hw.perflevel0` counts; output records each
 //!   platform's privilege and thread scope.
 //! - **System metrics monitoring** (`monitor` feature) — background thread sampling
 //!   CPU usage, memory, active cores, and thread count. Outputs structured counter events
