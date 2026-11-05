@@ -1,4 +1,4 @@
-use jolt_field::JoltField;
+use jolt_field::{Accumulator, JoltField};
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -18,7 +18,12 @@ impl<F: JoltField> TensorEqTable<F> {
     }
 
     pub fn new_with_scaling(point: &[F], scale: F) -> Self {
-        let split = point.len() / 2;
+        Self::new_with_scaling_and_split(point, scale, point.len() / 2)
+    }
+
+    /// Factors `scale * eq(point, x)` with the first `split` coordinates in the
+    /// outer table. `split` must be at most `point.len()`.
+    pub fn new_with_scaling_and_split(point: &[F], scale: F, split: usize) -> Self {
         let (out_point, in_point) = point.split_at(split);
         #[cfg(feature = "parallel")]
         let (e_out, e_in) = rayon::join(
@@ -53,10 +58,25 @@ impl<F: JoltField> TensorEqTable<F> {
         &self.e_in
     }
 
-    pub fn evaluate_index(&self, index: usize) -> F {
+    fn factors_at_index(&self, index: usize) -> (F, F) {
         let x_out = index >> self.in_bits;
         let x_in = index & ((1usize << self.in_bits) - 1);
-        self.e_out[x_out] * self.e_in[x_in]
+        (self.e_out[x_out], self.e_in[x_in])
+    }
+
+    pub fn evaluate_index(&self, index: usize) -> F {
+        let (outer, inner) = self.factors_at_index(index);
+        outer * inner
+    }
+
+    /// Sum the tables at one Boolean index with a single accumulator reduction.
+    pub fn sum_at_index(tables: &[Self], index: usize) -> F {
+        let mut sum = F::Accumulator::default();
+        for table in tables {
+            let (outer, inner) = table.factors_at_index(index);
+            sum.fmadd(outer, inner);
+        }
+        sum.reduce()
     }
 
     pub fn evaluate_slices(&self, values: &[&[F]]) -> Vec<F> {
@@ -668,13 +688,20 @@ mod tests {
     fn tensor_eq_table_factors_full_eq_table() {
         for vars in 0..=10 {
             let point = random_point(vars, 100 + vars as u64);
-            let tensor = TensorEqTable::<Fr>::new(&point);
-            let full = EqPolynomial::<Fr>::evals(&point, None);
-            assert_eq!(tensor.len(), full.len());
-            for x_out in 0..tensor.e_out().len() {
-                for x_in in 0..tensor.e_in().len() {
-                    let row = tensor.group_index(x_out, x_in);
-                    assert_eq!(tensor.e_out()[x_out] * tensor.e_in()[x_in], full[row]);
+            for scale in [Fr::zero(), Fr::one(), Fr::from_u64(7)] {
+                let full = EqPolynomial::<Fr>::evals(&point, Some(scale));
+                let tensors = std::iter::once(TensorEqTable::new_with_scaling(&point, scale))
+                    .chain((0..=vars).map(|split| {
+                        TensorEqTable::new_with_scaling_and_split(&point, scale, split)
+                    }));
+                for tensor in tensors {
+                    assert_eq!(tensor.len(), full.len());
+                    for x_out in 0..tensor.e_out().len() {
+                        for x_in in 0..tensor.e_in().len() {
+                            let row = tensor.group_index(x_out, x_in);
+                            assert_eq!(tensor.e_out()[x_out] * tensor.e_in()[x_in], full[row]);
+                        }
+                    }
                 }
             }
         }

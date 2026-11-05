@@ -8,10 +8,10 @@ use crate::support::tamper_manifest;
 use jolt_verifier::proof::JoltProofClaims;
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
 use {
-    jolt_blindfold::BlindFoldProof,
     jolt_crypto::VectorCommitmentOpening,
     jolt_field::{Fr, Ring},
     jolt_sumcheck::CompressedSumcheckProof,
+    jolt_zk::BlindFoldProof,
 };
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]

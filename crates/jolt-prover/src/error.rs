@@ -5,6 +5,8 @@ use jolt_openings::OpeningsError;
 use jolt_program::preprocess::PreprocessingError as ProgramPreprocessingError;
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::VerifierError;
+#[cfg(feature = "zk")]
+use jolt_zk::ProverError as BlindFoldProverError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -61,6 +63,20 @@ pub enum ProverError<F: JoltField> {
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
 
+    /// An explicit [`MemoryBudget`](crate::MemoryBudget) is below the bytes
+    /// reserved for the optimized prover's known eager allocations
+    /// ([`MemoryBudget::check_known_eager`](crate::MemoryBudget::check_known_eager)).
+    /// Raised after tracing, before proving.
+    #[error("memory budget of {budget} bytes is below the {required} bytes reserved for the optimized prover's known eager allocations")]
+    MemoryBudgetExceeded { budget: usize, required: usize },
+
+    /// The optimized prover's known eager reservation for the trace exceeds
+    /// `usize::MAX` bytes, so no [`MemoryBudget`](crate::MemoryBudget) covers
+    /// it ([`MemoryBudget::check_known_eager`](crate::MemoryBudget::check_known_eager)).
+    /// Raised after tracing, before proving.
+    #[error("the optimized prover's known eager reservation exceeds usize::MAX bytes, so the memory budget of {budget} bytes cannot cover it")]
+    MemoryReservationOverflow { budget: usize },
+
     /// The trace's last row is not a jump. Padding no-ops follow the last
     /// row, and only a jump's next-PC constraint is waived for a no-op
     /// successor, so any other final row (a taken self-branch, or the row
@@ -78,7 +94,7 @@ pub enum ProverError<F: JoltField> {
     /// itself.
     #[cfg(feature = "zk")]
     #[error(transparent)]
-    BlindFold(#[from] jolt_blindfold::ProverError<F>),
+    BlindFold(#[from] BlindFoldProverError<F>),
 }
 
 /// Route the typed kernel seam's extraction/self-check failures through

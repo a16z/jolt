@@ -82,7 +82,7 @@ use jolt_claims::protocols::composed::r1cs::{
     spartan_outer_constraints, spartan_outer_opening_columns, spartan_outer_row_weights,
     SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT, SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE,
 };
-use jolt_riscv::{CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
+use jolt_riscv::{CircuitFlagSet, CircuitFlags, InstructionFlags, JoltTraceRow as TraceRow};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -94,9 +94,9 @@ use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
 use jolt_witness::field_inline::FieldInlineSpartanRow;
 use jolt_witness::witnesses::{
     lookup_values, Imm, LeftInstructionInput, LeftLookupOperand, LookupOutput,
-    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, OpFlag, Pc, Product,
-    RamAddress, RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput,
-    RightLookupOperand, Rs1Value, Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
+    NextIsFirstInSequence, NextIsVirtual, NextPc, NextUnexpandedPc, Pc, Product, RamAddress,
+    RamReadValue, RamWriteValue, RdWriteValue, RightInstructionInput, RightLookupOperand, Rs1Value,
+    Rs2Value, ShouldBranch, ShouldJump, UnexpandedPc, WitnessEnv,
 };
 use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
@@ -106,16 +106,20 @@ use super::prefix_product::PrefixColumn;
 #[cfg(feature = "field-inline")]
 use super::support::map_reduce_chunks;
 use super::support::{
-    pin_derived_term_if_derived, prefix_cycle_weights, try_par_sum_vecs, BundleAccess, BundleStore,
-    GruenRoundMessage, RoundChallenges,
+    pin_derived_term_if_derived, try_par_sum_vecs, BundleAccess, BundleStore, GruenRoundMessage,
+    PrefixCycleWeights, RepeatCache, RoundChallenges,
 };
 use crate::uniskip::UniskipKernel;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+#[cfg(not(feature = "field-inline"))]
+mod b_folds;
 mod guard_groups;
-use guard_groups::GuardGroups;
+#[cfg(not(feature = "field-inline"))]
+use b_folds::PreparedBFolds;
+use guard_groups::{GuardEndpointGroup, GuardEndpoints, GuardGroups, GUARD_ENDPOINT_ENTRIES};
 
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
@@ -182,53 +186,19 @@ struct SpartanOuterRow {
     next_is_first_in_sequence: NextIsFirstInSequence,
     lookup_output: LookupOutput,
     should_jump: ShouldJump,
-    add_operands: OpFlag,
-    subtract_operands: OpFlag,
-    multiply_operands: OpFlag,
-    load: OpFlag,
-    store: OpFlag,
-    jump: OpFlag,
-    write_lookup_output_to_rd: OpFlag,
-    virtual_instruction: OpFlag,
-    assert_flag: OpFlag,
-    do_not_update_unexpanded_pc: OpFlag,
-    advice: OpFlag,
-    is_compressed: OpFlag,
-    is_first_in_sequence: OpFlag,
-    is_last_in_sequence: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_add: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_sub: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_mul: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_inv: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_assert_eq: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_load_accumulate_from_register: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_assert_zero: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_load_imm: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_load_accumulate_from_memory: OpFlag,
-    #[cfg(feature = "field-inline")]
-    field_advice_limb: OpFlag,
+    circuit_flags: CircuitFlagSet,
 }
 
 impl SpartanOuterRow {
     fn folded_groups<F: JoltField>(&self, lagrange: &[F]) -> ([F; 2], [F; 2]) {
         let values = self.group_values();
-        let (a0, b0) = fold_group(lagrange, &values.a_first, &values.b_first, &[0; DOMAIN]);
-        let (a1, b1) = fold_group(
-            lagrange,
-            &values.a_second,
-            &values.b_second_lo,
-            &values.b_second_hi,
-        );
-        ([a0, a1], [b0, b1])
+        (
+            [
+                fold_guards(lagrange, &values.a_first),
+                fold_guards(lagrange, &values.a_second),
+            ],
+            values.fold_b(lagrange),
+        )
     }
 }
 
@@ -247,7 +217,6 @@ impl WitnessBundle for SpartanOuterRow {
             lookup_output,
         ) = lookup_values(row);
         let next_flags = next.map(TraceRow::circuit_flags);
-        let flag = |flag| OpFlag(circuit_flags[flag]);
 
         Ok(Self {
             left_instruction_input: LeftInstructionInput(left_instruction_input),
@@ -282,42 +251,7 @@ impl WitnessBundle for SpartanOuterRow {
             should_jump: ShouldJump(
                 circuit_flags[CircuitFlags::Jump] && !next.is_some_and(|row| row.is_noop()),
             ),
-            add_operands: flag(CircuitFlags::AddOperands),
-            subtract_operands: flag(CircuitFlags::SubtractOperands),
-            multiply_operands: flag(CircuitFlags::MultiplyOperands),
-            load: flag(CircuitFlags::Load),
-            store: flag(CircuitFlags::Store),
-            jump: flag(CircuitFlags::Jump),
-            write_lookup_output_to_rd: flag(CircuitFlags::WriteLookupOutputToRD),
-            virtual_instruction: flag(CircuitFlags::VirtualInstruction),
-            assert_flag: flag(CircuitFlags::Assert),
-            do_not_update_unexpanded_pc: flag(CircuitFlags::DoNotUpdateUnexpandedPC),
-            advice: flag(CircuitFlags::Advice),
-            is_compressed: flag(CircuitFlags::IsCompressed),
-            is_first_in_sequence: flag(CircuitFlags::IsFirstInSequence),
-            is_last_in_sequence: flag(CircuitFlags::IsLastInSequence),
-            #[cfg(feature = "field-inline")]
-            field_add: flag(CircuitFlags::FieldAdd),
-            #[cfg(feature = "field-inline")]
-            field_sub: flag(CircuitFlags::FieldSub),
-            #[cfg(feature = "field-inline")]
-            field_mul: flag(CircuitFlags::FieldMul),
-            #[cfg(feature = "field-inline")]
-            field_inv: flag(CircuitFlags::FieldInv),
-            #[cfg(feature = "field-inline")]
-            field_assert_eq: flag(CircuitFlags::FieldAssertEq),
-            #[cfg(feature = "field-inline")]
-            field_load_accumulate_from_register: flag(
-                CircuitFlags::FieldLoadAccumulateFromRegister,
-            ),
-            #[cfg(feature = "field-inline")]
-            field_assert_zero: flag(CircuitFlags::FieldAssertZero),
-            #[cfg(feature = "field-inline")]
-            field_load_imm: flag(CircuitFlags::FieldLoadImm),
-            #[cfg(feature = "field-inline")]
-            field_load_accumulate_from_memory: flag(CircuitFlags::FieldLoadAccumulateFromMemory),
-            #[cfg(feature = "field-inline")]
-            field_advice_limb: flag(CircuitFlags::FieldAdviceLimb),
+            circuit_flags,
         })
     }
 
@@ -348,6 +282,15 @@ struct RowGroupValues {
     b_first: [i128; DOMAIN],
     b_second_lo: [i128; SECOND_GROUP_LEN],
     b_second_hi: [i128; SECOND_GROUP_LEN],
+}
+
+impl RowGroupValues {
+    fn fold_b<F: JoltField>(&self, weights: &[F]) -> [F; 2] {
+        [
+            fold_values(weights, &self.b_first, &[0; DOMAIN]),
+            fold_values(weights, &self.b_second_lo, &self.b_second_hi),
+        ]
+    }
 }
 
 /// One active field-inline cycle's composed group values, in field form: the
@@ -393,34 +336,20 @@ impl<F: JoltField> FieldGroupValues<F> {
         })
     }
 
-    fn fold_first(&self, weights: &[F]) -> (F, F) {
-        let (a, b) = fold_group(
-            weights,
-            &self.integer.a_first,
-            &self.integer.b_first,
-            &[0; DOMAIN],
-        );
-        let correction: F = weights[RV64_FIRST_GROUP_LEN..]
+    /// Only B carries field corrections; the A folds are `self.integer`'s.
+    fn fold_b(&self, weights: &[F]) -> [F; 2] {
+        let [first, second] = self.integer.fold_b(weights);
+        let first_correction: F = weights[RV64_FIRST_GROUP_LEN..]
             .iter()
             .zip(self.b_first)
             .map(|(c, b)| *c * b)
             .sum();
-        (a, b + correction)
-    }
-
-    fn fold_second(&self, weights: &[F]) -> (F, F) {
-        let (a, b) = fold_group(
-            weights,
-            &self.integer.a_second,
-            &self.integer.b_second_lo,
-            &self.integer.b_second_hi,
-        );
-        let correction: F = weights[RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
+        let second_correction: F = weights[RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
             .iter()
             .zip(self.b_second)
             .map(|(c, b)| *c * b)
             .sum();
-        (a, b + correction)
+        [first + first_correction, second + second_correction]
     }
 }
 
@@ -471,18 +400,16 @@ impl<'a, F> FieldInlineRowCursor<'a, F> {
 }
 
 impl SpartanOuterRow {
-    /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
-    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
-    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
-    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
-    fn group_values(&self) -> RowGroupValues {
+    /// Evaluate A guards without constructing the integer B values.
+    #[inline(always)]
+    fn guard_values(&self) -> ([i64; DOMAIN], [i64; SECOND_GROUP_LEN]) {
         let flag = |value: bool| i64::from(value);
-        let load = flag(self.load.0);
-        let store = flag(self.store.0);
-        let add = flag(self.add_operands.0);
-        let sub = flag(self.subtract_operands.0);
-        let mul = flag(self.multiply_operands.0);
-        let jump = flag(self.jump.0);
+        let load = flag(self.circuit_flags[CircuitFlags::Load]);
+        let store = flag(self.circuit_flags[CircuitFlags::Store]);
+        let add = flag(self.circuit_flags[CircuitFlags::AddOperands]);
+        let sub = flag(self.circuit_flags[CircuitFlags::SubtractOperands]);
+        let mul = flag(self.circuit_flags[CircuitFlags::MultiplyOperands]);
+        let jump = flag(self.circuit_flags[CircuitFlags::Jump]);
         let should_branch = flag(self.should_branch.0);
 
         // Rows 1, 2, 3, 4, 5, 6, 11, 14, 17, 18.
@@ -493,9 +420,10 @@ impl SpartanOuterRow {
             store,
             add + sub + mul,
             1 - add - sub - mul,
-            flag(self.assert_flag.0),
+            flag(self.circuit_flags[CircuitFlags::Assert]),
             flag(self.should_jump.0),
-            flag(self.virtual_instruction.0) - flag(self.is_last_in_sequence.0),
+            flag(self.circuit_flags[CircuitFlags::VirtualInstruction])
+                - flag(self.circuit_flags[CircuitFlags::IsLastInSequence]),
             flag(self.next_is_virtual.0) - flag(self.next_is_first_in_sequence.0),
         ];
         // Rows 0, 7, 8, 9, 10, 12, 13, 15, 16.
@@ -504,13 +432,44 @@ impl SpartanOuterRow {
             add,
             sub,
             mul,
-            1 - add - sub - mul - flag(self.advice.0),
-            flag(self.write_lookup_output_to_rd.0),
+            1 - add - sub - mul - flag(self.circuit_flags[CircuitFlags::Advice]),
+            flag(self.circuit_flags[CircuitFlags::WriteLookupOutputToRD]),
             jump,
             should_branch,
             1 - should_branch - jump,
         ];
 
+        let mut first = [0; DOMAIN];
+        let mut second = [0; SECOND_GROUP_LEN];
+        first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_a_first);
+        second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_a_second);
+        #[cfg(feature = "field-inline")]
+        {
+            first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
+                flag(self.circuit_flags[CircuitFlags::FieldAdd]),
+                flag(self.circuit_flags[CircuitFlags::FieldSub]),
+                flag(self.circuit_flags[CircuitFlags::FieldMul]),
+                flag(self.circuit_flags[CircuitFlags::FieldInv]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory]),
+            ]);
+            second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
+                flag(self.circuit_flags[CircuitFlags::FieldAssertEq]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister]),
+                flag(self.circuit_flags[CircuitFlags::FieldAssertZero]),
+                flag(self.circuit_flags[CircuitFlags::FieldLoadImm]),
+                flag(self.circuit_flags[CircuitFlags::FieldAdviceLimb]),
+            ]);
+        }
+        (first, second)
+    }
+
+    /// Evaluate the ordinary constraint rows and inactive field rows with exact integer
+    /// arithmetic. Formulas transcribe `jolt-claims`'s `rv64_eq_constraint_rows`
+    /// verbatim (matrix semantics, not satisfied-witness shortcuts), grouped as
+    /// `SPARTAN_OUTER_{FIRST,SECOND}_GROUP_ROWS` orders them.
+    fn group_values(&self) -> RowGroupValues {
+        let flag = |value: bool| i64::from(value);
+        let (a_first, a_second) = self.guard_values();
         let word = |value: u64| i128::from(value);
         let diff = |a: u64, b: u64| word(a) - word(b);
         let rv64_b_first = [
@@ -523,7 +482,7 @@ impl SpartanOuterRow {
             word(self.lookup_output.0) - 1,
             diff(self.next_unexpanded_pc.0, self.lookup_output.0),
             diff(self.next_pc.0, self.pc.0) - 1,
-            i128::from(1 - flag(self.do_not_update_unexpanded_pc.0)),
+            i128::from(1 - flag(self.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC])),
         ];
 
         let halves = |value: i128| (value >> 64, word(value as u64));
@@ -539,7 +498,7 @@ impl SpartanOuterRow {
             product_sign * word(product_lo),
         );
         let left_input = word(self.left_instruction_input.0);
-        let compressed = 2 * i128::from(self.is_compressed.0);
+        let compressed = 2 * i128::from(self.circuit_flags[CircuitFlags::IsCompressed]);
         let pc_step = diff(self.next_unexpanded_pc.0, self.unexpanded_pc.0);
         let rv64_b_second_lo = [
             diff(self.ram_address.0, self.rs1_value.0) - imm_lo + word(self.lookup_output.0),
@@ -550,7 +509,9 @@ impl SpartanOuterRow {
             diff(self.rd_write_value.0, self.lookup_output.0),
             diff(self.rd_write_value.0, self.unexpanded_pc.0) - 4 + compressed,
             pc_step - imm_lo,
-            pc_step - 4 + 4 * i128::from(self.do_not_update_unexpanded_pc.0) + compressed,
+            pc_step - 4
+                + 4 * i128::from(self.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC])
+                + compressed,
         ];
         let rv64_b_second_hi = [
             -imm_hi,
@@ -565,14 +526,12 @@ impl SpartanOuterRow {
         ];
 
         let mut values = RowGroupValues {
-            a_first: [0; DOMAIN],
-            a_second: [0; SECOND_GROUP_LEN],
+            a_first,
+            a_second,
             b_first: [0; DOMAIN],
             b_second_lo: [0; SECOND_GROUP_LEN],
             b_second_hi: [0; SECOND_GROUP_LEN],
         };
-        values.a_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_a_first);
-        values.a_second[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_a_second);
         values.b_first[..RV64_FIRST_GROUP_LEN].copy_from_slice(&rv64_b_first);
         values.b_second_lo[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second_lo);
         values.b_second_hi[..RV64_SECOND_GROUP_LEN].copy_from_slice(&rv64_b_second_hi);
@@ -581,20 +540,6 @@ impl SpartanOuterRow {
         // Nonzero field magnitudes are supplied by `field_group_values` below.
         #[cfg(feature = "field-inline")]
         {
-            values.a_first[RV64_FIRST_GROUP_LEN..].copy_from_slice(&[
-                flag(self.field_add.0),
-                flag(self.field_sub.0),
-                flag(self.field_mul.0),
-                flag(self.field_inv.0),
-                flag(self.field_load_accumulate_from_memory.0),
-            ]);
-            values.a_second[RV64_SECOND_GROUP_LEN..].copy_from_slice(&[
-                flag(self.field_assert_eq.0),
-                flag(self.field_load_accumulate_from_register.0),
-                flag(self.field_assert_zero.0),
-                flag(self.field_load_imm.0),
-                flag(self.field_advice_limb.0),
-            ]);
             let rd_write_value = word(self.rd_write_value.0);
             values.b_first[RV64_FIRST_GROUP_LEN + 3] = -1;
             values.b_first[RV64_FIRST_GROUP_LEN + 4] = -rd_write_value;
@@ -791,19 +736,35 @@ fn wide_value(top: i128, low: u64) -> S256 {
     S256::new([low, top as u64, (top >> 64) as u64, 0], is_positive)
 }
 
-fn fold_group<F: JoltField>(weights: &[F], guards: &[i64], lo: &[i128], hi: &[i128]) -> (F, F) {
+fn fold_guards<F: JoltField>(weights: &[F], guards: &[i64]) -> F {
     let mut az = <F as WithAccumulator>::SmallScalarAccumulator::default();
-    let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
-    for (((&weight, &guard), &lo), &hi) in weights.iter().zip(guards).zip(lo).zip(hi) {
+    for (&weight, &guard) in weights.iter().zip(guards) {
         az.fmadd_i64(weight, guard);
-        let (top, low) = (hi + (lo >> 64), lo as u64);
-        match top {
-            0 => bz.fmadd_signed_u64(weight, low, true),
-            -1 if low != 0 => bz.fmadd_signed_u64(weight, low.wrapping_neg(), false),
-            _ => bz.fmadd_s256(weight, &wide_value(top, low)),
-        }
     }
-    (az.reduce(), bz.reduce())
+    az.reduce()
+}
+
+fn fold_values<F: JoltField>(weights: &[F], lo: &[i128], hi: &[i128]) -> F {
+    let mut bz = <F as WithAccumulator>::SignedProductAccumulator::default();
+    for ((&weight, &lo), &hi) in weights.iter().zip(lo).zip(hi) {
+        accumulate_group_value(&mut bz, weight, lo, hi);
+    }
+    bz.reduce()
+}
+
+#[inline]
+fn accumulate_group_value<F: JoltField>(
+    sum: &mut F::SignedProductAccumulator,
+    weight: F,
+    lo: i128,
+    hi: i128,
+) {
+    let (top, low) = (hi + (lo >> 64), lo as u64);
+    match top {
+        0 => sum.fmadd_signed_u64(weight, low, true),
+        -1 if low != 0 => sum.fmadd_signed_u64(weight, low.wrapping_neg(), false),
+        _ => sum.fmadd_s256(weight, &wide_value(top, low)),
+    }
 }
 
 /// The uni-skip carry: everything the uni-skip front computes that the
@@ -1059,6 +1020,24 @@ impl<F: JoltField> UniskipKernel<F, OuterRemainder<F>> for OptimizedOuterUniskip
 /// linear-time round kernel.
 pub struct OptimizedOuterRemainder;
 
+impl OptimizedOuterRemainder {
+    /// Peak bytes of the remainder over `prefix_cycles` cycles before the
+    /// trace's constant suffix, or `None` past `usize::MAX`: `Az` and `Bz` at
+    /// their `2 · prefix_cycles` allocated entries each, which binding never
+    /// grows, plus a `prefix_cycles + 1`-entry allowance that bounds any
+    /// binding shrink copy. Not counted: the row store, a handle on the
+    /// witness's rows when it has one; the uni-skip carry; the split-eq
+    /// tables; the opening walk's eq factors and per-block sums; the
+    /// field-inline rows.
+    pub fn peak_bytes<F: JoltField>(prefix_cycles: usize) -> Option<usize> {
+        let len = prefix_cycles.checked_mul(2)?;
+        let transient = prefix_cycles.checked_add(1)?;
+        len.checked_mul(2)?
+            .checked_add(transient)?
+            .checked_mul(size_of::<F>())
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
     fn prepare(
         &self,
@@ -1147,6 +1126,8 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .map(|&variable| outer_opening(variable))
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
+        #[cfg(not(feature = "field-inline"))]
+        let b_folds = PreparedBFolds::new(&derived)?;
 
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
@@ -1164,41 +1145,43 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         };
         #[cfg(feature = "field-inline")]
         let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
-        let block = |x_out: usize,
+        // `try_reduce` discards every block result once one block fails, so
+        // groups an aborted block leaves in a reused cache never reach a result.
+        let block = |groups: &mut RepeatCache<GuardEndpointGroup<F>>,
+                     x_out: usize,
                      az_chunk: &mut [F],
                      bz_chunk: &mut [F]|
          -> Result<(F, F), WitnessError> {
-            let mut inner_zero = F::zero();
-            let mut inner_infinity = F::zero();
+            let mut guard_endpoints = GuardEndpoints::new(lagrange, groups);
             #[cfg(feature = "field-inline")]
             let mut field_cursor = FieldInlineRowCursor::seek(field_rows_ref, x_out * in_len);
             for x_in in 0..az_chunk.len() / 2 {
                 let t = x_out * in_len + x_in;
                 let row = access.row(t)?;
-                let integer_fold = || {
-                    let ([az_zero, az_one], [bz_zero, bz_one]) = row.folded_groups(lagrange);
-                    (az_zero, bz_zero, az_one, bz_one)
+                #[cfg(feature = "field-inline")]
+                let (values, [bz_zero, bz_one]) = if let Some(field_row) = field_cursor.advance(t) {
+                    let values = row.field_group_values(field_row);
+                    let bz = values.fold_b(lagrange);
+                    (values.integer, bz)
+                } else {
+                    let values = row.group_values();
+                    let bz = values.fold_b(lagrange);
+                    (values, bz)
                 };
                 #[cfg(feature = "field-inline")]
-                let (az_zero, bz_zero, az_one, bz_one) =
-                    if let Some(field_row) = field_cursor.advance(t) {
-                        let values = row.field_group_values(field_row);
-                        let (az_zero, bz_zero) = values.fold_first(lagrange);
-                        let (az_one, bz_one) = values.fold_second(lagrange);
-                        (az_zero, bz_zero, az_one, bz_one)
-                    } else {
-                        integer_fold()
-                    };
+                let (a_first, a_second) = (values.a_first, values.a_second);
                 #[cfg(not(feature = "field-inline"))]
-                let (az_zero, bz_zero, az_one, bz_one) = integer_fold();
+                let (a_first, a_second) = row.guard_values();
+                #[cfg(not(feature = "field-inline"))]
+                let [bz_zero, bz_one] = b_folds.fold(&row);
+                let [az_zero, az_one] =
+                    guard_endpoints.add(&a_first, &a_second, [bz_zero, bz_one], e_in[x_in]);
                 az_chunk[2 * x_in] = az_zero;
                 az_chunk[2 * x_in + 1] = az_one;
                 bz_chunk[2 * x_in] = bz_zero;
                 bz_chunk[2 * x_in + 1] = bz_one;
-                let e = e_in[x_in];
-                inner_zero += e * (az_zero * bz_zero);
-                inner_infinity += e * ((az_one - az_zero) * (bz_one - bz_zero));
             }
+            let [inner_zero, inner_infinity] = guard_endpoints.finish();
             Ok((e_out[x_out] * inner_zero, e_out[x_out] * inner_infinity))
         };
         let add = |left: (F, F), right: (F, F)| (left.0 + right.0, left.1 + right.1);
@@ -1208,7 +1191,10 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .par_chunks_mut(width)
             .zip(bz.par_chunks_mut(width))
             .enumerate()
-            .map(|(x_out, (az_chunk, bz_chunk))| block(x_out, az_chunk, bz_chunk))
+            .map_init(
+                || RepeatCache::new(GUARD_ENDPOINT_ENTRIES),
+                |groups, (x_out, (az_chunk, bz_chunk))| block(groups, x_out, az_chunk, bz_chunk),
+            )
             .try_reduce(
                 || (F::zero(), F::zero()),
                 |left, right| Ok(add(left, right)),
@@ -1216,10 +1202,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         #[cfg(not(feature = "parallel"))]
         let endpoints = {
             let mut folded = (F::zero(), F::zero());
+            let mut groups = RepeatCache::new(GUARD_ENDPOINT_ENTRIES);
             for (x_out, (az_chunk, bz_chunk)) in
                 az.chunks_mut(width).zip(bz.chunks_mut(width)).enumerate()
             {
-                folded = add(folded, block(x_out, az_chunk, bz_chunk)?);
+                folded = add(folded, block(&mut groups, x_out, az_chunk, bz_chunk)?);
             }
             folded
         };
@@ -1290,32 +1277,31 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         self.pending_endpoints = None;
     }
 
-    fn cycle_weights(&self) -> Vec<F> {
+    fn cycle_weights(&self) -> PrefixCycleWeights<F> {
         let reversed: Vec<F> = self.challenges.as_slice()[1..]
             .iter()
             .rev()
             .copied()
             .collect();
         let _span = tracing::info_span!("SpartanOuter::claimed_input_weights").entered();
-        prefix_cycle_weights(&reversed, self.prefix_cycles)
+        PrefixCycleWeights::new(&reversed, self.prefix_cycles)
     }
 
     #[tracing::instrument(skip_all, name = "SpartanOuter::claimed_inputs")]
-    fn claimed_inputs(&self, weights: &[F]) -> Result<Vec<F>, WitnessError> {
-        let cycles = weights.len();
+    fn claimed_inputs(&self, weights: &PrefixCycleWeights<F>) -> Result<Vec<F>, WitnessError> {
         let access = self.rows.access();
 
-        let block_size = 1usize << 12;
-        let blocks = cycles.div_ceil(block_size);
+        let blocks = weights.blocks();
         let block = |index: usize| -> Result<Vec<F>, WitnessError> {
-            let start = index * block_size;
-            let end = (start + block_size).min(cycles);
+            let block = weights.block(index);
             let mut accumulator = ClaimAccumulator::<F>::default();
-            for (t, &weight) in (start..end).zip(&weights[start..end]) {
+            for (t, &weight) in (block.start..).zip(block.inner) {
                 let row = access.row(t)?;
                 accumulator.add_row(weight, &row);
             }
-            Ok(accumulator.finish())
+            let mut values = accumulator.finish();
+            block.scale(&mut values);
+            Ok(values)
         };
         let claimed = {
             let _span = tracing::info_span!("SpartanOuter::claimed_input_walk").entered();
@@ -1329,14 +1315,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     /// `FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUTS` order — the appendage order the
     /// composed remainder relation folds).
     #[cfg(feature = "field-inline")]
-    fn field_claimed_inputs(&self, weights: &[F]) -> Vec<F> {
+    fn field_claimed_inputs(&self, weights: &PrefixCycleWeights<F>) -> Vec<F> {
         map_reduce_chunks(
             self.field_rows.len(),
             1 << 12,
             |range| {
                 let mut values = [F::zero(); FIELD_INLINE_SPARTAN_OUTER_R1CS_INPUT_COUNT];
                 for (cycle, row) in &self.field_rows[range] {
-                    let weight = weights[*cycle];
+                    let weight = weights.evaluate(*cycle);
                     for (value, column) in values.iter_mut().zip(row.columns()) {
                         *value += weight * column;
                     }
@@ -1394,32 +1380,38 @@ impl<F: JoltField> ClaimAccumulator<F> {
         flag(17, row.next_is_virtual.0);
         flag(18, row.next_is_first_in_sequence.0);
         flag(20, row.should_jump.0);
-        flag(21, row.add_operands.0);
-        flag(22, row.subtract_operands.0);
-        flag(23, row.multiply_operands.0);
-        flag(24, row.load.0);
-        flag(25, row.store.0);
-        flag(26, row.jump.0);
-        flag(27, row.write_lookup_output_to_rd.0);
-        flag(28, row.virtual_instruction.0);
-        flag(29, row.assert_flag.0);
-        flag(30, row.do_not_update_unexpanded_pc.0);
-        flag(31, row.advice.0);
-        flag(32, row.is_compressed.0);
-        flag(33, row.is_first_in_sequence.0);
-        flag(34, row.is_last_in_sequence.0);
+        flag(21, row.circuit_flags[CircuitFlags::AddOperands]);
+        flag(22, row.circuit_flags[CircuitFlags::SubtractOperands]);
+        flag(23, row.circuit_flags[CircuitFlags::MultiplyOperands]);
+        flag(24, row.circuit_flags[CircuitFlags::Load]);
+        flag(25, row.circuit_flags[CircuitFlags::Store]);
+        flag(26, row.circuit_flags[CircuitFlags::Jump]);
+        flag(27, row.circuit_flags[CircuitFlags::WriteLookupOutputToRD]);
+        flag(28, row.circuit_flags[CircuitFlags::VirtualInstruction]);
+        flag(29, row.circuit_flags[CircuitFlags::Assert]);
+        flag(30, row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC]);
+        flag(31, row.circuit_flags[CircuitFlags::Advice]);
+        flag(32, row.circuit_flags[CircuitFlags::IsCompressed]);
+        flag(33, row.circuit_flags[CircuitFlags::IsFirstInSequence]);
+        flag(34, row.circuit_flags[CircuitFlags::IsLastInSequence]);
         #[cfg(feature = "field-inline")]
         {
-            flag(35, row.field_add.0);
-            flag(36, row.field_sub.0);
-            flag(37, row.field_mul.0);
-            flag(38, row.field_inv.0);
-            flag(39, row.field_assert_eq.0);
-            flag(40, row.field_load_accumulate_from_register.0);
-            flag(41, row.field_assert_zero.0);
-            flag(42, row.field_load_imm.0);
-            flag(43, row.field_load_accumulate_from_memory.0);
-            flag(44, row.field_advice_limb.0);
+            flag(35, row.circuit_flags[CircuitFlags::FieldAdd]);
+            flag(36, row.circuit_flags[CircuitFlags::FieldSub]);
+            flag(37, row.circuit_flags[CircuitFlags::FieldMul]);
+            flag(38, row.circuit_flags[CircuitFlags::FieldInv]);
+            flag(39, row.circuit_flags[CircuitFlags::FieldAssertEq]);
+            flag(
+                40,
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
+            );
+            flag(41, row.circuit_flags[CircuitFlags::FieldAssertZero]);
+            flag(42, row.circuit_flags[CircuitFlags::FieldLoadImm]);
+            flag(
+                43,
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
+            );
+            flag(44, row.circuit_flags[CircuitFlags::FieldAdviceLimb]);
         }
 
         let mut word = |index: usize, magnitude: u128, is_positive: bool| {
@@ -1626,6 +1618,7 @@ mod tests {
     use jolt_claims::NoChallenges;
     use jolt_field::signed::S128;
     use jolt_field::{Fr, Ring};
+    use jolt_riscv::CIRCUIT_FLAGS;
     use jolt_verifier::stages::stage1::outer_remainder::outer_remainder_input_values_from_uniskip_output;
     use jolt_witness::testing::with_sample_backend;
     use jolt_witness::witnesses::ToField;
@@ -1638,7 +1631,7 @@ mod tests {
     use crate::reference::spartan_outer::{ReferenceOuterRemainder, SpartanOuterKernel};
     use crate::ReferenceBackend;
 
-    fn variable_field_value(row: &SpartanOuterRow, index: usize) -> Fr {
+    fn variable_field_value<F: JoltField>(row: &SpartanOuterRow, index: usize) -> F {
         match index {
             0 => row.left_instruction_input.to_field(),
             1 => row.right_instruction_input.to_field(),
@@ -1661,40 +1654,52 @@ mod tests {
             18 => row.next_is_first_in_sequence.to_field(),
             19 => row.lookup_output.to_field(),
             20 => row.should_jump.to_field(),
-            21 => row.add_operands.to_field(),
-            22 => row.subtract_operands.to_field(),
-            23 => row.multiply_operands.to_field(),
-            24 => row.load.to_field(),
-            25 => row.store.to_field(),
-            26 => row.jump.to_field(),
-            27 => row.write_lookup_output_to_rd.to_field(),
-            28 => row.virtual_instruction.to_field(),
-            29 => row.assert_flag.to_field(),
-            30 => row.do_not_update_unexpanded_pc.to_field(),
-            31 => row.advice.to_field(),
-            32 => row.is_compressed.to_field(),
-            33 => row.is_first_in_sequence.to_field(),
-            34 => row.is_last_in_sequence.to_field(),
+            21 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::AddOperands])),
+            22 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::SubtractOperands])),
+            23 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::MultiplyOperands])),
+            24 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Load])),
+            25 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Store])),
+            26 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Jump])),
+            27 => F::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::WriteLookupOutputToRD],
+            )),
+            28 => F::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::VirtualInstruction],
+            )),
+            29 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Assert])),
+            30 => F::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::DoNotUpdateUnexpandedPC],
+            )),
+            31 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::Advice])),
+            32 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsCompressed])),
+            33 => F::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::IsFirstInSequence],
+            )),
+            34 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::IsLastInSequence])),
             #[cfg(feature = "field-inline")]
-            35 => row.field_add.to_field(),
+            35 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdd])),
             #[cfg(feature = "field-inline")]
-            36 => row.field_sub.to_field(),
+            36 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldSub])),
             #[cfg(feature = "field-inline")]
-            37 => row.field_mul.to_field(),
+            37 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldMul])),
             #[cfg(feature = "field-inline")]
-            38 => row.field_inv.to_field(),
+            38 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldInv])),
             #[cfg(feature = "field-inline")]
-            39 => row.field_assert_eq.to_field(),
+            39 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertEq])),
             #[cfg(feature = "field-inline")]
-            40 => row.field_load_accumulate_from_register.to_field(),
+            40 => F::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromRegister],
+            )),
             #[cfg(feature = "field-inline")]
-            41 => row.field_assert_zero.to_field(),
+            41 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAssertZero])),
             #[cfg(feature = "field-inline")]
-            42 => row.field_load_imm.to_field(),
+            42 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldLoadImm])),
             #[cfg(feature = "field-inline")]
-            43 => row.field_load_accumulate_from_memory.to_field(),
+            43 => F::from_u64(u64::from(
+                row.circuit_flags[CircuitFlags::FieldLoadAccumulateFromMemory],
+            )),
             #[cfg(feature = "field-inline")]
-            44 => row.field_advice_limb.to_field(),
+            44 => F::from_u64(u64::from(row.circuit_flags[CircuitFlags::FieldAdviceLimb])),
             _ => unreachable!("canonical R1CS inputs"),
         }
     }
@@ -1750,40 +1755,10 @@ mod tests {
                     next_is_first_in_sequence: NextIsFirstInSequence(bit()),
                     lookup_output: LookupOutput(next()),
                     should_jump: ShouldJump(bit()),
-                    add_operands: OpFlag(bit()),
-                    subtract_operands: OpFlag(bit()),
-                    multiply_operands: OpFlag(bit()),
-                    load: OpFlag(bit()),
-                    store: OpFlag(bit()),
-                    jump: OpFlag(bit()),
-                    write_lookup_output_to_rd: OpFlag(bit()),
-                    virtual_instruction: OpFlag(bit()),
-                    assert_flag: OpFlag(bit()),
-                    do_not_update_unexpanded_pc: OpFlag(bit()),
-                    advice: OpFlag(bit()),
-                    is_compressed: OpFlag(bit()),
-                    is_first_in_sequence: OpFlag(bit()),
-                    is_last_in_sequence: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_add: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_sub: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_mul: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_inv: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_assert_eq: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_load_accumulate_from_register: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_assert_zero: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_load_imm: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_load_accumulate_from_memory: OpFlag(bit()),
-                    #[cfg(feature = "field-inline")]
-                    field_advice_limb: OpFlag(bit()),
+                    circuit_flags: CIRCUIT_FLAGS.into_iter().fold(
+                        CircuitFlagSet::default(),
+                        |flags, flag| if bit() { flags.set(flag) } else { flags },
+                    ),
                 }
             })
             .collect()
@@ -1924,7 +1899,7 @@ mod tests {
     }
 
     fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None);
+        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None, None);
     }
 
     fn parity_case_with_eq(
@@ -1934,8 +1909,14 @@ mod tests {
         exceptional: Option<ExceptionalEq>,
         zero_scale: bool,
         prefix: Option<usize>,
+        period: Option<usize>,
     ) {
         let mut rows = synthetic_rows(log_t, seed);
+        if let Some(period) = period {
+            for t in period..rows.len() {
+                rows[t] = rows[t % period];
+            }
+        }
         if let Some(prefix) = prefix {
             let tail = rows[rows.len() - 1];
             rows[prefix..].fill(tail);
@@ -2095,9 +2076,19 @@ mod tests {
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
         with_sample_backend(|dummy| {
             for case in ExceptionalEq::ALL {
-                parity_case_with_eq(dummy, 4, 389, Some(case), false, None);
+                parity_case_with_eq(dummy, 4, 389, Some(case), false, None, None);
             }
-            parity_case_with_eq(dummy, 4, 389, None, true, None);
+            parity_case_with_eq(dummy, 4, 389, None, true, None, None);
+        });
+    }
+
+    #[test]
+    fn remainder_matches_reference_with_repeated_guard_rows() {
+        with_sample_backend(|dummy| {
+            // log_t = 12 gives 64-row blocks; period 48 repeats 16 rows per
+            // block and collides keys in the 128-slot guard-endpoint cache.
+            parity_case_with_eq(dummy, 12, 389, None, false, None, Some(48));
+            parity_case_with_eq(dummy, 12, 390, None, false, Some(3000), Some(48));
         });
     }
 
@@ -2106,12 +2097,12 @@ mod tests {
         with_sample_backend(|dummy| {
             for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
                 for seed in [389, 390] {
-                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix));
+                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix), None);
                     for case in ExceptionalEq::ALL {
-                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix));
+                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix), None);
                     }
                 }
-                parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix));
+                parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix), None);
             }
         });
     }
@@ -2297,6 +2288,70 @@ mod tests {
         #[cfg(feature = "field-inline")]
         crate::optimized::field_registers_testing::structured_field_register_fixture(12)
             .with_plane(4, |backend| sample_case(backend, 4));
+    }
+
+    #[test]
+    #[cfg(not(feature = "field-inline"))]
+    fn prepared_b_folds_match_canonical_matrix() {
+        #[cfg(feature = "akita")]
+        use jolt_field::Prime128OffsetA7F7;
+        fn check<F: JoltField>() {
+            let mut rows = synthetic_rows(8, 0xB0_1D);
+            for negative in [false, true] {
+                let mut row = rows[0];
+                row.right_lookup_operand.0 = u128::MAX;
+                row.right_instruction_input.0 = if negative { i128::MIN } else { i128::MAX };
+                row.imm.0 = row.right_instruction_input.0;
+                row.product.0 = S128::new([u64::MAX; 2], !negative);
+                row.ram_address.0 = u64::MAX;
+                row.ram_read_value.0 = u64::MAX;
+                row.ram_write_value.0 = u64::MAX;
+                rows.push(row);
+            }
+            // Wide columns at the zero, `u64` and two-limb boundaries.
+            for (right_lookup, right_input, product) in [
+                (0u128, -1i128, S128::new([1, 0], false)),
+                (
+                    u128::from(u64::MAX),
+                    i128::from(u64::MAX),
+                    S128::new([u64::MAX, 0], true),
+                ),
+                (1u128 << 64, -(1i128 << 64), S128::new([0, 1], false)),
+            ] {
+                let mut row = rows[0];
+                row.right_lookup_operand.0 = right_lookup;
+                row.right_instruction_input.0 = right_input;
+                row.imm.0 = right_input;
+                row.product.0 = product;
+                rows.push(row);
+            }
+            let large = F::from_u128(u128::MAX) * F::from_u128(u128::MAX - 0x1234_5678);
+            for challenge in [F::zero(), F::one(), F::from_u64(19), -F::one(), large] {
+                let derived = OuterRemainderKernel::<F>::derived_weights(challenge).unwrap();
+                let folds = PreparedBFolds::new(&derived).unwrap();
+                for row in &rows {
+                    let expected = std::array::from_fn(|stream| {
+                        derived.bz_constant[stream]
+                            + derived.bz_weights[stream]
+                                .iter()
+                                .enumerate()
+                                .map(|(index, &weight)| {
+                                    weight * variable_field_value::<F>(row, index)
+                                })
+                                .sum::<F>()
+                    });
+                    assert_eq!(folds.fold(row), expected);
+                }
+                // A matrix that reads a column the fold does not support fails
+                // loudly instead of silently dropping it.
+                let mut changed = derived;
+                changed.bz_weights[0][1] = F::one();
+                assert!(PreparedBFolds::new(&changed).is_err());
+            }
+        }
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 
     /// The integer extension of each base-window basis vector is exactly the

@@ -28,7 +28,7 @@
 | jolt-claims | 105 | 0 | 0 | 317 |
 | jolt-field | 92 | 3 | 0 | 95 |
 | jolt-verifier | 42 | 2 | 0 | 73 |
-| jolt-blindfold | 41 | 0 | 0 | 67 |
+| jolt-zk | 41 | 0 | 0 | 67 |
 | jolt-openings | 40 | 0 | 0 | 58 |
 | jolt-hyperkzg | 32 | 0 | 0 | 36 |
 | jolt-r1cs | 28 | 0 | 0 | 59 |
@@ -117,7 +117,7 @@ Implementation slices, each leaving clippy green in both feature modes:
 
 1. Attributes on all 19 crates + fix the 33 tier-1 violations + `forbid(unsafe_code)` on the 15 clean crates.
 2. Unsafe assessment in jolt-crypto, jolt-dory, jolt-poly, jolt-lookup-tables (remove or document; benchmark where hot).
-3. `indexing_slicing` per crate, smallest first: jolt-riscv, common, jolt-akita, jolt-sumcheck, jolt-program, jolt-dory, jolt-transcript, jolt-crypto, jolt-r1cs, jolt-hyperkzg, jolt-openings, jolt-blindfold, jolt-verifier.
+3. `indexing_slicing` per crate, smallest first: jolt-riscv, common, jolt-akita, jolt-sumcheck, jolt-program, jolt-dory, jolt-transcript, jolt-crypto, jolt-r1cs, jolt-hyperkzg, jolt-openings, jolt-zk, jolt-verifier.
 4. Verifier numeric discipline: `arithmetic_side_effects` + `as_conversions` + `integer_division` (139 sites) + `clippy.toml` disallow lists.
 
 Slices 3–4 may split into follow-up PRs if the diff outgrows review; the attribute in a crate lands in the same commit as that crate's fixes, never before.

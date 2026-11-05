@@ -1,0 +1,94 @@
+[package]
+name = "jolt-algebra"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Shared field abstractions with BN254 and Solinas backends"
+repository = "https://github.com/a16z/jolt"
+keywords = ["SNARK", "cryptography", "finite-fields", "BN254", "Solinas"]
+categories = ["cryptography"]
+
+[package.metadata.cargo-machete]
+ignored = ["cc", "allocative"]
+
+[lints]
+workspace = true
+
+[dependencies]
+jolt-riscv = { workspace = true, features = ["field-inline"], optional = true }
+ark-ff = { workspace = true, optional = true }
+ark-serialize = { workspace = true, optional = true }
+ark-bn254 = { workspace = true, features = ["curve"], optional = true }
+num-traits = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+allocative = { workspace = true, optional = true }
+bytemuck = { workspace = true, optional = true }
+rand_core = { workspace = true }
+rayon = { workspace = true, optional = true }
+spongefish = { workspace = true, optional = true }
+thiserror = { workspace = true }
+
+[features]
+default = ["bn254"]
+bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
+solinas = []
+binary = []
+asm = []
+fuzzing = ["asm"]
+parallel = ["dep:rayon"]
+allocative = ["dep:allocative"]
+# spongefish `Encoding` for every field, so `F: JoltField` can be absorbed.
+spongefish = ["dep:spongefish"]
+# Byte views of `Fp128` for device buffers (`jolt-metal`).
+bytemuck = ["dep:bytemuck"]
+fp128-proof-linkage = ["asm"]
+fp64-proof-linkage = []
+# Guest arithmetic on the field-inline unit (see `field_inline`), which computes in
+# one field: a guest selects it with `-bn254` (`Fr`) or `-fp128`
+# (`Prime128OffsetA7F7`); other fields keep software arithmetic.
+# Internal: enable through exactly one field selector below.
+field-inline-guest = ["dep:jolt-riscv"]
+field-inline-guest-bn254 = ["field-inline-guest"]
+field-inline-guest-fp128 = ["field-inline-guest"]
+
+[dev-dependencies]
+# The spine test's oracle field must satisfy `JoltField`, which requires
+# `Allocative` under the `allocative` feature; integration tests do not see
+# the optional dependency above.
+allocative = { workspace = true }
+# Likewise `spongefish::Encoding` under the `spongefish` feature.
+spongefish = { workspace = true }
+bincode = { workspace = true }
+criterion = { workspace = true }
+num-bigint = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+
+[build-dependencies]
+cc = "1.2"
+
+[[bench]]
+name = "ext4_kernels"
+harness = false
+
+[[bench]]
+name = "fp64_kernels"
+harness = false
+
+[[bench]]
+name = "field_arithmetic"
+harness = false
+required-features = ["solinas"]
+
+[[bench]]
+name = "binary_kernels"
+harness = false
+required-features = ["binary"]
+
+[[example]]
+name = "fp128_production_witness"
+required-features = ["solinas", "fp128-proof-linkage"]
+
+[[example]]
+name = "fp64_production_witness"
+required-features = ["solinas", "fp64-proof-linkage"]

@@ -1,11 +1,11 @@
 //! Jolt-specific BlindFold protocol construction.
 //!
 //! This module lowers the already-verified committed-sumcheck frontier into the
-//! generic `jolt-blindfold` statement API. It does not build R1CS matrices
+//! generic `jolt-zk` statement API. It does not build R1CS matrices
 //! directly. Instead, it describes the verifier equations in typed Jolt terms:
 //! sumcheck statements, domains, committed round consistency, committed output
 //! claim rows, input/output claim expressions, public constants, transcript
-//! challenges, and the final PCS opening binding. `jolt-blindfold` then lowers
+//! challenges, and the final PCS opening binding. `jolt-zk` then lowers
 //! that statement into `jolt-r1cs` constraints and exposes the row layout used
 //! by the BlindFold verifier.
 //!
@@ -54,7 +54,6 @@
 //! final PCS opening proof: no clear output claim scalars are accepted by the
 //! verifier, and every hidden scalar that crosses a stage boundary is either in
 //! a committed output-claim row or in the final hiding evaluation commitment.
-use jolt_blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -66,6 +65,7 @@ use jolt_claims::protocols::composed::r1cs::{
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
 #[cfg(not(feature = "field-inline"))]
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
+use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 use jolt_claims::protocols::jolt::relations;
 #[cfg(feature = "fuzzing")]
 use jolt_claims::protocols::jolt::JoltExpr;
@@ -122,6 +122,7 @@ use jolt_sumcheck::{
     BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
     SumcheckStatement,
 };
+use jolt_zk::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
 use num_traits::Zero;
 
 use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
@@ -922,6 +923,27 @@ where
         spartan_shift_raf,
     )?;
     values.public(JoltDerivedId::from(BytecodeReadRafPublic::Entry), entry)?;
+    // The batching-challenge powers the read-RAF expressions fold under
+    // (`bytecode::challenge_pow_expr` leaves), one public per power.
+    {
+        use jolt_claims::SumcheckChallenges as _;
+        for (challenge, bound) in bytecode::challenge_power_bounds(READ_RAF_CYCLE_STAGES) {
+            let value = bytecode_challenges
+                .resolve_challenge(&challenge.into())
+                .ok_or(VerifierError::MissingStageClaimChallenge {
+                    id: JoltChallengeId::from(challenge).into(),
+                })?;
+            for exponent in 2..bound {
+                values.public(
+                    JoltDerivedId::from(BytecodeReadRafPublic::ChallengePow {
+                        challenge,
+                        exponent,
+                    }),
+                    bytecode::challenge_pow(value, exponent),
+                )?;
+            }
+        }
+    }
 
     let booleanity_address_point = input
         .stage6a

@@ -1,0 +1,28 @@
+[package]
+name = "jolt-akita-external-guest"
+version = "0.1.0"
+edition = "2021"
+publish = false
+[features]
+guest = [
+  "dep:jolt-akita-external",
+  "dep:jolt-akita",
+  "jolt/guest-std",
+  "jolt/stdout",
+  "jolt/random",
+  "jolt/thread",
+]
+[dependencies]
+jolt = { package = "jolt-sdk", path = "../../../jolt-sdk", default-features = false }
+jolt-akita-external = { path = "../replay", features = [
+  "akita",
+], optional = true }
+jolt-akita = { workspace = true, optional = true }
+[lib]
+test = false
+doctest = false
+[[bin]]
+name = "jolt-akita-external-guest"
+path = "src/main.rs"
+test = false
+bench = false

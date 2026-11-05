@@ -1,5 +1,7 @@
 mod product_sum;
+mod repeat_cache;
 pub(crate) use product_sum::{LowDegreeProductSum, TailFactorProducts};
+pub(crate) use repeat_cache::{repeat_hash, repeats_often, RepeatCache};
 
 use std::ops::Range;
 
@@ -519,6 +521,16 @@ pub(crate) fn bind_pairs<F: JoltField>(table: &mut Vec<F>, r: F) {
     table.truncate(half);
 }
 
+/// Bytes a Rayon fallible `collect::<Result<Vec<T>, _>>()` of `len` entries
+/// may hold at once, or `None` past `usize::MAX`. The collect is unindexed:
+/// it folds each split into its own vector on a linked list, then appends
+/// them into one table reserved at `len`. Split sizes have no lower bound, so
+/// each entry is priced at its worst: its table slot, four vector slots (a
+/// one-entry split reserves four) and a list node.
+pub(crate) fn fallible_collect_bytes<T>(len: usize) -> Option<usize> {
+    len.checked_mul(5 * size_of::<T>() + size_of::<Vec<T>>() + 2 * size_of::<usize>())
+}
+
 /// The drawn challenges of a kernel's bound rounds, tracked against the
 /// round total — one authority for both the challenge history and the
 /// bound-rounds invariant. Kernels that never revisit their challenges use
@@ -777,7 +789,6 @@ pub(crate) fn round_poly_from_skipped_evals<F: JoltField>(
     UnivariatePoly::from_evals(&evals)
 }
 
-#[cfg(feature = "parallel")]
 pub(crate) fn merge_evals<F: JoltField>(mut left: Vec<F>, right: Vec<F>) -> Vec<F> {
     for (left, right) in left.iter_mut().zip(right) {
         *left += right;
@@ -926,6 +937,20 @@ pub(crate) fn scan_chunk_size(len: usize) -> usize {
     }
 }
 
+/// Pool threads that can run a parallel pass's closures at once; one without
+/// `parallel`. A rayon worker runs one closure body at a time, so per-call
+/// scratch a pass allocates inside its closures is live at most this many times.
+pub(crate) fn pool_workers() -> usize {
+    #[cfg(feature = "parallel")]
+    {
+        rayon::current_num_threads()
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        1
+    }
+}
+
 /// `LT(·, r) + constant` served from split tables and bound low-to-high
 /// (legacy `LtPolynomial` port).
 ///
@@ -949,13 +974,29 @@ pub(crate) enum SplitLt<F> {
 }
 
 impl<F: JoltField> SplitLt<F> {
+    /// Variables of `lt_lo` over a `vars`-variable point; `lt_hi` and
+    /// `eq_hi` take the rest.
+    const fn lo_vars(vars: usize) -> usize {
+        vars / 2
+    }
+
+    /// Bytes the tables hold at their largest over `vars >= 2` variables, or
+    /// `None` past `usize::MAX`: the three split tables, then the dense table
+    /// the last `lt_lo` bind builds beside them, `lt_lo` keeping its capacity.
+    pub(crate) fn peak_bytes(vars: usize) -> Option<usize> {
+        let hi = 1usize << (vars - Self::lo_vars(vars));
+        (1usize << Self::lo_vars(vars))
+            .checked_add(hi.checked_mul(3)?)?
+            .checked_mul(size_of::<F>())
+    }
+
     pub(crate) fn new(r_cycle: &[F]) -> Self {
         Self::new_plus_constant(r_cycle, F::zero())
     }
 
     /// `LT(·, r_cycle) + constant` — the constant rides in the hi table.
     pub(crate) fn new_plus_constant(r_cycle: &[F], constant: F) -> Self {
-        let mid = r_cycle.len() / 2;
+        let mid = Self::lo_vars(r_cycle.len());
         let (r_hi, r_lo) = r_cycle.split_at(r_cycle.len() - mid);
         if r_lo.is_empty() {
             return Self::Dense(
@@ -1115,17 +1156,98 @@ impl<B: WitnessBundle + Copy + PartialEq> BundleAccess<'_, B> {
     }
 }
 
-pub(crate) fn prefix_cycle_weights<F: JoltField>(point: &[F], prefix_cycles: usize) -> Vec<F> {
-    let prefix = prefix_cycles.min((1usize << point.len()) - 1);
-    let eq = TensorEqTable::new(point);
-    let tail_mass = EqPolynomial::suffix_sum(point, prefix);
-    map_indices(prefix + 1, |row| {
-        if row == prefix {
-            tail_mass
-        } else {
-            eq.evaluate_index(row)
+pub(crate) struct PrefixCycleWeights<F: JoltField> {
+    eq: TensorEqTable<F>,
+    prefix: usize,
+    tail_mass: F,
+}
+
+impl<F: JoltField> PrefixCycleWeights<F> {
+    const BLOCK_BITS: usize = 12;
+
+    pub(crate) fn new(point: &[F], prefix_cycles: usize) -> Self {
+        let prefix = prefix_cycles.min((1usize << point.len()) - 1);
+        let active_bits = prefix.next_power_of_two().ilog2() as usize;
+        let (leading_point, active_point) = point.split_at(point.len() - active_bits);
+        // Every index below the prefix has zero leading coordinates.
+        let scale = leading_point
+            .iter()
+            .fold(F::one(), |scale, &r| scale * (F::one() - r));
+        let inner_bits = active_bits
+            .div_ceil(2)
+            .max(active_bits.min(Self::BLOCK_BITS));
+        Self {
+            eq: TensorEqTable::new_with_scaling_and_split(
+                active_point,
+                scale,
+                active_bits - inner_bits,
+            ),
+            prefix,
+            tail_mass: EqPolynomial::suffix_sum(point, prefix),
         }
-    })
+    }
+
+    fn block_len(&self) -> usize {
+        self.eq.e_in().len().min(1 << Self::BLOCK_BITS)
+    }
+
+    pub(crate) fn blocks(&self) -> usize {
+        self.prefix.div_ceil(self.block_len()) + 1
+    }
+
+    /// Each block has one outer factor. The final singleton carries the entire
+    /// constant suffix, including the last row when the prefix fills the domain.
+    pub(crate) fn block(&self, index: usize) -> PrefixCycleBlock<'_, F> {
+        let block_len = self.block_len();
+        if index == self.prefix.div_ceil(block_len) {
+            return PrefixCycleBlock {
+                start: self.prefix,
+                inner: std::slice::from_ref(&self.tail_mass),
+                outer: F::one(),
+            };
+        }
+        let start = index * block_len;
+        let count = block_len.min(self.prefix - start);
+        let inner_len = self.eq.e_in().len();
+        let inner_start = start % inner_len;
+        PrefixCycleBlock {
+            start,
+            inner: &self.eq.e_in()[inner_start..inner_start + count],
+            outer: self.eq.e_out()[start / inner_len],
+        }
+    }
+
+    /// One weight per row `0..=prefix`, the last carrying the constant suffix.
+    pub(crate) fn to_dense(&self) -> Vec<F> {
+        map_indices(self.prefix + 1, |row| self.evaluate(row))
+    }
+
+    pub(crate) fn evaluate(&self, row: usize) -> F {
+        assert!(row <= self.prefix);
+        if row == self.prefix {
+            self.tail_mass
+        } else {
+            self.eq.evaluate_index(row)
+        }
+    }
+}
+
+/// Rows `start..start + inner.len()` weigh `outer * inner[i]`.
+pub(crate) struct PrefixCycleBlock<'a, F> {
+    pub(crate) start: usize,
+    pub(crate) inner: &'a [F],
+    pub(crate) outer: F,
+}
+
+impl<F: JoltField> PrefixCycleBlock<'_, F> {
+    /// Applies the block's outer factor to sums accumulated with `inner` weights.
+    pub(crate) fn scale(&self, values: &mut [F]) {
+        if !self.outer.is_one() {
+            for value in values {
+                *value *= self.outer;
+            }
+        }
+    }
 }
 
 #[inline(always)]
@@ -1315,5 +1437,75 @@ mod product_grid_tests {
         for factors in 2..=MAX_GRID_FACTORS {
             assert_product_grid::<Prime128OffsetA7F7>(factors);
         }
+    }
+}
+
+#[cfg(test)]
+mod prefix_cycle_weights_tests {
+    use super::PrefixCycleWeights;
+    #[cfg(feature = "akita")]
+    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::{Fr, JoltField};
+    use jolt_poly::eq_index_msb;
+
+    fn check<F: JoltField>() {
+        for (bits, requested) in [
+            (0usize, 0usize),
+            (0, 1),
+            (6, 0),
+            (6, 1),
+            (6, 3),
+            (6, 31),
+            (6, 32),
+            (6, 33),
+            (6, 63),
+            (6, 64),
+            (12, 0),
+            (12, 129),
+            (12, 4095),
+            (25, 4095),
+            (25, 4096),
+            (25, 4097),
+            (25, 8193),
+            (27, 0),
+            (27, 1),
+            (27, 129),
+        ] {
+            for exceptional in [false, true] {
+                let point: Vec<F> = (0..bits)
+                    .map(|i| {
+                        if exceptional && (i == 0 || i == bits - 1) {
+                            F::from_u64(u64::from(i != 0))
+                        } else {
+                            F::from_u64(19 + 7 * i as u64)
+                        }
+                    })
+                    .collect();
+                let prefix = requested.min((1usize << bits) - 1);
+                let mut expected: Vec<F> = (0..prefix)
+                    .map(|row| eq_index_msb(&point, row as u128))
+                    .collect();
+                expected.push(F::one() - expected.iter().copied().sum::<F>());
+                let weights = PrefixCycleWeights::new(&point, requested);
+                let mut actual = Vec::new();
+                for index in 0..weights.blocks() {
+                    let block = weights.block(index);
+                    assert_eq!(block.start, actual.len());
+                    actual.extend(block.inner.iter().map(|value| block.outer * *value));
+                }
+                assert_eq!(actual, expected);
+                assert_eq!(weights.to_dense(), expected);
+                for (row, value) in expected.into_iter().enumerate() {
+                    assert_eq!(weights.evaluate(row), value);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn factored_blocks_and_constant_suffix_match_equality_weights() {
+        check::<Fr>();
+        #[cfg(feature = "akita")]
+        check::<Prime128OffsetA7F7>();
     }
 }
