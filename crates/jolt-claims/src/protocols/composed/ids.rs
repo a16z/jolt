@@ -47,7 +47,7 @@ impl TryFrom<ComposedOpeningId> for FieldInlineOpeningId {
 }
 
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { ComposedOpeningId {
+crate::recipe_id! { crate::protocols::composed; ComposedOpeningId {
     Jolt(value0: JoltOpeningId) = 0,
     FieldInline(value0: FieldInlineOpeningId) = 1,
 } }

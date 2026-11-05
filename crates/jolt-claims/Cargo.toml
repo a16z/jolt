@@ -23,7 +23,6 @@ immutable-recipes = [
   "jolt-field/immutable-recipes",
   "jolt-field/solinas",
 ]
-immutable-recipes-record = ["immutable-recipes"]
 
 [dependencies]
 allocative = { workspace = true, optional = true }
