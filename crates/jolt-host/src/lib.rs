@@ -42,8 +42,8 @@ pub struct Program {
 /// A guest ELF and the bytes read from it once.
 ///
 /// Guest builds replace the file at `path` even when nothing was recompiled
-/// (cargo removes and re-links its uplifted binary), so the bytes are read a
-/// single time and every later consumer uses them instead of the path.
+/// (Cargo removes and recreates the hardlink to its cached binary). Read the bytes
+/// once so every later consumer uses them instead of the path.
 #[derive(Clone)]
 pub struct GuestElf {
     path: PathBuf,
