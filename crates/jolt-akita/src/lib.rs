@@ -34,6 +34,7 @@
 
 mod adapters;
 pub mod configs;
+pub mod deferred;
 pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
@@ -61,6 +62,7 @@ pub use adapters::{
     AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
+pub use deferred::AkitaVerificationContext;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };

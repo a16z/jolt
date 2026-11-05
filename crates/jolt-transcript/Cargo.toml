@@ -26,6 +26,12 @@ solinas = ["jolt-field/solinas"]
 binary = ["jolt-field/binary"]
 bn254 = ["dep:ark-bn254", "dep:ark-ff", "jolt-field/bn254"]
 transcript-blake2b = ["dep:blake2"]
+# Identical BLAKE2b-512 bytes through the existing RISC-V inline.
+blake2-inline = [
+  "transcript-blake2b",
+  "dep:jolt-inlines-blake2",
+  "jolt-inlines-blake2/digest",
+]
 transcript-keccak = ["spongefish/keccak"]
 transcript-poseidon = ["bn254", "dep:light-poseidon"]
 # Keccak-256 (`0x01` pad) instead of SHA3-256 for every digest a statement or
@@ -33,8 +39,6 @@ transcript-poseidon = ["bn254", "dep:light-poseidon"]
 keccak256-digests = []
 # `ScriptedTranscript`: scripted challenges, an event log, no proof of work. Tests only.
 test-utils = []
-
-blake2-inline = ["dep:jolt-inlines-blake2", "jolt-inlines-blake2/digest"]
 
 [dependencies]
 jolt-inlines-blake2 = { workspace = true, optional = true }

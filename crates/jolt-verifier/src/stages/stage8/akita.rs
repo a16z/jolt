@@ -261,6 +261,7 @@ pub fn verify<PCS, VC, T>(
     #[cfg(feature = "akita")] stage4: &Stage4ClearOutput<PCS::Field>,
     stage6b: &Stage6bClearOutput<PCS::Field>,
     stage7: &Stage7ClearOutput<PCS::Field>,
+    context: &mut PCS::VerificationContext<'_>,
 ) -> Result<(), VerifierError>
 where
     PCS: CommitmentScheme,
@@ -417,6 +418,7 @@ where
         &main_group,
         proof,
         transcript,
+        context,
     )
     .map_err(opening_failed)?;
 

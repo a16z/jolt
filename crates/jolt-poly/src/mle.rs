@@ -22,46 +22,72 @@ pub enum MleError {
 }
 
 pub fn sparse_mle_msb<F: JoltField>(start_index: u128, values: &[u64], point: &[F]) -> F {
-    // Consecutive indices share their high bits: with `k` low bits,
-    // `eq(point, i) = eq(high, i >> k) · eq(low, i mod 2^k)`, so one low table
-    // serves every aligned block of `2^k` indices the run touches.
-    let Some(len_log2) = values.len().checked_ilog2() else {
-        return F::zero();
-    };
-    let low_bits = (len_log2 as usize).min(point.len());
-    let (high_point, low_point) = point.split_at(point.len() - low_bits);
-    let low = EqPolynomial::<F>::evals(low_point, None);
-    let mask = (1u128 << low_bits) - 1;
-    let mut sum = F::zero();
-    let mut index = start_index;
-    let mut rest = values;
-    loop {
-        let low_start = (index & mask) as usize;
-        let (block, tail) = rest.split_at((low.len() - low_start).min(rest.len()));
-        let partial = block
-            .iter()
-            .zip(&low[low_start..])
-            .fold(F::zero(), |acc, (value, eq)| acc + eq.mul_u64(*value));
-        sum += eq_index_msb(high_point, index >> low_bits) * partial;
-        // Advance only past a block with a successor: a run may end at index
-        // `u128::MAX`.
-        if tail.is_empty() {
-            return sum;
-        }
-        index += block.len() as u128;
-        rest = tail;
-    }
+    sparse_segments_mle_msb(core::iter::once((start_index, values)), point)
 }
 
 pub fn sparse_segments_mle_msb<'a, F, I>(segments: I, point: &[F]) -> F
 where
     F: JoltField,
     I: IntoIterator<Item = (u128, &'a [u64])>,
+    I::IntoIter: Clone,
 {
-    segments
-        .into_iter()
-        .map(|(start_index, values)| sparse_mle_msb(start_index, values, point))
-        .sum()
+    let segments = segments.into_iter();
+    let (entries, end_overflow) =
+        segments
+            .clone()
+            .fold((0usize, false), |(entries, overflow), (start, values)| {
+                (
+                    entries.saturating_add(values.len()),
+                    overflow || start.checked_add(values.len() as u128).is_none(),
+                )
+            });
+    if entries == 0 {
+        return F::zero();
+    }
+    let scalar = || {
+        segments
+            .clone()
+            .map(|(start, values)| {
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(offset, value)| {
+                        eq_index_msb(point, start + offset as u128).mul_u64(*value)
+                    })
+                    .sum::<F>()
+            })
+            .sum::<F>()
+    };
+    if point.is_empty() || end_overflow {
+        return scalar();
+    }
+    // A bounded low table is shared by all contiguous public-memory segments.
+    // Each high-address factor is constant for a whole table-width chunk.
+    let entry_bits = (usize::BITS - (entries - 1).leading_zeros()) as usize;
+    let low_bits = point.len().min(10).min(entry_bits);
+    let split = point.len() - low_bits;
+    let width = 1usize << low_bits;
+    let low = EqPolynomial::<F>::evals(&point[split..], None);
+    let mut value = F::zero();
+    for (mut address, mut words) in segments {
+        while !words.is_empty() {
+            let residue = (address & (width as u128 - 1)) as usize;
+            let take = words.len().min(width - residue);
+            let high = eq_index_msb(&point[..split], address >> low_bits);
+            if !high.is_zero() {
+                let dot: F = words[..take]
+                    .iter()
+                    .zip(&low[residue..residue + take])
+                    .filter(|(word, _)| **word != 0)
+                    .map(|(&word, &weight)| weight.mul_u64(word))
+                    .sum();
+                value += high * dot;
+            }
+            address += take as u128;
+            words = &words[take..];
+        }
+    }
+    value
 }
 
 pub fn block_selector_mle_msb<F: JoltField>(
@@ -163,7 +189,7 @@ mod tests {
     #![expect(clippy::panic, reason = "tests fail loudly on unexpected errors")]
 
     use super::*;
-    use crate::{eq_index_msb, try_eq_mle};
+    use crate::{eq_index_msb, try_eq_mle, EqPolynomial};
     use jolt_field::{Fr, Ring};
     use num_traits::{One, Zero};
 
@@ -333,5 +359,65 @@ mod tests {
                 domain_size: 4
             })
         );
+    }
+}
+
+#[cfg(test)]
+mod sparse_segment_table_tests {
+    use super::*;
+    use jolt_field::{Fr, Prime128OffsetA7F7};
+
+    #[test]
+    fn bounded_low_tables_match_scalar_mle_for_offsets_and_boolean_points() {
+        check_sparse_segments::<Fr>();
+        check_sparse_segments::<Prime128OffsetA7F7>();
+    }
+
+    fn check_sparse_segments<F: JoltField>() {
+        for arity in [0, 1, 7, 11, 25, 129] {
+            for kind in 0..3 {
+                let point: Vec<F> = (0..arity)
+                    .map(|i| {
+                        F::from_u64(match kind {
+                            0 => i as u64 + 7,
+                            1 => 0,
+                            _ => 1,
+                        })
+                    })
+                    .collect();
+                for len in [0, 1, 2, 127, 128, 1023, 2301] {
+                    let words: Vec<u64> = (0..len)
+                        .map(|i| {
+                            if i % 7 == 6 {
+                                0
+                            } else {
+                                (i as u64 + 1).wrapping_mul(0x000D_EADB_EEF1_2345)
+                            }
+                        })
+                        .collect();
+                    for base in [0, 1, 31, 1023, 2048, 8191] {
+                        let expected: F = words
+                            .iter()
+                            .enumerate()
+                            .map(|(i, &word)| {
+                                F::from_u64(word) * eq_index_msb(&point, base + i as u128)
+                            })
+                            .sum();
+                        assert_eq!(sparse_mle_msb(base, &words, &point), expected);
+                        let split = len.min(1023);
+                        assert_eq!(
+                            sparse_segments_mle_msb(
+                                [
+                                    (base, &words[..split]),
+                                    (base + split as u128, &words[split..])
+                                ],
+                                &point
+                            ),
+                            expected
+                        );
+                    }
+                }
+            }
+        }
     }
 }
