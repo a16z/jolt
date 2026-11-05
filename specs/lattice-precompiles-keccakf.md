@@ -36,7 +36,7 @@ Three further items are open but do not depend on the opening:
 
 The last two come with the implementation.
 
-**Measured so far.** On five mainnet blocks, emulated with the feature off and on, the trace shrinks by 34.62% in total, and the padded trace domain halves on three of the five. On a recursive-verification guest, rows fall by 3.32%. Both figures count trace rows only. Link and opening costs are not included, and no end-to-end proof on a block has been measured yet.
+**Measured so far.** On five mainnet blocks, emulated with the feature off and on, the trace shrinks by 34.62% in total, and the padded trace domain halves on three of the five. On a recursive-verification guest, rows fall by 3.32%. Both figures count trace rows only (details in Background); link and opening costs are not included, and there is no public end-to-end proof yet.
 
 ## Glossary
 
@@ -160,7 +160,7 @@ New `jolt-eval` objectives: `pcall_rows_saved` and `pcall_added_proof_bytes`, bo
 | Dependency | Status |
 |---|---|
 | `F128` in `jolt-field` (`specs/binary-field.md`) | implemented |
-| Characteristic-2 batched sum-check: zero extension, no uni-skip over domains larger than 2 (`specs/binary-sumcheck.md`) | implemented on `main` (`jolt-sumcheck/src/batch.rs`) |
+| Characteristic-2 batched sum-check: zero extension, no uni-skip over domains larger than 2 (`specs/binary-sumcheck.md`) | implemented on `main` (`crates/jolt-sumcheck/src/batch.rs`) |
 | `F128` challenge sampling | implemented (`jolt-transcript`, `binary` feature); this spec enables that feature under `pcall-keccakf` |
 | An Akita revision with binary sources and an opening that satisfies section II.4. `main` pins Akita `1160b0a8`, which has neither. | pending |
 
@@ -202,11 +202,11 @@ They are listed in `jolt-inlines/fixtures/fixtures/registered_inline_expand_pari
 
 **Registry.** Today `tracer/src/instruction/inline.rs` looks registrations up with a first-match `inventory::iter().find(..)`, and uniqueness is checked only by `linked_inline_registration_keys_are_unique`. This spec adds a one-time validation of all linked registrations. Execution and preprocessing share it, and it fails on any duplicate key in any block, not only the new one.
 
-**Decode path.** Both decoders, `tracer/src/instruction/mod.rs` (execution) and `jolt-program/src/image/decode.rs` (preprocessing), dispatch `funct7 = 0x0a` under opcode `0x0b` to the `PCALL` family before the generic inline arm. `PCALL` is admitted by a feature-gated instruction profile, as field inline is.
+**Decode path.** Both decoders, `tracer/src/instruction/mod.rs` (execution) and `crates/jolt-program/src/image/decode.rs` (preprocessing), dispatch `funct7 = 0x0a` under opcode `0x0b` to the `PCALL` family before the generic inline arm. `PCALL` is admitted by a feature-gated instruction profile, as field inline is.
 - **Reserved block.** The key set $\{(\text{opcode } 0\text{x}0b, \text{funct7 } 0\text{x}0a, \text{funct3 } f) : f < 8\}$ is reserved in the one-time registry validation. So any `InlineRegistration` in block `0x0a` fails validation in every build.
 - **Without the feature,** both decoders reject the word before any inventory lookup: the tracer with a decode error, `jolt-program` with `IllegalSourceInstruction`.
 - **No inventory entry.** `PCALL` adds no inventory entry, so `linked_inline_registration_inventory_matches_fixture` is unchanged.
-- **Expansion.** The expansion into virtual rows is produced in `jolt-program/src/expand`, as for other sequences.
+- **Expansion.** The expansion into virtual rows is produced in `crates/jolt-program/src/expand`, as for other sequences.
 
 #### I.2 Expansion
 
@@ -245,7 +245,7 @@ The tracer counts calls per family and stops at call $K+1$ with `PRECOMPILE_CAPA
 |---|---|---|
 | `PCALL` vocabulary, flags and profile | `jolt-riscv` (new module, as for field inline); decode in `tracer` and `jolt-program`; bytecode fields in `jolt-program` | preprocessing |
 | Guest API | `jolt-inlines/keccak256`, behind a guest feature | none |
-| Expansion | `jolt-program/src/expand` | preprocessing |
+| Expansion | `crates/jolt-program/src/expand` | preprocessing |
 | Execution and capacity | `tracer` | execution |
 | Relation ids, symbolic relations, layouts | `jolt-claims::protocols::jolt::lattice::precompile` (`specs/self-contained-sumcheck-relations.md`) | none |
 | Record table witness | `jolt-witness` | commitment, before any challenge |
@@ -413,7 +413,7 @@ $$z = \sum_j \Big( \sum_q \gamma_q\, Q_q(j)\, W_q(j) + \eta\, \mathrm{eq}(\zeta,
 
 | Route | Status | Cost |
 |---|---|---|
-| Akita binary-source mode: bit tables committed as in LaBinius and opened in one grouped session with the prime sources. Public on Akita in the binary-source PRs, #318 to #332. | The intended route. The grouped session gives one opening for prime and binary sources. Two things are missing: an evaluation interface that serves both claim fields from one source (requirement 2), and production security parameters for the grouped profile. Its internal stages currently include a field switch to a larger binary field and prime-field steps. | Open |
+| Akita binary-source mode: bit tables committed as in LaBinius and opened in one grouped session with the prime sources. Merged on Akita `main` in the binary-source PRs, #318 to #332. | The intended route. The grouped session gives one opening for prime and binary sources. Two things are missing: an evaluation interface that serves both claim fields from one source (requirement 2), and production security parameters for the grouped profile. Its internal stages currently include a field switch to a larger binary field and prime-field steps. | Open |
 | Standalone LaBinius instance for the table | Sound, but it is a second commitment instance (fails 1), and it does not serve the prime link claims (fails 2). | Not priced here |
 | Prime Akita with the bits stored as integers mod $p$ | Serves the prime link and can authenticate Boolean prime readings, but does not directly supply the $H$-linear evaluations the relation needs. A proved common-source evaluation conversion is required. There is no nonzero ring homomorphism from an $\mathbb F_2$-algebra into a ring of odd characteristic, which rules out a naive conversion, but it does not settle the best conversion protocol, its granularity or its cost. | Open; not priced here |
 | Reference mode: disclose the records | Sound for testing; does not meet the production criteria. | about 558,104 bytes at $K = 2^{10}$ (estimate; the disclosure codec and its byte accounting come with the implementation) |
@@ -438,7 +438,7 @@ With the feature off, none of this is compiled or run.
 **Interval lemma** (obligation; to be proved for `main`'s encoding). In every accepted trace, the rows of each `PCALL` expansion appear as one consecutive run, in row-ordinal order, from its call row to its return row. No row outside the run enters or leaves it.
 
 On `main`, this follows from existing constraints together with the bytecode commitment:
-- **Bytecode index.** Bytecode rows are indexed by (instruction address, `virtual_sequence_remaining`). Expansion rows share the address and are ordered by the sequence counter (`jolt-program/src/preprocess/bytecode.rs`).
+- **Bytecode index.** Bytecode rows are indexed by (instruction address, `virtual_sequence_remaining`). Expansion rows share the address and are ordered by the sequence counter (`crates/jolt-program/src/preprocess/bytecode.rs`).
 - **Within a sequence**, R1CS row 17 (`NextPCEqPCPlusOneIfInline`) forces $\mathrm{NextPC} = \mathrm{PC} + 1$.
 - **Entering a sequence**, row 18 (`MustStartSequenceFromBeginning`) forces any entry to be its first row.
 - **Leaving a sequence**, rows 14 and 16 fix `NextUnexpandedPC` at its end. `JALR` targets already have bit 0 cleared through `RangeCheckAligned`, so no new jump constraint is needed.
@@ -480,7 +480,7 @@ All new constraints are compiled only with the feature (Invariant 1).
 ### Soundness obligations
 
 1. The $H$ relation zero-check (II.2), with the error bound stated there.
-2. The link reduction (II.3): error at most the sum of degree over $p$ across its sum-check rounds and zero-checks, proved from the full ledger. The estimate of about $275/p$ at $T = 2^{27}$, $K = 2^{11}$ is a target, not a bound.
+2. The link reduction (II.3): error at most the sum of degree over $p$ across its sum-check rounds and zero-checks, proved from the full ledger; see II.3 for the current estimate.
 3. The opening: binding, the common-source extractor and Boolean extraction (II.4). This is open.
 4. The interval lemma and the simulation theorem (II.6), with each requirement mapped to a constraint.
 5. Statement binding: the transcript absorbs, before any precompile challenge:
@@ -502,8 +502,6 @@ All new constraints are compiled only with the feature (Invariant 1).
 8. Capacity scope: $K$ bounds calls per proof. If trace chunking is added, each chunk has its own table; a global bound would need a carried call count.
 
 ### Costs
-
-**Rows** (measured): −34.62% on five blocks and −3.32% on a recursive-verification guest. An absorb-and-permute call costs 44 rows instead of 3,121; a permute-only call costs 27 instead of 3,087.
 
 **Bytes**, against a target of at most 4,096 extra bytes per family per proof. Prime elements are 16 bytes.
 
@@ -551,7 +549,7 @@ A non-public prototype implements:
 - the prime-side rows, against the real verifier, with mutated proofs rejected;
 - the $H$ relation with a stubbed opening.
 
-The link and the opening were stubs there. The first end-to-end proof on a real block uses reference mode (II.4), and its measured rows, time and bytes will be added here.
+The link and the opening were stubs there. End-to-end proofs on real blocks use reference mode (II.4); their measured rows, time and bytes will be published with the implementation.
 
 ## Open questions
 
