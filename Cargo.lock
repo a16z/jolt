@@ -189,7 +189,6 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-poly",
- "jolt-sumcheck",
  "jolt-zk",
  "rayon",
  "tracing",
