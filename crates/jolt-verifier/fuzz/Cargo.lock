@@ -559,23 +559,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-blindfold"
-version = "0.1.0"
-dependencies = [
- "jolt-claims",
- "jolt-crypto",
- "jolt-field",
- "jolt-poly",
- "jolt-r1cs",
- "jolt-sumcheck",
- "jolt-transcript",
- "jolt-utils",
- "rand_core",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "jolt-claims"
 version = "0.1.0"
 dependencies = [
@@ -778,7 +761,6 @@ dependencies = [
  "ark-serialize",
  "bincode 2.0.1",
  "common",
- "jolt-blindfold",
  "jolt-claims",
  "jolt-claims-derive",
  "jolt-crypto",
@@ -791,6 +773,7 @@ dependencies = [
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-verifier-derive",
+ "jolt-zk",
  "num-traits",
  "serde",
  "sha3",
@@ -821,6 +804,23 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "libfuzzer-sys",
+]
+
+[[package]]
+name = "jolt-zk"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-utils",
+ "rand_core",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]

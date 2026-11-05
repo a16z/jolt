@@ -1,4 +1,4 @@
-//! Drives the shipped prover (`jolt_blindfold::prove`) end-to-end against the
+//! Drives the shipped prover (`jolt_zk::prove`) end-to-end against the
 //! real verifier. The rest of the suite exercises the verifier via the test
 //! harness's reference prover; these tests are what tie the production
 //! folding/Spartan prover itself to the verifier's acceptance criteria.
@@ -7,9 +7,9 @@
 
 mod support;
 
-use jolt_blindfold::{prove, BlindFoldProof, BlindFoldWitness, ProverError, VerificationError};
 use jolt_crypto::Bn254G1;
 use jolt_transcript::{prover_transcript, Blake2b512, FieldTranscript};
+use jolt_zk::{prove, BlindFoldProof, BlindFoldWitness, ProverError, VerificationError};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;
