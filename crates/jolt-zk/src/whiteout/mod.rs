@@ -20,11 +20,14 @@
 mod challenge;
 mod committed_pads;
 mod compression;
+#[cfg(feature = "whiteout-diagnostics")]
+pub mod diagnostics;
 #[cfg(feature = "whiteout-prover")]
 mod dit;
 mod error;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),
+    feature = "whiteout-diagnostics",
     feature = "whiteout-test-support"
 ))]
 mod fixture;

@@ -519,6 +519,7 @@ pub use prover::prove_sigma_unchecked;
 pub(crate) use prover::take_rejected;
 #[cfg(any(
     all(test, feature = "whiteout-prover"),
+    feature = "whiteout-diagnostics",
     feature = "whiteout-test-support"
 ))]
 pub(crate) use prover::{prove_sigma_with, SelfChecks};
@@ -700,7 +701,11 @@ mod prover {
         })?
     }
 
-    #[cfg(any(test, feature = "whiteout-test-support"))]
+    #[cfg(any(
+        test,
+        feature = "whiteout-diagnostics",
+        feature = "whiteout-test-support"
+    ))]
     pub(crate) fn prove_sigma_with<F, const D: usize, R, P>(
         setup: &SigmaSetup<F, D>,
         relation: &LiftedRelation<F>,
