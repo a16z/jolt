@@ -53,6 +53,7 @@ mod prover;
 mod scripted;
 mod setup;
 mod shake128;
+mod shape;
 mod transcript;
 mod verifier;
 
@@ -72,6 +73,7 @@ pub use prover::{ProverInit, ProverTranscript};
 pub use scripted::{Script, ScriptedTranscript, TranscriptEvent};
 pub use setup::{prover_transcript, session_id, verifier_transcript, PROTOCOL_ID};
 pub use shake128::{ProverState, Shake128, Shake128Hasher};
+pub use shape::ShapeTranscript;
 pub use spongefish::{Encoding, VerificationError, VerifierState};
 pub use transcript::{FieldTranscript, Transcript};
 pub use verifier::{VerifierInit, VerifierTranscript};
