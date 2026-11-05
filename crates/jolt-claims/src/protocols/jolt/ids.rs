@@ -566,7 +566,7 @@ mod tests {
 }
 
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltRelationId {
+crate::recipe_id! { JoltRelationId {
     SpartanOuter = 0,
     SpartanProductVirtualization = 1,
     SpartanShift = 2,
@@ -596,78 +596,78 @@ crate::recipe_id! { crate::protocols::jolt; JoltRelationId {
     HammingWeightClaimReduction = 26,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamReadWriteChallenge {
+crate::recipe_id! { RamReadWriteChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamReadWritePublic {
+crate::recipe_id! { RamReadWritePublic {
     EqCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamValCheckChallenge {
+crate::recipe_id! { RamValCheckChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamValCheckPublic {
+crate::recipe_id! { RamValCheckPublic {
     LtCyclePlusGamma = 0,
     InitEval = 1,
     InitSelector(value0: JoltAdviceKind) = 2,
     InitSelectorProgramImage = 3,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamRaClaimReductionChallenge {
+crate::recipe_id! { RamRaClaimReductionChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamRaVirtualizationPublic {
+crate::recipe_id! { RamRaVirtualizationPublic {
     EqCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamHammingBooleanityPublic {
+crate::recipe_id! { RamHammingBooleanityPublic {
     EqCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamRafEvaluationPublic {
+crate::recipe_id! { RamRafEvaluationPublic {
     UnmapAddress = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamOutputCheckPublic {
+crate::recipe_id! { RamOutputCheckPublic {
     EqAddress = 0,
     IoMask = 1,
     ValIo = 2,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RamRaClaimReductionPublic {
+crate::recipe_id! { RamRaClaimReductionPublic {
     EqCycleRaf = 0,
     EqCycleReadWrite = 1,
     EqCycleValCheck = 2,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; BooleanityChallenge {
+crate::recipe_id! { BooleanityChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; BooleanityPublic {
+crate::recipe_id! { BooleanityPublic {
     EqAddressCycle = 0,
     GammaPow { exponent: usize } = 1,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; IncClaimReductionChallenge {
+crate::recipe_id! { IncClaimReductionChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; IncClaimReductionPublic {
+crate::recipe_id! { IncClaimReductionPublic {
     EqRamReadWrite = 0,
     EqRamValCheck = 1,
     EqRegistersReadWrite = 2,
     EqRegistersValEvaluation = 3,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; HammingWeightClaimReductionChallenge {
+crate::recipe_id! { HammingWeightClaimReductionChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; HammingWeightClaimReductionPublic {
+crate::recipe_id! { HammingWeightClaimReductionPublic {
     EqBooleanity = 0,
     EqBooleanityAtDigitZero = 1,
     EqVirtualization(value0: usize) = 2,
@@ -676,7 +676,7 @@ crate::recipe_id! { crate::protocols::jolt; HammingWeightClaimReductionPublic {
     GammaPow(value0: usize) = 5,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; BytecodeReadRafChallenge {
+crate::recipe_id! { BytecodeReadRafChallenge {
     Gamma = 0,
     Stage1Gamma = 1,
     Stage2Gamma = 2,
@@ -685,7 +685,7 @@ crate::recipe_id! { crate::protocols::jolt; BytecodeReadRafChallenge {
     Stage5Gamma = 5,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; BytecodeReadRafPublic {
+crate::recipe_id! { BytecodeReadRafPublic {
     StageValue(value0: usize) = 0,
     StageCycleEq(value0: usize) = 1,
     SpartanOuterRaf = 2,
@@ -694,16 +694,16 @@ crate::recipe_id! { crate::protocols::jolt; BytecodeReadRafPublic {
     ChallengePow { challenge: BytecodeReadRafChallenge, exponent: usize } = 5,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltAdviceKind {
+crate::recipe_id! { JoltAdviceKind {
     Trusted = 0,
     Untrusted = 1,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; AdviceClaimReductionPublic {
+crate::recipe_id! { AdviceClaimReductionPublic {
     FinalScale(value0: JoltAdviceKind) = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; BytecodeClaimReductionChallenge {
+crate::recipe_id! { BytecodeClaimReductionChallenge {
     Eta = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
@@ -715,31 +715,31 @@ impl KeyVisit for RetiredIdentifier {
     }
 }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; BytecodeClaimReductionPublic {
+crate::recipe_id! { BytecodeClaimReductionPublic {
     Reserved0(value0: RetiredIdentifier) = 0,
     OutputWeight = 1,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; ProgramImageClaimReductionPublic {
+crate::recipe_id! { ProgramImageClaimReductionPublic {
     FinalScale = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; SpartanShiftChallenge {
+crate::recipe_id! { SpartanShiftChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; SpartanShiftPublic {
+crate::recipe_id! { SpartanShiftPublic {
     EqPlusOneOuter = 0,
     EqPlusOneProduct = 1,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; SpartanProductVirtualizationPublic {
+crate::recipe_id! { SpartanProductVirtualizationPublic {
     UniskipLagrangeWeight(value0: usize) = 0,
     LagrangeWeight(value0: usize) = 1,
     TauKernel = 2,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; SpartanOuterPublic {
+crate::recipe_id! { SpartanOuterPublic {
     TauKernel = 0,
     AzWeight(value0: usize) = 1,
     BzWeight(value0: usize) = 2,
@@ -747,61 +747,61 @@ crate::recipe_id! { crate::protocols::jolt; SpartanOuterPublic {
     BzConstant = 4,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RegistersReadWriteChallenge {
+crate::recipe_id! { RegistersReadWriteChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RegistersReadWritePublic {
+crate::recipe_id! { RegistersReadWritePublic {
     EqCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RegistersValEvaluationPublic {
+crate::recipe_id! { RegistersValEvaluationPublic {
     LtCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RegistersClaimReductionChallenge {
+crate::recipe_id! { RegistersClaimReductionChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; RegistersClaimReductionPublic {
+crate::recipe_id! { RegistersClaimReductionPublic {
     EqSpartan = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionClaimReductionChallenge {
+crate::recipe_id! { InstructionClaimReductionChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionClaimReductionPublic {
+crate::recipe_id! { InstructionClaimReductionPublic {
     EqSpartan = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionInputChallenge {
+crate::recipe_id! { InstructionInputChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionInputPublic {
+crate::recipe_id! { InstructionInputPublic {
     EqProduct = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionReadRafChallenge {
+crate::recipe_id! { InstructionReadRafChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionReadRafPublic {
+crate::recipe_id! { InstructionReadRafPublic {
     EqTableValue(value0: usize) = 0,
     EqRafConstant = 1,
     EqRafFlag = 2,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionRaVirtualizationChallenge {
+crate::recipe_id! { InstructionRaVirtualizationChallenge {
     Gamma = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; InstructionRaVirtualizationPublic {
+crate::recipe_id! { InstructionRaVirtualizationPublic {
     EqCycle = 0,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltChallengeId {
+crate::recipe_id! { JoltChallengeId {
     RamReadWrite(value0: RamReadWriteChallenge) = 0,
     RamValCheck(value0: RamValCheckChallenge) = 1,
     RamRaClaimReduction(value0: RamRaClaimReductionChallenge) = 2,
@@ -819,7 +819,7 @@ crate::recipe_id! { crate::protocols::jolt; JoltChallengeId {
     InstructionRaVirtualization(value0: InstructionRaVirtualizationChallenge) = 14,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltCommittedPolynomial {
+crate::recipe_id! { JoltCommittedPolynomial {
     RdInc = 0,
     RamInc = 1,
     InstructionRa(value0: usize) = 2,
@@ -834,7 +834,7 @@ crate::recipe_id! { crate::protocols::jolt; JoltCommittedPolynomial {
     ProgramBytecode = 11,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltVirtualPolynomial {
+crate::recipe_id! { JoltVirtualPolynomial {
     PC = 0,
     UnexpandedPC = 1,
     NextPC = 2,
@@ -882,18 +882,18 @@ crate::recipe_id! { crate::protocols::jolt; JoltVirtualPolynomial {
     FusedInc = 44,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltPolynomialId {
+crate::recipe_id! { JoltPolynomialId {
     Committed(value0: JoltCommittedPolynomial) = 0,
     Virtual(value0: JoltVirtualPolynomial) = 1,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltOpeningId {
+crate::recipe_id! { JoltOpeningId {
     Polynomial { polynomial: JoltPolynomialId, relation: JoltRelationId } = 0,
     UntrustedAdvice { relation: JoltRelationId } = 1,
     TrustedAdvice { relation: JoltRelationId } = 2,
 } }
 #[cfg(feature = "immutable-recipes")]
-crate::recipe_id! { crate::protocols::jolt; JoltDerivedId {
+crate::recipe_id! { JoltDerivedId {
     RamReadWrite(value0: RamReadWritePublic) = 0,
     RamValCheck(value0: RamValCheckPublic) = 1,
     RamRafEvaluation(value0: RamRafEvaluationPublic) = 2,
