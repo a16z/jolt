@@ -2,7 +2,7 @@
 
 mod flags;
 mod key;
-#[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+#[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
 pub mod record;
 pub use key::{KeySink, KeyVisit};
 use crate::protocols::composed::ComposedOpeningId;
@@ -477,7 +477,7 @@ macro_rules! immutable_symbolic_recipe {
                 },
             )
         }
-        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
         fn immutable_record_expression<F: ::jolt_field::Ring>(
             &self, phase: $crate::immutable_recipes::Phase,
             expression: &$crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
@@ -490,7 +490,7 @@ macro_rules! immutable_symbolic_recipe {
                     && $crate::immutable_recipe_key!(self, sink; $($key)+)
             }, expression, $crate::immutable_recipes::record::Captured::$native);
         }
-        #[cfg(all(feature = "immutable-recipes-record", not(target_arch = "riscv64")))]
+        #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
         fn immutable_record_support<F: ::jolt_field::Ring>(
             &self, openings: &::std::collections::BTreeSet<Self::OpeningId>,
         ) {
