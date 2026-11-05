@@ -349,7 +349,7 @@ async function loadTier() {
   $("tier-description").textContent = {
     main: "Standard suite for main commits. Each source run and rerun attempt is retained separately.",
     nightly: "Wider nightly suite on main. Larger input sizes and repetitions are never pooled with standard runs.",
-    pr: "Maintainer-opted-in PR comparisons, built and proved on the benchmark host. Select a PR and base or head leg; these points never enter main history. Informational calibration bands require an authenticated external reference for the exact base, matching build and host identities, and a 48-hour lifetime. Measurements remain visible when no reference matches.",
+    pr: "Maintainer-opted-in PR comparisons, built and proved on the benchmark host. Select a PR and base or head leg; these points never enter main history. This dashboard shows raw measurements without calibration bands. Informational bands appear in the PR's End-to-end benchmark check and the ingest artifact's comparison.json, using authenticated exact-base references with matching build and host identities and a 48-hour expiry.",
     other: "Unclassified or non-history runs. Their original tier and purpose remain visible; these are not main or nightly trends.",
     preview: "Manual data with no authenticated GitHub publication provenance. Original tiers and control purposes are preserved.",
   }[tier];
