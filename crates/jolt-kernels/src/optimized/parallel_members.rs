@@ -21,7 +21,18 @@ impl<F: JoltField> RoundScheduler<F> for ParallelMembers {
         &mut self,
         work: &mut [MemberRound<'_, F>],
     ) -> Result<(), SumcheckError<F>> {
-        if work.len() <= 1 || rayon::current_num_threads() == 1 {
+        // Large rounds already expose parallel work within each member. Running
+        // their lazy materializations together also raises peak memory. Restrict
+        // member concurrency to smaller rounds, using the actual runtime shape.
+        // This scheduling threshold is not an allocation bound.
+        const MAX_PARALLEL_MEMBER_ROUNDS: usize = 18;
+        if work.len() <= 1
+            || rayon::current_num_threads() == 1
+            || work.iter().any(|item| {
+                item.member.num_rounds().saturating_sub(item.local_round)
+                    > MAX_PARALLEL_MEMBER_ROUNDS
+            })
+        {
             for item in work {
                 item.run()?;
             }
