@@ -114,7 +114,7 @@ rules:
     paths:
       include:
         - crates/jolt-sumcheck/**
-        - crates/jolt-blindfold/**
+        - crates/jolt-zk/**
         - crates/jolt-verifier/**
     pattern-regex: '\bSumcheckShape\b'
 
@@ -125,7 +125,7 @@ rules:
     paths:
       include:
         - crates/jolt-sumcheck/**
-        - crates/jolt-blindfold/**
+        - crates/jolt-zk/**
         - crates/jolt-verifier/**
     pattern-regex: '\b(CommittedSumcheckCheck|BatchedCommittedSumcheckCheck|verify_committed\s*\()'
 

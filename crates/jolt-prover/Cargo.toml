@@ -61,7 +61,7 @@ akita = [
 zk = [
   "jolt-verifier/zk",
   "jolt-kernels/zk",
-  "dep:jolt-blindfold",
+  "dep:jolt-zk",
   "dep:rand_core",
   "jolt-sumcheck/committed",
 ]
@@ -100,7 +100,7 @@ allocative = [
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 akita-params = { workspace = true, optional = true }
-jolt-blindfold = { workspace = true, optional = true, features = ["prover"] }
+jolt-zk = { workspace = true, optional = true, features = ["prover"] }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true

@@ -4,10 +4,6 @@
     reason = "shared integration-test harness is intentionally broader than each test file"
 )]
 
-use jolt_blindfold::{
-    BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
-    FinalOpeningBinding, WitnessCoordinate,
-};
 use jolt_claims::r1cs::ClaimSourceTable;
 use jolt_claims::{challenge, constant, derived, opening, Expr};
 use jolt_crypto::{
@@ -23,6 +19,10 @@ use jolt_sumcheck::{
 };
 use jolt_transcript::{
     prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, Transcript,
+};
+use jolt_zk::{
+    BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
+    FinalOpeningBinding, VerificationError, WitnessCoordinate,
 };
 use rand_core::RngCore;
 
@@ -946,7 +946,7 @@ pub fn prove_blindfold_protocol_pipeline<R: RngCore>(rng: &mut R) -> BlindFoldTe
 
 pub fn blindfold_protocol_from_statement<O, P, Ch>(
     statement: &BlindFoldStatement<F, O, Bn254G1, P, Ch>,
-) -> Result<BlindFoldProtocol<F, Bn254G1>, jolt_blindfold::VerificationError<F>>
+) -> Result<BlindFoldProtocol<F, Bn254G1>, VerificationError<F>>
 where
     O: Clone + PartialEq,
     P: Clone + PartialEq,

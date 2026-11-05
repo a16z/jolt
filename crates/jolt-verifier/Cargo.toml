@@ -41,7 +41,7 @@ allocative = { workspace = true, optional = true }
 ark-serialize.workspace = true
 bincode.workspace = true
 common.workspace = true
-jolt-blindfold.workspace = true
+jolt-zk.workspace = true
 jolt-claims.workspace = true
 jolt-claims-derive.workspace = true
 jolt-crypto.workspace = true
