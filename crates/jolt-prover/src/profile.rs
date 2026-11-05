@@ -340,7 +340,7 @@ pub struct ProfileArgs {
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
     /// optimized`. The budget first routes the trace over the `2^scale`
     /// domain with `TracerBackend::limited_for_row_domain`, a routing proxy,
-    /// not a peak: at or above it the guest runs twice, as without a budget;
+    /// not a peak: at or above it the original tracer runs, as without a budget;
     /// below it, once through the limited serial trace, which rejects parallel
     /// tracing (`TRACER_PARALLEL`), fails at the first covered request the
     /// budget cannot hold (its setup alone requests over 1 GiB by default) and

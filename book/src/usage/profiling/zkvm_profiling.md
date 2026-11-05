@@ -62,7 +62,7 @@ tier, slotting into the same instrumented seams.
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
 The budget first routes the trace over the `2^scale` domain
 (`TracerBackend::limited_for_row_domain`); that routing proxy is not a peak.
-At or above it, the profile traces the guest twice, as without a budget.
+At or above it, the profile uses the original tracer, as without a budget.
 Below it, one limited serial trace feeds the proof: it rejects parallel
 tracing (`TRACER_PARALLEL`), fails at the first covered trace-storage request
 the budget cannot hold (its setup alone requests over 1 GiB by default, so
