@@ -1,6 +1,8 @@
 //! Constant-time 192-bit fixed point and the public high-precision routines
 //! that compute its constants.
 
+use std::hint::black_box;
+
 use num_bigint::BigUint;
 use rand_core::RngCore;
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
@@ -9,7 +11,7 @@ use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
 ///
 /// Every operation runs a fixed instruction sequence independent of the
 /// limb values.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(test, derive(PartialEq, Eq))]
 pub(crate) struct Fix192(pub(crate) [u64; 3]);
 
@@ -104,10 +106,30 @@ impl Fix192 {
     /// from [`Self::ALMOST_ONE`]. The number of multiplications is the
     /// table length, never the exponent's bit pattern.
     pub(crate) fn ct_product(factors: &[Self], exponent: u128) -> Self {
-        let mut acc = Self::ALMOST_ONE;
-        for (i, factor) in factors.iter().enumerate() {
-            let bit = Choice::from(((exponent >> i) & 1) as u8);
-            acc = Self::conditional_select(&acc, &acc.mul(factor), bit);
+        let [product] = Self::ct_products(factors, &[exponent]);
+        product
+    }
+
+    /// [`Self::ct_product`] for `N` exponents, factor by factor across the
+    /// lanes so their multiplications interleave.
+    pub(crate) fn ct_products<const N: usize>(
+        factors: &[Self],
+        exponents: &[u128; N],
+    ) -> [Self; N] {
+        let mut acc = [Self::ALMOST_ONE; N];
+        let mut exponents = *exponents;
+        for factor in factors {
+            // All-ones where the lane's current low bit is set. One barrier per
+            // factor hides from the compiler that each word is 0 or all-ones,
+            // as `Choice` does per select, so the selects stay arithmetic.
+            let masks = black_box(exponents.map(|e| (e as u64 & 1).wrapping_neg()));
+            exponents = exponents.map(|e| e >> 1);
+            for (acc, mask) in acc.iter_mut().zip(masks) {
+                let product = acc.mul(factor);
+                for (a, p) in acc.0.iter_mut().zip(product.0) {
+                    *a ^= mask & (*a ^ p);
+                }
+            }
         }
         acc
     }
