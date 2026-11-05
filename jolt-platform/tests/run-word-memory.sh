@@ -2,7 +2,7 @@
 set -euo pipefail
 # Linux only. The test executes the same assembly that the guest links.
 if [[ "$(uname -s)" != Linux ]]; then
-    echo "word-memory tests require the Linux validation box" >&2
+    echo "word-memory tests require Linux" >&2
     exit 2
 fi
 test_dir="$(dirname "$(realpath "$0")")"
