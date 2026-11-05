@@ -138,8 +138,6 @@ twist::instantiate_val_evaluation! {
     lt_cycle = FieldRegistersValEvaluationPublic::LtCycle,
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;

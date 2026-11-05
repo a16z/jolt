@@ -171,7 +171,6 @@ fn native_field_never_visits_keys() {
     }
 }
 
-
 #[test]
 fn full_shape_key_distinguishes_order_payloads_and_affine_flag() {
     use super::{KeySink, KeyVisit};
