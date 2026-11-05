@@ -202,39 +202,39 @@ where
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 
-    let stages = JoltStageProofs {
-        stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
-        stage1_sumcheck_proof: stage1.sumcheck_proof,
-        stage2_uni_skip_first_round_proof: stage2.uniskip_proof,
-        stage2_sumcheck_proof: stage2.sumcheck_proof,
-        stage3_sumcheck_proof: stage3.sumcheck_proof,
-        stage4_sumcheck_proof: stage4.sumcheck_proof,
-        stage5_sumcheck_proof: stage5.sumcheck_proof,
-        stage6a_sumcheck_proof: stage6a.sumcheck_proof,
-        stage6b_sumcheck_proof: stage6b.sumcheck_proof,
-        stage7_sumcheck_proof: stage7.sumcheck_proof,
-        // The homomorphic opening draws no selector point, so stage 8 has no
-        // nonce.
-        pow_nonces: StagePowNonces::from_iter([
-            (PowSite::Stage1Tau, stage1.tau_pow_nonce),
-            (PowSite::Stage1, stage1.pow_nonce),
-            (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
-            (PowSite::Stage2, stage2.pow_nonce),
-            (PowSite::Stage3, stage3.pow_nonce),
-            (PowSite::Stage4, stage4.pow_nonce),
-            (PowSite::Stage5, stage5.pow_nonce),
-            (PowSite::Stage6a, stage6a.pow_nonce),
-            (PowSite::Stage6b, stage6b.pow_nonce),
-            (PowSite::Stage7, stage7.pow_nonce),
-        ]),
-    };
+    // The homomorphic opening draws no selector point, so stage 8 has no
+    // nonce.
+    let pow_nonces = StagePowNonces::from_iter([
+        (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+        (PowSite::Stage1, stage1.pow_nonce),
+        (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+        (PowSite::Stage2, stage2.pow_nonce),
+        (PowSite::Stage3, stage3.pow_nonce),
+        (PowSite::Stage4, stage4.pow_nonce),
+        (PowSite::Stage5, stage5.pow_nonce),
+        (PowSite::Stage6a, stage6a.pow_nonce),
+        (PowSite::Stage6b, stage6b.pow_nonce),
+        (PowSite::Stage7, stage7.pow_nonce),
+    ]);
 
     #[cfg(not(feature = "zk"))]
     {
         Ok(JoltProof {
             protocol: JoltProtocolConfig::for_zk(ZkConfig::Transparent),
             commitments: stage0.commitments,
-            stages,
+            stages: JoltStageProofs {
+                stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
+                stage1_sumcheck_proof: stage1.sumcheck_proof,
+                stage2_uni_skip_first_round_proof: stage2.uniskip_proof,
+                stage2_sumcheck_proof: stage2.sumcheck_proof,
+                stage3_sumcheck_proof: stage3.sumcheck_proof,
+                stage4_sumcheck_proof: stage4.sumcheck_proof,
+                stage5_sumcheck_proof: stage5.sumcheck_proof,
+                stage6a_sumcheck_proof: stage6a.sumcheck_proof,
+                stage6b_sumcheck_proof: stage6b.sumcheck_proof,
+                stage7_sumcheck_proof: stage7.sumcheck_proof,
+                pow_nonces,
+            },
             joint_opening_proof: stage8.joint_opening_proof,
             untrusted_advice_commitment: stage0.untrusted_advice_commitment,
             claims: JoltProofClaims::Clear(ClearProofClaims {
@@ -260,7 +260,7 @@ where
         let shell = JoltProof {
             protocol: JoltProtocolConfig::for_zk(SELECTED_ZK_CONFIG),
             commitments: stage0.commitments,
-            stages: JoltStageProofs::masked(stages.pow_nonces),
+            stages: JoltStageProofs::masked(pow_nonces),
             joint_opening_proof: stage8.joint_opening_proof,
             untrusted_advice_commitment: stage0.untrusted_advice_commitment,
             claims: JoltProofClaims::Zk {

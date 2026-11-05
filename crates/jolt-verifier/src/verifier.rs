@@ -2339,8 +2339,13 @@ mod tests {
         SumcheckProof::Clear(ClearProof::Full(ClearSumcheckProof::default()))
     }
 
-    fn sumcheck_proof(_is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
-        SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()))
+    /// A masked proof's stage proofs take the one empty encoding.
+    fn sumcheck_proof(is_zk: bool) -> SumcheckProof<Fr, Bn254G1> {
+        if is_zk {
+            SumcheckProof::Clear(ClearProof::default())
+        } else {
+            SumcheckProof::Clear(ClearProof::Compressed(CompressedSumcheckProof::default()))
+        }
     }
 
     /// A stage proof the other mode's proof shape rejects: clear rounds in a
