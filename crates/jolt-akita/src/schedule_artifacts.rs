@@ -25,7 +25,14 @@ pub struct AkitaScheduleArtifacts {
     dense: Vec<u8>,
     full_dense: Vec<u8>,
     one_hot: Vec<AkitaOneHotScheduleArtifact>,
+    /// Whiteout's response schedules, one row per `e` length
+    /// ([`RESPONSE_CATALOG_FILE`]). A Whiteout setup derives each length's
+    /// one-row plan from it and plans only a length it lacks.
+    response: Option<Vec<u8>>,
 }
+
+/// The packaged response catalog's filename (family `fp128_response_digits`).
+pub(crate) const RESPONSE_CATALOG_FILE: &str = "jolt-fp128-response-digits.aks";
 
 /// One application-supplied catalog and the trusted geometry expected at admission.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -67,11 +74,25 @@ impl AkitaScheduleArtifacts {
             dense,
             full_dense,
             one_hot,
+            response: None,
         })
     }
 
-    /// Load dense catalogs and discover one-hot catalogs named
-    /// `jolt-fp128-onehot-k<K>-w<chunks>r<levels>.aks`.
+    /// Adds Whiteout's response catalog. Its bytes are audited when a
+    /// Whiteout setup first needs a response row.
+    fn with_response_catalog(mut self, bytes: Vec<u8>) -> Self {
+        self.response = Some(bytes);
+        self
+    }
+
+    /// Whiteout's response catalog, if the bundle carries one.
+    pub fn response_catalog(&self) -> Option<&[u8]> {
+        self.response.as_deref()
+    }
+
+    /// Load dense catalogs, discover one-hot catalogs named
+    /// `jolt-fp128-onehot-k<K>-w<chunks>r<levels>.aks`, and load
+    /// [`RESPONSE_CATALOG_FILE`] when present.
     /// The unsuffixed one-hot filename denotes one chunk and zero chunked folds.
     /// `dense_profile` is the caller-trusted geometry for both dense catalogs.
     pub fn from_directory(
@@ -126,13 +147,22 @@ impl AkitaScheduleArtifacts {
                 bytes: read(&entry.path())?,
             });
         }
-        Self::new(
+        let response_path = directory.join(RESPONSE_CATALOG_FILE);
+        let response = response_path
+            .exists()
+            .then(|| read(&response_path))
+            .transpose()?;
+        let artifacts = Self::new(
             dense_profile,
             read(&directory.join(format!("{}.aks", JoltDenseBounded::schedule_family_name())))?,
             read(&directory.join(format!("{}.aks", JoltDenseFull::schedule_family_name())))?,
             one_hot,
         )
-        .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))
+        .map_err(|error| OpeningsError::InvalidSetup(error.to_string()))?;
+        Ok(match response {
+            Some(bytes) => artifacts.with_response_catalog(bytes),
+            None => artifacts,
+        })
     }
 
     /// The `schedules/` directory packaged with this crate: the fallback the
@@ -251,18 +281,23 @@ struct ScheduleArtifactInputs {
     dense: Vec<u8>,
     full_dense: Vec<u8>,
     one_hot: Vec<AkitaOneHotScheduleArtifact>,
+    response: Option<Vec<u8>>,
 }
 
 impl TryFrom<ScheduleArtifactInputs> for AkitaScheduleArtifacts {
     type Error = AkitaError;
 
     fn try_from(input: ScheduleArtifactInputs) -> Result<Self, Self::Error> {
-        Self::new(
+        let artifacts = Self::new(
             input.dense_profile,
             input.dense,
             input.full_dense,
             input.one_hot,
-        )
+        )?;
+        Ok(Self {
+            response: input.response,
+            ..artifacts
+        })
     }
 }
 
