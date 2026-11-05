@@ -14,7 +14,7 @@ use jolt_poly::{CompressedPoly, UnivariatePoly};
 use jolt_riscv::JoltInstructionRow;
 #[cfg(feature = "akita")]
 use jolt_sdk::host::JoltProgramSource;
-use jolt_sdk::host::{GuestElf, Program};
+use jolt_sdk::host::Program;
 #[cfg(feature = "akita")]
 use jolt_sdk::jolt_prover::akita::preprocessing::AkitaVc;
 use jolt_sdk::jolt_verifier::preprocessing::ProgramPreprocessing as VerifierProgramPreprocessing;
@@ -32,7 +32,6 @@ use jolt_sumcheck::{ClearProof, SumcheckProof};
 use serde::{de::DeserializeOwned, Serialize};
 use std::cmp::PartialEq;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
 use tracing::info;
@@ -1530,7 +1529,8 @@ mod record_limit_tests {
 
 #[cfg(test)]
 mod guest_build_tests {
-    use super::{build_recursion_guest, write_generated, GuestElf, Program};
+    use super::{build_recursion_guest, write_generated, Program};
+    use jolt_sdk::host::GuestElf;
     use std::ffi::OsString;
     use std::fs::{self, File};
     use std::time::SystemTime;
