@@ -128,7 +128,7 @@ jobs:
           components: llvm-tools-preview,rust-src
           targets: ${{ matrix.workspace == 'jolt-eval' && 'riscv64imac-unknown-none-elf' || '' }}
       - name: Install pinned cargo-fuzz
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2
+        uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2
         with:
           tool: cargo-fuzz@0.13.2
       - name: Install guest builder
