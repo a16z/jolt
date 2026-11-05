@@ -53,10 +53,8 @@
 //! construction — so it reuses the reference kernel's explicit four-point
 //! sampling verbatim; only the table construction is replaced.
 //!
-//! Cross-stage carry: both prepares reclaim the packed stage-5 rows with
-//! [`ProofSession::take`], clone the [`Arc`], and park the carry back for
-//! the later consumers (mixed-backend registries fall back to a fresh
-//! streaming pass when the carry is absent or geometry-stale).
+//! Cross-stage carry: both prepares share the packed stage-5 rows through
+//! `SharedInstructionRows`, whose docs own the carry protocol.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -211,7 +209,11 @@ impl<F: JoltField> PrepareKernel<F, BooleanityAddressPhase<F>> for OptimizedBool
         }
 
         drop(BooleanityColumns::new(witness, dimensions)?);
-        let rows = InstructionCycleRow::shared(session, witness, 1usize << dimensions.log_t)?;
+        let rows = InstructionCycleRow::shared_for_next_consumer(
+            session,
+            witness,
+            1usize << dimensions.log_t,
+        )?;
         let masses = cycle_pushforward(
             &rows,
             dimensions.layout,
