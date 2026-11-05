@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 guest = []
+batch-bench = []
 field-inline = ["jolt/field-inline"]
 
 [dependencies]
