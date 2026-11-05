@@ -45,7 +45,7 @@ macro_rules! delegate_preset {
 
             fn ring_challenge_config(
                 d: usize,
-            ) -> Result<jolt_crypto::challenge::SparseChallengeConfig, akita_pcs::AkitaError> {
+            ) -> Result<akita_params::FoldChallengeDistribution, akita_pcs::AkitaError> {
                 <$base>::ring_challenge_config(d)
             }
 
