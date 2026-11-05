@@ -65,6 +65,7 @@ so the authors can fold it into the paper.
 | D32 | Persisted plans: the ZK catalog (planned at setup) and exported response schedules enter a setup only at construction, are re-audited and re-admitted on load, and the pads absorb the masked catalog's, selected row's and response schedule's digests | extension (public parameters), transcript change | implemented (O1) |
 | D34 | Small byte items (O5): compressed images take the fewest balanced chunks under the first map's certified SIS bound (15,115 coefficients at q128), so t_p and cm(u_a) take one chunk each; a repeated intermediate product takes one auxiliary slot (Whiteout and BlindFold committed proofs). | departure narrowed (D9), slot sharing (D12, D26) | implemented (O5) |
 | D35 | The residual commitment (and the pad commitment, which shares the Σ ring) over `R_128`: rank 9–10 instead of 18–19 over `R_64`, same `R_Σ`; the planner's dimension ceiling is lifted at the after-cut level only, and it never offloads into the cut level | parameter change (follows `06_evaluation.tex:124-133`) | implemented (O6, d = 128); d = 256 gated on a rerun |
+| D36 | Transcript move (T0): Whiteout runs on main's sealed spongefish transcript; masked values are absorbed as public messages at the clear positions and carried in the proof (Jolt) or the NARG string (Akita, Whiteout tail); challenges are uniform rejection-sampled field elements | implementation change, transcript change | implemented (T0) |
 
 ## D1. Constant-time Σ attempt
 
@@ -1108,6 +1109,18 @@ their kernel with probability at most 2^−127; the shift is fixed by then
 because t_p and the masked values are absorbed first. It also needs the residual u_a
 bound (§8, A41). This log did not check the argument.
 
+**T0 (2026-11-04).** The argument is unchanged in structure on main's
+transcript (D36): every m̂ is still absorbed before any challenge that
+depends on it, t_p still before the first challenge, and the masked input
+claims still bind nothing (Akita's `bind_fold_openings` binds only the
+setup-prefix evaluation under masking). Two quantities move. Akita v8 draws
+the EvaluationBatch coefficients as uniform field elements by pooled
+rejection sampling (`jolt_transcript::ChallengeCodec` for `Fp128`), so a
+fixed nonzero shift lies in their kernel with probability at most 1/q ≈
+2^−128 (was 2^−127), plus the codec's pool-exhaustion bound 2^−161, on which
+the verifier rejects. And the proof of work Jolt now runs before short
+challenges (#2108) is public and does not touch the masked values.
+
 **For the paper.** None required; the paper already binds claims through
 the masked messages and the pad commitment. A sentence in §4.1 that the PCS
 receives claims as affine forms over committed pads, never as absorbed values,
@@ -1802,3 +1815,40 @@ residual is now implemented at d = 128. The text could say that the
 residual's ring may exceed the cut level's ring, since the after-cut level
 is never folded.
 
+
+## D36. Transcript move to main's sealed transcript (T0)
+
+**Paper says.** The protocol is stated over an abstract random oracle; the
+masked messages m̂ are sent in place of the clear ones (§3.2, §4.1).
+
+**Implementation** (`jolt:specs/whiteout-jolt-integration.md` §2, §5). Until
+T0 Whiteout ran on the closed NARG transcript of jolt #2000 / akita #185,
+where every message, clear or masked, was a NARG prover message. T0 moves both
+repositories onto main's transcript (jolt #2110, #2108, #2111; Akita v8,
+#253):
+
+- **Jolt stage messages** stay proof-struct fields, as on main. In masked mode
+  the proof carries a tape (`MaskedMessages`: every m̂ in transcript order and
+  the masked rounds' proof-of-work nonces), and each m̂ is absorbed with
+  `append_private` exactly where the clear proof absorbs the value. Masked
+  rounds are fixed width with no count word; their proof of work is priced at
+  the scheduled round degree (`round_pow_bits`).
+- **Akita's masked levels** exchange m̂ in Akita's v8 NARG encoding at the
+  clear message's position (`PrivateProofChannel`); the Whiteout tail (pad
+  commitment, Σ, response) is NARG after Akita's opening.
+- **Challenges** are uniform field elements by pooled rejection sampling
+  (`ChallengeCodec`) instead of reduced squeezes; Σ's attempt challenges keep
+  Whiteout's constant-time XOF sampler, now forked from a 32-byte squeeze of
+  the concrete spongefish state.
+- **Pad layout** replays the masked verifier on `ShapeTranscript`, which
+  prices every challenge set at 2^256 so no step asks for proof of work.
+
+**Effect.** Proof bytes change (every Whiteout proof and the Dory ZK proof);
+the soundness argument is unchanged in structure, with D25's per-shift bound
+moving from 2^−127 to 2^−128. Zero knowledge is unaffected: what is absorbed
+in masked mode is m̂, public commitments and challenge-derived values, as
+before.
+
+**Status.** Implemented (T0). Open with the transcript owner: whether a third
+sealed transcript (`ShapeTranscript`) is acceptable (Quang Q3), and whether
+clear batched rounds should also drop the count word (Q5).

@@ -229,7 +229,7 @@ Akita's C0 golden digests (A8) are the mechanical proof of branches.md rule 1 fo
 
 | ID | Item | Recommendation |
 |---|---|---|
-| R1 | **The transcript base is closed.** The integration branches carry #2000/#185 and the J-stack is still open. Porting to it rewrites the M2a, M3a, M6b, W4 and W6 transcript code. Q2–Q4 of `whiteout-jolt-integration.md` (stage messages in the NARG, the `ShapeTranscript` sealed impl, `ZkBackend` on `ProverState`) are open with Quang. | Run T0 now, onto the J7/J8 and #254 heads. Do not wait for them to merge. Freeze feature work on the integration branches during T0. Settle Q2–Q4 with Quang before T0 starts. |
+| R1 | **The transcript base is closed.** The integration branches carry #2000/#185 and the J-stack is still open. Porting to it rewrites the M2a, M3a, M6b, W4 and W6 transcript code. Q2–Q4 of `whiteout-jolt-integration.md` (stage messages in the NARG, the `ShapeTranscript` sealed impl, `ZkBackend` on `ProverState`) are open with Quang. | Run T0 now, onto the J7/J8 and #254 heads. Do not wait for them to merge. Freeze feature work on the integration branches during T0. Settle Q2–Q4 with Quang before T0 starts. **Resolved by T0 (2026-11-04):** see §7. |
 | R2 | **LZ `main` gates (RP2 + seams).** ~7.2k source lines of Whiteout edits sit in files that exist on Akita `main`. | Open A1–A7 together, carry A5–A7 into `dev` at once, and keep the seam diffs to the declared seams. Move non-seam logic into new `zk` modules before opening. |
 | R3 | **Jolt `main` pins Akita `dev`** (J15), so clear Akita on jolt then also builds from a `dev` revision. | Accept, on rule 1 + C0. The alternative, waiting for ZK on Akita `main`, has no date. |
 | R4 | **J12 changes the Dory BlindFold wire** and deletes per-round Pedersen commitments. That breaks every existing `zk` proof. | Land it. Keeping the committed recorders beside the masking recorders would put two owners on one claim path (the CLAUDE.md invariant). Bump the protocol version and regenerate the fixtures in J12. Needs an a16z owner's explicit OK. |
@@ -238,7 +238,7 @@ Akita's C0 golden digests (A8) are the mechanical proof of branches.md rule 1 fo
 | R7 | **Akita #232 raised SIS to category 3** after the ZK parameters were priced. | Done in U3, reviewed. All schedules were regenerated. Clear `.aks` files are byte-identical to `main`. Every ZK row still fits ν ≤ 27, the priced search never offloads into the cut level, and the residual stays on `R_128`. The `SisBoundV1` tag moved 4 → 5 (append-only). The chunk bound grew from 884 to 15,115 coefficients, so u_a takes one chunk. Re-run the V6 costs before A13. |
 | R15 | **The Σ-binding table is still at 128-bit SIS**, while clear and digit commitments are now at 169. D27 (≈2^−119.7) does not depend on SIS and remains the overall floor. Moving Σ to 169 raises A_p's rank at d = 128 from 9 to 11, which costs proof bytes and verify time. Since #232 the estimator knows only the 169-bit policy, so the checked-in 128-bit table cannot be regenerated (U3 review N1). | **Decide.** Option (a): keep 128 for Σ, consistent with the D27 floor, and restore a 128-bit Σ-only estimator policy so the table regenerates. Option (b): move Σ to 169 for one uniform SIS level, and measure the cost first. Recommend (a) unless LZ or the authors want a uniform cat-3 claim; ask LZ item 7. |
 | R16 | **Main's FusedInc commitment (#2145).** Under `zk` it would have been committed in the clear. U3 made it a hiding precommitted group, opened masked (reviewed; D24/D31 updated in U5). | Carry it in J16/J17. Ask the authors to confirm D24's scope covers it. |
-| R17 | **U3 kept Whiteout's transcript bytes** and did not take main's spongefish 0.8, challenge codecs or transcript proof-of-work (#2095/#2097/#2099). The reviewer found these unused by any `main` consumer, so dropping them is safe for now. The dev branches therefore diverge from `main` exactly where T0 must converge. | Fold into T0 (R1). T0 lands Whiteout on main's transcript, not the reverse. |
+| R17 | **U3 kept Whiteout's transcript bytes** and did not take main's spongefish 0.8, challenge codecs or transcript proof-of-work (#2095/#2097/#2099). The reviewer found these unused by any `main` consumer, so dropping them is safe for now. The dev branches therefore diverge from `main` exactly where T0 must converge. | Fold into T0 (R1). T0 lands Whiteout on main's transcript, not the reverse. **Resolved by T0 (2026-11-04):** both branches now run on main's transcript; see §7. |
 | R18 | **Format split.** Whiteout's binary verifier view now has magic `AKSCVFY2` (U5): postcard always writes each row's `zk` field. Views from `main` and Whiteout fail closed on each other. | Carry it in A13 as an explicit wire change. |
 | R8 | **DS (J6) changes clear Jolt bytes** for a Whiteout-motivated reason. | Land it early as its own wire PR, so the fixture churn is separate from the Whiteout PRs. |
 | R9 | **The C0 golden digests land in `dev` (A8) after RP2 needs them.** | Move the C0 test into a `main` PR ahead of A1, so RP2's byte-identity claim is mechanical. |
@@ -247,6 +247,34 @@ Akita's C0 golden digests (A8) are the mechanical proof of branches.md rule 1 fo
 | R12 | **Paper-log gaps.** D33 is missing. D27 is below the 128-bit headline. D22 and D23 are open. | Treat author sign-off on D3, D22, D23 and D27 as a gate on A13 and J16 only. Everything before those PRs is unselectable and can land first. |
 | R13 | **Campaign perf commits** (O*, M1, M2, S1, S2). | Fold the ones that change parameters or wire (O1/D32, O4, O5, O6) into their feature PRs (J17, A11, A13). Ship pure perf as J18 and A14, each with a benchmark record. |
 | R14 | **Constant time.** U1 removed the secret-indexed digit lookup. U1b made the IFMA i16 scalar fallback branch-free. Still open: `Ifma52Params::reconstruct` branches on output data; A24's kernels are unaudited; nothing has run on x86_64. On M4, the scalar i16 NTT runs faster on zero operands (a hardware effect, 5–14 t-stat even with DIT). The prover's NEON path does not show it, but x86's scalar path at D < 64 (the response's D = 16/8 levels) is unmeasured. | Get a named CT reviewer for J7, J13, J14, A10 and A12. Run dudect on an x86_64 host (with and without AVX2) before A13. List A24 and the x86 result as known limitations in A13's PR text. |
+
+## 7. T0: integration branches on main's transcript (2026-11-04)
+
+**What landed.** jolt `wo/t0` merges origin/main (beebf45d8) and #2111
+(190bdea9d); Akita `wo/akita-t0` merges origin/main (b05545e69, protocol v8)
+and origin/dev. Whiteout's own transcript code is gone (Channel, sites, Fork,
+nonce, NARG codecs, akita #185's channel); its needs sit on main's:
+private routing through wave-1 `PrivateChannel` (clear) and a masked tape in
+the proof (Jolt) or Akita's `PrivateProofChannel` (v8 NARG); `ClaimDomain` in
+wave-1 form; pad commitments absorbed after the commitments; D25's binding
+argument unchanged in structure (D36). Clear Jolt proofs are main's bytes;
+clear Akita proofs and schedule artifacts reproduce Akita's golden table.
+R1 and R17 are closed. J5's scope shrinks to what wave 1 does not carry
+(below); J10–J17 now extract against main's types.
+
+**Where dev keeps a richer form than wave 1** (each is a Whiteout addition,
+lands with its first caller):
+
+| Crate | Wave 1 | dev adds |
+|---|---|---|
+| jolt-transcript | `PrivateChannel`, `ClaimDomain` | `PadSlots`; `ShapeTranscript` (sealed, Q3) |
+| jolt-sumcheck | single driver, degree schedule | `masked` (fixed-width masked rounds, `MaskedRoundReader`), `compressed_wire`, `padded_coefficients`, public `check_uniskip_round`, `SumcheckError::PrivateChannel` |
+| jolt-crypto | sparse challenges, op-norm rejection, public matrix | Whiteout samplers (indexed XOF, constant-time, position, signed sparse), `*_ct` helpers, the Ajtai/hiding-randomness lattice modules |
+| jolt-algebra | ring, NTT, FFT, checked arithmetic | constant-time lifts (`lift_ct`, `to_ring_ct`, `assign_centered_i32_ct`, `digits_to_field_ct`, `centered_mixed_radix_ct`) |
+| jolt-zk | (not in wave 1) | masking, BlindFold over pads, Whiteout |
+
+jolt-sumcheck still carries main's `committed`/`r1cs` modules, which no
+Whiteout path uses; J12 deletes them with the per-round Pedersen path.
 
 ## Not verified
 

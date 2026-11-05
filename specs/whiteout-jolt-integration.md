@@ -59,6 +59,29 @@ The `zk` feature means "zero knowledge", and the commitment axis picks the back 
 
 Rows 0, 1, 3 and 4 are J8's flow (`verifier.rs:213-293`). Rows 2 and 5–8 are Akita §7 items 2 and 5–8. Akita's item 1, "preamble, hiding commitment", is J8's rows 0 and 1. Akita's item 4 is row 4. No challenge separates rows 1 and 2, so the paper's step 1 holds (`04_protocol.tex:514-516`). Row 9 replaces J8's `PCS::check_eof` after stage 8 (`verifier.rs:293`), because the argument string now continues to row 8.
 
+### 2a. Transport on main's transcript (T0, 2026-11-04)
+
+T0 moved both integration branches off the closed NARG transcript (#2000,
+akita #185) onto main's sealed transcript (#2110, #2108, #2111; Akita v8).
+The order above is unchanged; the carriers are:
+
+| Rows | Clear (main, byte for byte) | Masked (Whiteout / Dory BlindFold) |
+|---|---|---|
+| 0–1 | statement and commitments absorbed publicly | same |
+| 2 | — | BlindFold: pad rows in `JoltProofClaims::Zk.zk_proof.pad_commitment`, `append_values` right after the commitments. Whiteout: t_p as a NARG message (`commit_lattice_pads`) |
+| 3 | stage proofs and `ClearProofClaims`, absorbed through `PrivateChannel::append_private` / `bind_derived` (wave-1 seam) | stage proof fields empty; every m̂ on the proof's `MaskedMessages` tape, absorbed with `append_private` at the clear position; masked rounds at fixed width (no count word), then `public_grind`/`check_public_grind` at the scheduled degree (nonce on the tape), then the challenge; derived claims bind nothing; stage-level `check_pow` as in clear |
+| 4–5 | Akita's opening in the NARG (#2111) | Akita's masked levels exchange m̂ in v8's encoding through Akita's `PrivateProofChannel`; public-in-both-modes messages through `exchange_public` |
+| 6–8 | — | NARG: aux blocks, ρ (`challenge_vector`), σ (32-byte squeeze), t_D, nonce, response proof (`ResponseProver` on the concrete `ProverState<Sponge>`) |
+| 9 | `check_eof` | `MaskedSession::finish` (all pads and the whole tape used), then `check_eof` |
+
+The verifier's masked state is `jolt_zk::masking::MaskedSession` (pad view +
+tape cursor); the prover's is `CommittedPads` + the tape
+(`MaskingRecorder`, `prove_uniskip_masked`, `CommittedPads::send`). jolt-zk's
+masking places pads only (`mask`, `mask_ext`, `take`, `take_ext`); each
+carrier encodes its own messages, so a masked message is m̂ at exactly the
+clear message's position and encoding. Seams that Akita implements take the
+concrete spongefish states like #2111's `GroupBatchOpening` (`type Sponge`).
+
 ### 3. Masked group opening and pad ownership
 
 `GroupBatchOpening` (`J8:crates/jolt-openings/src/schemes.rs:118`) takes clear `GroupOpeningClaim`s, and Akita absorbs their evaluations publicly (`A254:crates/akita-verifier/src/fold/root.rs:77-90`). jolt-openings does not depend on jolt-zk. The masked variant therefore lives in `jolt_zk::whiteout`:
@@ -87,7 +110,7 @@ pub trait MaskedGroupOpening: GroupBatchOpening + HidingCommitment {
 
 ### 4. Pad layout (`CountingGrinding`)
 
-`pad_layout` runs the masked verifier over zeroed messages with `CommittedPadsView::counting()`. It is Akita-excluded today (`whiteout/dev:crates/jolt-verifier/src/verifier.rs:389`). On the J-stack, zeroed messages fail Jolt's own grind check (`J8:crates/jolt-transcript/src/verifier.rs:91-100`), not only Akita's. W6 therefore adds `ShapeTranscript` to jolt-transcript:
+`pad_layout` runs the masked verifier over zeroed messages with `CommittedPadsView::counting()`. *T0:* the replay runs over a shape-correct proof shell with `MaskedReader::zeros()` on `jolt_transcript::ShapeTranscript`, the sealed third implementation this section proposed: it prices every challenge set at 2^256, so Jolt's and Akita's proof-of-work steps ask for nothing, and it implements neither `VerifierInit` nor `ProverInit` (Quang Q3, open). It is Akita-excluded today (`whiteout/dev:crates/jolt-verifier/src/verifier.rs:389`). On the J-stack, zeroed messages fail Jolt's own grind check (`J8:crates/jolt-transcript/src/verifier.rs:91-100`), not only Akita's. W6 therefore adds `ShapeTranscript` to jolt-transcript:
 
 - It is a sealed `FieldTranscript` whose `check_grind` returns `Ok` and whose challenges come from a throwaway sponge.
 - It does not implement `VerifierInit`, so `verify` cannot be instantiated with it.
@@ -102,7 +125,7 @@ It also produces the operand list.
 
 ### 5. Wire type, Σ and response
 
-- **Jolt stage messages.** They keep the J-stack's placement, with m̂ substituted.
+- **Jolt stage messages.** They keep the J-stack's placement, with m̂ substituted. *T0:* m̂ travels on the proof's `MaskedMessages` tape, since the masked shape differs from `ClearProofClaims` (no runtime aliasing in ZK mode) and masked rounds are fixed width (§2a).
 - **Whiteout messages.** Rows 2 and 5–8 are NARG prover messages. The `ZkBackend` and `ResponseProver` APIs write to the transcript, and J8 already puts Akita in the argument string.
 - **Proof type.** `JoltProof<PCS, VC, ()>` with `JoltProofClaims::Zk` (`J8:crates/jolt-verifier/src/proof.rs:247`). The Whiteout tail has no serde payload. A non-empty `backend_proof` is rejected, as in J8.
 
