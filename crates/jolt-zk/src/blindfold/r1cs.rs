@@ -6,7 +6,7 @@ use jolt_sumcheck::{
     SumcheckR1csRoundLayout,
 };
 
-use crate::{BlindFoldStage, BlindFoldStatement, Error, LayoutError};
+use crate::blindfold::{BlindFoldStage, BlindFoldStatement, Error, LayoutError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
@@ -409,7 +409,7 @@ fn validate_final_opening_count<F, O, P, Ch, C>(
 #[expect(clippy::indexing_slicing, reason = "tests index fixture data")]
 mod tests {
     use super::*;
-    use crate::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
+    use crate::blindfold::{BlindFoldStage, BlindFoldStatement, CommittedClaimRows, OpeningAlias};
     use jolt_claims::r1cs::{ClaimLoweringError, ClaimSourceTable};
     use jolt_claims::{challenge, constant, derived, opening, Expr};
     use jolt_field::{Fr, Ring};

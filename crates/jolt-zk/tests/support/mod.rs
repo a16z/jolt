@@ -20,7 +20,7 @@ use jolt_sumcheck::{
 use jolt_transcript::{
     prover_transcript, Blake2b512, Encoding, FieldTranscript, ProverState, Transcript,
 };
-use jolt_zk::{
+use jolt_zk::blindfold::{
     BlindFoldProof, BlindFoldProtocol, BlindFoldStage, BlindFoldStatement, CommittedClaimRows,
     FinalOpeningBinding, VerificationError, WitnessCoordinate,
 };

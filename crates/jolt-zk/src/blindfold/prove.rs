@@ -7,7 +7,7 @@ use jolt_transcript::{require_no_pow, Encoding, FieldTranscript, Transcript};
 use rand_core::RngCore;
 use rayon::prelude::*;
 
-use crate::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
+use crate::blindfold::{BlindFoldProof, BlindFoldProtocol, ProverError, WitnessCoordinate};
 
 const OUTER_SUMCHECK_DEGREE: usize = 3;
 const INNER_SUMCHECK_DEGREE: usize = 2;

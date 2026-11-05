@@ -11,7 +11,7 @@ use {
     jolt_crypto::VectorCommitmentOpening,
     jolt_field::{Fr, Ring},
     jolt_sumcheck::CompressedSumcheckProof,
-    jolt_zk::BlindFoldProof,
+    jolt_zk::blindfold::BlindFoldProof,
 };
 
 #[cfg(all(feature = "prover-fixtures", not(feature = "zk")))]
