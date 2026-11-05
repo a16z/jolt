@@ -271,6 +271,28 @@ pub struct ResidentAxpy {
     pub count: usize,
 }
 
+impl ResidentAxpy {
+    pub(crate) fn validate(self, buffer: &CudaSlice<u64>, words: usize) -> Result<(), CudaError> {
+        if self.count == 0 {
+            return Ok(());
+        }
+        for offset in [self.a_offset, self.b_offset, self.out_offset] {
+            CudaKernelContext::resident_span_end(offset, self.count, words, buffer)?;
+        }
+        let coincides_or_avoids = |left: usize, right: usize| {
+            left == right || left + self.count <= right || right + self.count <= left
+        };
+        if !coincides_or_avoids(self.out_offset, self.a_offset)
+            || !coincides_or_avoids(self.out_offset, self.b_offset)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident axpy output must coincide with an operand or avoid both",
+            });
+        }
+        Ok(())
+    }
+}
+
 pub struct DeviceG1Bases {
     stream: Arc<CudaStream>,
     limbs: CudaSlice<u64>,
@@ -1048,18 +1070,7 @@ impl CudaKernelContext {
         if count == 0 {
             return Ok(());
         }
-        for offset in [a_offset, b_offset, out_offset] {
-            Self::resident_span_end(offset, count, 3 * FQ_LIMBS, buffer)?;
-        }
-        let coincides_or_avoids = |left: usize, right: usize| {
-            left == right || left + count <= right || right + count <= left
-        };
-        if !coincides_or_avoids(out_offset, a_offset) || !coincides_or_avoids(out_offset, b_offset)
-        {
-            return Err(CudaError::InvariantViolation {
-                reason: "a resident axpy output must coincide with an operand or avoid both",
-            });
-        }
+        span.validate(buffer, 3 * FQ_LIMBS)?;
 
         let ((positive0, component0), (positive1, component1)) =
             G1Config::scalar_decomposition(ArkFr::from(scalar));
@@ -1108,19 +1119,7 @@ impl CudaKernelContext {
         if count == 0 {
             return Ok(());
         }
-        let words = 6 * FQ_LIMBS;
-        for offset in [a_offset, b_offset, out_offset] {
-            Self::resident_span_end(offset, count, words, buffer)?;
-        }
-        let coincides_or_avoids = |left: usize, right: usize| {
-            left == right || left + count <= right || right + count <= left
-        };
-        if !coincides_or_avoids(out_offset, a_offset) || !coincides_or_avoids(out_offset, b_offset)
-        {
-            return Err(CudaError::InvariantViolation {
-                reason: "a resident axpy output must coincide with an operand or avoid both",
-            });
-        }
+        span.validate(buffer, 6 * FQ_LIMBS)?;
 
         let (limbs, signs, max_bits) = glv_4d_scalar(scalar)?;
         let coeffs = self.upload_u64_slice(&limbs)?;
@@ -1154,14 +1153,12 @@ impl CudaKernelContext {
         Ok(())
     }
 
-    pub fn g2_fixed_base_in_place(
-        &self,
-        buffer: &mut CudaSlice<u64>,
+    pub(crate) fn validate_g2_fixed_base(
+        buffer: &CudaSlice<u64>,
         base_offset: usize,
         out_offset: usize,
-        scalars: &[Fr],
+        count: usize,
     ) -> Result<(), CudaError> {
-        let count = scalars.len();
         if count == 0 {
             return Ok(());
         }
@@ -1173,6 +1170,21 @@ impl CudaKernelContext {
                 reason: "a resident fixed-base scaling must not write over its base",
             });
         }
+        Ok(())
+    }
+
+    pub fn g2_fixed_base_in_place(
+        &self,
+        buffer: &mut CudaSlice<u64>,
+        base_offset: usize,
+        out_offset: usize,
+        scalars: &[Fr],
+    ) -> Result<(), CudaError> {
+        let count = scalars.len();
+        if count == 0 {
+            return Ok(());
+        }
+        Self::validate_g2_fixed_base(buffer, base_offset, out_offset, count)?;
 
         let (coefficients, signs) = {
             let device_scalars = self.canonical_scalars(&self.upload(scalars)?)?;

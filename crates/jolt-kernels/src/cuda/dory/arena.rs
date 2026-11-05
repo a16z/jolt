@@ -5,6 +5,10 @@
 //! vector work; a mirror allocation failure leaves the opening using fewer
 //! devices. Dropping the arena guard releases the per-opening buffers.
 //!
+//! Large vector updates compute disjoint slices, then exchange their output
+//! points. The mirrors remain complete because MSM and pairing consumers use
+//! different partitions. Small updates run on each mirror to avoid exchanges.
+//!
 //! Once MSMs become small, their family retires secondary copies for the rest
 //! of the opening, avoiding repeated broadcasts and mirrored vector updates. The
 //! retirement cutoff is below the MSM split threshold so larger pairing
@@ -28,6 +32,7 @@ use crate::cuda::common::context::{context_for, device_count, CudaKernelContext}
 use crate::cuda::common::devices::{fan_out, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::{ResidentAxpy, FQ_LIMBS};
+use crate::cuda::common::xfer_stats::{self, Phase};
 
 pub(super) const G1_WORDS: usize = 3 * FQ_LIMBS;
 
@@ -113,6 +118,43 @@ impl Arena {
         let offset = self.used;
         self.used = end;
         Ok(offset)
+    }
+
+    #[tracing::instrument(skip_all, name = "cuda_dory_exchange")]
+    fn exchange(&mut self, offset: usize, chunks: &[Range<usize>]) -> Result<(), CudaError> {
+        for (source_ordinal, chunk) in chunks.iter().enumerate() {
+            let start = (offset + chunk.start) * self.words;
+            let end = (offset + chunk.end) * self.words;
+            let (before, tail) = self.buffers.split_at_mut(source_ordinal);
+            let Some((source, after)) = tail.split_first_mut() else {
+                return Err(CudaError::InvariantViolation {
+                    reason: "a Dory vector chunk has no device mirror",
+                });
+            };
+            let targets = before.iter_mut().enumerate().chain(
+                after
+                    .iter_mut()
+                    .enumerate()
+                    .map(|(index, buffer)| (source_ordinal + 1 + index, buffer)),
+            );
+            for (ordinal, target) in targets {
+                let context = device(ordinal)?;
+                let copied =
+                    xfer_stats::timed(Phase::D2d, (end - start) * size_of::<u64>(), || {
+                        context.stream().memcpy_dtod(
+                            &source.slice(start..end),
+                            &mut target.slice_mut(start..end),
+                        )
+                    });
+                // Peer reads are not tracked on the source allocation by cudarc.
+                // Complete them before a later update can overwrite the source;
+                // serial destinations also avoid reverse readiness-event waits.
+                let completed = context.stream().synchronize();
+                copied?;
+                completed?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -291,12 +333,33 @@ pub(super) fn axpy(family: Family, span: ResidentAxpy, scalar: Fr) -> Result<(),
                 reason: "a resident axpy targeted the frozen setup prefix",
             });
         }
-        for (ordinal, buffer) in arena.buffers.iter_mut().enumerate() {
+        if span.count == 0 {
+            return Ok(());
+        }
+        // Validate the whole operation before splitting: a partial overlap
+        // between inputs and output can otherwise disappear within each chunk.
+        span.validate(arena.primary()?, arena.words)?;
+        let split = arena.buffers.len() > 1 && span.count >= VECTOR_SPLIT_LEN;
+        let chunks = if split {
+            base_chunks(span.count, arena.buffers.len(), VECTOR_SPLIT_LEN)
+        } else {
+            vec![0..span.count; arena.buffers.len()]
+        };
+        for (ordinal, (buffer, chunk)) in arena.buffers.iter_mut().zip(&chunks).enumerate() {
             let context = device(ordinal)?;
+            let part = ResidentAxpy {
+                a_offset: span.a_offset + chunk.start,
+                b_offset: span.b_offset + chunk.start,
+                out_offset: span.out_offset + chunk.start,
+                count: chunk.len(),
+            };
             match family {
-                Family::G1 => context.g1_axpy_in_place(buffer, span, scalar)?,
-                Family::G2 => context.g2_axpy_in_place(buffer, span, scalar)?,
+                Family::G1 => context.g1_axpy_in_place(buffer, part, scalar)?,
+                Family::G2 => context.g2_axpy_in_place(buffer, part, scalar)?,
             }
+        }
+        if split {
+            arena.exchange(span.out_offset, &chunks)?;
         }
         Ok(())
     })
@@ -322,6 +385,8 @@ pub(super) fn g2_msm(
 }
 
 const MSM_SPLIT_LEN: usize = 1 << 13;
+
+const VECTOR_SPLIT_LEN: usize = 1 << 13;
 
 const MIRROR_RETIRE_LEN: usize = 1 << 12;
 
@@ -517,8 +582,31 @@ pub(super) fn g2_fixed_base(
                 reason: "a resident fixed-base scaling targeted the frozen setup prefix",
             });
         }
-        for (ordinal, buffer) in arena.buffers.iter_mut().enumerate() {
-            device(ordinal)?.g2_fixed_base_in_place(buffer, base_offset, out_offset, scalars)?;
+        if scalars.is_empty() {
+            return Ok(());
+        }
+        CudaKernelContext::validate_g2_fixed_base(
+            arena.primary()?,
+            base_offset,
+            out_offset,
+            scalars.len(),
+        )?;
+        let split = arena.buffers.len() > 1 && scalars.len() >= VECTOR_SPLIT_LEN;
+        let chunks = if split {
+            base_chunks(scalars.len(), arena.buffers.len(), VECTOR_SPLIT_LEN)
+        } else {
+            vec![0..scalars.len(); arena.buffers.len()]
+        };
+        for (ordinal, (buffer, chunk)) in arena.buffers.iter_mut().zip(&chunks).enumerate() {
+            device(ordinal)?.g2_fixed_base_in_place(
+                buffer,
+                base_offset,
+                out_offset + chunk.start,
+                &scalars[chunk.clone()],
+            )?;
+        }
+        if split {
+            arena.exchange(out_offset, &chunks)?;
         }
         Ok(())
     })
@@ -604,12 +692,14 @@ mod tests {
     use super::super::handle::{span, span_g2, store_all, store_all_g2};
     use super::super::routines::{CudaG1Routines, CudaG2Routines};
     use super::{
-        base_chunks, lane_chunks, mirrors, multi_miller_batch, open, poisoned, read_from, Family,
-        G1_WORDS, MILLER_SPLIT_PAIRS, MIRROR_RETIRE_LEN, MSM_SPLIT_LEN,
+        axpy, base_chunks, g2_fixed_base, lane_chunks, mirrors, multi_miller_batch, open, poisoned,
+        read_from, Family, G1_WORDS, MILLER_SPLIT_PAIRS, MIRROR_RETIRE_LEN, MSM_SPLIT_LEN,
+        VECTOR_SPLIT_LEN,
     };
     use super::{freeze, g1_limbs, g1_point, g2_limbs, g2_point, gather, read, reserve, write};
     use crate::cuda::common::context::{device_count, shared_context};
     use crate::cuda::common::error::CudaError;
+    use crate::cuda::common::msm::ResidentAxpy;
     use crate::cuda::common::pairing::FQ12_LIMBS;
 
     #[test]
@@ -763,6 +853,155 @@ mod tests {
     fn scalars(count: usize, seed: u64) -> Vec<ArkFr> {
         let mut rng = ChaCha20Rng::seed_from_u64(seed);
         (0..count).map(|_| ArkFr(Fr::rand(&mut rng))).collect()
+    }
+
+    #[test]
+    fn distributed_axpy_preserves_mirrors_and_aliases() {
+        if shared_context().is_none() {
+            return;
+        }
+        let count = VECTOR_SPLIT_LEN + 3;
+        let capacity = 1 + 3 * count;
+        let _guard = open(capacity, capacity).expect("open arena");
+        let scalar = scalars(1, 6_281)[0].0;
+        let g1 = G1Projective::generator();
+        let g2 = G2Projective::generator();
+        let g1_pool: Vec<_> = (0..32).map(|i| g1 * Fr::from(i)).collect();
+        let g2_pool: Vec<_> = (0..32).map(|i| g2 * Fr::from(i)).collect();
+
+        for family in [Family::G1, Family::G2] {
+            let initial: Vec<_> = (0..capacity)
+                .flat_map(|i| match family {
+                    Family::G1 => g1_limbs(&g1_pool[i % 32]).to_vec(),
+                    Family::G2 => g2_limbs(&g2_pool[i % 32]).to_vec(),
+                })
+                .collect();
+            assert_eq!(reserve(family, capacity).expect("reserve points"), 0);
+            write(family, 0, &initial).expect("write points");
+            freeze(family, 1, &initial[..family.words()]).expect("freeze prefix");
+            for (a, b, out) in [
+                (1, 1, 1),
+                (1, 1 + count, 1),
+                (1, 1 + count, 1 + count),
+                (1, 1 + count, 1 + 2 * count),
+                (1, 1, 1 + count),
+            ] {
+                write(family, 1, &initial[family.words()..]).expect("reset points");
+                axpy(
+                    family,
+                    ResidentAxpy {
+                        a_offset: a,
+                        b_offset: b,
+                        out_offset: out,
+                        count,
+                    },
+                    scalar.into(),
+                )
+                .expect("distributed axpy");
+                let coefficients: Vec<_> = (0..32)
+                    .map(|i| {
+                        Fr::from(((a + i) % 32) as u64) * scalar + Fr::from(((b + i) % 32) as u64)
+                    })
+                    .collect();
+                let expected_g1: Vec<_> = coefficients.iter().map(|s| g1 * s).collect();
+                let expected_g2: Vec<_> = coefficients.iter().map(|s| g2 * s).collect();
+                assert_eq!(mirrors(family), device_count());
+                for ordinal in 0..mirrors(family) {
+                    let points = read_from(family, ordinal, 0, capacity).expect("read mirror");
+                    for (i, limbs) in points.chunks_exact(family.words()).enumerate() {
+                        let updated = (out..out + count).contains(&i);
+                        match family {
+                            Family::G1 => assert_eq!(
+                                g1_point(limbs),
+                                if updated {
+                                    expected_g1[(i - out) % 32]
+                                } else {
+                                    g1_pool[i % 32]
+                                },
+                                "G1 mirror {ordinal}, point {i}",
+                            ),
+                            Family::G2 => assert_eq!(
+                                g2_point(limbs),
+                                if updated {
+                                    expected_g2[(i - out) % 32]
+                                } else {
+                                    g2_pool[i % 32]
+                                },
+                                "G2 mirror {ordinal}, point {i}",
+                            ),
+                        }
+                    }
+                }
+            }
+            let before = read(family, 0, capacity).expect("read before rejection");
+            for out_offset in [0, 1 + count.div_ceil(2), capacity] {
+                assert!(axpy(
+                    family,
+                    ResidentAxpy {
+                        a_offset: 1,
+                        b_offset: 1,
+                        out_offset,
+                        count
+                    },
+                    scalar.into(),
+                )
+                .is_err());
+            }
+            for ordinal in 0..mirrors(family) {
+                assert_eq!(
+                    read_from(family, ordinal, 0, capacity).expect("unchanged mirror"),
+                    before
+                );
+            }
+        }
+        assert!(!poisoned());
+    }
+
+    #[test]
+    fn distributed_fixed_base_preserves_mirrors_and_rejects_overlap() {
+        if shared_context().is_none() {
+            return;
+        }
+        let count = VECTOR_SPLIT_LEN + 3;
+        let _guard = open(1, count + 2).expect("open arena");
+        let generator = G2Projective::generator();
+        let weights = [
+            Fr::from(0),
+            Fr::from(1),
+            -Fr::from(1),
+            scalars(1, 6_283)[0].0,
+        ];
+        let expected: Vec<_> = weights.iter().map(|s| generator * s).collect();
+        let scalars: Vec<_> = (0..count)
+            .map(|i| weights[i % weights.len()].into())
+            .collect();
+        assert_eq!(reserve(Family::G2, count + 2).expect("reserve points"), 0);
+        let prefix = [g2_limbs(&(-generator)), g2_limbs(&generator)].concat();
+        write(Family::G2, 0, &prefix).expect("write prefix");
+        freeze(Family::G2, 2, &prefix).expect("freeze prefix");
+        g2_fixed_base(1, 2, &scalars).expect("distributed fixed-base update");
+        assert_eq!(mirrors(Family::G2), device_count());
+        for ordinal in 0..mirrors(Family::G2) {
+            assert_eq!(
+                read_from(Family::G2, ordinal, 0, 2).expect("prefix"),
+                prefix
+            );
+            let points = read_from(Family::G2, ordinal, 2, count).expect("output");
+            for (i, limbs) in points.chunks_exact(Family::G2.words()).enumerate() {
+                assert_eq!(g2_point(limbs), expected[i % weights.len()]);
+            }
+        }
+        let before = read(Family::G2, 0, count + 2).expect("read before rejection");
+        for (base, out) in [(2 + count / 2, 2), (1, 0), (1, 3)] {
+            assert!(g2_fixed_base(base, out, &scalars).is_err());
+        }
+        for ordinal in 0..mirrors(Family::G2) {
+            assert_eq!(
+                read_from(Family::G2, ordinal, 0, count + 2).expect("unchanged mirror"),
+                before
+            );
+        }
+        assert!(!poisoned());
     }
 
     #[test]
