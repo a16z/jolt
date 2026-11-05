@@ -44,7 +44,6 @@ impl KeyVisit for () {
 #[macro_export]
 macro_rules! recipe_shape {
     ($ty:ty { $($field:ident),* $(,)? }) => {
-        #[cfg(feature = "immutable-recipes")]
         impl $crate::immutable_recipes::KeyVisit for $ty {
             fn visit(&self, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
                 let Self { $($field),* } = self;
@@ -53,7 +52,6 @@ macro_rules! recipe_shape {
         }
     };
     ($ty:ty => ( $field:ident )) => {
-        #[cfg(feature = "immutable-recipes")]
         impl $crate::immutable_recipes::KeyVisit for $ty {
             fn visit(&self, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
                 let Self($field) = self;
