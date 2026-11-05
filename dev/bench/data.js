@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793863634881,
+  "lastUpdate": 1793863642559,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -227458,6 +227458,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 782004,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "39494992+GUJustin@users.noreply.github.com",
+            "name": "Justin Thaler",
+            "username": "GUJustin"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9be63457147e34931a03499c8e51f2090f41f70c",
+          "message": "perf(kernels): pair instruction RA virtualization gathers (#2240)\n\n* perf(kernels): pair instruction virtualization branch gathers\n\n* refactor(kernels): give paired lo/hi gathers one owner in lazy_ra\n\nBooleanity's `PairedLoHi` and instruction RA virtualization's\n`PairedInstructionGather` were the same struct, width enum, width\ndispatch and amortization rule (one paired entry per 16 live rows), the\nlatter with the threshold as a bare literal. Move one generic\n`PairedLoHi<F, S: ChunkIndexSource>` and `MIN_ROWS_PER_CACHED_VALUE`\ninto `lazy_ra::paired` next to `PairedBranchTables`, reached through\n`LazyFoldedRa::paired_lo_hi(columns)`, which owns the eligibility rule:\nsingle-factor lazy set, width 4 or 8, every table of 16-address\nbranches, and entries(width) <= constant_suffix_start / 16.\n\nThe per-source digit walk moves into the trait: `visit_paired_values(row)`\nbecomes `visit_paired_branches::<F, BRANCHES>(start)`, and the\n`LookupIndexChunks` and `BooleanityChunks` overrides take any branch\ncount. Materialization calls it with 16 branches. Both keep their\nruntime four-bit check: table length alone does not pin the source's\nchunk width (2-bit sources reach the 16-branch materialization), so\nnon-four-bit sources still take `visit_indexed`. `PAIRED_MATERIALIZE_BRANCHES` becomes\nprivate to lazy_ra.\n\nHot loops: `PairedLoHi::gather` compiles to the same per-row work as\nboth deleted copies -- the same width match, `gather_width::<W>`\nmonomorphized per width, and per side the source's `#[inline(always)]`\noverride calling `visit_four_bit::<W>` (plus `visit_indexed` over the\nnon-instruction columns for Booleanity) with the same closures. No dyn,\nallocation or extra per-row branch. The only arithmetic change is in\nBooleanity's 16-branch materialization, which now applies the\n(always-zero there) instruction-digit skip shift that its prove_round\npath already applied.\n\nThe multilinear unit tests move with their owners: the\n`LookupIndexChunks` one to `lazy_ra::paired`, the `BooleanityChunks`\none to `booleanity::bulk`.\n\n---------\n\nCo-authored-by: Quang Dao <qvd@andrew.cmu.edu>",
+          "timestamp": "2026-11-04T23:12:40-07:00",
+          "tree_id": "11998cdd7daca6e9ad9edbee72779a8c86d49545",
+          "url": "https://github.com/a16z/jolt/commit/9be63457147e34931a03499c8e51f2090f41f70c"
+        },
+        "date": 1793863635873,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 4.6136,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 782188,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.6514,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 426040,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 425028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 426296,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8132,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 425876,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871664,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8693,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 426208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.6996,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 426108,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.7453,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9473,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 781616,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6392,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 426176,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.4643,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428208,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 25.0672,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 424976,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 5.2513,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 426236,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 35.5088,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 699368,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 17.9517,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 621072,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 72.165,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 636024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.7971,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 428584,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.0721,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 424872,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 17.6961,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 782016,
             "unit": "KB",
             "extra": ""
           }
