@@ -9,8 +9,9 @@ currently supports Dory; to run Akita from a Jolt checkout, see the
 [profiling commands](./profiling/zkvm_profiling.md).
 
 Dory supports optional zero-knowledge proofs through the `zk` feature and
-BlindFold. Jolt's Akita integration currently supports non-zero-knowledge
-proofs only; the `akita` and `zk` features are mutually exclusive.
+BlindFold. Zero knowledge over Akita (Whiteout) needs the explicit `whiteout`
+feature; `akita` with `zk` alone is a compile error while Whiteout's
+constant-time claim is not yet verified on all platforms.
 
 ## AI Coding Skill
 

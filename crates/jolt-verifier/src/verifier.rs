@@ -6,6 +6,7 @@ use common::jolt_device::JoltDevice;
 use jolt_claims::protocols::composed::ComposedOpeningId;
 use jolt_claims::protocols::field_inline::FieldInlineRepresentation;
 use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
+#[cfg(not(all(feature = "akita", feature = "zk")))]
 use jolt_claims::protocols::jolt::JoltRelationId;
 use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 #[cfg(not(feature = "akita"))]
@@ -13,22 +14,24 @@ use jolt_crypto::HomomorphicCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use jolt_openings::GroupBatchOpening;
 #[cfg(not(feature = "akita"))]
 use jolt_openings::{AdditivelyHomomorphic, ZkOpeningScheme};
 use jolt_program::preprocess::{compute_max_ram_k, compute_min_ram_k};
 use jolt_sumcheck::{ClearProof, SumcheckProof};
-#[cfg(feature = "akita")]
+#[cfg(not(all(feature = "akita", feature = "zk")))]
+use jolt_transcript::VerifierInit;
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use jolt_transcript::VerifierState;
-use jolt_transcript::{
-    protocol_tag, BytesMsg, Encoding, FieldTranscript, Transcript, VerifierInit, TAG_BYTES,
-};
+use jolt_transcript::{protocol_tag, BytesMsg, Encoding, FieldTranscript, Transcript, TAG_BYTES};
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::{ChallengeCodec, Shake128, ShapeTranscript};
 #[cfg(not(feature = "akita"))]
 use jolt_zk::blindfold::BlindFold;
 use jolt_zk::masking::MaskedSession;
+#[cfg(all(feature = "akita", feature = "zk"))]
+use jolt_zk::masking::OperandRule;
 #[cfg(not(feature = "akita"))]
 use jolt_zk::masking::PadLayout;
 #[cfg(not(feature = "akita"))]
@@ -38,21 +41,22 @@ use jolt_zk::masking::{
 #[cfg(not(feature = "akita"))]
 use jolt_zk::masking::{CommittedPadsView, MaskedReader};
 
-#[cfg(not(feature = "akita"))]
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
 use crate::stages::zk::residual::{JoltResidual, ResidualInputs};
 use crate::stages::{
     stage1::Stage1Output, stage2::Stage2Output, stage3::Stage3Output, stage4::Stage4Output,
     stage5::Stage5Output, stage6a::Stage6aOutput, stage6b::Stage6bOutput, stage7::Stage7Output,
 };
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use std::borrow::BorrowMut;
 
 #[cfg(not(feature = "akita"))]
 use crate::proof::JoltCommitments;
+#[cfg(not(all(feature = "akita", feature = "zk")))]
 use crate::stages::stage8;
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage8::Stage8Output;
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 use crate::stages::stage8::{OneHotTraceCommitmentMetadata, OneHotTraceSetupMetadata};
 use crate::{
     config::{
@@ -120,8 +124,9 @@ where
 
 /// The Akita verification path: the same stage spine, with ordered native
 /// trace-column claims and one batch opening for the trace, advice,
-/// and committed-program objects. No homomorphism bounds and no ZK tail.
-#[cfg(feature = "akita")]
+/// and committed-program objects. No homomorphism bounds and no ZK tail
+/// (Whiteout's is `crate::whiteout::verify`).
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 pub fn verify<'a, F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -152,7 +157,7 @@ where
 /// Verify with backend-owned runtime state, keeping the stage replay shared.
 /// Deferred callers must authenticate and discharge every exported setup claim
 /// in an enclosing proof before treating this result as acceptance.
-#[cfg(feature = "akita")]
+#[cfg(all(feature = "akita", not(feature = "zk")))]
 pub fn verify_with_context<'a, F, PCS, VC, T>(
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     public_io: &JoltDevice,
@@ -1147,7 +1152,7 @@ impl<F: JoltField, C> MaskedStages<'_, F, C> {
 
 /// Stages 1–7's outputs.
 #[cfg_attr(
-    feature = "akita",
+    all(feature = "akita", not(feature = "zk")),
     expect(
         dead_code,
         reason = "a clear Akita build has no residual relation, which alone reads every stage"
@@ -1262,7 +1267,12 @@ where
     })
 }
 
-#[cfg(not(feature = "akita"))]
+/// The residual operand rule of Whiteout, the Akita build's back end: it
+/// commits each product operand's pad as a constant digit polynomial.
+#[cfg(all(feature = "akita", feature = "zk"))]
+const WHITEOUT_OPERANDS: OperandRule = OperandRule::MaskedSlot;
+
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
 impl<F: JoltField> StageOutputs<F> {
     pub(crate) fn residual<PCS, VC, ZkProof, O>(
         &self,
@@ -1288,7 +1298,10 @@ impl<F: JoltField> StageOutputs<F> {
             stage6a: self.stage6a.zk()?,
             stage6b: self.stage6b.zk()?,
             stage7: self.stage7.zk()?,
+            #[cfg(not(feature = "akita"))]
             operands: BlindFold::<VC>::OPERANDS,
+            #[cfg(feature = "akita")]
+            operands: WHITEOUT_OPERANDS,
         })
     }
 }
@@ -2014,7 +2027,7 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(all(feature = "zk", not(feature = "akita")))]
     #[test]
     fn validate_inputs_rejects_missing_zk_vector_commitment_setup() {
         let mut preprocessing = test_preprocessing();
@@ -2031,7 +2044,7 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(all(feature = "zk", not(feature = "akita")))]
     #[test]
     fn validate_inputs_rejects_small_zk_vector_commitment_setup() {
         let mut preprocessing = test_preprocessing();

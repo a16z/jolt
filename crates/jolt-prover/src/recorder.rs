@@ -12,7 +12,7 @@
 #[cfg(not(feature = "zk"))]
 use core::marker::PhantomData;
 
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::Commitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{Field, JoltField};
@@ -28,17 +28,22 @@ use jolt_transcript::PadSlots;
 use jolt_transcript::PrivateChannel;
 use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::relations::ClaimRoutes;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_zk::blindfold::BlindFoldPadOpening;
 #[cfg(feature = "zk")]
 use jolt_zk::masking::{prove_uniskip_masked, CommittedPads, MaskedMessages, MaskingRecorder};
+#[cfg(all(feature = "zk", feature = "akita"))]
+use jolt_zk::whiteout::WhiteoutPadOpening;
 
 use crate::ProverError;
 
 /// What opens the pad commitment: BlindFold's vector-commitment opening.
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 type ModePadOpening<VC> =
     BlindFoldPadOpening<<VC as VectorCommitment>::Field, <VC as Commitment>::Output>;
+/// What opens the pad commitment: Whiteout's lattice pad opening.
+#[cfg(all(feature = "zk", feature = "akita"))]
+type ModePadOpening<VC> = WhiteoutPadOpening<<VC as VectorCommitment>::Field>;
 
 /// The pads a ZK proof commits before its first challenge.
 #[cfg(feature = "zk")]

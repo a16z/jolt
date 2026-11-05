@@ -60,7 +60,7 @@ Fiat-Shamir inventory and setup round-trip tests.
 - Changing Jolt's Akita claims, group order, commitment layout, or proof type.
 - Supporting chunk counts other than 1, 2, 4, and 8, or chunking more than the first two fold
   levels.
-- Adding ZK Akita support; the `akita` and `zk` features remain mutually exclusive.
+- ZK Akita support; that is Whiteout (`specs/whiteout-jolt-integration.md`), which this spec does not change.
 - Dynamically choosing a chunk profile during proving or verification. The profile is fixed by
   preprocessing.
 

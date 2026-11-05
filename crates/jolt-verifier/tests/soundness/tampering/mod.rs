@@ -13,11 +13,13 @@
 // shape-agnostic `manifest` checks run under every family. The akita sweep is
 // legacy-fixture-driven too, so it also runs with field-inline disabled (its exhaustive claim
 // destructuring would otherwise need the field-inline wire cells no legacy fixture can
-// populate).
+// populate). It sweeps the clear Akita proof; Whiteout's tampers are
+// `soundness/whiteout.rs`.
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "akita",
-    not(feature = "field-inline")
+    not(feature = "field-inline"),
+    not(feature = "zk")
 ))]
 pub mod akita;
 #[cfg(not(feature = "akita"))]

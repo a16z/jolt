@@ -8,24 +8,24 @@
 // the suite runs over the modular Akita field-inline fixture instead.
 #[cfg(feature = "field-inline")]
 use crate::support::akita_fixtures::akita_field_inline_eqpoly_case;
-#[cfg(not(feature = "field-inline"))]
+#[cfg(not(any(feature = "field-inline", feature = "zk")))]
 use crate::support::akita_fixtures::{
     akita_advice_case, akita_committed_muldiv_case, akita_muldiv_case,
 };
 
-#[cfg(not(feature = "field-inline"))]
+#[cfg(not(any(feature = "field-inline", feature = "zk")))]
 #[test]
 fn akita_muldiv_fixture_verifies() {
     akita_muldiv_case().verify().expect("muldiv case verifies");
 }
 
-#[cfg(not(feature = "field-inline"))]
+#[cfg(not(any(feature = "field-inline", feature = "zk")))]
 #[test]
 fn akita_advice_fixture_verifies() {
     akita_advice_case().verify().expect("advice case verifies");
 }
 
-#[cfg(not(feature = "field-inline"))]
+#[cfg(not(any(feature = "field-inline", feature = "zk")))]
 #[test]
 fn akita_committed_muldiv_fixture_verifies() {
     akita_committed_muldiv_case()
@@ -39,4 +39,12 @@ fn akita_field_inline_eqpoly_fixture_verifies() {
     akita_field_inline_eqpoly_case()
         .verify()
         .expect("Akita field-inline eq-MLE case verifies");
+}
+
+#[cfg(all(feature = "zk", not(feature = "field-inline")))]
+#[test]
+fn whiteout_muldiv_fixture_verifies() {
+    crate::support::akita_fixtures::whiteout_muldiv_case()
+        .verify()
+        .expect("Whiteout muldiv case verifies");
 }

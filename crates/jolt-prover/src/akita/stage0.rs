@@ -2,19 +2,24 @@ use common::jolt_device::JoltDevice;
 use jolt_kernels::akita::commitment::{FusedIncObject, WitnessCommitRequest, WitnessCommitment};
 use jolt_kernels::{JoltBackend, KernelContext};
 
+use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::OneHotTraceShape;
 use jolt_claims::protocols::jolt::{JoltAdviceKind, JoltRelationId, TracePolynomialOrder};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, GroupSetupMetadata, TransparentObjectSetup};
 use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
-use jolt_verifier::config::ZkConfig;
+use jolt_verifier::config::SELECTED_ZK_CONFIG;
 use jolt_verifier::{
     absorb_akita_commitments, validate_inputs_from_parts, CheckedInputs, JoltStatement,
     ProofTranscriptConfig, JOLT_SESSION,
 };
 
-use super::witness::{commit_advice, AdviceObject};
+#[cfg(not(feature = "zk"))]
+use super::witness::commit_advice;
+#[cfg(feature = "zk")]
+use super::witness::commit_advice_hiding;
+use super::witness::AdviceObject;
 use crate::{JoltProverPreprocessing, ProverConfig, ProverError};
 #[cfg(feature = "field-inline")]
 use jolt_kernels::akita::commitment::FieldIncObject;
@@ -45,7 +50,7 @@ pub fn prove_stage0<F, PCS, VC, T>(
 ) -> Result<Stage0Output<PCS, T>, ProverError<F>>
 where
     F: JoltField,
-    PCS: CommitmentScheme<Field = F> + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F> + TraceOneHotCommitment + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
     PCS::Output: Clone + Encoding,
@@ -106,7 +111,7 @@ where
         config.one_hot_config,
         trusted_advice.is_some(),
         untrusted_advice_present,
-        ZkConfig::Transparent,
+        SELECTED_ZK_CONFIG,
     )?;
 
     let mut transcript = T::init(
@@ -137,12 +142,24 @@ where
     // Auxiliary objects commit before the trace because their frozen
     // profiles select its grouped schedule row.
     let untrusted_advice = if untrusted_advice_present {
-        Some(commit_advice::<PCS>(
+        let max_bytes = public_io.memory_layout.max_untrusted_advice_size as usize;
+        // Whiteout commits it hiding on the trace setup's backend, which
+        // opens it.
+        #[cfg(feature = "zk")]
+        let object = commit_advice_hiding::<PCS>(
+            &preprocessing.pcs_setup,
+            JoltAdviceKind::Untrusted,
+            &public_io.untrusted_advice,
+            max_bytes,
+        )?;
+        #[cfg(not(feature = "zk"))]
+        let object = commit_advice::<PCS>(
             PCS::transparent_setup_context(&preprocessing.pcs_setup),
             JoltAdviceKind::Untrusted,
             &public_io.untrusted_advice,
-            public_io.memory_layout.max_untrusted_advice_size as usize,
-        )?)
+            max_bytes,
+        )?;
+        Some(object)
     } else {
         None
     };

@@ -106,6 +106,11 @@ impl OperandShapeDomain {
         Self { rule, ..self }
     }
 
+    /// The auxiliary slots allocated so far.
+    pub fn auxiliary_count(&self) -> usize {
+        self.slots.next
+    }
+
     /// The pad layout: `base` message slots, the auxiliary slots counted,
     /// and the operand pads recorded.
     ///

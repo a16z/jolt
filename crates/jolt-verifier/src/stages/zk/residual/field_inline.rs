@@ -1,4 +1,5 @@
 use crate::stages::derivations;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::field_inline::relations::claim_reductions::increments as field_increments;
 use jolt_claims::protocols::field_inline::relations::claim_reductions::registers as field_registers_reduction;
 use jolt_claims::protocols::field_inline::relations::registers as field_registers;
@@ -7,20 +8,26 @@ use jolt_claims::protocols::field_inline::{
     FieldRegistersClaimReductionChallenge, FieldRegistersClaimReductionPublic,
     FieldRegistersReadWriteChallenge, FieldRegistersReadWritePublic, FieldRegistersTraceDimensions,
 };
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::field_inline::{
     FieldRegistersIncClaimReductionChallenge, FieldRegistersIncClaimReductionPublic,
     FieldRegistersValEvaluationPublic, FIELD_REGISTERS_LOG_K,
 };
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::relations::bytecode::BytecodeReadRafAddressPhaseChallenges;
 use jolt_claims::SymbolicSumcheck as _;
 use jolt_field::JoltField;
+#[cfg(not(feature = "akita"))]
 use jolt_openings::CommitmentScheme;
+#[cfg(not(feature = "akita"))]
 use jolt_riscv::JoltInstructionRow;
 use jolt_sumcheck::BatchedMaskedRounds;
 
 use super::SourceValues;
 use crate::config::JOLT_VERIFIER_CONFIG;
+#[cfg(not(feature = "akita"))]
 use crate::preprocessing::ProgramPreprocessing;
+#[cfg(not(feature = "akita"))]
 use crate::stages::field_inline_bytecode::field_inline_stage_gamma_powers;
 use crate::VerifierError;
 
@@ -31,6 +38,7 @@ pub(super) fn public_error(stage: FieldInlineRelationId, error: impl ToString) -
     }
 }
 
+#[cfg(not(feature = "akita"))]
 /// The variables past the first `prefix_len` of a field-inline `address ++ cycle` opening
 /// point (the field-inline cycle sub-point).
 pub(super) fn point_suffix<F: JoltField>(
@@ -118,6 +126,7 @@ pub(super) fn stage4_read_write<F: JoltField>(
     Ok(claims)
 }
 
+#[cfg(not(feature = "akita"))]
 /// The stage-5 field-register value-evaluation member (declared last, no instance challenge)
 /// and its baked `LtCycle` public: `Lt(own cycle sub-point, upstream field-register read/write
 /// cycle sub-point)` over the field-register address prefix.
@@ -141,6 +150,7 @@ pub(super) fn stage5_val_evaluation<F: JoltField>(
     Ok(claims)
 }
 
+#[cfg(not(feature = "akita"))]
 /// Derive field-register accesses from the bytecode and add their stage-value
 /// contributions onto the ordinary staged bytecode publics BEFORE they bake, so the same
 /// `StageValue(i)` publics the symbolic output expression references carry both families —
@@ -174,6 +184,7 @@ pub(super) fn extend_bytecode_stage_values<F: JoltField, PCS: CommitmentScheme>(
     Ok(())
 }
 
+#[cfg(not(feature = "akita"))]
 /// Evaluate the field-register access contributions with the same bytecode and
 /// opening-point geometry used by the clear verifier.
 pub(super) fn composed_bytecode_stage_values<F: JoltField>(
@@ -217,10 +228,12 @@ pub(super) fn composed_bytecode_stage_values<F: JoltField>(
     Ok(public_values.stage_values)
 }
 
+#[cfg(not(feature = "akita"))]
 pub(super) fn stage6b_inc_relation(log_t: usize) -> field_increments::ClaimReduction {
     field_increments::ClaimReduction::new(FieldRegistersTraceDimensions::new(log_t))
 }
 
+#[cfg(not(feature = "akita"))]
 /// The field-register increment reduction's publics and challenge. It is trace-domain with the
 /// same suffix window as the ordinary increment reduction, so its reduced opening point is the
 /// SAME `inc_opening_point`; the Eq publics mirror the ordinary member's derivations over the
