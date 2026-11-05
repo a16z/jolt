@@ -10,6 +10,7 @@ use jolt_transcript::{Encoding, Transcript};
 use rand_core::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::batch::{instance_window, tail_offset};
 use crate::error::SumcheckError;
 #[cfg(all(feature = "committed", feature = "prover"))]
 use crate::proof::SumcheckProof;
@@ -123,13 +124,7 @@ impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
     /// dummy rounds are front-loaded. Head-aligned instances must not use
     /// this; supply their offset to [`Self::try_instance_point_at`] directly.
     pub fn try_round_offset(&self, num_vars: usize) -> Result<usize, SumcheckError<F>> {
-        self.max_num_vars
-            .checked_sub(num_vars)
-            .ok_or(SumcheckError::BatchedPointOutOfRange {
-                offset: 0,
-                num_vars,
-                total: self.consistency.rounds.len(),
-            })
+        tail_offset(self.max_num_vars, num_vars, self.consistency.rounds.len())
     }
 
     pub fn challenges(&self) -> Vec<F>
@@ -164,18 +159,10 @@ impl<F: Field, C> BatchedCommittedSumcheckConsistency<F, C> {
     where
         F: Copy,
     {
-        let end = offset
-            .checked_add(num_vars)
-            .ok_or(SumcheckError::BatchedPointRangeOverflow { offset, num_vars })?;
-        self.consistency
-            .rounds
-            .get(offset..end)
-            .ok_or(SumcheckError::BatchedPointOutOfRange {
-                offset,
-                num_vars,
-                total: self.consistency.rounds.len(),
-            })
-            .map(|rounds| rounds.iter().map(|round| round.challenge).collect())
+        Ok(instance_window(&self.consistency.rounds, offset, num_vars)?
+            .iter()
+            .map(|round| round.challenge)
+            .collect())
     }
 }
 

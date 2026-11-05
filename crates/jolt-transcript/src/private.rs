@@ -51,3 +51,14 @@ impl<T: Transcript + ?Sized> PrivateChannel for T {
         self.append_values(std::slice::from_ref(claim));
     }
 }
+
+/// Where a masked channel placed a private message's pads: `len` pad
+/// coordinates from `start` in the pad schedule. A clear transcript uses no
+/// pads, so its messages take the empty range.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PadSlots {
+    /// The first pad coordinate.
+    pub start: usize,
+    /// The number of pad coordinates.
+    pub len: usize,
+}

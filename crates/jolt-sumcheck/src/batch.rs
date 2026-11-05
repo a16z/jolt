@@ -230,6 +230,42 @@ fn validate_batch_dimensions<F: Field>(
     Ok(())
 }
 
+/// The tail-aligned offset `max_num_vars - num_vars` of a member with
+/// `num_vars` rounds in a batch of `max_num_vars` rounds, `total` of which
+/// were recorded. The one owner of a batch's member windows, with
+/// [`instance_window`].
+pub(crate) fn tail_offset<F: Field>(
+    max_num_vars: usize,
+    num_vars: usize,
+    total: usize,
+) -> Result<usize, SumcheckError<F>> {
+    max_num_vars
+        .checked_sub(num_vars)
+        .ok_or(SumcheckError::BatchedPointOutOfRange {
+            offset: 0,
+            num_vars,
+            total,
+        })
+}
+
+/// The `num_vars` recorded rounds starting at `offset`.
+pub(crate) fn instance_window<F: Field, R>(
+    rounds: &[R],
+    offset: usize,
+    num_vars: usize,
+) -> Result<&[R], SumcheckError<F>> {
+    let end = offset
+        .checked_add(num_vars)
+        .ok_or(SumcheckError::BatchedPointRangeOverflow { offset, num_vars })?;
+    rounds
+        .get(offset..end)
+        .ok_or(SumcheckError::BatchedPointOutOfRange {
+            offset,
+            num_vars,
+            total: rounds.len(),
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use jolt_field::{Prime64Offset59, Ring};
