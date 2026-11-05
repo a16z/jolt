@@ -9,274 +9,469 @@
 
 ## Summary
 
-On Ethereum blocks, Keccak is about a third of Jolt's RISC-V trace. Each absorb-and-permute inline costs 3,121 trace rows today, and the Akita (lattice) prover pays for every one of them. This spec adds a precompile path to lattice Jolt and uses `KECCAKF` as the first family. The guest issues one `PCALL` instruction per permutation. The main trace keeps only the 44 rows that read and write the permutation's memory. The permutation itself is proved once per call slot by a separate relation over a fixed-capacity record table in GF(2^128). A one-hot pointer link binds each `PCALL` in the trace to exactly one record.
+On Ethereum blocks, Keccak takes about a third of Jolt's RISC-V trace. Each absorb-and-permute inline costs 3,121 trace rows today, and the lattice (Akita) prover pays for every one of them.
 
-Two results are measured. On five mainnet blocks, emulated with the feature on, the trace shrinks by 34.6% in total, and the padded trace domain halves on three of the five. On a recursive-verification guest, rows fall by 3.32%. Both figures count trace rows only; they do not yet include the cost of the link or the table opening.
+This spec adds a precompile path to lattice Jolt, with `KECCAKF` as the first family:
 
-The open part is the opening of the record table. It must use Akita as the only commitment scheme and stay inside GF(2^128). Akita's binary-source commitment, which follows LaBinius, is the intended route, but its current opening runs internally in a larger binary extension field and in prime-field stages. The spec asks reviewers how to close that gap. The feature stays off by default until the opening exists and its bytes are measured.
+- **The call.** The guest issues one `PCALL` instruction per permutation. Its trace expansion keeps only the rows that read and write the permutation's memory: 44 rows for absorb-and-permute.
+- **The record table.** The permutation itself is proved once per record in a fixed-capacity table over GF(2^128).
+- **The link.** A prime-field link binds each `PCALL` in the trace to exactly one record, and binds each call's RAM words to the record's bits.
+
+The spec has two parts:
+
+- **Part I: the `PCALL` instruction.** It covers the instruction, its registry entry and fixed-capacity tracing, and it can land on its own.
+- **Part II: the proof protocol.** It covers the table relation, the link and the table opening.
+
+Two parts of Part II are open, and both depend on the opening:
+
+1. **One bit source for both readers.** A single committed bit source must answer both GF(2^128) claims (from the table relation) and prime-field claims (from the link).
+2. **Fields inside the opening.** The opening must stay inside the fields allowed for it.
+
+Akita's binary-source commitment, which follows LaBinius, is the intended home for that opening. Its current internal field stages are the question this spec asks reviewers.
+
+**Measured so far.** On five mainnet blocks, emulated with the feature off and on, the trace shrinks by 34.62% in total, and the padded trace domain halves on three of the five. On a recursive-verification guest, rows fall by 3.32%. Both figures count trace rows only. Link and opening costs are not included, and no end-to-end proof on a block has been measured yet.
+
+## Glossary
+
+- **Family:** one precompile function, here `KECCAKF`.
+- **Flavour:** a variant of a family, selected by `funct3`. Flavour 0 is permute only. Flavour 1 is absorb-and-permute.
+- **Port:** a contiguous run of RAM words the call reads, or reads and writes.
+- **Row ordinal:** the position of a row inside one `PCALL` expansion. It is a static bytecode property.
+- **Record:** one row of the family's table. Its position is the record index $g < K$. It is dynamic and has nothing to do with the static instruction.
+- **Start cycle:** the trace cycle of a call's first row. It identifies a dynamic call.
+- **Active:** a record that stands for a real call. Inactive records are padding.
+- **$K$:** the table capacity, a power of two fixed by the proving key.
+- **$T$:** the padded trace length.
+- **$H$:** GF(2^128) $= \mathbb F_2[x]/(x^{128}+x^7+x^2+x+1)$, the `F128` type of `jolt-field` (`specs/binary-field.md`).
+- **$\mathbb F_p$:** the prime field of lattice Jolt: Akita's 128-bit prime field, so $p > 2^{64}$.
 
 ## Intent
 
 ### Goal
 
-Add a default-off precompile path to lattice Jolt that removes the Keccak-f[1600] permutation rows from the main trace and proves them in a GF(2^128) record table, linked to the trace and opened through Akita.
-
-The path introduces four pieces:
-
-1. **`PCALL` instruction.** A guest instruction with its own ABI, encoding and registry entry. Its trace expansion contains only memory rows.
-2. **Record table.** One table per precompile family, with a fixed capacity `K` per proof. Each slot holds one call's input and output in a fixed bit layout over GF(2^128).
-3. **Family relation.** A sum-check relation over GF(2^128) that holds on every slot iff the slot's output is the family function of its input. For `KECCAKF` this is Keccak-f[1600], including the XOR of the absorbed block into the state.
-4. **Link.** A one-hot pointer from each call's first trace row to its record, plus an agreement check between the call's 64-bit RAM words and the record's bits.
+Add a default-off precompile path to lattice Jolt that removes the Keccak-f[1600] permutation rows from the main trace, proves them in an $H$-valued record table, links them to the trace in $\mathbb F_p$, and opens the table through Akita.
 
 ### Background: why Keccak dominates
 
-The block data below is measured by running the Ethereum guest in the Jolt emulator, with the feature off and on, on five mainnet blocks. Every Keccak call in the current guest is the fused absorb-and-permute inline, at 3,121 rows each. With the feature on, each call costs 44 rows: one call row, 17 reads of the rate words, 25 read-writes of the state and one return.
+The block data below was measured by running the Ethereum guest in the Jolt emulator with the feature off and on.
 
-| Block | Rows, off | Rows, on | Saved | Padded domain, off to on | Permutations $N$ | Capacity $K$ |
+**What the prototype does:**
+- Every Keccak call in the current guest is the fused absorb-and-permute inline, at 3,121 rows each.
+- With the feature on, each call becomes a flavour-1 `PCALL` of 44 rows: one call row, 17 rate reads, 25 state read-writes and one return.
+- The prototype that produced these numbers intercepted the existing Keccak inline key. Part I replaces that with a new key; the row counts do not depend on the key.
+
+| Block | Rows, off | Rows, on | Saved | Padded domain, off to on | Calls $N$ | Next power of two |
 |---|---:|---:|---:|---|---:|---:|
-| 25,824,419 | 6,886,179 | 4,061,493 | 41.02% | $2^{23}$ to $2^{22}$ | 918 | 1,024 |
-| 26,314,047 | 543,149,644 | 377,748,586 | 30.45% | $2^{30}$ to $2^{29}$ | 53,754 | 65,536 |
-| 26,304,915 | 850,024,492 | 557,900,266 | 34.37% | $2^{30}$, unchanged | 94,938 | 131,072 |
-| 26,320,263 | 1,507,914,750 | 954,857,847 | 36.68% | $2^{31}$ to $2^{30}$ | 179,739 | 262,144 |
-| 26,303,900 | 1,884,108,270 | 1,238,569,055 | 34.26% | $2^{31}$, unchanged | 209,795 | 262,144 |
+| 25,824,419 | 6,886,179 | 4,061,493 | 41.02% | $2^{23}$ to $2^{22}$ | 918 | $2^{10}$ |
+| 26,314,047 | 543,149,644 | 377,748,586 | 30.45% | $2^{30}$ to $2^{29}$ | 53,754 | $2^{16}$ |
+| 26,304,915 | 850,024,492 | 557,900,266 | 34.37% | $2^{30}$, unchanged | 94,938 | $2^{17}$ |
+| 26,320,263 | 1,507,914,750 | 954,857,847 | 36.68% | $2^{31}$ to $2^{30}$ | 179,739 | $2^{18}$ |
+| 26,303,900 | 1,884,108,270 | 1,238,569,055 | 34.26% | $2^{31}$, unchanged | 209,795 | $2^{18}$ |
 
-Across the five blocks, Keccak is 35.11% of rows with the feature off, and the feature removes 34.62% (1,658,946,088 rows). Each call saves $3121 - 44 = 3077$ rows. All other rows, call counts and outputs are identical between the two runs.
+**Totals:**
+- Keccak is 35.11% of rows with the feature off.
+- The feature removes 34.62% of rows, or 1,658,946,088 in total. Each call saves $3121 - 44 = 3077$ rows.
+- All other rows, call counts and guest outputs are identical between the two runs.
+
+**Recursive-verification guest:** counted rows fall from 106,762,299 to 103,220,672 (−3.32%). The padded $2^{27}$ domain is unchanged.
+
+The prototype is not public. All figures will be re-measured on the implementation, with the commands in Testing Strategy.
 
 ### Invariants
 
-1. **Default path unchanged.** With the feature off, every existing program decodes, traces and proves exactly as before, and proof bytes, including Akita PCS bytes, are byte-identical on every existing fixture.
-2. **Exact coverage.** Each dynamic `PCALL` is matched to exactly one live record. No live record names a cycle that is not a `PCALL` start. Padding slots are marked inactive and satisfy the relation on a fixed input.
-3. **Word agreement.** For each call, the 67 RAM words it touches (17 rate words read, 25 state words read and 25 written) equal the corresponding words of its record, bit for bit.
-4. **Absorb inside the proof.** The XOR of the rate block into the state is part of the proved relation, not a host-side check.
-5. **Fixed capacity.** `K` is fixed per proof. A program whose call count exceeds `K` fails during execution, before any proving work, with a clear error.
-6. **Atomic semantics.** Contracting each complete `PCALL` interval in the trace to one step yields the same execution as running Keccak-f[1600] atomically on the entry state (the projection property below).
+1. **Default path unchanged.** With the feature off, every existing program decodes, traces and proves exactly as before. Under identical inputs, configuration and prover randomness, the proof bytes (Akita proof included) are byte-identical on every existing fixture.
+2. **Old keys keep their meaning.** Existing inline keys behave as today in every configuration, including with the feature on.
+3. **Exact coverage.** In an accepted proof, active records and dynamic `PCALL`s are in bijection: each call has exactly one active record with the same flavour and start cycle, and each active record has exactly one call. Inactive records carry a zero pointer. This also implies $N \le K$ against a malicious prover.
+4. **Word agreement.** For each call, every RAM word it reads or writes equals the corresponding word of its record:
+   - flavour 1: 67 words (17 rate reads, 25 state reads, 25 state writes);
+   - flavour 0: 50 words.
+5. **Family semantics inside the proof.** For flavour 1 the record proves $S' = \mathrm{KeccakF}(S \oplus (B \,\|\, 0^{512}))$, where $S$ is the input state, $B$ the 1,088-bit block and $S'$ the output. For flavour 0 it proves $S' = \mathrm{KeccakF}(S)$. The XOR is proved, not checked on the host.
+6. **Fixed capacity.** $K$ is fixed by the proving key. An honest tracer fails at call $K+1$ before proving; a dishonest prover cannot exceed $K$, by Invariant 3.
 
 New `jolt-eval` invariants, added during implementation:
 
-- `pcall_default_off_byte_identity` (invariant 1);
-- `pcall_record_coverage` (invariants 2 and 5), with negative cases for a dropped, duplicated or spliced record and for call `K+1`;
-- `pcall_word_agreement` (invariants 3 and 4), with one-bit flips on input, output and the absorbed block.
+- `pcall_default_off_byte_identity` (1, 2);
+- `pcall_record_coverage` (3, 6), with a missing, duplicated, triplicated or fractional record, a record pointing at a non-call cycle, and call $K+1$;
+- `pcall_word_agreement` (4, 5), with one-bit flips in an input, block or output word, metadata swaps (flavour, start), and paired errors that would cancel in characteristic 2.
 
 ### Non-Goals
 
-- Zero knowledge. The new messages need their own simulator; this is follow-up work.
-- Other families (SHA-256, BLAKE, secp256k1). The table, registry and link are generic, but this spec specifies and measures `KECCAKF` only.
-- Choosing `K` dynamically or across proofs. `K` is a per-proof public parameter here.
-- Changing Akita itself. Where the opening needs an Akita change, the spec states the requirement and leaves the change to an Akita PR.
+- Zero knowledge. The `akita` and `zk` features are already mutually exclusive, and the new messages would need their own simulator.
+- Other families. The table, registry and link are generic, but this spec specifies and measures `KECCAKF` only.
+- Choosing $K$ per proof or across proofs. It is a parameter of the proving key.
+- Changing Akita. Where the opening needs an Akita change, the spec states the requirement and leaves the change to an Akita PR.
 
 ## Evaluation
 
 ### Acceptance Criteria
 
-- [ ] With the feature off, all existing fixtures prove and verify with byte-identical proofs and Akita bytes.
-- [ ] With the feature on, the Ethereum guest proves and verifies on at least one real block, and the counted rows match the emulator figures above.
-- [ ] A trace with $K+1$ calls fails during execution with the capacity error, before proving.
-- [ ] Proofs are rejected for: a missing record, a duplicated record, a record naming a non-`PCALL` cycle, a one-bit change in any record output, input or absorbed word, and a one-bit change in any linked RAM word.
-- [ ] The `PCALL` key is unique in the linked inline registry under every feature combination, including test configurations.
-- [ ] The added proof bytes (link, relation and opening) are measured on real blocks and reported against the 4,096-byte per-precompile target.
+**Part I** (instruction, registry, tracing):
+
+- [ ] With the feature off, all existing fixtures prove and verify with byte-identical proofs, under the commands below.
+- [ ] Registering two inlines with the same `(opcode, funct3, funct7)` fails registry validation. The existing test `linked_inline_registration_keys_are_unique` covers every feature combination that links the precompile.
+- [ ] A host built without the feature rejects the `PCALL` key with a clear error.
+- [ ] A trace with $K+1$ calls fails during execution with `PRECOMPILE_CAPACITY_EXCEEDED`, before proving.
+- [ ] Emulated rows with the feature on match the table above on the five blocks.
+
+**Part II** (protocol):
+
+- [ ] With the feature on, the Ethereum guest proves and verifies on at least one real block. The prover's row counter matches the emulator.
+- [ ] Proofs are rejected in every `pcall_record_coverage` and `pcall_word_agreement` case.
+- [ ] Added proof bytes are measured on real blocks and split into link, relation, commitment and opening. The total is reported against the 4,096-byte target.
 
 ### Testing Strategy
 
-- `cargo nextest run --features host` and `--features host,zk` stay green with the feature off.
-- New tests under the feature: tracer tests for the expansion and capacity error; relation tests on random records plus the mutation suite above; an end-to-end prove-and-verify on a small guest and on one recorded Ethereum block input.
-- A registry audit test that enumerates every linked inline registration and asserts the `PCALL` key range is disjoint from all others.
+- **Feature off, unchanged** (Invariant 1):
+  - root `cargo nextest run --features host` and `--features host,zk`;
+  - the Akita matrix: `cargo nextest run -p jolt-prover --features akita,prover-fixtures -E 'binary(e2e_matrix)'`.
+
+  Before and after proof bytes are compared under fixed inputs and randomness.
+- **Feature on:** the same Akita matrix with `akita,prover-fixtures,pcall-keccakf`.
+- **New tests:**
+  - tracer tests for both flavours, operand checks and the capacity error;
+  - relation tests on random records, plus the mutation suites above;
+  - one end-to-end proof on a recorded Ethereum block input.
+- **Binary sum-check:** the relation runs on the characteristic-2 path of `jolt-sumcheck` from `specs/binary-sumcheck.md`.
 
 ### Performance
 
-The expected movement, from the measurements above:
-
 | Objective | Direction | Magnitude |
 |---|---|---|
-| Trace rows on Ethereum blocks | down | 30% to 41% per block, measured with the emulator |
-| Trace rows on a recursive-verification guest | down | 3.32%, measured, inside an unchanged $2^{27}$ domain |
+| Trace rows on Ethereum blocks | down | 30% to 41% per block, measured in the emulator |
+| Trace rows, recursive-verification guest | down | 3.32%, measured |
 | Padded trace domain | down on most blocks | halves on 3 of 5 blocks |
-| Proof bytes | up | see Costs; target at most 4,096 bytes per precompile per proof |
-| Akita PCS bytes | unchanged | required |
-| Prover time | expected down | not yet measured end to end |
+| Proof bytes, feature on | up | see Costs; target at most 4,096 bytes per family per proof |
+| Proof bytes, feature off | unchanged | required |
+| Prover time | unknown | to be measured; table work grows linearly in $K$ |
 
 New `jolt-eval` objectives: `pcall_rows_saved` and `pcall_added_proof_bytes`, both per block.
 
 ## Design
 
-### Architecture
+### Dependencies
 
-#### 1. `PCALL` instruction, ABI and registry
+| Dependency | Status |
+|---|---|
+| `F128` in `jolt-field` (`specs/binary-field.md`) | implemented |
+| Characteristic-2 batched sum-check: zero extension, no uni-skip over domains larger than 2 (`specs/binary-sumcheck.md`) | proposed |
+| `F128` challenge sampling in `jolt-transcript` | to add |
+| An Akita revision with binary sources and an opening that satisfies section II.4. `main` pins Akita `1160b0a8`, which has neither. | pending |
 
-`PCALL` is an R-type instruction in the custom inline space. One registry entry exists per family flavour.
+### Part I: the `PCALL` instruction
+
+#### I.1 Encoding and ABI
 
 | Field | Value |
 |---|---|
 | opcode | `0x0b` (core inline space) |
-| funct7 | `0x08`: the precompile family block, new |
-| funct3 | `0`: `KECCAKF` permute; `1`: `KECCAKF` absorb-and-permute; 2 to 7 reserved |
-| rs1 | address of the 25-word state, 8-byte aligned |
-| rs2 | address of the 17-word rate block (flavour 1), else `x0` |
-| rd | `x0` |
+| funct7 | `0x0a`, a new precompile block |
+| funct3 | `0`: `KECCAKF` permute; `1`: `KECCAKF` absorb-and-permute; 2 to 7 reserved and rejected |
+| rs1 | address of the 25-word state |
+| rs2 | flavour 1: address of the 17-word block; flavour 0: must be `x0` |
+| rd | must be `x0` |
 
-The guest API is `keccak_f(state: &mut [u64; 25])` and `keccak_absorb_f(state: &mut [u64; 25], block: &[u64; 17])`.
+**Guest API:**
+- `keccak_f(state: &mut [u64; 25])`, flavour 0;
+- `keccak_absorb_f(state: &mut [u64; 25], block: &[u64; 17])`, flavour 1.
 
-**Relocation.** The prototype intercepted the existing Keccak inline keys $(0\text{x}0b, 0\text{x}01, 0/1)$. With the feature on, the same instruction word meant two different things, so programs built for the inline silently changed semantics. The precompile gets its own `funct7` block instead. On current `main` the core space uses `funct7` 0 to 7 (SHA-256, Keccak, BLAKE2, BLAKE3, bigint, secp256k1, Grumpkin, P-256), and `0x08` is unused. The registry rejects duplicate keys at construction and does not use first-match lookup for this block. One test-only registration on `main` already sits at $(0\text{x}2b, 0\text{x}7e, 6)$, so the user space is not used. The final key is for review; the audit test above enforces whatever is chosen.
+Lanes are little-endian `u64`, in the order `jolt-inlines/keccak256` uses. The guest-side feature makes these functions emit the new key. Without it they use the existing inline. Old keys keep their meaning everywhere (Invariant 2).
 
-**Expansion.** The tracer expands one `PCALL` into its memory rows only, without the permutation's ALU rows:
+**Key choice.** On `main`, opcode `0x0b` uses `funct7` 0 to 9:
 
-- 1 call row;
-- 17 reads at `rs2 + 8i` (flavour 1);
-- 25 read-writes at `rs1 + 8i`;
-- 1 return row.
+| `funct7` | Inline |
+|---:|---|
+| 0 | SHA-256 |
+| 1 | Keccak |
+| 2 | BLAKE2 |
+| 3 | BLAKE3 |
+| 4 | bigint |
+| 5 | secp256k1 |
+| 6 | Grumpkin |
+| 7 | P-256 |
+| 8 | NTT |
+| 9 | NTT pointwise dot |
 
-Each row carries two fields decoded from authenticated bytecode: a family lane, equal to 1 on these rows and 0 elsewhere, and a tag that encodes the (flavour, slot) pair injectively. They are not free witness columns.
+They are listed in `jolt-inlines/fixtures/fixtures/registered_inline_expand_parity_hashes.jsonl`. The first free block is `0x0a`. The user space `0x2b` already has a test-only registration at $(0\text{x}2b, 0\text{x}7e, 6)$, so this spec does not use it.
 
-**Memory.** Both ports must be aligned, inside ordinary RAM and non-overlapping, and all addresses are checked before the first write. Bases and registers are unchanged by the call.
+**Registry.** Today `tracer/src/instruction/inline.rs` looks registrations up with a first-match `inventory::iter().find(..)`, and uniqueness is checked only by `linked_inline_registration_keys_are_unique`. This spec adds a one-time validation of all linked registrations. Execution and preprocessing share it, and it fails on any duplicate key in any block, not only the new one.
 
-#### 2. One record table per family
+#### I.2 Expansion
 
-Each family has one table of `K` slots. A slot holds:
+One `PCALL` expands into memory rows only. It has no ALU rows for the permutation.
 
-- the input state, the absorbed block and the output state, as bits;
-- the internal post-XOR state, so that the absorb is inside the relation;
-- an active flag, a flavour bit and the slot's start pointer.
+| Flavour | Rows | RAM words |
+|---|---|---|
+| 0 | call, 25 state read-writes at `rs1 + 8i`, return: 27 rows | 25 read, 25 written: 50 |
+| 1 | call, 17 block reads at `rs2 + 8i`, 25 state read-writes, return: 44 rows | 17 + 25 read, 25 written: 67 |
 
-The prototype layout uses 83,968 witness bits per slot, including parity and constant columns. A tighter layout with 41,195 occupied bits, padded to 65,536, is specified but not implemented. Inactive slots hold the permutation of the zero state and are excluded from coverage.
+**Bytecode and sequencing.**
+- The rows are a virtual sequence, with new virtual instructions `PcallCall`, `PcallRead`, `PcallWrite` and `PcallReturn`. Each bytecode row carries the family, flavour and row ordinal.
+- With the feature on, these fields extend the committed bytecode row, so the bytecode layout digest changes. With the feature off, the layout is unchanged.
+- **Where written values come from.** The value of each `PcallWrite` row is supplied by the tracer from the record. The main trace does not constrain it; only the link (II.3) fixes it.
 
-#### 3. Family relation in GF(2^128)
+**Operand checks.** Done by the tracer before any memory effect:
+- 8-byte alignment;
+- non-wrapping ranges of 200 state bytes and, for flavour 1, 136 block bytes;
+- both ranges in ordinary RAM, with the block range disjoint from the state range.
 
-The table field is GF(2^128) $= \mathbb F_2[x]/(x^{128}+x^7+x^2+x+1)$, the `F128` type in `jolt-field`'s binary backend (`specs/binary-field.md`). Keccak-f[1600] is linear over $\mathbb F_2$ except for $\chi$, which has degree 2. So the round function is a low-degree polynomial identity on the slot's bits, and one batched sum-check proves all `K` slots at once.
+What the verifier enforces for these properties is listed in II.6.
 
-The prototype relation:
+#### I.3 Capacity
 
-- at $K = 2^{11}$, runs 27 sum-check rounds with a 2,552-byte transcript (measured, with the opening stubbed);
-- rejects all 11 mutations tried (one-bit changes in each permutation step and in the endpoints).
+The tracer counts calls per family and stops at call $K+1$ with `PRECOMPILE_CAPACITY_EXCEEDED: KECCAKF capacity K`, before that call's memory effects and before proving.
+- **No automatic retry.** There is no retry at a larger $K$, because $K$ is fixed by the proving key.
+- **Not a security check.** This error is for usability only: soundness of $N \le K$ comes from the coverage check in II.3.
+- **Sizing.** The blocks above need $K$ from $2^{10}$ to $2^{18}$. Occupancy at each block's own power of two is 0.69 to 0.90. A single key with $K = 2^{18}$ would leave the small block at 0.0035, and its fixed table work is paid on every proof (Open question 3).
 
-The relation ends in evaluation claims on the table's bits. Those claims go to the opening below.
+### Part II: the proof protocol
 
-#### 4. Link: one-hot pointer plus word agreement
+#### II.1 Crate and stage map
 
-- **Coverage.** Each record stores a one-hot pointer to the cycle of its call row. The verifier checks, with one sum-check over the trace's `PCALL`-start indicator (the call row's lane and tag), that the pointers cover every call row exactly once, and that every active record points at a call row. Multiplicity must be exactly one: a parity check alone would accept three identical copies.
-- **Agreement.** Each 64-bit RAM word is exported as two 32-bit limbs bound to the RAM relation. The record arranges each limb as one column of 32 bits. Agreement is then one aggregate claim per limb column plus a small metadata vector, instead of per-bit terminals. Each limb is a canonical integer below $2^{32}$, smaller than the prime, so it has a unique bit decomposition.
+| Piece | Crate | Stage |
+|---|---|---|
+| `PCALL` vocabulary, flags, decode | `jolt-riscv` (new module, as for field inline), `jolt-program` bytecode fields | preprocessing |
+| Guest API | `jolt-inlines/keccak256`, behind a guest feature | none |
+| Expansion and capacity | `tracer` | execution |
+| Relation ids, symbolic relations, layouts | `jolt-claims::protocols::jolt::lattice::precompile` (`specs/self-contained-sumcheck-relations.md`) | none |
+| Record table witness | `jolt-witness` | commitment, before any challenge |
+| Link sum-checks (II.3) | `jolt-kernels`, prime members in a new stage after 6b | new prime stage |
+| Family relation (II.2) | `jolt-kernels`, over `F128` | new binary stage after the link |
+| Table opening (II.4) | `jolt-akita`, a new group appended after `OneHotTrace` in the grouped order of `specs/lattice-claims.md` | 8 |
 
-The prime-field side of the link uses the trace's existing Akita commitment. The binary side uses the table's claims. Both are bound to one transcript.
+**Why the new stages.** A `SumcheckBatch` is over one field. So the binary relation cannot join a prime batch, and it gets its own stage. The prime link members could join an existing batch. A separate stage keeps feature-off batches identical (Invariant 1).
 
-#### 5. Opening the table through Akita
+**Feature scope.**
+- The feature is defined in `tracer`, `jolt-riscv`, `jolt-program`, `jolt-claims`, `jolt-witness`, `jolt-kernels`, `jolt-prover`, `jolt-verifier` and `jolt-sdk`.
+- It requires `akita`. It is a compile error with `zk` and is rejected on Dory builds.
+- $K$, the family set, the table layout and the protocol version are part of the preprocessing digest.
+- A program with no calls still commits a table of $K$ inactive records, so the proof shape stays fixed.
 
-The table must be committed and opened under the following constraints:
+#### II.2 Record table and family relation over $H$
 
-- Akita is the only commitment scheme in the proof: no hash-based or Merkle commitment, and no second scheme;
-- the only binary field is GF(2^128);
-- with the feature off, Akita proof bytes are unchanged.
+**Record layout.** One record holds, for each round $r = 0..24$, the 1,600-bit state $A_r$ entering round $r$; $A_{24}$ is the output.
+
+| Columns | Bits | Content |
+|---|---:|---|
+| state | $32 \times 32 \times 64 = 65{,}536$ | 25 states, padded to 32 rounds and 32 lanes |
+| parity | $32 \times 8 \times 64 = 16{,}384$ | $\theta$ column parities, 5 used per round |
+| constants | $32 \times 64 = 2{,}048$ | $\iota$ round constants, public |
+
+**Prototype figures.** The layout above is the measured prototype: 83,968 bits per record.
+- The absorb flavour adds the pre-absorb state and the block: $1{,}600 + 1{,}088$ bits.
+- Metadata adds 2 flavour bits and the pointer chunks of II.3.
+- The resulting layout pads to $2^{17}$ bits per record.
+
+**Constraints, per round:**
+- $\theta$ parity: each parity column equals the XOR of its five lanes; this is linear;
+- $\rho$ and $\pi$: public rotations and wiring;
+- $\chi$: $a \oplus (\lnot b \wedge c)$, degree 2;
+- $\iota$: XOR of the public constant, affine;
+- absorb: $A_0 = S \oplus (B \,\|\, 0^{512})$ for flavour 1, and $A_0 = S$ for flavour 0, gated by the flavour bits;
+- inactive records: the permutation of the zero state;
+- unused lanes and rounds: zero.
+
+Bitness comes from the source commitment; the opening must guarantee that the committed source is Boolean.
+
+**Aggregation.** In characteristic 2, equal nonzero residuals cancel in pairs, so a plain sum of residuals proves nothing. The relation instead proves a zero-check: an $\mathrm{eq}$-weighted sum over (record, constraint index), with constraint families combined by independent random $H$ coefficients. This is one batched sum-check over $\log_2 K + 16$ variables of degree at most 3. The prototype ran it in 27 rounds at $K = 2^{11}$, rejected all 11 single-step mutations tried, and produced a 2,552-byte transcript with the opening stubbed.
+
+**Soundness error:**
+$$\frac{3(\log_2 K + 16) + \log_2 K + 16 + c}{2^{128}}$$
+- the first term: rounds times degree;
+- the second: the zero-check point;
+- $c$: the batching of constraint families.
+
+The relation ends in $H$-linear claims on the committed bits, which go to the opening (II.4).
+
+#### II.3 Link over $\mathbb F_p$: coverage and word agreement
+
+The link is proved over $\mathbb F_p$, because exact counting needs characteristic larger than any count.
+
+**Pointer.**
+- Record $g$ stores two Boolean flavour bits $f_0, f_1$, with $u = f_0 + f_1 \le 1$ (active).
+- Its start cycle $\sigma_g < T$ is encoded as $\lceil \log_2 T / 4 \rceil$ one-hot chunks of at most 16 bits each.
+- Record constraints: chunk bits are Boolean; each chunk of an active record sums to 1; inactive records are all zero.
+- Activity: $a(g, \ell) = f_0[\ell < 27] + f_1[\ell < 44]$ for row ordinal $\ell < 64$.
+- Shifted read: $\mathrm{ra}_\ell(g, j)$ is the indicator that $\sigma_g + \ell = j$. Its multilinear extension in $j$ is a product of per-chunk carry matrices. It is evaluated as that product, never re-multilinearised, and carry out of the top chunk is rejected.
+
+**Coverage.** Let $\lambda(j)$ be the authenticated bytecode indicator that cycle $j$ is a `PCALL` row. Define
+$$C(j) = \sum_{g, \ell} a(g, \ell)\, \mathrm{ra}_\ell(g, j).$$
+The link proves $C(j) = \lambda(j)$ for all $j$.
+- $C(j)$ is an integer count of at most $K \cdot 64 < p$.
+- So the equality forces every `PCALL` row to be covered exactly once and no other row to be covered. That rejects missing, duplicated, triplicated and fractional records.
+- Combined with the row-ordinal agreement below and the interval lemma (II.6), slot 0 of each active record lands on a call row and its later slots lie in the same call. This gives Invariant 3, and in particular $N \le K$.
+
+**Agreement.**
+- **Prime readings of the bits.** The link reads the record's bits as prime-field values $b \in \mathbb F_p$, with $b(b - 1) = 0$.
+- **Limb equations.** For each applicable row $\ell$ of record $g$ and each limb $h \in \{0, 1\}$:
+$$R_{g,\ell,h} = \sum_{s=0}^{31} 2^s\, b[\mathrm{map}(g, \ell, 32h + s)],$$
+where $R$ is the trace's authenticated read or write value at cycle $\sigma_g + \ell$, split into two 32-bit limbs.
+- **Why limbs.** Each limb is below $2^{32} < p$, and two limb equalities imply word equality.
+- **Trace values.** The RAM read and write values are virtual polynomials in Jolt. Their values at the link's terminal point are obtained through the existing RAM read-write reductions, not asserted.
+- **Metadata.** The row ordinal, flavour and family fields of the trace are matched to the record in the same way.
+
+**Protocol.**
+1. **Commitments first.** The prover commits the record table before any link challenge.
+2. **Trace sum-check.** The verifier samples a random record point $\tau$ and row point $\rho$, plus independent coefficients $\gamma$ for the link fields. The prover sends
+$$z = \sum_{g,\ell} \mathrm{eq}(\tau, g)\, \mathrm{eq}(\rho, \ell)\, P_R(g, \ell),$$
+where $P_R$ is the record side of all link fields combined by $\gamma$. The verifier samples $\eta$, and a degree-2 sum-check over $j$ ($\log_2 T$ rounds) proves that $z$ equals the trace side, plus $\eta\, \mathrm{eq}(\zeta, j)(C(j) - \lambda(j))$.
+3. **Record and row sum-check.** A second sum-check over (record, row ordinal), with 6 row rounds of degree at most 3 and $\log_2 K$ record rounds of degree at most 9, proves:
+   - the definition of $z$;
+   - the trace weights evaluated at the first sum-check's terminal point;
+   - all record constraints above.
+
+   The degree 9 comes from the 7 chunks of the carry-matrix product.
+4. **Terminals.** All terminal claims are linear forms in the trace polynomials (through the existing reductions) and in the record's prime readings.
+
+**Error.** At $T = 2^{27}$ and $K = 2^{11}$, the link's interactive error is at most $230/p$, and the Boolean agreement adds at most $45/p$, assuming exact terminal openings.
+
+**The open dependency.** The agreement is sound only if the record's prime readings $b$ and the bits used by the $H$ relation (II.2) are the same committed bits. Matching transcript randomness does not give this, and neither does converting field encodings. It must be an interface property of the opening, stated in II.4 as the common-source requirement.
+
+#### II.4 Opening the table through Akita
+
+**Requirements for an admissible opening:**
+1. **Single commitment scheme.** Akita is the only commitment scheme in the proof: no hash-based or Merkle commitment, and no second scheme instance.
+2. **Common source.** One committed bit table answers both kinds of claim, with one extractor:
+   - $H$-linear claims from the relation (II.2);
+   - $\mathbb F_p$-linear claims from the link (II.3).
+3. **Boolean source.** The extracted source is Boolean.
+4. **Claim fields.** Claims reach the Jolt verifier only in $H$ or $\mathbb F_p$, so the verifier and the claim pipeline handle one binary field type. Whether the opening may use a larger binary field internally (Akita's `BinaryField192`, a cubic extension of a 64-bit field) is Open question 1, not a requirement.
+5. **Default path.** With the feature off, the Akita proof is unchanged.
 
 | Route | Status | Cost |
 |---|---|---|
-| Akita binary-source mode (LaBinius-style commitment to bit tables, grouped with the prime sources in one opening; LayerZero-Labs/akita binary-source PRs, e.g. #331, #332) | The intended route. One session and one opening for prime and binary sources. Its root and suffix currently run in a larger binary extension field and in prime-field stages, and the grouped profile has no production security parameters yet. | Open; the requirement is a GF(2^128) root, or a stated reduction from the larger-field stages to GF(2^128) claims. |
-| A standalone LaBinius instance for the table | Works, but it is a second commitment instance with its own field stages. | Its reduction alone is above 32 KB at the capacities above. |
-| Reduce bit columns modulo 2 inside prime Akita | Ruled out as a shortcut. An odd-modulus residue has no well-defined parity: $\mathbb Z_q/2\mathbb Z_q = 0$ for odd $q$. So it needs a prime-side bridge proving the lift. | About 24 to 29 KB with a linear verifier, or 1.6 to 2.3 MB if made succinct. |
-| Full disclosure of the records | Sound and simple; this is the reference opening for testing and for the first end-to-end run. | About 10 KB per slot, so megabytes at the block capacities. Not deployable. |
+| Akita binary-source mode: bit tables committed as in LaBinius and opened in one grouped session with the prime sources. Public on Akita in the binary-source PRs, #318 to #332. | The intended route. The grouped session gives one opening for prime and binary sources. Two things are missing: an evaluation interface that serves both claim fields from one source (requirement 2), and production security parameters for the grouped profile. Its internal stages currently include a field switch to a larger binary field and prime-field steps. | Open |
+| Standalone LaBinius instance for the table | Sound, but it is a second commitment instance (fails 1), and it does not serve the prime link claims (fails 2). | Not priced here |
+| Prime Akita with the bits stored as integers mod $p$ | Serves the prime link, but $H$ claims then need a proved lift of each residue to its canonical bit. There is no nonzero ring homomorphism from an $\mathbb F_2$-algebra into a ring of odd characteristic, so the parity of a residue is not a ring operation, and the lift must be proved bit by bit. | High; not priced here |
+| Reference mode: disclose the records | Sound for testing; does not meet the production criteria. | 558,104 bytes at $K = 2^{10}$ in the specified codec |
 
-Two facts limit the design space; the proofs are short and can go in an appendix if useful:
+**Reference mode.** This is the opening used for the first end-to-end run.
+- The proof carries the canonical record words: input state, block, flavour and start of each record. They are absorbed into the transcript before any link or relation challenge.
+- The verifier rebuilds the bit source from them and evaluates every $H$ and $\mathbb F_p$ terminal claim directly.
+- The prime link (II.3) is proved in full.
+- Its proofs and results are labelled reference-only.
 
-- **No cyclotomic embedding.** GF(2^128) does not embed in the cyclotomic rings Akita uses, so Akita's own opening cannot answer GF(2^128) claims directly.
-- **Restricted impossibility.** A protocol whose only source authentication is Akita's existing prime opening cannot reach an all-GF(2^128) terminal by changing its front end or reducing residues modulo 2. This is not a general impossibility: a succinct argument for the Akita relation, written as a Boolean circuit over GF(2^128), is not excluded.
+#### II.5 Verifier changes (feature on)
 
-#### 6. Fixed capacity and overflow
+- **Preprocessing:** registry validation, the authenticated expansion fields, and the digest of $K$, layout and version.
+- **Link stage (II.3):** the prime sum-checks, with terminals routed through the existing RAM and bytecode reductions.
+- **Binary stage (II.2):** the $H$ zero-check.
+- **Stage 8:** the table opening as an additional group, through the route chosen in II.4.
 
-`K` is a public parameter of the proving key, a power of two. The tracer counts calls and stops at call $K+1$ with `PRECOMPILE_CAPACITY_EXCEEDED: KECCAKF capacity K`, before any memory effect of that call and before proving starts. There is no automatic retry at a larger `K`: retries would leak a capacity threshold. A fixed `K = 2,048` covers small programs only; Ethereum blocks need $2^{15}$ to $2^{18}$, so the default for a block-proving key should be $2^{18}$. Occupancy on the blocks above is 0.50 to 1.0.
+With the feature off, none of this is compiled or run.
 
-#### 7. The projection property
+#### II.6 Interval lemma and simulation
 
-**Statement.** For every trace that satisfies the trace constraints plus the `PCALL` port and family contracts, contracting each complete `PCALL` interval to one step gives the execution of the same program in which that `PCALL` is an atomic application of Keccak-f[1600] to its entry RAM state. The link argument needs this property: it is what rules out a dropped call, a doubled record or a call spliced across two intervals.
+**Interval lemma** (obligation; to be proved for `main`'s encoding). In every accepted trace, the rows of each `PCALL` expansion appear as one consecutive run, in row-ordinal order, from its call row to its return row. No row outside the run enters or leaves it.
 
-The property is proved for an abstract machine under seven preconditions, which the verifier must enforce:
+On `main`, this follows from existing constraints together with the bytecode commitment:
+- **Bytecode index.** Bytecode rows are indexed by (instruction address, `virtual_sequence_remaining`). Expansion rows share the address and are ordered by the sequence counter (`jolt-program/src/preprocess/bytecode.rs`).
+- **Within a sequence**, R1CS row 17 (`NextPCEqPCPlusOneIfInline`) forces $\mathrm{NextPC} = \mathrm{PC} + 1$.
+- **Entering a sequence**, row 18 (`MustStartSequenceFromBeginning`) forces any entry to be its first row.
+- **Leaving a sequence**, rows 14 and 16 fix `NextUnexpandedPC` at its end. `JALR` targets already have bit 0 cleared through `RangeCheckAligned`, so no new jump constraint is needed.
+- **New for `PcallWrite`.** The flag must keep registers unchanged and the address equal to the base register plus the row ordinal times 8.
 
-1. Every expanded bytecode row has a unique 64-bit PC. Text PCs are $0 \bmod 4$ and expansion PCs are $1 \bmod 4$.
-2. Every expansion row has exactly one owning `PCALL`. The call row enters its own first interior row, each interior row has exactly one successor, and the return row goes back to the next text PC.
-3. Entry and final PCs are text PCs, and the trace's final successor is bound to the final PC.
-4. Every `JALR` clears bit 0 of its target. With odd expansion PCs, this needs an explicit constraint, $\mathrm{IsJALR} \cdot \mathrm{NextPC}_0 = 0$.
-5. Lane and tag come from authenticated decode, as above.
-6. The ports follow their declared order, bases, counts and directions, with distinct aligned writes and unchanged registers.
-7. No continuation boundary falls inside a `PCALL` interval.
+**Simulation theorem** (obligation). The theorem assumes:
+- the interval lemma;
+- coverage and agreement (II.3);
+- a sound relation (II.2);
+- a sound opening (II.4).
 
-Items 3 and 4 need new constraints in prime Jolt. A complete replay lemma for expanded bytecode, which would show that the implemented verifier enforces items 1, 2 and 5, is still owed. It is listed under Open questions.
+Under these assumptions, contracting each `PCALL` interval to one step gives the execution of the same program in which the call is an atomic application of the family function to its entry RAM.
 
-### Verifier changes
+**What the verifier must enforce:**
 
-With the feature on, the verifier gains:
+| Requirement | Enforced by |
+|---|---|
+| Expansion order and entry | rows 17, 18 and the bytecode commitment (existing) |
+| Lane, flavour, ordinal | authenticated bytecode fields (new, feature-gated) |
+| Port addresses | RAM checking, plus the `PcallWrite`/`PcallRead` address equation (new, feature-gated) |
+| Register preservation | flags of the new virtual instructions (new, feature-gated) |
+| State/block disjointness and alignment | for alignment, the address equation over aligned 8-byte words; for disjointness, a new feature-gated check |
+| No cut inside an interval | only relevant if trace chunking is added; it must not cut inside a sequence |
 
-- registry checks at preprocessing: the key is unique, the expansion is authenticated and lane and tag are decoded;
-- the constraints of the projection property (items 3 and 4 above);
-- the family relation sum-check in GF(2^128);
-- the link sum-checks: coverage and limb agreement;
-- the table's opening claims, added to the existing Akita opening batch.
-
-With the feature off, none of this runs and the verifier is unchanged.
+All new constraints are compiled only with the feature (Invariant 1).
 
 ### Soundness obligations
 
-1. Soundness of the GF(2^128) family relation: the sum-check error over $2^{128}$, times the number of rounds and the degree, per slot batch.
-2. Binding and extraction of the table opening; this is open (section 5).
-3. The projection property's seven preconditions, enforced by the implemented verifier, and the replay lemma.
-4. Uniqueness of the limb decomposition: limbs below $2^{32}$ and a prime above $2^{32}$.
-5. Coverage multiplicity exactly one in the prime link.
-6. Transcript binding: the binary and prime challenges are drawn from one transcript after both commitments are absorbed.
+1. The $H$ relation zero-check (II.2), with the error bound stated there.
+2. The link reduction (II.3): at most $230/p$ for coverage and $45/p$ for Boolean agreement at the stated sizes.
+3. The opening: binding, the common-source extractor and Boolean extraction (II.4). This is open.
+4. The interval lemma and the simulation theorem (II.6), with each requirement mapped to a constraint.
+5. Statement binding: the transcript absorbs, before any precompile challenge:
+   - the program and preprocessing digests;
+   - the feature and protocol version;
+   - the family and flavour semantics;
+   - $K$, $T$ and the field identifiers;
+   - the table layout, the padding rule and the ordered claim roles.
+
+   Challenges are domain-separated per stage.
+6. Composition: the total error is the sum of the existing VM and PCS errors and items 1 to 3, under Fiat-Shamir.
 
 ### Costs
 
-**Rows** (measured):
+**Rows** (measured): −34.62% on five blocks and −3.32% on a recursive-verification guest. A call costs 44 rows instead of 3,121.
 
-- −34.62% on five Ethereum blocks;
-- −3.32% on a recursive-verification guest;
-- 44 rows per call against 3,121 today.
+**Bytes**, against a target of at most 4,096 extra bytes per family per proof. Prime elements are 16 bytes.
 
-**Bytes**, against a target of at most 4,096 extra bytes per precompile per proof:
+| Message | Elements | Bytes | Basis |
+|---|---|---|---|
+| Relation zero-check, $K = 2^{11}$ | about 160 | 2,552 | measured, opening stubbed |
+| Link round messages | $3\log_2 T + 24 + 10\log_2 K$ (215 at $T = 2^{27}$, $K = 2^{11}$) | 3,440 | forecast |
+| Link and agreement terminals | about 210 at the same sizes | 3,400 | forecast |
+| Commitment and opening | open | open | II.4 |
 
-| Message | Bytes | Basis |
-|---|---|---|
-| Family relation transcript | 2,552 at $K = 2^{11}$; grows with $\log K$ | measured |
-| Link (pointer coverage and limb agreement), unbatched | about 3,400 / 6,800 / 13,600 at 8- / 16- / 32-byte prime elements | forecast |
-| Link and agreement at block capacities | about 15 to 20 KB at 16-byte elements | forecast |
-| Table opening | open | depends on section 5 |
+**Before the opening, the forecast is already about 9 KB**, above 4,096 bytes:
+- **What batching saves.** Folding terminals into the stage-8 batch removes only terminal claims, not round messages.
+- **The constraint.** Meeting the target therefore needs fewer round messages, for example by merging the link and relation sum-checks where fields allow, and an opening that adds a few hundred bytes.
+- **If that is not achievable,** the trade (about a third fewer rows for roughly 10 KB or more) is a decision for maintainers (Open question 2).
 
-So the forecast is already above 4,096 bytes before the opening. Meeting the target needs the link claims folded into the existing Akita batch rather than sent separately, and an opening that adds only a few hundred bytes. If that is not achievable, the trade (about a third fewer rows against tens of KB) is a decision for maintainers. Measured byte figures from the first end-to-end proof will be added to this spec.
-
-**Binary-side work.** At $K = 2^{17}$ the table is about 11 Gbit, or 86M GF(2^128) elements. That is about 39 table bits per trace row removed, counting padding. With the opening stubbed, the relation prover took 7.25 s at $K = 2^{11}$; prover time at block capacities is not yet measured.
+**Table size.** At $K = 2^{17}$ the table holds $2^{17}$ records of $2^{17}$ bits: $2^{34}$ Boolean entries. Packed 128 per `F128` word, that is 2 GiB. The relation's operation count is not yet measured. With the opening stubbed, the prototype took 7.25 s at $K = 2^{11}$.
 
 ### Rollout
 
-1. Behind the `pcall-keccakf` cargo feature, off by default. The tracer, prover and verifier compile the path only with the feature, and default builds are byte-identical.
-2. Land in order: the `PCALL` instruction and registry with the capacity error; the record table and relation; the link; the opening. Each step has its own tests, and the feature remains unusable for proving until the opening lands.
-3. Turn on by default only after the opening is settled, the bytes are measured on real blocks, and the maintainers accept the byte cost.
+1. **Part I** behind `pcall-keccakf`, off by default: the registry validation, the instruction and the capacity error. Proving with the feature on is rejected until Part II lands.
+2. **Part II, in order:**
+   1. the record table and the relation;
+   2. the link with reference mode;
+   3. an Akita pin bump and the production opening.
+
+   Each step lands with its tests.
+3. **Turning it on.** The feature is turned on for block proving only after the opening is settled, bytes are measured on real blocks, and maintainers accept the byte cost.
 
 ### Alternatives Considered
 
 - **Keep Keccak as an inline.** No new protocol, but 3,121 rows per call and about a third of the trace on blocks.
-- **Prove Keccak in the prime field with lookups.** Cheaper than RISC-V rows, but bitwise operations in a prime field cost per-bit columns or lookup tables. The binary table proves $\chi$ and the linear steps natively.
-- **A standalone binary commitment appended to the proof.** Simple, but it adds a second commitment instance and costs more than the byte target (section 5).
+- **Prove Keccak in $\mathbb F_p$ with lookups.** Bitwise steps cost per-bit columns or lookup tables in a prime field; the $H$ table proves $\chi$ and the linear steps natively.
+- **Prime Akita only, with bits as residues.** Avoids a binary source, but the bit lift costs per bit (II.4).
+- **Two specs.** Part I and Part II could be separate specs (Open question 6).
 
 ## Documentation
 
-- A book page under `book/src/how/` on precompiles: the ABI, the capacity error and how to enable the feature.
-- An update to the inlines page, noting that `KECCAKF` replaces the Keccak inline when the feature is on.
+- A book page under `book/src/how/` on precompiles: the ABI, flavours, capacity, how to enable the guest and host features, and what a host without support does with the key.
+- An update to `book/src/how/optimizations/inlines.md`: with the guest feature on, the Keccak helpers emit the new key; the old inline keys keep their meaning.
 
 ## Execution
 
-Prototypes exist for each piece, except the link (stubbed) and the opening (stubbed). They are default-off and were tested on a recursive-verification guest and on Ethereum blocks in the emulator:
-
-- the instruction, expansion and capacity error;
+A non-public prototype implements:
+- the expansion and the capacity error;
 - the prime-side rows, against the real verifier, with mutated proofs rejected;
-- the GF(2^128) relation.
+- the $H$ relation with a stubbed opening.
 
-The first end-to-end proof on a real block uses the full-disclosure reference opening. Its measured rows, time and bytes will be added here.
+The link and the opening were stubs there. The first end-to-end proof on a real block uses reference mode (II.4), and its measured rows, time and bytes will be added here.
 
 ## Open questions
 
-1. **Opening.** Is there an all-GF(2^128) opening on Akita's binary-source mode, for example a GF(2^128) root for the grouped session, or a sound reduction of its larger-field stages to GF(2^128) claims? Or would reviewers accept those internal stages for this table?
-2. **Bytes.** Is 4,096 bytes per precompile the right target for a third fewer rows on blocks? Or should the target scale with rows saved?
-3. **Capacity.** One `K` per proving key, or a small set of keys at $2^{15}$ to $2^{18}$?
-4. **Key.** Is $(0\text{x}0b, 0\text{x}08, \cdot)$ acceptable as the precompile block, or should precompiles get their own opcode?
-5. **Replay lemma.** Who owns the replay lemma for expanded bytecode (projection item 3), which also matters for existing virtual sequences?
+1. **Opening.** Can Akita's binary-source mode provide the common-source interface of II.4, one bit table answering both $H$ and $\mathbb F_p$ linear claims with one extractor? May its internal stages use the larger binary field, provided only $H$ and $\mathbb F_p$ claims reach Jolt?
+2. **Bytes.** Is 4,096 bytes per family the right target for about a third fewer rows on blocks, or should it scale with rows saved?
+3. **Capacity.** One $K$ per proving key, or a small set of keys from $2^{10}$ to $2^{18}$?
+4. **Key.** Is $(0\text{x}0b, 0\text{x}0a, \cdot)$ acceptable as the precompile block, or should precompiles get their own opcode?
+5. **Interval lemma.** Should its proof for `main`'s virtual-sequence encoding be written once for all inline sequences, since existing virtual sequences rely on the same rows?
+6. **Scope.** Keep this as one spec, or split Part I and Part II?
 
 ## References
 
 - Akita (lattice PCS): https://github.com/LayerZero-Labs/akita, binary-source PRs #318 to #332.
 - M. Osadnik and G. Seiler, *LaBinius: Fast Lattice-Based Binary Polynomial Commitment Scheme*, IACR ePrint 2026/2103.
-- `specs/binary-field.md` (the GF(2^128) type), `specs/binary-sumcheck.md`, `specs/lattice-claims.md`.
-- NIST FIPS 202, *SHA-3 Standard: Permutation-Based Hash and Extendable-Output Functions* (Keccak-f[1600]).
-- Inlines: `book/src/how/optimizations/inlines.md`.
+- `specs/binary-field.md`, `specs/binary-sumcheck.md`, `specs/lattice-claims.md`, `specs/field-inline-protocol.md` (precedent for a new instruction family on the modular stack), `specs/self-contained-sumcheck-relations.md`, `specs/prover-stage-drivers.md`.
+- NIST FIPS 202, *SHA-3 Standard: Permutation-Based Hash and Extendable-Output Functions*.
+- `book/src/how/optimizations/inlines.md`.
