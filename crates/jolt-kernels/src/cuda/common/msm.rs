@@ -215,6 +215,28 @@ pub struct SignedColumn {
 }
 
 impl SignedColumn {
+    pub(crate) fn copy_window(
+        &self,
+        context: &CudaKernelContext,
+        start: usize,
+        len: usize,
+    ) -> Result<Self, CudaError> {
+        if start > self.len || len > self.len - start {
+            return Err(CudaError::InvariantViolation {
+                reason: "a signed commitment tile lies outside its column",
+            });
+        }
+        Ok(Self {
+            magnitudes: context
+                .stream()
+                .clone_dtod(&self.magnitudes.slice(start..start + len))?,
+            signs: context
+                .stream()
+                .clone_dtod(&self.signs.slice(start..start + len))?,
+            len,
+        })
+    }
+
     #[cfg(test)]
     pub(crate) const fn magnitudes(&self) -> &CudaSlice<u64> {
         &self.magnitudes
@@ -886,6 +908,68 @@ impl CudaKernelContext {
         self.upload_u64_slice(values)
     }
 
+    pub(crate) fn stitch_commit_rows(
+        &self,
+        source: &CudaSlice<u64>,
+        destination: &mut CudaSlice<u64>,
+        blocks: usize,
+        total_blocks: usize,
+        first_block: usize,
+    ) -> Result<(), CudaError> {
+        let row_words = 3 * FQ_LIMBS;
+        let destination_stride =
+            total_blocks
+                .checked_mul(row_words)
+                .ok_or(CudaError::InvariantViolation {
+                    reason: "a commitment row stride overflowed",
+                })?;
+        if source.is_empty()
+            || blocks == 0
+            || total_blocks == 0
+            || first_block > total_blocks
+            || blocks > total_blocks - first_block
+            || !source.len().is_multiple_of(row_words)
+            || !(source.len() / row_words).is_multiple_of(blocks)
+            || destination.len() / row_words / total_blocks != source.len() / row_words / blocks
+            || !destination.len().is_multiple_of(destination_stride)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "a commitment row tile does not fit its destination",
+            });
+        }
+        self.require_owned(source.ordinal())?;
+        self.require_owned(destination.ordinal())?;
+        let words = Self::count_of(source.len())?;
+        let blocks = Self::count_of(blocks)?;
+        let total_blocks = Self::count_of(total_blocks)?;
+        let first_block = Self::count_of(first_block)?;
+        let mut builder = self.stream().launch_builder(self.msm_stitch_rows());
+        let _ = builder.arg(source);
+        let _ = builder.arg(destination);
+        let _ = builder.arg(&blocks);
+        let _ = builder.arg(&total_blocks);
+        let _ = builder.arg(&first_block);
+        let _ = builder.arg(&words);
+        // SAFETY: each source limb maps to a distinct (address, block, limb).
+        // Complete rows and both block bounds were checked above; source and
+        // destination are separate allocations on this context.
+        let _ = unsafe { builder.launch(Self::launch_config(words)) }?;
+        Ok(())
+    }
+
+    pub(crate) fn download_commit_rows(
+        &self,
+        source: &CudaSlice<u64>,
+    ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        self.require_owned(source.ordinal())?;
+        if !source.len().is_multiple_of(3 * FQ_LIMBS) {
+            return Err(CudaError::InvariantViolation {
+                reason: "commitment row limbs do not contain complete G1 points",
+            });
+        }
+        Ok(unflatten_jacobian(&self.download_u64(source)?))
+    }
+
     pub fn write_u64_range(
         &self,
         buffer: &mut CudaSlice<u64>,
@@ -1319,6 +1403,7 @@ impl CudaKernelContext {
         kind: IncrementKind,
         cycles: usize,
     ) -> Result<SignedColumn, CudaError> {
+        let stream = extras.stream();
         let words = cycles.saturating_mul(EXTRA_WORDS);
         if extras.len() < words {
             return Err(CudaError::LengthMismatch {
@@ -1328,9 +1413,9 @@ impl CudaKernelContext {
         }
         let count = Self::count_of(cycles)?;
         let code = kind.code();
-        let mut magnitudes = self.alloc_u64_unset(cycles)?;
-        let mut signs = self.alloc_u8_unset(cycles)?;
-        let mut builder = self.stream().launch_builder(self.commit_increment_column());
+        let mut magnitudes = self.alloc_unset_on(stream, cycles)?;
+        let mut signs = self.alloc_unset_on(stream, cycles)?;
+        let mut builder = stream.launch_builder(self.commit_increment_column());
         let _ = builder.arg(extras);
         let _ = builder.arg(&code);
         let _ = builder.arg(&mut magnitudes);
@@ -1342,7 +1427,7 @@ impl CudaKernelContext {
         // `signs[t]` of two fresh `cycles`-element allocations distinct from
         // the input. Threads with `t >= cycles` return first.
         let _ = unsafe { builder.launch(Self::launch_config(count)) }?;
-        self.stream().synchronize()?;
+        stream.synchronize()?;
         Ok(SignedColumn {
             magnitudes,
             signs,
@@ -1356,8 +1441,19 @@ impl CudaKernelContext {
         column: &SignedColumn,
         row_len: usize,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        let accumulator = self.msm_rows_signed_resident(bases, column, row_len)?;
+        tracing::info_span!("cuda_msm_i128_download", len = column.len)
+            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
+    }
+
+    pub(crate) fn msm_rows_signed_resident(
+        &self,
+        bases: &DeviceG1Bases,
+        column: &SignedColumn,
+        row_len: usize,
+    ) -> Result<CudaSlice<u64>, CudaError> {
         self.require_owned(bases.ordinal())?;
-        let accumulator = self.pippenger_device(
+        self.pippenger_device(
             bases,
             DeviceScalars {
                 values: &column.magnitudes,
@@ -1367,9 +1463,7 @@ impl CudaKernelContext {
             column.len,
             row_len,
             64,
-        )?;
-        tracing::info_span!("cuda_msm_i128_download", len = column.len)
-            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&accumulator)?)))
+        )
     }
 
     pub fn msm_rows_i128(
@@ -1575,6 +1669,23 @@ impl CudaKernelContext {
         chunk_len: usize,
         mode: OneHotMode,
     ) -> Result<Vec<JacobianLimbs>, CudaError> {
+        let output = self.one_hot_rows_resident(bases, hot, cycles, one_hot_k, chunk_len, mode)?;
+        tracing::info_span!(
+            "cuda_commit_one_hot_download",
+            segments = output.len() / (3 * FQ_LIMBS)
+        )
+        .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&output)?)))
+    }
+
+    pub(crate) fn one_hot_rows_resident(
+        &self,
+        bases: &DeviceG1Bases,
+        hot: &CudaView<'_, u32>,
+        cycles: usize,
+        one_hot_k: usize,
+        chunk_len: usize,
+        mode: OneHotMode,
+    ) -> Result<CudaSlice<u64>, CudaError> {
         if one_hot_k == 0 || chunk_len == 0 || !cycles.is_multiple_of(chunk_len) {
             return Err(CudaError::LengthMismatch {
                 expected: chunk_len,
@@ -1797,8 +1908,7 @@ impl CudaKernelContext {
             }
             Ok::<_, CudaError>(())
         })?;
-        tracing::info_span!("cuda_commit_one_hot_download", segments)
-            .in_scope(|| Ok(unflatten_jacobian(&self.download_u64(&output)?)))
+        Ok(output)
     }
 
     fn complete_one_hot_buckets(
@@ -5039,6 +5149,42 @@ mod tests {
             );
             assert_eq!(&got[..start], &original[..start]);
             assert_eq!(&got[end..], &original[end..]);
+        }
+    }
+
+    #[test]
+    fn commitment_tiles_preserve_row_order() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let blocks = 7;
+        for addresses in [1, 3] {
+            let expected: Vec<u64> = (0..addresses * blocks * 12)
+                .map(|index| index as u64 + 1)
+                .collect();
+            let mut destination = context
+                .alloc_u64_unset(expected.len())
+                .expect("destination");
+            for range in [3..7, 0..1, 1..3] {
+                let source: Vec<_> = expected
+                    .chunks_exact(blocks * 12)
+                    .flat_map(|rows| rows[range.start * 12..range.end * 12].iter().copied())
+                    .collect();
+                let source = context.upload_raw_u64(&source).expect("tile");
+                context
+                    .stitch_commit_rows(&source, &mut destination, range.len(), blocks, range.start)
+                    .expect("stitch");
+            }
+            assert_eq!(
+                context.download_u64(&destination).expect("download"),
+                expected
+            );
+            let source = context.upload_raw_u64(&[0; 12]).expect("source");
+            for (tile_blocks, total_blocks, start) in [(0, 7, 0), (1, 0, 0), (1, 7, 7), (2, 7, 0)] {
+                assert!(context
+                    .stitch_commit_rows(&source, &mut destination, tile_blocks, total_blocks, start)
+                    .is_err());
+            }
         }
     }
 

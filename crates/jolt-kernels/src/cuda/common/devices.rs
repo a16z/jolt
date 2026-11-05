@@ -43,6 +43,10 @@ impl CycleWindow {
 
 const MIN_WITNESS_WINDOW: usize = 1 << 12;
 
+// Start shared tiles and separate preparation streams at the smallest window
+// size with a measured two-L4 whole-proof benefit.
+pub(crate) const MIN_COMMIT_TILE_WINDOW: usize = 1 << 23;
+
 fn whole_domain(cycles: usize) -> Vec<CycleWindow> {
     vec![CycleWindow {
         start: 0,

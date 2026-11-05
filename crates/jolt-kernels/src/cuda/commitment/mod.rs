@@ -5,8 +5,9 @@
 //! Commitment-aligned windows can share their uploaded trace and hot columns
 //! with later sumcheck and opening kernels. Every device acquires its window
 //! through the shared session cache so matching prewarmed atoms remain available.
-//! With multiple windows, row-source visits stay on the caller while each
-//! device starts committing as soon as its window is resident.
+//! With multiple windows, row-source visits stay on the caller. Large windows
+//! publish row-aligned tiles for any available device; smaller windows keep
+//! tier-one work on the resident device.
 //!
 //! `DeviceTier1Commitment` separates these row computations from PCS
 //! finalization. `DoryScheme` pipelines GPU rows into CPU tier-two commitments;
@@ -97,6 +98,34 @@ pub trait DeviceTier1Commitment: CommitmentScheme + ModeStreamingCommitment {
         rows: &[JacobianLimbs],
     ) -> Result<Self::PartialCommitment, CudaError>;
 
+    /// Finalizes columns owned by `context`, returning one result per input in
+    /// input order. Each column contains row-ordered Jacobian G1 points, with
+    /// x, y, and z each encoded as `FQ_LIMBS` Montgomery limbs.
+    fn tier2_resident(
+        context: &CudaKernelContext,
+        setup: &Self::ProverSetup,
+        columns: &[CudaSlice<u64>],
+    ) -> Result<Vec<FinishedColumn<Self>>, CudaError> {
+        let rows = columns
+            .iter()
+            .map(|column| context.download_commit_rows(column))
+            .collect::<Result<Vec<_>, _>>()?;
+        let selection: Vec<usize> = (0..columns.len()).collect();
+        let mut finished = Self::tier2_selected(context, setup, &rows, &selection)?;
+        finished.sort_unstable_by_key(|(index, _)| *index);
+        if finished.len() != columns.len()
+            || finished
+                .iter()
+                .enumerate()
+                .any(|(index, (got, _))| index != *got)
+        {
+            return Err(CudaError::InvariantViolation {
+                reason: "tier two did not finalize each resident column exactly once",
+            });
+        }
+        Ok(finished.into_iter().map(|(_, value)| value).collect())
+    }
+
     fn tier2_selected(
         _context: &CudaKernelContext,
         setup: &Self::ProverSetup,
@@ -170,6 +199,7 @@ impl DeviceTier1Commitment for DoryScheme {
 }
 
 mod partition;
+mod tiles;
 
 pub(super) const fn increment_kind(kind: ColumnKind) -> Option<IncrementKind> {
     match kind {
@@ -450,34 +480,38 @@ impl CudaBackend {
                     row_width,
                 };
                 let host_bases = PCS::tier1_bases(setup, row_width)?;
-                let (columns, hots) = partition::split_columns::<F, PCS>(
-                    setup,
-                    &bases,
-                    &plan,
-                    &host_bases,
-                    &windows,
-                    |ordinal| {
-                        let window =
-                            windows
-                                .get(ordinal)
-                                .ok_or(KernelError::InvariantViolation {
-                                    reason: "missing commitment window",
-                                })?;
-                        let device = super::common::context::context_for(ordinal).ok_or(
-                            KernelError::InvariantViolation {
-                                reason: "missing commitment device",
-                            },
-                        )?;
-                        session_row_trace_window::<F>(
-                            device,
-                            session,
-                            source,
-                            preprocessing,
-                            cycles,
-                            &window.residency(cycles),
-                        )
-                    },
-                )?;
+                let prepare = |ordinal| {
+                    let window = windows
+                        .get(ordinal)
+                        .ok_or(KernelError::InvariantViolation {
+                            reason: "missing commitment window",
+                        })?;
+                    let device = super::common::context::context_for(ordinal).ok_or(
+                        KernelError::InvariantViolation {
+                            reason: "missing commitment device",
+                        },
+                    )?;
+                    session_row_trace_window::<F>(
+                        device,
+                        session,
+                        source,
+                        preprocessing,
+                        cycles,
+                        &window.residency(cycles),
+                    )
+                };
+                let (columns, hots) = if tiles::suitable(&windows, row_width) {
+                    tiles::commit::<F, PCS>(setup, &plan, &host_bases, &windows, prepare)?
+                } else {
+                    partition::split_columns::<F, PCS>(
+                        setup,
+                        &bases,
+                        &plan,
+                        &host_bases,
+                        &windows,
+                        prepare,
+                    )?
+                };
                 for (ordinal, (window, built)) in windows.iter().zip(hots).enumerate() {
                     let _ = park_hot_columns(session, source, ordinal, ids, window, built);
                 }
@@ -928,6 +962,76 @@ mod tests {
                 "only {instruction_chunks} instruction chunk, so a kernel that ignored the \
                  chunk selector would pass",
             );
+        });
+    }
+
+    #[cfg(not(feature = "zk"))]
+    #[test]
+    fn tiled_commitments_match_reference() {
+        use super::partition::ColumnPlan;
+        use super::DeviceTier1Commitment;
+        use crate::cuda::common::context::context_for;
+        use crate::cuda::common::devices::CycleWindow;
+        use crate::cuda::dory::CudaDoryScheme;
+        use crate::cuda::witness::session_row_trace_window;
+        use jolt_witness::ProgramSource;
+
+        if shared_context().is_none() {
+            return;
+        }
+        let config = JoltOneHotConfig {
+            log_k_chunk: 4,
+            lookups_ra_virtual_log_k_chunk: 32,
+        };
+        let grid = CommitmentGrid {
+            total_vars: 14,
+            log_t: 10,
+            log_k_chunk: 4,
+            order: TracePolynomialOrder::CycleMajor,
+        };
+        with_r1cs_witness(10, RAM_K, config, 29, |witness| {
+            let expected = commit_columns(&ReferenceBackend, witness, grid);
+            let ids = trace_ids(witness);
+            let kinds = super::column_kinds::<Fr>(&ids, grid).expect("column kinds");
+            let setup = CudaDoryScheme::setup_prover(grid.total_vars);
+            let row_width = grid.num_columns();
+            let bases = CudaDoryScheme::tier1_bases(&setup, row_width).expect("bases");
+            let plan = ColumnPlan {
+                kinds: &kinds,
+                one_hot_k: 16,
+                row_width,
+            };
+            for devices in 1..=if context_for(1).is_some() { 2 } else { 1 } {
+                let windows: Vec<_> = (0..devices)
+                    .map(|ordinal| CycleWindow {
+                        start: ordinal * 1024 / devices,
+                        len: 1024 / devices,
+                    })
+                    .collect();
+                let mut session = ProofSession::default();
+                let (got, _) = super::tiles::commit::<Fr, CudaDoryScheme>(
+                    &setup,
+                    &plan,
+                    &bases,
+                    &windows,
+                    |ordinal| {
+                        session_row_trace_window(
+                            context_for(ordinal).expect("device"),
+                            &mut session,
+                            witness,
+                            witness.program_preprocessing(),
+                            1024,
+                            &windows[ordinal].residency(1024),
+                        )
+                    },
+                )
+                .expect("tiled commitment");
+                assert_eq!(got.len(), expected.len());
+                for ((commitment, hint), expected) in got.into_iter().zip(&expected) {
+                    assert_eq!(commitment, expected.commitment);
+                    assert_eq!(hint, expected.hint);
+                }
+            }
         });
     }
 

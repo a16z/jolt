@@ -2,10 +2,11 @@
 //!
 //! Columns with equal row counts share a GPU multi-Miller launch against the
 //! corresponding G2 setup prefix. Final exponentiation remains on the CPU.
-//! Results carry their original column indices because batching can reorder
-//! columns; the caller restores commitment order.
+//! Host-row results carry their original column indices because batching can
+//! reorder columns; resident-row results are restored to input order here.
 
 use ark_ec::pairing::MillerLoopOutput;
+use cudarc::driver::CudaSlice;
 use jolt_crypto::Bn254GT;
 use jolt_dory::{DoryCommitment, DoryProverSetup};
 
@@ -14,6 +15,100 @@ use crate::cuda::common::context::CudaKernelContext;
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::msm::{JacobianLimbs, FQ_LIMBS};
 use crate::cuda::common::pairing::FQ12_LIMBS;
+
+pub(super) fn tier2_resident(
+    context: &CudaKernelContext,
+    setup: &DoryProverSetup,
+    columns: &[CudaSlice<u64>],
+) -> Result<Vec<DoryCommitment>, CudaError> {
+    let mut groups: Vec<(usize, Vec<usize>)> = Vec::new();
+    for (index, column) in columns.iter().enumerate() {
+        context.require_owned(column.ordinal())?;
+        if !column.len().is_multiple_of(3 * FQ_LIMBS) {
+            return Err(CudaError::InvariantViolation {
+                reason: "a resident commitment column has incomplete G1 coordinates",
+            });
+        }
+        group_column(
+            &mut groups,
+            setup.0.g2_vec.len(),
+            index,
+            column.len() / (3 * FQ_LIMBS),
+        )?;
+    }
+    let mut outputs: Vec<Option<DoryCommitment>> = vec![None; columns.len()];
+    for (count, members) in groups {
+        let (g1, g2) =
+            tracing::info_span!("cuda_tier2_stage_rows", lanes = members.len(), rows = count)
+                .in_scope(|| {
+                    let row_words = count * 3 * FQ_LIMBS;
+                    let words = row_words.checked_mul(members.len()).ok_or(
+                        CudaError::InvariantViolation {
+                            reason: "a resident tier-two batch allocation size overflowed",
+                        },
+                    )?;
+                    let mut g1 = context.alloc_u64_unset(words)?;
+                    for (lane, &index) in members.iter().enumerate() {
+                        context.stream().memcpy_dtod(
+                            &columns[index],
+                            &mut g1.slice_mut(lane * row_words..(lane + 1) * row_words),
+                        )?;
+                    }
+                    let g2: Vec<u64> = setup.0.g2_vec[..count]
+                        .iter()
+                        .flat_map(|base| arena::g2_limbs(&base.0))
+                        .collect();
+                    Ok::<_, CudaError>((g1, context.upload_raw_u64(&g2)?))
+                })?;
+        let commitments = pair_group(context, &g1, &g2, count, members.len())?;
+        for (&index, value) in members.iter().zip(commitments) {
+            outputs[index] = Some(DoryCommitment(value));
+        }
+    }
+    outputs
+        .into_iter()
+        .map(|value| {
+            value.ok_or(CudaError::InvariantViolation {
+                reason: "a resident commitment column was not finalized",
+            })
+        })
+        .collect()
+}
+
+fn group_column(
+    groups: &mut Vec<(usize, Vec<usize>)>,
+    available: usize,
+    index: usize,
+    count: usize,
+) -> Result<(), CudaError> {
+    if count == 0 || count > available {
+        return Err(CudaError::LengthMismatch {
+            expected: available,
+            got: count,
+        });
+    }
+    match groups.iter_mut().find(|(rows, _)| *rows == count) {
+        Some((_, members)) => members.push(index),
+        None => groups.push((count, vec![index])),
+    }
+    Ok(())
+}
+
+fn pair_group(
+    context: &CudaKernelContext,
+    g1: &CudaSlice<u64>,
+    g2: &CudaSlice<u64>,
+    count: usize,
+    lanes: usize,
+) -> Result<Vec<Bn254GT>, CudaError> {
+    let segments: Vec<_> = (0..lanes).map(|lane| (lane * count, 0)).collect();
+    let limbs = context.multi_miller_batch(g1, g2, &segments, count)?;
+    tracing::info_span!("cuda_tier2_final_exp", lanes).in_scope(|| {
+        final_exponentiations(&limbs, lanes).ok_or(CudaError::InvariantViolation {
+            reason: "a batched tier-2 Miller output was degenerate",
+        })
+    })
+}
 
 fn exponentiate(words: &[u64]) -> Option<Bn254GT> {
     Bn254GT::from_miller_loop(MillerLoopOutput(curve::fq12(words)))
@@ -109,20 +204,11 @@ pub(crate) fn tier2_selected(
         let rows = columns.get(index).ok_or(CudaError::InvariantViolation {
             reason: "a tier-2 selection named a column outside the batch",
         })?;
-        match groups.iter_mut().find(|(count, _)| *count == rows.len()) {
-            Some((_, members)) => members.push(index),
-            None => groups.push((rows.len(), vec![index])),
-        }
+        group_column(&mut groups, setup.0.g2_vec.len(), index, rows.len())?;
     }
 
     let mut placed: Vec<(usize, DoryCommitment)> = Vec::with_capacity(selection.len());
     for (count, members) in groups {
-        if count == 0 || count > setup.0.g2_vec.len() {
-            return Err(CudaError::LengthMismatch {
-                expected: setup.0.g2_vec.len(),
-                got: count,
-            });
-        }
         let (device_g2, device_g1) =
             tracing::info_span!("cuda_tier2_stage_rows", lanes = members.len(), rows = count)
                 .in_scope(|| {
@@ -141,16 +227,7 @@ pub(crate) fn tier2_selected(
                     Ok((device_g2, context.upload_raw_u64(&g1)?))
                 })?;
 
-        let segments: Vec<(usize, usize)> =
-            (0..members.len()).map(|lane| (lane * count, 0)).collect();
-        let limbs = context.multi_miller_batch(&device_g1, &device_g2, &segments, count)?;
-
-        let outputs =
-            tracing::info_span!("cuda_tier2_final_exp", lanes = members.len()).in_scope(|| {
-                final_exponentiations(&limbs, members.len()).ok_or(CudaError::InvariantViolation {
-                    reason: "a batched tier-2 Miller output was degenerate",
-                })
-            })?;
+        let outputs = pair_group(context, &device_g1, &device_g2, count, members.len())?;
         for (value, &member) in outputs.into_iter().zip(members.iter()) {
             placed.push((member, DoryCommitment(value)));
         }

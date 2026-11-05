@@ -27,6 +27,8 @@ use crate::cuda::commitment::FinishedColumn;
 #[cfg(not(feature = "zk"))]
 use crate::cuda::common::context::CudaKernelContext;
 use ark_bn254::Fr as Bn254Fr;
+#[cfg(not(feature = "zk"))]
+use cudarc::driver::CudaSlice;
 use dory::backends::arkworks::ArkFr;
 use dory::mode::Transparent;
 use dory::setup::ProverSetup;
@@ -123,6 +125,32 @@ impl CudaDoryScheme {
 
 impl DeviceTier1Commitment for CudaDoryScheme {
     const BATCHES_TIER2: bool = !cfg!(feature = "zk");
+
+    #[cfg(not(feature = "zk"))]
+    fn tier2_resident(
+        context: &CudaKernelContext,
+        setup: &Self::ProverSetup,
+        columns: &[CudaSlice<u64>],
+    ) -> Result<Vec<FinishedColumn<Self>>, CudaError> {
+        let commitments = tier2::tier2_resident(context, setup, columns)?;
+        if commitments.len() != columns.len() {
+            return Err(CudaError::InvariantViolation {
+                reason: "resident tier two did not finalize every column",
+            });
+        }
+        commitments
+            .into_iter()
+            .zip(columns)
+            .map(|(commitment, column)| {
+                let rows = context.download_commit_rows(column)?;
+                let partial = DoryScheme::partial_from_rows(setup, &rows)?;
+                Ok((
+                    commitment,
+                    DoryHint::from_parts(partial.row_commitments, <Fr as Ring>::from_u64(0)),
+                ))
+            })
+            .collect()
+    }
 
     #[cfg(not(feature = "zk"))]
     fn tier2_selected(

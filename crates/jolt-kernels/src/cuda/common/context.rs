@@ -179,6 +179,7 @@ pub struct CudaKernelContext {
     msm_segment_sum_small: CudaFunction,
     msm_bucket_reduce_chunked: CudaFunction,
     msm_point_rows_sum: CudaFunction,
+    msm_stitch_rows: CudaFunction,
     msm_window_fold: CudaFunction,
     msm_g2_segment_sum_small: CudaFunction,
     msm_g2_bucket_reduce_chunked: CudaFunction,
@@ -423,6 +424,7 @@ impl CudaKernelContext {
             msm_segment_sum_small: module.load_function("msm_segment_sum_small_kernel")?,
             msm_bucket_reduce_chunked: module.load_function("msm_bucket_reduce_chunked_kernel")?,
             msm_point_rows_sum: module.load_function("msm_point_rows_sum_kernel")?,
+            msm_stitch_rows: module.load_function("msm_stitch_rows_kernel")?,
             msm_window_fold: module.load_function("msm_window_fold_kernel")?,
             msm_g2_segment_sum_small: module.load_function("msm_g2_segment_sum_small_kernel")?,
             msm_g2_bucket_reduce_chunked: module
@@ -677,26 +679,30 @@ impl CudaKernelContext {
     }
 
     fn alloc_unset<T: DeviceRepr>(&self, len: usize) -> Result<CudaSlice<T>, CudaError> {
+        self.alloc_unset_on(&self.stream, len)
+    }
+
+    pub(crate) fn alloc_unset_on<T: DeviceRepr>(
+        &self,
+        stream: &Arc<CudaStream>,
+        len: usize,
+    ) -> Result<CudaSlice<T>, CudaError> {
+        self.require_owned(stream.context().ordinal())?;
         // SAFETY: `alloc` leaves the elements unset, which every caller of this
         // helper is required to tolerate: each writes all of `len` before any
         // read, or reads only positions it wrote. Nothing here observes the
         // contents. `JOLT_CUDA_POISON` turns that requirement into a test by
         // filling the block with a non-zero pattern instead, so a stale read
         // cannot pass as a zero.
-        let mut buffer = unsafe { self.stream.alloc::<T>(len) }?;
+        let mut buffer = unsafe { stream.alloc::<T>(len) }?;
         if let Some(byte) = poison_byte() {
             let bytes = len * size_of::<T>();
-            let (pointer, _record) = buffer.device_ptr_mut(&self.stream);
+            let (pointer, _record) = buffer.device_ptr_mut(stream);
             // SAFETY: `pointer` is the freshly allocated block above and `bytes`
             // is exactly its length, so the fill stays inside it; the memset is
             // ordered on the same stream as every later use.
             unsafe {
-                cudarc::driver::result::memset_d8_async(
-                    pointer,
-                    byte,
-                    bytes,
-                    self.stream.cu_stream(),
-                )
+                cudarc::driver::result::memset_d8_async(pointer, byte, bytes, stream.cu_stream())
             }?;
         }
         Ok(buffer)
@@ -1037,6 +1043,10 @@ impl CudaKernelContext {
 
     pub(crate) const fn msm_point_rows_sum(&self) -> &CudaFunction {
         &self.msm_point_rows_sum
+    }
+
+    pub(crate) const fn msm_stitch_rows(&self) -> &CudaFunction {
+        &self.msm_stitch_rows
     }
 
     pub(crate) const fn msm_window_fold(&self) -> &CudaFunction {

@@ -1,4 +1,4 @@
-//! CUDA commitment rows assembled across cycle windows.
+//! CUDA commitment rows assembled across small or single-device cycle windows.
 //!
 //! Dense rows concatenate in cycle order. One-hot rows interleave each window's
 //! rows by address before finalization. Optimized streams the column's rows
@@ -7,7 +7,8 @@
 //! Large equal-height batches amortize G2 preparation and retain larger
 //! Miller groups. Smaller ready batches improved balance in SHA2-chain
 //! measurements on two L4s, but gave only marginal whole proof gains and
-//! no reduction in peak device memory.
+//! no reduction in peak device memory. Large multi-device windows instead use
+//! the resident row tiles in `super::tiles`.
 //! The caller prepares trace windows sequentially while device workers commit
 //! each ready window. Preparation never shares the row source across threads.
 //! Tier-one work stays with its resident window to avoid cross-device copies

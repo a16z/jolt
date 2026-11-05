@@ -48,9 +48,10 @@ use jolt_witness::backend::cuda::{
 };
 use jolt_witness::JoltWitnessPlane;
 
-use super::common::context::CudaKernelContext;
+use super::common::context::{device_count, CudaKernelContext};
 use super::common::device_columns::witness_identity;
-use super::common::devices::CycleWindow;
+use super::common::devices::{CycleWindow, MIN_COMMIT_TILE_WINDOW};
+use super::common::error::CudaError;
 use crate::{KernelError, ProofSession};
 
 const STAGED_ATOM_MIN_CYCLES: usize = 1 << 25;
@@ -237,6 +238,17 @@ pub(crate) fn session_row_trace_window<F: JoltField>(
     {
         return Ok(Arc::clone(&resident.trace));
     }
+    // Large commitment tiles can be borrowed by either device, so preparation
+    // must not wait behind a worker. Allocation events order cross-stream use.
+    let stream = if device_count() > 1 && window.len >= MIN_COMMIT_TILE_WINDOW {
+        context
+            .stream()
+            .context()
+            .new_stream()
+            .map_err(CudaError::from)?
+    } else {
+        Arc::clone(context.stream())
+    };
     let trace = tracing::info_span!(
         "cuda_witness_residency",
         cycles = window.len,
@@ -244,7 +256,7 @@ pub(crate) fn session_row_trace_window<F: JoltField>(
     )
     .in_scope(|| {
         DeviceTrace::upload_source(
-            Arc::clone(context.stream()),
+            stream,
             witness,
             window.start..window.start + window.len,
             preprocessing,

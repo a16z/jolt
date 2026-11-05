@@ -1662,6 +1662,19 @@ extern "C" __global__ void msm_bucket_reduce_chunked_kernel(
     }
 }
 
+extern "C" __global__ void msm_stitch_rows_kernel(
+    const u64 *__restrict__ source, u64 *__restrict__ destination,
+    const unsigned int blocks, const unsigned int total_blocks, const unsigned int first_block,
+    const unsigned int words) {
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= words) return;
+    const unsigned int row = i / 12;
+    const unsigned int address = row / blocks;
+    const unsigned int block = row % blocks;
+    const u64 target = (static_cast<u64>(address) * total_blocks + first_block + block) * 12;
+    destination[target + i % 12] = source[i];
+}
+
 extern "C" __global__ void msm_point_rows_sum_kernel(const u64 *__restrict__ partials,
                                                     unsigned int rows, unsigned int count,
                                                     u64 *__restrict__ out) {
