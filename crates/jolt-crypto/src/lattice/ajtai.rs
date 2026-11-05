@@ -23,6 +23,7 @@ use jolt_algebra::{
 };
 use zeroize::Zeroizing;
 
+use super::matrix::{derive_public_matrix_prefix, PublicMatrixSeed};
 use super::view::{MatrixShape, MatrixView};
 use crate::CryptoError;
 
@@ -36,6 +37,8 @@ const LIMB_BITS: u32 = 30;
 /// Columns accumulated before one exact reconstruction, unless the CRT
 /// capacity allows fewer. Also the unit of parallel work.
 const COLUMN_CHUNK: usize = 64;
+/// Seed of [`PreparedMatrix`]'s blind, a public matrix stream of one ring.
+const BLIND_SEED: [u8; 32] = *b"jolt-crypto ajtai crt blind v1\0\0";
 
 /// Balanced gadget digits: base `2^log_basis`, `levels` digits, digit 0 least
 /// significant, decomposed by jolt-algebra's branch-free balanced
@@ -126,9 +129,19 @@ pub struct PreparedMatrix<F: Field, const D: usize> {
     shape: MatrixShape,
     /// Row-major entries over `F`.
     coefficients: Vec<CyclotomicRing<F, D>>,
-    /// The same entries in CRT+NTT form, row-major.
-    entries: OnceLock<Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>>>,
+    /// The same entries in CRT+NTT form, row-major, and [`Self::blind`]'s
+    /// image.
+    ntt: OnceLock<NttForm<D>>,
     params: CrtNttParamSet<i32, CRT_PRIMES, D>,
+    /// The public blind `K` every constant-time accumulator starts from
+    /// ([`Self::apply_centered`]).
+    blind: CyclotomicRing<F, D>,
+}
+
+/// [`PreparedMatrix`]'s CRT+NTT form.
+struct NttForm<const D: usize> {
+    entries: Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>>,
+    blind: CyclotomicCrtNtt<i32, CRT_PRIMES, D>,
 }
 
 impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
@@ -152,11 +165,16 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 ))
             })
             .collect::<Result<Vec<_>, CryptoError>>()?;
+        let blind = CyclotomicRing::from_slice(&derive_public_matrix_prefix::<F>(
+            D,
+            &PublicMatrixSeed::shake256_paged_v1(BLIND_SEED),
+        )?);
         Ok(Self {
             shape,
             coefficients,
-            entries: OnceLock::new(),
+            ntt: OnceLock::new(),
             params: CrtNttParamSet::new(q128_primes()),
+            blind,
         })
     }
 
@@ -206,22 +224,25 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
             .collect())
     }
 
-    /// The CRT+NTT entries, built on the first constant-time product and
-    /// kept. The transform reads only the public matrix.
+    /// The CRT+NTT entries and blind, built on the first CRT product and
+    /// kept. The transform reads only public values.
     ///
     /// WARNING: the build runs in parallel outside the cell's lock. Inside
     /// `get_or_init` it would deadlock: callers run on Rayon workers, and a
     /// worker that steals another caller's job while it waits on the build
     /// blocks on the cell it is initializing. Concurrent first callers may
-    /// each build the entries (one is kept).
-    fn ntt_entries(&self) -> &[CyclotomicCrtNtt<i32, CRT_PRIMES, D>] {
-        if let Some(entries) = self.entries.get() {
-            return entries;
+    /// each build the form (one is kept).
+    fn ntt_form(&self) -> &NttForm<D> {
+        if let Some(form) = self.ntt.get() {
+            return form;
         }
-        let entries = cfg_iter!(self.coefficients)
-            .map(|entry| CyclotomicCrtNtt::from_ring(entry, &self.params))
-            .collect();
-        self.entries.get_or_init(|| entries)
+        let form = NttForm {
+            entries: cfg_iter!(self.coefficients)
+                .map(|entry| CyclotomicCrtNtt::from_ring(entry, &self.params))
+                .collect(),
+            blind: CyclotomicCrtNtt::from_ring(&self.blind, &self.params),
+        };
+        self.ntt.get_or_init(|| form)
     }
 
     /// `M · x` for centered integer columns `x`, laid out column by column
@@ -318,16 +339,20 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         let chunk = self
             .params
             .crt_capacity()
-            .max_safe_width::<F, D>(u64::from(bound))
+            // One column's capacity holds the blind: `|K| ≤ q/2 ≤ D·(q/2)·b`
+            // for any `b ≥ 1`.
+            .max_safe_width::<F, D>(u64::from(bound.max(1)))
+            .and_then(|width| width.checked_sub(1))
+            .filter(|&width| width > 0)
             .ok_or_else(|| {
                 CryptoError::InvalidSetup(format!(
-                    "the CRT primes cannot hold one column at bound {bound}"
+                    "the CRT primes cannot hold one column and the blind at bound {bound}"
                 ))
             })?
             .min(COLUMN_CHUNK);
-        let entries = self.ntt_entries();
+        let form = self.ntt_form();
         let partials = cfg_into_iter!(0..self.shape.width.div_ceil(chunk))
-            .map(|index| self.apply_columns(entries, input, index * chunk, chunk))
+            .map(|index| self.apply_columns(form, input, index * chunk, chunk))
             .collect::<Result<Vec<_>, CryptoError>>()?;
         let mut output = vec![CyclotomicRing::zero(); self.shape.rows];
         for partial in partials {
@@ -394,7 +419,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 })
             })
             .collect();
-        let entries = self.ntt_entries();
+        let entries = &self.ntt_form().entries;
         cfg_into_iter!(0..width)
             .map(|col| {
                 let sums = planes
@@ -416,17 +441,25 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
     }
 
     /// The exact contribution of columns `start..start + len` (clamped to the
-    /// width) to every output row, over the CRT+NTT `entries`.
+    /// width) to every output row, over the CRT+NTT `form`.
+    ///
+    /// Each accumulator starts from the blind `K`'s image and `K` is
+    /// subtracted in `F`, so the reconstruction never sees the degenerate
+    /// all-zero product of an all-zero input: on Apple M4, `to_ring_ct` on a
+    /// zero accumulator just computed takes measurably different time, even
+    /// under DIT (`specs/whiteout-sigma.md` §2.8). `K` is a public
+    /// pseudorandom ring element, so an input whose product is `−K` solves
+    /// an inhomogeneous SIS instance.
     fn apply_columns(
         &self,
-        entries: &[CyclotomicCrtNtt<i32, CRT_PRIMES, D>],
+        form: &NttForm<D>,
         input: &[i64],
         start: usize,
         len: usize,
     ) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
         let width = self.shape.width;
         let end = (start + len).min(width);
-        let mut accumulators = vec![CyclotomicCrtNtt::zero(); self.shape.rows];
+        let mut accumulators = vec![form.blind.clone(); self.shape.rows];
         let mut column = CyclotomicCrtNtt::zero();
         let mut lifted = [0i32; D];
         let columns = input
@@ -438,7 +471,10 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 *dst = value as i32;
             }
             column.assign_centered_i32_ct(&lifted, &self.params);
-            for (accumulator, row) in accumulators.iter_mut().zip(entries.chunks_exact(width)) {
+            for (accumulator, row) in accumulators
+                .iter_mut()
+                .zip(form.entries.chunks_exact(width))
+            {
                 let entry = row
                     .get(start + offset)
                     .ok_or_else(|| CryptoError::Internal("matrix row is too short".into()))?;
@@ -447,7 +483,7 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         }
         Ok(accumulators
             .iter()
-            .map(|accumulator| accumulator.to_ring_ct(&self.params))
+            .map(|accumulator| accumulator.to_ring_ct(&self.params) - self.blind)
             .collect())
     }
 }

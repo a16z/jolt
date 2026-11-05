@@ -11,7 +11,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use jolt_algebra::{lift_ct, CanonicalEncoding, CyclotomicRing, Field};
+use jolt_algebra::{lift_biased, CanonicalEncoding, CyclotomicRing, Field, LIFT_BIAS};
 use jolt_crypto::lattice::{PreparedMatrix, CHALLENGE_RING_DIM};
 
 use rayon::prelude::*;
@@ -138,9 +138,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
     /// `bound` in magnitude: `bound` must be a hard bound on every input
     /// (the Gaussian tail cut for a mask), never a statistical one.
     ///
-    /// Constant time in `x`: the Ajtai map is, and the gadget lift is
-    /// branch-free. `N·x` is as secret as `x` (a mask), so it is zeroed
-    /// when dropped.
+    /// Constant time in `x`: the Ajtai map is, and the gadget term is
+    /// branch-free with biased multiplier operands ([`lift_biased`]). `N·x`
+    /// is as secret as `x` (a mask), so it is zeroed when dropped.
     pub fn apply(
         &self,
         x: &[i64],
@@ -163,8 +163,9 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
                     let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
                         "gadget rows differ from M's",
                     ))?;
+                    let bias = F::from_u64(LIFT_BIAS) * power;
                     for (dst, &value) in row.coefficients_mut().iter_mut().zip(plane) {
-                        *dst -= lift_ct::<F>(value) * power;
+                        *dst += bias - lift_biased::<F>(value) * power;
                     }
                 }
             }

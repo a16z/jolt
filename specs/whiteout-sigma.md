@@ -190,6 +190,11 @@ transformed by the forward NTT and accumulated pointwise into each output row.
   other Akita kernel.
 - **Input bound.** The bound `|x| ≤ bound` is checked over all inputs as one
   constant-time aggregate, and only the aggregate is branched on.
+- **Blind (P7).** Every CRT accumulator starts from the image of a fixed
+  public pseudorandom ring element `K`, and `K` is subtracted in F after the
+  reconstruction, so the reconstruction never sees the all-zero product of
+  an all-zero input or limb (§2.8, Record P7). Chunks keep one column of CRT
+  capacity for `K`, since `|K| ≤ q/2`.
 - **Limbs (§5.1).** A bound above `i32::MAX` splits each input by shifts
   into balanced 30-bit limbs (`x = Σ_j 2^{30j} x_j`), applies the map to
   each limb, and recombines in F. The limb count depends only on the public
@@ -649,8 +654,91 @@ production monomorphization.
     D = 256 fails at 2.5 · 10⁴ (|t| = 9.8) while the same run under DIT
     passes (|t| = 2.0).
 
-  So under DIT no step shows a leak at or above about 17 ns on `L·y` (of
-  12 µs), and the harness detects the M4 leak DIT removes.
+  So under DIT no step showed a leak at or above about 17 ns on `L·y` (of
+  12 µs) in these runs, and the harness detects the M4 leak DIT removes.
+  **Corrected by P7 below: DIT does not remove the zero-output leak.**
+
+  **Record P7 (2026-11-05, Apple M4 Max, under DIT).** A review at load
+  4–20 found `N·y` and `L·y` failing for constant non-negative masks at
+  D = 256. Reproduced on whiteout/dev b41acbb7b with the slot harness on
+  the DIT pool, 2.5 · 10⁴ `N·y` / 10⁵ `L·y` measurements, seeds 0–2, load
+  7–130 (max |t| per seed):
+
+  | Step, fixed class | before | after the blind |
+  |---|---|---|
+  | `L·y`, 0 | 12.0 / 5.2 / 10.3 | 1.2 / 1.8 / 1.1 |
+  | `L·y`, +1 | 4.8 / 2.6 / 5.8 | 1.9 / 1.3 / 0.9 |
+  | `L·y`, ±B, A/A | ≤ 2.5 | ≤ 2.7 |
+  | `N·y`, 0 | 5.9 / 8.5 / 7.6 | 7.4 / 3.1 / 6.7 |
+  | `N·y`, +1 | 4.4 / 3.9 / 2.7 | 11.2 / 6.7 / 2.6 |
+  | `N·y`, +B | 2.6 / 1.6 / 3.2 | 5.1 / 4.2 / 6.8 |
+  | `N·y`, −B, A/A | ≤ 1.9 | ≤ 2.9 |
+
+  - **Root cause (L·y, and the Ajtai map's share of N·y).** The CRT
+    reconstruction of an all-zero accumulator. A constant mask in
+    `[0, 2^29)` has an all-zero top limb (§1.3, Limbs), and mask 0 has two,
+    so a whole limb pass multiplies the matrix by zero and `to_ring_ct`
+    reconstructs zero. A probe of `apply_columns` alone (16 columns,
+    D = 256, 10⁵ measurements, one row) gives |t| = 36, 8.6 and 17 for
+    fixed 0 across three runs. Its two halves pass when timed apart: the
+    transforms and pointwise products give ≤ 2.3, and `to_ring_ct` on the
+    same accumulators read back from memory gives ≤ 2.4. `to_ring_ct`'s
+    stages also pass apart: the inverse NTT, centering, Garner and the
+    lift each give ≤ 4.2 at 4 · 10⁵. So the time difference needs a zero
+    accumulator that was just computed and is consumed by the fused
+    reconstruction. No single instruction was isolated. The source is
+    branch-free and DIT is set, so this is a value-dependent effect in the
+    core that DIT does not cover. Candidate mechanisms, none verified, are
+    the loaded-zero multiply-add effect of the optimization campaign (U1b)
+    and load value prediction.
+  - **Fix: a public blind.** Every accumulator of `apply_columns` starts
+    from the CRT+NTT image of a fixed pseudorandom ring element `K`
+    (`PreparedMatrix::blind`, a one-ring public matrix stream), and `K` is
+    subtracted in F (§1.3). The reconstruction then sees `M·x + K`, which is
+    never the degenerate zero: an input with `M·x = −K` solves an
+    inhomogeneous SIS instance. The chunk width keeps one column of CRT
+    capacity for `K`. Outputs are unchanged, and the frozen `apply_centered`
+    digests still pass.
+    An honest mask is unlikely to produce an all-zero limb plane: with
+    σ ≈ 2^35.7 that needs about 4096 or more coefficients all below 2^29
+    (each about 2^−7). The blind therefore defends against the dudect
+    classes, not against an observed leak on honest Σ runs.
+  - **Sign-selected multiplies removed (hardening, no measured effect).**
+    `lift_ct`, `digits_to_field_ct`, the gadget term of `N·y` and the claim
+    sums multiplied by `F(sign)`, which is 0 for every non-negative input.
+    They now multiply by `lift_biased(x) = x + 2^63`, which is never zero
+    for `x > i64::MIN` while `p > 2^64` (its top bit is still the inverted
+    sign, but no operand is zero or a 0/1 selector), and subtract the
+    constant bias times the factor.
+    Alone, this left `L·y` fixed 0 at |t| 5.7–13.7.
+  - **Open: N·y residual.** After the blind, `N·y` still fails for
+    constant non-negative masks (0, +1, +B) at |t| 4.5–11 in crops, raw
+    ≤ 3.2. The fixed class is about 0.05–0.08% slower (150–350 ns of
+    430 µs). Constant −B, a repeated bell-shaped mask, fresh non-negative
+    magnitudes, and A/A pass. `L·y`, which is the same Ajtai map on one row
+    with no gadget, passes. The cause is not localized. A micro-probe of
+    the gadget loop alone passes at 2 · 10⁴. A run with the gadget skipped
+    (diagnostic only) still failed, so the residual is not the gadget
+    alone.
+
+  The full harness after the fix, with the mask classes 0, +1, ±B, a
+  repeated bell-shaped mask and fresh non-negative magnitudes, ran at
+  10⁵ / 2.5 · 10⁴ measurements on seeds 0 and 1, load 7–40. Seed 2 was
+  stopped when the load reached 260. 101 of 108 tests pass: linear parts
+  ≤ 2.4, `Q_μ(0,y)` and `B_μ` ≤ 2.7, `L·y` ≤ 2.7, `t_D` ≤ 3.0, fork seed
+  ≤ 2.6, `z`/`v` ≤ 2.8, and the challenge sampler ≤ 2.4. The 7 failures
+  are the open `N·y` residual: fixed 0, +1 or +B at |t| 4.5–7.9, at D = 64
+  and at D = 256.
+
+  **Cost.** `sigma_timing` at scale 2048 with jolt-algebra `asm`, six
+  interleaved pairs of 20 proofs under the perf lock, load 28–90: median
+  0.46 s per proof before and 0.43 s after. The difference is within the
+  noise, so no slowdown was detected. The blind adds one ring subtraction
+  per chunk and row, and the biased lifts each drop one multiplication.
+
+  **Not verified:** x86_64; the
+  `asm` build of `Fp128` (the prover's graph enables jolt-algebra `asm`,
+  the harness's does not); M1–M3.
 
 - **asm, branch-free.** `Fp128` add, sub and mul have no conditional branch on
   aarch64 or x86_64; add/sub compile to `csel` and `cmov`.
@@ -674,7 +762,10 @@ production monomorphization.
 **Platform.** The argument assumed that integer multiply, add and compare take
 data-independent time without DIT/DOITM. The dudect record above refutes this
 on Apple M4 for the CRT reconstruction, so the prover sets DIT for the
-attempts (A11).
+attempts (A11). DIT is not sufficient: under DIT the M4 still times the
+reconstruction of a just-computed zero accumulator differently (P7), which
+the blind of §1.3 avoids, and an `N·y` residual for constant non-negative
+masks remains open (P7).
 
 **Memory hygiene.** The prover overwrites its heap secrets with zeros, by
 volatile writes through the `zeroize` crate, before freeing them. jolt-zk's
@@ -1228,11 +1319,11 @@ Moved out of W4:
     (gofetch.fail). This note has not checked that against Apple's
     documentation, nor measured it on M4. On M1 and M2, DIT is not a DMP
     mitigation.
-  - **Residual.** None detected above about 17 ns on `L·y` (seed 2,
-    4 · 10⁵ measurements) or about 38 ns at 10⁵, the sizes of the positive
-    controls the slot harness found (§2.8). The residual seen under DIT on
-    `L·y` and `N·y` at D = 256 was the old harness's per-measurement
-    allocation, not the arithmetic. Not covered: work these entry points
+  - **Residual.** The A11 runs detected none above about 17 ns on `L·y`
+    (seed 2, 4 · 10⁵ measurements) or about 38 ns at 10⁵, the sizes of the
+    positive controls the slot harness found (§2.8). P7 (§2.8) later found
+    two under DIT: the zero-accumulator reconstruction, fixed by the blind
+    of §1.3, and an open `N·y` residual for constant non-negative masks. Not covered: work these entry points
     send to another pool or a `std::thread` (none today), and operations
     the attempt uses that DIT does not cover on a given core.
 - **A12, compression (W5, authors).**

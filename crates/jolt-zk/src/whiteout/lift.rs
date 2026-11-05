@@ -21,7 +21,7 @@
 
 use std::collections::BTreeMap;
 
-use jolt_algebra::{lift_ct, CyclotomicRing, JoltField};
+use jolt_algebra::{lift_biased, CyclotomicRing, JoltField, LIFT_BIAS};
 use jolt_crypto::lattice::CHALLENGE_RING_DIM;
 use jolt_poly::EqPolynomial;
 use rayon::prelude::*;
@@ -594,10 +594,11 @@ impl<F: JoltField> SValues<F> for [i64] {
                         |mut acc, (element, &outer)| {
                             for (k, &inner) in table.component.iter().enumerate() {
                                 let weight = outer * inner;
+                                let bias = weight * F::from_u64(LIFT_BIAS);
                                 for (dst, &value) in
                                     acc.iter_mut().zip(element.iter().skip(k).step_by(stride))
                                 {
-                                    *dst += weight * lift_ct::<F>(value);
+                                    *dst += weight * lift_biased::<F>(value) - bias;
                                 }
                             }
                             acc

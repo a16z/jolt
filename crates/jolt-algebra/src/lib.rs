@@ -132,8 +132,9 @@ mod unreduced;
 
 pub use accum::reduce_signed_accum;
 pub use algebra::{
-    lift_ct, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
-    MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
+    lift_biased, lift_ct, Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field,
+    JoltField, MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring,
+    WithAccumulator, LIFT_BIAS,
 };
 #[cfg(feature = "solinas")]
 pub use fft::SmoothFftField;

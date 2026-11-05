@@ -6,7 +6,7 @@ use std::ops::{Add, Sub};
 
 use super::prime::{NttPrime, PrimeWidth};
 use crate::AlgebraError;
-use crate::Field;
+use crate::{lift_biased, Field};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SmallNat {
@@ -423,22 +423,21 @@ impl<const K: usize> GarnerData<K> {
 }
 
 /// The field image of `Σ_i digits[i] · weights[i]`, with no branch on the
-/// digits: each digit is lifted into `F` from its magnitude and sign by
-/// arithmetic, never by `F::from_i128`, which branches on sign. With the
-/// radix weights of `GarnerData::field_weights` this is the constant-time
-/// counterpart of `GarnerData::digits_to_field`.
+/// digits and no zero or sign-dependent multiplier operand: each digit is
+/// lifted by [`lift_biased`], and `bias`, `F(LIFT_BIAS) · Σ_i weights[i]`,
+/// removes the offsets. With the radix weights of
+/// `GarnerData::field_weights` this is the constant-time counterpart of
+/// `GarnerData::digits_to_field`.
 pub(crate) fn digits_to_field_ct<F: Field, const K: usize>(
     digits: &[i64; K],
     weights: &[F; K],
+    bias: F,
 ) -> F {
     digits
         .iter()
         .zip(weights)
-        .fold(F::zero(), |acc, (&digit, &weight)| {
-            let sign = digit >> 63;
-            let magnitude = F::from_u64(((digit ^ sign) - sign) as u64) * weight;
-            let negative = F::from_u64((sign & 1) as u64);
-            acc + magnitude - (magnitude + magnitude) * negative
+        .fold(-bias, |acc, (&digit, &weight)| {
+            acc + lift_biased::<F>(digit) * weight
         })
 }
 
