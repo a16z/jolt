@@ -29,15 +29,15 @@ mod whiteout {
     use common::jolt_device::JoltDevice;
     use jolt_akita::{
         AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
-        WhiteoutPlans,
+        HidingRandomness, WhiteoutPlans,
     };
     use jolt_field::Ring;
     use jolt_prover::akita;
     use jolt_prover::akita::preprocessing::{
         self, AkitaProverPreprocessing, AkitaVc, AkitaVerifierPreprocessing,
     };
-    use jolt_prover::akita::witness::AdviceObject;
-    use jolt_prover::{JoltBackend, ProverConfig, ProverError};
+    use jolt_prover::akita::witness::{AdviceObject, DirectProgramOpenings, HidingOpening};
+    use jolt_prover::{JoltBackend, PreprocessingError, ProverConfig, ProverError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
@@ -441,6 +441,170 @@ mod whiteout {
             .is_err(),
             "a proof verifies against another commitment to its program"
         );
+    }
+
+    /// The opening a trusted party ships, as bytes for the randomness: the
+    /// committing process's handle is gone once it returns.
+    fn ship(opening: HidingOpening<AkitaScheme>) -> (AkitaCommitment, Vec<u8>) {
+        (opening.commitment, opening.randomness.to_bytes().to_vec())
+    }
+
+    fn receive(commitment: &AkitaCommitment, randomness: &[u8]) -> HidingOpening<AkitaScheme> {
+        HidingOpening {
+            commitment: commitment.clone(),
+            randomness: HidingRandomness::from_bytes(randomness).expect("decode randomness"),
+        }
+    }
+
+    /// A copy of `randomness` with its first digit (after the 13-byte
+    /// header) moved by one, still inside the balanced alphabet.
+    fn altered(randomness: &[u8]) -> Vec<u8> {
+        let mut altered = randomness.to_vec();
+        altered[13] ^= 1;
+        altered
+    }
+
+    /// A trusted party commits trusted advice hiding and ships the
+    /// commitment and its randomness. The prover, in another process,
+    /// rebuilds its hint from (advice, randomness) and proves; the verifier
+    /// accepts against the shipped commitment. Altered randomness or other
+    /// advice is refused at rebuild, and an auditor's rebuild reproduces
+    /// the commitment.
+    #[test]
+    #[expect(clippy::panic, reason = "an unexpected refusal is a test failure")]
+    fn whiteout_trusted_advice_reopens_from_shipped_randomness() {
+        let (commitment, randomness) = {
+            let run = prepare(Setup::Advice);
+            let trusted_party = preprocess(Setup::Advice, &run, &config(&run));
+            let object = preprocessing::commit_trusted_advice(&trusted_party, &trusted_advice())
+                .expect("trusted advice commitment");
+            ship(object.hiding_opening().expect("export the advice opening"))
+        };
+
+        let run = prepare(Setup::Advice);
+        let config = config(&run);
+        let prover = preprocess(Setup::Advice, &run, &config);
+        let reopen = |advice: &[u8], randomness: &[u8]| {
+            preprocessing::reopen_trusted_advice(&prover, advice, &receive(&commitment, randomness))
+        };
+        let refusal = |result: Result<AdviceObject<AkitaScheme>, _>| match result {
+            Err(PreprocessingError::InvalidAdvice { reason }) => reason,
+            Err(error) => panic!("unexpected refusal: {error:?}"),
+            Ok(_) => panic!("a mismatched rebuild was accepted"),
+        };
+        // The digit stays inside the alphabet, so the refusal is the
+        // commitment mismatch, not the randomness decoding.
+        assert!(
+            refusal(reopen(&trusted_advice(), &altered(&randomness)))
+                .contains("do not open the expected commitment"),
+            "altered randomness rebuilds the commitment"
+        );
+        assert!(
+            refusal(reopen(
+                &postcard::to_stdvec(&8u64).expect("serialize advice"),
+                &randomness
+            ))
+            .contains("do not open the expected commitment"),
+            "other advice rebuilds the commitment"
+        );
+        // A shipped commitment whose backend payload matches but whose
+        // header (the layout digest, right after the flavor byte) does not.
+        let mut header = postcard::to_stdvec(&commitment).expect("serialize commitment");
+        header[1] ^= 1;
+        let header: AkitaCommitment = postcard::from_bytes(&header).expect("decode commitment");
+        assert!(
+            refusal(preprocessing::reopen_trusted_advice(
+                &prover,
+                &trusted_advice(),
+                &receive(&header, &randomness)
+            ))
+            .contains("header differs"),
+            "a shipped commitment with another header is refused"
+        );
+        let audited = reopen(&trusted_advice(), &randomness).expect("the auditor's rebuild");
+        assert_eq!(audited.commitment, commitment);
+
+        let object = reopen(&trusted_advice(), &randomness).expect("the prover's rebuild");
+        let mut proved = prove_with(run, &config, prover, Some(object));
+        let proof = std::mem::replace(
+            &mut proved.proof,
+            Err(ProverError::InvariantViolation { reason: "taken" }),
+        )
+        .expect("Whiteout proof on reopened trusted advice");
+        verify_with(&proved, &proof, Some(&commitment))
+            .expect("the verifier accepts against the shipped commitment");
+    }
+
+    /// A trusted party commits a program hiding and ships its verifier
+    /// preprocessing and the objects' randomness. The prover rebuilds its
+    /// preprocessing from (program, randomness) and proves; the trusted
+    /// party's verifier preprocessing accepts. Altered or swapped randomness
+    /// is refused at rebuild.
+    #[test]
+    fn whiteout_committed_program_reopens_from_shipped_randomness() {
+        let run = prepare(Setup::Committed);
+        let config = config(&run);
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let (verifier, bytecode, program_image) = {
+            let trusted_party = preprocess(Setup::Committed, &run, &config);
+            let openings = trusted_party
+                .committed_program
+                .as_ref()
+                .expect("committed program")
+                .direct_program
+                .hiding_openings()
+                .expect("export the program openings");
+            (
+                transported(&trusted_party.verifier),
+                ship(openings.bytecode),
+                ship(openings.program_image),
+            )
+        };
+        let reopen = |bytecode_randomness: &[u8], program_image_randomness: &[u8]| {
+            preprocessing::preprocess_committed_reopened(
+                &artifacts,
+                run.preprocessing.clone(),
+                &config,
+                false,
+                false,
+                &DirectProgramOpenings {
+                    bytecode: receive(&bytecode.0, bytecode_randomness),
+                    program_image: receive(&program_image.0, program_image_randomness),
+                },
+            )
+        };
+        assert!(
+            reopen(&altered(&bytecode.1), &program_image.1).is_err(),
+            "altered bytecode randomness rebuilds the commitment"
+        );
+        assert!(
+            reopen(&bytecode.1, &altered(&program_image.1)).is_err(),
+            "altered program-image randomness rebuilds the commitment"
+        );
+        assert!(
+            reopen(&program_image.1, &bytecode.1).is_err(),
+            "swapped randomness rebuilds the commitments"
+        );
+        let prover = reopen(&bytecode.1, &program_image.1).expect("the prover's rebuild");
+        assert_eq!(
+            prover.verifier.program.committed(),
+            verifier.program.committed()
+        );
+
+        let mut proved = prove_with(run, &config, prover, None);
+        let proof = std::mem::replace(
+            &mut proved.proof,
+            Err(ProverError::InvariantViolation { reason: "taken" }),
+        )
+        .expect("Whiteout proof on a reopened committed program");
+        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+            &verifier,
+            &proved.public_io,
+            &proof,
+            None,
+        )
+        .expect("the trusted party's verifier preprocessing accepts");
     }
 }
 
