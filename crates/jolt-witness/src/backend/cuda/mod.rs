@@ -9,8 +9,10 @@
 //! from the active instruction profile. Unsupported descriptors are rejected
 //! by the upload path.
 //!
-//! Packed windows include the logical padding rows. Optimized kernels can
-//! instead retain a nonconstant prefix and one representative padding row.
+//! Packed windows include the logical padding rows. With random-access rows,
+//! CUDA expands the implicit no-op suffix on-device instead of uploading it.
+//! Optimized kernels can retain a nonconstant prefix and one representative
+//! padding row throughout evaluation.
 //!
 //! This is an extraction interface, not a second `JoltWitnessPlane`: program
 //! metadata and non-trace oracles remain with the host witness. Packing uses

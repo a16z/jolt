@@ -29,6 +29,26 @@ typedef __int128_t i128;
 #define FLAG_BIT_SHOULD_JUMP 26
 #define FLAG_BIT_PRODUCT_NEGATIVE 27
 
+extern "C" __global__ void fill_padding_kernel(
+    unsigned char *is_noop,
+    unsigned long long *address,
+    unsigned int *virtual_sequence,
+    unsigned long long *ram_address,
+    unsigned long long *extras,
+    unsigned int seed,
+    unsigned int remaining) {
+  unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= remaining) return;
+  size_t destination = (size_t)seed + 1u + index;
+  is_noop[destination] = is_noop[seed];
+  address[destination] = address[seed];
+  virtual_sequence[destination] = virtual_sequence[seed];
+  ram_address[destination] = ram_address[seed];
+  for (unsigned int word = 0; word < EXTRA_WORDS; word++) {
+    extras[destination * EXTRA_WORDS + word] = extras[(size_t)seed * EXTRA_WORDS + word];
+  }
+}
+
 __device__ __forceinline__ u64 rev8w(u64 v) {
   u32 lo = __byte_perm((u32)v, 0, 0x0123);
   u32 hi = __byte_perm((u32)(v >> 32), 0, 0x0123);

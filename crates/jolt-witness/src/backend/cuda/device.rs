@@ -6,6 +6,8 @@
 //! unrepresentable indices through a device rejection flag checked on the host.
 //! Large row-source windows alternate two pinned staging buffers, overlapping
 //! packing with uploads without allocating a host copy of the entire window.
+//! When random access identifies an implicit no-op suffix, only physical rows
+//! are uploaded; a device fill expands the canonical packed padding row.
 
 use super::packed::EXTRA_KIND_BITS;
 use core::fmt::Display;
@@ -46,6 +48,7 @@ const BLOCK: u32 = 256;
 const NO_REJECTION: u64 = u64::MAX;
 
 struct ExtractFunctions {
+    fill_padding: CudaFunction,
     mapped_pc: CudaFunction,
     remapped_ram: CudaFunction,
     lookup_index: CudaFunction,
@@ -97,6 +100,7 @@ fn load_extract_functions(stream: &CudaStream) -> Result<ExtractFunctions, Strin
             .map_err(|error: DriverError| error.to_string())
     };
     Ok(ExtractFunctions {
+        fill_padding: function("fill_padding_kernel")?,
         mapped_pc: function("mapped_pc_words_kernel")?,
         remapped_ram: function("remapped_ram_words_kernel")?,
         lookup_index: function("lookup_index_limbs_kernel")?,
@@ -147,6 +151,30 @@ fn copy_pinned<T: DeviceRepr + ValidAsZeroBits>(
 }
 
 impl DeviceRows {
+    fn upload(
+        &mut self,
+        stream: &Arc<CudaStream>,
+        staging: &PackedTrace,
+        range: Range<usize>,
+    ) -> Result<(), DriverError> {
+        stream.memcpy_htod(&staging.is_noop, &mut self.is_noop.slice_mut(range.clone()))?;
+        stream.memcpy_htod(&staging.address, &mut self.address.slice_mut(range.clone()))?;
+        stream.memcpy_htod(
+            &staging.virtual_sequence,
+            &mut self.virtual_sequence.slice_mut(range.clone()),
+        )?;
+        stream.memcpy_htod(
+            &staging.ram_address,
+            &mut self.ram_address.slice_mut(range.clone()),
+        )?;
+        stream.memcpy_htod(
+            &staging.extras,
+            &mut self
+                .extras
+                .slice_mut(range.start * PACKED_EXTRA_WORDS..range.end * PACKED_EXTRA_WORDS),
+        )
+    }
+
     fn upload_pinned(
         &mut self,
         stream: &Arc<CudaStream>,
@@ -256,33 +284,83 @@ impl DeviceTrace {
             );
         }
 
+        let physical_end = source
+            .random_access()
+            .filter(|access| range.end <= access.cycles())
+            .map_or(range.end, |access| {
+                access.physical_cycles().clamp(range.start, range.end)
+            });
         let tables = kind_tables()?;
         let mut trace = Self::allocate(Arc::clone(&stream), cycles, preprocessing, &tables)?;
-        let mut staging = [
-            PinnedTrace::new(stream.context()).map_err(device_error)?,
-            PinnedTrace::new(stream.context()).map_err(device_error)?,
-        ];
-        let mut next = 0;
-        visit_source(source, range, STAGING_CYCLES, |rows, destination| {
-            if rows.is_empty() {
-                return Ok(());
-            }
-            let buffer = &mut staging[next];
-            buffer.pack(rows).map_err(device_error)?;
+        if range.start < physical_end {
+            let mut staging = [
+                PinnedTrace::new(stream.context()).map_err(device_error)?,
+                PinnedTrace::new(stream.context()).map_err(device_error)?,
+            ];
+            let mut next = 0;
+            visit_source(
+                source,
+                range.start..physical_end,
+                STAGING_CYCLES,
+                |rows, destination| {
+                    if rows.is_empty() {
+                        return Ok(());
+                    }
+                    let buffer = &mut staging[next];
+                    buffer.pack(rows).map_err(device_error)?;
+                    tables.require_supported(
+                        buffer.extras.as_slice().map_err(device_error)?
+                            [..rows.len() * PACKED_EXTRA_WORDS]
+                            .chunks_exact(PACKED_EXTRA_WORDS)
+                            .map(|row| row[EXTRA_KIND_BITS] as u16),
+                    )?;
+                    trace
+                        .rows
+                        .upload_pinned(&stream, buffer, destination)
+                        .map_err(device_error)?;
+                    next ^= 1;
+                    Ok(())
+                },
+            )?;
+        }
+        if physical_end < range.end {
+            let padding = PackedTrace::pack(&[], 1)?;
             tables.require_supported(
-                buffer.extras.as_slice().map_err(device_error)?[..rows.len() * PACKED_EXTRA_WORDS]
+                padding
+                    .extras
                     .chunks_exact(PACKED_EXTRA_WORDS)
                     .map(|row| row[EXTRA_KIND_BITS] as u16),
             )?;
-            trace
-                .rows
-                .upload_pinned(&stream, buffer, destination)
-                .map_err(device_error)?;
-            next ^= 1;
-            Ok(())
-        })?;
+            trace.fill_padding(physical_end - range.start, &padding)?;
+        }
         stream.synchronize().map_err(device_error)?;
         Ok(trace)
+    }
+
+    fn fill_padding(&mut self, start: usize, padding: &PackedTrace) -> Result<(), WitnessError> {
+        self.rows
+            .upload(&self.stream, padding, start..start + 1)
+            .map_err(device_error)?;
+        let count = self.count()?;
+        let start = u32::try_from(start).map_err(device_error)?;
+        let remaining = count - start - 1;
+        if remaining == 0 {
+            return Ok(());
+        }
+        let mut builder = self.stream.launch_builder(&self.functions.fill_padding);
+        let _ = builder.arg(&mut self.rows.is_noop);
+        let _ = builder.arg(&mut self.rows.address);
+        let _ = builder.arg(&mut self.rows.virtual_sequence);
+        let _ = builder.arg(&mut self.rows.ram_address);
+        let _ = builder.arg(&mut self.rows.extras);
+        let _ = builder.arg(&start);
+        let _ = builder.arg(&remaining);
+        // SAFETY: upload_source calls only for a nonempty suffix inside cycles.
+        // The seed row is uploaded on this stream and never written by the
+        // kernel. Each thread writes one later row in the same allocations;
+        // extras uses the shared PACKED_EXTRA_WORDS layout.
+        let _ = unsafe { builder.launch(launch_config(remaining)) }.map_err(device_error)?;
+        Ok(())
     }
 
     fn upload_packed(
@@ -300,25 +378,9 @@ impl DeviceTrace {
         )?;
 
         let mut trace = Self::allocate(Arc::clone(&stream), cycles, preprocessing, &tables)?;
-        let device = &mut trace.rows;
-
-        stream
-            .memcpy_htod(&staging.is_noop, &mut device.is_noop.slice_mut(..))
-            .map_err(device_error)?;
-        stream
-            .memcpy_htod(&staging.address, &mut device.address.slice_mut(..))
-            .map_err(device_error)?;
-        stream
-            .memcpy_htod(
-                &staging.virtual_sequence,
-                &mut device.virtual_sequence.slice_mut(..),
-            )
-            .map_err(device_error)?;
-        stream
-            .memcpy_htod(&staging.ram_address, &mut device.ram_address.slice_mut(..))
-            .map_err(device_error)?;
-        stream
-            .memcpy_htod(&staging.extras, &mut device.extras.slice_mut(..))
+        trace
+            .rows
+            .upload(&stream, &staging, 0..cycles)
             .map_err(device_error)?;
         drop(staging);
 
@@ -1015,8 +1077,9 @@ mod tests {
     use crate::backend::ProgramSource;
     use crate::testing::with_sample_backend;
     use crate::witnesses::WitnessEnv;
-    use crate::ChunkVisitor;
+    use crate::{ChunkVisitor, RandomAccessRows};
     use cudarc::driver::CudaContext;
+    use jolt_program::execution::TraceData;
     use jolt_riscv::{
         JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RamAccess, RegisterRead,
         RegisterState, RegisterWrite,
@@ -1029,6 +1092,107 @@ mod tests {
     #[test]
     fn cuda_source_compiles_without_device() -> Result<(), String> {
         super::extract_ptx().map(|_| ()).map_err(Clone::clone)
+    }
+
+    #[test]
+    fn source_upload_preserves_implicit_padding() {
+        struct Source<'a> {
+            rows: Vec<TraceRow>,
+            access: RandomAccessRows,
+            env: WitnessEnv<'a>,
+        }
+
+        impl RowSource for Source<'_> {
+            fn visit_chunks(
+                &self,
+                range: Range<usize>,
+                chunk_size: usize,
+                visitor: &mut ChunkVisitor<'_>,
+            ) -> Result<(), WitnessError> {
+                if range.start > range.end || range.end > self.access.cycles() {
+                    return Err(device_error("source range exceeds its domain"));
+                }
+                for start in (range.start..range.end).step_by(chunk_size) {
+                    let end = (start + chunk_size).min(range.end);
+                    let chunk: Vec<_> = (start..end)
+                        .map(|index| self.rows.get(index).copied().unwrap_or_default())
+                        .collect();
+                    let padding = TraceRow::default();
+                    let next = (end < self.access.cycles())
+                        .then(|| self.rows.get(end).unwrap_or(&padding));
+                    visitor(&chunk, next, &self.env)?;
+                }
+                Ok(())
+            }
+
+            fn random_access(&self) -> Option<RandomAccessRows> {
+                Some(self.access.clone())
+            }
+        }
+
+        with_sample_backend(|backend| {
+            let stream = CudaContext::new(0).unwrap().default_stream();
+            let mut rows = Vec::new();
+            backend
+                .visit_chunks(0..2, 2, &mut |chunk, _, _| {
+                    rows.extend_from_slice(chunk);
+                    Ok(())
+                })
+                .unwrap();
+            let cycles = 2 * MIN_PINNED_CYCLES;
+            let source = Source {
+                access: RandomAccessRows::new(
+                    Arc::new(TraceData::new(rows.clone())),
+                    cycles,
+                    Arc::new(backend.program_preprocessing().clone()),
+                )
+                .unwrap(),
+                rows,
+                env: WitnessEnv::new(backend.program_preprocessing()),
+            };
+            for range in [
+                0..MIN_PINNED_CYCLES + 17,
+                1..MIN_PINNED_CYCLES + 1,
+                MIN_PINNED_CYCLES..cycles,
+            ] {
+                let expected = PackedTrace::from_source(&source, range.clone()).unwrap();
+                let trace = DeviceTrace::upload_source(
+                    Arc::clone(&stream),
+                    &source,
+                    range,
+                    backend.program_preprocessing(),
+                )
+                .unwrap();
+                assert_eq!(trace.cycles(), expected.cycles);
+                assert_eq!(
+                    stream.clone_dtoh(&trace.rows.is_noop).unwrap(),
+                    expected.is_noop
+                );
+                assert_eq!(
+                    stream.clone_dtoh(&trace.rows.address).unwrap(),
+                    expected.address
+                );
+                assert_eq!(
+                    stream.clone_dtoh(&trace.rows.virtual_sequence).unwrap(),
+                    expected.virtual_sequence
+                );
+                assert_eq!(
+                    stream.clone_dtoh(&trace.rows.ram_address).unwrap(),
+                    expected.ram_address
+                );
+                assert_eq!(
+                    stream.clone_dtoh(&trace.rows.extras).unwrap(),
+                    expected.extras
+                );
+            }
+            assert!(DeviceTrace::upload_source(
+                stream,
+                &source,
+                MIN_PINNED_CYCLES..cycles + 1,
+                backend.program_preprocessing(),
+            )
+            .is_err());
+        });
     }
 
     #[test]
