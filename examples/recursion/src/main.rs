@@ -185,7 +185,7 @@ enum Commands {
 
     /// Write a parseable proof stream with an altered Akita schedule-row digest.
     #[cfg(feature = "akita")]
-    TamperOpening {
+    TamperScheduleDigest {
         #[arg(long)]
         example: String,
         #[arg(long)]
@@ -1058,7 +1058,7 @@ fn tamper_proof(
                     let ((mut selection, body), consumed): (([u8; 32], Vec<u8>), _) =
                         bincode::serde::decode_from_slice(&encoded, config).unwrap();
                     assert_eq!(consumed, encoded.len());
-                    // The v8 verifier resolves this digest in its trusted schedule catalog.
+                    // The verifier resolves this digest in its trusted schedule catalog.
                     *selection.first_mut().expect("schedule-row digest") ^= 1;
                     let encoded = bincode::serde::encode_to_vec((selection, body), config).unwrap();
                     proof.joint_opening_proof = bincode::serde::decode_from_slice(&encoded, config)
@@ -1328,7 +1328,7 @@ fn main() {
         #[cfg(feature = "field-inline")]
         Some(Commands::CheckFieldKernels) => kernel_tests::run(),
         #[cfg(feature = "akita")]
-        Some(Commands::TamperOpening {
+        Some(Commands::TamperScheduleDigest {
             example,
             workdir,
             output,

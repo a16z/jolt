@@ -10,9 +10,15 @@ workspace = true
 
 [features]
 default = ["parallel"]
+# Akita's rayon-backed kernels and backend thread pool. A single-core zkVM
+# guest builds without it; Jolt's own prover kernels in this crate still link
+# rayon, which a guest verifier never calls.
 parallel = ["akita-pcs/parallel"]
+# Jolt owns the transcript; route its Blake2b compression through the guest inline.
 blake2-inline = ["jolt-transcript/blake2-inline"]
+# Akita's NTT kernels over the jolt-inlines NTT inline for a guest verifier.
 ntt-inline = ["akita-pcs/ntt-inline"]
+# Enables field-inline schedule coverage alongside the prover's field profile.
 field-inline = []
 profiling = ["parallel"]
 

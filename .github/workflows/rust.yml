@@ -642,7 +642,7 @@ jobs:
           work="$RUNNER_TEMP/recursion"
           "$recursion" generate --example fibonacci --workdir "$work/proofs"
           "$recursion" trace --embed --example fibonacci --workdir "$work/proofs"
-          "$recursion" tamper-opening --example fibonacci --workdir "$work/proofs" --output "$work/tampered"
+          "$recursion" tamper-schedule-digest --example fibonacci --workdir "$work/proofs" --output "$work/tampered"
           "$recursion" trace --embed --expect reject --example fibonacci --workdir "$work/tampered"
 
   test-verifier-field-inline-fixtures:
