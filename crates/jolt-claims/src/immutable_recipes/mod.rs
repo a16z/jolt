@@ -2,12 +2,12 @@
 
 mod flags;
 mod key;
-pub use key::{KeySink, KeyVisit};
 use crate::protocols::composed::ComposedOpeningId;
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
 };
 use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
+pub use key::{KeySink, KeyVisit};
 
 use crate::{Expr, Source, Term};
 use jolt_field::{ImmutableRecipeField, Ring, IMMUTABLE_RECIPE_MODULUS};
@@ -417,7 +417,6 @@ impl<F: Ring, O, D, C> Recipe<'_, F, O, D, C> {
     }
 }
 
-
 /// Used only on the selected field/context path. Unsupported fields and native
 /// recording retain the original Expr evaluator, including its operation order.
 pub fn evaluate_canonical<F: Ring, O, D, C, E>(
@@ -435,7 +434,6 @@ pub fn evaluate_canonical<F: Ring, O, D, C, E>(
         derived,
     )
 }
-
 
 pub type JoltTable = Table<'static, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 pub type ComposedTable = Table<'static, ComposedOpeningId, JoltDerivedId, JoltChallengeId>;
