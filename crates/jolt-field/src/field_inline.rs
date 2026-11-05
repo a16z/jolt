@@ -497,6 +497,8 @@ mod guest {
         // index is the only loop state: the scalar bookkeeping around each
         // field-inline word costs as much as the word itself, so the inner
         // loop is unrolled per block width and indexes without bounds checks.
+        // Copy the row slices into locals: memory-writing asm would otherwise
+        // reload their base pointers from block_rows for every term.
         macro_rules! accumulate_block {
             ($($row:ident => $k:literal),+) => {{ $( let $row: &[[u64; N]] = *$row; )+
                 for j in 0..len {
@@ -594,6 +596,8 @@ mod guest {
             rows.iter().all(|row| row.len() == len),
             "every row has one element per shared operand"
         );
+        // Copy the row slices into locals: memory-writing asm would otherwise
+        // reload their base pointers from block_rows for every term.
         macro_rules! accumulate_block {
             ($($row:ident => $k:literal),+) => {
                 for j in 0..len {
