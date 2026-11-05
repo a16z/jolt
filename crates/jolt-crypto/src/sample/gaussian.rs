@@ -10,11 +10,12 @@
 //! rejection sampler's accept/reject sequence is independent of the value it
 //! finally returns.
 
+use chacha20::rand_core::{Rng, SeedableRng};
+use chacha20::ChaCha20Rng;
 use jolt_algebra::parallel::*;
-use rand_chacha::ChaCha20Rng;
-use rand_core::{CryptoRng, RngCore, SeedableRng};
+use rand_core::{CryptoRng, Error as RngError, RngCore};
 use subtle::{Choice, ConditionallySelectable, ConstantTimeEq};
-use zeroize::{zeroize_flat_type, Zeroizing};
+use zeroize::Zeroizing;
 
 use super::fixed::{binary_gaussian_cdt, pow2_neg_table, Fix192};
 use super::SampleError;
@@ -94,16 +95,37 @@ impl GaussianSampler {
 
     pub fn sample<R: RngCore + CryptoRng>(&self, rng: &mut R) -> i64 {
         loop {
-            let (z, accept) = self.trial(rng);
+            let [(z, accept)] = self.trials(&[TrialCoins::draw(rng, self.width.k)]);
             if bool::from(accept) {
                 return z;
             }
         }
     }
 
+    /// The outputs of [`Self::sample`] called `out.len()` times, and the
+    /// same coins drawn from `rng`. Trials run [`TRIAL_LANES`] at a time:
+    /// a trial's coins never depend on an earlier trial's result, and the
+    /// sequential sampler needs at least one trial per missing output, so
+    /// drawing the coins of `min(TRIAL_LANES, missing)` trials up front
+    /// consumes exactly the coins it would.
     pub fn fill<R: RngCore + CryptoRng>(&self, rng: &mut R, out: &mut [i64]) {
-        for slot in out {
-            *slot = self.sample(rng);
+        let mut slots = out.iter_mut();
+        while slots.len() > 0 {
+            let lanes = TRIAL_LANES.min(slots.len());
+            let mut coins = [TrialCoins::default(); TRIAL_LANES];
+            for lane in coins.iter_mut().take(lanes) {
+                *lane = TrialCoins::draw(rng, self.width.k);
+            }
+            let accepted = self
+                .trials(&coins)
+                .into_iter()
+                .take(lanes)
+                .filter(|(_, accept)| bool::from(*accept))
+                .map(|(z, _)| z);
+            // At most `lanes` accepted samples, so no slot is skipped.
+            for (z, slot) in accepted.zip(slots.by_ref()) {
+                *slot = z;
+            }
         }
     }
 
@@ -125,49 +147,100 @@ impl GaussianSampler {
         cfg_chunks_mut!(out, FILL_CHUNK)
             .zip(cfg_iter!(seeds.as_slice()))
             .for_each(|(chunk, seed)| {
-                self.fill(&mut ChunkRng(ChaCha20Rng::from_seed(*seed)).0, chunk);
+                self.fill(&mut ChunkRng(ChaCha20Rng::from_seed(*seed)), chunk);
             });
     }
 
+    /// `N` independent trials on their drawn coins, each returning its
+    /// signed sample and accept bit. The lanes run the same fixed
+    /// instruction sequence side by side, so a lane's latency chain
+    /// overlaps the others'.
     // Kept out of line so the reviewed constant-time code is the code that
     // runs, whatever the caller's inlining.
     #[inline(never)]
-    fn trial<R: RngCore>(&self, rng: &mut R) -> (i64, Choice) {
+    fn trials<const N: usize>(&self, coins: &[TrialCoins; N]) -> [(i64, Choice); N] {
         let k = self.width.k;
-        let u = Fix192::random(rng);
-        let x: u64 = self
-            .cdt
-            .iter()
-            .map(|threshold| u64::from((!u.ct_lt(threshold)).unwrap_u8()))
-            .sum();
-        let y = uniform_below(rng, k);
-        let z = k * x + y;
-        let exponent = u128::from(y) * u128::from(y) + 2 * u128::from(k * x) * u128::from(y);
-        let keep = Fix192::random(rng).ct_lt(&Fix192::ct_product(&self.exp_table, exponent));
-        let negate = Choice::from((rng.next_u32() & 1) as u8);
-        let accept = keep & !(z.ct_eq(&0) & negate);
-        let z = z as i64;
-        (
-            i64::conditional_select(&z, &z.wrapping_neg(), negate),
-            accept,
-        )
+        let mut z = [0u64; N];
+        let mut exponent = [0u128; N];
+        for ((z, exponent), coins) in z.iter_mut().zip(&mut exponent).zip(coins) {
+            let x: u64 = self
+                .cdt
+                .iter()
+                .map(|threshold| u64::from((!coins.u.ct_lt(threshold)).unwrap_u8()))
+                .sum();
+            let y = coins.y;
+            *z = k * x + y;
+            *exponent = u128::from(y) * u128::from(y) + 2 * u128::from(k * x) * u128::from(y);
+        }
+        let thresholds = Fix192::ct_products(&self.exp_table, &exponent);
+        let mut results = [(0i64, Choice::from(0)); N];
+        for (((result, z), threshold), coins) in
+            results.iter_mut().zip(z).zip(&thresholds).zip(coins)
+        {
+            let keep = coins.keep.ct_lt(threshold);
+            let negate = Choice::from((coins.sign & 1) as u8);
+            let accept = keep & !(z.ct_eq(&0) & negate);
+            let z = z as i64;
+            *result = (
+                i64::conditional_select(&z, &z.wrapping_neg(), negate),
+                accept,
+            );
+        }
+        results
     }
 }
 
-/// One chunk's ChaCha20 stream, zeroed when dropped: its state holds the
-/// chunk seed as the key, and its buffer the current keystream block.
+/// Trials per batch of [`GaussianSampler::fill`].
+const TRIAL_LANES: usize = 8;
+
+/// The coins of one trial, in the order it draws them.
+#[derive(Clone, Copy, Default)]
+struct TrialCoins {
+    /// Uniform in `[0, 1)`, inverted through the CDT.
+    u: Fix192,
+    /// Uniform on `[0, k)`.
+    y: u64,
+    /// Uniform in `[0, 1)`, compared against the acceptance probability.
+    keep: Fix192,
+    /// Its low bit is the sign.
+    sign: u32,
+}
+
+impl TrialCoins {
+    fn draw<R: RngCore>(rng: &mut R, k: u64) -> Self {
+        let u = Fix192::random(rng);
+        let y = uniform_below(rng, k);
+        let keep = Fix192::random(rng);
+        let sign = rng.next_u32();
+        Self { u, y, keep, sign }
+    }
+}
+
+/// One chunk's ChaCha20 stream: the word stream of `rand_chacha`'s
+/// `ChaCha20Rng` (64-bit block counter, stream 0) from `chacha20`'s SIMD
+/// backends, which zero the key state and keystream buffer on drop.
 struct ChunkRng(ChaCha20Rng);
 
-impl Drop for ChunkRng {
-    fn drop(&mut self) {
-        // SAFETY: rand_chacha 0.3's `ChaCha20Rng` is plain data (`u32`
-        // words, unions of integer lanes, a `[u32; 64]` buffer and a `usize`
-        // index) with no pointer and no `Drop` impl, so all-zero bytes are a
-        // valid value; it is not used afterwards. WARNING: recheck this when
-        // bumping rand_chacha.
-        unsafe { zeroize_flat_type(&raw mut self.0) }
+impl RngCore for ChunkRng {
+    fn next_u32(&mut self) -> u32 {
+        self.0.next_u32()
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0.next_u64()
+    }
+
+    fn fill_bytes(&mut self, dest: &mut [u8]) {
+        self.0.fill_bytes(dest);
+    }
+
+    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), RngError> {
+        self.0.fill_bytes(dest);
+        Ok(())
     }
 }
+
+impl CryptoRng for ChunkRng {}
 
 /// Uniform on `[0, bound)` for a public `bound ≥ 1`, by masked rejection.
 /// The number of draws is independent of the returned value.
@@ -188,6 +261,9 @@ mod tests {
     #![expect(clippy::print_stdout, reason = "tests report their p-values")]
     #![expect(clippy::unwrap_used, reason = "tests unwrap valid widths")]
     #![expect(clippy::indexing_slicing, reason = "tests index histograms")]
+
+    use rand_chacha::ChaCha20Rng;
+    use rand_core::SeedableRng;
 
     use super::super::fixed::Fix192;
     use super::*;
