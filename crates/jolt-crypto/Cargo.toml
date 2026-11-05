@@ -36,6 +36,7 @@ parallel = ["dep:rayon", "jolt-algebra/parallel", "jolt-poly/parallel"]
 # and the Ajtai map over jolt-algebra's ring and CRT-NTT. Off by default so
 # curve-only builds, including the Dory verifier, do not compile them.
 lattice = [
+  "dep:keccak",
   "dep:shake",
   "dep:smallvec",
   "dep:thiserror",
@@ -48,6 +49,9 @@ ont-static-base = ["lattice"]
 # Constant-time discrete Gaussian sampler and joint rejection rule. Prover-only:
 # no verifier build may enable it.
 sample = ["dep:subtle", "dep:num-bigint", "dep:chacha20", "dep:zeroize"]
+# Exposes the constant-time challenge sampler's candidate count, which
+# jolt-zk's timing diagnostics condition on. Diagnostics only.
+sample-diagnostics = ["sample"]
 
 [dependencies]
 jolt-algebra = { path = "../jolt-algebra", default-features = false }
@@ -58,6 +62,7 @@ rand_core = { workspace = true }
 # The sampler's per-chunk ChaCha20 streams (SIMD backends).
 chacha20 = { workspace = true, features = ["rng", "zeroize"], optional = true }
 thiserror = { workspace = true, optional = true }
+keccak = { version = "0.1.6", features = ["asm"], optional = true }
 shake = { workspace = true, optional = true }
 smallvec = { version = "1.15.2", features = [
   "const_generics",

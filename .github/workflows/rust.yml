@@ -146,6 +146,7 @@ jobs:
       - name: cargo clippy -p jolt-crypto --features lattice
         run: |
           cargo clippy -p jolt-crypto --all-targets --no-default-features --features lattice,parallel
+          cargo clippy -p jolt-crypto --all-targets --no-default-features --features lattice,sample-diagnostics
           cargo clippy -p jolt-crypto --all-targets --no-default-features --features ont-static-base
       # jolt-crypto's `sample` feature (the constant-time Gaussian sampler and
       # rejection rule) is prover-only; no verifier graph may enable it.
@@ -884,7 +885,7 @@ jobs:
       - name: Test jolt-crypto with lattice
         if: matrix.shard == 2
         run: |
-          cargo nextest run -p jolt-crypto --no-default-features --features lattice,parallel --cargo-quiet
+          cargo nextest run -p jolt-crypto --no-default-features --features lattice,sample,parallel --cargo-quiet
           cargo nextest run -p jolt-crypto --no-default-features --features ont-static-base --cargo-quiet -E 'test(/static_base/)'
       # The shard loop above tests jolt-crypto without `sample`.
       - name: Test jolt-crypto with the Gaussian sampler
