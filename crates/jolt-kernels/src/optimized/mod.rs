@@ -38,6 +38,8 @@ use self::field_registers_inc_claim_reduction::OptimizedFieldRegistersIncClaimRe
 use self::field_registers_read_write::OptimizedFieldRegistersReadWrite;
 #[cfg(feature = "field-inline")]
 use self::field_registers_val_evaluation::OptimizedFieldRegistersValEvaluation;
+#[cfg(feature = "parallel")]
+use self::parallel_members::ParallelMembers;
 #[cfg(not(feature = "akita"))]
 use crate::commitment::ModeStreamingCommitment;
 
@@ -142,7 +144,7 @@ where
     pub fn with_optimized_compute(mut self) -> Self {
         #[cfg(feature = "parallel")]
         {
-            self.round_scheduler = Box::new(parallel_members::ParallelMembers);
+            self.round_scheduler = Box::new(ParallelMembers);
         }
         self.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
         self.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
