@@ -9,7 +9,7 @@ jolt-hyperkzg::kzg.rs::absorb_evaluations::challenge_powers#1
 jolt-hyperkzg::kzg.rs::absorb_witnesses::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::open_table::challenge#1
 jolt-hyperkzg::scheme.rs::HyperKZGScheme::verify_opening::challenge#1
-jolt-openings::prefix.rs::PrefixPackedLayout<Id>::reduce_claims::challenge_vector#5
+jolt-openings::prefix.rs::PrefixPackedLayout<Id>::select::challenge_vector#5
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch::challenge_powers#1
 jolt-openings::schemes.rs::HomomorphicBatch<PCS>::verify_batch_zk::challenge_powers#0
 jolt-spartan-verifier::key.rs::SpartanKey<F>::begin::challenge_vector#4

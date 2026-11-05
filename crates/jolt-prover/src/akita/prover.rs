@@ -5,6 +5,7 @@
 use std::borrow::BorrowMut;
 
 use common::jolt_device::JoltDevice;
+use jolt_akita::TraceOneHotCommitment;
 use jolt_crypto::VectorCommitment;
 use jolt_field::{CanonicalBytes, JoltField};
 use jolt_openings::{
@@ -42,7 +43,10 @@ pub fn prove<F, PCS, VC, T>(
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
     F: JoltField + CanonicalBytes + Encoding,
-    PCS: CommitmentScheme<Field = F> + GroupBatchOpening + TransparentObjectSetup,
+    PCS: CommitmentScheme<Field = F>
+        + GroupBatchOpening
+        + TraceOneHotCommitment
+        + TransparentObjectSetup,
     PCS::ProverSetup: GroupSetupMetadata,
     PCS::VerifierSetup: GroupSetupMetadata,
     PCS::Output: Clone + PartialEq + Encoding + GroupCommitmentMetadata,
@@ -50,9 +54,9 @@ where
     VC::Output: Clone + Encoding,
     T: FieldTranscript<F> + ProverInit + BorrowMut<ProverState<PCS::Sponge>>,
 {
-    // The Akita path is transparent-only (`akita` and `zk` are mutually
-    // exclusive), so the mode context carries nothing; the shared stage
-    // recipes still thread it to mint their clear recorders.
+    // The clear Akita prover: the Whiteout build proves through
+    // `super::whiteout`, so the mode context here carries nothing; the shared
+    // stage recipes still thread it to mint their clear recorders.
     let mut mode = ProofMode::<VC>::clear();
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         &mut backend,

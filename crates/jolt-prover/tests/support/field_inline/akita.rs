@@ -15,7 +15,12 @@ use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, JoltWitnessOracle, 
 
 use crate::support::{GuestCase, PreparedGuest};
 
+#[cfg(not(feature = "zk"))]
 pub type Proof = JoltProof<AkitaScheme, AkitaVc>;
+/// A Whiteout proof: no clear opening proof, no ZK payload outside its
+/// masked tape and argument string.
+#[cfg(feature = "zk")]
+pub type Proof = JoltProof<AkitaScheme, AkitaVc, (), ()>;
 
 pub struct ProveOutput {
     pub verifier_preprocessing: JoltVerifierPreprocessing<AkitaScheme, AkitaVc>,

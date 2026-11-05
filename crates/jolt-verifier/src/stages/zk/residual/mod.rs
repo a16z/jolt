@@ -33,10 +33,36 @@ use jolt_claims::protocols::composed::r1cs::{
 };
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDerivedId};
-#[cfg(not(feature = "field-inline"))]
+#[cfg(not(any(feature = "field-inline", feature = "akita")))]
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 use jolt_claims::protocols::jolt::relations;
+#[cfg(feature = "fuzzing")]
+use jolt_claims::protocols::jolt::{JoltExpr, JoltOpeningId};
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
+use jolt_claims::SumcheckDomain;
+use jolt_claims::{
+    protocols::jolt::{
+        geometry::{
+            dimensions::REGISTER_ADDRESS_BITS,
+            ram::{RamValCheckInit, RamValCheckInitContribution},
+            spartan::{SpartanOuterDimensions, SpartanProductDimensions},
+        },
+        InstructionClaimReductionChallenge, InstructionClaimReductionPublic,
+        InstructionInputChallenge, InstructionInputPublic, JoltAdviceKind, JoltChallengeId,
+        JoltDerivedId, JoltRelationId, RamOutputCheckPublic, RamRafEvaluationPublic,
+        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+        RegistersReadWriteChallenge, RegistersReadWritePublic, SpartanOuterPublic,
+        SpartanShiftChallenge, SpartanShiftPublic,
+    },
+    FactoredExpr, Source, SymbolicSumcheck,
+};
+use jolt_field::JoltField;
+// Stages 5–7 of the homomorphic build; the Akita build lowers them through
+// `members`.
+#[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{
     geometry::{
         booleanity::BooleanityDimensions,
@@ -59,39 +85,22 @@ use jolt_claims::protocols::jolt::{
     RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
     RegistersValEvaluationPublic, TraceDimensions,
 };
-#[cfg(feature = "fuzzing")]
-use jolt_claims::protocols::jolt::{JoltExpr, JoltOpeningId};
-use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
-use jolt_claims::SumcheckDomain;
-use jolt_claims::{
-    protocols::jolt::{
-        geometry::{
-            dimensions::REGISTER_ADDRESS_BITS,
-            ram::{RamValCheckInit, RamValCheckInitContribution},
-            spartan::{SpartanOuterDimensions, SpartanProductDimensions},
-        },
-        InstructionClaimReductionChallenge, InstructionClaimReductionPublic,
-        InstructionInputChallenge, InstructionInputPublic, JoltAdviceKind, JoltChallengeId,
-        JoltDerivedId, JoltRelationId, RamOutputCheckPublic, RamRafEvaluationPublic,
-        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
-        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
-        RegistersReadWriteChallenge, RegistersReadWritePublic, SpartanOuterPublic,
-        SpartanShiftChallenge, SpartanShiftPublic,
-    },
-    FactoredExpr, Source, SymbolicSumcheck,
-};
-#[cfg(any(feature = "fuzzing", all(test, feature = "field-inline")))]
+#[cfg(any(
+    feature = "fuzzing",
+    all(test, feature = "field-inline", not(feature = "akita"))
+))]
 use jolt_claims::{Expr, Term};
 use jolt_crypto::VectorCommitment;
-use jolt_field::JoltField;
+#[cfg(not(feature = "akita"))]
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_openings::CommitmentScheme;
 use jolt_poly::{
     block_selector_mle_msb,
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
-    try_eq_mle, EqPlusOnePolynomial, IdentityPolynomial, LtPolynomial, MultilinearEvaluation,
+    try_eq_mle, EqPlusOnePolynomial, IdentityPolynomial, MultilinearEvaluation,
 };
-use jolt_poly::{OperandPolynomial, OperandSide};
+#[cfg(not(feature = "akita"))]
+use jolt_poly::{LtPolynomial, OperandPolynomial, OperandSide};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{
     BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec, SumcheckError,
@@ -108,6 +117,7 @@ use std::collections::BTreeMap;
 use crate::preprocessing::JoltVerifierPreprocessing;
 use crate::stages::relations::MaskedClaims;
 use crate::stages::stage2::ram_output_check::ram_output_check_publics;
+#[cfg(not(feature = "akita"))]
 use crate::stages::stage6b::{committed_reduction_cycle_phase, outputs::BytecodeReductionWeights};
 use crate::stages::{
     stage1::Stage1ZkOutput, stage2::Stage2ZkOutput, stage3::Stage3ZkOutput, stage4::Stage4ZkOutput,
@@ -119,20 +129,31 @@ use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
 mod field_inline;
+#[cfg(feature = "akita")]
+mod members;
+#[cfg(feature = "akita")]
+pub use members::MaskedMember;
 mod stage1;
 mod stage2;
 mod stage3;
 mod stage4;
+#[cfg(not(feature = "akita"))]
 mod stage5;
+#[cfg(not(feature = "akita"))]
 mod stage6a;
+#[cfg(not(feature = "akita"))]
 mod stage6b;
+#[cfg(not(feature = "akita"))]
 mod stage7;
 
 /// The lowering's opening-id type: the composite [`ComposedOpeningId`], so hidden values
 /// from either protocol family (jolt, field-inline) live in one claim-source namespace.
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
-#[cfg(any(feature = "fuzzing", all(test, feature = "field-inline")))]
+#[cfg(any(
+    feature = "fuzzing",
+    all(test, feature = "field-inline", not(feature = "akita"))
+))]
 type VerifierExpr<F> = Expr<F, ComposedOpeningId, VerifierPublicId>;
 type VerifierFactored<F> = FactoredExpr<F, ComposedOpeningId, VerifierPublicId>;
 
@@ -293,10 +314,20 @@ impl<F: JoltField> JoltResidual<F> {
         builder = stage2::add_stage2(&input, builder, &mut values)?;
         builder = stage3::add_stage3(&input, builder, &mut values)?;
         builder = stage4::add_stage4(&input, builder, &mut values)?;
-        builder = stage5::add_stage5(&input, builder, &mut values)?;
-        builder = stage6a::add_stage6a(&input, builder, &mut values)?;
-        builder = stage6b::add_stage6b(&input, builder, &mut values)?;
-        builder = stage7::add_stage7(&input, builder, &mut values)?;
+        #[cfg(not(feature = "akita"))]
+        {
+            builder = stage5::add_stage5(&input, builder, &mut values)?;
+            builder = stage6a::add_stage6a(&input, builder, &mut values)?;
+            builder = stage6b::add_stage6b(&input, builder, &mut values)?;
+            builder = stage7::add_stage7(&input, builder, &mut values)?;
+        }
+        #[cfg(feature = "akita")]
+        {
+            builder = members::add_stage5(&input, builder, &mut values)?;
+            builder = members::add_stage6a(&input, builder, &mut values)?;
+            builder = members::add_stage6b(&input, builder, &mut values)?;
+            builder = members::add_stage7(&input, builder, &mut values)?;
+        }
 
         Ok(Self {
             stages: builder.stages,
@@ -666,7 +697,10 @@ where
 }
 
 /// Map a protocol-family expression into the composite-id [`VerifierExpr`].
-#[cfg(any(feature = "fuzzing", all(test, feature = "field-inline")))]
+#[cfg(any(
+    feature = "fuzzing",
+    all(test, feature = "field-inline", not(feature = "akita"))
+))]
 fn map_expr<F, O, P, C>(expr: Expr<F, O, P, C>) -> VerifierExpr<F>
 where
     F: JoltField,
@@ -766,6 +800,7 @@ fn domain_spec(domain: SumcheckDomain) -> SumcheckDomainSpec {
     }
 }
 
+#[cfg(not(feature = "akita"))]
 fn formula_dimensions<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
 ) -> Result<JoltFormulaDimensions, VerifierError>
@@ -914,6 +949,7 @@ where
     Ok((selector, opening_point))
 }
 
+#[cfg(not(feature = "akita"))]
 fn advice_source_point<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
@@ -926,6 +962,7 @@ where
     advice_selector(input, kind, &r_address).map(|(_, point)| point)
 }
 
+#[cfg(not(feature = "akita"))]
 fn advice_layout<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
@@ -937,6 +974,7 @@ where
     input.checked.precommitted.advice(kind).cloned()
 }
 
+#[cfg(not(feature = "akita"))]
 #[expect(
     clippy::too_many_arguments,
     reason = "Stage 6 has several protocol components."
@@ -1351,6 +1389,7 @@ where
     Ok(())
 }
 
+#[cfg(not(feature = "akita"))]
 fn bytecode_reduction_weights<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     layout: &BytecodeClaimReductionLayout,
@@ -1395,6 +1434,7 @@ where
     )
 }
 
+#[cfg(not(feature = "akita"))]
 fn add_bytecode_reduction_cycle_publics<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
@@ -1427,6 +1467,7 @@ where
     )
 }
 
+#[cfg(not(feature = "akita"))]
 fn add_bytecode_reduction_address_publics<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
@@ -1458,6 +1499,7 @@ where
     )
 }
 
+#[cfg(not(feature = "akita"))]
 fn add_program_image_reduction_cycle_publics<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
@@ -1489,6 +1531,7 @@ where
     )
 }
 
+#[cfg(not(feature = "akita"))]
 fn add_program_image_reduction_address_publics<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
@@ -1516,6 +1559,7 @@ where
     )
 }
 
+#[cfg(not(feature = "akita"))]
 fn add_advice_cycle_publics<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
@@ -1549,6 +1593,7 @@ where
     )
 }
 
+#[cfg(not(feature = "akita"))]
 fn add_advice_address_publics<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
@@ -1577,6 +1622,7 @@ where
     )
 }
 
+#[cfg(not(feature = "akita"))]
 fn stage6_virtualization_points<PCS, VC>(
     input: &ResidualInputs<'_, PCS, VC>,
     dimensions: HammingWeightClaimReductionDimensions,
@@ -1596,6 +1642,7 @@ where
         .collect()
 }
 
+#[cfg(not(feature = "akita"))]
 fn hamming_virtualization_address_point<F: JoltField>(
     log_k_chunk: usize,
     point: &[F],
@@ -1612,6 +1659,7 @@ fn hamming_virtualization_address_point<F: JoltField>(
 }
 
 impl<F: JoltField> SourceValues<F> {
+    #[cfg(not(feature = "akita"))]
     fn has_public(&self, id: VerifierPublicId) -> bool {
         self.publics.contains_key(&id)
     }
@@ -1654,6 +1702,7 @@ fn public_error(stage: JoltRelationId, error: impl ToString) -> VerifierError {
     }
 }
 
+#[cfg(not(feature = "akita"))]
 fn point_prefix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -1670,6 +1719,7 @@ fn point_prefix<F: JoltField>(
     })
 }
 
+#[cfg(not(feature = "akita"))]
 fn point_suffix<F: JoltField>(
     point: &[F],
     prefix_len: usize,
@@ -1698,7 +1748,7 @@ fn residual_error(reason: impl ToString) -> VerifierError {
 /// (hidden rows by composite id, challenges and deriveds as
 /// [`VerifierPublicId`] publics), reproduce the clear path's
 /// `ConcreteSumcheck::input_claim` / `expected_output` on synthetic values.
-#[cfg(all(test, feature = "field-inline"))]
+#[cfg(all(test, feature = "field-inline", not(feature = "akita")))]
 #[expect(clippy::unwrap_used)]
 #[expect(
     clippy::as_conversions,

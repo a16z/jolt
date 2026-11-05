@@ -165,6 +165,11 @@ pub struct Stage4ZkOutput<F: JoltField> {
     pub batch_rounds: BatchedMaskedRounds<F>,
     pub batch_output_claims: MaskedClaims<F>,
     pub ram_val_check_public_eval: F,
+    /// Whiteout: the staged advice and program-image openings' points. Stage
+    /// 7's program-image address phase reads the program image's for its output
+    /// public; Whiteout's stage 8 opens the advice at theirs.
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    pub staged_points: RamValCheckStagedOpenings<Vec<F>>,
     /// The produced opening points, the ZK counterpart of the clear path's
     /// `output_points`. Read through the same `*_point()` accessors. The advice /
     /// program-image leaves are absent in ZK (BlindFold carries those openings), so

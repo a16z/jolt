@@ -1,9 +1,9 @@
 //! Verifier-selected protocol configuration.
 //!
 //! Every protocol axis is fixed at compile time — the `zk` feature selects
-//! BlindFold, the `akita` feature selects Akita commitments, the
-//! `field-inline` feature enables the native
-//! field-register extension — so one compiled verifier runs exactly one
+//! zero knowledge (BlindFold over Dory, Whiteout over Akita), the `akita`
+//! feature selects Akita commitments, the `field-inline` feature enables the
+//! native field-register extension — so one compiled verifier runs exactly one
 //! protocol. A proof self-describes its axes and [`validate_proof_config`]
 //! rejects a mismatch fail-closed.
 
@@ -17,10 +17,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::VerifierError;
 
-#[cfg(all(feature = "zk", feature = "akita"))]
+#[cfg(all(feature = "zk", feature = "akita", not(feature = "whiteout")))]
 compile_error!(
-    "the `zk` and `akita` features are mutually exclusive: no zk protocol exists over the \
-     Akita commitment axis (a lattice-friendly hiding commitment is a future workstream)"
+    "`zk` with `akita` selects Whiteout, which needs the explicit `whiteout` feature: \
+     Whiteout's constant-time claim is not yet verified on all platforms (an open \
+     timing residual in the Σ-protocol's `N·y` product; specs/whiteout-sigma.md)"
 );
 
 /// The zero-knowledge axis. Serialized in [`JoltProof`](crate::proof::JoltProof)
@@ -31,8 +32,7 @@ pub enum ZkConfig {
     /// BlindFold over pads committed with a curve vector commitment (Dory).
     BlindFold,
     /// Whiteout over a lattice pad commitment, with Akita's masked levels
-    /// and Σ-protocol. No build selects it yet: `zk` with `akita` is a
-    /// compile error.
+    /// and Σ-protocol (`specs/whiteout-jolt-integration.md`).
     Whiteout,
 }
 
@@ -86,11 +86,12 @@ pub const JOLT_VERIFIER_INSTRUCTION_PROFILE: JoltInstructionProfile = RV64IMAC_J
 #[cfg(not(feature = "field-inline"))]
 pub const JOLT_VERIFIER_INSTRUCTION_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT;
 
-#[cfg(feature = "zk")]
-pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::BlindFold;
-
-#[cfg(not(feature = "zk"))]
-pub const SELECTED_ZK_CONFIG: ZkConfig = ZkConfig::Transparent;
+/// `zk` picks zero knowledge; the commitment axis picks its back end.
+pub const SELECTED_ZK_CONFIG: ZkConfig = match (cfg!(feature = "zk"), cfg!(feature = "akita")) {
+    (false, _) => ZkConfig::Transparent,
+    (true, false) => ZkConfig::BlindFold,
+    (true, true) => ZkConfig::Whiteout,
+};
 
 #[cfg(feature = "akita")]
 pub const SELECTED_COMMITMENT_CONFIG: CommitmentConfig = CommitmentConfig::Akita;
@@ -179,7 +180,11 @@ mod tests {
             postcard::from_bytes::<JoltProtocolConfig>(&[2, 1, 0, 4, 0]).unwrap(),
             whiteout_protocol
         );
-        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, whiteout_protocol).is_err());
+        assert_eq!(
+            validate_proof_config(&JOLT_VERIFIER_CONFIG, whiteout_protocol).is_ok(),
+            JOLT_VERIFIER_CONFIG == whiteout_protocol,
+            "only a Whiteout build accepts a Whiteout proof"
+        );
     }
 
     /// A proof declaring a different field-register file size rejects even when the enabled

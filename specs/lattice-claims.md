@@ -59,7 +59,8 @@ The Akita clear-mode protocol includes:
 - one grouped opening ordered as
   `[UntrustedAdvice?, TrustedAdvice?, ProgramBytecode, ProgramImageInit, FusedInc, OneHotTrace]`.
 
-Akita and `zk` remain mutually exclusive. The Dory protocol, including its
+Zero knowledge over Akita is Whiteout (`whiteout` feature,
+`specs/whiteout-jolt-integration.md`). The Dory protocol, including its
 clear and BlindFold modes, is unchanged.
 
 ## Boundary Contract
