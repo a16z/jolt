@@ -7,7 +7,7 @@
 use jolt_claims::protocols::jolt::relations::claim_reductions::instruction::InstructionClaimReductionOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionClaimReductionPublic, JoltDerivedId};
 use jolt_field::{Accumulator, JoltField};
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 #[cfg(feature = "parallel")]
 use jolt_utils::par_collect_windows;
@@ -24,7 +24,9 @@ use jolt_witness::{JoltWitnessPlane, WitnessBundle, WitnessError};
 use rayon::prelude::*;
 
 use super::prefix_product::PrefixColumn;
-use super::support::{pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress};
+use super::support::{
+    fallible_collect_bytes, pin_derived_term, BundleStore, GruenRoundMessage, RoundProgress,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -60,6 +62,38 @@ impl InstructionOperandRow {
 }
 
 pub struct OptimizedInstructionClaimReduction;
+
+impl OptimizedInstructionClaimReduction {
+    /// Construction allowance over `2^log_t` cycles, or `None` past
+    /// `usize::MAX`. The fallible-collect bound covers the combined prefix
+    /// table; parallel materialization fills its destination directly.
+    /// Not counted: the row store, a handle on the witness's rows when it
+    /// has one.
+    pub fn construction_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        fallible_collect_bytes::<F>(1usize << log_t)
+    }
+
+    /// Peak bytes over `2^log_t` cycles, `log_t >= 1`, from the end of
+    /// `prepare` through the output walk, or `None` past `usize::MAX`: the
+    /// combined table bounded by `T` entries, its split-eq tables
+    /// ([`GruenSplitEqPolynomial::low_to_high_bytes`]) and `log_t` challenge
+    /// slots, plus the larger of the buffer the table's first in-place shrink
+    /// allocates ([`Polynomial::in_place_shrink_len`]) and the output walk's
+    /// reversed challenges and two eq tables. Both windows keep the table's
+    /// full capacity counted. Not counted: the row store, a handle on the
+    /// witness's rows when it has one; the round messages.
+    pub fn post_prepare_peak_bytes<F: JoltField>(log_t: usize) -> Option<usize> {
+        let cycles = 1usize << log_t;
+        let walk = log_t
+            .checked_add(1usize << (log_t / 2))?
+            .checked_add(1usize << log_t.div_ceil(2))?;
+        cycles
+            .checked_add(log_t)?
+            .checked_add(Polynomial::<F>::in_place_shrink_len(cycles).max(walk))?
+            .checked_mul(size_of::<F>())?
+            .checked_add(GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t)?)
+    }
+}
 
 impl<F: JoltField> PrepareKernel<F, InstructionClaimReduction<F>>
     for OptimizedInstructionClaimReduction

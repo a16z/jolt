@@ -482,6 +482,32 @@ pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> Cyc
     CycleMajorMatrix { entries }
 }
 
+/// Entry bytes [`round0_bind`] requests over the `prefix_cycles` cycles
+/// before the trace's constant suffix and `2^log_k` addresses, its result
+/// included, or `None` past `usize::MAX`, at the largest entry count `M`: a
+/// cycle pair emits one entry per accessing cycle when their columns differ
+/// and one entry otherwise, so `M = prefix_cycles`, or `⌈prefix_cycles / 2⌉`
+/// with one address. Rust 1.95 grows a `Vec` by doubling from four slots, and
+/// Rayon 1.12's collect keeps one such vector per split on a linked list,
+/// then reserves the destination once every split has finished: the splits
+/// request at most `4M` slots while growing and the destination `max(M, 4)`,
+/// so at most `5M + 3` slots and `M` list nodes (two links and a `Vec`
+/// header). These are pinned toolchain and lock facts, not an allocator
+/// contract; re-derive them on a toolchain, Rayon or collector change.
+pub(crate) fn round0_bind_bytes<F: JoltField>(prefix_cycles: usize, log_k: usize) -> Option<usize> {
+    let entries = if log_k == 0 {
+        prefix_cycles.div_ceil(2)
+    } else {
+        prefix_cycles
+    };
+    let node = size_of::<Vec<CycleMajorEntry<F>>>() + 2 * size_of::<usize>();
+    entries
+        .checked_mul(5)?
+        .checked_add(3)?
+        .checked_mul(size_of::<CycleMajorEntry<F>>())?
+        .checked_add(entries.checked_mul(node)?)
+}
+
 impl<F: JoltField> AddressMajorEntry<F> {
     fn bind(
         even: Option<&Self>,
@@ -744,6 +770,44 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         #[cfg(not(feature = "parallel"))]
         entries.sort_unstable_by_key(|entry| (entry.col, entry.row));
         Self { entries }
+    }
+
+    /// Entry bytes [`Self::from_columns`] keeps over the `prefix_cycles`
+    /// cycles before the trace's constant suffix, or `None` past
+    /// `usize::MAX`: at most one entry per cycle, collected sequentially, so
+    /// the doubling growth leaves at most `max(4, 2 · prefix_cycles)` slots.
+    pub fn collected_bytes(prefix_cycles: usize) -> Option<usize> {
+        prefix_cycles
+            .max(2)
+            .checked_mul(2)?
+            .checked_mul(size_of::<AddressMajorEntry<F>>())
+    }
+
+    /// Entry bytes the first [`Self::bind`] of a matrix built by
+    /// [`Self::from_columns`] over the `prefix_cycles` cycles before the
+    /// trace's constant suffix requests while it collects, with at most one
+    /// entry per cycle, or `None` past `usize::MAX`: the old entries at their
+    /// collected capacity ([`Self::collected_bytes`]), the splits' growing
+    /// vectors (at most `4 · prefix_cycles` slots, as in
+    /// [`round0_bind_bytes`]), either the per-group scratch or the
+    /// destination, which is reserved only after every split has finished
+    /// (at most `prefix_cycles + 3` slots), and at most `prefix_cycles` list
+    /// nodes. The same pinned Rust and Rayon facts apply.
+    pub fn first_bind_bytes(prefix_cycles: usize) -> Option<usize> {
+        let node = size_of::<Vec<AddressMajorEntry<F>>>() + 2 * size_of::<usize>();
+        let slots = prefix_cycles.checked_mul(5)?.checked_add(3)?;
+        Self::collected_bytes(prefix_cycles)?
+            .checked_add(slots.checked_mul(size_of::<AddressMajorEntry<F>>())?)?
+            .checked_add(prefix_cycles.checked_mul(node)?)
+    }
+
+    /// Entry bytes of the bound entries the first [`Self::bind`] keeps after
+    /// dropping the old ones, or `None` past `usize::MAX`: the destination's
+    /// at most `prefix_cycles + 3` slots, one entry per cycle.
+    pub fn bound_bytes(prefix_cycles: usize) -> Option<usize> {
+        prefix_cycles
+            .checked_add(3)?
+            .checked_mul(size_of::<AddressMajorEntry<F>>())
     }
 
     /// After binding every address, retain the explicit cycle prefix and
