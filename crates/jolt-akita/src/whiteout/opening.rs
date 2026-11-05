@@ -132,8 +132,11 @@ impl MaskedGroupOpening<AkitaField> for AkitaScheme {
         transcript: &mut VerifierState<'_, TranscriptSponge>,
     ) -> Result<MaskedPrefix<F, F>, ZkError> {
         let (groups, forms) = decode(shape, groups)?;
-        // The counting replay checks no proof of work and reads zero bytes,
-        // so Akita's transcript rejection here is a short NARG string.
+        // The counting replay checks no proof of work and reads zero bytes, so
+        // Akita's `InvalidProof` here is usually a short NARG string. A replay
+        // shape check (`MaskedReplay::check_equal`) also reports it; that case
+        // retries to the size cap before rejecting, which wastes time but
+        // still rejects.
         shape
             .row()
             .count_masked(&groups, forms, view, transcript)
