@@ -241,6 +241,20 @@ pub fn zk_advice_consumer_case() -> ZkVerifierFixtureCase {
     zk_case_from_parts(fixture)
 }
 
+/// A ZK proof with both advice kinds and a committed program, generated
+/// once per test binary.
+#[cfg(feature = "zk")]
+pub fn zk_committed_advice_case() -> ZkVerifierFixtureCase {
+    use std::sync::OnceLock;
+
+    static CASE: OnceLock<ZkVerifierFixtureCase> = OnceLock::new();
+    CASE.get_or_init(|| {
+        let _guard = verifier_fixture_lock();
+        zk_case_from_parts(generate_committed_advice_consumer())
+    })
+    .clone()
+}
+
 #[cfg(not(feature = "zk"))]
 pub fn standard_advice_consumer_case() -> VerifierFixtureCase {
     let _guard = verifier_fixture_lock();
@@ -608,7 +622,6 @@ fn generate_advice_consumer() -> GeneratedVerifierFixture {
     generate_advice_consumer_with_committed_program(false)
 }
 
-#[cfg(not(feature = "zk"))]
 fn generate_committed_advice_consumer() -> GeneratedVerifierFixture {
     generate_advice_consumer_with_committed_program(true)
 }

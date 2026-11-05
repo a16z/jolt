@@ -37,6 +37,43 @@ fn zk_committed_muldiv_verifier_proof_is_accepted() {
     );
 }
 
+/// A ZK proof with untrusted and trusted advice and a committed program
+/// verifies.
+#[test]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn zk_committed_advice_proof_is_accepted() {
+    support::assert_zk_accepts(
+        crate::support::verifier_fixtures::zk_committed_advice_case().verify(),
+    );
+}
+
+/// The same proof with its masked untrusted-advice opening (stage 4's
+/// staged cell) moved by one rejects.
+#[test]
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+fn zk_committed_advice_opening_tamper_rejects() {
+    use jolt_algebra::Ring as _;
+    use jolt_claims::protocols::jolt::{JoltOpeningId, JoltRelationId};
+
+    let mut case = crate::support::verifier_fixtures::zk_committed_advice_case();
+    let (masked, _) = masked_stages(&case);
+    let advice = masked
+        .residual
+        .opening(&JoltOpeningId::untrusted_advice(JoltRelationId::RamValCheck).into())
+        .expect("the staged untrusted-advice opening");
+    drop(masked);
+    let JoltProofClaims::Zk { masked: tape, .. } = &mut case.proof.claims else {
+        panic!("ZK verifier fixture must carry a masked payload");
+    };
+    let at = tape
+        .values
+        .iter()
+        .position(|value| *value == advice.masked)
+        .expect("the opening is on the masked tape");
+    tape.values[at] += Fr::from_u64(1);
+    support::assert_zk_rejects(case.verify());
+}
+
 /// Golden masked shape of the muldiv fixture at trace_length 512 /
 /// ram_K 8192: the pad layout and the residual relation's row counts. The
 /// header is pinned alongside so a drift here reads as a protocol change
