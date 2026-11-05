@@ -3,7 +3,7 @@
 //! stage-2-only values.
 
 use core::marker::PhantomData;
-use std::ops::Index;
+use std::ops::{Index, Range};
 use std::sync::Arc;
 
 use jolt_field::JoltField;
@@ -84,6 +84,17 @@ impl RamAddresses {
 
     pub(crate) fn prefix_len(&self) -> usize {
         self.values.len()
+    }
+
+    /// Whether every cycle in `range` is [`NO_ACCESS`], including cycles in
+    /// the implicit suffix.
+    #[inline]
+    pub(crate) fn no_access_in(&self, range: Range<usize>) -> bool {
+        assert!(range.end <= self.cycles);
+        let prefix_len = self.values.len();
+        self.values[range.start.min(prefix_len)..range.end.min(prefix_len)]
+            .iter()
+            .all(|&address| address == NO_ACCESS)
     }
 }
 
