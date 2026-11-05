@@ -23,8 +23,7 @@ use std::ops::Range;
 use akita_params::zk::ZK_CUT_LEVEL;
 use akita_transcript::{
     ProofMessageRange, ProtocolMessageKind, ProtocolSiteId, SITE_FAMILY_NEXT_WITNESS,
-    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_RESPONSE, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2,
-    SITE_FAMILY_SUMCHECK,
+    SITE_FAMILY_OPENING_PAYLOAD, SITE_FAMILY_STAGE1, SITE_FAMILY_STAGE2, SITE_FAMILY_SUMCHECK,
 };
 use jolt_akita::{AkitaField, AkitaScheme};
 use jolt_algebra::{CanonicalBytes, Ring};

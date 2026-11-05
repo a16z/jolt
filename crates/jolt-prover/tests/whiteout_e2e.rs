@@ -347,6 +347,7 @@ mod whiteout {
 
     /// Every masked value is bound: a shifted value at several positions of
     /// the masked tape, a dropped value and an appended one reject.
+    #[expect(clippy::panic, reason = "a clear proof here is a test failure")]
     fn assert_tape_tampers_reject(proved: &Proved, proof: &WhiteoutProof) {
         let JoltProofClaims::Zk { masked, .. } = &proof.claims else {
             panic!("a Whiteout proof carries a masked tape");

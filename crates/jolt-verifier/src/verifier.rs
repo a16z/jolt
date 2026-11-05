@@ -1658,7 +1658,12 @@ mod tests {
         let word =
             |index: usize| u64::from_le_bytes(honest[8 * index..8 * index + 8].try_into().unwrap());
         assert_eq!(honest.len(), 20 * 8 + 32 + 2 * 16);
-        assert_eq!(word(0), u64::from(is_zk), "zk is the first word");
+        let zk_word = match JOLT_VERIFIER_CONFIG.zk {
+            ZkConfig::Transparent => 0,
+            ZkConfig::BlindFold => 1,
+            ZkConfig::Whiteout => 2,
+        };
+        assert_eq!(word(0), zk_word, "zk is the first word");
         assert_eq!(word(19), 0, "no advice is present");
         assert_eq!(&honest[160..192], &checked.preprocessing_digest);
         assert_eq!(
