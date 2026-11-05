@@ -121,10 +121,14 @@ pub struct CommittedPads<F, O> {
 
 impl<F: Field, O> CommittedPads<F, O> {
     #[cfg_attr(
-        not(any(all(test, feature = "prover"), feature = "test-support")),
+        not(any(
+            all(test, feature = "prover"),
+            feature = "test-support",
+            feature = "whiteout-prover"
+        )),
         expect(
             dead_code,
-            reason = "only a back end's commit_pads builds pads; the first lands with the Whiteout Σ-protocol"
+            reason = "only a back end's commit_pads builds pads; BlindFold's lands with the pad-committed BlindFold"
         )
     )]
     pub(crate) fn new(layout: PadLayout, pads: Vec<F>, opening: O) -> Result<Self, ZkError> {
