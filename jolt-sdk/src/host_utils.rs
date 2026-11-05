@@ -328,7 +328,7 @@ pub fn prove_program(
         max_trace_length,
     )?;
     if let Some(budget) = memory_budget {
-        budget.check_known_eager::<F>(&config, &trace.trace)?;
+        let _ = budget.check_known_eager::<F>(&config, &trace.trace)?;
     }
     let witness_config = JoltVmWitnessConfig::new(
         config.trace_length.ilog2() as usize,

@@ -504,8 +504,9 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 ///
 /// Returns a `--memory-budget` below what its checks reserve
 /// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
-/// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
-/// matrix limit does not price.
+/// a trace failure, such as a limited trace's request the budget cannot
+/// hold, and, under Akita, a PCS setup failure, such as a budgeted setup shape
+/// the matrix limit does not price.
 ///
 /// # Panics
 ///
@@ -834,8 +835,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
         program.trace_with_backend(&mut tracer, &input, &[], &[])
     } else {
         program.trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
-    }
-    .expect("modular trace");
+    }?;
     let trace_length = trace_output.trace.proof_len();
     assert!(
         trace_length.next_power_of_two() <= max_trace_length,
