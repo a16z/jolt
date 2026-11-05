@@ -29,8 +29,6 @@ spongefish = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [features]
-setup-weight-tiles = []
-signed-byte-sum = []
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []
@@ -52,8 +50,6 @@ fp64-proof-linkage = []
 field-inline-guest = ["dep:jolt-riscv"]
 field-inline-guest-bn254 = ["field-inline-guest"]
 field-inline-guest-fp128 = ["field-inline-guest"]
-
-immutable-recipes = []
 
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires
