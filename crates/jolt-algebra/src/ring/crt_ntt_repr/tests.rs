@@ -591,7 +591,7 @@ fn ct_i32_mat_vec_matches_field_schoolbook() {
 }
 
 /// `radix_sum_to_ring` against `F`'s own arithmetic: planes of products
-/// `a·b` whose integers exceed `i128` (up to `2^174`, below `P/4`), with
+/// `a·b` whose integers exceed `i128` (up to about `2^177.2`, the `P/8` the transposed product reaches, below `P/4`), with
 /// both signs and the largest operands, summed at radix `2^32`.
 #[test]
 fn radix_sum_matches_field_arithmetic() {
@@ -605,7 +605,7 @@ fn radix_sum_matches_field_arithmetic() {
             .wrapping_add(0x5851_f42d_4c95_7f2d_1405_7b7e_f767_814f);
         (state as i128) >> (128 - bits)
     };
-    let extreme = (1i128 << 84) - 1;
+    let extreme = (3i128 << 84) - 1;
     for planes in 1..=RADIX_SUM_PLANES {
         let operands: Vec<([i128; D], [i128; D])> = (0..planes)
             .map(|plane| {

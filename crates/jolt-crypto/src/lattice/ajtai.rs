@@ -367,6 +367,10 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 "the CRT primes cannot hold one transposed column".into(),
             ));
         }
+        let (rows, width) = (self.shape.rows, self.shape.width);
+        if rows == 0 {
+            return Ok(vec![CyclotomicRing::zero(); width]);
+        }
         let limbs = field_bits::<F>()?.div_ceil(RADIX_SUM_BITS) as usize;
         let canonical: Vec<[u128; D]> = weights
             .iter()
@@ -391,7 +395,6 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
             })
             .collect();
         let entries = self.ntt_entries();
-        let (rows, width) = (self.shape.rows, self.shape.width);
         cfg_into_iter!(0..width)
             .map(|col| {
                 let sums = planes
