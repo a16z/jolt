@@ -14,6 +14,7 @@ use crate::ntt::prime::{MontCoeff, PrimeWidth};
 #[cfg(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::{prime::NttPrime, NttTwiddles};
 use crate::ring::cyclotomic::CyclotomicRing;
+use crate::LIFT_BIAS;
 
 use super::lut::{balanced_limbs, CenteredMontReducer};
 use super::{
@@ -559,7 +560,7 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
 
     /// [`Self::to_ring`] with no branch, table lookup or memory address that
     /// depends on the coefficients: masked centering and Garner digits, and a
-    /// sign-free lift of each digit into `F`.
+    /// biased lift of each digit into `F` ([`crate::lift_biased`]).
     ///
     /// Constant time holds if the target's integer and `F` arithmetic and the
     /// inverse NTT kernel are themselves data independent.
@@ -582,8 +583,14 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         }
         params.garner.centered_mixed_radix_ct(&mut digits);
         let (weights, _) = params.garner.field_weights::<F>();
+        let bias =
+            weights.iter().fold(F::zero(), |sum, &weight| sum + weight) * F::from_u64(LIFT_BIAS);
         CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
-            digits_to_field_ct(&std::array::from_fn(|limb| digits[limb][index]), &weights)
+            digits_to_field_ct(
+                &std::array::from_fn(|limb| digits[limb][index]),
+                &weights,
+                bias,
+            )
         }))
     }
 
