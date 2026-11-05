@@ -145,7 +145,6 @@ pub fn referenced_openings<F, O: Ord, D, C>(
     openings
 }
 
-
 #[cfg(not(feature = "immutable-recipes"))]
 #[doc(hidden)]
 #[macro_export]

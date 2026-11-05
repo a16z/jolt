@@ -86,8 +86,6 @@ twist::instantiate_value_reduction! {
     eq_spartan = FieldRegistersClaimReductionPublic::EqSpartan,
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
