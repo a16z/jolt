@@ -224,6 +224,8 @@ pub struct GarnerData<const K: usize> {
     /// First limb of the run containing limb `i`. Each run's modulus product
     /// is below 2^126, so its centered mixed-radix value fits in i128.
     run_start: [usize; K],
+    /// `(Π_{j≠i} p_j)^{-1} mod p_i`: the explicit-CRT inverse of prime `i`.
+    crt_inverse: [u64; K],
 }
 
 impl<const K: usize> GarnerData<K> {
@@ -235,6 +237,11 @@ impl<const K: usize> GarnerData<K> {
     /// Garner inverses used to construct the cached Shoup quotients.
     pub fn gamma(&self) -> &[[u64; K]; K] {
         &self.gamma
+    }
+
+    /// `(Π_{j≠i} p_j)^{-1} mod p_i` for every prime `i`.
+    pub fn crt_inverse(&self) -> &[u64; K] {
+        &self.crt_inverse
     }
 
     /// Compute Garner constants from a set of NTT primes.
@@ -276,12 +283,24 @@ impl<const K: usize> GarnerData<K> {
             }
             run_start[index] = start;
         }
+        let mut crt_inverse = [0; K];
+        for (i, inverse) in crt_inverse.iter_mut().enumerate() {
+            let pi = moduli[i];
+            let cofactor = moduli.iter().enumerate().filter(|&(j, _)| j != i).fold(
+                1 % pi,
+                |product, (_, &pj)| {
+                    ((u128::from(product) * u128::from(pj % pi)) % u128::from(pi)) as u64
+                },
+            );
+            *inverse = modular_inverse(cofactor, pi)?;
+        }
         Ok(Self {
             moduli,
             gamma,
             gamma_shoup,
             lift,
             run_start,
+            crt_inverse,
         })
     }
 

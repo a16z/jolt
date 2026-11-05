@@ -136,7 +136,14 @@ fn check_apply_transposed<const D: usize>(rows: usize, width: usize) {
     let mut weights: Vec<CyclotomicRing<F, D>> = (0..rows)
         .map(|_| CyclotomicRing::from_coefficients(std::array::from_fn(|_| F::random(&mut rng))))
         .collect();
+    // The largest weight, and limb boundaries of the radix-2^32 split.
     weights[0].coefficients_mut()[1] = -F::one();
+    weights[0].coefficients_mut()[2] = F::from_u64(u32::MAX.into());
+    weights[0].coefficients_mut()[3] = F::from_u128(1 << 96);
+    weights[0].coefficients_mut()[4] = F::from_u64(0);
+    if let Some(last) = weights.last_mut() {
+        *last = CyclotomicRing::from_coefficients([-F::one(); D]);
+    }
     let view = MatrixView::new(shape, &data).unwrap();
     let expected: Vec<CyclotomicRing<F, D>> = (0..width)
         .map(|col| {
@@ -181,6 +188,7 @@ fn combine_columns_matches_the_stream() {
 #[test]
 fn apply_transposed_matches_schoolbook() {
     check_apply_transposed::<64>(3, 5);
+    check_apply_transposed::<128>(10, 4);
     check_apply_transposed::<256>(2, 3);
 }
 

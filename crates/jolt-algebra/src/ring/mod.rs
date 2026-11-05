@@ -10,7 +10,7 @@ mod residue;
 pub use crt_ntt_repr::{
     cyclic_ntt_with_i16_tail_to_ring, mat_vec_i16_with_tail, ntt_with_i16_tail_to_ring,
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
-    I16TailParams,
+    I16TailParams, RADIX_SUM_BITS,
 };
 pub use cyclotomic::{
     balanced_decompose_coefficients_pow2_i8_into, CyclotomicRing, NegacyclicShiftWindows,

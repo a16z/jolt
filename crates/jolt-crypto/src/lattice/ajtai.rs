@@ -19,7 +19,7 @@ use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::tables::{q128_primes, validate_profile_crt_ring_degree, Q128_MAX_RING_D};
 use jolt_algebra::{
     balanced_decompose_coefficients_pow2_i8_into, CanonicalEncoding, CrtNttParamSet,
-    CyclotomicCrtNtt, CyclotomicRing, Field,
+    CyclotomicCrtNtt, CyclotomicRing, Field, RADIX_SUM_BITS,
 };
 use zeroize::Zeroizing;
 
@@ -36,7 +36,6 @@ const LIMB_BITS: u32 = 30;
 /// Columns accumulated before one exact reconstruction, unless the CRT
 /// capacity allows fewer. Also the unit of parallel work.
 const COLUMN_CHUNK: usize = 64;
-const LIMB_MASK: u64 = (1 << LIMB_BITS) - 1;
 
 /// Balanced gadget digits: base `2^log_basis`, `levels` digits, digit 0 least
 /// significant, decomposed by jolt-algebra's branch-free balanced
@@ -341,9 +340,13 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
 
     /// `Mᵀ · w` over field weights: entry `col` is `Σ_row w_row · M[row][col]`.
     ///
-    /// Each weight coefficient is split into unsigned `LIMB_BITS`-bit limbs,
-    /// and every limb plane runs the CRT product exactly. Not constant time: the
-    /// weights must be public.
+    /// Each weight coefficient is split into unsigned
+    /// [`RADIX_SUM_BITS`]-bit limbs, and every limb plane runs the CRT
+    /// product exactly. A column's planes leave CRT+NTT form together, with
+    /// one field image per coefficient
+    /// ([`CyclotomicCrtNtt::radix_sum_to_ring`]).
+    ///
+    /// Not constant time: the weights and the matrix must be public.
     pub fn apply_transposed(
         &self,
         weights: &[CyclotomicRing<F, D>],
@@ -354,15 +357,21 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 actual: weights.len(),
             });
         }
+        // Four times the limb bound: the radix sum's rounding margin.
         if !self
             .params
             .crt_capacity()
-            .supports::<F, D>(self.shape.rows, LIMB_MASK)
+            .supports::<F, D>(self.shape.rows, 1 << (RADIX_SUM_BITS + 2))
         {
             return Err(CryptoError::InvalidSetup(
                 "the CRT primes cannot hold one transposed column".into(),
             ));
         }
+        let (rows, width) = (self.shape.rows, self.shape.width);
+        if rows == 0 {
+            return Ok(vec![CyclotomicRing::zero(); width]);
+        }
+        let limbs = field_bits::<F>()?.div_ceil(RADIX_SUM_BITS) as usize;
         let canonical: Vec<[u128; D]> = weights
             .iter()
             .map(|ring| {
@@ -375,42 +384,35 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
                 Ok(values)
             })
             .collect::<Result<_, CryptoError>>()?;
-        let limbs = field_bits::<F>()?.div_ceil(LIMB_BITS) as usize;
-        let mut output = vec![CyclotomicRing::<F, D>::zero(); self.shape.width];
-        let mut scale = F::one();
-        let radix = F::from_u64(1 << LIMB_BITS);
-        for limb in 0..limbs {
-            let shift = LIMB_BITS * limb as u32;
-            let rows: Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>> = canonical
-                .iter()
-                .map(|values| {
-                    // In range: the mask keeps `LIMB_BITS < 32` bits.
-                    let plane: [i32; D] =
-                        values.map(|value| ((value >> shift) as u64 & LIMB_MASK) as i32);
-                    let mut ntt = CyclotomicCrtNtt::zero();
-                    ntt.assign_centered_i32_ct(&plane, &self.params);
-                    ntt
+        // Limb-major: plane `limb` of weight `row` at `limb * rows + row`.
+        let planes: Vec<CyclotomicCrtNtt<i32, CRT_PRIMES, D>> = (0..limbs)
+            .flat_map(|limb| {
+                let shift = RADIX_SUM_BITS * limb as u32;
+                canonical.iter().map(move |values| {
+                    let plane: [i128; D] = values.map(|value| i128::from((value >> shift) as u32));
+                    CyclotomicCrtNtt::from_centered_coefficients(&plane, &self.params)
                 })
-                .collect();
-            let entries = self.ntt_entries();
-            let columns: Vec<CyclotomicRing<F, D>> = cfg_into_iter!(0..self.shape.width)
-                .map(|col| {
-                    let mut accumulator = CyclotomicCrtNtt::zero();
-                    for (row, weight) in rows.iter().enumerate() {
-                        let entry = entries
-                            .get(row * self.shape.width + col)
-                            .ok_or_else(|| CryptoError::Internal("matrix entry missing".into()))?;
-                        accumulator.add_assign_pointwise_mul(entry, weight, &self.params);
-                    }
-                    Ok(accumulator.to_ring_ct(&self.params))
-                })
-                .collect::<Result<_, CryptoError>>()?;
-            for (out, column) in output.iter_mut().zip(columns) {
-                column.scale_accumulate_into(out, scale);
-            }
-            scale *= radix;
-        }
-        Ok(output)
+            })
+            .collect();
+        let entries = self.ntt_entries();
+        cfg_into_iter!(0..width)
+            .map(|col| {
+                let sums = planes
+                    .chunks_exact(rows)
+                    .map(|limb_planes| {
+                        let mut accumulator = CyclotomicCrtNtt::zero();
+                        for (row, plane) in limb_planes.iter().enumerate() {
+                            let entry = entries.get(row * width + col).ok_or_else(|| {
+                                CryptoError::Internal("matrix entry missing".into())
+                            })?;
+                            accumulator.add_assign_pointwise_mul(entry, plane, &self.params);
+                        }
+                        Ok(accumulator)
+                    })
+                    .collect::<Result<Vec<_>, CryptoError>>()?;
+                Ok(CyclotomicCrtNtt::radix_sum_to_ring(&sums, &self.params)?)
+            })
+            .collect()
     }
 
     /// The exact contribution of columns `start..start + len` (clamped to the
