@@ -8,11 +8,10 @@ description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 [features]
 # The prove side: `prove` and the proof-of-work search before its challenges,
 # which copies the sponge state. Verifier builds leave it off.
-prover = [
-  "jolt-sumcheck/prover",
-  "jolt-transcript/prover-grinding",
-  "dep:rayon",
-]
+prover = ["jolt-sumcheck/prover", "jolt-transcript/prover-grinding"]
+# `CommittedPads::uncommitted`, for tests of protocols written over the
+# masked channel in other crates (Akita's masked levels).
+test-support = []
 
 [lints]
 workspace = true
@@ -27,9 +26,10 @@ jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
 rand_core.workspace = true
-rayon = { workspace = true, optional = true }
+rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
 thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 jolt-field = { workspace = true, features = ["bn254", "solinas"] }

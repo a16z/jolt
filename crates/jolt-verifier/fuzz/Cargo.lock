@@ -820,8 +820,10 @@ dependencies = [
  "jolt-transcript",
  "jolt-utils",
  "rand_core",
+ "rayon",
  "serde",
  "thiserror",
+ "zeroize",
 ]
 
 [[package]]
