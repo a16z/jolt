@@ -29,6 +29,13 @@ Two parts of Part II are open, and both depend on the opening:
 
 Akita's binary-source commitment, which follows LaBinius, is the intended home for that opening. Its current internal field stages are the question this spec asks reviewers.
 
+Three further items are open but do not depend on the opening:
+- where the link's trace claims are reduced (Open question 7);
+- the relation's constraint-index table;
+- the link's second-stage construction and error ledger.
+
+The last two come with the implementation.
+
 **Measured so far.** On five mainnet blocks, emulated with the feature off and on, the trace shrinks by 34.62% in total, and the padded trace domain halves on three of the five. On a recursive-verification guest, rows fall by 3.32%. Both figures count trace rows only. Link and opening costs are not included, and no end-to-end proof on a block has been measured yet.
 
 ## Glossary
@@ -75,7 +82,7 @@ The block data below was measured by running the Ethereum guest in the Jolt emul
 
 **Recursive-verification guest:** counted rows fall from 106,762,299 to 103,220,672 (−3.32%). The padded $2^{27}$ domain is unchanged.
 
-The prototype is not public. All figures will be re-measured on the implementation, with the commands in Testing Strategy.
+The prototype is not public. Public benchmark commands, guest and input identities will accompany the implementation, and all figures will be re-measured there. Until then these are non-public prototype measurements.
 
 ### Invariants
 
@@ -174,9 +181,7 @@ New `jolt-eval` objectives: `pcall_rows_saved` and `pcall_added_proof_bytes`, bo
 - `keccak_f(state: &mut [u64; 25])`, flavour 0;
 - `keccak_absorb_f(state: &mut [u64; 25], block: &[u64; 17])`, flavour 1.
 
-Lanes are little-endian `u64`, in the order `jolt-inlines/keccak256` uses. The existing entry point `keccak256_absorb_permute(state: *mut u64, block: *const u8)` switches to the new key under the guest feature, so existing hashers get the saving without changes. Two requirements are new relative to the existing inline:
-- 8-byte alignment of the block, so callers copy an unaligned block first, as the hasher already does;
-- disjoint state and block, so the aliased-operand case is rejected. The guest-side feature makes these functions emit the new key. Without it they use the existing inline. Old keys keep their meaning everywhere (Invariant 2).
+Lanes are little-endian `u64`, in the order `jolt-inlines/keccak256` uses. The existing entry point `keccak256_absorb_permute(state: *mut u64, block: *const u8)` switches to the new key under the guest feature, so existing hashers get the saving without changes. Its safety contract already requires an 8-byte-aligned block and non-overlapping state and block, and the hasher already stages unaligned input. What changes is enforcement: under the new key the tracer rejects a violating call instead of executing it. The old inline keys keep their expansion semantics. The guest-side feature makes these functions emit the new key. Without it they use the existing inline. Old keys keep their meaning everywhere (Invariant 2).
 
 **Key choice.** On `main`, opcode `0x0b` uses `funct7` 0 to 9:
 
@@ -197,9 +202,9 @@ They are listed in `jolt-inlines/fixtures/fixtures/registered_inline_expand_pari
 
 **Registry.** Today `tracer/src/instruction/inline.rs` looks registrations up with a first-match `inventory::iter().find(..)`, and uniqueness is checked only by `linked_inline_registration_keys_are_unique`. This spec adds a one-time validation of all linked registrations. Execution and preprocessing share it, and it fails on any duplicate key in any block, not only the new one.
 
-**Decode path.** `PCALL` is decoded in the `0x0b` decoder: `funct7 = 0x0a` dispatches to the `PCALL` family before the generic `INLINE` lookup.
+**Decode path.** Both decoders, `tracer/src/instruction/mod.rs` (execution) and `jolt-program/src/image/decode.rs` (preprocessing), dispatch `funct7 = 0x0a` under opcode `0x0b` to the `PCALL` family before the generic inline arm. `PCALL` is admitted by a feature-gated instruction profile, as field inline is.
 - **Reserved block.** The key set $\{(\text{opcode } 0\text{x}0b, \text{funct7 } 0\text{x}0a, \text{funct3 } f) : f < 8\}$ is reserved in the one-time registry validation. So any `InlineRegistration` in block `0x0a` fails validation in every build.
-- **Without the feature,** the decoder rejects `funct7 = 0x0a` with `UnsupportedPrecompile`, before the inventory lookup.
+- **Without the feature,** both decoders reject the word before any inventory lookup: the tracer with a decode error, `jolt-program` with `IllegalSourceInstruction`.
 - **No inventory entry.** `PCALL` adds no inventory entry, so `linked_inline_registration_inventory_matches_fixture` is unchanged.
 - **Expansion.** The expansion into virtual rows is produced in `jolt-program/src/expand`, as for other sequences.
 
@@ -238,7 +243,7 @@ The tracer counts calls per family and stops at call $K+1$ with `PRECOMPILE_CAPA
 
 | Piece | Crate | Stage |
 |---|---|---|
-| `PCALL` vocabulary, flags, decode | `jolt-riscv` (new module, as for field inline), `jolt-program` bytecode fields | preprocessing |
+| `PCALL` vocabulary, flags and profile | `jolt-riscv` (new module, as for field inline); decode in `tracer` and `jolt-program`; bytecode fields in `jolt-program` | preprocessing |
 | Guest API | `jolt-inlines/keccak256`, behind a guest feature | none |
 | Expansion | `jolt-program/src/expand` | preprocessing |
 | Execution and capacity | `tracer` | execution |
@@ -250,13 +255,9 @@ The tracer counts calls per family and stops at call $K+1$ with `PRECOMPILE_CAPA
 
 **Why the new stages.** A `SumcheckBatch` is over one field. So the binary relation cannot join a prime batch, and it gets its own stage. The prime link members could join an existing batch. A separate stage keeps feature-off batches identical (Invariant 1).
 
-**Where the link runs.** The link's trace-side sum-check ends at a new cycle point $\zeta'$, with claims on:
-- `RamReadValue`, `RamWriteValue` and `RamAddress`;
-- the `PCALL` bytecode fields.
-
-These are virtual polynomials. On `main` they are reduced only in two places:
-- stage 2, by RAM read-write checking from the Spartan outer point;
-- stages 6a and 6b, by bytecode read-raf.
+**Where the link runs.** The link's trace-side sum-check ends at a new cycle point $\zeta'$, with claims on `RamReadValue`, `RamWriteValue`, $\lambda$ and the `PCALL` bytecode fields. Port addresses are not link terminals: they are enforced per row by the address equation (II.6). These are virtual polynomials. On `main`:
+- **RAM values.** Stage 2 consumes `RamReadValue` and `RamWriteValue` from the Spartan outer point through RAM read-write checking. `RamAddress` goes through `RamRafEvaluation`. Their outputs continue through later RAM reductions (stages 4 and 5) to committed sources.
+- **Bytecode fields.** Stages 6a and 6b reduce per-cycle bytecode fields through bytecode read-raf, which folds a fixed number of staged claim sets (`NUM_BYTECODE_VAL_STAGES`; `akita` already adds one). A $\zeta'$ claim set is one more.
 
 So the link must run early enough that its $\zeta'$ claims can enter those reductions. That needs a feature-gated reduction that merges $\zeta'$ with the existing point. The alternative is that this spec adds new feature-gated reductions for those polynomials.
 
@@ -290,7 +291,7 @@ Either choice changes the feature-on inputs of an existing stage. Invariant 1 st
   - $U[r, x, y, b] = A[r, x, y, b] + D[r, x, b]$, a linear form.
 - $\rho$ and $\pi$: $V$ is the public Keccak rotation and lane permutation of $U$, a linear form.
 - $\chi$ and $\iota$: $A[r+1, x, y, b] = V[r, x, y, b] + (1 + V[r, x+1, y, b])\, V[r, x+2, y, b] + [x = y = 0]\, RC[r, b]$. The rotation table, round constants $RC$, lane map and source addresses are fixed by the layout version, and $D$, $U$ and $V$ are linear forms, not extra witness columns.
-- absorb, per lane $i < 25$ and bit $b$, with $f_1$ the absorb flavour bit:
+- absorb, per lane $i = x + 5y < 25$ (as in `jolt-inlines/keccak256`) and bit $b$, with $f_1$ the absorb flavour bit:
   - for $i < 17$: $A[0, i, b] = S_{i,b} + f_1 B_{i,b}$;
   - for $i \ge 17$: $A[0, i, b] = S_{i,b}$.
 
@@ -310,7 +311,7 @@ Bitness comes from the source commitment; the opening must guarantee that the co
 1. **Views.** Every operand of a residual ($A[r+1]$, $V$, $V$ shifted by $x+1$ and by $x+2$, the absorb terms, selectors and constants) is a public linear map of the source. It is materialised as its own multilinear table over the constraint index, a view, with masks folded into the views.
 2. **Zero-check.** Constraint families are combined by independent random $H$ coefficients, and the result is weighted by $\mathrm{eq}(\tau_H, \cdot)$ at a random point. Each residual is at most the product of two views, so with the equality weight every index variable has degree at most 3.
 3. **Rounds.** The sum-check runs over $\log_2 K + 16$ variables: the record index plus the $2^{16}$-entry state index.
-4. **Terminals.** They are evaluations of views, so each is an $H$-linear form of the committed source.
+4. **Terminals.** They are evaluations of views, so each is an $H$-linear form of the committed source. Because rotations, the lane permutation and the $x+1$, $x+2$ shifts are not permutations of index variables, each terminal has the form $\langle \mathrm{eq}(r_g, \cdot) \otimes c, s \rangle$. Here $c$ is a public in-record vector the verifier computes in $O(2^{17})$ from the layout. It is not a multilinear point evaluation of the source. If the chosen opening accepts only point evaluations, one batched reduction sum-check per field over the in-record index converts these claims, and its rounds belong in Costs.
 
 The full constraint-index table (round, absorb, flavour, inactive and padding residuals, with their view definitions) is fixed with the layout version in the implementation, and the degree bound is conditional on it.
 
@@ -384,10 +385,18 @@ $$z = \sum_j \Big( \sum_q \gamma_q\, Q_q(j)\, W_q(j) + \eta\, \mathrm{eq}(\zeta,
    - the claimed $Q_q$ and $C$ terminals at the first sum-check's point;
    - equality-weighted zero-checks for $f_0 f_1 = 0$, chunk sums equal to $u$, canonical inactive chunks, and valid (non-overflowing) active offsets.
 
-   Terminals are absorbed before the coefficients that batch them. It has 6 row rounds of degree at most 3 and $\log_2 K$ record rounds of degree at most $m + 2$: one degree per chunk of the carry-matrix product, plus the activity and equality factors. That is degree 9 at $T = 2^{27}$ ($m = 7$) and 10 at $T = 2^{29}$ to $2^{31}$ ($m = 8$). The parameter validator and proof parser use this dimension-dependent bound.
+   Terminals are absorbed before the coefficients that batch them. **Provisional.** The intended shape is 6 row rounds of degree at most 3 and $\log_2 K$ record rounds of degree at most $m + 2$: one degree per chunk of the carry-matrix product, plus the activity and equality factors. That is degree 9 at $T = 2^{27}$ ($m = 7$) and 10 at $T = 2^{29}$ to $2^{31}$ ($m = 8$).
+
+   **Still open, to be published before implementation acceptance:**
+   - the complete second-stage polynomial and its batched input, independently batching $z$, each $Q_q(r)$, $C(r)$ and the validity residuals after absorbing them;
+   - the carry matrices with their initial and final carry states;
+   - the source-linear form of every matrix-entry terminal;
+   - the error ledger at every supported dimension.
+
+   No verifier, reference or production, may stub this stage.
 4. **Terminals.** All terminal claims are linear forms in the trace's virtual polynomials (discharged as in II.1) and in the record's prime readings.
 
-**Error.** The link's interactive error is bounded by the sum, over all its zero-checks and sum-check rounds, of degree divided by $p$. For $T = 2^{27}$ and $K = 2^{11}$ an estimate is $230/p$ for coverage and $45/p$ for agreement. The full ledger at every supported dimension, including $T = 2^{31}$ and $K = 2^{18}$, comes with the implementation.
+**Error.** The link's interactive error is bounded by the sum, over all its zero-checks and sum-check rounds, of degree divided by $p$. For $T = 2^{27}$ and $K = 2^{11}$ the estimate is about $275/p$. That is a target, not an established bound: the full ledger at every supported dimension, including $T = 2^{31}$ and $K = 2^{18}$, comes with the second-stage construction.
 
 **The open dependency.** The agreement is sound only if the record's prime readings $b$ and the bits used by the $H$ relation (II.2) are the same committed bits. Matching transcript randomness does not give this, and neither does converting field encodings. It must be an interface property of the opening, stated in II.4 as the common-source requirement.
 
@@ -399,7 +408,7 @@ $$z = \sum_j \Big( \sum_q \gamma_q\, Q_q(j)\, W_q(j) + \eta\, \mathrm{eq}(\zeta,
    - $H$-linear claims from the relation (II.2);
    - $\mathbb F_p$-linear claims from the link (II.3).
 3. **Boolean source.** The extracted source is Boolean.
-4. **Claim fields.** Claims reach the Jolt verifier only in $H$ or $\mathbb F_p$. `jolt-field` also has `F192` ($\mathbb F_{2^{64}}^3$), and `jolt-transcript` can sample it. Restricting claims to $H$ keeps one binary claim type in the claim pipeline and the stage-8 assembly; it is a scope choice, not a missing type. Whether the opening may use `F192` internally is Open question 1.
+4. **Claim fields.** Claims reach the Jolt verifier only in $H$ or $\mathbb F_p$. `jolt-field` also has `F192` ($\mathbb F_{2^{64}}[y]/(y^3+y+1)$), and `jolt-transcript` can sample it. Restricting claims to $H$ keeps one binary claim type in the claim pipeline and the stage-8 assembly; it is a scope choice, not a missing type. Whether the opening may use `F192` internally is Open question 1.
 5. **Default path.** With the feature off, the Akita proof is unchanged.
 
 | Route | Status | Cost |
@@ -407,7 +416,7 @@ $$z = \sum_j \Big( \sum_q \gamma_q\, Q_q(j)\, W_q(j) + \eta\, \mathrm{eq}(\zeta,
 | Akita binary-source mode: bit tables committed as in LaBinius and opened in one grouped session with the prime sources. Public on Akita in the binary-source PRs, #318 to #332. | The intended route. The grouped session gives one opening for prime and binary sources. Two things are missing: an evaluation interface that serves both claim fields from one source (requirement 2), and production security parameters for the grouped profile. Its internal stages currently include a field switch to a larger binary field and prime-field steps. | Open |
 | Standalone LaBinius instance for the table | Sound, but it is a second commitment instance (fails 1), and it does not serve the prime link claims (fails 2). | Not priced here |
 | Prime Akita with the bits stored as integers mod $p$ | Serves the prime link and can authenticate Boolean prime readings, but does not directly supply the $H$-linear evaluations the relation needs. A proved common-source evaluation conversion is required. There is no nonzero ring homomorphism from an $\mathbb F_2$-algebra into a ring of odd characteristic, which rules out a naive conversion, but it does not settle the best conversion protocol, its granularity or its cost. | Open; not priced here |
-| Reference mode: disclose the records | Sound for testing; does not meet the production criteria. | 558,104 bytes at $K = 2^{10}$ in the specified codec |
+| Reference mode: disclose the records | Sound for testing; does not meet the production criteria. | about 558,104 bytes at $K = 2^{10}$ (estimate; the disclosure codec and its byte accounting come with the implementation) |
 
 **Reference mode.** This is the opening used for the first end-to-end run.
 - The proof carries the canonical record words: input state, block, flavour and start of each record. They are absorbed into the transcript before any link or relation challenge.
@@ -462,7 +471,8 @@ Exact coverage, not the projection, rules out missing or duplicated records. Ind
 | Port addresses | RAM checking, plus the port address equation (new, feature-gated) |
 | Ports inside ordinary RAM, not wrapping | new feature-gated bounded-integer range checks on the base registers: `[rs1, rs1+200)` and, for flavour 1, `[rs2, rs2+136)` must lie inside ordinary RAM under the authenticated memory layout, excluding the mapped I/O, advice and termination regions. Generic RAM consistency covers those regions too, so it does not suffice. |
 | Register preservation | flags of the new virtual instructions (new, feature-gated) |
-| Alignment and state/block disjointness | new feature-gated checks on the base registers: both 8-byte aligned, and the two ranges disjoint for flavour 1 |
+| Alignment and non-wrap | follow from the unwrapped port address equation together with `main`'s RAM RAF identity |
+| State/block disjointness | not needed for simulation: every block read precedes every state write, and each state row reads its word before writing it. It is kept as a tracer and host-parity policy. |
 | No cut inside an interval | only relevant if trace chunking is added; it must not cut inside a sequence |
 
 All new constraints are compiled only with the feature (Invariant 1).
@@ -470,7 +480,7 @@ All new constraints are compiled only with the feature (Invariant 1).
 ### Soundness obligations
 
 1. The $H$ relation zero-check (II.2), with the error bound stated there.
-2. The link reduction (II.3): at most $230/p$ for coverage and $45/p$ for Boolean agreement at the stated sizes.
+2. The link reduction (II.3): error at most the sum of degree over $p$ across its sum-check rounds and zero-checks, proved from the full ledger. The estimate of about $275/p$ at $T = 2^{27}$, $K = 2^{11}$ is a target, not a bound.
 3. The opening: binding, the common-source extractor and Boolean extraction (II.4). This is open.
 4. The interval lemma and the simulation theorem (II.6), with each requirement mapped to a constraint.
 5. Statement binding: the transcript absorbs, before any precompile challenge:
@@ -493,7 +503,7 @@ All new constraints are compiled only with the feature (Invariant 1).
 
 ### Costs
 
-**Rows** (measured): −34.62% on five blocks and −3.32% on a recursive-verification guest. A call costs 44 rows instead of 3,121.
+**Rows** (measured): −34.62% on five blocks and −3.32% on a recursive-verification guest. An absorb-and-permute call costs 44 rows instead of 3,121; a permute-only call costs 27 instead of 3,087.
 
 **Bytes**, against a target of at most 4,096 extra bytes per family per proof. Prime elements are 16 bytes.
 
@@ -505,7 +515,7 @@ All new constraints are compiled only with the feature (Invariant 1).
 | Commitment and opening | open | open | II.4 |
 
 **Before the opening, the forecast is already about 9 KB**, above 4,096 bytes:
-- **What batching saves.** Folding terminals into the stage-8 batch removes only terminal claims, not round messages.
+- **What batching saves.** Grouping terminal openings in stage 8 may amortize the cost of authentication. It does not by itself remove the terminal evaluation values the nonlinear final checks need (for example the three views of a $\chi$ residual), nor any round messages. No part of the estimated terminal bytes is established to disappear through grouping alone.
 - **The constraint.** Meeting the target therefore needs fewer round messages, for example by merging the link and relation sum-checks where fields allow, and an opening that adds a few hundred bytes.
 - **If that is not achievable,** the trade (about a third fewer rows for roughly 10 KB or more) is a decision for maintainers (Open question 2).
 
@@ -526,7 +536,7 @@ All new constraints are compiled only with the feature (Invariant 1).
 
 - **Keep Keccak as an inline.** No new protocol, but 3,121 rows per call and about a third of the trace on blocks.
 - **Prove Keccak in $\mathbb F_p$ with lookups.** Bitwise steps cost per-bit columns or lookup tables in a prime field; the $H$ table proves $\chi$ and the linear steps natively.
-- **Prime Akita only, with bits as residues.** Avoids a binary source, but the bit lift costs per bit (II.4).
+- **Prime Akita only, with bits as residues.** Avoids a separate binary-source mode, but needs a proved common-source conversion that supplies the $H$-linear evaluations; its construction, granularity and cost are open (II.4).
 - **Two specs.** Part I and Part II could be separate specs (Open question 6).
 
 ## Documentation
@@ -548,7 +558,7 @@ The link and the opening were stubs there. The first end-to-end proof on a real 
 1. **Opening.** Can Akita's binary-source mode provide the common-source interface of II.4, one bit table answering both $H$ and $\mathbb F_p$ linear claims with one extractor? May its internal stages use the larger binary field, provided only $H$ and $\mathbb F_p$ claims reach Jolt?
 2. **Bytes.** Is 4,096 bytes per family the right target for about a third fewer rows on blocks, or should it scale with rows saved?
 3. **Capacity.** One $K$ per proving key, or a small set of keys from $2^{10}$ to $2^{18}$?
-4. **Key.** Is $(0\text{x}0b, 0\text{x}0a, \cdot)$ acceptable as the precompile block, or should precompiles get their own opcode?
+4. **Key.** Is the block with opcode `0x0b` and funct7 `0x0a` acceptable for precompiles, or should precompiles get their own opcode?
 5. **Interval lemma.** Should its proof for `main`'s virtual-sequence encoding be written once for all inline sequences, since existing virtual sequences rely on the same rows?
 6. **Scope.** Keep this as one spec, or split Part I and Part II?
 7. **Link placement.** Merge the link's cycle-point claims into stages 2 and 6, or add dedicated reductions after the link?
