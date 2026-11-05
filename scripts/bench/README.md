@@ -664,7 +664,7 @@ test "$jolt_key_type" = ssh-ed25519
 printf 'restrict,command="/usr/local/libexec/jolt-bench-entry" %s %s\n' \
   "$jolt_key_type" "$jolt_key_blob" > /etc/ssh/authorized_keys/jolt-bench-runner
 chown root:root /etc/ssh/authorized_keys/jolt-bench-runner
-chmod 0600 /etc/ssh/authorized_keys/jolt-bench-runner
+chmod 0644 /etc/ssh/authorized_keys/jolt-bench-runner
 cat > /etc/ssh/sshd_config.d/60-jolt-bench-runner.conf <<'SSH_CONFIG'
 Match User runner
     AuthorizedKeysFile /etc/ssh/authorized_keys/jolt-bench-runner
@@ -678,6 +678,7 @@ chmod 0600 /etc/ssh/sshd_config.d/60-jolt-bench-runner.conf
 systemctl reload ssh
 ```
 
+The key file is readable by `runner` because sshd reads it as the target user.
 The root-owned authorized-key path prevents PR code from changing this key's
 restrictions through the account's home directory. It does not prevent code
 already running as `runner` from modifying other account state. The entry stores
