@@ -34,7 +34,7 @@ use crate::stages::pow::{check_pow, PowSite, StagePowNonces};
 #[cfg(feature = "akita")]
 use crate::stages::stage4::outputs::Stage4ClearOutput;
 #[cfg(all(feature = "akita", feature = "zk"))]
-use crate::stages::stage4::outputs::Stage4OutputPoints;
+use crate::stages::stage4::ram_val_check::RamValCheckStagedOpenings;
 use crate::stages::stage6b::outputs::Stage6bClearOutput;
 #[cfg(all(feature = "akita", feature = "zk"))]
 use crate::stages::stage6b::outputs::Stage6bOutputPoints;
@@ -818,7 +818,7 @@ pub fn masked_group_claims<F, C, Ch>(
     one_hot_config: JoltOneHotConfig,
     one_hot_trace_commitment: &C,
     schedule: &PrecommittedSchedule,
-    stage4_points: &Stage4OutputPoints<F>,
+    stage4_staged_points: &RamValCheckStagedOpenings<Vec<F>>,
     stage6b_points: &Stage6bOutputPoints<F>,
     stage7_points: &Stage7OutputPoints<F>,
     residual: &JoltResidual<F>,
@@ -833,10 +833,9 @@ where
         stage7_points,
         precommitted_final_openings(schedule, stage7_points, stage6b_points, None)?,
         &mut |kind| {
-            let points = &stage4_points.ram_val_check;
             let point = match kind {
-                JoltAdviceKind::Untrusted => points.untrusted_advice.as_ref(),
-                JoltAdviceKind::Trusted => points.trusted_advice.as_ref(),
+                JoltAdviceKind::Untrusted => stage4_staged_points.untrusted_advice.as_ref(),
+                JoltAdviceKind::Trusted => stage4_staged_points.trusted_advice.as_ref(),
             };
             point
                 .map(|point| {

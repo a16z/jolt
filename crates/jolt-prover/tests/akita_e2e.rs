@@ -5,6 +5,7 @@
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "akita",
+    not(feature = "zk"),
     not(feature = "field-inline")
 ))]
 #[path = "support/akita_backend.rs"]
@@ -13,6 +14,7 @@ mod backend_contract;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "akita",
+    not(feature = "zk"),
     not(feature = "field-inline")
 ))]
 mod support;
@@ -20,6 +22,7 @@ mod support;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "akita",
+    not(feature = "zk"),
     not(feature = "field-inline")
 ))]
 #[expect(

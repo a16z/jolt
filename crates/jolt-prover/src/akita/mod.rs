@@ -17,4 +17,6 @@ pub use prover::prove;
 #[cfg(feature = "zk")]
 pub use whiteout::prove;
 #[cfg(all(feature = "zk", feature = "prover-fixtures"))]
-pub use whiteout::{faults as whiteout_faults, secrets as whiteout_secrets};
+pub use whiteout::{
+    faults as whiteout_faults, regions as whiteout_regions, secrets as whiteout_secrets,
+};

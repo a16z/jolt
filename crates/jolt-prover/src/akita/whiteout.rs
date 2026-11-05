@@ -59,6 +59,8 @@ pub type WhiteoutProof<PCS, VC> = JoltProof<PCS, VC, (), ()>;
 /// Logs the argument string's length at the end of `region`, so a profile
 /// log splits the proof's bytes by region (`specs/whiteout-v6-costs.md`).
 fn mark_region<T: ProverTranscript>(region: &'static str, transcript: &T, tape: usize) {
+    #[cfg(feature = "prover-fixtures")]
+    regions::record(region, transcript.narg_string().len());
     tracing::info!(
         region,
         narg_bytes = transcript.narg_string().len(),
@@ -445,7 +447,15 @@ where
         })?;
     mark_region("akita_masked_prefix", &transcript, tape.values.len());
     #[cfg(feature = "prover-fixtures")]
-    if faults::abort(transcript.borrow().narg_string()) {
+    if faults::abort(faults::Aborted {
+        narg: transcript.borrow().narg_string().to_vec(),
+        tape: tape
+            .values
+            .iter()
+            .flat_map(CanonicalBytes::to_bytes_le_vec)
+            .collect(),
+        commitment: stage0.commitment.encode().as_ref().to_vec(),
+    }) {
         return Err(ProverError::Zk(ZkError::FoldOverflow { level: 0 }));
     }
 
@@ -601,17 +611,57 @@ pub mod secrets {
     }
 }
 
+/// Test-only seam (`prover-fixtures`): the argument string's length at the
+/// end of each region of the last Whiteout attempt on this thread, so the
+/// masked-site census can split the pad commitment, Akita's masked levels
+/// and Σ, which Akita's message record does not delimit.
+#[cfg(feature = "prover-fixtures")]
+pub mod regions {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static REGIONS: RefCell<Vec<(&'static str, usize)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    pub(super) fn record(region: &'static str, narg_bytes: usize) {
+        REGIONS.with(|regions| {
+            let mut regions = regions.borrow_mut();
+            // Stage 0 opens every attempt.
+            if region == "stage0" {
+                regions.clear();
+            }
+            regions.push((region, narg_bytes));
+        });
+    }
+
+    /// Takes the recorded `(region, argument-string length at its end)`
+    /// pairs, in order.
+    pub fn take() -> Vec<(&'static str, usize)> {
+        REGIONS.with(|regions| std::mem::take(&mut *regions.borrow_mut()))
+    }
+}
+
 /// Test-only seam (`prover-fixtures`): forces the next attempt on this
 /// thread to abort as a fold overflow right after its masked levels, and
-/// keeps the aborted argument string, so HT3 can check that the rerun
-/// reuses nothing from it (§6).
+/// keeps what the aborted attempt had produced, so HT3 can check that the
+/// rerun reuses nothing from it (§6).
 #[cfg(feature = "prover-fixtures")]
 pub mod faults {
     use std::cell::RefCell;
 
+    /// What an aborted attempt had produced when it stopped: its argument
+    /// string, its masked tape (canonical bytes) and its trace commitment's
+    /// encoding.
+    #[derive(Clone, Debug)]
+    pub struct Aborted {
+        pub narg: Vec<u8>,
+        pub tape: Vec<u8>,
+        pub commitment: Vec<u8>,
+    }
+
     thread_local! {
         static ARMED: RefCell<bool> = const { RefCell::new(false) };
-        static ABORTED: RefCell<Option<Vec<u8>>> = const { RefCell::new(None) };
+        static ABORTED: RefCell<Option<Aborted>> = const { RefCell::new(None) };
     }
 
     /// Aborts the next attempt on this thread after its masked levels.
@@ -619,16 +669,16 @@ pub mod faults {
         ARMED.with(|armed| *armed.borrow_mut() = true);
     }
 
-    /// The argument string of the attempt [`abort_next_attempt`] aborted.
-    pub fn take_aborted() -> Option<Vec<u8>> {
+    /// What the attempt [`abort_next_attempt`] aborted had produced.
+    pub fn take_aborted() -> Option<Aborted> {
         ABORTED.with(|aborted| aborted.borrow_mut().take())
     }
 
-    /// Whether to abort this attempt, keeping its argument string if so.
-    pub(super) fn abort(narg: &[u8]) -> bool {
+    /// Whether to abort this attempt, keeping what it produced if so.
+    pub(super) fn abort(attempt: Aborted) -> bool {
         let armed = ARMED.with(|armed| std::mem::take(&mut *armed.borrow_mut()));
         if armed {
-            ABORTED.with(|aborted| *aborted.borrow_mut() = Some(narg.to_vec()));
+            ABORTED.with(|aborted| *aborted.borrow_mut() = Some(attempt));
         }
         armed
     }

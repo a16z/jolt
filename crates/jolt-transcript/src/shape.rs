@@ -13,7 +13,9 @@ use crate::{
 ///
 /// It absorbs into and draws challenges from its own throwaway sponge `H`,
 /// and it prices every challenge set at 2^256, so no step asks for proof of
-/// work and a shape-correct proof with no nonces replays to its end. It has
+/// work. It passes every check, so a proof's values and nonces do not stop
+/// the replay: a shape-correct proof replays to its end whether or not it
+/// carries the nonces a real transcript's prices ask for. It has
 /// no NARG string and implements neither [`VerifierInit`](crate::VerifierInit)
 /// nor [`ProverInit`](crate::ProverInit), so no proof can be verified or
 /// produced with it.
@@ -46,12 +48,8 @@ impl<H: DuplexSpongeInit<U = u8>> Sealed for ShapeTranscript<H> {
         self.state.squeeze(len, decode)
     }
 
-    fn require(&mut self, ok: bool) -> Result<(), VerificationError> {
-        if ok {
-            Ok(())
-        } else {
-            Err(VerificationError)
-        }
+    fn require(&mut self, _ok: bool) -> Result<(), VerificationError> {
+        Ok(())
     }
 }
 

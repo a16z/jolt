@@ -83,7 +83,7 @@ where
         #[cfg(all(feature = "akita", feature = "zk"))]
         (Stage4Output::Zk(stage4), Stage6bOutput::Zk(stage6)) => Stage7References {
             bytecode_weights: stage6.bytecode_reduction_weights.clone(),
-            program_image_point: stage4.program_image_point.clone(),
+            program_image_point: stage4.staged_points.program_image.clone(),
         },
         #[cfg(not(all(feature = "akita", feature = "zk")))]
         (Stage4Output::Zk(_), Stage6bOutput::Zk(_)) => Stage7References::default(),

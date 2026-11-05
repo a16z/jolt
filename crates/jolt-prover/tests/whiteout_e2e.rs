@@ -37,13 +37,17 @@ mod whiteout {
     };
     use jolt_prover::akita::witness::{AdviceObject, DirectProgramOpenings, HidingOpening};
     use jolt_prover::{JoltBackend, ProverConfig, ProverError};
-    use jolt_verifier::proof::JoltProof;
-    use jolt_verifier::{JoltSponge, VerifierError};
+    use jolt_algebra::Ring;
+    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_verifier::proof::{JoltProof, JoltProofClaims};
+    use jolt_verifier::VerifierError;
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
     use crate::support::{self, GuestCase, PreparedGuest};
 
     type F = AkitaField;
+    /// A Whiteout proof: no clear opening proof, the tail in the NARG string.
+    type WhiteoutProof = JoltProof<AkitaScheme, AkitaVc, (), ()>;
 
     /// How a case is preprocessed.
     #[derive(Clone, Copy)]
@@ -60,7 +64,7 @@ mod whiteout {
         preprocessing: AkitaProverPreprocessing,
         public_io: JoltDevice,
         trusted: Option<AkitaCommitment>,
-        proof: Result<JoltProof, ProverError<F>>,
+        proof: Result<WhiteoutProof, ProverError<F>>,
     }
 
     fn prepare(setup: Setup) -> PreparedGuest {
@@ -147,7 +151,7 @@ mod whiteout {
             .include_trusted_advice(advice),
             JoltVmWitnessInputs::new(&run.program, &program, run.trace),
         );
-        let proof = akita::prove::<F, AkitaScheme, AkitaVc, JoltSponge>(
+        let proof = akita::prove::<F, AkitaScheme, AkitaVc, ProverState<Keccak>>(
             JoltBackend::optimized().with_witness(&witness),
             &preprocessing,
             config,
@@ -162,16 +166,16 @@ mod whiteout {
         }
     }
 
-    fn verify(proved: &Proved, proof: &JoltProof) -> Result<(), VerifierError> {
+    fn verify(proved: &Proved, proof: &WhiteoutProof) -> Result<(), VerifierError> {
         verify_with(proved, proof, proved.trusted.as_ref())
     }
 
     fn verify_with(
         proved: &Proved,
-        proof: &JoltProof,
+        proof: &WhiteoutProof,
         trusted: Option<&AkitaCommitment>,
     ) -> Result<(), VerifierError> {
-        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, JoltSponge>(
+        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &proved.preprocessing.verifier,
             &proved.public_io,
             proof,
@@ -192,8 +196,8 @@ mod whiteout {
     }
 
     /// An honest proof verifies against transported preprocessing.
-    fn assert_verifies_transported(proved: &Proved, proof: &JoltProof) {
-        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, JoltSponge>(
+    fn assert_verifies_transported(proved: &Proved, proof: &WhiteoutProof) {
+        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &transported(&proved.preprocessing.verifier),
             &proved.public_io,
             proof,
@@ -202,7 +206,7 @@ mod whiteout {
         .expect("an honest proof verifies against transported preprocessing");
     }
 
-    fn honest(setup: Setup) -> (Proved, JoltProof) {
+    fn honest(setup: Setup) -> (Proved, WhiteoutProof) {
         let mut proved = prove(setup);
         let proof = std::mem::replace(
             &mut proved.proof,
@@ -233,6 +237,7 @@ mod whiteout {
         let mut extended = proof.clone();
         extended.narg.push(0);
         assert!(verify(&proved, &extended).is_err());
+        assert_tape_tampers_reject(&proved, &proof);
 
         // HT3: a second proof of the same statement draws fresh hiding
         // randomness, pads and Σ coins.
@@ -313,7 +318,7 @@ mod whiteout {
 
         let reproved = prove_with(prepare(Setup::Muldiv), &config, loaded, None);
         let proof = reproved.proof.expect("Whiteout proof on persisted plans");
-        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, JoltSponge>(
+        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &persisted,
             &reproved.public_io,
             &proof,
@@ -324,7 +329,7 @@ mod whiteout {
 
     /// Flipped bits across the argument string, truncation and an appended
     /// byte reject.
-    fn assert_byte_tampers_reject(proved: &Proved, proof: &JoltProof) {
+    fn assert_byte_tampers_reject(proved: &Proved, proof: &WhiteoutProof) {
         let len = proof.narg.len();
         for position in [len / 8, len / 4, len / 2, 3 * len / 4, len - 1] {
             let mut tampered = proof.clone();
@@ -337,6 +342,36 @@ mod whiteout {
         let mut truncated = proof.clone();
         let _ = truncated.narg.pop();
         assert!(verify(proved, &truncated).is_err());
+        assert_tape_tampers_reject(proved, proof);
+    }
+
+    /// Every masked value is bound: a shifted value at several positions of
+    /// the masked tape, a dropped value and an appended one reject.
+    fn assert_tape_tampers_reject(proved: &Proved, proof: &WhiteoutProof) {
+        let JoltProofClaims::Zk { masked, .. } = &proof.claims else {
+            panic!("a Whiteout proof carries a masked tape");
+        };
+        let len = masked.values.len();
+        assert!(len > 0, "a Whiteout proof masks its stage messages");
+        let tamper = |edit: &dyn Fn(&mut Vec<F>)| {
+            let mut tampered = proof.clone();
+            let JoltProofClaims::Zk { masked, .. } = &mut tampered.claims else {
+                unreachable!("checked above");
+            };
+            edit(&mut masked.values);
+            tampered
+        };
+        for position in [0, len / 4, len / 2, 3 * len / 4, len - 1] {
+            assert!(
+                verify(proved, &tamper(&|values| values[position] += F::from_u64(1))).is_err(),
+                "a shifted masked value at {position} of {len} must reject"
+            );
+        }
+        assert!(verify(proved, &tamper(&|values| {
+            let _ = values.pop();
+        }))
+        .is_err());
+        assert!(verify(proved, &tamper(&|values| values.push(F::from_u64(0)))).is_err());
     }
 
     /// Untrusted and trusted advice open as hiding precommitted groups: an
@@ -389,7 +424,7 @@ mod whiteout {
             "a hiding recommit draws fresh randomness"
         );
         assert!(
-            jolt_verifier::verify::<F, AkitaScheme, AkitaVc, JoltSponge>(
+            jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
                 &recommitted.verifier,
                 &proved.public_io,
                 &proof,
@@ -532,7 +567,7 @@ mod whiteout {
             Err(ProverError::InvariantViolation { reason: "taken" }),
         )
         .expect("Whiteout proof on a reopened committed program");
-        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, JoltSponge>(
+        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
             &verifier,
             &proved.public_io,
             &proof,

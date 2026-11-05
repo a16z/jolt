@@ -525,8 +525,17 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRaf<F> {
         id: &JoltDerivedId,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
         output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
-        _challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
+        challenges: &BytecodeReadRafCyclePhaseChallenges<F>,
     ) -> Result<F, VerifierError> {
+        // The batching-challenge powers are publics of the drawn challenge,
+        // as the clear output check resolves them.
+        if let JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+            challenge: BytecodeReadRafChallenge::Gamma,
+            exponent,
+        }) = id
+        {
+            return Ok(bytecode::challenge_pow(challenges.gamma, *exponent));
+        }
         self.cycle_publics(output_points)?.value(id)
     }
 }
@@ -870,8 +879,22 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafCommitted<F> {
         id: &JoltDerivedId,
         _input_points: &BytecodeReadRafInputClaims<Vec<F>>,
         output_points: &BytecodeReadRafCycleOutputClaims<Vec<F>>,
-        _challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
+        challenges: &BytecodeReadRafCyclePhaseCommittedChallenges<F>,
     ) -> Result<F, VerifierError> {
+        // The batching-challenge powers are publics of the drawn challenges,
+        // as the clear output check resolves them.
+        if let JoltDerivedId::BytecodeReadRaf(BytecodeReadRafPublic::ChallengePow {
+            challenge,
+            exponent,
+        }) = id
+        {
+            return challenges
+                .resolve_challenge(&(*challenge).into())
+                .map(|value| bytecode::challenge_pow(value, *exponent))
+                .ok_or(VerifierError::MissingStageClaimChallenge {
+                    id: JoltChallengeId::from(*challenge).into(),
+                });
+        }
         committed_public_value(&self.committed_publics(output_points)?, id)
     }
 }

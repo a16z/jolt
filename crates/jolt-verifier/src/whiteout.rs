@@ -172,7 +172,7 @@ where
         proof_one_hot,
         trace_commitment,
         &checked.precommitted,
-        stages.stage4.output_points(),
+        &stages.stage4.zk()?.staged_points,
         stages.stage6b.output_points(),
         &stages.stage7.zk()?.output_points,
         residual,

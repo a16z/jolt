@@ -21,9 +21,9 @@ allocative = ["dep:allocative", "jolt-claims/allocative"]
 # fault seam (`jolt_prover::akita::{whiteout_secrets, whiteout_faults}`).
 prover-fixtures = ["jolt-prover/prover-fixtures"]
 fs-audit = []
-# Whiteout's census event log (T0: re-expressed on main's transcript in the
-# port pass; dev forwarded `jolt-transcript/logging`).
-logging = []
+# Whiteout's census: Akita's prover-side record of the argument string's
+# message ranges, which the census classifies beside the masked tape.
+logging = ["akita-transcript/logging-transcript"]
 fuzzing = []
 field-inline = [
   "common/field-inline",
@@ -82,6 +82,7 @@ jolt-prover.workspace = true
 jolt-witness.workspace = true
 jolt-akita.workspace = true
 akita-params.workspace = true
+akita-transcript.workspace = true
 tracer.workspace = true
 jolt-dory = { path = "../jolt-dory" }
 postcard = { workspace = true, features = ["use-std"] }
