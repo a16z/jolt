@@ -115,5 +115,15 @@ jobs:
               exit 1
             fi
           done
+      - name: Verify a published calibration bootstrap through trusted ingest artifacts
+        env:
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt || inputs.run_attempt }}
+        run: |
+          if [[ -f "$RUNNER_TEMP/benchmark-record/receipt.json" ]] &&
+             jq -e 'any(.[]; .bootstrap == true)' "$RUNNER_TEMP/benchmark-record/receipt.json" > /dev/null; then
+            uv run --no-project python source/scripts/bench/publication.py verify-calibration \
+              --ingest-run-id "$SOURCE_RUN_ID" --ingest-run-attempt "$SOURCE_RUN_ATTEMPT"
+          fi
       - name: Request a build of the existing Pages site
         run: gh api --method POST repos/a16z/jolt/pages/builds

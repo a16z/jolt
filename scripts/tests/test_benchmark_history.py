@@ -171,7 +171,8 @@ def collected_fixture(data, *, run=None, missing=False, extra_zip=None, artifact
     with zipfile.ZipFile(archive, "w") as bundle:
         bundle.writestr("benchmark-results.json", raw)
         bundle.writestr("ingest.json", json.dumps(receipt))
-        for name, content in (extra_zip or {}).items():
+        extras = extra_zip(receipt) if callable(extra_zip) else (extra_zip or {})
+        for name, content in extras.items():
             bundle.writestr(name, content)
     artifact = {"id": 42, "name": f"jolt-e2e-{run['id']}-{run['run_attempt']}", "expired": False,
         "size_in_bytes": len(archive.getvalue()), "digest": "sha256:synthetic",
@@ -463,3 +464,52 @@ class BenchmarkHistoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CalibrationArchiveTests(unittest.TestCase):
+    def test_bootstrap_app_ingest_archives_reference_and_raw_without_a_history_point(self):
+        data = synthetic_result(tier="calibration")
+        data["provenance"]["event"] = "workflow_dispatch"
+        raw = b'{"synthetic_calibration_evidence":true}'
+        def sidecars(receipt):
+            reference = {"schema": 1, "source": dict(receipt, tier="calibration"), "raw_sha256": history.digest(raw),
+                         "cells": [{"key_sha256": "a" * 64}]}
+            encoded = json.dumps(reference, sort_keys=True, separators=(",", ":")).encode()
+            return {"calibration/reference.json": encoded,
+                    "calibration/raw/benchmark-results.json": raw}
+        record, package = collected_fixture(data, extra_zip=sidecars)
+        self.assertTrue(record["bootstrap"])
+        self.assertEqual(record["publication_status"], "ready")
+        with tempfile.TemporaryDirectory() as directory:
+            site = Path(directory)
+            legacy = site / "dev/bench/existing.json"
+            legacy.parent.mkdir(parents=True)
+            legacy.write_bytes(b'unchanged legacy data')
+            history.append_site(site, [(record, package)])
+            index = json.loads((site / 'dev/prover-history/history.json').read_bytes())
+            self.assertEqual(index['runs'], [])
+            catalog = json.loads((site / 'dev/prover-history/calibration/index.json').read_bytes())
+            self.assertEqual(catalog['references'], [record['calibration']])
+            sha = record['calibration']['sha256']
+            evidence = site / 'dev/prover-history/calibration' / sha / 'raw.json'
+            self.assertEqual(evidence.read_bytes(), raw)
+            history.append_site(site, [(record, package)])
+            self.assertEqual(json.loads((site / 'dev/prover-history/calibration/index.json').read_bytes()), catalog)
+            changed = copy.deepcopy(record)
+            changed['calibration']['artifact_id'] += 1
+            with self.assertRaisesRegex(ValueError, 'Conflicting calibration'):
+                history.append_site(site, [(changed, package)])
+            self.assertEqual(json.loads((site / 'dev/prover-history/calibration/index.json').read_bytes()), catalog)
+            self.assertEqual(legacy.read_bytes(), b'unchanged legacy data')
+
+    def test_failed_refresh_cannot_publish_or_replace_a_catalog_reference(self):
+        data = synthetic_result(tier="calibration")
+        data["provenance"]["event"] = "workflow_dispatch"
+        raw = b'raw evidence'
+        def substituted(receipt):
+            reference = {"schema": 1, "source": receipt, "raw_sha256": '0' * 64, "cells": []}
+            return {"calibration/reference.json": json.dumps(reference, sort_keys=True, separators=(",", ":")).encode(),
+                    "calibration/raw/benchmark-results.json": raw}
+        record, _ = collected_fixture(data, extra_zip=substituted)
+        self.assertEqual(record['publication_status'], 'rejected')
+        self.assertNotIn('calibration', record)

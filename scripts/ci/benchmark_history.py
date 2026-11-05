@@ -399,6 +399,8 @@ def producer_plan(ingest, bundle, run):
             or provenance["event"] != run["event"] or provenance["ref"] != "refs/heads/main"
             or str(provenance["run_id"]) != str(run_id) or str(provenance["run_attempt"]) != str(attempt)):
         raise ValueError("Plan and dispatch do not match their trusted producer attempt")
+    if plan["tier"] == "calibration" and run["event"] != "workflow_dispatch":
+        raise ValueError("Bootstrap calibration requires a main workflow dispatch")
     if plan["tier"] == "pr":
         item = plan["runs"][0]
         admission = plan["admission"]
@@ -551,6 +553,29 @@ def collect(run_id, attempt, publisher_revision):
                         record["push_index_sha256"] = digest(raw_index)
                         expected, declared, bounds = push_documents(raw_index, producer)
                     records = []
+                    reference_raw = artifact_json(bundle, "calibration/reference.json")
+                    if reference_raw is not None:
+                        reference = read_json(reference_raw)
+                        raw = artifact_json(bundle, "calibration/raw/benchmark-results.json")
+                        receipt = read_json(artifact_json(bundle, "ingest.json"))
+                        source = reference["source"]
+                        canonical = json.dumps(reference, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+                        if (plan["tier"] == "pr" or source.get("tier") != plan["tier"]
+                                or reference["schema"] != 1 or raw is None
+                                or digest(raw) != reference["raw_sha256"] or reference_raw != canonical
+                                or any(source.get(name) != receipt[name] for name in receipt)):
+                            raise ValueError("Calibration reference does not match its trusted ingest source")
+                        sha = digest(reference_raw)
+                        package = json_bytes({"reference": reference, "raw": raw.decode()})
+                        records.append(({"key": "calibration-" + sha, "sha256": digest(package),
+                            "publication_status": "ready", "bootstrap": plan["tier"] == "calibration",
+                            "calibration": {"sha256": sha,
+                                "raw_sha256": reference["raw_sha256"], "artifact_id": artifact["id"],
+                                "ingest_run_id": run_id, "ingest_run_attempt": attempt,
+                                "plan_run_id": producer["id"], "plan_run_attempt": producer["run_attempt"],
+                                "key_sha256s": [cell["key_sha256"] for cell in reference["cells"]]}}, package))
+                    if plan["tier"] == "calibration":
+                        return records, None
                     for position, sha in enumerate(expected):
                         item = source_record(run, publisher_revision, sha, producer)
                         item["tier"] = plan["tier"]
@@ -618,7 +643,7 @@ def safe_path(site, relative):
 
 def archive_filename(record):
     key = record["key"]
-    if not isinstance(key, str) or re.fullmatch(r"(?:github-[0-9a-f]{40}-[1-9][0-9]*-[1-9][0-9]*|preview-[0-9a-f]{64})", key) is None:
+    if not isinstance(key, str) or re.fullmatch(r"(?:calibration-[0-9a-f]{64}|github-[0-9a-f]{40}-[1-9][0-9]*-[1-9][0-9]*|preview-[0-9a-f]{64})", key) is None:
         raise ValueError("Invalid publication key")
     return f"{key}.json"
 
@@ -641,12 +666,36 @@ def append_site(site, records=(), raw_index=None, assets=ASSETS):
     history = read_json(index_path.read_bytes()) if index_path.exists() else {"format_version": 1, "runs": []}
     if history.get("format_version") != 1 or not isinstance(history.get("runs"), list):
         raise ValueError("Unsupported history index; refusing to overwrite it")
+    catalog_path = safe_path(site, SITE_PATH / "calibration/index.json")
+    catalog = read_json(catalog_path.read_bytes()) if catalog_path.exists() else {"schema": 1, "references": []}
+    if catalog.get("schema") != 1 or not isinstance(catalog.get("references"), list):
+        raise ValueError("Unsupported calibration catalog")
     appended = 0
     for record, raw in records:
         key = record["key"]
         filename = archive_filename(record)
         if record["sha256"] != (digest(raw) if raw is not None else None):
             raise ValueError("Receipt and raw JSON digest differ")
+        if record.get("calibration"):
+            entry = record["calibration"]
+            package = read_json(raw)
+            payload = json.dumps(package["reference"], sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+            evidence = package["raw"].encode()
+            if digest(payload) != entry["sha256"] or digest(evidence) != entry["raw_sha256"]:
+                raise ValueError("Calibration archive digest mismatch")
+            for name, content in (("reference.json", payload), ("raw.json", evidence)):
+                target = safe_path(site, SITE_PATH / "calibration" / entry["sha256"] / name)
+                if target.exists() and target.read_bytes() != content:
+                    raise ValueError("Conflicting immutable calibration evidence")
+                if not target.exists():
+                    atomic_write(target, content)
+            existing = next((item for item in catalog["references"] if item["sha256"] == entry["sha256"]), None)
+            if existing is not None and existing != entry:
+                raise ValueError("Conflicting calibration catalog identity")
+            if existing is None:
+                catalog["references"].append(entry)
+                atomic_write(catalog_path, json_bytes(catalog))
+            continue
         existing = next((item for item in history["runs"] if item["key"] == key), None)
         if existing:
             # Expired upstream artifacts cannot erase an already archived result.

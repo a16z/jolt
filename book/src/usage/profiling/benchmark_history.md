@@ -162,3 +162,28 @@ policy. They exercise PR/main separation, filters, details, raw downloads,
 failure gaps, hostile strings and mobile/desktop layout. A live dashboard still
 needs merged workflows, an enabled App dispatcher and target, and received ingest runs;
 source and preview checks do not establish live execution or deployment.
+
+### Calibration references
+
+Each main-push tip and nightly run first measures a 17-cell, ten-pair null using
+its hosted tip bundle twice. Trusted ingest validates all 374 proof processes and
+recomputes the informational time/RSS envelopes. It retains the reference and raw
+evidence in the canonical ingest artifact for 30 days. The publisher appends them
+under `dev/prover-history/calibration/<reference-sha256>/` and lists immutable
+artifact/ingest identities in `calibration/index.json`; this catalog grants no
+measurement authority by itself.
+
+PR ingest authenticates those artifacts, their main App producer and original
+plan/dispatch, then recomputes the reference. Exact base SHA, normalized prover
+bytes, harness/suite/build/input identities and stable host settings must match.
+The newest reference finished before the comparison is selected, expiring 48 hours
+after measurement. Missing or mismatched evidence leaves medians and signed
+deltas visible with an unavailable reference, never a regression verdict.
+
+Main-only `tier=calibration` bootstrap is allowed while ordinary execution is
+disabled. It adds a local same-source PR-recipe probe after the hosted null;
+bootstrap probes do not enter history trends. After catalog publication, this
+workflow runs `publication.py verify-calibration` against its immutable ingest
+artifact and requires bands for all 17 probe cells. The README's first-run and
+post-main-advance acceptance steps remain prerequisites to ordinary enablement.
+This publisher must merge after #2215, which supplies that trusted command.
