@@ -220,7 +220,8 @@ What the verifier enforces for these properties is listed in II.6.
 
 The tracer counts calls per family and stops at call $K+1$ with `PRECOMPILE_CAPACITY_EXCEEDED: KECCAKF capacity K`, before that call's memory effects and before proving.
 - **No automatic retry.** There is no retry at a larger $K$, because $K$ is fixed by the proving key.
-- **Not a security check.** This error is for usability only: soundness of $N \le K$ comes from the coverage check in II.3.
+- **Not a security check.** This error is for usability only. A malicious prover does not run the tracer; soundness of $N \le K$ comes from the coverage check in II.3 and the successful-termination requirement. Both flavours count against the same $K$.
+- **No privacy claim.** Success or capacity failure reveals whether $N \le K$; the feature makes no call-count-hiding claim.
 - **Sizing.** The blocks above need $K$ from $2^{10}$ to $2^{18}$. Occupancy at each block's own power of two is 0.69 to 0.90. A single key with $K = 2^{18}$ would leave the small block at 0.0035, and its fixed table work is paid on every proof (Open question 3).
 
 ### Part II: the proof protocol
@@ -266,9 +267,19 @@ The tracer counts calls per family and stops at call $K+1$ with `PRECOMPILE_CAPA
 - $\rho$ and $\pi$: public rotations and wiring;
 - $\chi$: $a \oplus (\lnot b \wedge c)$, degree 2;
 - $\iota$: XOR of the public constant, affine;
-- absorb: $A_0 = S \oplus (B \,\|\, 0^{512})$ for flavour 1, and $A_0 = S$ for flavour 0, gated by the flavour bits;
-- inactive records: the permutation of the zero state;
+- absorb, per lane $i < 25$ and bit $b$, with $f_1$ the absorb flavour bit:
+  - for $i < 17$: $A_{0,i,b} = S_{i,b} + f_1 B_{i,b}$;
+  - for $i \ge 17$: $A_{0,i,b} = S_{i,b}$.
+
+  Flavour 0 records carry an all-zero block.
+- inactive records ($u = 0$) are canonical and constrained, not skipped:
+  - flavour bits, pointer, input state and block are zero;
+  - the round states are the permutation of the zero state.
+
+  The same active bit $u$ is used in coverage, agreement and every relation selector.
 - unused lanes and rounds: zero.
+
+Bits are numbered from the least significant bit of each 64-bit lane, lanes in the order of `jolt-inlines/keccak256`. Limbs are low then high. Any packing of bits into $H$ uses the coefficient basis $x^b$, never the ring image of the integer $2^b$.
 
 Bitness comes from the source commitment; the opening must guarantee that the committed source is Boolean.
 
@@ -293,7 +304,7 @@ The link is proved over $\mathbb F_p$, because exact counting needs characterist
 - Activity: $a(g, \ell) = f_0[\ell < 27] + f_1[\ell < 44]$ for row ordinal $\ell < 64$.
 - Shifted read: $\mathrm{ra}_\ell(g, j)$ is the indicator that $\sigma_g + \ell = j$. Its multilinear extension in $j$ is a product of per-chunk carry matrices. It is evaluated as that product, never re-multilinearised, and carry out of the top chunk is rejected.
 
-**Coverage.** Let $\lambda(j)$ be the authenticated bytecode indicator that cycle $j$ is a `PCALL` row. Define
+**Coverage.** Let $\lambda(j)$ be the authenticated bytecode indicator that cycle $j$ is a `PCALL` row; trace padding rows have $\lambda(j) = 0$. Define
 $$C(j) = \sum_{g, \ell} a(g, \ell)\, \mathrm{ra}_\ell(g, j).$$
 The link proves $C(j) = \lambda(j)$ for all $j$.
 - $C(j)$ is an integer count of at most $K \cdot 64 < p$.
@@ -308,6 +319,8 @@ where $R$ is the trace's authenticated read or write value at cycle $\sigma_g + 
 - **Why limbs.** Each limb is below $2^{32} < p$, and two limb equalities imply word equality.
 - **Trace values.** The RAM read and write values are virtual polynomials in Jolt. Their values at the link's terminal point are obtained through the existing RAM read-write reductions, not asserted.
 - **Metadata.** The row ordinal, flavour and family fields of the trace are matched to the record in the same way.
+- **Indexed, not bagged.** Every equation is indexed by $(g, \ell, h)$ and selected by the same pointer $\mathrm{ra}_\ell(g, \cdot)$. Comparing multisets of input or output words would let outputs of two calls be swapped.
+- **Read-write rows.** The value a read-write row reads is the pre-write value, and the value it writes is the record's output word.
 
 **Protocol.**
 1. **Commitments first.** The prover commits the record table before any link challenge.
@@ -369,6 +382,7 @@ On `main`, this follows from existing constraints together with the bytecode com
 - **Entering a sequence**, row 18 (`MustStartSequenceFromBeginning`) forces any entry to be its first row.
 - **Leaving a sequence**, rows 14 and 16 fix `NextUnexpandedPC` at its end. `JALR` targets already have bit 0 cleared through `RangeCheckAligned`, so no new jump constraint is needed.
 - **New for `PcallWrite`.** The flag must keep registers unchanged and the address equal to the base register plus the row ordinal times 8.
+- **No external entry.** No ordinary instruction, other sequence, trap or return path, or chunk boundary may target a `PCALL` interior row. The lemma must cover every PC-writing mechanism, not only `JALR`.
 
 **Simulation theorem** (obligation). The theorem assumes:
 - the interval lemma;
@@ -376,7 +390,16 @@ On `main`, this follows from existing constraints together with the bytecode com
 - a sound relation (II.2);
 - a sound opening (II.4).
 
-Under these assumptions, contracting each `PCALL` interval to one step gives the execution of the same program in which the call is an atomic application of the family function to its entry RAM.
+Let $A_K(P)$ be the atomic machine: at a `PCALL` it reads its ports from entry RAM, writes the family output, preserves every other architectural register and memory word, and moves to the next text instruction; call $K+1$ is a failure. Let $E_K(P)$ be the expanded machine Jolt proves.
+
+Under these assumptions, for every accepted trace of $E_K(P)$ with its linked records, there is an ordered partition into ordinary intervals and complete `PCALL` intervals. Projecting boundary states to architectural state and replacing each `PCALL` interval by one atomic step gives a valid, successfully terminating run of $A_K(P)$ with the same initial state, I/O and final state.
+
+The proof has three parts, each a separate obligation:
+1. interval integrity, from the interval lemma;
+2. local atomic equivalence, from ports, agreement and the relation;
+3. composition across intervals.
+
+Exact coverage, not the projection, rules out missing or duplicated records. Indexed agreement rules out spliced endpoints.
 
 **What the verifier must enforce:**
 
@@ -404,8 +427,16 @@ All new constraints are compiled only with the feature (Invariant 1).
    - $K$, $T$ and the field identifiers;
    - the table layout, the padding rule and the ordered claim roles.
 
-   Challenges are domain-separated per stage.
-6. Composition: the total error is the sum of the existing VM and PCS errors and items 1 to 3, under Fiat-Shamir.
+   Challenges are domain-separated per stage. Message order:
+   - the record table and every auxiliary source are committed before any challenge that tests them;
+   - every claimed value is absorbed before the coefficients that batch it;
+   - each round polynomial is absorbed before its round challenge;
+   - terminal claims are absorbed before their opening batch.
+
+   $H$ challenges are sampled natively in $H$, never through the integer map.
+6. Composition: the total error is the sum of the existing VM and PCS errors, items 1 to 3, and the Fiat-Shamir loss, chosen against a declared security target. Field width alone does not set that target.
+7. Successful termination: an accepted proof must end in the authenticated successful terminal state. A prefix that stops after $K$ calls is not an accepted execution.
+8. Capacity scope: $K$ bounds calls per proof. If trace chunking is added, each chunk has its own table; a global bound would need a carried call count.
 
 ### Costs
 
