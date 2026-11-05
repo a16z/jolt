@@ -337,6 +337,37 @@ mod tests {
         assert_ne!(one[..FILL_CHUNK], one[FILL_CHUNK..2 * FILL_CHUNK]);
     }
 
+    /// A wrapping polynomial digest of a sample sequence.
+    fn digest(samples: &[i64]) -> u64 {
+        samples.iter().fold(0u64, |acc, &z| {
+            acc.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ z as u64
+        })
+    }
+
+    /// Outputs and the RNG's next word after them, frozen from the scalar
+    /// one-trial-at-a-time sampler. A faster sampler must reproduce its
+    /// output stream bit for bit and leave the caller's RNG where it did.
+    #[test]
+    fn outputs_match_frozen_stream() {
+        let small = GaussianSampler::new(GaussianWidth::from_multiplier(3).unwrap());
+        let mut rng = ChaCha20Rng::seed_from_u64(11);
+        let mut out = vec![0i64; 1001];
+        small.fill(&mut rng, &mut out);
+        assert_eq!(out[..6], [2, 1, 3, 2, -4, 0]);
+        assert_eq!(digest(&out), 0xb763_ca43_3143_8fce);
+        assert_eq!(small.sample(&mut rng), 0);
+        assert_eq!(rng.next_u64(), 0x4d1b_bee9_2490_8452);
+
+        let production =
+            GaussianSampler::new(GaussianWidth::from_multiplier(58_642_511_897).unwrap());
+        let mut rng = ChaCha20Rng::seed_from_u64(12);
+        let mut out = vec![0i64; 2 * FILL_CHUNK + 5];
+        production.fill_parallel(&mut rng, &mut out);
+        assert_eq!(out[..3], [-36_633_101_124, 90_967_683_327, 95_312_507_648]);
+        assert_eq!(digest(&out), 0x65e3_0452_59ba_2937);
+        assert_eq!(rng.next_u64(), 0x057a_91c1_a415_8c59);
+    }
+
     #[test]
     fn rejects_out_of_range_multipliers() {
         for k in [0, MAX_MULTIPLIER + 1] {
