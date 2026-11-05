@@ -232,10 +232,14 @@ where
         })
         .collect::<Result<Vec<_>, VerifierError>>()?;
 
-    // The verifier builds `opening_claims`, so its length needs no word.
-    for claim in &opening_claims {
-        transcript.append(&claim.evaluation.value);
-    }
+    // The verifier builds `opening_claims`, so its length needs no word. One
+    // message, as `HomomorphicBatch::prove_batch` absorbs it: a sponge that
+    // frames each absorb (Poseidon) tells N messages from their concatenation.
+    let evaluations = opening_claims
+        .iter()
+        .map(|claim| claim.evaluation.value)
+        .collect::<Vec<_>>();
+    transcript.append_values(&evaluations);
     let gamma_powers = transcript.challenge_powers(opening_claims.len())?;
 
     let joint_claim = gamma_powers

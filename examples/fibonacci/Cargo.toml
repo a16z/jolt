@@ -5,6 +5,7 @@ edition = "2021"
 
 [features]
 transcript-blake2b = ["jolt-sdk/transcript-blake2b"]
+transcript-poseidon = ["jolt-sdk/transcript-poseidon"]
 
 [dependencies]
 jolt-sdk = { workspace = true, features = ["host"] }

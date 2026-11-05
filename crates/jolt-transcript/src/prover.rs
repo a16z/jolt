@@ -1,8 +1,10 @@
 //! Prover-only operations on `spongefish::ProverState`.
 
-use crate::codec::NargMessage;
 #[cfg(feature = "prover-grinding")]
-use crate::pow::{nonce_word, Leb128, SpongePow, CHECK_BYTES};
+use crate::codec::RawBytes;
+use crate::codec::{NargMessage, SpongeUnit};
+#[cfg(feature = "prover-grinding")]
+use crate::pow::{Leb128, SpongePow};
 use crate::{prover_transcript, ProverState as JoltProverState, Transcript, TAG_BYTES};
 #[cfg(feature = "prover-grinding")]
 use spongefish::VerificationError;
@@ -11,7 +13,8 @@ use spongefish::{DuplexSpongeInit, DuplexSpongeInterface, Encoding, ProverState}
 /// The prover's side of a [`Transcript`]: messages written to the NARG string
 /// and the proof-of-work nonce searches.
 pub trait ProverTranscript: Transcript {
-    /// Absorbs `msg`'s [`Encoding`] and appends its NARG form
+    /// Absorbs `msg`'s [`Encoding`] ([`SpongeUnit::encode_message`]) and
+    /// appends its NARG form
     /// ([`NargMessage::write_narg`]) for verifier replay.
     ///
     /// This is not spongefish's inherent `ProverState::prover_message`, which
@@ -27,9 +30,10 @@ pub trait ProverTranscript: Transcript {
     /// Bytes accumulated in the NARG so far.
     fn narg_string(&self) -> &[u8];
 
-    /// An owned callback that writes into its second argument the bytes the
-    /// transcript would squeeze right after absorbing its first, a candidate
-    /// prover message in its absorbed form. The transcript is unchanged, and
+    /// An owned callback that writes into its second argument the units the
+    /// transcript would squeeze right after absorbing its first, the byte
+    /// encoding of a candidate prover message, absorbed as one message
+    /// ([`SpongeUnit::encode_message`]). The transcript is unchanged, and
     /// the callback holds a copy of the public sponge only: no private
     /// randomness, no proof bytes. This is the extension oracle of
     /// state-restoration soundness, shaped like spongefish's
@@ -44,14 +48,15 @@ pub trait ProverTranscript: Transcript {
     /// Needs the `prover-grinding` feature, which enables spongefish's
     /// `yolocrypto` to copy the sponge state.
     #[cfg(feature = "prover-grinding")]
-    fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<Self>;
+    fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [Self::Unit]) + Clone + use<Self>;
 
     /// A proof of work of `bits` bits whose nonce goes into the NARG string.
     ///
     /// For `bits == 0` this does nothing. For `1 <= bits <= MAX_POW_BITS`, the
     /// prover sends the least nonce below `2^(bits + 7)` for which the low
-    /// `bits` bits of the next eight squeezed bytes, read as a little-endian
-    /// `u64`, are zero, and squeezes those bytes. The nonce is one prover
+    /// `bits` bits of the next squeezed check are zero, and squeezes the
+    /// check: eight bytes read as a little-endian `u64` on a byte sponge, one
+    /// element's canonical integer on `PoseidonSponge`. The nonce is one prover
     /// message: canonical LEB128 in the NARG string, one `u64` LE word in the
     /// sponge.
     ///
@@ -103,7 +108,7 @@ pub trait ProverInit: ProverTranscript + Sized {
 
 impl<H> ProverInit for JoltProverState<H>
 where
-    H: DuplexSpongeInit<U = u8>,
+    H: DuplexSpongeInit<U: SpongeUnit>,
 {
     fn init(session: &[u8; TAG_BYTES], statement: &(impl Encoding + ?Sized)) -> Self {
         prover_transcript::<H>(session, statement)
@@ -112,14 +117,14 @@ where
 
 impl<H, R> ProverTranscript for ProverState<H, R>
 where
-    H: DuplexSpongeInterface<U = u8>,
+    H: DuplexSpongeInterface<U: SpongeUnit>,
     R: DuplexSpongeInit<U = u8>,
 {
     fn send<M: NargMessage + ?Sized>(&mut self, msg: &M) {
         ProverState::prover_message_with(
             self,
             msg,
-            |msg| msg.encode(),
+            |msg| H::U::encode_message(msg),
             |msg, narg| {
                 msg.write_narg(narg);
             },
@@ -131,11 +136,11 @@ where
     }
 
     #[cfg(feature = "prover-grinding")]
-    fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [u8]) + Clone + use<H, R> {
+    fn verifier_message_oracle(&self) -> impl Fn(&[u8], &mut [H::U]) + Clone + use<H, R> {
         let snapshot = self.duplex_sponge_state.clone();
         move |candidate, output| {
             let mut sponge = snapshot.clone();
-            let _ = sponge.absorb(candidate);
+            let _ = sponge.absorb(H::U::encode_message(&RawBytes(candidate)).as_ref());
             let _ = sponge.squeeze(output);
         }
     }
@@ -152,10 +157,10 @@ where
         ProverState::prover_message_with(
             self,
             &nonce,
-            |&nonce| nonce_word(nonce),
+            |&nonce| H::U::encode_word(nonce),
             |&nonce, narg| narg.extend_from_slice(Leb128::new(nonce).as_bytes()),
         );
-        if ProverState::verifier_message_as(self, CHECK_BYTES, |check| pow.accepts(check)) {
+        if ProverState::verifier_message_as(self, H::U::CHECK_LEN, |check| pow.accepts(check)) {
             Ok(())
         } else {
             Err(VerificationError)

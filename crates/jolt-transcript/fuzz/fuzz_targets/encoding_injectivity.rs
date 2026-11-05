@@ -9,10 +9,12 @@
 //! move changes the framing and MUST change the state. A matching state would
 //! mean the framing convention fails to separate `[ab]` from `[a][b]`, the
 //! classic transcript-malleability footgun. The state is observed as the next
-//! 32 squeezed bytes.
+//! 32 squeezed units: 32 bytes, or 32 `Fr` elements on Poseidon.
+
+use std::fmt::Debug;
 
 use jolt_transcript::{
-    protocol_tag, prover_transcript, Blake2b512, Keccak, PoseidonSponge, Transcript,
+    protocol_tag, prover_transcript, Blake2b512, Keccak, PoseidonSponge, SpongeUnit, Transcript,
 };
 use libfuzzer_sys::fuzz_target;
 use spongefish::DuplexSpongeInit;
@@ -34,12 +36,12 @@ fn parse_chunks(data: &[u8]) -> Vec<&[u8]> {
     chunks
 }
 
-fn framed_state<H: DuplexSpongeInit<U = u8>>(chunks: &[Vec<u8>]) -> [u8; 32] {
+fn framed_state<H: DuplexSpongeInit<U: SpongeUnit + Debug>>(chunks: &[Vec<u8>]) -> Vec<H::U> {
     let mut transcript = prover_transcript::<H>(&protocol_tag(b"fuzz-injectivity"), b"");
     for chunk in chunks {
         transcript.append_bytes(chunk);
     }
-    transcript.verifier_messages::<u8, 32>()
+    transcript.verifier_message_as(32, <[H::U]>::to_vec)
 }
 
 fuzz_target!(|data: &[u8]| {
