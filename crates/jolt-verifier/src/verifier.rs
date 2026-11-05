@@ -245,6 +245,7 @@ impl Encoding for JoltStatement<'_> {
         word(match protocol.zk {
             ZkConfig::Transparent => 0,
             ZkConfig::BlindFold => 1,
+            ZkConfig::Whiteout => 2,
         });
         word(match protocol.commitment {
             CommitmentConfig::Homomorphic => 0,
@@ -373,7 +374,7 @@ where
         ZkConfig::BlindFold => Some(validate_zk_vector_commitment_setup::<PCS, VC>(
             preprocessing,
         )?),
-        ZkConfig::Transparent => None,
+        ZkConfig::Transparent | ZkConfig::Whiteout => None,
     };
     let program = &preprocessing.program;
     let memory_layout = program.memory_layout();
@@ -936,7 +937,7 @@ where
         ZkConfig::BlindFold => Some(validate_zk_vector_commitment_setup::<PCS, VC>(
             preprocessing,
         )?),
-        ZkConfig::Transparent => None,
+        ZkConfig::Transparent | ZkConfig::Whiteout => None,
     };
 
     let mut normalized_public_io = public_io.clone();
@@ -1677,6 +1678,7 @@ mod tests {
         let zk_word = match JOLT_VERIFIER_CONFIG.zk {
             ZkConfig::Transparent => 0,
             ZkConfig::BlindFold => 1,
+            ZkConfig::Whiteout => 2,
         };
         assert_eq!(word(0), zk_word, "zk is the first word");
         assert_eq!(word(19), 0, "no advice is present");
