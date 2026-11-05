@@ -22,8 +22,11 @@ not admitted. The target rechecks the label and PR head after queue/lock waits.
 The dashboard shows the PR link, submitted head, base and measured merge, source
 run/attempt, admission event, and raw result. Select a PR, workload/input/core
 count, base or head leg, host/build configuration, and metric. PR legs do not enter
-the main trend. Automatic calibration remains unavailable: these are observed
-measurements, not statistical significance or a future false-positive guarantee.
+the main trend. PR ingest authenticates external calibration references for the
+exact base commit, with matching build and host identities and a 48-hour expiry.
+The displayed bands describe repeated measurements of the same build; they are
+informational, not statistical significance or a future false-positive guarantee.
+When no reference matches, measurements remain visible without a band.
 
 A point is the median of complete measured repetitions. The table shows its
 minimum–maximum range; raw JSON retains warmups. Failed cases/builds, incomplete
