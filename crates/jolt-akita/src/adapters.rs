@@ -1,13 +1,10 @@
-use std::{
-    collections::BTreeMap,
-    fmt,
-    io::{Cursor, Error as IoError, ErrorKind},
-    sync::Arc,
-    sync::OnceLock,
-};
+use std::{collections::BTreeMap, fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 #[cfg(feature = "parallel")]
-use std::error::Error;
+use std::{
+    error::Error,
+    io::{Error as IoError, ErrorKind},
+};
 
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};

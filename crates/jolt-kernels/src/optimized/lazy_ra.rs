@@ -53,7 +53,7 @@ use rayon::prelude::*;
 mod paired;
 
 pub(crate) use paired::PairedBranchTables;
-use paired::PAIR_ADDRESSES;
+use paired::{PairedLoHi, PAIR_ADDRESSES};
 
 /// The default widest lazy branch set: the fourth bind materializes `T/16`.
 const DEFAULT_MAX_WIDTH: usize = 8;
@@ -128,23 +128,17 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
         }
     }
 
-    /// Every column's value at bound row `row` of a
-    /// `PAIRED_MATERIALIZE_BRANCHES`-wide lazy set.
-    fn visit_paired_values<F: JoltField>(
+    /// Every column's value summed over the `BRANCHES` branch rows from
+    /// `start`.
+    fn visit_paired_branches<F: JoltField, const BRANCHES: usize>(
         &self,
         tables: &PairedBranchTables<F>,
-        row: usize,
+        start: usize,
         visit: impl FnMut(usize, F),
     ) where
         Self: Sized,
     {
-        tables.visit_indexed(
-            self,
-            0..tables.columns(),
-            row * PAIRED_MATERIALIZE_BRANCHES,
-            PAIRED_MATERIALIZE_BRANCHES / 2,
-            visit,
-        );
+        tables.visit_indexed(self, 0..tables.columns(), start, BRANCHES / 2, visit);
     }
 
     fn gather_pairs<F: JoltField>(
@@ -156,12 +150,22 @@ pub(crate) trait ChunkIndexSource: Send + Sync + 'static {
     ) where
         Self: Sized,
     {
-        for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
-            *out = (
-                gather(table, width, self, i, 2 * row),
-                gather(table, width, self, i, 2 * row + 1),
-            );
-        }
+        gather_pairs_by_index(self, tables, width, row, out);
+    }
+}
+
+pub(super) fn gather_pairs_by_index<F: JoltField, S: ChunkIndexSource>(
+    source: &S,
+    tables: &[Vec<F>],
+    width: usize,
+    row: usize,
+    out: &mut [(F, F)],
+) {
+    for (i, (out, table)) in out.iter_mut().zip(tables).enumerate() {
+        *out = (
+            gather(table, width, source, i, 2 * row),
+            gather(table, width, source, i, 2 * row + 1),
+        );
     }
 }
 
@@ -295,6 +299,22 @@ impl<F: JoltField, S: ChunkIndexSource> LazyFoldedRa<F, S> {
     #[inline]
     pub(crate) fn lo_hi(&self, i: usize, row: usize) -> (F, F) {
         (self.value(i, 2 * row), self.value(i, 2 * row + 1))
+    }
+
+    /// The leading `columns` polynomials' `(lo, hi)` pairs through paired
+    /// branch tables, when [`PairedLoHi`] admits this single-factor lazy set.
+    pub(crate) fn paired_lo_hi(&self, columns: usize) -> Option<PairedLoHi<'_, F, S>> {
+        let Self::Lazy {
+            tables,
+            width,
+            factors: 1,
+            source,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        PairedLoHi::new(&tables[..columns], *width, source)
     }
 
     /// All polynomials' `(lo, hi)` pairs at `row`, into `out` (length
@@ -606,7 +626,7 @@ fn materialize<F: JoltField, S: ChunkIndexSource>(
 /// the row-major fill touches all tables per row, which only pays while they
 /// stay cache-resident.
 const ROW_MAJOR_FILL_MAX_TABLE_BYTES: usize = 1 << 20;
-pub(super) const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
+const PAIRED_MATERIALIZE_BRANCHES: usize = 16;
 const PAIRED_MATERIALIZE_MIN_ROWS: usize = 1 << 12;
 const PAIRED_MATERIALIZE_MAX_BYTES: usize = 2 << 20;
 /// Round messages read every polynomial at a row; once a row spans this many
@@ -757,9 +777,11 @@ fn materialize_paired_values<F: JoltField, S: ChunkIndexSource>(
             return;
         }
         for row in 0..len {
-            source.visit_paired_values(paired, start + row, |column, value| {
-                out[column][row] = value;
-            });
+            source.visit_paired_branches::<F, PAIRED_MATERIALIZE_BRANCHES>(
+                paired,
+                (start + row) * PAIRED_MATERIALIZE_BRANCHES,
+                |column, value| out[column][row] = value,
+            );
         }
     }
     fill(
@@ -786,7 +808,11 @@ fn materialize_paired_rows<F: JoltField, S: ChunkIndexSource>(
     #[cfg(not(feature = "parallel"))]
     let mut values = vec![F::zero(); len * columns];
     let fill = |(row, out): (usize, &mut [F])| {
-        source.visit_paired_values(&paired, row, |column, value| out[column] = value);
+        source.visit_paired_branches::<F, PAIRED_MATERIALIZE_BRANCHES>(
+            &paired,
+            row * PAIRED_MATERIALIZE_BRANCHES,
+            |column, value| out[column] = value,
+        );
     };
     #[cfg(feature = "parallel")]
     values
