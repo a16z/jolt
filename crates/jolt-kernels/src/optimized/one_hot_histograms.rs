@@ -118,16 +118,12 @@ pub(crate) fn pushforward_access<F: JoltField>(
         let base = outer * in_len;
         for (inner, &weight) in eq.e_in().iter().take(prefix - base).enumerate() {
             let row = row_at(base + inner)?;
-            state
-                .instruction
-                .add(row.lookup_index.0, weight, k_chunk, omit_digit_zero);
+            state.instruction.add(row.lookup_index.0, weight);
             add_other(&mut state.other, &row, weight);
         }
         let outer_weight = eq.e_out()[outer];
         let (instruction_sums, other_sums) = state.sums.split_at_mut(instruction);
-        state
-            .instruction
-            .fold_into(instruction_sums, outer_weight, omit_digit_zero);
+        state.instruction.fold_into(instruction_sums, outer_weight);
         for (sums, block) in other_sums.iter_mut().zip(&mut state.other) {
             for (sum, bucket) in sums.iter_mut().zip(block) {
                 let value = std::mem::take(bucket).reduce();
@@ -175,42 +171,64 @@ pub(crate) fn pushforward_access<F: JoltField>(
         .collect())
 }
 
+const PAIRED_K_CHUNK: usize = 16;
+const PAIR_BUCKETS: usize = PAIRED_K_CHUNK * PAIRED_K_CHUNK;
+
 // Marginalization and clearing grow with accumulator width. Pair selectors
 // only on large enough blocks, with zero buckets omitted: dense zero updates
 // can dominate the larger tables even when the instruction count falls.
+// Pairs always omit zero digits, so only `Digits` carries the zero policy.
 enum InstructionHistogram<F: JoltField> {
-    Digits(Vec<Vec<F::Accumulator>>),
-    Pairs(Vec<[F::SumAccumulator; 256]>),
+    Digits {
+        buckets: Vec<Vec<F::Accumulator>>,
+        k_chunk: usize,
+        omit_zero: bool,
+    },
+    Pairs(Vec<[F::SumAccumulator; PAIR_BUCKETS]>),
 }
 
 impl<F: JoltField> InstructionHistogram<F> {
     fn new(columns: usize, k_chunk: usize, block_len: usize, omit_zero: bool) -> Self {
+        // Blocks need 32 rows per accumulator byte to amortize clearing and
+        // marginalizing the tables: 1,024 rows for Fp128 and 4,096 for Fr.
+        // Smaller Fr blocks measured slower than direct digits.
         if omit_zero
-            && k_chunk == 16
+            && k_chunk == PAIRED_K_CHUNK
             && columns > 0
             && columns <= 32
             && columns.is_multiple_of(2)
             && block_len >= 1024
             && std::mem::size_of::<F::SumAccumulator>() <= block_len / 32
         {
-            Self::Pairs(vec![[F::SumAccumulator::default(); 256]; columns / 2])
+            Self::Pairs(vec![
+                [F::SumAccumulator::default(); PAIR_BUCKETS];
+                columns / 2
+            ])
         } else {
-            Self::Digits(vec![vec![F::Accumulator::default(); k_chunk]; columns])
-        }
-    }
-
-    fn add(&mut self, index: u128, weight: F, k_chunk: usize, omit_zero: bool) {
-        match self {
-            Self::Digits(buckets) => {
-                add_instruction_digits(buckets, index, weight, k_chunk, omit_zero);
+            Self::Digits {
+                buckets: vec![vec![F::Accumulator::default(); k_chunk]; columns],
+                k_chunk,
+                omit_zero,
             }
-            Self::Pairs(buckets) => add_instruction_digits(buckets, index, weight, 256, omit_zero),
         }
     }
 
-    fn fold_into(&mut self, sums: &mut [Vec<F::Accumulator>], weight: F, omit_zero: bool) {
+    fn add(&mut self, index: u128, weight: F) {
         match self {
-            Self::Digits(buckets) => {
+            Self::Digits {
+                buckets,
+                k_chunk,
+                omit_zero,
+            } => add_instruction_digits(buckets, index, weight, *k_chunk, *omit_zero),
+            Self::Pairs(tables) => {
+                add_instruction_digits(tables, index, weight, PAIR_BUCKETS, true);
+            }
+        }
+    }
+
+    fn fold_into(&mut self, sums: &mut [Vec<F::Accumulator>], weight: F) {
+        match self {
+            Self::Digits { buckets, .. } => {
                 for (sums, buckets) in sums.iter_mut().zip(buckets) {
                     for (sum, bucket) in sums.iter_mut().zip(buckets) {
                         sum.fmadd(weight, std::mem::take(bucket).reduce());
@@ -220,12 +238,12 @@ impl<F: JoltField> InstructionHistogram<F> {
             Self::Pairs(tables) => {
                 for (table, sums) in tables.iter_mut().zip(sums.chunks_exact_mut(2)) {
                     let (high, low) = sums.split_at_mut(1);
-                    for digit in usize::from(omit_zero)..16 {
-                        let mut high_sum = table[16 * digit];
+                    for digit in 1..PAIRED_K_CHUNK {
+                        let mut high_sum = table[PAIRED_K_CHUNK * digit];
                         let mut low_sum = table[digit];
-                        for other in 1..16 {
-                            high_sum.merge(table[16 * digit + other]);
-                            low_sum.merge(table[16 * other + digit]);
+                        for other in 1..PAIRED_K_CHUNK {
+                            high_sum.merge(table[PAIRED_K_CHUNK * digit + other]);
+                            low_sum.merge(table[PAIRED_K_CHUNK * other + digit]);
                         }
                         high[0][digit].fmadd(weight, high_sum.reduce());
                         low[0][digit].fmadd(weight, low_sum.reduce());
@@ -285,6 +303,8 @@ mod pushforward_tests {
     use jolt_field::{Accumulator, Fr, JoltField};
     use jolt_poly::EqPolynomial;
     #[cfg(feature = "akita")]
+    use jolt_poly::TensorEqTable;
+    #[cfg(feature = "akita")]
     use jolt_witness::witnesses::FusedInc;
 
     #[cfg(feature = "akita")]
@@ -309,6 +329,65 @@ mod pushforward_tests {
         )
     }
 
+    fn trace(prefix: usize, len: usize, tail: InstructionCycleRow) -> Vec<InstructionCycleRow> {
+        let mut rows = vec![tail; len];
+        for (j, item) in rows[..prefix].iter_mut().enumerate() {
+            let value = (j as u128 + 1) * 0xdead_beef_1234_5678;
+            let value = (value << 64) | value;
+            *item = row(
+                value,
+                j % 23,
+                if j % 3 == 0 {
+                    None
+                } else {
+                    Some((j % 19) as u64)
+                },
+            );
+        }
+        rows
+    }
+
+    fn dense_pushforwards<F: JoltField>(
+        rows: &[InstructionCycleRow],
+        point: &[F],
+        selectors: &FamilySelectors,
+        k_chunk: usize,
+        omit_zero: bool,
+    ) -> Vec<Vec<F>> {
+        let (instruction, bytecode, ram) = (
+            selectors.instruction.len(),
+            selectors.bytecode.len(),
+            selectors.ram.len(),
+        );
+        let mut expected = vec![vec![F::zero(); k_chunk]; instruction + bytecode + ram];
+        for (row, &weight) in rows.iter().zip(&EqPolynomial::<F>::evals(point, None)) {
+            let mut column = 0;
+            for selector in &selectors.instruction {
+                expected[column][selector.chunk_u128(row.lookup_index())] += weight;
+                column += 1;
+            }
+            for selector in &selectors.bytecode {
+                expected[column][selector.chunk_usize(row.bytecode_pc())] += weight;
+                column += 1;
+            }
+            for selector in &selectors.ram {
+                if let Some(address) = row.remapped_ram_address() {
+                    expected[column][selector.chunk_usize(address as usize)] += weight;
+                }
+                column += 1;
+            }
+        }
+        if omit_zero {
+            let ram = instruction + bytecode..instruction + bytecode + ram;
+            for (index, bucket) in expected.iter_mut().enumerate() {
+                if !ram.contains(&index) {
+                    bucket[0] = F::zero();
+                }
+            }
+        }
+        expected
+    }
+
     fn check<F: JoltField>() {
         for bits in [1, 2, 3, 4, 8] {
             for counts in [(128 / bits, 3, 4), (2, 2, 2), (0, 2, 1), (2, 0, 0)] {
@@ -320,20 +399,7 @@ mod pushforward_tests {
                         } else {
                             row(0, 0, None)
                         };
-                        let mut rows = vec![tail; 64];
-                        for (j, item) in rows[..prefix].iter_mut().enumerate() {
-                            let value = (j as u128 + 1) * 0xdead_beef_1234_5678;
-                            let value = (value << 64) | value;
-                            *item = row(
-                                value,
-                                j % 23,
-                                if j % 3 == 0 {
-                                    None
-                                } else {
-                                    Some((j % 19) as u64)
-                                },
-                            );
-                        }
+                        let rows = trace(prefix, 64, tail);
                         let compact: ConstantSuffix<_> = rows.clone().into();
                         for boolean_point in [false, true] {
                             let point: Vec<_> = (0..6)
@@ -341,40 +407,7 @@ mod pushforward_tests {
                                     F::from_u64(if boolean_point { i % 2 } else { 17 + i * 3 })
                                 })
                                 .collect();
-                            let weights = EqPolynomial::<F>::evals(&point, None);
                             for omit_zero in [false, true] {
-                                let mut expected = vec![
-                                    vec![F::zero(); 1 << bits];
-                                    counts.0 + counts.1 + counts.2
-                                ];
-                                for (row, &weight) in rows.iter().zip(&weights) {
-                                    let mut column = 0;
-                                    for selector in &selectors.instruction {
-                                        expected[column]
-                                            [selector.chunk_u128(row.lookup_index())] += weight;
-                                        column += 1;
-                                    }
-                                    for selector in &selectors.bytecode {
-                                        expected[column]
-                                            [selector.chunk_usize(row.bytecode_pc())] += weight;
-                                        column += 1;
-                                    }
-                                    for selector in &selectors.ram {
-                                        if let Some(address) = row.remapped_ram_address() {
-                                            expected[column]
-                                                [selector.chunk_usize(address as usize)] += weight;
-                                        }
-                                        column += 1;
-                                    }
-                                }
-                                if omit_zero {
-                                    let ram = counts.0 + counts.1..counts.0 + counts.1 + counts.2;
-                                    for (index, bucket) in expected.iter_mut().enumerate() {
-                                        if !ram.contains(&index) {
-                                            bucket[0] = F::zero();
-                                        }
-                                    }
-                                }
                                 assert_eq!(
                                     pushforwards(
                                         &compact,
@@ -384,7 +417,13 @@ mod pushforward_tests {
                                         omit_zero
                                     )
                                     .unwrap(),
-                                    expected
+                                    dense_pushforwards(
+                                        &rows,
+                                        &point,
+                                        &selectors,
+                                        1 << bits,
+                                        omit_zero
+                                    )
                                 );
                             }
                         }
@@ -409,7 +448,7 @@ mod pushforward_tests {
                             i.wrapping_mul(0xdead_beef_0123_4567_89ab_cdef_fedc_ba98)
                         };
                         let weight = F::from_u128(((i + 1) << 96) | (i * i + 31));
-                        histogram.add(index, weight, 16, omit_zero);
+                        histogram.add(index, weight);
                         for (column, buckets) in expected.iter_mut().enumerate() {
                             let digit = ((index >> (4 * (columns - column - 1))) & 15) as usize;
                             if !omit_zero || digit != 0 {
@@ -417,7 +456,7 @@ mod pushforward_tests {
                             }
                         }
                     }
-                    histogram.fold_into(&mut sums, outer, omit_zero);
+                    histogram.fold_into(&mut sums, outer);
                     let actual: Vec<Vec<F>> = sums
                         .iter()
                         .map(|buckets| buckets.iter().map(|bucket| bucket.reduce()).collect())
@@ -437,6 +476,32 @@ mod pushforward_tests {
     #[test]
     fn paired_instruction_marginals_match_direct_buckets_akita() {
         check_marginals::<Prime128OffsetA7F7>();
+    }
+
+    #[cfg(feature = "akita")]
+    fn check_paired<F: JoltField>() {
+        let point: Vec<_> = (0..20).map(|i| F::from_u64(17 + 3 * i)).collect();
+        let block_len = TensorEqTable::new(&point).e_in().len();
+        let counts = (32, 3, 4);
+        assert!(matches!(
+            InstructionHistogram::<F>::new(counts.0, 16, block_len, true),
+            InstructionHistogram::Pairs(_)
+        ));
+        let selectors = FamilySelectors::new::<F>(counts, 4).unwrap();
+        for prefix in [0, block_len, 2 * block_len + 37] {
+            let rows = trace(prefix, 1 << point.len(), row(u128::MAX, 37, Some(0)));
+            let compact: ConstantSuffix<_> = rows.clone().into();
+            assert_eq!(
+                pushforwards(&compact, &point, &selectors, 16, true).unwrap(),
+                dense_pushforwards(&rows, &point, &selectors, 16, true)
+            );
+        }
+    }
+
+    #[cfg(feature = "akita")]
+    #[test]
+    fn paired_histograms_match_dense_equality_through_pushforwards() {
+        check_paired::<Prime128OffsetA7F7>();
     }
 
     #[test]
