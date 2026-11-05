@@ -59,6 +59,11 @@ jobs:
           filter: blob:none
       - name: check style invariants
         run: python3 scripts/check_style_invariants.py --base "origin/${{ github.base_ref || 'main' }}"
+      - name: Test RV64 word memory routines
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gcc-riscv64-linux-gnu qemu-user
+          bash jolt-platform/tests/run-word-memory.sh
       - name: Test benchmark profile selection
         run: python3 -m unittest scripts.tests.test_benchmark_profiles -v
       - name: Test the AI merge gate
@@ -688,7 +693,7 @@ jobs:
         with:
           components: rust-src
           cache: false
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           shared-key: release-tests
           save-if: false
