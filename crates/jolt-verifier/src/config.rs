@@ -30,6 +30,10 @@ pub enum ZkConfig {
     Transparent,
     /// BlindFold over pads committed with a curve vector commitment (Dory).
     BlindFold,
+    /// Whiteout over a lattice pad commitment, with Akita's masked levels
+    /// and Σ-protocol. No build selects it yet: `zk` with `akita` is a
+    /// compile error.
+    Whiteout,
 }
 
 impl ZkConfig {
@@ -38,7 +42,7 @@ impl ZkConfig {
     pub const fn is_masked(self) -> bool {
         match self {
             Self::Transparent => false,
-            Self::BlindFold => true,
+            Self::BlindFold | Self::Whiteout => true,
         }
     }
 }
@@ -163,6 +167,19 @@ mod tests {
             postcard::from_bytes::<JoltProtocolConfig>(&[0, 1, 0, 4, 0]).unwrap(),
             akita_protocol
         );
+        let whiteout_protocol = JoltProtocolConfig {
+            zk: ZkConfig::Whiteout,
+            ..akita_protocol
+        };
+        assert_eq!(
+            postcard::to_stdvec(&whiteout_protocol).unwrap(),
+            [2, 1, 0, 4, 0]
+        );
+        assert_eq!(
+            postcard::from_bytes::<JoltProtocolConfig>(&[2, 1, 0, 4, 0]).unwrap(),
+            whiteout_protocol
+        );
+        assert!(validate_proof_config(&JOLT_VERIFIER_CONFIG, whiteout_protocol).is_err());
     }
 
     /// A proof declaring a different field-register file size rejects even when the enabled
