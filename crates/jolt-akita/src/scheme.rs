@@ -429,8 +429,11 @@ impl AkitaScheme {
     /// [`CommitmentScheme::setup`] that rejects, with
     /// [`OpeningsError::InvalidSetup`] and before allocating the one-hot
     /// backend setup, a request whose flat public matrix needs more than
-    /// `remaining_bytes`. Only the one-hot single-chunk setup without grouped
-    /// rows is priced; every other shape is rejected before any setup work.
+    /// `remaining_bytes`. Only the one-hot single-chunk setup is priced,
+    /// including grouped rows, which that matrix covers because it is sized
+    /// from the grouped catalog. Full-width dense groups build separate,
+    /// unpriced backend setups, so they and every other shape are rejected
+    /// before any setup work.
     ///
     /// Passing prices only that matrix, not the complete setup: schedule
     /// catalogs, backend caches, the setup-prefix export's buffers,
@@ -441,10 +444,13 @@ impl AkitaScheme {
     ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
         if params.flavor != AkitaSetupFlavor::OneHot
             || params.akita_chunk_profile != AkitaChunkProfile::default()
-            || params.grouped_schedule.is_some()
+            || params
+                .grouped_schedule
+                .as_ref()
+                .is_some_and(|request| request.full_width_arities().next().is_some())
         {
             return Err(OpeningsError::InvalidSetup(
-                "a known setup-source limit prices only the one-hot single-chunk setup without grouped rows".into(),
+                "a known setup-source limit prices only the one-hot single-chunk setup without full-width dense groups".into(),
             ));
         }
         Self::build_setup(params, Some(remaining_bytes))
@@ -1447,7 +1453,7 @@ mod tests {
     /// rejected under any limit, though each builds unbudgeted.
     #[test]
     fn known_source_limit_rejects_shapes_it_does_not_price() {
-        use crate::schedule_registry::GroupedScheduleParams;
+        use crate::schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
 
         let artifacts =
             AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
@@ -1476,7 +1482,7 @@ mod tests {
                 Some(GroupedScheduleParams::new(
                     None,
                     None,
-                    Vec::new(),
+                    vec![DenseGroupLayout::FullWidth { num_vars: 14 }],
                     PolynomialGroupLayout::new(16, 2),
                 )),
                 Arc::clone(&artifacts),
