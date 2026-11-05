@@ -1094,8 +1094,7 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    // Counts the named caller buffers only: the sizing trace run_workload
-    // queued for a background drop may still be live and is not included.
+    // Counts the named caller buffers only.
     let setup_source_limit = memory_budget.map(|budget| {
         let caller_bytes = trace_output
             .heap_bytes()
