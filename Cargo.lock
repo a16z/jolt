@@ -167,6 +167,7 @@ source = "git+https://github.com/LayerZero-Labs/akita.git?rev=0d12171ee4ec8c9d9a
 dependencies = [
  "jolt-algebra",
  "jolt-crypto",
+ "jolt-zk",
  "thiserror 2.0.21",
 ]
 
@@ -219,6 +220,7 @@ dependencies = [
  "jolt-algebra",
  "jolt-crypto",
  "jolt-transcript",
+ "jolt-zk",
  "keccak 0.2.2",
  "serde",
  "sha3 0.12.0",
@@ -238,13 +240,17 @@ dependencies = [
  "akita-prover",
  "akita-serialization",
  "akita-setup",
+ "akita-sumcheck",
  "akita-transcript",
  "akita-types",
  "akita-verifier",
  "jolt-algebra",
  "jolt-crypto",
+ "jolt-poly",
+ "jolt-zk",
  "rayon",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -277,7 +283,9 @@ dependencies = [
  "jolt-algebra",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-zk",
  "tracing",
+ "zeroize",
 ]
 
 [[package]]
@@ -361,6 +369,7 @@ dependencies = [
  "jolt-crypto",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-zk",
  "rand_core 0.6.4",
  "shake",
  "spongefish",
@@ -385,6 +394,7 @@ dependencies = [
  "jolt-poly",
  "jolt-sumcheck",
  "jolt-transcript",
+ "jolt-zk",
  "rayon",
  "tracing",
 ]
@@ -3370,10 +3380,14 @@ dependencies = [
  "jolt-platform",
  "jolt-poly",
  "jolt-transcript",
+ "jolt-zk",
+ "rand 0.8.7",
+ "rand_core 0.6.4",
  "rayon",
  "serde",
  "serde_bytes",
  "serde_json",
+ "thiserror 2.0.21",
  "tracing",
 ]
 
