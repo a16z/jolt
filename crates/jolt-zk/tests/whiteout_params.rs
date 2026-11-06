@@ -43,7 +43,7 @@ fn randomness_len(extra: usize) -> usize {
     columns * 4
 }
 
-/// The headline residual vector at T = 2^24, k = 2 (`scripts/whiteout-costs.py`),
+/// A residual vector at T = 2^24, k = 2 sizes (`scripts/whiteout-costs.py`),
 /// each segment rounded up to whole R_256 elements, at commitment rank
 /// [`RANK`].
 fn headline(operand_shape: SegmentShape) -> SegmentTable {

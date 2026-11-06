@@ -287,7 +287,7 @@ fn whiteout_opening_verifies_and_rejects_a_flipped_response_byte() {
 }
 
 /// The honest bound, pinned to Akita's frozen tables: muldiv's `A_p` (d 128,
-/// the residual's ring, width 417) takes rank 8, whose Σ-binding bracket is
+/// the residual's ring, width 473) takes rank 8, whose Σ-binding bracket is
 /// 33 < width ≤ 1226, so rank 7 is under the 128-bit target there, as the
 /// Akita Σ-binding harness's rank 2 is; `A_D` (key Open, d 64, ℓ∞ 15) takes rank 1 at
 /// width 4736, inside the q128 cell's rank-1 width of 13,656 under the
@@ -302,7 +302,7 @@ fn whiteout_ranks_sit_at_the_tables_minimum() {
         let width =
             LatticePadCommitment::<F, D>::width(pads.placement(), pads.randomness_columns())
                 .unwrap();
-        assert_eq!((D, width, pads.image_len() / D), (128, 417, 8));
+        assert_eq!((D, width, pads.image_len() / D), (128, 473, 8));
         Ok::<(), ZkError>(())
     })
     .unwrap();

@@ -937,7 +937,7 @@ fn assert_rejects_by(
 const SWEEP_FLIPS: usize = 512;
 
 /// V5: the message sweep. Flipped bytes at the first, middle and last byte
-/// of every argument-string message, stride-sampled to [`SWEEP_FLIPS`]
+/// of every argument-string message, stride-sampled to at least [`SWEEP_FLIPS`]
 /// while keeping each class's first and last, and `+1` on values spread
 /// over the whole tape. Every tamper must reject by the Whiteout tail (Σ
 /// and the response proof), the first step that checks a masked value: a
@@ -965,7 +965,7 @@ fn whiteout_muldiv_message_sweep() {
                 .map(|offset| (item.class, range.start + offset)),
         );
     }
-    let stride = flips.len().div_ceil(SWEEP_FLIPS).max(1);
+    let stride = (flips.len() / SWEEP_FLIPS).max(1);
     let selected: Vec<usize> = flips
         .iter()
         .enumerate()

@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Ticket | P5 (candidate #1 of `specs/whiteout-p1-profile.md`) |
-| Status | design and security analysis; no production code |
+| Status | superseded: k = 3 is implemented as the only cut (jolt D5, Akita `specs/whiteout-akita.md` §5.5.4). This note's per-row k ∈ {2, 3} plan was not adopted, and its shapes and estimates predate the implementation |
 | Pins | jolt `whiteout/dev` `a23f63464`; Akita `~/akita-whiteout` `b7889ad52`; paper `akita-paper/sections/whiteout/*.tex` as read on 2026-11-05 |
 | Indexing | paper fold k = Akita `cut_level + 1`. k = 2 is `ZK_CUT_LEVEL = 1` today; k = 3 is `cut_level = 2` |
 

@@ -190,7 +190,7 @@ Akita's C0 golden digests (A8) are the mechanical proof of branches.md rule 1 fo
    - D31: the trust root of statement-fixed groups is the holder of r;
    - Q1: pads instead of LHL randomness below the cut.
 4. **Cut and residual (A11, A13):**
-   - D5: k = 2 only;
+   - D5: k = 3 only;
    - D18: structural constraints at the masked levels;
    - D28: the public coordinates of w_k;
    - D29 → O4: `cm(u_a)` at the cut;

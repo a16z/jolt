@@ -17,8 +17,9 @@ so the authors can fold it into the paper.
 - jolt: `whiteout/dev` at `2cc2502ed`. Paths are written `jolt:`.
 - Akita: `whiteout/dev` at `fe57e2446`, written `akita:`. The W2 branch
   `wo/akita-w2` at `68c76dbd0` is written `akita-w2:`.
-- Indexing: the paper's fold j is Akita level j − 1. The paper's k = 2 is
-  `cut_level = 1`.
+- Indexing: the paper's fold j is Akita level j − 1, so the paper's k is
+  `cut_level + 1`. The implementation's k = 3 is `cut_level = 2` (D5);
+  deltas written before that change quote k = 2 counts.
 
 **Evidence labels.**
 
@@ -35,7 +36,7 @@ so the authors can fold it into the paper.
 | D2 | Σ near-zero rejection: σ grows so one attempt almost always accepts | parameter change | in progress (`wo/sigma-norej`) |
 | D3 | One-shot fold responses sized to 2^−136 in total, not "one extra digit, 2^−950" | parameter change, fix | implemented on `wo/akita-w2` |
 | D4 | Hiding randomness: sizing owner, open alphabet, cut before the terminal, trusted catalogs reject it | clarification, extension | implemented |
-| D5 | The cut is k = 2 only (`cut_level = 1`, `masked_folds = 2`) | parameter fixed | implemented |
+| D5 | The cut is k = 3 only (`cut_level = 2`, three masked levels) | parameter fixed | implemented |
 | D6 | Per-round degree schedule for batched sumchecks | extension | implemented |
 | D7 | Shared stage checks over `ClaimDomain`; stage-2 row has no constant term; Q3 answered | clarification | implemented |
 | D8 | BlindFold stays curve-based, over pads committed up front | alternative back end | implemented |
@@ -223,7 +224,8 @@ fold and reports δ_fold < 2^−950 per fold (`06_evaluation.tex:110,143-150`).
 - The one-hot bound is a Chernoff bound on the exact moment-generating function
   of challenge × one-hot input. Any λ on the grid gives a valid bound, so
   missing the minimizer only enlarges the threshold.
-- Summing over the two masked folds gives δ_fold ≤ 2^−136.
+- Summing over the masked levels (two at k = 2, three at k = 3, D5) gives
+  δ_fold ≤ 2^−136.
 - Total, with the paper's other terms (δ_LHL = 2^−129.2, T_att = 163,
   ε = 2^−137, M = 2.37, ν = 256) and Q_tot = 2^100 (an assumption, see Q6):
   2^−128.79 when δ_fold sits at its target, and 2^−128.81 at the reported
@@ -329,28 +331,41 @@ whose range check covers the witness that holds it". State that slices
 already split across witness chunks are out of scope, or give each chunk its
 own vector.
 
-## D5. The cut at k = 2
+## D5. The cut at k = 3
 
 **Paper says.** k ∈ {2, 3, 4} are admissible; k = 2 with offloading is
 recommended (`06_evaluation.tex:169-170,237-246`).
 
 **Implementation.**
 
-- Only `cut_level = 1` (paper k = 2) is supported:
-  `akita-w2:crates/akita-params/src/zk.rs:38,127-131`, and Akita spec §4.1.
-- `masked_folds = cut_level + 1 = 2`, so levels 0 and 1 are masked.
-- There is no planning for k ∈ {3, 4}.
+- Only `cut_level = 2` (paper k = 3) is supported: `ZK_CUT_LEVEL` in
+  `akita:crates/akita-params/src/zk.rs`, and Akita spec §4.1 and §5.5.4.
+  A schedule with any other cut is refused.
+- Levels 0, 1 and 2 are masked; level 3 holds the residual commitment.
+  Each witness response at a masked level gets `2^−136 / (3·W_ℓ)`.
+- Level 0 may offload its setup into level 1, and the headline row does;
+  the cut level is never offloaded.
 
-**Why.** It is the recommended configuration, and the earlier-fold matrices
-keep Akita's ranks there (`06_evaluation.tex:155-162`). k = 3 and 4 need re-ranked
-inner matrices.
+**Why.** At k = 2 the cut level is Akita's level 1, which always folds by
+coefficient packing, so w_k is the witness before the evaluation-trace folds
+shrink it. One more masked fold divides w_k, and with it the Σ-protocol's
+`s` and `e`, by about 2.2–2.9 at the one-hot catalog rows. At k = 3 the
+re-priced A ranks of all three masked levels of the 36:1 row equal the
+clear ranks (Akita test W2-d), so the re-ranking the paper anticipates for
+k ≥ 3 (`06_evaluation.tex:155-162`) does not arise there.
 
-**Argument / security impact.** None beyond the paper's k = 2 analysis.
+**Argument / security impact.** The per-level conditions of
+Def. `wo:def:source-cutoff` are checked by admission at every masked level
+(ℓ∞ route, quotient relation, open base 8, one chunk, LHL-sized hiding
+randomness on every witness B slice and D image, one-shot fold digits).
+δ_fold stays at 2^−136 in total. Not recomputed here: δ_LHL, whose sum
+gains level 2's B slices and D image, and the knowledge error, which gains
+one more fold's interactive terms (those of clear Akita's third fold).
 
 **Status.** Implemented.
 
-**For the paper.** No change needed. Optionally state that the
-implementation fixes k = 2.
+**For the paper.** State that the implementation fixes k = 3, and recount
+δ_LHL's hiding images and the knowledge-error ledger at k = 3.
 
 ## D6. Per-round degree schedule
 
@@ -428,9 +443,9 @@ count (Q3) is not stated.
   - R collects every term linear in w.
   - There is **no constant term**. An earlier draft of the Akita spec had one;
     fixup `62b0c4f88` corrected it.
-- **Total.** 3 products and 1 auxiliary slot per masked level, so 6 products
-  and 2 auxiliary slots at k = 2. This answers Q3 and matches the paper's
-  "two auxiliary values".
+- **Total.** 3 products and 1 auxiliary slot per masked level, so 9 products
+  and 3 auxiliary slots at k = 3 (6 and 2 at k = 2). This answers Q3 and
+  matches the paper's "two auxiliary values" at its k = 2.
 - A PrivateCpu fault test shifts the last stage-2 round by X − X². It shows
   the stage-2 check is the only one that catches an oracle miss (commit
   `6d35999a1`).
@@ -1774,9 +1789,9 @@ D rings are 64 on every row.
   does not price them. With the cheaper `R_128` residual it chose that
   offload from 35 variables, and Akita's 36:1 headline row then needed
   ν = 29 > 27 (refused: unprovable, not unsound). The narrowing concerns
-  only the cut level; offloading at earlier folds (D5's "k = 2 with
-  offloading") is unchanged, and admission still accepts a cut-level
-  setup prefix (used by tests). A test checks that every checked-in ZK
+  only the cut level; offloading at earlier folds (D5) is unchanged, and
+  admission still accepts a cut-level setup prefix, which no search
+  plans. A test checks that every checked-in ZK
   row's `e` fits the bound.
 
 **Argument.**

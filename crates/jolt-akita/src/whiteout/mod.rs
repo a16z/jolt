@@ -354,7 +354,7 @@ fn load_single_row<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
 /// admission): a verifier then refuses plans of the old statement instead of
 /// misreading them.
 const WHITEOUT_PLANS_MAGIC: [u8; 4] = *b"WOPL";
-const WHITEOUT_PLANS_VERSION: u32 = 1;
+const WHITEOUT_PLANS_VERSION: u32 = 2;
 
 /// A Whiteout setup's persisted plans: its zero-knowledge catalog and,
 /// optionally, a set of response schedules, each as Akita's canonical
