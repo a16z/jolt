@@ -13,7 +13,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 /// `setup.params().width()` of the production Whiteout parameters.
-const PRODUCTION_K: u64 = 58_642_511_897;
+const PRODUCTION_K: u64 = 229_072_314;
 /// One `fill_parallel` chunk.
 const CHUNK: usize = 1 << 14;
 /// fib 2^16's residual length.
