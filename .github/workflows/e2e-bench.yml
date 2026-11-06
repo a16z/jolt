@@ -1,0 +1,163 @@
+name: End-to-end prover benchmarks
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [labeled, synchronize]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: Suite to run on the selected main revision
+        type: choice
+        options: [main, nightly, calibration]
+        default: main
+
+permissions: {}
+
+jobs:
+  plan:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'pull_request_target' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'benchmark') &&
+        (github.event.action == 'synchronize' || github.event.label.name == 'benchmark')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      enabled: ${{ steps.plan.outputs.enabled }}
+      tier: ${{ steps.plan.outputs.tier }}
+      harness: ${{ steps.plan.outputs.harness }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Resolve the trusted measurement plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOLT_E2E_ENABLED: ${{ vars.JOLT_E2E_ENABLED }}
+        run: uv run --no-project python scripts/bench/ci.py plan --out "$RUNNER_TEMP/e2e-plan"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
+        with:
+          name: jolt-e2e-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-plan/plan.json
+          if-no-files-found: error
+      - name: Publish the non-executed receipt
+        if: steps.plan.outputs.enabled != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jolt-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-plan/benchmark-results.json
+          if-no-files-found: error
+
+  prepare:
+    needs: plan
+    if: needs.plan.outputs.enabled == 'true' && needs.plan.outputs.tier != 'pr' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      CARGO_BUILD_JOBS: 1
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      index_sha256: ${{ steps.prepare.outputs.index_sha256 }}
+      manifest_digests: ${{ steps.prepare.outputs.manifest_digests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.harness }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: rust-src
+          cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-plan
+          merge-multiple: true
+      - name: Add 24 GB of swap for release linking
+        shell: bash
+        run: |
+          available_bytes=$(df -B1 --output=avail "$RUNNER_TEMP" | tail -n 1)
+          if ! [ "$available_bytes" -ge 40000000000 ]; then
+            echo "Need 40 GB free for 24 GB swap and 16 GB build space; found $available_bytes bytes" >&2
+            exit 1
+          fi
+          swap_file=$(mktemp "$RUNNER_TEMP/jolt-build-swap.XXXXXX")
+          sudo chown root:root "$swap_file"
+          sudo fallocate -l 24000000000 "$swap_file"
+          sudo mkswap "$swap_file"
+          sudo swapon "$swap_file"
+          free -b
+          swapon --show --bytes
+      - name: Build release provers and complete guest inputs on the hosted runner
+        id: prepare
+        run: /usr/bin/time -v uv run --no-project python scripts/bench/ci.py prepare --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-builds"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: upload
+        if: always()
+        with:
+          name: jolt-e2e-builds-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-builds
+          if-no-files-found: warn
+          retention-days: 14
+
+  dispatch:
+    needs: [plan, prepare]
+    if: >-
+      !cancelled() && needs.plan.outputs.enabled == 'true' && github.ref == 'refs/heads/main' &&
+      (needs.plan.outputs.tier == 'pr' || needs.prepare.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.harness }}
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.plan.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-plan
+          merge-multiple: true
+      - name: Publish the target request for the Pika App
+        env:
+          BUILD_ARTIFACT_ID: ${{ needs.prepare.outputs.artifact_id }}
+          BUILD_INDEX_SHA256: ${{ needs.prepare.outputs.index_sha256 }}
+          BUILD_MANIFEST_DIGESTS: ${{ needs.prepare.outputs.manifest_digests }}
+        run: >-
+          uv run --no-project python scripts/bench/ci.py dispatch
+          --plan "$RUNNER_TEMP/e2e-plan/plan.json" --out "$RUNNER_TEMP/e2e-dispatch"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jolt-e2e-dispatch-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-dispatch/dispatch.json
+          if-no-files-found: error
+          retention-days: 14

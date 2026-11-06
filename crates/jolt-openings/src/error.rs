@@ -17,6 +17,11 @@ pub enum OpeningsError {
     #[error("opening proof generation failed: {0}")]
     ProveFailed(String),
 
+    /// The setup's public matrix needs `required` bytes, above the caller's
+    /// `limit`; raised before the setup allocates it.
+    #[error("the setup's public matrix needs {required} bytes, above the {limit}-byte limit")]
+    SetupExceedsBudget { required: usize, limit: usize },
+
     #[error("polynomial size {poly_size} exceeds setup max {setup_max}")]
     PolynomialTooLarge { poly_size: usize, setup_max: usize },
 

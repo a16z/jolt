@@ -1,0 +1,99 @@
+name: End-to-end benchmark ingest
+run-name: e2e-bench ingest ${{ inputs.job_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        type: string
+        required: true
+      plan_run_id:
+        type: string
+        required: true
+      plan_run_attempt:
+        type: string
+        required: true
+      result_url:
+        type: string
+        required: true
+      result_sha256:
+        type: string
+        required: true
+      executor_exit_code:
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  ingest:
+    if: github.actor == '0xandoroid-ai-agent[bot]' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: false
+      - name: Download, bind provenance, and validate without executing result code
+        id: ingest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_ID: ${{ inputs.job_id }}
+          PLAN_RUN_ID: ${{ inputs.plan_run_id }}
+          PLAN_RUN_ATTEMPT: ${{ inputs.plan_run_attempt }}
+          RESULT_URL: ${{ inputs.result_url }}
+          RESULT_SHA256: ${{ inputs.result_sha256 }}
+          EXECUTOR_EXIT_CODE: ${{ inputs.executor_exit_code }}
+        run: >-
+          uv run --no-project python scripts/bench/ingest.py
+          --job-id "$JOB_ID" --plan-run-id "$PLAN_RUN_ID" --plan-run-attempt "$PLAN_RUN_ATTEMPT"
+          --result-url "$RESULT_URL" --result-sha256 "$RESULT_SHA256"
+          --executor-exit-code "$EXECUTOR_EXIT_CODE" --out "$RUNNER_TEMP/e2e-ingest"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jolt-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-ingest/result
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: jolt-e2e-check-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-ingest/check/check.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Post end-to-end benchmark comparison
+        if: steps.ingest.outputs.pr_number != ''
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync(process.env.COMMENT_PATH, 'utf8');
+            const marker = body.split('\n', 1)[0];
+            const issue_number = Number(process.env.PR_NUMBER);
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo, issue_number, per_page: 100,
+            });
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.startsWith(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                ...context.repo, comment_id: existing.id, body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                ...context.repo, issue_number, body,
+              });
+            }
+        env:
+          COMMENT_PATH: ${{ runner.temp }}/e2e-ingest/result/pr-comment.md
+          PR_NUMBER: ${{ steps.ingest.outputs.pr_number }}

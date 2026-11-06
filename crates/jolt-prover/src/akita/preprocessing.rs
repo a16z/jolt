@@ -270,3 +270,50 @@ fn validate_trace_order(config: &ProverConfig) -> Result<(), PreprocessingError>
     }
     Ok(())
 }
+
+#[cfg(all(test, not(feature = "field-inline")))]
+#[expect(clippy::unwrap_used)]
+mod tests {
+    use common::jolt_device::MemoryLayout;
+    use jolt_akita::{AkitaChunkProfile, AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_openings::OpeningsError;
+    use jolt_program::execution::ExecutionDimensions;
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_riscv::RV64IMAC_JOLT;
+
+    use super::grouped_setup_params;
+    use crate::ProverConfig;
+
+    /// The profile's budgeted setup: production grouped parameters always
+    /// carry the bounded-dense increment group, which the limit prices
+    /// instead of rejecting the shape.
+    #[test]
+    fn matrix_byte_limit_prices_the_production_grouped_setup() {
+        let program = JoltProgramPreprocessing::new(
+            Vec::new(),
+            Vec::new(),
+            MemoryLayout::default(),
+            0,
+            1 << 12,
+            RV64IMAC_JOLT,
+        )
+        .unwrap();
+        let config = ProverConfig::derive_from_dimensions::<AkitaField>(
+            ExecutionDimensions::default(),
+            &program.memory_layout,
+            program.ram.min_bytecode_address,
+            program.ram.bytecode_words.len(),
+            program.max_padded_trace_length,
+        )
+        .unwrap();
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let params =
+            grouped_setup_params(&artifacts, &program, &config, false, false, &[]).unwrap();
+        assert!(matches!(
+            AkitaScheme::setup_with_matrix_byte_limit(params.clone(), 0),
+            Err(OpeningsError::SetupExceedsBudget { limit: 0, .. })
+        ));
+        let _ = AkitaScheme::setup_with_matrix_byte_limit(params, usize::MAX).unwrap();
+    }
+}

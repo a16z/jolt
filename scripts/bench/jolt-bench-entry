@@ -1,0 +1,263 @@
+#!/usr/bin/python3
+"""Credential-free forced SSH command for the dedicated benchmark account."""
+
+import fcntl
+import json
+import os
+from pathlib import Path, PurePosixPath
+import pwd
+import re
+import shutil
+import shlex
+import stat
+import subprocess
+import sys
+import tempfile
+import tarfile
+import zipfile
+
+JOB_ID = r'[a-z0-9][a-z0-9-]{0,63}'
+LIMITS = {'dispatch.json': 1024 * 1024, 'plan.zip': 8 * 1024 * 1024,
+          'builds.zip': 32 * 1024**3}
+TIMEOUTS = {'pr': 120 * 60, 'main': 180 * 60, 'nightly': 180 * 60, 'calibration': 180 * 60}
+
+
+def environment(home, temporary):
+    return {'HOME': str(home), 'USER': pwd.getpwuid(os.getuid()).pw_name,
+            'LOGNAME': pwd.getpwuid(os.getuid()).pw_name,
+            'PATH': f'{home}/.cargo/bin:{home}/.local/bin:/usr/local/bin:/usr/bin:/bin',
+            'CARGO_HOME': str(home / '.cargo'), 'RUSTUP_HOME': str(home / '.rustup'),
+            'TMPDIR': str(temporary), 'LANG': 'C.UTF-8', 'LC_ALL': 'C.UTF-8',
+            'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null',
+            'GIT_TERMINAL_PROMPT': '0', 'XDG_RUNTIME_DIR': f'/run/user/{os.getuid()}'}
+
+
+def unit_name(job):
+    return f'jolt-bench-{job.name}.service'
+
+
+def unit_state(job):
+    env = environment(Path(pwd.getpwuid(os.getuid()).pw_dir), job / 'tmp')
+    result = subprocess.run(['systemctl', '--user', 'show', unit_name(job),
+        '--property=LoadState,ActiveState,SubState,Result,ExecMainStatus,ExecMainCode'],
+        env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    values = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+    if 'LoadState' not in values:
+        raise ValueError('runner systemd user manager is unavailable: ' + result.stderr.strip())
+    return values
+
+
+def status(job):
+    state = unit_state(job)
+    if not job.exists():
+        return {'state': 'absent', 'exit_code': None}
+    if state['LoadState'] == 'not-found':
+        return {'state': 'lost', 'exit_code': None}
+    if state['SubState'] in ('running', 'start', 'start-post', 'stop', 'stop-sigterm', 'stop-sigkill', 'stop-post') or state['ActiveState'] == 'activating':
+        return {'state': 'running', 'exit_code': None}
+    if state['SubState'] == 'exited' or state['ActiveState'] in ('failed', 'inactive'):
+        code = int(state['ExecMainStatus'])
+        if state['Result'] == 'timeout':
+            code = 124
+        elif state['ExecMainCode'] != '1':
+            code = 128 + code if code else 1
+        elif state['Result'] != 'success' and code == 0:
+            code = 1
+        return {'state': 'finished', 'exit_code': code}
+    return {'state': 'running', 'exit_code': None}
+
+
+def extract_zip(filename, destination, *, plan=False):
+    with zipfile.ZipFile(filename) as archive:
+        members = archive.infolist()
+        names = set()
+        total = 0
+        for member in members:
+            name = PurePosixPath(member.filename)
+            mode = member.external_attr >> 16
+            if (name.is_absolute() or '..' in name.parts or '\\' in member.filename
+                    or not name.parts or name.as_posix() != member.filename.rstrip('/') or member.filename in names
+                    or stat.S_ISLNK(mode) or (stat.S_IFMT(mode) not in (0, stat.S_IFREG, stat.S_IFDIR))):
+                raise ValueError('unsafe or duplicate ZIP member')
+            names.add(member.filename)
+            total += member.file_size
+            if total > (8 * 1024**2 if plan else 64 * 1024**3) or len(names) > 100000:
+                raise ValueError('ZIP exceeds extraction limit')
+        if plan and names != {'plan.json'}:
+            raise ValueError('plan ZIP must contain exactly plan.json')
+        archive.extractall(destination)
+
+
+def fetch_harness(job, plan, env):
+    source = job / 'harness'
+    subprocess.run(['git', 'init', '-q', str(source)], env=env, check=True, timeout=30,
+                   stdout=subprocess.DEVNULL)
+    subprocess.run(['git', '-C', str(source), 'remote', 'add', 'origin',
+                    'https://github.com/a16z/jolt.git'], env=env, check=True, timeout=30,
+                   stdout=subprocess.DEVNULL)
+    subprocess.run(['git', '-C', str(source), 'fetch', '--depth=1', '--no-tags', 'origin',
+                    plan['harness']], env=env, check=True, timeout=300, stdout=subprocess.DEVNULL)
+    subprocess.run(['git', '-C', str(source), '-c', 'core.hooksPath=/dev/null',
+                    'checkout', '--detach', plan['harness']], env=env, check=True, timeout=60,
+                   stdout=subprocess.DEVNULL)
+
+
+def submit(job, stream, home):
+    if job.exists():
+        return {'state': 'exists'}
+    job.mkdir(mode=0o700)
+    launching = False
+    try:
+        names = set()
+        with tarfile.open(fileobj=stream, mode='r|') as archive:
+            for member in archive:
+                if (member.name not in LIMITS or member.name in names or not member.isfile()
+                        or member.size < 0 or member.size > LIMITS[member.name]):
+                    raise ValueError('unexpected, duplicate, or oversized tar member')
+                names.add(member.name)
+                with archive.extractfile(member) as source, (job / member.name).open('xb') as target:
+                    shutil.copyfileobj(source, target, length=1024 * 1024)
+        manifest = json.loads((job / 'dispatch.json').read_text())
+        run_id, attempt = manifest['run_id'], manifest['run_attempt']
+        if (manifest['schema'] != 1 or type(run_id) is not int or run_id <= 0
+                or type(attempt) is not int or attempt <= 0 or job.name != f'{run_id}-{attempt}'
+                or manifest['tier'] not in TIMEOUTS
+                or manifest['plan_artifact'] != f'jolt-e2e-plan-{run_id}-{attempt}'):
+            raise ValueError('dispatch identity does not match the job')
+        builds = manifest['builds_artifact']
+        if builds != (None if manifest['tier'] == 'pr' else f'jolt-e2e-builds-{run_id}-{attempt}'):
+            raise ValueError('unexpected builds artifact')
+        if names != {'dispatch.json', 'plan.zip'} | ({'builds.zip'} if builds else set()):
+            raise ValueError('tar file set does not match dispatch')
+        extract_zip(job / 'plan.zip', job, plan=True)
+        plan = json.loads((job / 'plan.json').read_text())
+        if (plan['enabled'] is not True or plan['tier'] != manifest['tier']
+                or not re.fullmatch('[0-9a-f]{40}', plan['harness'])
+                or str(plan['provenance']['run_id']) != str(run_id)
+                or str(plan['provenance']['run_attempt']) != str(attempt)):
+            raise ValueError('plan does not match dispatch')
+        if builds:
+            extract_zip(job / 'builds.zip', job / 'bundles')
+        (job / 'tmp').mkdir()
+        env = environment(home, job / 'tmp')
+        fetch_harness(job, plan, env)
+        clean = ['/usr/bin/env', '-i', *(f'{key}={value}' for key, value in env.items())]
+        entry = [sys.executable, str(Path(__file__).resolve())]
+        # The installed entry and planned ci.py share this target/finalize argv contract.
+        stopped = shlex.join([*clean, *entry, '--finalize-stopped', str(job)]) + ' ${EXIT_CODE} ${SERVICE_RESULT}'
+        if unit_state(job)['LoadState'] != 'not-found':
+            raise ValueError('executor unit already exists without its job directory')
+        launching = True
+        subprocess.run(['systemd-run', '--user', '--quiet', '--unit=' + unit_name(job),
+            '--service-type=exec', '--property=RemainAfterExit=yes', '--property=ExitType=cgroup',
+            '--property=KillMode=control-group', '--property=TimeoutStopSec=60s',
+            f'--property=RuntimeMaxSec={TIMEOUTS[plan["tier"]]}s', '--property=ExecStopPost=' + stopped,
+            '--working-directory=' + str(job), *clean, *entry, '--worker', str(job)], env=env, check=True)
+        return {'state': 'submitted'}
+    except BaseException:
+        if not launching:
+            shutil.rmtree(job)
+        raise
+
+
+def finalize(job, home):
+    return subprocess.run([sys.executable, str(job / 'harness/scripts/bench/ci.py'), 'finalize',
+        '--dispatch', str(job / 'dispatch.json'), '--plan', str(job / 'plan.json'), '--out', str(job / 'result')],
+        cwd=job / 'harness', env=environment(home, job / 'tmp'), timeout=60).returncode
+
+
+def worker(job, home):
+    code = 1
+    try:
+        code = subprocess.run([sys.executable, str(job / 'harness/scripts/bench/ci.py'), 'target',
+            '--dispatch', str(job / 'dispatch.json'), '--plan', str(job / 'plan.json'),
+            '--bundles', str(job / 'bundles'), '--out', str(job / 'result')],
+            cwd=job / 'harness', env=environment(home, job / 'tmp')).returncode
+    finally:
+        final = finalize(job, home)
+    return code or final
+
+
+def remove(job):
+    if job.exists():
+        env = environment(Path(pwd.getpwuid(os.getuid()).pw_dir), job / 'tmp')
+        if unit_state(job)['LoadState'] != 'not-found':
+            subprocess.run(['systemctl', '--user', 'stop', unit_name(job)], env=env, check=True)
+            subprocess.run(['systemctl', '--user', 'reset-failed', unit_name(job)], env=env,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        shutil.rmtree(job)
+    return {'state': 'removed'}
+
+
+def fetch(job, output):
+    if status(job)['state'] != 'finished':
+        raise ValueError('only a finished job can be fetched')
+    root = job / 'result'
+    if not (root / 'benchmark-results.json').is_file():
+        raise ValueError('job has no root result')
+    env = environment(Path(pwd.getpwuid(os.getuid()).pw_dir), job / 'tmp')
+    with tempfile.TemporaryFile() as journal:
+        subprocess.run(['journalctl', '--user', '-u', unit_name(job), '--no-pager', '--lines=10000', '-o', 'cat'],
+                       env=env, stdout=journal, check=True)
+        journal.seek(max(0, journal.tell() - 8 * 1024**2))
+        (root / 'executor.log').write_bytes(journal.read(8 * 1024**2))
+    with zipfile.ZipFile(output, 'w', compression=zipfile.ZIP_DEFLATED, allowZip64=True) as archive:
+        for filename in sorted(root.rglob('*')):
+            relative = filename.relative_to(root)
+            build_log = relative.parts[0] == 'builds' and len(relative.parts) == 3 and relative.name == 'build.log'
+            if (relative.parts[0] == 'builds' and not build_log) or 'runtime-cache' in relative.parts:
+                continue
+            if filename.is_symlink():
+                raise ValueError('result contains a symlink')
+            if filename.is_file():
+                if build_log:
+                    with filename.open('rb') as log:
+                        log.seek(max(0, filename.stat().st_size - 8 * 1024**2))
+                        archive.writestr(relative.as_posix(), log.read(8 * 1024**2))
+                else:
+                    archive.write(filename, relative.as_posix())
+
+
+def main():
+    home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    if len(sys.argv) == 3 and sys.argv[1] == '--worker':
+        raise SystemExit(worker(Path(sys.argv[2]), home))
+    if len(sys.argv) == 5 and sys.argv[1] == '--finalize-stopped':
+        if sys.argv[3] != 'exited' or sys.argv[4] == 'timeout':
+            raise SystemExit(finalize(Path(sys.argv[2]), home))
+        return
+    if len(sys.argv) != 1:
+        raise ValueError('only SSH_ORIGINAL_COMMAND is accepted')
+    match = re.fullmatch(rf'(submit|status|fetch|remove) ({JOB_ID})', os.environ.get('SSH_ORIGINAL_COMMAND', ''))
+    if match is None:
+        raise ValueError('expected one executor verb and job id')
+    verb, job_id = match.groups()
+    root = home / '.local/share/jolt-bench/jobs'
+    os.umask(0o077)
+    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryFile(dir=root) as incoming:
+        if verb == 'submit':
+            total = 0
+            while chunk := sys.stdin.buffer.read(1024 * 1024):
+                total += len(chunk)
+                if total > sum(LIMITS.values()) + 1024 * 1024:
+                    raise ValueError('submission exceeds tar size cap')
+                incoming.write(chunk)
+            incoming.seek(0)
+        with (root / '.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            job = root / job_id
+            if verb == 'fetch':
+                fetch(job, sys.stdout.buffer)
+                return
+            result = (submit(job, incoming, home) if verb == 'submit' else
+                      status(job) if verb == 'status' else remove(job))
+            print(json.dumps(result))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (OSError, ValueError, KeyError, tarfile.TarError, zipfile.BadZipFile) as error:
+        print(f'executor: {error}', file=sys.stderr)
+        raise SystemExit(1)

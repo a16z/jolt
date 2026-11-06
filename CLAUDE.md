@@ -33,6 +33,39 @@ A push voids the line. After opening a pull request and after every push, review
 
 ## Essential Commands
 
+### Opt-in prover benchmarks
+
+When the Pika App dispatcher and forced-command target are configured and the
+`JOLT_E2E_ENABLED` repository variable is `true` (setup in
+`scripts/bench/README.md`), a maintainer or administrator can add the `benchmark` label to a same-repository PR. The label
+persists across pushes: each admitted run builds base and candidate locally with
+release/znver4, then runs the 17-cell suite at 1, 8, and 24 physical cores. Forks
+and labels applied by write-only contributors are not admitted. While the label
+remains, any later push to the branch, by anyone who can push to it, runs its code
+(including `build.rs`) on the benchmark machine's persistent account without new
+approval. Only `runner` on `jolt-bench` executes PR code; no Pika agent runs there.
+The App rechecks admission before dispatch and publishes an **End-to-end benchmark**
+check. Results are in the **End-to-end benchmark ingest** run's `jolt-e2e-*`
+artifact and the dashboard's **Pull requests** view at
+`https://a16z.github.io/jolt/dev/prover-history/`. Main commits and nightly runs
+need no label: their builds run on GitHub-hosted runners and only verified
+artifacts run on the benchmark machine. Each tip calibrates before history; PR
+ingest authenticates exact-base external references with 48-hour expiry. Before
+ordinary enablement, run main-only `tier=calibration` bootstrap and the README
+`publication.py verify-calibration` acceptance steps. Bootstrap alone is allowed
+while ordinary tiers are disabled.
+
+### Prover benchmark history
+
+The history publisher collects the Pika App's successful **End-to-end benchmark ingest**
+runs, not the planning workflow. Its canonical artifact is
+`jolt-e2e-INGEST_RUN_ID-ATTEMPT`; `ingest.json` binds it to the original plan and
+measured revisions. PR code runs only as `runner` on `jolt-bench`, never on the
+daemon host. Publication appends only
+under `dev/prover-history/` on the existing `gh-pages` source and leaves `dev/bench/`
+unchanged. See `book/src/usage/profiling/benchmark_history.md` and the producer's
+`scripts/bench/README.md` for setup and admission.
+
 ### Linting and Formatting
 
 ```bash
