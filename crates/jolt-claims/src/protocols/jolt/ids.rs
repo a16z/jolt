@@ -566,6 +566,15 @@ pub enum JoltDerivedId {
     Test,
 }
 
+#[cfg(feature = "immutable-recipes")]
+use crate::immutable_recipes::{KeySink, KeyVisit};
+#[cfg(feature = "immutable-recipes")]
+impl KeyVisit for RetiredIdentifier {
+    fn visit(&self, _sink: &mut dyn KeySink) -> bool {
+        match *self {}
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "wire regression tests fail loudly")]
 mod tests {
@@ -645,14 +654,5 @@ mod tests {
             bincode::serde::decode_from_slice::<BytecodeClaimReductionPublic, _>(&[0, 0], config)
                 .is_err()
         );
-    }
-}
-
-#[cfg(feature = "immutable-recipes")]
-use crate::immutable_recipes::{KeySink, KeyVisit};
-#[cfg(feature = "immutable-recipes")]
-impl KeyVisit for RetiredIdentifier {
-    fn visit(&self, _sink: &mut dyn KeySink) -> bool {
-        match *self {}
     }
 }
