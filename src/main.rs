@@ -2,6 +2,7 @@ mod build_wasm;
 
 use std::{
     fs::{self, File},
+    hash::{DefaultHasher, Hash, Hasher},
     io::Write,
     path::PathBuf,
     process::{exit, Command},
@@ -183,6 +184,24 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
 
     let opt_flag = guest_opt_flag();
 
+    // rustc does not track -T contents. Keep these rendering inputs in sync with
+    // zeroos-build's LinkerConfig construction and private backtrace resolution.
+    let mut linker_inputs = DefaultHasher::new();
+    [
+        LINKER_TEMPLATE,
+        &args.base.memory_origin,
+        &args.base.memory_size,
+        &args.base.stack_size,
+        &args.base.heap_size,
+        &format!("{:?}", args.base.mode),
+        &format!("{:?}", args.base.backtrace),
+    ]
+    .hash(&mut linker_inputs);
+    let linker_cfg = format!(
+        "--cfg=jolt_linker_inputs=\"{:016x}\"",
+        linker_inputs.finish()
+    );
+
     // Strip symbols for smaller ELFs. Preserve them when JOLT_BACKTRACE is set
     // or --backtrace enable is passed, so the tracer can symbolize panic backtraces.
     // In auto mode (default), strip for release and preserve for debug/dev profiles.
@@ -217,6 +236,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         "-Cllvm-args=-max-store-memcpy=32",
         "-Cllvm-args=-max-store-memset=32",
         "--cfg=getrandom_backend=\"custom\"",
+        &linker_cfg,
     ];
 
     if args.base.mode == StdMode::Std {

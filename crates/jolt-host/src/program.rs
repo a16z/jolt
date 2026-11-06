@@ -255,10 +255,8 @@ impl Program {
                 None => cmd.env_remove(FIELD_INLINE_MODULUS_ENV),
             };
 
-            // WARNING: every `jolt build`, even one with nothing to recompile,
-            // deletes and re-links the ELF. Builds of the same guest from other
-            // processes share this directory, so the ELF is read under this
-            // lock and never again by path.
+            // Builds sharing this directory can replace the ELF. Read it under
+            // this lock and keep the bytes instead of reopening the path.
             fs::create_dir_all(&guest_target_dir).expect("create the guest target directory");
             let build_lock = File::create(Path::new(&guest_target_dir).join(".jolt-build.lock"))
                 .expect("open the guest build lock");
