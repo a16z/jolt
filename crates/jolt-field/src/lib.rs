@@ -249,8 +249,8 @@ impl<F> ImmutableRecipeField<F> {
 #[cfg(all(feature = "immutable-recipes", feature = "solinas"))]
 pub const IMMUTABLE_RECIPE_MODULUS: u128 = FIELD_INLINE_FP128_MODULUS;
 
+mod dot_product;
 #[cfg(feature = "setup-weight-tiles")]
 mod scaled_slice;
 #[cfg(feature = "signed-byte-sum")]
 mod signed_byte_sum;
-mod dot_product;
