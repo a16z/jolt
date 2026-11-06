@@ -183,9 +183,6 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
 
     let opt_flag = guest_opt_flag();
 
-    // Strip symbols for smaller ELFs. Preserve them when JOLT_BACKTRACE is set
-    // or --backtrace enable is passed, so the tracer can symbolize panic backtraces.
-    // In auto mode (default), strip for release and preserve for debug/dev profiles.
     let backtrace_via_env = std::env::var("JOLT_BACKTRACE")
         .map(|v| !v.is_empty() && v != "0")
         .unwrap_or(false);
@@ -256,7 +253,8 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     std::env::set_var("CARGO_PROFILE_RELEASE_TRIM_PATHS", "all");
 
     if !preserve_symbols {
-        jolt_rustflags.push("-Cstrip=symbols");
+        // The ELF loader needs $x/$d mapping symbols to classify executable bytes.
+        jolt_rustflags.push("-Cstrip=debuginfo");
     }
 
     // Frame pointers change generated code — only enable for explicit --backtrace modes,

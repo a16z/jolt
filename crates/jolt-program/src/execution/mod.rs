@@ -5,11 +5,11 @@ pub mod trace;
 use crate::ProgramError;
 #[cfg(feature = "image")]
 use crate::{
-    expand::{expand_program, expand_program_with_provider, InlineExpansionProvider},
+    expand::{InlineExpansionProvider, NoInlineExpansionProvider},
     image::decode_elf,
 };
 #[cfg(feature = "image")]
-use jolt_riscv::{JoltInstructionProfile, JoltInstructionRow, RV64IMAC_JOLT};
+use jolt_riscv::{JoltInstructionProfile, RV64IMAC_JOLT};
 
 #[cfg(feature = "field-inline")]
 pub use crate::field_inline::{
@@ -26,17 +26,11 @@ pub use trace::{
 
 #[cfg(feature = "image")]
 pub fn build_jolt_program(elf_bytes: &[u8]) -> Result<JoltProgram, ProgramError> {
-    let image = decode_elf(elf_bytes, RV64IMAC_JOLT)?;
-    let expanded_bytecode = expand_program(&image.instructions, RV64IMAC_JOLT)?
-        .into_iter()
-        .map(JoltInstructionRow::from)
-        .collect();
-    Ok(JoltProgram::from_rv64_image_with_profile(
-        elf_bytes.to_vec(),
-        expanded_bytecode,
-        image,
+    build_jolt_program_with_inline_provider(
+        elf_bytes,
+        &mut NoInlineExpansionProvider,
         RV64IMAC_JOLT,
-    ))
+    )
 }
 
 #[cfg(feature = "image")]
@@ -46,11 +40,7 @@ pub fn build_jolt_program_with_inline_provider<P: InlineExpansionProvider + ?Siz
     profile: JoltInstructionProfile,
 ) -> Result<JoltProgram, ProgramError> {
     let image = decode_elf(elf_bytes, profile)?;
-    let expanded_bytecode =
-        expand_program_with_provider(&image.instructions, inline_provider, profile)?
-            .into_iter()
-            .map(JoltInstructionRow::from)
-            .collect();
+    let expanded_bytecode = image.expanded_bytecode(inline_provider, profile)?;
     Ok(JoltProgram::from_rv64_image_with_profile(
         elf_bytes.to_vec(),
         expanded_bytecode,
