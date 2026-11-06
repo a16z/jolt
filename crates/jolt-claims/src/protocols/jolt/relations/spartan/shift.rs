@@ -129,7 +129,7 @@ impl SymbolicSumcheck for Shift {
     type Challenges<F> = SpartanShiftChallenges<F>;
     type Inputs<C> = SpartanShiftInputClaims<C>;
     type Outputs<C> = SpartanShiftOutputClaims<C>;
-    crate::immutable_symbolic_recipe!(8, JOLT, Jolt; shape);
+    crate::immutable_symbolic_recipe!(SpartanShift, JOLT, Jolt, input_only = false, unit_first = true; shape);
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }
     }
