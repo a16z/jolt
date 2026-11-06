@@ -818,8 +818,8 @@ def render_comment(result, out):
              'resident set size (RSS).', '',
              'Values are medians; changes use the ratio of head and base medians, with warmups excluded. '
              'Positive changes mean more time or memory.', '',
-             '| Workload / PCS | Physical cores | End-to-end base / head (s) | Signed time change | Observed time reference | Peak RSS base / head (bytes) | Signed RSS change | Observed RSS reference |',
-             '|---|---:|---:|---:|---|---:|---:|---|']
+             '| Workload / PCS | Physical cores | Trace ceiling | Trace rows base / head | End-to-end base / head (s) | Signed time change | Observed time reference | Peak RSS base / head (bytes) | Signed RSS change | Observed RSS reference |',
+             '|---|---:|---:|---:|---:|---:|---|---:|---:|---|']
     repetitions = result['suite']['repetitions']
     builds = {build['leg']: build for build in result['builds']}
     harness_notes = []
@@ -839,13 +839,14 @@ def render_comment(result, out):
                           '<pre>' + code[:MAX_HARNESS_DIFF] + '</pre>',
                           'Harness diff truncated to 12000 characters.' if diff.get('truncated') or
                           len(diff['text']) > MAX_HARNESS_DIFF or len(code) > MAX_HARNESS_DIFF else '', ''])
-    identities = ['| Workload / PCS / physical cores | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
+    identities = ['| Workload / PCS / physical cores / trace ceiling | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
                   '|---|---|---|---|']
     notable_rows = []
     for case in result['cases']:
         name = case['workload']
         if not re.fullmatch(r'[a-z0-9-]+', name) or case['pcs'] not in ('dory', 'akita'):
             raise ValueError('invalid workload or PCS in comment data')
+        ceiling = f"2^{case['scale_log2']}" if case['scale_log2'] is not None else 'unavailable'
         measurements = {leg: [sample for sample in case['samples']
                               if sample['leg'] == leg and sample['phase'] == 'measure']
                         for leg in ('base', 'head')}
@@ -858,7 +859,7 @@ def render_comment(result, out):
                 for samples in measurements.values()):
             point_status = 'unpaired or incomplete repetitions'
         if point_status != 'complete':
-            lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {point_status} | "
+            lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {ceiling} | unavailable | {point_status} | "
                          'unavailable | unavailable | — | unavailable | unavailable |')
             continue
         medians = {leg: {key: statistics.median(sample['metrics'][key] for sample in values)
@@ -875,7 +876,10 @@ def render_comment(result, out):
         for key in base:
             if not base[key]:
                 basis[key] = 'unavailable: zero base median'
-        label = f"| {name} / {case['pcs']} | {case['physical_cores']} |"
+        trace_rows = ['; '.join(str(rows) for rows in sorted({sample['metrics']['trace_rows']
+                      for sample in measurements[leg]})) for leg in ('base', 'head')]
+        label = (f"| {name} / {case['pcs']} | {case['physical_cores']} | {ceiling} | "
+                 f"{' / '.join(trace_rows)} |")
         time_values = f"{base['e2e_s']:.6f} / {head['e2e_s']:.6f} | {changes['e2e_s']}"
         rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
         lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
@@ -889,7 +893,7 @@ def render_comment(result, out):
             build = builds.get(leg, {})
             binaries.append(text((build.get('binaries', {}).get(case['pcs'], {}).get('sha256') or 'unavailable')[:12]))
             guests.append(text((build.get('guests', {}).get(name, {}).get('elf', {}).get('sha256') or 'unavailable')[:12]))
-        identities.append(f"| {name} / {case['pcs']} / {case['physical_cores']} | {' / '.join(rows)} | "
+        identities.append(f"| {name} / {case['pcs']} / {case['physical_cores']} / {ceiling} | {' / '.join(rows)} | "
                           f"{' / '.join(binaries)} | {' / '.join(guests)} |")
     manual = result['suite'].get('calibration') or {}
     source = manual.get('source') or {}

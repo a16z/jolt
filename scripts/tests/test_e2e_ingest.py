@@ -90,7 +90,8 @@ class IngestTests(unittest.TestCase):
                 else:
                     base_seconds = 1 if cores in (8, 9) else 100
                     sample['metrics'].update(e2e_s=base_seconds if sample['leg'] == 'base' else seconds,
-                        peak_rss_bytes=10000 if sample['leg'] == 'base' else rss)
+                        peak_rss_bytes=10000 if sample['leg'] == 'base' else rss,
+                        trace_rows=4 if sample['leg'] == 'base' else 5)
             result['cases'].append(case)
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / 'summary.md'
@@ -104,17 +105,27 @@ class IngestTests(unittest.TestCase):
                                   (7, '100.000000 / 103.001000 | +3.00%')]:
                 row = next(line for line in comment.splitlines()
                            if line.startswith(f'| fibonacci / dory | {cores} |'))
+                self.assertIn(f'| {cores} | 2^3 | 4 / 5 |', row)
                 self.assertIn(values, row)
                 full = next(line for line in summary.read_text().splitlines()
                             if line.startswith(f'| fibonacci / dory | {cores} |'))
                 full_cells, short_cells = full.split('|'), row.split('|')
-                self.assertEqual(short_cells[1:-1], [full_cells[i] for i in (1, 2, 3, 4, 6, 7)])
+                self.assertEqual(short_cells[1:-1], [full_cells[i] for i in (1, 2, 3, 4, 5, 6, 8, 9)])
             for cores in (5, 6, 8, 9):
                 self.assertNotIn(f'| fibonacci / dory | {cores} |', comment)
 
     def test_pr_comment_no_change_marker_and_links(self):
+        result = inputs()[0]
+        template = result['cases'].pop()
+        for cores, scale in [(24, 27), (1, 16), (24, 18), (24, 27)]:
+            case = copy.deepcopy(template)
+            case.update(physical_cores=cores, scale_log2=scale)
+            result['cases'].append(case)
+        missing = copy.deepcopy(template)
+        missing.update(physical_cores=24, scale_log2=30, status='missing', samples=[])
+        result['cases'].append(missing)
         with tempfile.TemporaryDirectory() as directory:
-            comment = ingest.render_pr_comment(inputs()[0], Path(directory) / 'summary.md',
+            comment = ingest.render_pr_comment(result, Path(directory) / 'summary.md',
                 'https://github.com/a16z/jolt/actions/runs/456/attempts/2')
         self.assertTrue(comment.startswith('<!-- jolt-e2e-benchmark-comment -->\n'))
         self.assertIn('[Full results](https://github.com/a16z/jolt/actions/runs/456/attempts/2)', comment)
@@ -122,6 +133,8 @@ class IngestTests(unittest.TestCase):
         self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
                       f"Measured merge: `{'c' * 40}`.", comment)
         self.assertIn('No change above 3%', comment)
+        self.assertIn('Sizes run (physical cores × trace ceiling): 1 × 2^16, 24 × 2^18, 24 × 2^27.', comment)
+        self.assertNotIn('2^30', comment)
         self.assertNotIn('| Workload', comment)
 
     def test_pr_comment_does_not_claim_no_change_for_unavailable_comparisons(self):

@@ -29,6 +29,11 @@ Those bands describe repeated measurements of the same build; they are
 informational, not statistical significance or a future false-positive guarantee.
 The dashboard shows the raw PR measurements without bands.
 
+The sticky PR comment links to full results and benchmark history. It lists every
+core-count/trace-ceiling pair with a recorded process exit, even when no change
+exceeds 3%. Its table keeps only larger time or peak-RSS changes and identifies
+each row's physical cores, `2^k` ceiling and measured base/head trace rows.
+
 A point is the median of complete measured repetitions. The table shows its
 minimum–maximum range; raw JSON retains warmups. Failed cases/builds, incomplete
 repetitions and missing metrics have no plotted value and break the line. The

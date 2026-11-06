@@ -456,6 +456,11 @@ before any result complete the App check directly.
 
 The comment shows the base and head medians for end-to-end time and peak RSS,
 with signed percentage changes computed as `100 * (head_median / base_median - 1)`.
+Each row identifies its physical cores, `2^k` trace ceiling and measured base/head
+trace rows. The sticky PR comment shows only rows with more than 3% time or
+peak-RSS change and retains the full-results and benchmark-history links. It
+always lists the distinct core-count/ceiling pairs with a recorded process exit,
+including when no row changes; planned cases without an exit are not listed as run.
 Only the configured measured repetitions contribute; warmups are excluded.
 Missing repetitions, failed processes and zero denominators remain unavailable
 comparisons. Proof sizes remain in the raw samples.
