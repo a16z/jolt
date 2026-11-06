@@ -30,6 +30,7 @@ mod fixture;
 mod labels;
 mod lift;
 mod linear;
+mod linear_factored;
 mod opening;
 mod pad_commitment;
 mod params;
