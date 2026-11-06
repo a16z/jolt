@@ -13,6 +13,7 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         .find(|attr| attr.path().is_ident("recipe_namespace"))
         .ok_or_else(|| Error::new_spanned(&input, "expected #[recipe_namespace(path)]"))?
         .parse_args::<Path>()?;
+    let namespace = quote!(#namespace).to_string().replace(' ', "");
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let mut arms = Vec::new();
     let mut render_arms = Vec::new();
@@ -68,7 +69,7 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         };
         render_arms.push(quote! {
             #(#attrs)* Self::#variant_name #pattern => {
-                writer.write_str(concat!(stringify!(#namespace), "::", stringify!(#name), "::", stringify!(#variant_name)))?;
+                writer.write_str(concat!(#namespace, "::", stringify!(#name), "::", stringify!(#variant_name)))?;
                 #payload
                 Ok(())
             },
