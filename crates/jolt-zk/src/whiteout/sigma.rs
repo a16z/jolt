@@ -556,7 +556,7 @@ mod prover {
     use crate::masking::ZkError;
     use crate::secret::SecretVec;
 
-    /// Which of the prover's own checks run before the challenges.
+    /// Which of the prover's own checks run before anything is sent.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) enum SelfChecks {
         Run,
@@ -603,6 +603,7 @@ mod prover {
         nonce: [u8; ATTEMPT_NONCE_LEN],
         challenge: SparseChallenge,
         v: SecretVec<F>,
+        parts_y: LinearParts<F>,
     }
 
     /// Per-proof state shared by the attempts, and the attempts' reused
@@ -750,14 +751,30 @@ mod prover {
             .into());
         }
         let tables = relation.claim_tables()?;
-        // Before any challenge: every row and ct(g), N·s = t, the alphabets.
         let digit_bound = table
             .segments()
             .map(|segment| segment.digit_bound())
             .max()
             .unwrap_or(0);
+
+        let rho: Vec<F> =
+            FieldTranscript::<F>::challenge_vector(transcript, relation.labels().num_challenges())?;
+        let aggregated = relation.aggregate(&rho)?;
+        let parts_s = aggregated.linear_parts(&tables, s, false)?;
+        let h = aggregated.quadratic(&constant_ring(F::one()), &parts_s);
+        // Before anything is sent: every row and ct(g), N·s = t, the
+        // alphabets. ct(h) = Σ_a μ_a·row_a(s) is multilinear in ρ with one
+        // monomial per row (label 0 is ct(g)), so ct(h) = 0 shows every row
+        // vanishes except with probability ℓ/|F|; the per-row scan only names
+        // the row.
         if checks == SelfChecks::Run {
-            if let Some(row) = relation.first_violation(&tables, s)? {
+            if !h.constant_term().is_zero() {
+                let row =
+                    relation
+                        .first_violation(&tables, s)?
+                        .ok_or(WhiteoutError::InvalidRelation(
+                            "ct(h) is nonzero while every row vanishes",
+                        ))?;
                 return Err(WhiteoutError::ResidualUnsatisfied { row }.into());
             }
             if *setup.linear().apply(s, digit_bound)? != *setup.target_images()? {
@@ -765,14 +782,6 @@ mod prover {
             }
             table.check_private_vector(s)?;
         }
-
-        let rho: Vec<F> =
-            FieldTranscript::<F>::challenge_vector(transcript, relation.labels().num_challenges())?;
-        let aggregated = relation.aggregate(&rho)?;
-        let parts_s = aggregated.linear_parts(&tables, s, false)?;
-        // ct(h) = Σ μ_row · row(s) + ct(g), so the per-row check above
-        // already guarantees ct(h) = 0.
-        let h = aggregated.quadratic(&constant_ring(F::one()), &parts_s);
         let blocks = setup
             .params()
             .blocks()
@@ -958,6 +967,7 @@ mod prover {
                 nonce,
                 challenge,
                 v,
+                parts_y,
             }))
         }
 
@@ -988,7 +998,7 @@ mod prover {
                 }
             }
             let c_ring: ChallengeRing<F> = challenge_ring(&c);
-            let parts_z = self.aggregated.linear_parts(&self.tables, &z[..], false)?;
+            let parts_z = accepted.parts_y.shifted(&c_ring, &self.parts_s);
             let product = SecretVec::from(self.aggregated.product_polynomial(&c_ring, &parts_z));
             let theta = product.get(CHALLENGE_RING_DIM..).unwrap_or_default();
             ResponseWitness::new(
