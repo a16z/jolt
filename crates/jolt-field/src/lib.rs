@@ -187,8 +187,8 @@ pub enum FieldError {
     InvalidSize { expected: usize, actual: usize },
 }
 
+mod dot_product;
 #[cfg(feature = "setup-weight-tiles")]
 mod scaled_slice;
 #[cfg(feature = "signed-byte-sum")]
 mod signed_byte_sum;
-mod dot_product;
