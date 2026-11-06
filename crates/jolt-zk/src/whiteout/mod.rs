@@ -31,6 +31,7 @@ mod fixture;
 mod labels;
 mod lift;
 mod linear;
+mod linear_factored;
 mod pad_commitment;
 mod params;
 mod placement;
