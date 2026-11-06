@@ -448,6 +448,8 @@ use crate::protocols::field_inline::{
 };
 use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 
+pub type RecipeLookupResult<'a, F, O, D, C> = Result<Option<Recipe<'a, F, O, D, C>>, RecipeError>;
+
 pub type JoltTable = Table<'static, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 pub type ComposedTable = Table<'static, ComposedOpeningId, JoltDerivedId, JoltChallengeId>;
 pub type FieldTable =
@@ -467,7 +469,7 @@ macro_rules! immutable_symbolic_recipe {
         #[cfg(feature = "immutable-recipes")]
         fn immutable_recipe<F: ::jolt_field::Ring>(
             &self, phase: $crate::immutable_recipes::Phase,
-        ) -> Result<Option<$crate::immutable_recipes::Recipe<'_, F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>>, $crate::immutable_recipes::RecipeError> {
+        ) -> $crate::immutable_recipes::RecipeLookupResult<'_, F, Self::OpeningId, Self::DerivedId, Self::ChallengeId> {
             if F::immutable_recipe_field().is_none() { return Ok(None); }
             if ($tag == 21 && phase != $crate::immutable_recipes::Phase::Input)
                 || !$crate::immutable_recipe_admitted!(self; $($key)+) { return Ok(None); }

@@ -46,17 +46,12 @@ pub trait SymbolicSumcheck {
     fn immutable_recipe<F: ::jolt_field::Ring>(
         &self,
         _phase: crate::immutable_recipes::Phase,
-    ) -> Result<
-        Option<
-            crate::immutable_recipes::Recipe<
-                '_,
-                F,
-                Self::OpeningId,
-                Self::DerivedId,
-                Self::ChallengeId,
-            >,
-        >,
-        crate::immutable_recipes::RecipeError,
+    ) -> crate::immutable_recipes::RecipeLookupResult<
+        '_,
+        F,
+        Self::OpeningId,
+        Self::DerivedId,
+        Self::ChallengeId,
     > {
         Ok(None)
     }
