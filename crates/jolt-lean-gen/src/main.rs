@@ -91,6 +91,95 @@ fn imm_is_nat(name: &str) -> bool {
     )
 }
 
+// These instructions store decoded final-row operands. Their immediate width
+// is independent of the source instruction's encoding width.
+fn final_imm_width(name: &str) -> Option<u32> {
+    match name {
+        "ADDI"
+        | "ADDIW"
+        | "ANDI"
+        | "ORI"
+        | "XORI"
+        | "SLTI"
+        | "SLTIU"
+        | "AUIPC"
+        | "JAL"
+        | "JALR"
+        | "VirtualWindowMaskB"
+        | "VirtualWindowMaskH"
+        | "VirtualWindowMaskW"
+        | "VirtualLoadB"
+        | "VirtualLoadH"
+        | "VirtualLoadW"
+        | "VirtualStoreB"
+        | "VirtualStoreH"
+        | "VirtualStoreW"
+        | "VirtualShiftDataB"
+        | "VirtualShiftDataH"
+        | "VirtualShiftDataW"
+        | "LD"
+        | "SD"
+        | "VirtualPow2"
+        | "VirtualPow2W"
+        | "VirtualShiftRightBitmask"
+        | "VirtualShiftRightBitmaskW"
+        | "VirtualSignExtendWord"
+        | "VirtualZeroExtendWord"
+        | "VirtualMovsign"
+        | "VirtualRev8W"
+        | "VirtualHostIO" => Some(64),
+        "BEQ"
+        | "BNE"
+        | "BLT"
+        | "BGE"
+        | "BLTU"
+        | "BGEU"
+        | "VirtualAssertEQ"
+        | "VirtualAssertValidDiv0"
+        | "VirtualAssertValidUnsignedRemainder"
+        | "VirtualAssertMulUNoOverflow"
+        | "VirtualAssertLTE" => Some(128),
+        _ => None,
+    }
+}
+
+// The source-facing Lean constructors decode these encoded-width immediates.
+fn encoded_imm_width(name: &str) -> Option<u32> {
+    match name {
+        "ADDI" | "ADDIW" | "ANDI" | "ORI" | "XORI" | "SLTI" | "SLTIU" | "JALR"
+        | "VirtualWindowMaskB" | "VirtualWindowMaskH" | "VirtualWindowMaskW" | "VirtualLoadB"
+        | "VirtualLoadH" | "VirtualLoadW" | "VirtualStoreB" | "VirtualStoreH" | "VirtualStoreW"
+        | "VirtualShiftDataB" | "VirtualShiftDataH" | "VirtualShiftDataW" | "LD" | "SD" => Some(12),
+        "BEQ" | "BNE" | "BLT" | "BGE" | "BLTU" | "BGEU" | "VirtualAssertEQ" => Some(13),
+        "JAL" => Some(21),
+        "AUIPC" => Some(20),
+        _ => None,
+    }
+}
+
+fn encoded_literal(name: &str, imm: i128) -> Option<(u32, i128)> {
+    // AUIPC's source constructor shifts its upper immediate; a fixed final
+    // offset is rendered directly so it cannot be shifted a second time.
+    if name == "AUIPC" {
+        return None;
+    }
+    let width = encoded_imm_width(name)?;
+    let low = (imm as u128) & ((1u128 << width) - 1);
+    let signed = if low & (1u128 << (width - 1)) == 0 {
+        low as i128
+    } else {
+        low as i128 - (1i128 << width)
+    };
+    let fits = match final_imm_width(name) {
+        Some(64) => signed as u64 == imm as u64,
+        Some(128) => signed == imm,
+        _ => false,
+    };
+    fits.then_some((width, signed))
+}
+
+// Widths for the remaining Lean immediate fields. Decoded final-row widths
+// for source-style instructions are handled by final_imm_width above.
 fn imm_width(name: &str) -> u32 {
     match name {
         "BEQ" | "BNE" | "BLT" | "BGE" | "BLTU" | "BGEU" | "VirtualAssertEQ" => 13,
@@ -104,6 +193,10 @@ fn imm_width(name: &str) -> u32 {
 fn lean_imm(name: &str, imm: i128, override_value: Option<&str>) -> String {
     if let Some(value) = override_value {
         return value.to_string();
+    }
+
+    if let Some(width) = final_imm_width(name) {
+        return format!("({imm} : BitVec {width})");
     }
 
     let bits = imm as u64;
@@ -134,7 +227,19 @@ fn lean_instr(
     let rd = operand(o.rd);
     let rs1 = operand(o.rs1);
     let rs2 = operand(o.rs2);
-    let imm = lean_imm(name, o.imm, imm_override);
+    let encoded_constant = imm_override
+        .is_none()
+        .then(|| encoded_literal(name, o.imm))
+        .flatten();
+    let use_encoded = (imm_override == Some("imm") && encoded_imm_width(name).is_some())
+        || encoded_constant.is_some();
+    let imm = if let Some((width, signed)) = encoded_constant {
+        format!("({signed} : BitVec {width})")
+    } else {
+        lean_imm(name, o.imm, imm_override)
+    };
+    // Advice and source overrides replace an operand, not the row's immediate.
+    let row_imm = lean_imm(name, o.imm, None);
 
     let args = match name {
         "ADD" | "ADDW" | "SUB" | "SUBW" | "MUL" | "MULW" | "MULHU" | "MULHSU" | "OR" | "XOR"
@@ -161,7 +266,7 @@ fn lean_instr(
         | "VirtualSignExtendWord"
         | "VirtualZeroExtendWord"
         | "VirtualMovsign"
-        | "VirtualRev8W" => format!("{rd} {rs1}"),
+        | "VirtualRev8W" => format!("{rd} {rs1} {row_imm}"),
         "LD" => format!(".{load_class} {rd} {rs1} {imm}"),
         "VirtualLoadB" | "VirtualLoadH" | "VirtualLoadW" => {
             format!(".{load_class} {rd} {rs1} {imm} {align_fault}")
@@ -170,15 +275,17 @@ fn lean_instr(
             format!("{rs1} {rs2} {imm} {align_fault}")
         }
         "SD" | "SB" | "SH" | "SW" => format!("{rs1} {rs2} {imm}"),
-        "VirtualAdvice" | "VirtualAdviceLoad" => format!("{rd} {imm}"),
+        "VirtualAdvice" => format!("{rd} {imm} {row_imm}"),
+        "VirtualAdviceLoad" => format!("{rd} {row_imm}"),
         "AUIPC" | "JAL" | "LUI" => format!("{rd} {imm}"),
         "JALR" => format!("{rd} {rs1} {imm}"),
         "VirtualAssertValidDiv0"
         | "VirtualAssertValidUnsignedRemainder"
         | "VirtualAssertMulUNoOverflow"
-        | "VirtualAssertLTE" => format!("{rs1} {rs2}"),
+        | "VirtualAssertLTE" => format!("{rs1} {rs2} {row_imm}"),
         "VirtualAssertEQ" => format!("{rs1} {rs2} {imm}"),
-        "FENCE" | "VirtualHostIO" => String::new(),
+        "VirtualHostIO" => format!("{rd} {rs1} {row_imm}"),
+        "FENCE" => String::new(),
         _ => {
             let mut parts = Vec::new();
             if o.rd.is_some() {
@@ -195,10 +302,16 @@ fn lean_instr(
         }
     };
 
+    let constructor = if use_encoded {
+        format!("JoltISA.Encoded.{name}")
+    } else {
+        format!(".{name}")
+    };
+
     if args.is_empty() {
         format!(".instr (.{name}) <|")
     } else {
-        format!(".instr (.{name} {args}) <|")
+        format!(".instr ({constructor} {args}) <|")
     }
 }
 
@@ -218,7 +331,7 @@ enum Class {
 fn is_unsupported(kind: SourceInstructionKind) -> bool {
     matches!(
         kind.name(),
-        "ECALL" | "EBREAK" | "MRET" | "CSRRW" | "CSRRS" | "LRW" | "LRD" | "SCW" | "SCD" | "Inline"
+        "ECALL" | "EBREAK" | "MRET" | "CSRRW" | "CSRRS" | "Inline"
     )
 }
 
@@ -444,8 +557,10 @@ fn load_class_and_align_fault(kind: SourceInstructionKind) -> (&'static str, &'s
     (load_class, align_fault)
 }
 
+// Only VirtualAdvice receives a per-execution payload. AdviceLoad's immediate
+// is a fixed byte count, preserved in the generated program.
 fn is_advice_row(name: &str) -> bool {
-    matches!(name, "VirtualAdvice" | "VirtualAdviceLoad")
+    name == "VirtualAdvice"
 }
 
 fn render_rows(
@@ -486,7 +601,7 @@ fn render_rows(
 
 fn emit_program(kind: SourceInstructionKind) -> Result<(), Box<dyn std::error::Error>> {
     let name = kind.name();
-    let shape = source_shape(kind);
+    let shape = source_shape(kind); // TODO: (Ari): Make this more robust later.
     let (load_class, align_fault) = load_class_and_align_fault(kind);
 
     println!("--- {name} ---");
