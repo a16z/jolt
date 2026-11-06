@@ -367,9 +367,10 @@ ct(h) = Σ_i μ_i·violation_i would publish one field element, a ρ-weighted
 combination of the violated rows. H6 needs `ct(Q′) = 0`. Squeezing ρ sends
 nothing, and the prover aborts on `ct(h) ≠ 0` before σ, so the transcript
 never carries such a value. This is a self-check of the honest prover, not a
-soundness check: the verifier's guarantees do not depend on it, and the
-ℓ/|F| miss only means a faulty witness reaches the verifier, which rejects
-it.
+soundness check: the verifier's guarantees do not depend on it. The
+verifier checks the same ρ-aggregated identity, so a cancellation the
+prover's check misses can pass verification too; that event is the ℓ/|F|
+aggregation term already in the soundness bound (`wo:lem:sigma-aggregate`).
 
 ### 2.2 Lifting the rows
 
