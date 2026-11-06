@@ -20,6 +20,7 @@ statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::absorb_selection::append#0::
 statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::absorb_selection::append#1::transcript.append(selection.row_digest.as_bytes())
 statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::count_masked::absorb_selection#0::self.absorb_selection(transcript)
 statement	jolt-akita::whiteout/mod.rs::WhiteoutRow::verify_masked::absorb_selection#0::self.absorb_selection(transcript)
+statement	jolt-akita::whiteout/mod.rs::absorb_pad_statement::append#0::transcript.append(digest)
 challenge-derived	jolt-crypto::challenge/sampler/xof.rs::IndexedXofPrefix::new::absorb_bytes#0::absorb_bytes(&mutstate,0,seed)
 challenge-derived	jolt-crypto::challenge/sampler/xof.rs::IndexedXofPrefix::reader::absorb_bytes#0::absorb_bytes(&mutstate,GROUP_ROOT_LEN,&coordinate_index.to_le_bytes())
 statement	jolt-crypto::lattice/matrix.rs::SetupSeedPageXof::new::absorb_len_prefixed#0::absorb_len_prefixed(&mutxof,b"domain",PUBLIC_MATRIX_DOMAIN)

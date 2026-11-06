@@ -63,11 +63,21 @@ jobs:
           --test fs_obligations
           --features fs-audit
           --cargo-quiet
-      # Akita+ZK (Whiteout) Fiat-Shamir coverage runs in rust.yml's
-      # jolt-verifier Whiteout lane (census, sweeps, fs_attacks::whiteout);
-      # this job only checks the verifier builds.
-      - name: Build Akita ZK (Whiteout) verifier
-        run: cargo check -p jolt-verifier --lib --features akita,zk
+      # `zk` with `akita` selects Whiteout only through the explicit
+      # `whiteout` feature; without it the pair must stay a compile error.
+      - name: Probe the Whiteout opt-in
+        shell: bash
+        run: |
+          set -euo pipefail
+          if cargo check -p jolt-verifier --lib --features akita,fs-audit,zk 2>akita-zk.log; then
+            echo "akita+zk built without the explicit whiteout feature" >&2
+            exit 1
+          fi
+          grep -q "needs the explicit \`whiteout\` feature" akita-zk.log
+      # Whiteout's Fiat-Shamir coverage (census, sweeps, fs_attacks) runs in
+      # rust.yml's jolt-verifier Whiteout lane; this job checks the build.
+      - name: Build the Whiteout verifier
+        run: cargo check -p jolt-verifier --lib --features fs-audit,whiteout
 
   fs-attacks-smoke:
     name: FS attacks (${{ matrix.instance }})

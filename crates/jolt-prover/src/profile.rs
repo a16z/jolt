@@ -99,7 +99,7 @@ fn scale_to_target_ops(target_cycles: usize, cycles_per_op: f64) -> u32 {
 /// The compiled protocol's artifact-name suffix: one compiled harness proves
 /// exactly one protocol, and the Akita runs must never collide with the
 /// homomorphic runs' trace names, `latest_` links, or CSV rows, nor Whiteout
-/// (`akita,zk`) runs the clear Akita ones (the Dory names stay unsuffixed —
+/// (`whiteout`) runs the clear Akita ones (the Dory names stay unsuffixed —
 /// they are the paths existing consumers key on).
 #[cfg(not(feature = "akita"))]
 const PROTOCOL_SUFFIX: &str = "";

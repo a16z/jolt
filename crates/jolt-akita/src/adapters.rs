@@ -1,13 +1,9 @@
-use std::{
-    collections::BTreeMap,
-    fmt,
-    io::{Cursor, Error as IoError, ErrorKind},
-    sync::Arc,
-    sync::OnceLock,
-};
+use std::{collections::BTreeMap, fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 #[cfg(feature = "parallel")]
 use std::error::Error;
+#[cfg(feature = "parallel")]
+use std::io::{Error as IoError, ErrorKind};
 
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
@@ -27,9 +23,9 @@ use jolt_algebra::Zero;
 use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{BytesMsg, Encoding};
-#[cfg(feature = "parallel")]
 #[cfg(feature = "zk")]
 use jolt_zk::whiteout::PrecommittedShape;
+#[cfg(feature = "parallel")]
 use rayon::{ThreadPool, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
@@ -1166,6 +1162,10 @@ pub(crate) enum AkitaHintSource {
     /// Whiteout: one dense polynomial committed hiding, on the setup's
     /// Whiteout backend, as a precommitted group of `shape`.
     #[cfg(feature = "zk")]
+    #[cfg_attr(
+        not(feature = "zk-prover"),
+        expect(dead_code, reason = "only the prover half commits hiding")
+    )]
     WhiteoutPrecommitted {
         shape: PrecommittedShape,
     },

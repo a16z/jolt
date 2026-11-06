@@ -2,7 +2,7 @@
 
 Akita is Jolt's lattice-based [polynomial commitment](./appendix/pcs.md) backend. Jolt integrates the [Akita PCS](https://github.com/LayerZero-Labs/akita) through the `jolt-akita` crate. It is an alternative to the elliptic-curve [Dory](./dory.md) backend and uses native trace column batching and grouped openings.
 
-The `akita` Cargo feature selects this protocol at compile time. The current implementation supports clear proofs, including trusted and untrusted advice and committed programs. It does **not** support zero knowledge: `akita` and `zk` are mutually exclusive, and enabling both produces a compile error. [BlindFold](./blindfold.md) currently applies to the Dory backend.
+The `akita` Cargo feature selects this protocol at compile time. The current implementation supports clear proofs, including trusted and untrusted advice and committed programs. Zero knowledge over Akita is Whiteout, selected by the `whiteout` feature (`zk` with `akita`); `zk` and `akita` without `whiteout` is a compile error, because Whiteout's constant-time claim is not yet verified on all platforms. [BlindFold](./blindfold.md) applies to the Dory backend.
 
 ## Field and witness representation
 

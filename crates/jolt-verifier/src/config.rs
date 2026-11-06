@@ -1,9 +1,9 @@
 //! Verifier-selected protocol configuration.
 //!
 //! Every protocol axis is fixed at compile time — the `zk` feature selects
-//! zero knowledge (BlindFold over Dory, Whiteout over Akita), the `akita` feature selects Akita commitments, the
-//! `field-inline` feature enables the native
-//! field-register extension — so one compiled verifier runs exactly one
+//! zero knowledge (BlindFold over Dory, Whiteout over Akita), the `akita`
+//! feature selects Akita commitments, the `field-inline` feature enables the
+//! native field-register extension — so one compiled verifier runs exactly one
 //! protocol. A proof self-describes its axes and [`validate_proof_config`]
 //! rejects a mismatch fail-closed.
 
@@ -16,6 +16,13 @@ use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
 use serde::{Deserialize, Serialize};
 
 use crate::VerifierError;
+
+#[cfg(all(feature = "zk", feature = "akita", not(feature = "whiteout")))]
+compile_error!(
+    "`zk` with `akita` selects Whiteout, which needs the explicit `whiteout` feature: \
+     Whiteout's constant-time claim is not yet verified on all platforms (an open \
+     timing residual in the Σ-protocol's `N·y` product; specs/whiteout-sigma.md)"
+);
 
 /// The zero-knowledge axis. Serialized in [`JoltProof`](crate::proof::JoltProof)
 /// and absorbed as the first preamble byte, so variants are append-only.
@@ -172,6 +179,11 @@ mod tests {
         assert_eq!(
             postcard::from_bytes::<JoltProtocolConfig>(&[2, 1, 0, 4, 0]).unwrap(),
             whiteout_protocol
+        );
+        assert_eq!(
+            validate_proof_config(&JOLT_VERIFIER_CONFIG, whiteout_protocol).is_ok(),
+            JOLT_VERIFIER_CONFIG == whiteout_protocol,
+            "only a Whiteout build accepts a Whiteout proof"
         );
     }
 

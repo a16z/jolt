@@ -45,7 +45,7 @@ field-inline = [
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the Akita envelope, so the Dory (elliptic-curve) path `src/dory` is
 # compiled out and the Akita (lattice) path `src/akita` replaces it.
-# With `zk` it proves Whiteout (zero knowledge over Akita).
+# With `whiteout` (`zk` and `akita` together) it proves Whiteout.
 akita = [
   "dep:jolt-akita",
   "dep:akita-params",
@@ -61,6 +61,11 @@ akita = [
 # Compile-time ZK mode: masking sumcheck recorders over committed pads, hiding
 # witness commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.
+# Whiteout: zero knowledge over Akita. `zk` with `akita` alone is a compile
+# error; this feature is the explicit opt-in. Whiteout's Σ-protocol is not yet
+# shown constant time on every platform: a timing residual in its `N·y`
+# product is open (specs/whiteout-sigma.md, specs/whiteout-jolt-integration.md).
+whiteout = ["zk", "akita", "jolt-verifier/whiteout"]
 zk = [
   "jolt-verifier/zk",
   "jolt-kernels/zk",

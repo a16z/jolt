@@ -289,7 +289,7 @@ fn whiteout_opening_verifies_and_rejects_a_flipped_response_byte() {
 /// The honest bound, pinned to Akita's frozen tables: muldiv's `A_p` (d 128,
 /// the residual's ring, width 449) takes rank 9, whose Σ-binding bracket is
 /// 32 < width ≤ 1231, so rank 8 is under the 128-bit target there, as the
-/// A40 harness's rank 2 is; `A_D` (key Open, d 64, ℓ∞ 15) takes rank 1 at
+/// Akita Σ-binding harness's rank 2 is; `A_D` (key Open, d 64, ℓ∞ 15) takes rank 1 at
 /// width 4736, inside the q128 cell's rank-1 width of 13,656 under the
 /// 169-bit tables. The residual's own ranks are pinned by akita-pcs
 /// (`admission_prices_the_residual_at_the_sigma_radius`).

@@ -36,14 +36,19 @@ field-inline = [
   "jolt-prover/field-inline",
 ]
 zk = ["jolt-prover/zk"]
+# Whiteout: zero knowledge over Akita. `zk` with `akita` alone is a compile
+# error; this feature is the explicit opt-in. Whiteout's Σ-protocol is not yet
+# shown constant time on every platform: a timing residual in its `N·y`
+# product is open (specs/whiteout-sigma.md, specs/whiteout-jolt-integration.md).
+whiteout = ["zk", "akita", "jolt-prover/whiteout"]
 # The Akita commitment mode: native one-hot trace columns and auxiliary
-# objects share one batch opening. With `zk` it verifies Whiteout proofs
+# objects share one batch opening. With `whiteout` it verifies Whiteout proofs
 # only — one PIOP per compiled verifier.
 akita = [
   "jolt-prover/akita",
   "jolt-claims/akita",
   "tracer/fp128-field-inline",
-  # Whiteout's masked group opening seam (used under `zk`).
+  # Whiteout's masked group opening seam (used under `whiteout`).
   "jolt-zk/whiteout",
 ]
 

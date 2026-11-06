@@ -1,7 +1,7 @@
 use crate::AkitaScheduleArtifacts;
 use akita_params::PrecommittedGroupProfiles;
 use akita_pcs::custom_source::RootPolyMeta;
-#[cfg(feature = "zk")]
+#[cfg(feature = "zk-prover")]
 use akita_pcs::HidingRandomness;
 use akita_pcs::{AkitaError, CommitOutput, CpuBackend, GroupContext, SourceHandle};
 use akita_transcript::TranscriptSponge;
@@ -18,8 +18,10 @@ use jolt_transcript::{FieldTranscript, ProverState, VerifierState};
 use jolt_zk::masking::{AffineRow, CommittedPads, PadLayout, ResidualRelation, ZkError};
 #[cfg(feature = "zk-prover")]
 use jolt_zk::whiteout::WhiteoutPadOpening;
-#[cfg(feature = "zk")]
+#[cfg(feature = "zk-prover")]
 use jolt_zk::whiteout::{DenseSource, MaskedOpeningShape, PrecommittedShape};
+#[cfg(feature = "zk-prover")]
+use rand_core::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{btree_map::Entry, BTreeMap},
@@ -93,10 +95,10 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
 
     /// Whiteout: commits `polynomial`, one dense polynomial, hiding as a
     /// precommitted group of `shape` on the setup's Whiteout backend, the one
-    /// that opens it (Akita §3.5, R6). Per-proof groups and statement-fixed
+    /// that opens it (Akita `specs/whiteout-akita.md` §3.5). Per-proof groups and statement-fixed
     /// ones (trusted advice, a committed program) alike: a hiding commitment
     /// cannot move to another backend.
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_commit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
         shape: PrecommittedShape,
@@ -107,10 +109,10 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     /// Whiteout: rebuilds the hint of the hiding precommitted group
     /// `commitment` of `shape` from `polynomial` and the randomness it was
     /// made with, so a process other than the committing one can open it
-    /// (D31). Fails unless they rebuild exactly `commitment`, which makes
+    /// (`specs/whiteout-jolt-integration.md` §5). Fails unless they rebuild exactly `commitment`, which makes
     /// this the check of `commitment` against (`polynomial`, `randomness`)
     /// too.
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_recommit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
         shape: PrecommittedShape,
@@ -123,7 +125,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     /// Whiteout: the randomness a hiding precommitted group's hint was
     /// committed with, for
     /// [`whiteout_recommit_precommitted`](Self::whiteout_recommit_precommitted).
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_hiding_randomness(
         hint: &Self::OpeningHint,
     ) -> Result<HidingRandomness, OpeningsError>;
@@ -131,7 +133,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     /// Whiteout: samples, commits and sends the pads of `layout` for the
     /// masked opening of `shape` (spec §2, row 2).
     #[cfg(feature = "zk-prover")]
-    fn whiteout_commit_pads<R: rand_core::RngCore + rand_core::CryptoRng>(
+    fn whiteout_commit_pads<R: RngCore + CryptoRng>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         layout: PadLayout,
@@ -163,7 +165,7 @@ pub trait TraceOneHotCommitment: CommitmentScheme {
     /// Whiteout: proves `relation` by the Σ-protocol and the response proof
     /// (spec §2, rows 7 and 8).
     #[cfg(feature = "zk-prover")]
-    fn whiteout_prove_tail<R: rand_core::RngCore + rand_core::CryptoRng + Send>(
+    fn whiteout_prove_tail<R: RngCore + CryptoRng + Send>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         relation: &ResidualRelation<Self::Field>,
@@ -328,7 +330,13 @@ impl AkitaScheme {
         let poly_count = source.len();
         Self::validate_commit_shape(setup, num_vars, poly_count)?;
         let one_hot_k = setup.one_hot_k();
-        #[cfg(feature = "zk")]
+        #[cfg(all(feature = "zk", not(feature = "zk-prover")))]
+        if setup.verifier.whiteout().is_some() {
+            return Err(commit_failed(
+                "a Whiteout setup commits hiding only with jolt-akita's `zk-prover`",
+            ));
+        }
+        #[cfg(feature = "zk-prover")]
         if setup.verifier.whiteout().is_some() {
             // Whiteout commits the trace group hiding, under the
             // zero-knowledge row keyed on its precommitted groups.
@@ -400,7 +408,7 @@ impl AkitaScheme {
     /// of `shape`, on the setup's Whiteout backend: with fresh randomness,
     /// or, given `reopen`, rebuilding exactly that commitment from the
     /// randomness it was made with.
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn commit_whiteout_precommitted<P: MultilinearPoly<AkitaField> + ?Sized>(
         setup: &AkitaProverSetup,
         shape: PrecommittedShape,
@@ -622,7 +630,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         setup.release_post_commit_ntt_residency()
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_commit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
         shape: PrecommittedShape,
@@ -632,7 +640,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         Self::commit_whiteout_precommitted(setup, shape, polynomial, layout_digest, None)
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_recommit_precommitted<P: MultilinearPoly<Self::Field> + ?Sized>(
         setup: &Self::ProverSetup,
         shape: PrecommittedShape,
@@ -651,7 +659,7 @@ impl TraceOneHotCommitment for AkitaScheme {
         .map(|(_, hint)| hint)
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(feature = "zk-prover")]
     fn whiteout_hiding_randomness(
         hint: &Self::OpeningHint,
     ) -> Result<HidingRandomness, OpeningsError> {
@@ -668,7 +676,7 @@ impl TraceOneHotCommitment for AkitaScheme {
     }
 
     #[cfg(feature = "zk-prover")]
-    fn whiteout_commit_pads<R: rand_core::RngCore + rand_core::CryptoRng>(
+    fn whiteout_commit_pads<R: RngCore + CryptoRng>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         layout: PadLayout,
@@ -737,7 +745,7 @@ impl TraceOneHotCommitment for AkitaScheme {
     }
 
     #[cfg(feature = "zk-prover")]
-    fn whiteout_prove_tail<R: rand_core::RngCore + rand_core::CryptoRng + Send>(
+    fn whiteout_prove_tail<R: RngCore + CryptoRng + Send>(
         setup: &Self::ProverSetup,
         shape: &MaskedOpeningShape,
         relation: &ResidualRelation<AkitaField>,
@@ -1043,7 +1051,13 @@ impl TransparentObjectSetup for AkitaScheme {
         layout_digest: [u8; 32],
     ) -> Result<(AkitaCommitment, AkitaProverHint), OpeningsError> {
         let num_vars = poly.num_vars();
-        #[cfg(feature = "zk")]
+        #[cfg(all(feature = "zk", not(feature = "zk-prover")))]
+        if setup.verifier.whiteout().is_some() {
+            return Err(commit_failed(
+                "a Whiteout setup commits hiding only with jolt-akita's `zk-prover`",
+            ));
+        }
+        #[cfg(feature = "zk-prover")]
         if setup.verifier.whiteout().is_some() {
             return Self::commit_whiteout_precommitted(
                 setup,

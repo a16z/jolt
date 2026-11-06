@@ -4,7 +4,7 @@
 //! the cut, and the residual relation is proved by jolt-zk's Σ-protocol with
 //! Akita's response proof.
 //!
-//! PROTOTYPE (port map in the spec's prototype deltas):
+//! Scope:
 //! - Zero-knowledge rows are planned on first use for the exact shape, in
 //!   either role. Response schedules come from the packaged response catalog
 //!   and are planned only for a length it lacks. Both are persisted with the
@@ -13,7 +13,7 @@
 //! - One trace group under `JoltOneHotK16`, beside the precommitted dense
 //!   groups its setup admits (advice, field increments, committed programs),
 //!   each committed hiding under the profile of its own shape's
-//!   zero-knowledge row (Akita §3.5, R6).
+//!   zero-knowledge row (Akita `specs/whiteout-akita.md` §3.5).
 //! - `A_p` is priced at the Σ collision radius ([`sigma_matrix_rank`]),
 //!   `A_D` at its digits' difference bound ([`digit_matrix_rank`]).
 
@@ -31,10 +31,11 @@ use akita_params::zk::{
     hiding_randomness_columns, AdmittedZkSchedule, DigitAlphabet, ImageShape, ZkOpeningSchedule,
     ZK_CUT_LEVEL,
 };
+#[cfg(feature = "zk-prover")]
+use akita_params::PrecommittedGroupProfiles;
 use akita_params::{
     BasisMode, ChunkedWitnessCfg, CommittedGroupBatchProfile, FoldSchedule, GroupCommitPhaseParams,
-    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
-    PrecommittedGroupProfiles, ScheduleLookupKey,
+    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleLookupKey,
 };
 #[cfg(feature = "zk-prover")]
 use akita_pcs::zk::{prove_masked_prefix, ResidualOpening};
@@ -44,14 +45,13 @@ use akita_pcs::zk::{
 };
 #[cfg(feature = "zk-prover")]
 use akita_pcs::SelectedProverOpeningData;
-use akita_pcs::{
-    AkitaCommitmentScheme, AkitaError, AkitaVerifier, CommitOutput, GroupContext, HidingRandomness,
-    SourceHandle,
-};
+use akita_pcs::{AkitaCommitmentScheme, AkitaError, AkitaVerifier};
+#[cfg(feature = "zk-prover")]
+use akita_pcs::{CommitOutput, GroupContext, HidingRandomness, SourceHandle};
 use akita_schedules::digit_commitment_min_rank;
-use akita_types::{
-    Commitment, CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
-};
+#[cfg(feature = "zk-prover")]
+use akita_types::Commitment;
+use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, PolynomialGroupClaims};
 use jolt_crypto::lattice::{
     derive_public_matrix_prefix, PreparedMatrix, PublicMatrixSeed, CHALLENGE_RING_DIM,
 };
@@ -73,10 +73,10 @@ use jolt_zk::whiteout::{
 use rand_core::{CryptoRng, RngCore};
 
 #[cfg(feature = "zk-prover")]
+use crate::adapters::AkitaBackendHint;
+#[cfg(feature = "zk-prover")]
 use crate::adapters::AkitaBackendProverSetup;
-use crate::adapters::{
-    AkitaBackend, AkitaBackendHint, AkitaCommitment, AkitaField, WhiteoutSource,
-};
+use crate::adapters::{AkitaBackend, AkitaCommitment, AkitaField, WhiteoutSource};
 use crate::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
 use crate::schedule_registry::GroupedScheduleParams;
 #[cfg(feature = "zk-prover")]
@@ -90,7 +90,7 @@ type F = AkitaField;
 /// The zero-knowledge configuration of Jolt's K=16 trace group.
 pub type WhiteoutOneHot = ZkCommitmentConfig<JoltOneHotK16>;
 
-/// The response proof's configuration (`specs/whiteout-akita.md` §5). Direct-only:
+/// The response proof's configuration (Akita `specs/whiteout-akita.md` §5). Direct-only:
 /// recursive setup planning ranks setup envelope before proof bytes and keeps
 /// a one-fold row at `ν = 24` (muldiv) whose proof is 2.3x larger.
 pub type WhiteoutResponse = ResponseDigits;
@@ -121,7 +121,7 @@ macro_rules! with_ring_dim {
 /// The Module-SIS rank of the pad commitment `A_p`, of `width` columns over
 /// a ring of dimension `ring_dim`: Akita's Σ-binding table at jolt-zk's
 /// `binding_collision_radius()`, the radius the residual's `A_a` and
-/// `[B_a | B′_a]` are priced at (Akita A41, §5.5.2; `A_p` is A40). `A_p` binds the pads,
+/// `[B_a | B′_a]` are priced at (Akita `specs/whiteout-akita.md` §5.5.2). `A_p` binds the pads,
 /// which the Σ-protocol certifies only inside its Gaussian box.
 ///
 /// # Errors
@@ -142,7 +142,7 @@ pub(crate) fn sigma_matrix_rank(ring_dim: usize, width: usize) -> Result<usize, 
 /// The Module-SIS rank of `A_D`, of `width` challenge-ring columns of
 /// range-checked radix-2^[`RESPONSE_LOG_BASIS`] digits: Akita's ordinary
 /// pricing of a digit commitment at the digit-difference bound
-/// (`05_security.tex:31-33`), [`digit_commitment_min_rank`].
+/// (paper: security analysis, digit commitment), [`digit_commitment_min_rank`].
 ///
 /// # Errors
 ///
@@ -181,7 +181,7 @@ pub type WhiteoutDenseFull = ZkCommitmentConfig<JoltDenseFull>;
 
 /// A precommitted group's hiding commitment: the root profile of the
 /// zero-knowledge row of its own shape, which carries the masked root's
-/// `b_randomness_columns` (Akita §3.5, R6), and that row's one-row catalog,
+/// `b_randomness_columns` (Akita `specs/whiteout-akita.md` §3.5), and that row's one-row catalog,
 /// whose config admits the group's source at commit time.
 struct PrecommittedRow {
     profile: GroupCommitPhaseParams,
@@ -252,6 +252,7 @@ impl PrecommittedRow {
 
     /// Commits `source` under the hiding profile: the backend samples fresh
     /// randomness for every B slice and keeps it in the handle.
+    #[cfg(feature = "zk-prover")]
     fn commit(
         &self,
         backend: &AkitaBackend,
@@ -267,6 +268,7 @@ impl PrecommittedRow {
     /// Rebuilds the commitment `expected` of `source` under the hiding
     /// profile from the randomness it was made with; fails unless the
     /// rebuilt commitment is `expected`.
+    #[cfg(feature = "zk-prover")]
     fn recommit(
         &self,
         backend: &AkitaBackend,
@@ -288,7 +290,7 @@ impl PrecommittedRow {
 
 /// The root profile and one-row catalog of the zero-knowledge row of one
 /// `num_vars`-variable dense polynomial under `Cfg`, planned unchunked: a
-/// masked level spans one witness chunk (D4), and the group is folded at the
+/// masked level spans one witness chunk, and the group is folded at the
 /// single-chunk trace row's masked root.
 fn plan_precommitted<Cfg: CommitmentConfig<Field = F, ExtField = F>>(
     num_vars: usize,
@@ -621,6 +623,7 @@ impl WhiteoutCatalog {
     ///
     /// [`AkitaError::UnsupportedSchedule`] if no admitted opening folds a
     /// group of `shape`, and the backend's errors.
+    #[cfg(feature = "zk-prover")]
     pub fn commit_precommitted(
         &self,
         shape: PrecommittedShape,
@@ -636,13 +639,14 @@ impl WhiteoutCatalog {
     }
 
     /// Rebuilds the hiding commitment `expected` of `source`, a precommitted
-    /// group of `shape`, from the randomness it was made with (D31).
+    /// group of `shape`, from the randomness it was made with (`specs/whiteout-jolt-integration.md` §5).
     ///
     /// # Errors
     ///
     /// [`AkitaError::InvalidInput`] unless (`source`, `randomness`) rebuild
     /// exactly `expected`, and [`commit_precommitted`](Self::commit_precommitted)'s
     /// errors.
+    #[cfg(feature = "zk-prover")]
     pub fn recommit_precommitted(
         &self,
         shape: PrecommittedShape,
@@ -784,6 +788,7 @@ impl WhiteoutRow {
     /// # Errors
     ///
     /// The backend's errors.
+    #[cfg(feature = "zk-prover")]
     pub fn commit_hiding(
         &self,
         source: &SourceHandle<F, F>,
@@ -1039,7 +1044,7 @@ const MAX_CACHED_LAYOUTS: usize = 8;
 /// The public state one pad layout fixes under a row: the pad commitment
 /// `A_p` (with `L`), `A_D`, and the response prover of `e`'s length. Each is
 /// a deterministic function of the row, the layout and the setup's plans,
-/// never of a proof (`specs/whiteout-o3-verifier.md`).
+/// never of a proof.
 struct LayoutState<const D: usize> {
     pads: LatticePadCommitment<F, D>,
     v_matrix: Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>,
@@ -1222,7 +1227,7 @@ impl WhiteoutTail {
     #[cfg(feature = "zk-prover")]
     /// The response prover for the row and `layout`, as the image compression
     /// the masked prefix sends u_a under: the chain the response proof
-    /// checks (Akita A47).
+    /// checks.
     ///
     /// # Errors
     ///
@@ -1250,10 +1255,8 @@ impl WhiteoutTail {
         rng: &mut R,
     ) -> Result<CommittedPads<F, WhiteoutPadOpening<F>>, ZkError> {
         with_ring_dim!(self.row.ring_dim(), D, {
-            let ([catalog, selected, response_digest], state) = self.pad_statement::<D>(&layout)?;
-            transcript.append(&catalog);
-            transcript.append(&selected);
-            transcript.append(&response_digest);
+            let (digests, state) = self.pad_statement::<D>(&layout)?;
+            absorb_pad_statement(transcript, &digests);
             commit_lattice_pads(
                 &state.pads,
                 state.response.prover.as_ref() as &dyn ImageCompression<F>,
@@ -1279,10 +1282,8 @@ impl WhiteoutTail {
     ) -> Result<CommittedPadsView<LatticePadPayload<F>>, ZkError> {
         let _span = tracing::info_span!("whiteout_receive_pads").entered();
         with_ring_dim!(self.row.ring_dim(), D, {
-            let ([catalog, selected, response], state) = self.pad_statement::<D>(&layout)?;
-            transcript.append(&catalog);
-            transcript.append(&selected);
-            transcript.append(&response);
+            let (digests, state) = self.pad_statement::<D>(&layout)?;
+            absorb_pad_statement(transcript, &digests);
             receive_lattice_pads(
                 &state.pads,
                 &CompressionShape::<WhiteoutResponse>::default(),
@@ -1494,7 +1495,8 @@ impl Debug for WhiteoutSetup {
     }
 }
 
-/// Setups are equal when they admit the same shapes under the same plans.
+/// Setups are equal when they admit the same shapes under the same plans and
+/// carry the same packaged response catalog.
 impl PartialEq for WhiteoutSetup {
     fn eq(&self, other: &Self) -> bool {
         self.grouped == other.grouped
@@ -1638,6 +1640,7 @@ impl WhiteoutSetup {
     ///
     /// [`ZkError`] if an admitted shape has no zero-knowledge row, or a
     /// persisted plan is refused ([`WhiteoutPlanError`]).
+    #[cfg(feature = "zk-prover")]
     pub(crate) fn catalog(
         &self,
         num_vars: usize,
@@ -1782,7 +1785,7 @@ struct PlannedResponse {
 
 /// The response prover under a `whiteout_prove_response` span that logs the
 /// response proof's bytes, so a profile splits the tail into the Σ-protocol
-/// and the response proof (`jolt:specs/whiteout-v6-costs.md`).
+/// and the response proof.
 #[cfg(feature = "zk-prover")]
 struct ProfiledResponse<'a>(&'a AkitaResponseProver<WhiteoutResponse>);
 
@@ -1892,11 +1895,23 @@ impl PlannedResponse {
     }
 }
 
+/// Absorbs the pads' public parameters (the catalog digest, the selected
+/// row's digest and the response schedule's digest) before t_p. A plain
+/// function, outside `with_ring_dim!`, so the Fiat-Shamir inventory sees
+/// these absorb sites.
+fn absorb_pad_statement<T: Transcript>(transcript: &mut T, digests: &[[u8; 32]; 3]) {
+    for digest in digests {
+        transcript.append(digest);
+    }
+}
+
 mod opening;
 
+pub(crate) use opening::opens_whiteout;
 #[cfg(feature = "zk-prover")]
 pub use opening::WhiteoutResidual;
-pub(crate) use opening::{opening_shape, opens_whiteout, whiteout};
+#[cfg(feature = "zk-prover")]
+pub(crate) use opening::{opening_shape, whiteout};
 
 #[cfg(all(test, feature = "zk-prover"))]
 #[expect(

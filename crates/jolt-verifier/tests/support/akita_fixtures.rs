@@ -139,7 +139,7 @@ fn generate_committed_muldiv() -> AkitaFixtureCase {
     prove_prepared(run, config, preprocessing, &[])
 }
 
-/// Whiteout's muldiv case (`akita,zk`): one hiding `OneHotTrace` group,
+/// Whiteout's muldiv case (`whiteout`): one hiding `OneHotTrace` group,
 /// under the production setup.
 #[cfg(feature = "zk")]
 pub fn whiteout_muldiv_case() -> &'static AkitaFixtureCase {
@@ -147,7 +147,7 @@ pub fn whiteout_muldiv_case() -> &'static AkitaFixtureCase {
     CASE.get_or_init(generate_whiteout_muldiv)
 }
 
-/// Whiteout's advice case (`akita,zk`): both advice kinds as hiding
+/// Whiteout's advice case (`whiteout`): both advice kinds as hiding
 /// precommitted groups beside the trace group.
 #[cfg(feature = "zk")]
 pub fn whiteout_advice_case() -> &'static AkitaFixtureCase {
@@ -155,7 +155,7 @@ pub fn whiteout_advice_case() -> &'static AkitaFixtureCase {
     CASE.get_or_init(generate_advice)
 }
 
-/// Whiteout's committed-program case (`akita,zk`): the bytecode and
+/// Whiteout's committed-program case (`whiteout`): the bytecode and
 /// program-image objects as hiding precommitted groups beside the trace
 /// group.
 #[cfg(feature = "zk")]

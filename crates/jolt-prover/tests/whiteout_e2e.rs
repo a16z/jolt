@@ -37,7 +37,7 @@ mod whiteout {
         self, AkitaProverPreprocessing, AkitaVc, AkitaVerifierPreprocessing,
     };
     use jolt_prover::akita::witness::{AdviceObject, DirectProgramOpenings, HidingOpening};
-    use jolt_prover::{JoltBackend, ProverConfig, ProverError};
+    use jolt_prover::{JoltBackend, PreprocessingError, ProverConfig, ProverError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
@@ -239,7 +239,7 @@ mod whiteout {
         assert!(verify(&proved, &extended).is_err());
         assert_tape_tampers_reject(&proved, &proof);
 
-        // HT3: a second proof of the same statement draws fresh hiding
+        // A second proof of the same statement draws fresh hiding
         // randomness, pads and Σ coins.
         let (again, second) = honest(Setup::Muldiv);
         verify(&again, &second).expect("a second Whiteout proof verifies");
@@ -464,13 +464,14 @@ mod whiteout {
         altered
     }
 
-    /// D31: a trusted party commits trusted advice hiding and ships the
+    /// A trusted party commits trusted advice hiding and ships the
     /// commitment and its randomness. The prover, in another process,
     /// rebuilds its hint from (advice, randomness) and proves; the verifier
     /// accepts against the shipped commitment. Altered randomness or other
     /// advice is refused at rebuild, and an auditor's rebuild reproduces
     /// the commitment.
     #[test]
+    #[expect(clippy::panic, reason = "an unexpected refusal is a test failure")]
     fn whiteout_trusted_advice_reopens_from_shipped_randomness() {
         let (commitment, randomness) = {
             let run = prepare(Setup::Advice);
@@ -486,17 +487,39 @@ mod whiteout {
         let reopen = |advice: &[u8], randomness: &[u8]| {
             preprocessing::reopen_trusted_advice(&prover, advice, &receive(&commitment, randomness))
         };
+        let refusal = |result: Result<AdviceObject<AkitaScheme>, _>| match result {
+            Err(PreprocessingError::InvalidAdvice { reason }) => reason,
+            Err(error) => panic!("unexpected refusal: {error:?}"),
+            Ok(_) => panic!("a mismatched rebuild was accepted"),
+        };
+        // The digit stays inside the alphabet, so the refusal is the
+        // commitment mismatch, not the randomness decoding.
         assert!(
-            reopen(&trusted_advice(), &altered(&randomness)).is_err(),
+            refusal(reopen(&trusted_advice(), &altered(&randomness)))
+                .contains("do not open the expected commitment"),
             "altered randomness rebuilds the commitment"
         );
         assert!(
-            reopen(
+            refusal(reopen(
                 &postcard::to_stdvec(&8u64).expect("serialize advice"),
                 &randomness
-            )
-            .is_err(),
+            ))
+            .contains("do not open the expected commitment"),
             "other advice rebuilds the commitment"
+        );
+        // A shipped commitment whose backend payload matches but whose
+        // header (the layout digest, right after the flavor byte) does not.
+        let mut header = postcard::to_stdvec(&commitment).expect("serialize commitment");
+        header[1] ^= 1;
+        let header: AkitaCommitment = postcard::from_bytes(&header).expect("decode commitment");
+        assert!(
+            refusal(preprocessing::reopen_trusted_advice(
+                &prover,
+                &trusted_advice(),
+                &receive(&header, &randomness)
+            ))
+            .contains("header differs"),
+            "a shipped commitment with another header is refused"
         );
         let audited = reopen(&trusted_advice(), &randomness).expect("the auditor's rebuild");
         assert_eq!(audited.commitment, commitment);
@@ -512,7 +535,7 @@ mod whiteout {
             .expect("the verifier accepts against the shipped commitment");
     }
 
-    /// D31: a trusted party commits a program hiding and ships its verifier
+    /// A trusted party commits a program hiding and ships its verifier
     /// preprocessing and the objects' randomness. The prover rebuilds its
     /// preprocessing from (program, randomness) and proves; the trusted
     /// party's verifier preprocessing accepts. Altered or swapped randomness

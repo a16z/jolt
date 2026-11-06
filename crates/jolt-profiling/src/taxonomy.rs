@@ -200,7 +200,7 @@ pub const ZK_MODE_SPANS: [&str; 7] = [
 /// Akita-mode (`akita` feature) seams: the `OneHotTrace` column assembly
 /// and native group commit at stage 0, plus the native grouped stage-8
 /// opening. The Akita prover keeps `prove_uniskip_clear` (its recorders are
-/// clear; `akita` and `zk` are mutually exclusive) and fires no `commit_witness` /
+/// clear; the Whiteout build proves through its own path) and fires no `commit_witness` /
 /// `stream_witnesses` / `JointOpeningPolynomials::prepare` /
 /// `HomomorphicBatch::*`.
 pub const AKITA_MODE_SPANS: [&str; 4] = [
@@ -210,7 +210,7 @@ pub const AKITA_MODE_SPANS: [&str; 4] = [
     "prove_uniskip_clear",
 ];
 
-/// Whiteout-mode (`akita,zk`) seams: the Akita stage-0 commit, the
+/// Whiteout-mode (`whiteout` feature) seams: the Akita stage-0 commit, the
 /// pad-masked uni-skip, the pad commitment with its `pad_layout` replay, and
 /// the opening that runs under `prove_stage8` — the `replay_stages` claim
 /// replay, Akita's masked prefix, the `replay_relation` residual, and the
