@@ -20,14 +20,14 @@ pub(crate) fn weighted<const N: usize>(
                 emit::row_acc_zero($k);
                 // SAFETY: the nonempty width and all row lengths were checked.
                 unsafe { load(REG_B, $row.get_unchecked(width - 1)); }
-                fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
+                emit::fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
             )+
             for j in (0..width - 1).rev() {
                 $(
                     // SAFETY: j is below the validated width of every row.
                     unsafe { load(REG_B, $row.get_unchecked(j)); }
-                    fixed!(r_word(FUNCT3_MUL, 9 + $k, 9 + $k, REG_A));
-                    fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
+                    emit::fixed!(r_word(FUNCT3_MUL, 9 + $k, 9 + $k, REG_A));
+                    emit::fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
                 )+
             }
         }};
@@ -71,7 +71,7 @@ fn triplet_block<const N: usize>(rows: [&[[u64; N]]; 5]) {
             emit::row_acc_zero($k);
             // SAFETY: the caller validated all row lengths as 64.
             unsafe { load(REG_B, $row.get_unchecked(63)); }
-            fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
+            emit::fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
         )+};
     }
     macro_rules! advance {
@@ -96,8 +96,8 @@ fn triplet_block<const N: usize>(rows: [&[[u64; N]]; 5]) {
                     options(nostack)
                 );
             }
-            fixed!(r_word(FUNCT3_MUL, 9 + $k, 9 + $k, REG_A));
-            fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
+            emit::fixed!(r_word(FUNCT3_MUL, 9 + $k, 9 + $k, REG_A));
+            emit::fixed!(r_word(FUNCT3_ADD, 9 + $k, 9 + $k, REG_B));
         };
     }
     macro_rules! group {
