@@ -12,7 +12,7 @@ GitHub-hosted runners; the target downloads, verifies and runs those artifacts
 without any Cargo/toolchain fallback. Both routes keep the repository's `release`
 profile (fat LTO and debug information) and explicit `-C target-cpu=znver4`.
 
-The PR matrix has 17 cells and launches 136 proof processes, including warmups.
+The PR matrix has 33 cells and launches 264 proof processes, including warmups.
 `pr-baseline.json` preserves the initial three-cell, 24-proof matrix. Measured
 timing and noise references apply to their exact artifact inputs, not to an
 unmeasured later kernel or a future run. Automatic references use the exact-base
@@ -21,19 +21,39 @@ lifecycle below; the measured bands below belong to the pinned manual experiment
 ## Workloads and tiers
 
 `suites.json` is the source of the case matrix. Standard-main and nightly run both
-Dory and Akita at exactly 1, 8, or 24 physical cores. PRs use all 15 Akita
-main-size cells plus Dory SHA2 and BTreeMap at 24 cores.
+Dory and Akita at exactly 1, 8, or 24 physical cores. The PR tier uses the matrix
+below; “all five” means Fibonacci, SHA2 chain, SHA3 chain, BTreeMap and secp256k1
+ECDSA batch. Each scale is a trace ceiling, not a measured row count.
 All three tiers use `release` without profile overrides.
 The ordinary instruction profile and clear proofs are
 used; no protocol parameter is adjusted for the benchmark.
 
-| Workload | Fixed operations at 1 / 8 / 24 cores in `main` | Input |
-|---|---:|---|
-| Fibonacci | 16000 / 64000 / 250000 | Postcard-encoded iteration count |
-| SHA2 chain | 64 / 256 / 1024 | `[5; 32]`, then the count |
-| SHA3/Keccak chain | 48 / 192 / 768 | `[5; 32]`, then the count |
-| BTreeMap | 128 / 512 / 2048 | Insertion count; guest-owned deterministic keys |
-| secp256k1 ECDSA batch | 1 / 4 / 16 | One valid signature/public-key vector, verified repeatedly |
+| Physical cores | Trace ceiling | Akita workloads | Dory workloads |
+|---:|---:|---|---|
+| 1 | `2^16` | Fibonacci only | — |
+| 8 | `2^20` | All five | — |
+| 24 | `2^16` | Fibonacci, SHA2, SHA3, BTreeMap | — |
+| 24 | `2^18` | All five | — |
+| 24 | `2^20` | All five | — |
+| 24 | `2^22` | All five | SHA2, BTreeMap |
+| 24 | `2^24` | All five | — |
+| 24 | `2^27` | SHA2 only | — |
+
+The operation counts below determine fixed input bytes. Main retains its existing
+`2^18` / `2^20` / `2^22` inputs at 1 / 8 / 24 cores respectively.
+
+| Workload | `2^16` | `2^18` | `2^20` | `2^22` | `2^24` | PR `2^27` |
+|---|---:|---:|---:|---:|---:|---:|
+| Fibonacci | 4000 | 16000 | 64000 | 250000 | 1000000 | — |
+| SHA2 chain | 16 | 64 | 256 | 1024 | 4096 | 32768 |
+| SHA3/Keccak chain | 12 | 48 | 192 | 768 | 3072 | — |
+| BTreeMap | 32 | 128 | 512 | 2048 | 8192 | — |
+| secp256k1 ECDSA batch | — | 1 | 4 | 16 | 64 | — |
+
+One secp256k1 operation measured 201801 trace rows: it fails the `2^16` ceiling
+and fits `2^18`. The four other tiny cases fit. Fibonacci inputs are Postcard
+iteration counts; hash chains start with `[5; 32]`; BTreeMap uses deterministic
+guest-owned keys; the signature batch repeats one fixed valid vector.
 
 The `verify_batch` function in `examples/secp256k1-ecdsa-verify/guest` calls the
 real `ecdsa_verify` precompile. The profiling harness enables `batch-bench` and
@@ -45,9 +65,19 @@ the input generator uses no PRNG.
 
 | Tier | Cases | Warmups / measured repetitions per leg |
 |---|---|---:|
-| `pr` | All five workloads at 1 / 8 / 24 cores with Akita; Dory SHA2 and BTreeMap at 24 cores: 17 points | 1 / 3 |
+| `pr` | The matrix above: 33 supported points, 264 fresh processes across both legs | 1 / 3 |
 | `main` | All five workloads, all three core counts, both PCS: 30 points | 1 / 3 |
-| `nightly` | Two larger inputs for each main point: 60 points | 1 / 5 |
+| `nightly` | The original 60 points plus Fibonacci/Akita and Fibonacci/Dory at `2^28`, and Fibonacci/Akita at `2^30`: 63 supported points | 1 / 5 |
+
+The new nightly Fibonacci inputs are 16000000 operations at `2^28` and 64000000
+at `2^30`, all at 24 cores. Main and nightly retain their six unsupported
+Ethereum-block rows, so their configured totals are 36 and 69 cases. The prior
+five one-core `2^18` PR cases leave only the PR tier; other tiers are unchanged.
+An unchanged definition retains its ID, including the five `2^24` Akita cases
+already present in nightly. New definitions receive new IDs.
+Main and nightly launch 120 and 378 proof processes respectively, before the
+726-process calibration refresh. A one-commit main push therefore launches 846
+proof processes; nightly launches 1104. Unsupported rows launch none.
 
 The historical sub-600-second interval below excludes compilation. The new PR
 route includes local builds and has no measured sub-600-second promise. A warm
@@ -60,7 +90,93 @@ the matching harness. The original measurement artifacts retain their original
 configuration bytes and source revisions. Larger inputs remain bundled for
 separately scoped measurements.
 
-### Measured PR interval
+### November 6 size probes and runtime planning
+
+The size probes ran on shared CherryPika, an EPYC 9354P, not jolt-bench's EPYC
+9254. They used source and harness
+[`3942fe6148`](https://github.com/a16z/jolt/commit/3942fe6148539e0feab499f84dc25188e28781d9),
+release/znver4, optimized clear proofs, zero warmups and one fresh process per
+case, during November 6 20:22:08–21:07:40 UTC. Both verifiers passed for 28 cases;
+the secp256k1 `2^16` ceiling failure was expected. These are proxy measurements,
+not target timing, variation estimates or a representative scaling curve.
+
+The table records end-to-end time, full-process peak RSS and time per million
+actual padded rows. Each row has one sample. GiB means `2^30` bytes.
+
+| Workload | Scheme | Ceiling | Trace rows | End-to-end (s) | Peak RSS (GiB) | s / million padded rows |
+|---|---|---:|---:|---:|---:|---:|
+| fibonacci | akita | `2^24` | 10000763 | 6.612 | 2.682 | 0.394 |
+| sha2-chain | akita | `2^24` | 8622628 | 8.067 | 2.340 | 0.481 |
+| sha3-chain | akita | `2^24` | 9772590 | 7.637 | 2.836 | 0.455 |
+| btreemap | akita | `2^24` | 6266416 | 5.082 | 1.684 | 0.606 |
+| secp256k1-batch | akita | `2^24` | 12738486 | 8.786 | 3.239 | 0.524 |
+| sha2-chain | dory | `2^24` | 8622628 | 30.629 | 2.345 | 1.826 |
+| btreemap | dory | `2^24` | 6266416 | 22.961 | 1.674 | 2.737 |
+| fibonacci | akita | `2^27` | 80000770 | 38.278 | 19.060 | 0.285 |
+| sha2-chain | akita | `2^27` | 68977195 | 36.476 | 15.498 | 0.272 |
+| sha3-chain | akita | `2^27` | 78176821 | 40.777 | 19.838 | 0.304 |
+| btreemap | akita | `2^27` | 57448708 | 27.158 | 12.558 | 0.405 |
+| secp256k1-batch | akita | `2^27` | 101888253 | 48.342 | 23.079 | 0.360 |
+| sha2-chain | dory | `2^27` | 68977195 | 244.151 | 16.863 | 1.819 |
+| btreemap | dory | `2^27` | 57448708 | 220.119 | 14.152 | 3.280 |
+| fibonacci | akita | `2^28` | 160000770 | 63.845 | 37.324 | 0.238 |
+| fibonacci | dory | `2^28` | 160000770 | 376.392 | 38.797 | 1.402 |
+| fibonacci | akita | `2^30` | 640000770 | 242.513 | 147.552 | 0.226 |
+| fibonacci | dory | `2^30` | 640000770 | 1254.160 | 153.502 | 1.168 |
+
+The tiny 24-core Fibonacci `2^18` sample was faster than `2^16` (0.884 versus
+0.907 seconds); the Dory/BTreeMap per-row rate increased at `2^27`. Both
+observations are unexplained with these shared-host single samples.
+CherryPika had swap enabled. Aggregate used swap rose by 5160960 bytes between
+the two `2^30` starts, and process-specific swap was not sampled. RSS excludes
+swapped pages, so these runs do not establish no-swap residency on jolt-bench.
+Fibonacci/Dory `2^30` is omitted for time, not an observed memory failure: its
+153.502 GiB RSS is below the supplied target MemTotal of 188.408 GiB, but six
+1257.241-second processes would add 125.72 minutes to nightly.
+
+Runtime planning uses full `process_s`, not only proving time. Existing cells use
+their 22 observed null processes in
+[ingest 42292532404](https://github.com/a16z/jolt/actions/runs/42292532404/attempts/1).
+New measured cells use the single CherryPika process. The five unmeasured
+24-core `2^20` cells use the existing 8-core `2^20` process times as an explicit
+model assumption, without assuming a parallel speedup. The resulting sum is
+127.619 seconds for one process per PR cell.
+
+| Planned interval | Process-count basis | Forecast, not a measured new run |
+|---|---:|---:|
+| PR proof execution | `8 * 127.619` seconds; 264 processes | 17.02 minutes |
+| PR build plus execution | Above plus the last observed 29.45-minute two-leg preparation | 46.46 minutes; keep the 120-minute limit |
+| Null refresh on each main push/nightly | `22 * 127.619` seconds; 726 processes | 46.79 host-minutes |
+| Main push with one history commit | Above plus the observed 17.94-minute main-history interval | 64.74 host-minutes; each further commit adds its history interval |
+| Bootstrap proof execution | `30 * 127.619` seconds; 990 processes | 63.81 minutes, plus its local build |
+
+The build anchor comes from
+[PR2313 ingest 42287204032](https://github.com/a16z/jolt/actions/runs/42287204032/attempts/1);
+it is not a guaranteed preparation time for another revision. The previous
+17-cell null took 18.03 minutes on the target, so this model adds 28.77 refresh
+minutes per main push. The five `2^24` Akita cases cost 13.57 refresh minutes and
+the selected SHA2/Akita `2^27` case costs 13.58. The excluded Dory SHA2/BTreeMap
+pairs at `2^24` and `2^27` would add 19.83 and 170.65 minutes respectively;
+all five Akita `2^27` cases would cost 71.16 minutes rather than the selected
+13.58. Every retained PR case still gets its own ten-pair reference.
+
+No completed full-nightly measurement was found in the eight retained successful
+ingests examined on November 6. The only scheduled producer,
+[42178739170](https://github.com/a16z/jolt/actions/runs/42178739170), emitted a
+disabled receipt and ran no proofs. The historical October 31 60-cell pilot took
+1082.094 seconds with one process per case, not the full nightly repetition
+count. Repeating that cost six times gives 108.21 minutes. The three additions
+contribute 6.47 + 37.73 + 24.65 = 68.86 proxy minutes; adding the new 46.79-minute
+null gives a 223.86-minute planning scenario. The nightly worker limit is raised
+to 240 minutes; main and calibration remain 180. This is not a measured full-run
+duration or an upper bound: the pilot used a different source/harness, and
+transfer, orchestration and contention can change the result.
+
+The root-owned installed `jolt-bench-entry` must be updated for that limit to be
+live. The dispatcher's nightly submitted-state deadline must also leave room
+above the worker limit. This repository change installs neither component.
+
+### Historical PR interval
 
 [Hosted run 41362804476](https://github.com/a16z/jolt/actions/runs/41362804476)
 built base `e37e6f24a4276fb76e85d0db150cdb196cbc26e5` and candidate/harness
@@ -71,7 +187,7 @@ native prover bytes. The following measurements used those artifacts on
 | Matrix | Fresh processes, including warmups | Manual on-host checkout through packaging | Download request through finalize | Suite execution |
 |---|---:|---:|---:|---:|
 | Preserved three-cell baseline | 24 | 78.999932 s | 67.783 s | 46.969 s |
-| Adopted 17-cell matrix | 136 | 458.583460 s | 448.842 s | 429.834 s |
+| Historical 17-cell matrix | 136 | 458.583460 s | 448.842 s | 429.834 s |
 
 The manual on-host interval uses one target clock: checkout start through result
 packaging end. It includes downloads, ZIP checks, extraction, payload verification,
@@ -112,8 +228,9 @@ toolchain, image and build inputs. One cold run per host does not isolate a
 hardware speed difference. The temporary replay job was removed after capture.
 
 Main trace ceilings are `2^18`, `2^20`, and `2^22` at 1, 8, and 24 cores.
-Nightly uses twice and four times each main operation count and raises the trace
-ceiling by one and two bits respectively. These are ceilings, not invented row
+Nightly retains twice and four times each main operation count and raises the trace
+ceiling by one and two bits respectively, plus the three large Fibonacci cases
+listed above. These are ceilings, not invented row
 measurements. An input that exceeds its ceiling fails visibly.
 
 Main and nightly each retain six unsupported `ethereum-block` rows. The tracked
@@ -203,8 +320,9 @@ The disposable GitHub-hosted builder checks for 40 GB of free disk space, then
 adds a 24 GB swap file, reserving 16 GB of disk space for the build. It uses one
 Cargo job and retains the repository's release profile, including fat LTO and
 debug information. Its existing 120-minute job timeout is separate from the
-target's 120-minute PR build-plus-run timeout. Main/nightly/calibration target
-jobs allow 180 minutes. These are failure limits, not duration estimates.
+target's 120-minute PR build-plus-run timeout. Main and calibration target jobs
+allow 180 minutes; nightly allows 240 based on the planning scenario above.
+These are failure limits, not duration estimates.
 
 ## Manual commands
 
@@ -648,7 +766,7 @@ Removing the label does not terminate a build or proof already running. The App
 submits one job at a time in FIFO order; the kernel lock also serializes manual
 target commands. Submission is size-capped and staged before acquiring the jobs
 lock, so an incomplete upload cannot block status/fetch/remove. PR timeouts are
-120 minutes; main/nightly/calibration timeouts are 180. Results include an
+120 minutes; main/calibration timeouts are 180 and nightly is 240. Results include an
 `executor.log` tail of at most 8 MiB from the unit journal and capped per-build logs. Normal completion
 finalizes in the worker; systemd finalizes a killed/timed-out worker after its
 process tree has stopped.
@@ -766,10 +884,10 @@ under `dev/prover-history/` on the existing `gh-pages` source. It never modifies
 `dev/bench/`. Nightly remains at 07:00 UTC. An interrupted or missing result is
 unavailable, never a pass.
 
-The measured pilot ran each of the 60 supported nightly cases once. It does not establish the full
-nightly suite's duration, variation between runs, or completion within 180
-minutes. Hosted-job and queue overhead remain unmeasured; no finish guarantee
-is established.
+The historical pilot ran each of the original 60 supported nightly cases once.
+The expanded 63-case repeated nightly duration and variation remain unmeasured;
+the 240-minute limit follows the planning scenario above, not a completed sweep.
+Hosted-job and queue overhead remain unmeasured; no finish guarantee is established.
 
 Rerun all jobs together: a plan from an older run attempt is rejected.
 

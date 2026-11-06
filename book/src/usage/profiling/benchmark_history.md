@@ -16,6 +16,38 @@ nor a Pages-source change.
 | Pull requests | Same-repository PRs with a maintainer/admin-applied `benchmark` label; local build and proof |
 | Manual previews | Explicitly labelled imported measurements, never authenticated main history |
 
+The PR tier has 33 supported cases and 264 fresh proof processes across its two
+legs. It runs Fibonacci/Akita at one core with a `2^16` trace ceiling, all five
+workloads with Akita at eight cores and `2^20`, and the following 24-core sizes.
+“All five” means Fibonacci, SHA2 chain, SHA3 chain, BTreeMap and secp256k1 ECDSA.
+
+| 24-core ceiling | Akita workloads | Dory workloads |
+| --- | --- | --- |
+| `2^16` | All except secp256k1 | — |
+| `2^18`, `2^20`, `2^24` | All five | — |
+| `2^22` | All five | SHA2, BTreeMap |
+| `2^27` | SHA2 only | — |
+
+One secp256k1 operation measured 201801 rows and does not fit `2^16`. Nightly
+retains its original 60 supported cases and adds 24-core Fibonacci/Akita and
+Fibonacci/Dory at `2^28`, plus Fibonacci/Akita at `2^30`: 63 supported cases,
+378 proof processes before calibration. The large inputs are 16000000 and
+64000000 operations respectively. Main/nightly still contain six unsupported
+Ethereum-block rows each. Definitions retain their case IDs only when unchanged.
+
+The [benchmark README](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#november-6-size-probes-and-runtime-planning)
+records the shared-CherryPika single-process probes and the planning assumptions.
+The PR proof forecast is 17.02 minutes; adding the most recent observed two-leg
+build gives 46.46 minutes against a 120-minute limit. Calibration now has 726
+processes and a 46.79-host-minute forecast on each main push/nightly. One ordinary
+main-history commit adds the observed 17.94 minutes. A historical 60-case nightly
+pilot, the three large additions and calibration give a 223.86-minute scenario,
+so the nightly worker limit is 240 minutes; main/calibration remain 180.
+These are forecasts, not measured expanded jolt-bench runs. Dory `2^30` is omitted
+because its six processes alone would add 125.72 proxy minutes, not because of an
+observed memory failure. Target no-swap acceptance and the installed worker/App
+deadline updates remain separate from this source change.
+
 The PR label persists across pushes. The trusted producer checks the actual label
 applier, current label and merge parents; a write-only collaborator or fork is
 not admitted. The target rechecks the label and PR head after queue/lock waits.

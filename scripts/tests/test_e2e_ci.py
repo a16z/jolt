@@ -522,6 +522,7 @@ class CalibrationSchedulingTests(unittest.TestCase):
                             runs=[{'head': 'a' * 40}, {'head': 'b' * 40}])
                 events = []
                 def prove(options):
+                    self.assertEqual(options.case, [])
                     events.append((options.kind, options.tier, options.warmups, options.repetitions,
                                    options.base, options.head, len(ci.bench.config_cases(options.config, 'pr')[1])))
                     return dict(status='complete', wall_time={'benchmark_s': 0})
@@ -533,7 +534,8 @@ class CalibrationSchedulingTests(unittest.TestCase):
                         patch.object(ci.bench, 'run', side_effect=prove), patch.object(ci, 'prepare', side_effect=prepare):
                     self.assertFalse(ci.calibration_phase(args, plan))
                 self.assertEqual(events[0], ('null', 'pr', 1, 10,
-                    args.bundles / 'manifest.json', args.bundles / 'manifest.json', 17))
+                    args.bundles / 'manifest.json', args.bundles / 'manifest.json',
+                    len(ci.bench.config_cases(ci.bench.DEFAULT_CONFIG, 'pr')[1])))
                 if tier == 'calibration':
                     self.assertEqual(events[1], 'local-build')
                     self.assertEqual(events[2][0:4], ('null', 'pr', 1, 3))
