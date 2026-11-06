@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793925116372,
+  "lastUpdate": 1793926442349,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -232474,6 +232474,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 784152,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "894ed05729b372fcbd59b3223ab4c37ef5e868e6",
+          "message": "ci(bench): add reproducible end-to-end prover benchmarks (#2215)\n\n* feat(bench): add pinned CPU proof bundles and raw paired measurements\n\n* fix(bench): pin runner resources and record explicit compiler targets\n\n* fix(bench): build the guest CLI from a pinned Git checkout\n\n* feat(bench): gate CPU suites and validate trusted result publication\n\n* fix(bench): resolve added guest dependencies before locked builds\n\n* docs(bench): include transfers and publication in the PR time gate\n\n* fix(bench): preserve builds across workflow checkout cleanup\n\n* docs(bench): align administrator registration with runner group\n\n* fix(bench): bound cache and validate calibrated comparisons\n\n* docs(bench): declare native build prerequisites\n\n* docs(bench): preserve coreutils in native prerequisites\n\n* ci(bench): build only the requested prover executables\n\nKeep the release PR subset to the existing Akita Fibonacci, SHA2 and\nBTreeMap points. Build the real guest-builder CLI separately with its\nexisting Dory dependency closure, and select prover executables from the\nrequested supported cases. Preserve complete-main bundle reuse, exact\nprovenance, input/PCS cache variants and the eight-entry retention bound.\nMain and nightly retain both PCS, their existing schedule and timeout.\n\nReuse Quang Dao's PR2204 Apple Silicon HOL Light setup fix verbatim.\nSource PR: https://github.com/a16z/jolt/pull/2204\nSource commit: https://github.com/a16z/jolt/commit/9d479d0558306525e49a1f0f62afa061147af1bc\n\nCo-authored-by: Quang Dao <qvd@andrew.cmu.edu>\n\n* ci(bench): schedule nightly benchmarks at 07:00 UTC\n\nKeep the configured 180-minute job timeout and all runtime inputs unchanged.\nState the once-per-case pilot's limits without implying full-nightly duration\nor completion. Hosted-job and queue overhead remain unmeasured.\n\n* ci(bench): separate builder profile and record command timings\n\nBuild the actual-source guest-builder CLI under ci while preserving the\nworkflow prover's release profile and the guest release arguments. Record\nguest_builder_profile independently in manifests and completed-cache identity.\n\nRecord start arguments and elapsed command outcomes in the existing build log,\nincluding failures, without excluding preparation from the full clock.\nLimit PR measurement jobs to 10 minutes; main/nightly retain 180 minutes.\nDocument interrupted/missing results and preserve the complete external-time\nacceptance requirement. Extend only the directly affected owned fixtures.\n\n* fix(bench): preserve identical effective build input timestamps\n\nKeep forced source checkout and cleanup, but retain the prior mtime only when\nan overlaid input, patched manifest or resolved lockfile has identical final\nbytes. Changed inputs still invalidate normally. The owned Git fixture\nreproduces timestamp-only churn and checks changed/deleted inputs and cleanup.\n\nEmit stable Cargo compiler-artifact JSON in build.log so the next real run can\nrecord unit freshness and candidate compilation. This does not attribute prior\nbuild latency or claim that the PR budget is met.\n\n* ci(bench): use qualified off16 profile for PR proofs\n\n* ci(bench): build release artifacts on hosted runners\n\nSeparate pinned preparation from artifact verification and run-only execution.\nUse repository release settings with znver4 code generation; host-generic ci\nhelpers prepare guests without executing target-ISA binaries. Bind plan,\nmanifest and payload hashes and preserve trusted publication restrictions.\n\nKeep the 24-proof baseline and stage the measured-fitting 17-cell proposal\nseparately. Public output bytes allow the matched off-host equivalence control.\n\n* ci(bench): publish the pinned plan before compilation\n\n* fix(bench): preserve hosted diagnostics and request receipts\n\n* ci(bench): limit hosted build concurrency after OOM\n\n* ci: add hosted swap capacity for release benchmark builds\n\n* ci(bench): adopt measured hosted PR suite\n\n* fix(bench): mark automatic calibration unavailable\n\n* ci(bench): measure cold and Cargo-warm hosted builds\n\n* ci(bench): record hosted replay and remove temporary builder\n\n* ci(bench): gate local PR builds on maintainer labels\n\n* fix(bench): recheck only the label and head before local PR builds\n\nThe PR API base.sha lags the planned merge^1 and merge_commit_sha moves\nwhenever main advances, so comparing them refused almost every labelled PR\nafter the queue wait. The plan already pins the base and merge it builds.\nThe disabled comment validator and writer drop the same base.sha check and\nkeep the test merge as their staleness check. The target job uses\n!cancelled(); its finalize and upload steps still run on cancellation.\nDocs state that later pushes to a labelled branch run on the persistent\naccount and give the steady-state enablement condition.\n\n* fix(bench): preserve merge-only metrics during rebase\n\n* chore(bench): simplify secp256k1 guest target declarations\n\n* Revert \"chore(bench): simplify secp256k1 guest target declarations\"\n\nThis reverts commit a5f3f68bf5db532fd8d7ed4f3593aade9153097d.\n\n* refactor(bench): reuse the gated secp256k1 guest\n\n* fix(bench): support per-leg native harness fallback\n\n* ci(bench): dispatch target runs through the Pika App\n\n* ci(bench): retain contained executor units and recover PR results\n\n* ci(bench): publish authenticated external calibration references\n\n* ci(bench): admit calibration jobs and validate bootstrap outcomes\n\n* docs(bench): make forced public key readable by runner\n\n---------\n\nCo-authored-by: Quang Dao <qvd@andrew.cmu.edu>",
+          "timestamp": "2026-11-05T18:30:17-05:00",
+          "tree_id": "d8067104a53cb3514e3a5d0df44e7f9b2bd2417d",
+          "url": "https://github.com/a16z/jolt/commit/894ed05729b372fcbd59b3223ab4c37ef5e868e6"
+        },
+        "date": 1793926436713,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.6802,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 783796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.326,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 425820,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 425964,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 428452,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.6653,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 426028,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871880,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.5281,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 424928,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.159,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 425100,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 3.8253,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 131308,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.5926,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 783956,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.5117,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 426360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.3807,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 428648,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 20.3688,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 4.8185,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 428448,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 28.7882,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 697796,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 14.4559,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 606272,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 58.7017,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 640620,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.4735,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 425456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 1.6914,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 425024,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 15.3758,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 783944,
             "unit": "KB",
             "extra": ""
           }
