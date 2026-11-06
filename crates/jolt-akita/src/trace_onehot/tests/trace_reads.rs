@@ -203,3 +203,47 @@ fn zero_suffix_commitment_matches_explicit_zero_rows() {
         }
     }
 }
+
+#[test]
+fn row_traversal_rejects_invalid_selector_at_every_position() {
+    #[derive(Debug)]
+    struct Rows {
+        invalid_row: usize,
+        invalid_value: u8,
+    }
+    impl TraceOneHotRows for Rows {
+        fn num_rows(&self) -> usize {
+            32
+        }
+        fn num_columns(&self) -> usize {
+            1
+        }
+        fn fill_row(&self, row: usize, selected: &mut [u8]) {
+            selected[0] = if row == self.invalid_row {
+                self.invalid_value
+            } else {
+                15
+            };
+        }
+    }
+    for invalid_row in 0..32 {
+        for invalid_value in [16, 255] {
+            let columns = TraceOneHotColumn::new(
+                16,
+                512,
+                Arc::new(Rows {
+                    invalid_row,
+                    invalid_value,
+                }),
+            )
+            .unwrap();
+            let result = super::super::traversal::visit_segment_ring_row_range::<512>(
+                &columns[0],
+                0,
+                1,
+                |_, _, _| panic!("invalid selectors must not reach the consumer"),
+            );
+            assert!(result.is_err());
+        }
+    }
+}
