@@ -865,8 +865,9 @@ def render_comment(result, out):
                          for key in ('e2e_s', 'peak_rss_bytes')}
                    for leg, values in measurements.items()}
         base, head = medians['base'], medians['head']
-        changes = {key: f'{(head[key] / base[key] - 1) * 100:+.2f}%' if base[key] else 'unavailable (zero base)'
-                   for key in base}
+        ratios = {key: head[key] / base[key] if base[key] else None for key in base}
+        changes = {key: f'{(ratio - 1) * 100:+.2f}%' if ratio is not None else 'unavailable (zero base)'
+                   for key, ratio in ratios.items()}
         calibrated, reason = calibration.for_case(result, case)
         basis = {key: (f"{calibrated[key]['threshold_pct']:.2f}% "
                        f"(max symmetric null {calibrated[key]['max_symmetric_window_delta_pct']:.2f}%)"
@@ -878,7 +879,7 @@ def render_comment(result, out):
         time_values = f"{base['e2e_s']:.6f} / {head['e2e_s']:.6f} | {changes['e2e_s']}"
         rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
         lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
-        if any(base[key] and abs(head[key] - base[key]) > base[key] * 0.03 for key in base):
+        if any(ratio is not None and not 0.97 <= ratio <= 1.03 for ratio in ratios.values()):
             notable_rows.append(f'{label} {time_values} | {rss_values} |')
         rows, binaries, guests = [], [], []
         for leg in ('base', 'head'):

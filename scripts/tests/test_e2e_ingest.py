@@ -80,14 +80,16 @@ class IngestTests(unittest.TestCase):
         template = result['cases'].pop()
         for cores, seconds, rss in [(1, 104, 10000), (2, 96, 10000),
                                     (3, 100, 10400), (4, 100, 9600),
-                                    (5, 103, 9700), (6, 97, 10300), (7, 103.001, 10000)]:
+                                    (5, 103, 9700), (6, 97, 10300), (7, 103.001, 10000),
+                                    (8, 0.97, 10000), (9, 1.03, 10000)]:
             case = copy.deepcopy(template)
             case['physical_cores'] = cores
             for sample in case['samples']:
                 if sample['phase'] == 'warmup':
                     sample['metrics'].update(e2e_s=1000, peak_rss_bytes=1000000)
                 else:
-                    sample['metrics'].update(e2e_s=100 if sample['leg'] == 'base' else seconds,
+                    base_seconds = 1 if cores in (8, 9) else 100
+                    sample['metrics'].update(e2e_s=base_seconds if sample['leg'] == 'base' else seconds,
                         peak_rss_bytes=10000 if sample['leg'] == 'base' else rss)
             result['cases'].append(case)
         with tempfile.TemporaryDirectory() as directory:
@@ -105,7 +107,7 @@ class IngestTests(unittest.TestCase):
                             if line.startswith(f'| fibonacci / dory | {cores} |'))
                 full_cells, short_cells = full.split('|'), row.split('|')
                 self.assertEqual(short_cells[1:-1], [full_cells[i] for i in (1, 2, 3, 4, 6, 7)])
-            for cores in (5, 6):
+            for cores in (5, 6, 8, 9):
                 self.assertNotIn(f'| fibonacci / dory | {cores} |', comment)
 
     def test_pr_comment_no_change_marker_and_links(self):
