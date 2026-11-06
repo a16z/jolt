@@ -1,6 +1,7 @@
 //! Verifier state shared across setups: one seed-derived matrix, the setup-prefix
 //! commitments it needs, and one backend verifier per distinct catalog.
-//! Everything is derived from the public seed; nothing is loaded from outside.
+//! Material is derived from the public seed unless a complete, borrowed setup
+//! is supplied through explicit provisioning.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -10,7 +11,7 @@ use akita_params::{
     setup_prefix_slot_field_elements, verifier_setup_matrix_capacity_for_schedule,
     SetupPrefixSlotId,
 };
-use akita_pcs::CpuBackend;
+use akita_pcs::{AkitaSerialize, Compress, CpuBackend};
 use akita_types::{
     derive_public_matrix_prefix, sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
     SetupPrefixVerifierRegistry,
@@ -23,7 +24,8 @@ use crate::adapters::{
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::one_hot_family::AkitaOneHotBackendScheme;
-use crate::{AkitaField, AkitaVerifierSetup};
+use crate::prepared::PreparedBytes;
+use crate::{AkitaField, AkitaVerifierSetup, TrustedBytes};
 
 #[derive(Clone, Debug)]
 pub(crate) struct AkitaVerifierRequirements {
@@ -111,18 +113,47 @@ impl AkitaVerifierRequirements {
         }
         Ok(())
     }
+
+    /// The descriptor of this state's key holding `num_field_elements`.
+    fn descriptor(&self, num_field_elements: usize) -> AkitaSetupDescriptor {
+        AkitaSetupDescriptor {
+            max_num_vars: self.max_num_vars,
+            max_num_batched_polys: self.max_total_batch_polys,
+            num_field_elements,
+            setup_seed: sample_akita_setup_seed(),
+        }
+    }
+
+    /// Borrow a key exported for exactly this request's capacity, keeping only
+    /// the required prefix slots. The descriptor match rejects a key built for
+    /// another capacity or seed; it does not establish the key's provenance.
+    fn trusted_setup(
+        &self,
+        body: TrustedBytes,
+    ) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
+        let key = AkitaBackendVerifierSetup::borrow_trusted(PreparedBytes::payload(body)?)
+            .map_err(invalid_setup)?;
+        if key.expanded().descriptor() != &self.descriptor(self.retained_field_elements) {
+            return Err(invalid_setup(
+                "trusted setup descriptor does not match requested capacity",
+            ));
+        }
+        let mut prefixes = SetupPrefixVerifierRegistry::new(sample_akita_setup_seed());
+        for id in &self.prefix_slots {
+            let slot = key.prefix_slots().get(id).ok_or_else(|| {
+                invalid_setup("trusted setup-prefix commitments lack a required slot")
+            })?;
+            prefixes.insert(slot.clone()).map_err(invalid_setup)?;
+        }
+        AkitaBackendVerifierSetup::from_parts(Arc::clone(key.expanded()), prefixes)
+            .map_err(invalid_setup)
+    }
 }
 
 fn generate_material(
     requirements: &AkitaVerifierRequirements,
 ) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
     let seed = sample_akita_setup_seed();
-    let descriptor = |num_field_elements| AkitaSetupDescriptor {
-        max_num_vars: requirements.max_num_vars,
-        max_num_batched_polys: requirements.max_total_batch_polys,
-        num_field_elements,
-        setup_seed: seed.clone(),
-    };
     let mut prefixes = SetupPrefixVerifierRegistry::new(seed.clone());
     if !requirements.prefix_slots.is_empty() {
         let slots = requirements
@@ -131,7 +162,7 @@ fn generate_material(
             .cloned()
             .collect::<Vec<_>>();
         let generated = CpuBackend::<AkitaField, AkitaField>::export_setup_prefixes_from_seed(
-            &descriptor(requirements.prefix_field_elements),
+            &requirements.descriptor(requirements.prefix_field_elements),
             &slots,
         )
         .map_err(invalid_setup)?;
@@ -142,7 +173,7 @@ fn generate_material(
     let retained_fields = requirements.retained_field_elements;
     let expanded = Arc::new(
         AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-            descriptor(retained_fields),
+            requirements.descriptor(retained_fields),
             derive_public_matrix_prefix(retained_fields, &seed),
         ),
     );
@@ -159,6 +190,17 @@ impl Prepared {
     fn new(
         setups: impl IntoIterator<Item = Result<AkitaVerifierSetup, OpeningsError>>,
     ) -> Result<Self, OpeningsError> {
+        Self::build(setups, |requirements| {
+            with_backend_pool(|| generate_material(requirements))
+        })
+    }
+
+    fn build(
+        setups: impl IntoIterator<Item = Result<AkitaVerifierSetup, OpeningsError>>,
+        material_for: impl FnOnce(
+            &AkitaVerifierRequirements,
+        ) -> Result<AkitaBackendVerifierSetup, OpeningsError>,
+    ) -> Result<Self, OpeningsError> {
         let mut requested = Vec::new();
         for setup in setups {
             let setup = setup?;
@@ -166,7 +208,7 @@ impl Prepared {
             requested.push(setup);
         }
         let requirements = AkitaVerifierRequirements::for_setups(&requested)?;
-        let material = with_backend_pool(|| generate_material(&requirements))?;
+        let material = material_for(&requirements)?;
         let mut catalogs: Vec<AkitaVerifierSetup> = Vec::new();
         for mut setup in requested {
             if catalogs.iter().any(|catalog| catalog.same_catalog(&setup)) {
@@ -205,11 +247,18 @@ impl Prepared {
 /// a prepared catalog's bytes that fits the state's capacity attaches to it on
 /// first use instead of building its own. Dropping every value stops new setups
 /// from attaching; setups already attached keep their verifiers.
+///
+/// Native applications can export the complete matrix and prefix registry with
+/// [`Self::prepared_setup_bytes`] and import them on another machine with
+/// [`Self::prepare_with_trusted_setup`]. Both preparation paths admit every
+/// catalog row within the state's capacity. A guest that instead trusts an
+/// expanded key and terminal NTT cache for one selected row uses
+/// [`AkitaVerifierSetup::prepare_verifier`].
 #[derive(Clone)]
 #[must_use = "setups attach to the prepared state only while it is alive"]
 pub struct AkitaVerifierResources {
     /// Holds the published state; the registry only keeps a weak reference.
-    _prepared: Arc<Prepared>,
+    prepared: Arc<Prepared>,
 }
 
 impl AkitaVerifierResources {
@@ -225,11 +274,55 @@ impl AkitaVerifierResources {
     pub fn prepare(
         setups: impl IntoIterator<Item = Result<AkitaVerifierSetup, OpeningsError>>,
     ) -> Result<Self, OpeningsError> {
-        let prepared = Arc::new(Prepared::new(setups)?);
+        Ok(Self::publish(Prepared::new(setups)?))
+    }
+
+    /// Export the complete backend key as a self-aligning detached body.
+    ///
+    /// A trusted producer writes these bytes once. A consumer authenticates them
+    /// and calls [`Self::prepare_with_trusted_setup`] over immutable backing.
+    /// This export serializes the full matrix and allocates an owned body, so it
+    /// belongs on the producer. The format reuses the prepared-payload framing
+    /// of [`AkitaVerifierSetup::detach_prepared_payloads`].
+    pub fn prepared_setup_bytes(&self) -> Result<Vec<u8>, OpeningsError> {
+        let material = &self.prepared.material;
+        let mut bytes = Vec::with_capacity(material.serialized_size(Compress::No));
+        material
+            .serialize_with_mode(&mut bytes, Compress::No)
+            .map_err(invalid_setup)?;
+        let offset =
+            AkitaExpandedSetup::<AkitaField>::coefficient_offset(&bytes).map_err(invalid_setup)?;
+        PreparedBytes::from(bytes).detach(offset)
+    }
+
+    /// Prepare general verifiers over an authenticated, complete backend key.
+    ///
+    /// The matrix is borrowed in place: this path does not allocate or derive a
+    /// matrix copy. It audits the ordinary catalogs, validates the exact joined
+    /// capacity and required prefix slots, and builds the usual terminal caches.
+    /// Every catalog row admitted by [`Self::prepare`] remains admitted; no row
+    /// is selected ahead of proofs and no missing material is derived as fallback.
+    ///
+    /// This trusts the matrix words as canonical and seed-derived, as well as
+    /// the prefix commitments. `body` must be an immutable, authenticated body exported by
+    /// [`Self::prepared_setup_bytes`], satisfying [`TrustedBytes`]' process-lifetime
+    /// contract. Descriptor and slot checks do not establish that provenance.
+    /// Applications can use read-only file backing to avoid a large heap copy;
+    /// file size and virtual address space are still required. Proofs may touch
+    /// additional matrix pages, so this does not bound verification RSS.
+    pub fn prepare_with_trusted_setup(
+        setups: impl IntoIterator<Item = Result<AkitaVerifierSetup, OpeningsError>>,
+        body: TrustedBytes,
+    ) -> Result<Self, OpeningsError> {
+        Ok(Self::publish(Prepared::build(setups, |requirements| {
+            requirements.trusted_setup(body)
+        })?))
+    }
+
+    fn publish(prepared: Prepared) -> Self {
+        let prepared = Arc::new(prepared);
         PREPARED_VERIFIER_RESOURCES.publish(&prepared);
-        Ok(Self {
-            _prepared: prepared,
-        })
+        Self { prepared }
     }
 }
 
