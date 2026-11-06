@@ -49,10 +49,7 @@ pub fn forward_ntt64(
 ) {
     #[cfg(target_arch = "riscv64")]
     {
-        if (state.as_ptr() as usize).trailing_zeros() >= 3
-            && (psi.as_ptr() as usize).trailing_zeros() >= 3
-            && (twiddles.as_ptr() as usize).trailing_zeros() >= 3
-        {
+        if (state.as_ptr() as usize | psi.as_ptr() as usize | twiddles.as_ptr() as usize) & 7 == 0 {
             // SAFETY: the guard establishes alignment for all paired accesses.
             unsafe { forward_aligned(state, psi, twiddles, p, pinv) };
         } else {
