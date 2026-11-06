@@ -465,7 +465,6 @@ fn preprocess_guest_prover(
 ) -> JoltProverPreprocessing {
     jolt_sdk::preprocess_program(guest_prog, memory_config, max_trace_length, mode).unwrap()
 }
-
 /// The packed (Akita) inner proofs use the modular prover over fp128 and the
 /// packed verifier preprocessing from
 /// the host's own verification of each proof.
@@ -912,7 +911,7 @@ fn generate_proofs(
         guest.name()
     );
 
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = GUEST_TARGET_DIR;
 
     let all_groups_data = collect_guest_proofs(guest, target_dir, false, mode, proofs);
 
@@ -965,6 +964,8 @@ fn configured_recursion_program(memory_config: MemoryConfig) -> Program {
     program.add_guest_feature("fast-alloc");
     program.add_guest_feature("hash-inlines");
     program.set_memory_config(memory_config);
+    #[cfg(feature = "immutable-recipes")]
+    program.add_guest_feature("immutable-recipes");
     program
 }
 
@@ -1076,6 +1077,8 @@ fn tamper_proof(
     save_proof_data(guest, &tampered, output);
 }
 
+const GUEST_TARGET_DIR: &str = "/tmp/jolt-guest-targets";
+
 /// Guest build settings: a higher LLVM inline threshold, one codegen unit and no
 /// debug information for the guest's release profile. Measured as the fewest
 /// trace rows of the guest build configurations screened at inner sizes 2^12
@@ -1152,7 +1155,7 @@ fn run_recursion_proof(
     memory_config: MemoryConfig,
     max_trace_length: usize,
 ) {
-    let target_dir = "/tmp/jolt-guest-targets";
+    let target_dir = GUEST_TARGET_DIR;
 
     let mut program = configured_recursion_program(memory_config);
     build_recursion_guest(&mut program, target_dir);
@@ -1285,6 +1288,10 @@ fn verify_proofs(
         "Input size is too large"
     );
 
+    // Immutable recipes: tables from a native verification of this stream,
+    // or empty tables (canonical path) when any proof does not verify.
+    #[cfg(feature = "immutable-recipes")]
+    let recipe_tables = immutable_recipe_tables::prepare(&all_groups_data, GUEST_TARGET_DIR);
     run_recursion_proof(
         guest,
         run_config,
@@ -1292,6 +1299,8 @@ fn verify_proofs(
         memory_config,
         guest.get_max_trace_length(use_embed),
     );
+    #[cfg(feature = "immutable-recipes")]
+    immutable_recipe_tables::release(recipe_tables);
 }
 
 fn main() {
@@ -1427,6 +1436,9 @@ fn main() {
     }
 }
 
+#[cfg(feature = "immutable-recipes")]
+mod immutable_recipe_tables;
+
 #[cfg(test)]
 mod tests {
     use super::decode_verifier_output;
@@ -1535,9 +1547,9 @@ mod guest_build_tests {
     use std::fs::{self, File};
     use std::time::SystemTime;
 
-    struct Environment(Vec<(&'static str, Option<OsString>)>);
+    pub(super) struct Environment(Vec<(&'static str, Option<OsString>)>);
     impl Environment {
-        fn save(keys: &[&'static str]) -> Self {
+        pub(super) fn save(keys: &[&'static str]) -> Self {
             Self(
                 keys.iter()
                     .map(|&key| (key, std::env::var_os(key)))

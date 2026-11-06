@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
+immutable-recipes = [
+  "akita",
+  "field-inline-fp128",
+  "jolt_sdk/immutable-recipes",
+]
 ntt-inline = ["akita", "jolt-akita/ntt-inline"]
 guest = []
 kernel-tests = ["field-inline"]
