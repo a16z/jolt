@@ -357,7 +357,10 @@ impl<F: JoltField> ConcreteSumcheck<F> for BytecodeReadRafAddressPhase<F> {
     fn symbolic(&self) -> &Self::Symbolic {
         &self.symbolic
     }
-
+    #[cfg_attr(
+        feature = "immutable-recipes",
+        jolt_verifier_derive::recipe_method(support = 1, returns_set = 1)
+    )]
     fn wire_output_openings(
         &self,
     ) -> BTreeSet<<AddressPhaseSymbolic as SymbolicSumcheck>::OpeningId> {

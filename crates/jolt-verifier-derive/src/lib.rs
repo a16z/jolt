@@ -132,7 +132,7 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote};
 use syn::{
-    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Fields, GenericArgument,
+    parse_macro_input, parse_quote, Attribute, Data, DeriveInput, Error, Fields, GenericArgument,
     GenericParam, Ident, ItemFn, Meta, PathArguments, Token, Type,
 };
 
@@ -1186,7 +1186,7 @@ fn expand(input: DeriveInput) -> syn::Result<TokenStream2> {
             #absorb_methods
         }
     };
-
+    let driver_impl = recipe_method::batch_companions(driver_impl, plans.len(), &krate)?;
     // Each opening cell instantiation is its own concrete aggregate: `*Claims`
     // holds the wire *values* (`Inputs<F>` / `Outputs<F>`); `*Points` holds the
     // derived opening points (`Inputs<Vec<F>>` / `Outputs<Vec<F>>`). Only the
@@ -1430,4 +1430,15 @@ fn option_inner(ty: &Type) -> Option<&Type> {
         GenericArgument::Type(ty) => Some(ty),
         _ => None,
     })
+}
+
+mod recipe_method;
+
+/// Derive only declared recipe seams from the canonical method body. The
+/// original method tokens are emitted unchanged; every match count is checked.
+#[proc_macro_attribute]
+pub fn recipe_method(arguments: TokenStream, item: TokenStream) -> TokenStream {
+    recipe_method::expand(arguments.into(), item.into())
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
 }

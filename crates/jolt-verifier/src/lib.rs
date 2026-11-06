@@ -69,3 +69,33 @@ pub use verifier::{
     absorb_committed_program_commitments, validate_and_seed_transcript, validate_inputs_from_parts,
     verify, CheckedInputs, JoltStatement, ProofTranscriptConfig, JOLT_SESSION,
 };
+
+#[cfg(feature = "immutable-recipes")]
+pub mod immutable_recipes;
+
+macro_rules! recipe_verify_clear {
+    ($checked:expr; $receiver:ident ($($argument:expr),* $(,)?)) => {{
+        #[cfg(not(feature = "immutable-recipes"))]
+        { $receiver.verify_clear($($argument),*) }
+        #[cfg(feature = "immutable-recipes")]
+        {
+            let context = $crate::immutable_recipes::RecipeContext::from_checked($checked);
+            $receiver.verify_clear_with_recipes(&context, $($argument),*)
+        }
+    }};
+}
+
+macro_rules! recipe_validate_output_claims {
+    ($checked:expr; $receiver:ident ($($argument:expr),* $(,)?)) => {{
+        #[cfg(not(feature = "immutable-recipes"))]
+        { $receiver.validate_output_claims($($argument),*) }
+        #[cfg(feature = "immutable-recipes")]
+        {
+            let context = $crate::immutable_recipes::RecipeContext::from_checked($checked);
+            $receiver.validate_output_claims_with_recipes(&context, $($argument),*)
+        }
+    }};
+}
+
+pub(crate) use recipe_validate_output_claims;
+pub(crate) use recipe_verify_clear;
