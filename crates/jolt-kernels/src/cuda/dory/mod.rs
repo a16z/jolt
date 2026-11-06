@@ -221,6 +221,7 @@ impl CommitmentScheme for CudaDoryScheme {
     type Proof = DoryProof;
     type ProverSetup = DoryProverSetup;
     type VerifierSetup = DoryVerifierSetup;
+    type VerificationContext<'a> = <DoryScheme as CommitmentScheme>::VerificationContext<'a>;
     type OpeningHint = DoryHint;
     type SetupParams = <DoryScheme as CommitmentScheme>::SetupParams;
 
