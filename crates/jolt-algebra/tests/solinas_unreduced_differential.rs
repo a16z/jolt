@@ -321,6 +321,12 @@ base_field_suite!(
     u128::MAX - 0xFFFF_A7F6,
     0x0728_0006
 );
+base_field_suite!(
+    fp128_prime_801f_unreduced,
+    two::Prime128Offset801F,
+    u128::MAX - 0x6A23_801E,
+    0x0728_0007
+);
 
 /// The `i32`-lane headroom boundary: 32768 all-max-lane accumulations are
 /// exact (32768 · 0xFFFF = 2147450880 ≤ i32::MAX).

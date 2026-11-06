@@ -194,6 +194,10 @@ fn packed_fp128_matches_scalar() {
         pm(128, 0xFFFF_A7F7),
         0x12804,
     );
+    check_prime_field::<<two::Prime128Offset801F as WithPacking>::Packing>(
+        pm(128, 0x6A23_801F),
+        0x12805,
+    );
 }
 
 fn check_ext_boundaries<PF, F>(p: u128)
@@ -278,6 +282,11 @@ fn packed_ext4_matches_scalar() {
         pm(128, 0xFFFF_A7F7),
         0xE404,
     );
+    type F801f = two::Prime128Offset801F;
+    check_ext_field::<<two::FpExt4<F801f> as WithPacking>::Packing, F801f>(
+        pm(128, 0x6A23_801F),
+        0xE405,
+    );
 }
 
 #[test]
@@ -302,6 +311,7 @@ fn with_packing_associated_types() {
     check_with_packing::<two::Prime64Offset59>(0x5108);
     check_with_packing::<two::Prime128Offset275>(0x5109);
     check_with_packing::<two::Prime128OffsetA7F7>(0x510c);
+    check_with_packing::<two::Prime128Offset801F>(0x510b);
     check_with_packing::<two::Ext2<two::Prime32Offset99>>(0x510d);
     check_with_packing::<two::FpExt2<two::Fp32<251>, two::NegOneNr>>(0x510e);
     check_with_packing::<two::FpExt4<two::Prime32Offset99>>(0x510f);
