@@ -131,11 +131,12 @@ These features exist on the integration branches and must reach upstream unchang
 | `jolt-crypto` | `lattice`, `sample`, `sample-diagnostics` | `lattice` is verifier-safe. `sample` is prover-only. Neither is default |
 | `jolt-zk` | `whiteout`, `whiteout-prover`, `whiteout-test-support`, `test-support`, `whiteout-diagnostics` | invariant I6: a verifier graph never reaches `whiteout-prover`, `jolt-dit` or `jolt-crypto/sample` |
 | `jolt-akita` | `zk`, `zk-prover` | `jolt-verifier/akita`+`zk` → `zk`. `jolt-prover/zk` → `zk-prover` |
-| `jolt-prover`, `jolt-verifier` | `zk`, `akita` (existing) | **`compile_error!` on `zk`+`akita` stays on `main` until J16 deletes it.** J15 appends `ZkConfig::Whiteout`, but no build can produce it before J16 |
+| `jolt-prover`, `jolt-verifier` | `zk`, `akita` (existing) | **`compile_error!` on `zk`+`akita` stays on `main` until J16.** J15 appends `ZkConfig::Whiteout`, but no build can produce it before J16 |
+| `jolt-prover`, `jolt-verifier`, `jolt-sdk` | `whiteout` | implies `zk` and `akita`. From J16, `zk`+`akita` without it is a `compile_error!` (`jolt-verifier/src/config.rs`) while the Σ-protocol's `N·y` constant-time residual is open |
 | Akita `akita-params`/`types`/`prover`/`verifier`/`pcs`/`planner`/`config` | `zk` | compiles the modules. Selects nothing (branches.md rules 2–3) |
 | Akita `akita-pcs`, `akita-cpu-backend` | `zk-prover`, `test-support`, `zk-diagnostics` | samplers (A46). `ZkCommitmentConfig` stays behind `test-support` until A13 |
 
-Whiteout gets **no separate rollout feature**. The `compile_error!` is the jolt gate, and A13's config type is the Akita gate. A `whiteout-experimental` flag would be a mode with no production caller (CLAUDE.md), and the `zk`×`akita` axis already selects the protocol.
+Whiteout's jolt gate is the explicit `whiteout` feature: `zk`+`akita` selects the protocol, and the `compile_error!` refuses that selection unless `whiteout` is also on, until the `N·y` constant-time residual is closed. A13's config type is the Akita gate.
 
 Akita's C0 golden digests (A8) are the mechanical proof of branches.md rule 1 for the seams and for J15's pin of Akita `dev`. On the jolt side, J15 must show that the clear-Akita verifier fixtures are byte-identical across the pin bump.
 
@@ -146,10 +147,10 @@ Akita's C0 golden digests (A8) are the mechanical proof of branches.md rule 1 fo
   - clippy `jolt-verifier --features jolt-zk/whiteout` (additivity);
   - the I6 sampler-free `cargo tree` check (J14);
   - clippy `jolt-akita` with `zk` and with `zk-prover` (J15);
-  - clippy Whiteout `jolt-verifier`/`jolt-prover --features akita,zk[,prover-fixtures,logging]` (J16);
-  - nextest `jolt-prover --features akita,zk,prover-fixtures --test whiteout_e2e`, `jolt-verifier --features akita,zk,prover-fixtures,logging`, and `jolt-akita --features zk-prover -E 'test(whiteout)'` (J16);
+  - clippy Whiteout `jolt-verifier`/`jolt-prover --features whiteout[,prover-fixtures,logging]` (J16);
+  - nextest `jolt-prover --features whiteout,prover-fixtures --test whiteout_e2e`, `jolt-verifier --features whiteout,prover-fixtures,logging`, and `jolt-akita --features zk-prover -E 'test(whiteout)'` (J16);
   - `jolt-zk --features whiteout-prover` (J14).
-- **jolt, `fs-soundness.yml`:** J16 replaces "Probe Akita ZK support", which asserts that the two features are mutually exclusive, with "Build Akita ZK (Whiteout) verifier".
+- **jolt, `fs-soundness.yml`:** J16 replaces "Probe Akita ZK support", which asserts that the two features are mutually exclusive, with "Build Akita ZK (Whiteout) verifier" under `whiteout`, and keeps a probe that `zk`+`akita` without `whiteout` fails to compile.
 - **jolt, `CLAUDE.md`:** J16 updates the clippy matrix and the "`akita` is mutually exclusive with `zk`" text.
 - **Akita, `ci.yml`:**
   - the golden-digest test and the removal of the `akita-zk-*` dependency checks (A8);
