@@ -36,11 +36,11 @@ pub trait SymbolicSumcheck {
         false
     }
     #[cfg(feature = "immutable-recipes")]
-    fn immutable_shape_permit(&self) -> Option<crate::immutable_recipes::BasePermit<Self>>
+    fn immutable_shape_permit(&self) -> bool
     where
         Self: Sized,
     {
-        None
+        false
     }
     #[cfg(feature = "immutable-recipes")]
     fn immutable_recipe<F: ::jolt_field::Ring>(
@@ -150,14 +150,14 @@ macro_rules! immutable_symbolic_recipe {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! immutable_key_delegate {
-    ($family:literal; $($field:ident),+ $(,)?) => {
+    ($family:ident; $($field:ident),+ $(,)?) => {
         #[cfg(feature = "immutable-recipes")]
-        fn immutable_shape_permit(&self) -> Option<$crate::immutable_recipes::BasePermit<Self>> {
-            Some($crate::immutable_recipes::BasePermit::new())
+        fn immutable_shape_permit(&self) -> bool {
+            true
         }
         #[cfg(feature = "immutable-recipes")]
         fn immutable_shape_visit(&self, family: u64, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
-            if family != $family { return false; }
+            if family != $crate::immutable_recipes::RecipeTag::$family as u64 { return false; }
             let Self { $($field),+ } = self;
             true $(&& $crate::immutable_recipes::KeyVisit::visit($field, sink))+
         }

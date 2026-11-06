@@ -104,7 +104,7 @@ impl SymbolicSumcheck for OuterRemainder {
         let (az, bz) = self.output_factor_expressions();
         derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
     }
-    crate::immutable_symbolic_recipe!(1, COMPOSED, Composed; shape);
+    crate::immutable_symbolic_recipe!(SpartanOuterRemainder, COMPOSED, Composed, input_only = false, unit_first = true; shape);
     /// The openings of `az` and `bz`, without expanding their product: each
     /// expanded term is a distinct weight-indexed monomial with coefficient
     /// one, so no term cancels and the product references exactly these.
@@ -171,7 +171,7 @@ pub struct ProductRemainder {
 }
 impl SymbolicSumcheck for ProductRemainder {
     #[cfg(feature = "immutable-recipes")]
-    crate::immutable_base_recipe!(3, COMPOSED, Composed);
+    crate::immutable_base_recipe!(SpartanProductRemainder, COMPOSED, Composed, input_only = false, unit_first = true);
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
@@ -232,7 +232,7 @@ where
     >,
 {
     #[cfg(feature = "immutable-recipes")]
-    crate::immutable_base_recipe!(18, COMPOSED, Composed);
+    crate::immutable_base_recipe!(BytecodeReadRaf, COMPOSED, Composed, input_only = false, unit_first = true);
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;

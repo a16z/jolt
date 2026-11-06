@@ -78,7 +78,7 @@ impl SymbolicSumcheck for LatticeDigitZeroClaimReduction {
     type Challenges<F> = HammingWeightClaimReductionChallenges<F>;
     type Inputs<C> = LatticeDigitZeroClaimReductionInputClaims<C>;
     type Outputs<C> = LatticeDigitZeroClaimReductionOutputClaims<C>;
-    crate::immutable_symbolic_recipe!(27, JOLT, Jolt; shape);
+    crate::immutable_symbolic_recipe!(DigitZero, JOLT, Jolt, input_only = false, unit_first = true; shape);
     fn new(shape: Self::Shape) -> Self {
         Self { shape }
     }
