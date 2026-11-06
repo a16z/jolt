@@ -1,5 +1,5 @@
 OUTPUT_ARCH(riscv)
-ENTRY(_start)
+ENTRY(__jolt_start)
 
 MEMORY
 {
@@ -25,12 +25,19 @@ SECTIONS
     PROVIDE_HIDDEN(__ehdr_start = .);
     
     .text : {
+        *(.text.jolt_boot)
         *(.text.boot)
         *(.text .text.*)
         . = ALIGN(4);
     } > RAM : text
     
     .rodata : {
+        . = ALIGN(8);
+        __jolt_memory_layout = .;
+        QUAD(__global_pointer$)
+        QUAD(__stack_top)
+        QUAD(__heap_start)
+        QUAD(__heap_end)
         *(.rodata .rodata.*)
         *(.srodata .srodata.*)
         . = ALIGN(8);
