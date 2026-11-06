@@ -15,6 +15,14 @@ let JOLT_FP128_A7F7_P_GENERIC = prove
   REWRITE_TAC[jolt_fp128_p; jolt_fp128_a7f7_p] THEN
   CONV_TAC NUM_REDUCE_CONV);;
 
+let jolt_fp128_801f_p = new_definition
+ `jolt_fp128_801f_p = 0xffffffffffffffffffffffff95dc7fe1`;;
+
+let JOLT_FP128_801F_P_GENERIC = prove
+ (`jolt_fp128_p 1780711455 = jolt_fp128_801f_p`,
+  REWRITE_TAC[jolt_fp128_p; jolt_fp128_801f_p] THEN
+  CONV_TAC NUM_REDUCE_CONV);;
+
 let JOLT_FP128_OFFSET275_VALID = prove
  (`jolt_fp128_valid_offset 275`,
   REWRITE_TAC[jolt_fp128_valid_offset; jolt_fp128_p] THEN
@@ -22,6 +30,11 @@ let JOLT_FP128_OFFSET275_VALID = prove
 
 let JOLT_FP128_OFFSETA7F7_VALID = prove
  (`jolt_fp128_valid_offset 4294944759`,
+  REWRITE_TAC[jolt_fp128_valid_offset; jolt_fp128_p] THEN
+  CONV_TAC NUM_REDUCE_CONV);;
+
+let JOLT_FP128_OFFSET801F_VALID = prove
+ (`jolt_fp128_valid_offset 1780711455`,
   REWRITE_TAC[jolt_fp128_valid_offset; jolt_fp128_p] THEN
   CONV_TAC NUM_REDUCE_CONV);;
 
