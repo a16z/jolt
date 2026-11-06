@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 
@@ -368,7 +369,9 @@ def build_attempt(args, native_harness, fallback_reason=None):
                 logged(['git', 'clone', '--no-local', '--no-checkout', '--no-tags', str(ROOT), str(source)], ROOT, env, log)
             if not (source / '.git').is_dir() or (source / '.git/objects/info/alternates').exists():
                 raise ValueError('build source must be an independent private Git checkout')
-            logged(['git', 'fetch', '--no-tags', str(ROOT), revision], source, env, log)
+            # Reestablish the shallow boundary even if a previous fetch imported
+            # the tip without its parents; otherwise build.rs's git log fails.
+            logged(['git', 'fetch', '--depth=1', '--no-tags', str(ROOT), revision], source, env, log)
             logged(['git', 'checkout', '--force', '--detach', revision], source, env, log)
             logged(['git', 'clean', '-ffdx', '-e', '/target/'], source, env, log)
             for path in paths:
@@ -751,7 +754,7 @@ def run(args):
                        '--format', 'none', '--backend', 'optimized', '--guest-elf', str(elf),
                        '--input-file', str(input_file), '--result-json', str(raw)]
             env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG': 'C.UTF-8',
-                   'TMPDIR': str(directory), 'LOCALAPPDATA': str(cache),
+                   'LOCALAPPDATA': str(cache),
                    'RAYON_NUM_THREADS': str(case['physical_cores']), 'RUST_BACKTRACE': '1'}
             if 'RUNNER_TRACKING_ID' in os.environ:
                 env['RUNNER_TRACKING_ID'] = os.environ['RUNNER_TRACKING_ID']
@@ -761,7 +764,10 @@ def run(args):
             sample['started_at'] = utc_now()
             write_json(result_path, result)
             try:
-                code, seconds, rss = measure(command, env, directory, directory / 'process.log')
+                # Even --format none creates benchmark-runs/latest_* symlinks.
+                with tempfile.TemporaryDirectory(prefix='jolt-bench-') as scratch:
+                    env['TMPDIR'] = scratch
+                    code, seconds, rss = measure(command, env, Path(scratch), directory / 'process.log')
                 sample['exit_code'] = code
                 if code:
                     raise ValueError(f'profile exited {code}; see samples/{sample["order"]:05d}/process.log')
