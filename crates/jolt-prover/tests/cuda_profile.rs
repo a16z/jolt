@@ -12,8 +12,12 @@ fn cuda_profile_proves_verifies_and_records_the_backend() {
         format: OutputFormat::Chrome,
         backend: BackendKind::Cuda,
         gpus: None,
+        guest_elf: None,
+        input_file: None,
+        result_json: None,
         memory_budget: None,
-    });
+    })
+    .expect("CUDA profile");
     let summary = artifacts.summary.expect("profile summary");
     assert_eq!(summary.run.backend, "cuda");
     assert_eq!(summary.run.scale_log2, 13);
