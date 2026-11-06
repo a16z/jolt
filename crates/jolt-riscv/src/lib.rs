@@ -22,6 +22,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
+pub use jolt_platform::{PCALL_FUNCT7, PCALL_OPCODE};
+
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
 mod flags;

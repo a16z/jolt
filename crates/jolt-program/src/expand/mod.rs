@@ -28,7 +28,7 @@ mod shifts;
 mod tests;
 
 pub use allocator::ExpansionAllocator;
-pub use error::ExpansionError;
+pub use error::{ExpansionError, InlineRegistryError};
 pub use grammar::{is_source_only, ExpandedInstructionSequence};
 pub use inline::{InlineExpansionBuilder, InlineOperands, InlineRegister, Value};
 

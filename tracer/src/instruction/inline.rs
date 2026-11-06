@@ -23,11 +23,14 @@ use jolt_program::expand::{
 };
 use jolt_riscv::{
     InlineExtension, JoltInstructionProfile, JoltInstructionRow, SourceInlineKey,
-    SourceInstructionKind, RV64IMAC_JOLT_ALL_INLINES,
+    SourceInstructionKind, PCALL_FUNCT7, PCALL_OPCODE, RV64IMAC_JOLT_ALL_INLINES,
 };
 use serde::{Deserialize, Serialize};
 
-use std::collections::VecDeque;
+use std::{
+    collections::{BTreeMap, VecDeque},
+    sync::OnceLock,
+};
 
 pub type InlineSequenceFn = fn(
     InlineExpansionBuilder,
@@ -99,26 +102,76 @@ pub struct InlineRegistration {
 
 inventory::collect!(InlineRegistration);
 
+pub use jolt_program::expand::InlineRegistryError;
+
+type InlineRegistry = BTreeMap<(u32, u32, u32), &'static InlineRegistration>;
+
+fn build_inline_registry(
+    registrations: impl IntoIterator<Item = &'static InlineRegistration>,
+) -> Result<InlineRegistry, InlineRegistryError> {
+    let mut registry = InlineRegistry::new();
+    for registration in registrations {
+        let key = (
+            registration.opcode,
+            registration.funct3,
+            registration.funct7,
+        );
+        if key.0 == PCALL_OPCODE && key.2 == PCALL_FUNCT7 {
+            return Err(InlineRegistryError::ReservedPrecompile {
+                funct3: key.1,
+                name: registration.name,
+            });
+        }
+        if let Some(previous) = registry.insert(key, registration) {
+            return Err(InlineRegistryError::Duplicate {
+                opcode: key.0,
+                funct3: key.1,
+                funct7: key.2,
+                first: previous.name,
+                second: registration.name,
+            });
+        }
+    }
+    Ok(registry)
+}
+
+fn inline_registry() -> Result<&'static InlineRegistry, InlineRegistryError> {
+    static REGISTRY: OnceLock<Result<InlineRegistry, InlineRegistryError>> = OnceLock::new();
+    REGISTRY
+        .get_or_init(|| build_inline_registry(inventory::iter::<InlineRegistration>))
+        .as_ref()
+        .map_err(|error| *error)
+}
+
+/// Validate all linked keys once, including registrations not used by this program.
+pub fn validate_inline_registry() -> Result<(), InlineRegistryError> {
+    inline_registry().map(|_| ())
+}
+
 fn find_inline(opcode: u32, funct3: u32, funct7: u32) -> &'static InlineRegistration {
-    inventory::iter::<InlineRegistration>
-        .into_iter()
-        .find(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
-        .unwrap_or_else(|| {
-            panic!(
-                "No inline registered for opcode={opcode:#04x}, funct3={funct3:#03b}, funct7={funct7:#09b}."
-            )
-        })
+    find_inline_registration(opcode, funct3, funct7).unwrap_or_else(|| {
+        panic!(
+            "No inline registered for opcode={opcode:#04x}, funct3={funct3:#03b}, funct7={funct7:#09b}."
+        )
+    })
 }
 
 fn lookup_inline(inline: SourceInlineKey) -> Result<&'static InlineRegistration, ExpansionError> {
-    inventory::iter::<InlineRegistration>
-        .into_iter()
-        .find(|r| {
-            r.opcode == inline.opcode as u32
-                && r.funct3 == inline.funct3 as u32
-                && r.funct7 == inline.funct7 as u32
-        })
-        .ok_or(ExpansionError::UnsupportedInstruction)
+    let registry = inline_registry()?;
+    registry
+        .get(&(
+            inline.opcode as u32,
+            inline.funct3 as u32,
+            inline.funct7 as u32,
+        ))
+        .copied()
+        .ok_or(
+            if inline.opcode as u32 == PCALL_OPCODE && inline.funct7 as u32 == PCALL_FUNCT7 {
+                ExpansionError::UnsupportedPrecompile
+            } else {
+                ExpansionError::UnsupportedInstruction
+            },
+        )
 }
 
 fn build_registered_sequence(
@@ -150,15 +203,14 @@ pub fn find_inline_registration(
     funct3: u32,
     funct7: u32,
 ) -> Option<&'static InlineRegistration> {
-    inventory::iter::<InlineRegistration>
-        .into_iter()
-        .find(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
+    inline_registry()
+        .unwrap_or_else(|error| panic!("{error}"))
+        .get(&(opcode, funct3, funct7))
+        .copied()
 }
 
 pub fn is_inline_registered(opcode: u32, funct3: u32, funct7: u32) -> bool {
-    inventory::iter::<InlineRegistration>
-        .into_iter()
-        .any(|r| r.opcode == opcode && r.funct3 == funct3 && r.funct7 == funct7)
+    find_inline_registration(opcode, funct3, funct7).is_some()
 }
 
 /// Inline provider backed by tracer-owned `inventory` registrations.
@@ -412,6 +464,53 @@ mod tests {
             name: "TEST_INLINE_PROFILE",
             build_sequence: test_sequence,
             build_advice: test_advice,
+        }
+    }
+
+    #[test]
+    fn inline_registry_reserves_entire_precompile_block() {
+        for funct3 in 0..8 {
+            let registration = Box::leak(Box::new(InlineRegistration {
+                opcode: PCALL_OPCODE,
+                funct3,
+                funct7: PCALL_FUNCT7,
+                extension: InlineExtension::Keccak256,
+                name: "RESERVED",
+                build_sequence: test_sequence,
+                build_advice: test_advice,
+            }));
+            assert!(matches!(
+                build_inline_registry([&*registration]),
+                Err(InlineRegistryError::ReservedPrecompile { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn duplicate_inline_registration_is_rejected_in_every_block() {
+        for opcode in [0x0b, 0x2b] {
+            let first = Box::leak(Box::new(InlineRegistration {
+                opcode,
+                funct3: 1,
+                funct7: 0x09,
+                extension: InlineExtension::Keccak256,
+                name: "FIRST",
+                build_sequence: test_sequence,
+                build_advice: test_advice,
+            }));
+            let second = Box::leak(Box::new(InlineRegistration {
+                name: "SECOND",
+                ..*first
+            }));
+            assert!(matches!(
+                build_inline_registry([&*first, &*second]),
+                Err(InlineRegistryError::Duplicate {
+                    first: "FIRST",
+                    second: "SECOND",
+                    ..
+                })
+            ));
+            assert!(build_inline_registry([&*first]).is_ok());
         }
     }
 
