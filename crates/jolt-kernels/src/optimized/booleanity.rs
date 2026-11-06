@@ -599,8 +599,8 @@ impl<'a, F: JoltField, S: ChunkIndexSource, const TRIANGULAR: bool>
             |lanes, row, _, weight| {
                 // These are sums of field elements, so defer reduction across
                 // the columns just as the outer lanes defer it across rows.
-                let mut constant = F::Accumulator::default();
-                let mut leading = F::Accumulator::default();
+                let mut constant = F::SumAccumulator::default();
+                let mut leading = F::SumAccumulator::default();
                 self.source.for_each_category_pair(
                     self.width,
                     row,

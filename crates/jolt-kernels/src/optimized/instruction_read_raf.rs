@@ -614,12 +614,12 @@ struct CycleState<F: JoltField> {
 }
 
 struct RafScan<F: JoltField> {
-    shift_half: Vec<F::SumAccumulator>,
-    left: Vec<F::Accumulator>,
-    right: Vec<F::Accumulator>,
-    shift_full: Vec<F::SumAccumulator>,
-    identity: Vec<F::Accumulator>,
-    upper_all_ones: Vec<F::SumAccumulator>,
+    shift_half: Box<[F::SumAccumulator; CHUNK_SIZE]>,
+    left: Box<[F::Accumulator; CHUNK_SIZE]>,
+    right: Box<[F::Accumulator; CHUNK_SIZE]>,
+    shift_full: Box<[F::SumAccumulator; CHUNK_SIZE]>,
+    identity: Box<[F::Accumulator; CHUNK_SIZE]>,
+    upper_all_ones: Box<[F::SumAccumulator; CHUNK_SIZE]>,
 }
 
 struct RafSums<F> {
@@ -632,20 +632,38 @@ struct RafSums<F> {
 }
 
 impl<F: JoltField> RafScan<F> {
+    #[expect(
+        clippy::expect_used,
+        reason = "the vector is constructed with exactly CHUNK_SIZE entries"
+    )]
+    #[expect(
+        clippy::unnecessary_box_returns,
+        reason = "initializing buckets on the heap avoids large temporary stack arrays"
+    )]
+    fn buckets<A: Accumulator>() -> Box<[A; CHUNK_SIZE]> {
+        vec![A::default(); CHUNK_SIZE]
+            .into_boxed_slice()
+            .try_into()
+            .ok()
+            .expect("fixed-size RAF bucket allocation")
+    }
+
     fn new() -> Self {
         Self {
-            shift_half: vec![F::SumAccumulator::default(); CHUNK_SIZE],
-            left: vec![F::Accumulator::default(); CHUNK_SIZE],
-            right: vec![F::Accumulator::default(); CHUNK_SIZE],
-            shift_full: vec![F::SumAccumulator::default(); CHUNK_SIZE],
-            identity: vec![F::Accumulator::default(); CHUNK_SIZE],
-            upper_all_ones: vec![F::SumAccumulator::default(); CHUNK_SIZE],
+            shift_half: Self::buckets(),
+            left: Self::buckets(),
+            right: Self::buckets(),
+            shift_full: Self::buckets(),
+            identity: Self::buckets(),
+            upper_all_ones: Self::buckets(),
         }
     }
 
     fn reduce(self) -> RafSums<F> {
-        fn reduce<A: Accumulator>(accumulators: Vec<A>) -> Vec<A::Element> {
+        fn reduce<A: Accumulator>(accumulators: Box<[A; CHUNK_SIZE]>) -> Vec<A::Element> {
+            let accumulators: Box<[A]> = accumulators;
             accumulators
+                .into_vec()
                 .into_iter()
                 .map(|accumulator| accumulator.reduce())
                 .collect()
