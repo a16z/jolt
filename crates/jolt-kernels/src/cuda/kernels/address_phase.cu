@@ -46,6 +46,24 @@ extern "C" __global__ void ap_table_keys_kernel(const unsigned long long *__rest
     keys[j] = slot * AP_CHUNK_SIZE + ap_chunk(ap_index(lookup_index, j), suffix_len);
 }
 
+__device__ __forceinline__ unsigned int ap_reserve_slot(unsigned int *counter,
+                                                       unsigned int key) {
+#if __CUDA_ARCH__ >= 700
+    // Common prefixes concentrate rows in a few buckets. Equal-key warp groups
+    // reserve a range with one atomic; lane rank gives each live row a unique
+    // slot even after row-bound and AP_SKIP checks remove lanes.
+    unsigned int peers = __match_any_sync(__activemask(), key);
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int leader = (unsigned int)(__ffs(peers) - 1);
+    unsigned int base = 0;
+    if (lane == leader) base = atomicAdd(counter, (unsigned int)__popc(peers));
+    base = __shfl_sync(peers, base, leader);
+    return base + (unsigned int)__popc(peers & ((1u << lane) - 1u));
+#else
+    return atomicAdd(counter, 1u);
+#endif
+}
+
 extern "C" __global__ void ap_histogram_kernel(const unsigned int *__restrict__ keys,
                                                unsigned int *__restrict__ counts,
                                                unsigned int n) {
@@ -53,7 +71,7 @@ extern "C" __global__ void ap_histogram_kernel(const unsigned int *__restrict__ 
     if (j >= n) return;
     unsigned int key = keys[j];
     if (key == AP_SKIP) return;
-    atomicAdd(&counts[key], 1u);
+    ap_reserve_slot(&counts[key], key);
 }
 
 extern "C" __global__ void ap_scatter_kernel(const unsigned int *__restrict__ keys,
@@ -65,7 +83,7 @@ extern "C" __global__ void ap_scatter_kernel(const unsigned int *__restrict__ ke
     if (j >= n) return;
     unsigned int key = keys[j];
     if (key == AP_SKIP) return;
-    unsigned int slot = atomicAdd(&cursors[key], 1u);
+    unsigned int slot = ap_reserve_slot(&cursors[key], key);
     order[offsets[key] + slot] = j;
 }
 

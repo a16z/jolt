@@ -182,7 +182,8 @@ pub(super) fn segment_rows(
     let _ = builder.arg(&count);
     // SAFETY: thread `j < rows` reads `keys[j]` of `rows` and writes
     // `order[offsets[key] + slot]`. Since `offsets` is the exclusive scan of
-    // this key set's histogram and `slot` comes from `atomicAdd(&cursors[key])`,
+    // this key set's histogram and each atomic reservation from `cursors[key]`
+    // assigns distinct slots to its participating rows within a disjoint range,
     // slots stay in `[0, counts[key])`, so each write lands in that key's
     // segment of the partition of `[0, total)` and no two threads share a slot.
     let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
@@ -688,4 +689,52 @@ fn suffix_len(address_bits: usize, phase: usize) -> Result<usize, CudaError> {
         .ok_or(CudaError::InvariantViolation {
             reason: "address phase index exceeds the address width",
         })
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test failures include CUDA errors")]
+mod tests {
+    use super::{segment_rows, SKIP};
+    use crate::cuda::common::context::shared_context;
+
+    #[test]
+    fn segments_partition_non_skipped_rows() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        const BUCKETS: usize = 257;
+        for len in [1, 31, 32, 33, 255, 256, 257, 4099] {
+            for pattern in 0..4 {
+                let keys: Vec<_> = (0..len)
+                    .map(|i| match pattern {
+                        0 => 0,
+                        1 => (i % BUCKETS) as u32,
+                        2 if i % 3 != 0 => ((i / 7) % BUCKETS) as u32,
+                        _ => SKIP,
+                    })
+                    .collect();
+                let device_keys = context.upload_u32_slice(&keys).unwrap();
+                let segments = segment_rows(context, &device_keys, len, BUCKETS).unwrap();
+                let counts = context.stream().clone_dtoh(&segments.counts).unwrap();
+                let offsets = context.stream().clone_dtoh(&segments.offsets).unwrap();
+                let order = context.stream().clone_dtoh(&segments.order).unwrap();
+                let mut end = 0;
+                for bucket in 0..BUCKETS {
+                    let start = offsets[bucket] as usize;
+                    assert_eq!(start, end);
+                    end = start + counts[bucket] as usize;
+                    let mut actual = order[start..end].to_vec();
+                    actual.sort_unstable();
+                    let expected: Vec<_> = keys
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, key)| **key == bucket as u32)
+                        .map(|(row, _)| row as u32)
+                        .collect();
+                    assert_eq!(actual, expected);
+                }
+                assert_eq!(end, keys.iter().filter(|key| **key != SKIP).count());
+            }
+        }
+    }
 }
