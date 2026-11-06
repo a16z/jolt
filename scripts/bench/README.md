@@ -209,7 +209,7 @@ jobs allow 180 minutes. These are failure limits, not duration estimates.
 ## Manual commands
 
 Run-only execution needs Linux, Python 3.11+ through `uv`, Git for the pinned harness
-checkout, `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs the pinned Rust toolchain,
+checkout, GNU `/usr/bin/time` (Debian/Ubuntu package `time`), `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs the pinned Rust toolchain,
 its `rust-src` component and configured RISC-V targets. The five
 prepared guests use `riscv64imac-unknown-none-elf`. The build produces its own
 `jolt` CLI; a stale globally installed CLI is not used.
