@@ -1,5 +1,7 @@
 (* Architecture-neutral arithmetic facts for p = 2^64 - 59. *)
 
+needs "Library/words.ml";;
+
 let jolt_fp64_p = new_definition
  `jolt_fp64_p = 18446744073709551557`;;
 
@@ -147,3 +149,17 @@ let JOLT_FP64_FINAL_REDUCTION = prove
   ASM_REWRITE_TAC[BITVAL_CLAUSES] THEN CONV_TAC NUM_REDUCE_CONV THEN
   COND_CASES_TAC THEN ASM_REWRITE_TAC[] THEN
   POP_ASSUM_LIST(MP_TAC o end_itlist CONJ) THEN ARITH_TAC);;
+
+let JOLT_FP64_SMALL_SIGNED_SUB = prove
+ (`!h:int64 c.
+      val h <= 1
+      ==> ival h = &(val h) /\
+          ival(word_sub h (word(bitval c))) = &(val h) - &(bitval c)`,
+  REPEAT GEN_TAC THEN DISCH_TAC THEN
+  SUBGOAL_THEN `h:int64 = word 0 \/ h = word 1` MP_TAC THENL
+   [REWRITE_TAC[GSYM VAL_EQ] THEN CONV_TAC WORD_REDUCE_CONV THEN
+    ASM_ARITH_TAC;
+    ALL_TAC] THEN
+  DISCH_THEN(DISJ_CASES_THEN SUBST1_TAC) THEN
+  BOOL_CASES_TAC `c:bool` THEN REWRITE_TAC[BITVAL_CLAUSES] THEN
+  CONV_TAC WORD_REDUCE_CONV THEN INT_ARITH_TAC);;
