@@ -1,13 +1,10 @@
-use std::{
-    collections::BTreeMap,
-    fmt,
-    io::{Cursor, Error as IoError, ErrorKind},
-    sync::Arc,
-    sync::OnceLock,
-};
+use std::{collections::BTreeMap, fmt, io::Cursor, sync::Arc, sync::OnceLock};
 
 #[cfg(feature = "parallel")]
-use std::error::Error;
+use std::{
+    error::Error,
+    io::{Error as IoError, ErrorKind},
+};
 
 #[cfg(feature = "profiling")]
 use std::{cell::Cell, num::NonZeroUsize};
@@ -1102,7 +1099,7 @@ impl AkitaBatchProof {
         self.schedule_selection
     }
 
-    /// Headerless backend proof body: Akita's Spongefish argument bytes.
+    /// Headerless backend proof body: Akita's argument bytes.
     pub fn backend_proof_body_size(&self) -> usize {
         self.backend_proof.len()
     }

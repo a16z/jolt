@@ -40,3 +40,9 @@ path = "fuzz_targets/dory_homomorphic_batch_must_reject.rs"
 test = false
 doc = false
 bench = false
+
+# Match the root dependency identity for Akita v8 codecs and channels.
+[patch."https://github.com/a16z/jolt"]
+jolt-field = { path = "../../jolt-field" }
+jolt-transcript = { path = "../../jolt-transcript" }
+jolt-poly = { path = "../../jolt-poly" }

@@ -43,7 +43,8 @@ where
         &commitment.backend_coeff_len,
     )?;
     let backend_commitment =
-        AkitaBackendCommitment::new(resolved.profiles().final_group, backend_payload);
+        AkitaBackendCommitment::new(resolved.profiles().final_group, backend_payload)
+            .map_err(|err| invalid_batch(format!("Akita commitment validation failed: {err}")))?;
     Ok(backend_commitment)
 }
 
@@ -76,14 +77,19 @@ where
             &commitment.serialized_backend_bytes,
             &commitment.backend_coeff_len,
         )?;
-        auxiliary_backend.push(AkitaBackendCommitment::new(*profile, payload));
+        auxiliary_backend.push(
+            AkitaBackendCommitment::new(*profile, payload).map_err(|err| {
+                invalid_batch(format!("Akita commitment validation failed: {err}"))
+            })?,
+        );
     }
     validate_commitment_profile_len(main, &profiles.final_group)?;
     let main_payload = deserialize_akita::<AkitaBackendCommitmentPayload>(
         &main.serialized_backend_bytes,
         &main.backend_coeff_len,
     )?;
-    let main_backend = AkitaBackendCommitment::new(profiles.final_group, main_payload);
+    let main_backend = AkitaBackendCommitment::new(profiles.final_group, main_payload)
+        .map_err(|err| invalid_batch(format!("Akita commitment validation failed: {err}")))?;
 
     Ok((auxiliary_backend, main_backend))
 }
