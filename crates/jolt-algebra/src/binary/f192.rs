@@ -108,7 +108,11 @@ impl CanonicalBytes for F192 {
 
     fn to_bytes_le(&self, out: &mut [u8]) {
         assert_eq!(out.len(), Self::NUM_BYTES);
-        for (coefficient, bytes) in self.0.iter().zip(out.chunks_exact_mut(F64::NUM_BYTES)) {
+        for (coefficient, bytes) in self
+            .0
+            .iter()
+            .zip(out.as_chunks_mut::<{ F64::NUM_BYTES }>().0)
+        {
             coefficient.to_bytes_le(bytes);
         }
     }

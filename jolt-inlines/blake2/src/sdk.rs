@@ -87,12 +87,12 @@ fn or_into_words(words: &mut [u64; MSG_BLOCK_LEN], mut pos: usize, mut src: &[u8
         src = rest;
     }
     let aligned = (src.as_ptr() as usize).is_multiple_of(WORD_BYTES);
-    let mut chunks = src.chunks_exact(WORD_BYTES);
-    for chunk in &mut chunks {
+    let (chunks, remainder) = src.as_chunks::<WORD_BYTES>();
+    for chunk in chunks {
         words[pos / WORD_BYTES] = load_word(chunk, aligned);
         pos += WORD_BYTES;
     }
-    for (i, &byte) in chunks.remainder().iter().enumerate() {
+    for (i, &byte) in remainder.iter().enumerate() {
         words[pos / WORD_BYTES] |= u64::from(byte) << (8 * i);
     }
 }
@@ -102,7 +102,7 @@ fn or_into_words(words: &mut [u64; MSG_BLOCK_LEN], mut pos: usize, mut src: &[u8
 fn load_block(words: &mut [u64; MSG_BLOCK_LEN], block: &[u8]) {
     debug_assert_eq!(block.len(), BLOCK_INPUT_SIZE_IN_BYTES);
     let aligned = (block.as_ptr() as usize).is_multiple_of(WORD_BYTES);
-    for (word, chunk) in words.iter_mut().zip(block.chunks_exact(WORD_BYTES)) {
+    for (word, chunk) in words.iter_mut().zip(block.as_chunks::<WORD_BYTES>().0) {
         *word = load_word(chunk, aligned);
     }
 }
@@ -192,7 +192,7 @@ impl Blake2b {
         let len = out.len();
         if len.is_multiple_of(WORD_BYTES) && (out.as_mut_ptr() as usize).is_multiple_of(WORD_BYTES)
         {
-            for (chunk, word) in out.chunks_exact_mut(WORD_BYTES).zip(&self.h) {
+            for (chunk, word) in out.as_chunks_mut::<WORD_BYTES>().0.iter_mut().zip(&self.h) {
                 // SAFETY: `out` starts on an 8-byte boundary and its length is
                 // a multiple of 8, so every chunk is an aligned 8-byte word.
                 unsafe { chunk.as_mut_ptr().cast::<u64>().write(word.to_le()) };
@@ -329,7 +329,6 @@ impl Blake2b {
 /// into the IV, as defined by section 2.8 of the
 /// [BLAKE2 specification](https://www.blake2.net/blake2.pdf).
 #[inline(always)]
-#[expect(clippy::unwrap_used)]
 fn initial_state_with_params(salt: &[u8], persona: &[u8]) -> [u64; STATE_VECTOR_LEN] {
     assert!(
         salt.len() <= SALT_SIZE_IN_BYTES,
@@ -345,8 +344,8 @@ fn initial_state_with_params(salt: &[u8], persona: &[u8]) -> [u64; STATE_VECTOR_
     params[SALT_SIZE_IN_BYTES..SALT_SIZE_IN_BYTES + persona.len()].copy_from_slice(persona);
 
     let mut h = INITIAL_STATE;
-    for (word, chunk) in h[4..].iter_mut().zip(params.chunks_exact(8)) {
-        *word ^= u64::from_le_bytes(chunk.try_into().unwrap());
+    for (word, chunk) in h[4..].iter_mut().zip(params.as_chunks::<8>().0) {
+        *word ^= u64::from_le_bytes(*chunk);
     }
     h
 }

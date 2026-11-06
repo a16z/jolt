@@ -1200,7 +1200,7 @@ impl<const P: u128> CanonicalEncoding for Fp128<P> {
 
     #[inline]
     fn num_bits(&self) -> u32 {
-        u128::BITS - join(self.0).leading_zeros()
+        join(self.0).bit_width()
     }
 }
 
