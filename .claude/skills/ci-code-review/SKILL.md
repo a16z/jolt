@@ -48,7 +48,7 @@ This pull request #<number> has been reviewed at commit <full 40-char head SHA> 
 ```
 
 Use the actual skill, model and effort. The gate accepts only the review models and efforts the
-[gate guide](../../../.github/ai-merge-gate.md#the-attestation-is-an-exact-standalone-comment-line)
+[gate guide](../../../.github/ai-merge-gate.md#review-attestation)
 lists; the skill name is free text. Being the PR author alone is not authority to attest.
 Review bodies do not count, and a push, deletion or edit removing the line invalidates the
 attestation. An edited comment's author and last editor must both be allowed accounts. Cached

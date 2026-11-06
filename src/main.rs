@@ -511,10 +511,6 @@ fn display_greeting() {
 }
 
 fn display_sysinfo() {
-    let mut sys = System::new();
-    sys.refresh_memory();
-    sys.refresh_cpu_all();
-
     println!(
         "OS:             {}",
         System::name().unwrap_or("UNKNOWN".to_string())
@@ -527,11 +523,18 @@ fn display_sysinfo() {
         "Host:           {}",
         System::host_name().unwrap_or("UNKNOWN".to_string())
     );
-    println!("CPUs:           {}", sys.cpus().len());
-    println!(
-        "RAM:            {:.2} GB",
-        sys.total_memory() as f64 / 1_000_000_000.0
-    );
+    if let Ok(mut sys) = System::new() {
+        sys.refresh_memory();
+        sys.refresh_cpu_all();
+        println!("CPUs:           {}", sys.cpus().len());
+        println!(
+            "RAM:            {:.2} GB",
+            sys.total_memory() as f64 / 1_000_000_000.0
+        );
+    } else {
+        println!("CPUs:           UNKNOWN");
+        println!("RAM:            UNKNOWN");
+    }
 }
 
 const RUST_TOOLCHAIN: &str = include_str!("../rust-toolchain.toml");

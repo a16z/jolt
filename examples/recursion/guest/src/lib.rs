@@ -18,7 +18,7 @@ use jolt::JoltDevice;
 #[cfg(not(feature = "akita"))]
 use jolt::{JoltVerifierPreprocessing, RV64IMACProof};
 #[cfg(feature = "akita")]
-use jolt_akita::{AkitaField, AkitaScheme};
+use jolt_akita::{AkitaField, AkitaScheme, AkitaVerifierTranscript};
 #[cfg(feature = "akita")]
 type AkitaVc = NoVectorCommitment<AkitaField>;
 #[cfg(feature = "akita")]
@@ -192,7 +192,7 @@ fn verify_records(bytes: &[u8]) -> Result<u32, RecordError> {
             AkitaField,
             AkitaScheme,
             AkitaVc,
-            jolt::VerifierTranscript<'_>,
+            AkitaVerifierTranscript<'_>,
         >(&verifier_preprocessing, &device, &proof, None)
         .is_ok();
         end_cycle_tracking("verification");

@@ -1,0 +1,62 @@
+[package]
+name = "jolt-akita-recursion"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[package.metadata.cargo-machete]
+# Imported by guest_build.rs, shared with replay and outside src/.
+ignored = ["jolt-inlines-blake2", "jolt-inlines-keccak256"]
+
+[features]
+akita = ["dep:jolt-akita", "dep:jolt-verifier"]
+recursion-host = [
+  "dep:tracing",
+  "akita",
+  "dep:akita-planner",
+  "dep:jolt-host",
+  "dep:jolt-prover",
+  "dep:jolt-program",
+  "dep:jolt-witness",
+  "dep:tracer",
+  "dep:clap",
+  "dep:serde_json",
+  "dep:jolt-inlines-sha2",
+  "dep:jolt-inlines-blake2",
+  "dep:jolt-inlines-keccak256",
+  "dep:tracing-subscriber",
+  "jolt-prover/akita",
+]
+
+[[bin]]
+name = "akita-recursion"
+path = "src/main.rs"
+required-features = ["recursion-host"]
+
+[dependencies]
+jolt-akita = { workspace = true, optional = true }
+jolt-verifier = { workspace = true, features = ["akita"], optional = true }
+jolt-crypto.workspace = true
+jolt-openings.workspace = true
+common.workspace = true
+akita-types.workspace = true
+akita-params.workspace = true
+serde.workspace = true
+bincode.workspace = true
+postcard = { workspace = true, features = ["alloc", "use-std"] }
+jolt-host = { workspace = true, optional = true }
+jolt-prover = { workspace = true, optional = true }
+jolt-program = { workspace = true, optional = true }
+jolt-witness = { workspace = true, optional = true }
+tracer = { workspace = true, optional = true, features = ["std"] }
+clap = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+jolt-inlines-sha2 = { workspace = true, optional = true, features = ["host"] }
+jolt-inlines-blake2 = { workspace = true, optional = true, features = ["host"] }
+jolt-inlines-keccak256 = { workspace = true, optional = true, features = [
+  "host",
+] }
+tracing-subscriber = { workspace = true, optional = true }
+
+akita-planner = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
