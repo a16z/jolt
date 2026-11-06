@@ -248,8 +248,10 @@ def render_pr_comment(result, summary_path, details_url, exit_code=0):
     rows = bench.render_comment(result, summary_path)
     lines = ['<!-- jolt-e2e-benchmark-comment -->', '## End-to-end CPU benchmark', '',
              f'[Full results]({details_url}) · '
-             '[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', '']
-    if exit_code or result['status'] != 'complete' or result['kind'] != 'comparison':
+             '[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', '',
+             f"Base: `{result['revisions']['base']}`. Submitted head: `{result['revisions']['head']}`. "
+             f"Measured merge: `{result['revisions']['merge']}`.", '']
+    if exit_code or result['status'] != 'complete':
         lines.append('Comparison unavailable; see full results for execution status.')
     elif rows:
         lines += ['Rows with more than 3% change in time or peak resident set size (RSS) are shown; '

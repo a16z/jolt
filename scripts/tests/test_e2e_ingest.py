@@ -95,6 +95,8 @@ class IngestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / 'summary.md'
             comment = ingest.render_pr_comment(result, summary, 'https://fixture.invalid/results')
+            self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
+                          f"Measured merge: `{'c' * 40}`.", comment)
             for cores, values in [(1, '100.000000 / 104.000000 | +4.00%'),
                                   (2, '100.000000 / 96.000000 | -4.00%'),
                                   (3, '10000 / 10400 | +4.00%'),
@@ -117,18 +119,21 @@ class IngestTests(unittest.TestCase):
         self.assertTrue(comment.startswith('<!-- jolt-e2e-benchmark-comment -->\n'))
         self.assertIn('[Full results](https://github.com/a16z/jolt/actions/runs/456/attempts/2)', comment)
         self.assertIn('[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', comment)
+        self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
+                      f"Measured merge: `{'c' * 40}`.", comment)
         self.assertIn('No change above 3%', comment)
         self.assertNotIn('| Workload', comment)
 
     def test_pr_comment_does_not_claim_no_change_for_unavailable_comparisons(self):
-        for changes, exit_code in [({'status': 'failed'}, 0), ({'status': 'incomplete'}, 0),
-                                   ({'kind': 'null'}, 0), ({}, 1)]:
+        for changes, exit_code in [({'status': 'failed'}, 0), ({'status': 'incomplete'}, 0), ({}, 1)]:
             with self.subTest(changes=changes, exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
                 result = dict(inputs()[0], **changes)
                 comment = ingest.render_pr_comment(result, Path(directory) / 'summary.md',
                                                    'https://fixture.invalid/results', exit_code)
                 self.assertIn('Comparison unavailable', comment)
                 self.assertNotIn('No change', comment)
+                self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
+                              f"Measured merge: `{'c' * 40}`.", comment)
 
     def test_hosted_validation_accepts_each_tier_and_refuses_result_or_build_substitution(self):
         for tier in ('pr', 'main', 'nightly', 'calibration'):

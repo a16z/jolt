@@ -71,6 +71,7 @@ jobs:
           retention-days: 30
       - name: Post end-to-end benchmark comparison
         if: steps.ingest.outputs.pr_number != ''
+        timeout-minutes: 2
         continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
