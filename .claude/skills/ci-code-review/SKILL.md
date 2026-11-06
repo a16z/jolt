@@ -35,10 +35,10 @@ disposable container or machine holding only a snapshot of the head and the tool
 the run unchecked. With Docker, from the review checkout:
 
 ```bash
-snap=$(mktemp -d "$HOME/jolt-review.XXXXXX") && mkdir "$snap/docker" &&
-  git clone -q --depth 1 "file://$PWD" "$snap/src"
+mkdir -p "$HOME/jolt-review" && snap=$(mktemp -d "$HOME/jolt-review/XXXXXX") &&
+  mkdir "$snap/docker" && git clone -q --depth 1 "file://$PWD" "$snap/src"
 sandbox() {  # this review's snapshot, an empty Docker client config, and its own stores
-  r=$(basename "$snap")
+  r=jolt-review-$(basename "$snap")
   DOCKER_HOST=$(docker context inspect -f '{{.Endpoints.docker.Host}}') DOCKER_CONFIG="$snap/docker" \
     docker run --rm -v "$snap/src":/src -w /src -v "$r-cargo":/usr/local/cargo \
     -v "$r-rustup":/usr/local/rustup -v "$r-home":/root "$@"
@@ -52,16 +52,18 @@ sandbox rust sh -c 'rustup component add rust-src && mkdir -p ~/.zeroos &&
 sandbox --network none rust env   # must list no proxy or credential variable
 # Network off: every build, test and helper.
 sandbox --network none -e CARGO_NET_OFFLINE=true rust cargo nextest run -p <crate> -E 'test(<name>)'
-docker volume rm "$(basename "$snap")"-{cargo,rustup,home} && rm -rf "$snap"   # at the end
+# At the end: the container deletes what it wrote as root, then the stores and snapshot go.
+sandbox --network none rust find /src -mindepth 1 -delete
+docker volume rm "jolt-review-$(basename "$snap")"-{cargo,rustup,home} && rm -rf "$snap"
 ```
 
 The container sees only the snapshot and this review's three volumes. The snapshot has its own
 `.git` without your remotes' credentials, so the pull request's code cannot plant hooks or config
 that git in your checkout would run; never run git or cargo on the host inside the snapshot. The
 empty client config stops Docker from copying your proxy settings, credentials included, into the
-container. The snapshot sits under your home because Docker Desktop and Colima share it with
-their VM by default. Keep `snap` for the whole review; a new shell must set it again. Offline,
-guest-building tests need `cargo install --path . --locked` first.
+container. Snapshots live in `~/jolt-review`, inside the home directory Docker Desktop and Colima
+share with their VM by default. Keep `snap` for the whole review; a new shell must set it again.
+Offline, guest-building tests need `cargo install --path . --locked` first.
 
 ## Fan out
 
@@ -151,14 +153,15 @@ model. Review the exact head outside CI. For example, on a checkout whose
 fetched:
 
 ```bash
+mkdir -p "$HOME/jolt-review"
 codex exec -m gpt-6-astra -c model_reasoning_effort=max -s workspace-write \
-  -c sandbox_workspace_write.network_access=true \
+  -c sandbox_workspace_write.network_access=true --add-dir "$HOME/jolt-review" \
   "Review the changes in git diff origin/main...HEAD following .claude/skills/ci-code-review/SKILL.md. Fan out to many parallel subagents, run the pull request's code only in the credential-free container it describes, keep helpers out of the branch, do not re-run CI, and state your confidence."
 ```
 
-The sandbox flags let the session write scratch files and reach GitHub and Docker whatever your
-`config.toml` sets; its commands still read your credentials, so the pull request's code runs
-only in the container.
+The sandbox flags let the session write scratch files and snapshots in `~/jolt-review`, which it
+cannot create itself, and reach GitHub and Docker whatever your `config.toml` sets; its commands
+still read your credentials, so the pull request's code runs only in the container.
 
 Use plain `codex exec`. In Codex CLI 0.162.0, `codex exec review` runs Codex's built-in review
 mode, which turns off subagent tools (the `multi_agent` feature) and adds its own review rubric.
