@@ -171,7 +171,13 @@ pub struct ProductRemainder {
 }
 impl SymbolicSumcheck for ProductRemainder {
     #[cfg(feature = "immutable-recipes")]
-    crate::immutable_base_recipe!(SpartanProductRemainder, COMPOSED, Composed, input_only = false, unit_first = true);
+    crate::immutable_base_recipe!(
+        SpartanProductRemainder,
+        COMPOSED,
+        Composed,
+        input_only = false,
+        unit_first = true
+    );
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
@@ -232,7 +238,13 @@ where
     >,
 {
     #[cfg(feature = "immutable-recipes")]
-    crate::immutable_base_recipe!(BytecodeReadRaf, COMPOSED, Composed, input_only = false, unit_first = true);
+    crate::immutable_base_recipe!(
+        BytecodeReadRaf,
+        COMPOSED,
+        Composed,
+        input_only = false,
+        unit_first = true
+    );
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;

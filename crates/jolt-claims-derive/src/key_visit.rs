@@ -7,7 +7,9 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         return Err(Error::new_spanned(&input, "KeyVisit requires an enum"));
     };
     let name = &input.ident;
-    let namespace = input.attrs.iter()
+    let namespace = input
+        .attrs
+        .iter()
         .find(|attr| attr.path().is_ident("recipe_namespace"))
         .ok_or_else(|| Error::new_spanned(&input, "expected #[recipe_namespace(path)]"))?
         .parse_args::<Path>()?;
@@ -16,14 +18,29 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
     let mut render_arms = Vec::new();
     for (index, variant) in data.variants.iter().enumerate() {
         if variant.discriminant.is_some() {
-            return Err(Error::new_spanned(variant, "recipe tags use declaration order"));
+            return Err(Error::new_spanned(
+                variant,
+                "recipe tags use declaration order",
+            ));
         }
         let tag = Literal::usize_unsuffixed(index);
         let variant_name = &variant.ident;
-        let attrs: Vec<_> = variant.attrs.iter().filter(|attr| attr.path().is_ident("cfg")).collect();
-        let values: Vec<_> = variant.fields.iter().enumerate().map(|(index, field)| {
-            field.ident.clone().unwrap_or_else(|| format_ident!("value{index}"))
-        }).collect();
+        let attrs: Vec<_> = variant
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("cfg"))
+            .collect();
+        let values: Vec<_> = variant
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                field
+                    .ident
+                    .clone()
+                    .unwrap_or_else(|| format_ident!("value{index}"))
+            })
+            .collect();
         let pattern = match &variant.fields {
             Fields::Unit => quote!(),
             Fields::Unnamed(_) => quote!((#(#values),*)),
