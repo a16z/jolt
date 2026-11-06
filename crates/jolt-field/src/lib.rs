@@ -196,14 +196,6 @@ macro_rules! immutable_recipe_ring_defaults {
             None
         }
         #[cfg(feature = "immutable-recipes")]
-        fn immutable_recipe_native_field() -> Option<$crate::ImmutableRecipeNativeField<Self>> {
-            None
-        }
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_recipe_export(&self) -> Option<u128> {
-            None
-        }
-        #[cfg(feature = "immutable-recipes")]
         fn immutable_recipe_import(_value: u128) -> Option<Self> {
             None
         }
@@ -221,15 +213,6 @@ macro_rules! immutable_recipe_fp128_methods {
                 && !cfg!(feature = "field-inline-guest-bn254")
                 && P == FIELD_INLINE_FP128_MODULUS)
                 .then($crate::ImmutableRecipeField::new)
-        }
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_recipe_export(&self) -> Option<u128> {
-            (P == FIELD_INLINE_FP128_MODULUS).then(|| self.to_canonical_u128())
-        }
-        #[cfg(feature = "immutable-recipes")]
-        fn immutable_recipe_native_field() -> Option<$crate::ImmutableRecipeNativeField<Self>> {
-            (!cfg!(target_arch = "riscv64") && P == FIELD_INLINE_FP128_MODULUS)
-                .then($crate::ImmutableRecipeNativeField::new)
         }
         #[cfg(feature = "immutable-recipes")]
         fn immutable_recipe_import(value: u128) -> Option<Self> {
@@ -266,17 +249,3 @@ impl<F> ImmutableRecipeField<F> {
 #[cfg(all(feature = "immutable-recipes", feature = "solinas"))]
 pub const IMMUTABLE_RECIPE_MODULUS: u128 = FIELD_INLINE_FP128_MODULUS;
 
-/// Native canonical export eligibility, separate from guest recipe eligibility.
-#[cfg(feature = "immutable-recipes")]
-#[derive(Clone, Copy)]
-pub struct ImmutableRecipeNativeField<F> {
-    marker: PhantomData<fn() -> F>,
-}
-#[cfg(feature = "immutable-recipes")]
-impl<F> ImmutableRecipeNativeField<F> {
-    pub(crate) fn new() -> Self {
-        Self {
-            marker: PhantomData,
-        }
-    }
-}
