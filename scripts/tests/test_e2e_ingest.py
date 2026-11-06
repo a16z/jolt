@@ -243,6 +243,21 @@ class IngestTests(unittest.TestCase):
                 self.assertEqual(checked[0]['builds'], [])
                 self.assertEqual(ingest.check_result('123-1', checked, 1, 'failed')['conclusion'], 'failure')
 
+    def test_download_sends_descriptive_user_agent(self):
+        for url, authenticated in [('https://fixture.invalid/result.zip', False),
+                ('https://api.github.com/repos/a16z/jolt/actions/artifacts/42/zip', True)]:
+            with self.subTest(url=url), patch.dict(os.environ, GH_TOKEN='fixture-token'), \
+                    patch.object(ingest.urllib.request, 'build_opener') as opener:
+                opener.return_value.open.return_value = io.BytesIO(b'owned result')
+                self.assertEqual(ingest.download(url, 100, authenticated=authenticated), b'owned result')
+                request = opener.return_value.open.call_args.args[0]
+                self.assertEqual(request.get_header('User-agent'),
+                                 'jolt-e2e-ingest/1 (+https://github.com/a16z/jolt)')
+                redirected = ingest.DownloadRedirect().redirect_request(request, None, 302, 'Found', {},
+                                                                        'https://storage.invalid/result.zip')
+                self.assertEqual(redirected.get_header('User-agent'), request.get_header('User-agent'))
+                self.assertFalse(redirected.has_header('Authorization'))
+
     def test_untrusted_zip_paths_and_download_caps_are_enforced(self):
         self.assertEqual(ingest.result_files(zipped({'builds/fixture/build.log': b'owned log'})),
                          {'builds/fixture/build.log': b'owned log'})

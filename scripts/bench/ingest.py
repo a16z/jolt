@@ -37,7 +37,8 @@ def download(url, limit, *, authenticated=False):
     parsed = urlsplit(url)
     if parsed.scheme != 'https' or parsed.username or parsed.password or not parsed.hostname:
         raise ValueError('download must use credential-free HTTPS')
-    headers = {'Accept': 'application/vnd.github+json'}
+    headers = {'Accept': 'application/vnd.github+json',
+               'User-Agent': 'jolt-e2e-ingest/1 (+https://github.com/a16z/jolt)'}
     if authenticated:
         if parsed.hostname != 'api.github.com':
             raise ValueError('artifact authentication is limited to GitHub')
