@@ -91,10 +91,10 @@ def synthetic_plan_run(data):
 
 def synthetic_run(data):
     run = synthetic_plan_run(data)
+    title = f"e2e-bench ingest {data['provenance']['run_id']}-{data['provenance']['run_attempt']}"
     run.update(id=run['id'] + 1000, event='workflow_dispatch', path=history.WORKFLOW_FILE,
-               name=history.WORKFLOW, head_branch='main', head_sha='f' * 40,
-               actor={'login': history.APP},
-               display_title=f"e2e-bench ingest {data['provenance']['run_id']}-{data['provenance']['run_attempt']}")
+               name=title, head_branch='main', head_sha='f' * 40,
+               actor={'login': history.APP}, display_title=title)
     return run
 
 

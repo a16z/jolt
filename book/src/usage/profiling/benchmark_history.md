@@ -64,7 +64,7 @@ an artifact. The workflow publishes only to the existing legacy Pages source,
 The canonical artifact is `jolt-e2e-INGEST_RUN_ID-ATTEMPT`. Its `ingest.json`
 receipt binds the ingest attempt to the original plan run/attempt, job ID, plan
 and dispatch artifact IDs and SHA-256 digests. The collector checks repository,
-ingest actor/name/path, event, main branch, attempt and display title. It follows
+ingest actor/path, event, main branch, attempt and display title. It follows
 the receipt to the successful **End-to-end prover benchmarks** producer and its
 exact plan and dispatch artifacts. The ingest workflow's own main checkout SHA
 is not the measured commit.
