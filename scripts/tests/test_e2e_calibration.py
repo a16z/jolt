@@ -179,6 +179,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(bands['e2e_s']['threshold_pct'], 3)
         for change in (lambda r: r.update(finished_at='2026-11-07T10:10:01Z'),
                        lambda r: r['builds'][0].update(revision='a' * 40),
+                       lambda r: r['builds'][0]['runner'].update(sha256='f' * 64),
                        lambda r: r.update(started_at='2026-11-05T08:00:00Z')):
             changed = copy.deepcopy(probe)
             change(changed)
