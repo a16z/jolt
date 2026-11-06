@@ -138,6 +138,7 @@ fn compact_memory_layout() -> MemoryLayout {
         stack_size: 0,
         heap_size: 0,
         program_size: Some(64),
+        ..Default::default()
     })
 }
 
@@ -562,6 +563,7 @@ fn ram_val_final_virtual_view_materializes_final_memory_and_public_io() -> Resul
         stack_size: 0,
         heap_size: 0,
         program_size: Some(64),
+        ..Default::default()
     });
     let preprocessing = preprocessing_with_memory_layout(memory_layout.clone());
     let device = JoltDevice {

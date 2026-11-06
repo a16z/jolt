@@ -12,6 +12,13 @@ categories = ["cryptography"]
 workspace = true
 
 [features]
+pcall-keccakf = [
+  "jolt-lookup-tables/pcall-keccakf",
+  "akita",
+  "jolt-program/pcall-keccakf",
+  "jolt-prover/pcall-keccakf",
+  "jolt-host/pcall-keccakf",
+]
 # Guest transcript acceleration through the shared claims feature.
 blake2-inline = ["jolt-claims/blake2-inline"]
 # Heap flamegraph visitation of the stage clear-output carriers (profile

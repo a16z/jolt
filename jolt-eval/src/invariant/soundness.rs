@@ -67,6 +67,7 @@ impl GuestMemoryConfig {
             stack_size: self.stack_size,
             heap_size: self.heap_size,
             program_size: None,
+            ..Default::default()
         }
     }
 }

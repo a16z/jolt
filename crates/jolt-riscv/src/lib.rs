@@ -22,6 +22,8 @@
     clippy::wildcard_enum_match_arm
 )]
 
+pub use jolt_platform::{PCALL_FUNCT7, PCALL_OPCODE};
+
 #[cfg(feature = "field-inline")]
 pub mod field_inline;
 mod flags;
@@ -212,6 +214,15 @@ macro_rules! for_each_instruction_kind {
                 FIELD_LOAD_ACCUMULATE_FROM_MEMORY => FieldLoadAccumulateFromMemory => "field.load_accumulate_from_memory",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADVICE_LIMB => FieldAdviceLimb => "field.advice_limb",
+                #[cfg(feature = "pcall-keccakf")]
+                PcallCall => PcallCall => "pcall.call",
+                #[cfg(feature = "pcall-keccakf")]
+                PcallRead => PcallRead => "pcall.read",
+                #[cfg(feature = "pcall-keccakf")]
+                PcallWrite => PcallWrite => "pcall.write",
+                #[cfg(feature = "pcall-keccakf")]
+                PcallReturn => PcallReturn => "pcall.return",
+
             ]
         }
     };
@@ -337,6 +348,15 @@ macro_rules! for_each_jolt_instruction_kind {
                 FIELD_LOAD_ACCUMULATE_FROM_MEMORY => FieldLoadAccumulateFromMemory => (0x0108, "field.load_accumulate_from_memory"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADVICE_LIMB => FieldAdviceLimb => (0x0109, "field.advice_limb"),
+                #[cfg(feature = "pcall-keccakf")]
+                PcallCall => PcallCall => (0x0200, "pcall.call"),
+                #[cfg(feature = "pcall-keccakf")]
+                PcallRead => PcallRead => (0x0201, "pcall.read"),
+                #[cfg(feature = "pcall-keccakf")]
+                PcallWrite => PcallWrite => (0x0202, "pcall.write"),
+                #[cfg(feature = "pcall-keccakf")]
+                PcallReturn => PcallReturn => (0x0203, "pcall.return"),
+
             ]
         }
     };
@@ -516,3 +536,6 @@ macro_rules! jolt_instruction {
         }
     };
 }
+
+#[cfg(feature = "pcall-keccakf")]
+pub use profile::RV64IMAC_JOLT_PRECOMPILES;

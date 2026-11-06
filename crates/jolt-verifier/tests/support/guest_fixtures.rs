@@ -51,6 +51,7 @@ pub fn prepare_guest(
         stack_size: layout.stack_size,
         heap_size: layout.heap_size,
         program_size: Some(layout.program_size),
+        ..Default::default()
     };
     let inputs = TraceInputs::new(
         inputs.to_vec(),

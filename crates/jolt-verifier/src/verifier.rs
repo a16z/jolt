@@ -2053,6 +2053,7 @@ mod tests {
             max_output_size: 8,
             stack_size: 8,
             heap_size: 8,
+            ..Default::default()
         })
     }
 

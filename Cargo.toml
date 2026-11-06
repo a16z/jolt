@@ -144,6 +144,7 @@ members = [
 exclude = ["jolt-eval/fuzz"]
 
 [features]
+pcall-keccakf = ["jolt-sdk/pcall-keccakf", "jolt-prover/pcall-keccakf"]
 host = ["jolt-sdk/host"]
 zk = ["jolt-sdk/zk"]
 
@@ -285,6 +286,7 @@ expect_used = "deny"
 unused_results = "warn"
 
 [workspace.dependencies]
+tiny-keccak = { version = "2.0", features = ["keccak"] }
 # Cryptography and Math
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }
 ark-grumpkin = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout", default-features = false }

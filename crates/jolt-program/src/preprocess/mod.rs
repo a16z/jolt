@@ -1,5 +1,7 @@
 pub mod bytecode;
 pub mod error;
+#[cfg(feature = "pcall-keccakf")]
+pub mod pcall;
 pub mod program;
 pub mod public_io;
 pub mod ram;
