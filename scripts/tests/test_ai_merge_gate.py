@@ -12,7 +12,9 @@ import tempfile
 import tomllib
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
+from urllib.request import Request, urlopen
 
 # The gate imports its sibling diff_classifier the way it runs in CI, from scripts/ci.
 sys.path.insert(0, str(Path(__file__).parents[1] / "ci"))
@@ -1338,24 +1340,117 @@ class AiMergeGateTests(unittest.TestCase):
 
 
 class ClassifierAgentTests(unittest.TestCase):
+    def test_upstream_failures_keep_safe_bounded_diagnostics(self):
+        key = "fixture-secret-key"
+        for phase, status, body, details in (
+            ("preflight", 401, {"error": {"type": "invalid_request_error", "code": "invalid_api_key",
+                                         "message": key}}, ("invalid_request_error", "invalid_api_key")),
+            ("request", 429, {"error": {"type": "insufficient_quota", "code": "insufficient_quota",
+                                       "message": key}}, ("insufficient_quota",)),
+            ("preflight", 502, b"not JSON: " + key.encode(), ()),
+            ("request", 503, {"error": {"type": key + "x" * 5000, "code": "code_" + key}},
+             ("[REDACTED]", "code_[REDACTED]")),
+            ("request", None, key + "x" * 5000, ("[REDACTED]",)),
+        ):
+            with self.subTest(phase=phase, status=status):
+                payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+                def upstream(request, **_kwargs):
+                    if phase == "request" and request.full_url.endswith("input_tokens"):
+                        response = io.BytesIO(b'{"input_tokens": 100}')
+                        response.status = 200
+                        return response
+                    if status is None:
+                        raise RuntimeError(body)
+                    raise HTTPError(request.full_url, status, "upstream refused", None, io.BytesIO(payload))
+                broker = AGENT.ModelBroker(key)
+                with mock.patch.object(AGENT.urllib.request, "urlopen", side_effect=upstream), broker.serve() as endpoint:
+                    with self.assertRaises(HTTPError) as stopped:
+                        urlopen(Request(endpoint + "/v1/responses", json.dumps({"model": AGENT.MODEL}).encode(),
+                                        {"Content-Type": "application/json"}), timeout=5)
+                    with stopped.exception as response:
+                        self.assertEqual(json.load(response)["error"]["message"], "classifier stopped")
+                if status is not None:
+                    self.assertIn(f"HTTP {status}", broker.failure)
+                self.assertNotIn(key, broker.failure)
+                self.assertLessEqual(len(broker.failure), 512)
+                for detail in details:
+                    self.assertIn(detail, broker.failure)
+                self.assertEqual(broker.usage, [])
+
+    def test_cached_context_can_repeat_within_spend_budget(self):
+        usage = {"input_tokens": 100_000, "output_tokens": 4000,
+                 "input_tokens_details": {"cached_tokens": 100_000}}
+        response = {"type": "response.completed", "response": {
+            "model": AGENT.MODEL, "status": "completed", "usage": usage}}
+        payload = json.dumps(response).encode()
+        def request(endpoint, _body, _headers):
+            return 200, (json.dumps({"input_tokens": 100_000}).encode()
+                         if endpoint.endswith("input_tokens") else payload)
+        broker = AGENT.ModelBroker("fake", request=request)
+        for _ in range(40):
+            self.assertEqual(broker.forward({"model": AGENT.MODEL}, {}), (200, payload))
+        self.assertEqual((broker.input_tokens, broker.output_tokens), (4_000_000, 160_000))
+        self.assertAlmostEqual(broker.cost_usd, 2)
+
+    def test_long_context_prices_the_entire_request_at_the_surcharge(self):
+        for count, expected in ((272_000, .199), (272_001, .393004)):
+            with self.subTest(input_tokens=count):
+                self.assertAlmostEqual(AGENT.request_cost(count, 1000, cached=200_000, written=50_000), expected)
+
+    def test_compaction_request_uses_the_budgeted_broker(self):
+        calls = []
+        def request(endpoint, body, _headers):
+            calls.append(endpoint)
+            if endpoint.endswith("input_tokens"):
+                return 200, json.dumps({"input_tokens": 100_000}).encode()
+            self.assertEqual(body["max_output_tokens"], 128_000)
+            response = {"type": "response.completed", "response": {"model": AGENT.MODEL,
+                "status": "completed", "usage": {"input_tokens": 100_000, "output_tokens": 200,
+                    "input_tokens_details": {"cached_tokens": 90_000, "cache_write_tokens": 10_000}}}}
+            return 200, b"data: " + json.dumps(response).encode() + b"\n\n"
+        broker = AGENT.ModelBroker("fake", request=request)
+        with tempfile.TemporaryDirectory() as directory, broker.serve() as endpoint:
+            root = Path(directory)
+            (root / "agent-state").mkdir()
+            AGENT.configure_codex(endpoint, root)
+            config = tomllib.loads((root / "agent-state/config.toml").read_text())
+            self.assertEqual(config["model_context_window"], 1_050_000)
+            self.assertEqual(config["model_providers"]["gate"]["stream_idle_timeout_ms"], 18_000_000)
+            body = {"model": AGENT.MODEL, "stream": True,
+                    "input": [{"role": "user", "content": [{"type": "input_text",
+                        "text": "Summarize the conversation so it can continue."}]}]}
+            def compact():
+                return urlopen(Request(endpoint + "/v1/responses", json.dumps(body).encode(),
+                                       {"Content-Type": "application/json"}), timeout=5)
+            with compact() as response:
+                self.assertEqual(response.status, 200)
+            self.assertEqual(broker.input_tokens, 100_000)
+            self.assertAlmostEqual(broker.cost_usd, .036)
+            broker.cost_usd = AGENT.MAX_SPEND_USD
+            with self.assertRaises(HTTPError) as error:
+                compact()
+            self.assertEqual(error.exception.code, 429)
+            self.assertEqual(broker.failure, "classifier spend cap")
+        self.assertEqual(calls.count("/v1/responses"), 1)
+
     def test_budget_preflight_blocks_payment_and_incomplete_usage_is_retained(self):
-        for limit in ("request", "input", "output", "spend", "turns"):
-            with self.subTest(limit=limit):
+        for count, cost, model, error in (
+            (AGENT.MAX_INPUT_TOKENS + 1, 0, AGENT.MODEL, "per-request input cap"),
+            (AGENT.MAX_INPUT_TOKENS, AGENT.MAX_SPEND_USD, AGENT.MODEL, "spend cap"),
+            (300_000, 47, AGENT.MODEL, "spend cap"),
+            (272_000, 48.04, AGENT.MODEL, "spend cap"),
+            (None, 0, AGENT.MODEL, "input token count"),
+            (100, 0, "other-model", "unexpected requested model"),
+        ):
+            with self.subTest(count=count, cost=cost, model=model):
                 calls = []
                 def request(endpoint, _body, _headers):
                     calls.append(endpoint)
-                    return 200, json.dumps({"input_tokens": AGENT.MAX_INPUT_TOKENS + (limit == "request")}).encode()
+                    return 200, json.dumps({"input_tokens": count}).encode()
                 broker = AGENT.ModelBroker("fake", request=request)
-                if limit == "input":
-                    broker.input_tokens = AGENT.MAX_RUN_INPUT_TOKENS
-                if limit == "output":
-                    broker.output_tokens = AGENT.MAX_RUN_OUTPUT_TOKENS
-                if limit == "spend":
-                    broker.cost_usd = AGENT.MAX_SPEND_USD
-                if limit == "turns":
-                    broker.usage = [{}] * AGENT.MAX_TURNS
-                with self.assertRaises(AGENT.AgentFailure):
-                    broker.forward({"model": AGENT.MODEL}, {})
+                broker.cost_usd = cost
+                with self.assertRaisesRegex(AGENT.AgentFailure, error):
+                    broker.forward({"model": model}, {})
                 self.assertNotIn("/v1/responses", calls)
         def incomplete(endpoint, _body, _headers):
             response = {"type": "response.incomplete", "response": {"model": AGENT.MODEL,
