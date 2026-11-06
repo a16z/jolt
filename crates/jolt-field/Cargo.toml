@@ -29,8 +29,6 @@ spongefish = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [features]
-setup-weight-tiles = []
-signed-byte-sum = []
 default = ["bn254"]
 bn254 = ["dep:ark-ff", "dep:ark-serialize", "dep:ark-bn254"]
 solinas = []
