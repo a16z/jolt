@@ -36,6 +36,10 @@ pub(super) fn fill_digits<const BITS: usize>(mut value: u128, columns: &mut [u8]
 }
 
 #[cfg(test)]
+#[expect(
+    clippy::unwrap_used,
+    reason = "test encoding consists only of hexadecimal digits"
+)]
 mod tests {
     use super::fill_digits;
 
@@ -51,15 +55,15 @@ mod tests {
                 .collect();
             for width in 0..=32 {
                 let mut guarded = [0xff; 34];
-                fill_digits::<4>(value, &mut guarded[1..1 + width]);
-                assert_eq!(&guarded[1..1 + width], &hex[32 - width..]);
+                fill_digits::<4>(value, &mut guarded[1..=width]);
+                assert_eq!(&guarded[1..=width], &hex[32 - width..]);
                 assert_eq!(guarded[0], 0xff);
                 assert!(guarded[1 + width..].iter().all(|&byte| byte == 0xff));
             }
             for width in 0..=16 {
                 let mut guarded = [0xff; 18];
-                fill_digits::<8>(value, &mut guarded[1..1 + width]);
-                assert_eq!(&guarded[1..1 + width], &value.to_be_bytes()[16 - width..]);
+                fill_digits::<8>(value, &mut guarded[1..=width]);
+                assert_eq!(&guarded[1..=width], &value.to_be_bytes()[16 - width..]);
                 assert_eq!(guarded[0], 0xff);
                 assert!(guarded[1 + width..].iter().all(|&byte| byte == 0xff));
             }
