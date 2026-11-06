@@ -149,10 +149,18 @@ step. `public_output` is an array of the exact public output bytes passed to
 those verifiers, emitted after they both succeed. Same-source hosted/local
 controls compare these bytes, proof sizes and row counts; they do not claim
 byte-identical serialized proofs. `process_s` is parent-observed launch through reaped exit,
-including both verifications, output, and teardown. `peak_rss_bytes` is Linux
-`wait4` maximum RSS for that process, converted from KiB to bytes; it is not a
-heap allocation estimate or a host-wide memory reading. `proof_bytes` is the
-serialized proof length. `trace_rows` is the modular trace's `proof_len()` before
+including both verifications, output, teardown, and the GNU time launcher.
+`peak_rss_bytes` is Linux `ru_maxrss`, collected by GNU `/usr/bin/time` (`time`
+package) and converted from KiB to bytes. GNU time forks the measured process
+after exec, excluding the Python harness's address space from the child's RSS
+high-water mark. This retains metric contract 1: resident anonymous and
+file-backed memory, not an allocation estimate or cgroup total. Unmapped page
+cache is excluded; reaped descendants contribute their largest peak, not a sum.
+It uses exit-time kernel accounting, without polling or a cgroup. The collector's
+extra fork/exec is included in `process_s`. Per-sample `process.rss` retains the
+raw KiB value; stdout/stderr remain in `process.log`. Nonzero command exits stay
+nonzero; signal termination uses GNU time's `128 + signal` exit status.
+`proof_bytes` is the serialized proof length. `trace_rows` is the modular trace's `proof_len()` before
 padding, not a raw RISC-V instruction count. `padded_trace_rows` is the actual
 `ProverConfig.trace_length`, including the required final no-op and minimum size.
 
@@ -201,7 +209,7 @@ jobs allow 180 minutes. These are failure limits, not duration estimates.
 ## Manual commands
 
 Run-only execution needs Linux, Python 3.11+ through `uv`, Git for the pinned harness
-checkout, `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs the pinned Rust toolchain,
+checkout, GNU `/usr/bin/time` (Debian/Ubuntu package `time`), `taskset` and `lscpu`. The target also builds opted-in PRs, so it needs the pinned Rust toolchain,
 its `rust-src` component and configured RISC-V targets. The five
 prepared guests use `riscv64imac-unknown-none-elf`. The build produces its own
 `jolt` CLI; a stale globally installed CLI is not used.
@@ -484,6 +492,10 @@ invalidates existing references. Missing or unreadable identity evidence makes
 references unavailable. Construction hostname, compiler/linker labels,
 transient free swap, random URS hashes and harness Git SHA alone do not bind;
 the initially empty suite-local Dory cache policy does.
+
+An RSS collector change alters the committed runner hash, so references from the
+direct Python `wait4` collector do not match and must be regenerated, even when
+their hosted-artifact samples were not visibly limited by the parent's RSS.
 
 For lookup only, `elf-no-build-id-comment-v1` uses GNU objcopy to remove exactly
 `.note.gnu.build-id` and `.comment` on a copy, refusing either section if writable

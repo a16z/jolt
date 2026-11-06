@@ -80,6 +80,45 @@ class E2eBenchTests(unittest.TestCase):
             with self.assertRaises(ChildProcessError):
                 os.waitpid(child.pid, os.WNOHANG)
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux RSS accounting')
+    def test_measure_rss_excludes_the_harness_address_space(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            command = [sys.executable, '-c', 'data = bytearray(16 * 1024 * 1024)']
+            code = f'''import json, os, run
+from pathlib import Path
+command = {command!r}
+root = Path({str(root)!r})
+small = run.measure(command, os.environ, root, root / 'small.log')
+data = bytearray(128 * 1024 * 1024)
+large = run.measure(command, os.environ, root, root / 'large.log')
+print(json.dumps([small, large]))
+'''
+            env = dict(bench.build_environment(), PYTHONPATH=str(SCRIPT.parent.resolve()))
+            result = subprocess.run([sys.executable, '-c', code], env=env,
+                                    capture_output=True, text=True, timeout=15, check=True)
+            for exit_code, seconds, rss in json.loads(result.stdout):
+                self.assertEqual(exit_code, 0)
+                self.assertGreater(seconds, 0)
+                self.assertGreaterEqual(rss, 16 * 1024 * 1024)
+                self.assertLess(rss, 96 * 1024 * 1024)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux RSS accounting')
+    def test_measure_retains_output_and_nonzero_exit_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for ending, expected in [('sys.exit(7)', 7),
+                                     ('os.kill(os.getpid(), signal.SIGTERM)', 143)]:
+                with self.subTest(ending=ending):
+                    command = [sys.executable, '-c',
+                               'import os, signal, sys; data = bytearray(16 * 1024 * 1024); '
+                               'print("owned child", flush=True); ' + ending]
+                    code, _, rss = bench.measure(command, bench.build_environment(),
+                                                 root, root / 'process.log')
+                    self.assertEqual(code, expected)
+                    self.assertGreaterEqual(rss, 16 * 1024 * 1024)
+                    self.assertEqual((root / 'process.log').read_text(), 'owned child\n')
+
     def test_host_lock_excludes_another_process_until_its_owner_exits(self):
         with tempfile.TemporaryDirectory() as directory:
             env = dict(os.environ, XDG_CACHE_HOME=directory,

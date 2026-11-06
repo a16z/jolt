@@ -585,18 +585,21 @@ def sample_order(paired, warmups, repetitions):
 
 
 def measure(command, env, cwd, log_path):
+    rss_path = log_path.with_suffix('.rss').resolve()
+    # GNU time forks after exec, so the measured child never inherits this
+    # harness's address space and its Linux ru_maxrss floor.
+    timed = ['/usr/bin/time', '--quiet', '--format=%M', '--output', str(rss_path), '--', *command]
     with log_path.open('wb') as log:
         started = time.perf_counter()
-        with subprocess.Popen(command, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
+        with subprocess.Popen(timed, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
                               start_new_session=True) as child:
             try:
-                _, status, usage = os.wait4(child.pid, 0)
+                child.wait()
                 finished = time.perf_counter()
-                child.returncode = os.waitstatus_to_exitcode(status)
             except BaseException:
                 stop_child(child)
                 raise
-    return child.returncode, finished - started, int(usage.ru_maxrss) * 1024
+    return child.returncode, finished - started, int(rss_path.read_text()) * 1024
 
 
 def validate_metrics(metrics, case):
