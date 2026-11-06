@@ -186,3 +186,9 @@ pub enum FieldError {
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
 }
+
+#[cfg(feature = "setup-weight-tiles")]
+mod setup_weight_tiles;
+#[cfg(feature = "signed-byte-sum")]
+mod signed_byte_sum;
+mod terminal_contraction;
