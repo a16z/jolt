@@ -20,12 +20,11 @@ import urllib.request
 
 MODEL = "gpt-6.1-sol"
 EFFORT = "xhigh"
-MAX_INPUT_TOKENS = 150_000
-MAX_OUTPUT_TOKENS = 20_000
-MAX_RUN_OUTPUT_TOKENS = 100_000
-MAX_SPEND_USD = 2.875
-MAX_TURNS = 32
-WALL_SECONDS = 40 * 60
+MODEL_CONTEXT_WINDOW = 1_050_000
+MAX_OUTPUT_TOKENS = 128_000
+MAX_INPUT_TOKENS = MODEL_CONTEXT_WINDOW - MAX_OUTPUT_TOKENS
+MAX_SPEND_USD = 50
+WALL_SECONDS = 5 * 60 * 60
 MAX_VERDICT_BYTES = 60_000
 
 CLASSIFICATION_SCHEMA = {
@@ -72,6 +71,13 @@ def validate_verdict(answer: object, paths: set[str]) -> dict:
     return answer
 
 
+def request_cost(input_tokens: int, output_tokens: int, cached: int = 0, written: int = 0) -> float:
+    # https://developers.openai.com/api/docs/models/gpt-6.1-sol#pricing
+    input_rate, output_rate = (4, 15) if input_tokens > 272_000 else (2, 10)
+    fresh = input_tokens - cached - written
+    return ((fresh + cached * .05 + written * 1.25) * input_rate + output_tokens * output_rate) / 1_000_000
+
+
 class ModelBroker:
     """Keep the API key in a non-dumpable process; forward model traffic, not tool calls."""
 
@@ -92,7 +98,7 @@ class ModelBroker:
         request = urllib.request.Request("https://api.openai.com" + endpoint,
             json.dumps(body).encode(), {"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=max(1, min(15 * 60, WALL_SECONDS - (time.monotonic() - self.started)))) as response:
+            with urllib.request.urlopen(request, timeout=max(1, WALL_SECONDS - (time.monotonic() - self.started))) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as error:
             return error.code, b'{"type":"error","error":{"type":"api_error","message":"model API refused request"}}'
@@ -101,8 +107,8 @@ class ModelBroker:
         with self.lock:
             if self.failure:
                 raise AgentFailure(self.failure)
-            if body.get("model") != MODEL or len(self.usage) >= MAX_TURNS:
-                raise AgentFailure("model or turn limit")
+            if body.get("model") != MODEL:
+                raise AgentFailure("unexpected requested model")
             body["max_output_tokens"] = MAX_OUTPUT_TOKENS
             body["service_tier"] = "default"
             count_body = {key: value for key, value in body.items() if key in
@@ -112,10 +118,12 @@ class ModelBroker:
                 raise AgentFailure("model token preflight failed")
             count = json.loads(counted).get("input_tokens")
             output = body["max_output_tokens"]
-            if type(count) is not int or count < 0 or count > MAX_INPUT_TOKENS \
-                    or self.output_tokens + output > MAX_RUN_OUTPUT_TOKENS \
-                    or self.cost_usd + (count * 2.50 + output * 10) / 1_000_000 > MAX_SPEND_USD:
-                raise AgentFailure("classifier token or spend cap")
+            if type(count) is not int or count < 0:
+                raise AgentFailure("invalid classifier input token count")
+            if count > MAX_INPUT_TOKENS:
+                raise AgentFailure("classifier per-request input cap")
+            if self.cost_usd + request_cost(count, output, written=count) > MAX_SPEND_USD:
+                raise AgentFailure("classifier spend cap")
             self.inflight = True
             status, payload = self.request("/v1/responses", body, {})
             if status != 200:
@@ -134,10 +142,9 @@ class ModelBroker:
             details = usage.get("input_tokens_details", {})
             cached = details.get("cached_tokens", 0)
             written = details.get("cache_write_tokens", 0)
-            fresh = usage["input_tokens"] - cached - written
             self.input_tokens += usage["input_tokens"]
             self.output_tokens += usage["output_tokens"]
-            self.cost_usd += (fresh * 2 + cached * .10 + written * 2.50 + usage["output_tokens"] * 10) / 1_000_000
+            self.cost_usd += request_cost(usage["input_tokens"], usage["output_tokens"], cached, written)
             self.usage.append(usage)
             self.inflight = False
             if response.get("status") != "completed":
@@ -198,6 +205,7 @@ def configure_codex(endpoint: str, directory: Path) -> None:
     config = f'''
 model = "{MODEL}"
 model_reasoning_effort = "{EFFORT}"
+model_context_window = {MODEL_CONTEXT_WINDOW}
 model_provider = "gate"
 approval_policy = "never"
 allow_login_shell = false
@@ -213,6 +221,7 @@ base_url = "{endpoint}/v1"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
+stream_idle_timeout_ms = {WALL_SECONDS * 1000}
 [features]
 shell_snapshot = false
 hooks = false

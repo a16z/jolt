@@ -75,7 +75,19 @@ Gate evaluation and draft cleanup never change `merge-conflict`.
 
 ## Limits and trust
 
-The broker retains its request, token, spend and wall-time limits in `classifier_agent.py`.
+Each classifier attempt has a $50 model-spend cap and a five-hour wall-time cap;
+the classify job allows 305 minutes for setup, classification and artifact upload.
+The broker reserves the model's maximum output before each request and accounts for
+[standard and long-context token prices](https://developers.openai.com/api/docs/models/gpt-6.1-sol).
+There are no cumulative input-token, output-token or request-count caps.
+
+Codex uses its own auto-compaction through the same budgeted Responses broker.
+The configured API context window is 1,050,000 tokens, with up to 128,000 output tokens;
+the broker reserves that output space, allowing up to 922,000 input tokens.
+Pinned Codex 0.162.0 [clamps the configured window to its model catalog's maximum](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/models-manager/src/model_info.rs),
+872,000 tokens for this model, and [auto-compacts at 90%](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/protocol/src/openai_models.rs)
+(784,800 tokens). Compaction requests use the same model checks and spend accounting.
+
 The gate allows two paid attempts per head and three per PR. Preparation reserves the attempt;
 publication consumes that reservation without counting it again. Failed attempts are not cached.
 Verified snapshots are bounded to 500,000,000 bytes per revision. These are resource limits,
