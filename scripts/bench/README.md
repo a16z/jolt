@@ -133,14 +133,20 @@ observations are unexplained with these shared-host single samples.
 CherryPika had swap enabled. Aggregate used swap rose by 5160960 bytes between
 the two `2^30` starts, and process-specific swap was not sampled. RSS excludes
 swapped pages, so these runs do not establish no-swap residency on jolt-bench.
+Runtime planning uses full fresh-process wall time (`process_s`), not only the
+table's end-to-end proof interval.
 Fibonacci/Dory `2^30` is omitted for time, not an observed memory failure: its
 153.502 GiB RSS is below the supplied target MemTotal of 188.408 GiB, but six
 1257.241-second processes would add 125.72 minutes to nightly.
 
-The nightly worker limit is 240 minutes for a 223.86-minute planning scenario
-(108.21 minutes for six repetitions of the one-process-per-case 60-case pilot +
-68.86 for the large Fibonacci cases + 46.79 for calibration), not a completed
-nightly measurement.
+The October 31 jolt-bench pilot ran 60 supported cases with zero warmups and
+one process per case in 1082.094 seconds, excluding builds. Nightly's six
+processes per case give a 108.21-minute scenario for those cases. The new
+Fibonacci processes took 64.735 seconds (Akita `2^28`), 377.344 seconds (Dory
+`2^28`) and 246.486 seconds (Akita `2^30`); six of each add 68.86 minutes.
+Adding 46.79 minutes for calibration gives 223.86 minutes, so the nightly worker
+limit is 240 minutes. This is a planning scenario, not a completed nightly
+measurement.
 
 ### Capacity
 

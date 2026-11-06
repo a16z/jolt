@@ -176,6 +176,7 @@ class E2eCiTests(unittest.TestCase):
                 return {'status': 'complete', 'fixture_revision': options.head.parent.name,
                         'wall_time': {'benchmark_s': 0}}
             with patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
+                    patch.object(ci.subprocess, 'check_output', return_value='c' * 40 + '\trefs/heads/main\n'), \
                     patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
                     patch.object(ci.bench, 'capture') as capture, \
                     patch.object(ci.bench, 'build', side_effect=AssertionError('target must not build')), \

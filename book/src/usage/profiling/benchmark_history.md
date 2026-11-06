@@ -31,7 +31,8 @@ lists all core counts, operation counts and nightly cases.
 The [capacity model](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#capacity)
 gives per-push forecasts. A main-push job whose tip is superseded when it reaches
 calibration skips only the null, retains every history commit and records its
-reason. Lookup failure retains calibration; nightly and bootstrap are unchanged.
+reason. Lookup failure retains calibration. Nightly, manual main and bootstrap
+jobs always calibrate.
 Without another matching reference, a PR based on a skipped tip keeps its
 measurements but has a neutral reference-unavailable check.
 
@@ -192,8 +193,9 @@ source and preview checks do not establish live execution or deployment.
 
 ### Calibration references
 
-Each main-push tip and nightly run first measures a ten-pair null for every PR
-case in its pinned suite, using its hosted tip bundle twice. With `N` PR cases,
+Each nightly run, manual main run and still-current main-push tip first measures
+a ten-pair null for every PR case in its pinned suite, using its hosted tip bundle
+twice. With `N` PR cases,
 one warmup and ten measured pairs require `22N` proof processes. Trusted ingest
 validates the complete configured case set and every process, then
 recomputes the informational time/RSS envelopes. It retains the reference and raw
