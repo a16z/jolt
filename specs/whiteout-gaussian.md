@@ -4,7 +4,26 @@ Labels (`wo:…`, §n) refer to the Whiteout paper draft.
 Numbers the text omits come from the paper's cost model at its headline
 configuration (k = 2).
 
-**Production regime (almost-never rejection).**
+**Production regime (truncated products and occasional rejection,
+`whiteout-sigma.md` §5.2).** This supersedes the production values of the
+almost-never rejection regime below.
+
+- `Fix192::mul` keeps only the partial products that reach the top three
+  limbs (nine 64-bit multiplies instead of eighteen). Each product is at
+  most `7·2^−192` below the exact one (§2, "Precision").
+- In production, `α = 2^9` (`M − 1 ≈ 2.7·10^−2`, per-attempt rejection
+  `≈ 2^−5.23`, `T_att = 25`). The width is `k = 229,072,314 ≈ 2^27.8` (`ℓ = 61`
+  exponent bits).
+- **Precision.** Per trial, `δ ≤ (26 + 8·61 + 1)·2^−192 + 2^−196.6 ≈
+  2^−183.0`; per output, `2δ/0.68 ≈ 2^−181.4`. Over `6.2·10⁶ × 25 ≈
+  2^27.2` samples this adds at most `2^−154` to Thm `wo:thm:zk`.
+- **Cost.** Probe on one thread (M4 Max, release, best of 7 under load),
+  per `fill` sample at `ℓ = 77`: 356 ns with the exact product, 250 ns
+  with the truncated one. Of the 250 ns, the exponential product is 157 ns
+  and the ChaCha20 coins are 60 ns. The rest (CDT, select, sign) is about
+  30 ns. The model is now about `93 + 2.04·ℓ` ns.
+
+**Almost-never rejection regime (`whiteout-sigma.md` §5.1).**
 The values below are the paper's α = 16 regime. The sampler and the rule
 are unchanged, but their ranges and the production values moved:
 
@@ -113,13 +132,16 @@ example, repeated squaring of `2^{−1/k²}` would amplify the error by about
 `2^{52}`. Tests compare them with mpmath vectors (400-bit).
 
 **Precision.** Per trial, the CDT floors move at most `26·2^{−192}` of mass,
-the exp product has absolute error at most `(2ℓ_b+1)·2^{−192}` (`ℓ_b`
-truncations, `ℓ_b` floored factors, and the initial `1 − 2^{−192}`), and
-the dropped tail is `2^{−196.6}`. The trial's joint law of `(accept, z)` is
-then within `δ ≤ 134·2^{−192} ≈ 2^{−184.9}`, and one output is within
-`2δ/P_acc ≈ 2^{−183.3}` (`P_acc ≈ 0.68` per trial). Over every sample of
+the exp product has absolute error at most `(8ℓ_b+1)·2^{−192}` (`ℓ_b`
+truncated products, each at most `7·2^{−192}` below the exact one, `ℓ_b`
+floored factors, and the initial `1 − 2^{−192}`), and the dropped tail is
+`2^{−196.6}`. A truncated product keeps the partial products at limb 3 and
+above and the high halves of limb 2's, nine 64-bit multiplies instead of
+eighteen. The trial's joint law of `(accept, z)` is then within
+`δ ≤ 451·2^{−192} ≈ 2^{−183.2}`, and one output is within
+`2δ/P_acc ≈ 2^{−181.6}` (`P_acc ≈ 0.68` per trial). Over every sample of
 every attempt, `6.2·10⁶ × 163 ≈ 2^{29.9}` at the headline configuration
-and about `2^{34}` at larger traces, the sampler adds at most `2^{−149}` to
+and about `2^{34}` at larger traces, the sampler adds at most `2^{−147}` to
 Thm `wo:thm:zk`'s `2^{−128.8}` (§6.2 asks implementations to add this
 term).
 
@@ -164,7 +186,8 @@ uniform).
   `M = exp(t/α + 1/(2α²))`. `M^{−1}` is floored to 192 bits, which is exact
   for some `M' ≥ M`; Thm `wo:thm:joint-rejection` holds for any larger `M`.
 - Compare the result with a 192-bit uniform. Its absolute error is below
-  `2^{−181}` per attempt, negligible beside `ε`.
+  `2^{−179}` per attempt (truncated products as in §2), negligible beside
+  `ε`.
 
 Only the accept bit (`Choice`) leaves the step; the Σ-protocol prover
 branches on it. Its law depends on the state only within `ε/M` (H3 of Thm

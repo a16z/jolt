@@ -52,7 +52,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 const HEADLINE_K: u64 = 16_080_468;
-const PRODUCTION_K: u64 = 58_642_511_897;
+const PRODUCTION_K: u64 = 229_072_314;
 const FILL_LEN: usize = 1 << 15;
 const BOX_BOUND: u64 = 93_120_000;
 const SHIFT_BOUND: u64 = 1 << 13;
