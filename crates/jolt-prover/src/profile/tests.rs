@@ -84,6 +84,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             input_file: None,
             result_json: None,
             akita_chunk_profile: profile,
+            akita_prover_idle_spin_us: None,
             memory_budget: None,
         };
         assert_eq!(args.workload_name(), workload_name);
@@ -98,4 +99,35 @@ fn chunk_profile_parser_rejects_invalid_geometry() {
     for value in ["w0r2", "w3r2", "w1r2", "w2r0", "w2", "w128r2"] {
         assert!(parse_akita_chunk_profile(value).is_err(), "{value}");
     }
+}
+
+#[cfg(feature = "akita")]
+#[test]
+fn prover_idle_policy_is_opt_in_and_has_distinct_artifacts() {
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    let parse = |options: &[&str]| {
+        Cli::try_parse_from(["jolt-prover", "--name", "fibonacci"].iter().chain(options))
+            .map(|cli| cli.args)
+    };
+    let default = parse(&[]).unwrap();
+    assert_eq!(default.akita_prover_idle_spin_us, None);
+    assert_eq!(default.trace_name(20), "modular_fibonacci_akita_20");
+    for (value, expected) in [("0", 0), ("64", 64)] {
+        let args = parse(&["--akita-prover-idle-spin-us", value]).unwrap();
+        assert_eq!(args.akita_prover_idle_spin_us, Some(expected));
+        assert_eq!(
+            args.trace_name(20),
+            format!("modular_fibonacci_akita_20_spin{value}us")
+        );
+        assert_eq!(
+            args.benchmark_name(),
+            format!("fibonacci_akita_spin{value}us")
+        );
+        assert_eq!(args.workload_name(), format!("fibonacci_spin{value}us"));
+    }
+    assert!(parse(&["--akita-prover-idle-spin-us", "-1"]).is_err());
 }

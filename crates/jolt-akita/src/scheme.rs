@@ -128,6 +128,7 @@ impl AkitaScheme {
 
         let dense = dense_polynomials(polynomials)?;
         Self::commit_dense_backend(
+            setup,
             setup.dense_backend()?.1,
             setup.verifier.dense_scheme()?.schedules(),
             layout_digest,
@@ -246,15 +247,16 @@ impl AkitaScheme {
         Self::validate_commit_shape(setup, num_vars, poly_count)?;
         let one_hot_k = setup.one_hot_k();
         let (_, backend) = setup.one_hot_backend()?;
-        let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            let source = backend.import_source(source)?;
-            let context = profiles.as_ref().map_or_else(
-                GroupContext::scheduler_without_precommitted_groups,
-                GroupContext::scheduler_with_precommitted_groups,
-            );
-            commit_one_hot_source(setup, backend, &source, context)
-        })
-        .map_err(commit_failed)?;
+        let (backend_commitment, backend_hint) = setup
+            .with_prover_backend(|| {
+                let source = backend.import_source(source)?;
+                let context = profiles.as_ref().map_or_else(
+                    GroupContext::scheduler_without_precommitted_groups,
+                    GroupContext::scheduler_with_precommitted_groups,
+                );
+                commit_one_hot_source(setup, backend, &source, context)
+            })
+            .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
             num_vars,
@@ -272,16 +274,17 @@ impl AkitaScheme {
         polynomials: Vec<AkitaBackendOneHotPoly>,
     ) -> Result<(AkitaBackendCommitment, AkitaBackendHint), OpeningsError> {
         let (_, backend) = setup.one_hot_backend()?;
-        with_backend_pool(|| {
-            let source = backend.import_source(polynomials)?;
-            commit_one_hot_source(
-                setup,
-                backend,
-                &source,
-                GroupContext::scheduler_without_precommitted_groups(),
-            )
-        })
-        .map_err(commit_failed)
+        setup
+            .with_prover_backend(|| {
+                let source = backend.import_source(polynomials)?;
+                commit_one_hot_source(
+                    setup,
+                    backend,
+                    &source,
+                    GroupContext::scheduler_without_precommitted_groups(),
+                )
+            })
+            .map_err(commit_failed)
     }
 
     /// Freezes the ordered group profiles the final trace group commits
@@ -377,6 +380,7 @@ impl AkitaScheme {
     }
 
     fn commit_dense_backend<Cfg>(
+        setup: &AkitaProverSetup,
         backend: &AkitaBackend,
         schedules: &TrustedScheduleCatalog<Cfg>,
         layout_digest: AkitaLayoutDigest,
@@ -387,16 +391,17 @@ impl AkitaScheme {
         Cfg: CommitmentConfig<Field = AkitaField, ExtField = AkitaBackendExtField>,
     {
         let poly_count = dense.len();
-        let (backend_commitment, backend_hint) = with_backend_pool(|| {
-            let source = backend.import_source(dense)?;
-            backend.commit(
-                schedules,
-                &source,
-                GroupContext::scheduler_without_precommitted_groups(),
-            )
-        })
-        .map(split_commit_output)
-        .map_err(commit_failed)?;
+        let (backend_commitment, backend_hint) = setup
+            .with_prover_backend(|| {
+                let source = backend.import_source(dense)?;
+                backend.commit(
+                    schedules,
+                    &source,
+                    GroupContext::scheduler_without_precommitted_groups(),
+                )
+            })
+            .map(split_commit_output)
+            .map_err(commit_failed)?;
         Self::package_commitment(
             layout_digest,
             num_vars,
@@ -509,6 +514,8 @@ impl CommitmentScheme for AkitaScheme {
         }
         verifier.prime_backend_cache(backend_verifier_setup, one_hot_backend_verifier_setup)?;
         let prover = AkitaProverSetup {
+            #[cfg(feature = "parallel")]
+            prover_pool: None,
             inherited_setup: None,
             full_width,
             backend_prover_setup,
@@ -557,6 +564,7 @@ impl CommitmentScheme for AkitaScheme {
         let dense =
             vec![AkitaBackendDensePoly::from_field_evals(num_vars, evals).map_err(akita_error)?];
         Self::commit_dense_backend(
+            setup,
             setup.dense_backend()?.1,
             setup.verifier.dense_scheme()?.schedules(),
             setup.default_layout_digest(),
@@ -757,7 +765,14 @@ impl TransparentObjectSetup for AkitaScheme {
             .map_err(invalid_setup)?;
         let dense =
             vec![AkitaBackendDensePoly::from_field_prefix(num_vars, values).map_err(akita_error)?];
-        Self::commit_dense_backend(backend, scheme.schedules(), layout_digest, num_vars, dense)
+        Self::commit_dense_backend(
+            setup,
+            backend,
+            scheme.schedules(),
+            layout_digest,
+            num_vars,
+            dense,
+        )
     }
 
     fn commit_full_width_object<P: MultilinearPoly<Self::Field> + ?Sized>(
@@ -777,6 +792,7 @@ impl TransparentObjectSetup for AkitaScheme {
         }
         .map_err(akita_error)?];
         Self::commit_dense_backend(
+            setup,
             &cached.backend,
             cached.scheme.schedules(),
             layout_digest,

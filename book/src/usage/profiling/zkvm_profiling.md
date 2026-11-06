@@ -43,6 +43,27 @@ independent. The CSV workload name and `summary.json`'s `run.workload`
 also carry the chunk-profile suffix. `w1r0` has no workload suffix.
 The `benchmark` sweep uses `w1r0`.
 
+For an Akita `profile` run, `--akita-prover-idle-spin-us 64` creates a
+separate prover pool whose idle workers keep searching for up to 64 microseconds
+before trying to sleep. This can reduce the cost of repeated parallel phases,
+but can also consume more CPU and hurt other work. Compare it with the option
+omitted on the intended machine and workload. Zero skips the active-wait
+interval; it is different from omitting the option.
+
+```bash
+RAYON_NUM_THREADS=16 cargo run --release -p jolt-prover --features profiling,akita -- \
+    profile --name fibonacci --backend optimized --format none \
+    --akita-prover-idle-spin-us 64
+```
+
+Setup and verification retain their default waiting policy. These runs append
+`_spin64us` (or the selected budget) to artifact and CSV workload names, and
+`--result-json` records `akita_prover_idle_spin_us`. The `benchmark` sweep keeps
+the default policy. Library callers can create an `AkitaProverPool`, attach it
+to the PCS setup with `with_prover_pool`, and run the surrounding prover through
+that pool's `install` method. Pool clones share workers and are not serialized
+into the verifier setup or proof.
+
 Workloads and default scales (`--scale <log2 trace length>` overrides):
 
 | `--name` | default scale |

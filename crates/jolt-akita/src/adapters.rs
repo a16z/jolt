@@ -4,10 +4,12 @@ use std::{collections::BTreeMap, fmt, io::Cursor, sync::Arc, sync::OnceLock};
 use std::{
     error::Error,
     io::{Error as IoError, ErrorKind},
+    num::NonZeroUsize,
+    time::Duration,
 };
 
 #[cfg(feature = "profiling")]
-use std::{cell::Cell, num::NonZeroUsize};
+use std::cell::Cell;
 
 use akita_config::{CommitmentConfig, TrustedScheduleCatalog};
 use akita_params::{OpeningScheduleSelection, ScheduleRowDigest};
@@ -27,7 +29,7 @@ use jolt_openings::OpeningsError;
 use jolt_poly::{MultilinearPoly, OneHotIndexOrder, OneHotPolynomial, Polynomial};
 use jolt_transcript::{BytesMsg, Encoding};
 #[cfg(feature = "parallel")]
-use rayon::{ThreadPool, ThreadPoolBuilder};
+use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 use serde::{Deserialize, Serialize};
 
 use crate::configs::{AkitaChunkProfile, JoltDenseBounded, JoltDenseFull};
@@ -373,8 +375,51 @@ pub(crate) struct FullWidthBackendSetup {
     pub(crate) backend: Arc<AkitaBackend>,
 }
 
+/// An explicitly configured pool for Akita commitment and opening work.
+///
+/// Attach it with [`AkitaProverSetup::with_prover_pool`]. Clones share workers,
+/// whose stacks have the size required by the Akita backend. Setup and verifier
+/// entry points keep their default execution policy. Use [`Self::install`] to
+/// run the surrounding Jolt prover on these workers too. This does not replace
+/// Rayon's global pool.
+#[cfg(feature = "parallel")]
+#[derive(Clone, Debug)]
+pub struct AkitaProverPool(Arc<ThreadPool>);
+
+#[cfg(feature = "parallel")]
+impl AkitaProverPool {
+    /// Creates a pool with an optional active-wait budget between work bursts.
+    ///
+    /// `None` keeps Rayon's default waiting policy. `Some(Duration::ZERO)`
+    /// skips active waiting; a positive budget lets idle workers keep searching
+    /// before they sleep. Active waiting consumes CPU time and power, and may
+    /// hurt other workloads competing for the same cores. Measure it under the
+    /// intended workload and contention rather than treating it as a default.
+    pub fn new(
+        num_threads: NonZeroUsize,
+        idle_spin_timeout: Option<Duration>,
+    ) -> Result<Self, ThreadPoolBuildError> {
+        let mut builder = ThreadPoolBuilder::new()
+            .num_threads(num_threads.get())
+            .thread_name(|index| format!("jolt-akita-prover-{index}"))
+            .stack_size(BACKEND_WORKER_STACK_BYTES);
+        if let Some(timeout) = idle_spin_timeout {
+            builder = builder.idle_spin_timeout(timeout);
+        }
+        builder.build().map(|pool| Self(Arc::new(pool)))
+    }
+
+    /// Runs a prover operation on this pool. If its PCS setup also selects
+    /// this pool, nested commitment and opening work reuses the same workers.
+    pub fn install<R: Send>(&self, operation: impl FnOnce() -> R + Send) -> R {
+        self.0.install(operation)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AkitaProverSetup {
+    #[cfg(feature = "parallel")]
+    pub(crate) prover_pool: Option<AkitaProverPool>,
     pub(crate) inherited_setup: Option<Arc<InheritedSetupClaims>>,
     pub(crate) full_width: BTreeMap<usize, Arc<FullWidthBackendSetup>>,
     pub(crate) backend_prover_setup: Option<Arc<AkitaBackendProverSetup>>,
@@ -386,6 +431,31 @@ pub struct AkitaProverSetup {
 }
 
 impl AkitaProverSetup {
+    /// Selects the pool used by this setup's commitment and opening calls.
+    /// The default setup uses Akita's existing shared backend pool. This choice
+    /// is local host state: it does not change verifier setup or proof encoding.
+    #[cfg(feature = "parallel")]
+    #[must_use]
+    pub fn with_prover_pool(mut self, pool: AkitaProverPool) -> Self {
+        self.prover_pool = Some(pool);
+        self
+    }
+
+    #[cfg_attr(
+        not(feature = "parallel"),
+        expect(
+            clippy::unused_self,
+            reason = "pool selection is host-only; serial calls execute inline"
+        )
+    )]
+    pub(crate) fn with_prover_backend<R: Send>(&self, f: impl FnOnce() -> R + Send) -> R {
+        #[cfg(feature = "parallel")]
+        if let Some(pool) = &self.prover_pool {
+            return pool.install(f);
+        }
+        with_backend_pool(f)
+    }
+
     /// Provision a power-of-two public prefix before making commitments.
     /// Reuse prepared state when it already covers the requested domain.
     pub fn with_setup_domain(mut self, field_len: usize) -> Result<Self, OpeningsError> {

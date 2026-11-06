@@ -210,18 +210,19 @@ fn prove_one_hot_opening<'a>(
     let (backend_prover_setup, backend) = setup.one_hot_backend()?;
     let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
     let scheme = setup.verifier.one_hot_scheme()?;
-    with_backend_pool(|| {
-        let proof = with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove(
-            backend_prover_setup,
-            opening,
-            backend,
-            session,
-            BasisMode::Lagrange,
-        ))?;
-        let _ = backend.trim_caches()?;
-        Ok::<_, AkitaError>(proof)
-    })
-    .map_err(prove_failed)
+    setup
+        .with_prover_backend(|| {
+            let proof = with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove(
+                backend_prover_setup,
+                opening,
+                backend,
+                session,
+                BasisMode::Lagrange,
+            ))?;
+            let _ = backend.trim_caches()?;
+            Ok::<_, AkitaError>(proof)
+        })
+        .map_err(prove_failed)
 }
 
 fn verify_one_hot_statement(
@@ -318,14 +319,15 @@ impl AkitaNativeBatching {
         // public matrix (shared by every Jolt setup through the deterministic
         // setup seed).
         let (backend_prover_setup, backend) = setup.one_hot_backend()?;
-        let mut handles = with_backend_pool(|| {
-            let _span = info_span!("AkitaNativeBatching::import_auxiliary_handles").entered();
-            handles
-                .iter()
-                .map(|handle| backend.import_commitment(handle))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .map_err(prove_failed)?;
+        let mut handles = setup
+            .with_prover_backend(|| {
+                let _span = info_span!("AkitaNativeBatching::import_auxiliary_handles").entered();
+                handles
+                    .iter()
+                    .map(|handle| backend.import_commitment(handle))
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .map_err(prove_failed)?;
         handles.push(main_backend_hint);
         let claims = OpeningClaims::from_groups(group_claims).map_err(akita_error)?;
         let scheme = setup.verifier.one_hot_scheme()?;
@@ -343,18 +345,19 @@ impl AkitaNativeBatching {
         .map_err(akita_error)?;
         let selection = opening.selection();
         let _span = info_span!("AkitaNativeBatching::backend_batched_prove_embedded").entered();
-        with_backend_pool(|| {
-            with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove_embedded(
-                backend_prover_setup,
-                opening,
-                backend,
-                transcript,
-                BasisMode::Lagrange,
-            ))?;
-            let _ = backend.trim_caches()?;
-            Ok::<_, AkitaError>(())
-        })
-        .map_err(prove_failed)?;
+        setup
+            .with_prover_backend(|| {
+                with_one_hot_family!(scheme scheme, |scheme| scheme.batched_prove_embedded(
+                    backend_prover_setup,
+                    opening,
+                    backend,
+                    transcript,
+                    BasisMode::Lagrange,
+                ))?;
+                let _ = backend.trim_caches()?;
+                Ok::<_, AkitaError>(())
+            })
+            .map_err(prove_failed)?;
         Ok(AkitaBatchProof::new(selection, Vec::new()))
     }
 
@@ -674,18 +677,19 @@ impl BatchOpeningScheme for AkitaNativeBatching {
                 let selection = opening.selection();
                 let (backend_prover_setup, backend) = setup.dense_backend()?;
                 let _span = info_span!("AkitaNativeBatching::backend_batched_prove").entered();
-                let proof = with_backend_pool(|| {
-                    let proof = scheme.batched_prove(
-                        backend_prover_setup,
-                        opening,
-                        backend,
-                        &session,
-                        BasisMode::Lagrange,
-                    )?;
-                    let _ = backend.trim_caches()?;
-                    Ok::<_, AkitaError>(proof)
-                })
-                .map_err(prove_failed)?;
+                let proof = setup
+                    .with_prover_backend(|| {
+                        let proof = scheme.batched_prove(
+                            backend_prover_setup,
+                            opening,
+                            backend,
+                            &session,
+                            BasisMode::Lagrange,
+                        )?;
+                        let _ = backend.trim_caches()?;
+                        Ok::<_, AkitaError>(proof)
+                    })
+                    .map_err(prove_failed)?;
                 (selection, proof)
             }
             AkitaHintSource::OneHot { .. } | AkitaHintSource::TraceOneHot { .. } => prove_one_hot(
