@@ -237,13 +237,15 @@ fn row_traversal_rejects_invalid_selector_at_every_position() {
                 }),
             )
             .unwrap();
+            let mut visited = false;
             let result = super::super::traversal::visit_segment_ring_row_range::<512>(
                 &columns[0],
                 0,
                 1,
-                |_, _, _| panic!("invalid selectors must not reach the consumer"),
+                |_, _, _| visited = true,
             );
             assert!(result.is_err());
+            assert!(!visited, "invalid selectors must not reach the consumer");
         }
     }
 }
