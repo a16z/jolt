@@ -32,8 +32,7 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
                     .ident
                     .clone()
                     .unwrap_or_else(|| format_ident!("value{index}"))
-                }
-    })
+            })
             .collect();
         let pattern = match &variant.fields {
             Fields::Unit => quote!(),
@@ -43,8 +42,7 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         arms.push(quote! {
             #(#attrs)* Self::#variant_name #pattern => sink.word(#tag)
                 #(&& ::jolt_claims::immutable_recipes::KeyVisit::visit(#values, sink))*,
-            }
-    });
+        });
     }
     Ok(quote! {
         mod #module {
