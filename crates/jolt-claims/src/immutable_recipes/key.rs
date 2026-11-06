@@ -61,48 +61,6 @@ macro_rules! recipe_shape {
     };
 }
 
-#[macro_export]
-macro_rules! recipe_id {
-    ($module:path; $ty:ty { $( $(#[$attr:meta])* $variant:ident
-        $( ( $($value:ident : $tuple:ty),* $(,)? ) )?
-        $( { $($field:ident : $named:ty),* $(,)? } )? = $tag:literal ),* $(,)? }) => {
-        impl $crate::immutable_recipes::KeyVisit for $ty {
-            fn visit(&self, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
-                match self {
-                    $( $(#[$attr])* Self::$variant $( ($($value),*) )? $( { $($field),* } )?
-                        => sink.word($tag)
-                            $( $(&& $crate::immutable_recipes::KeyVisit::visit($value, sink))* )?
-                            $( $(&& $crate::immutable_recipes::KeyVisit::visit($field, sink))* )?, )*
-                }
-            }
-        }
-        #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
-        impl $crate::immutable_recipes::record::RenderId for $ty {
-            fn render(&self, writer: &mut dyn ::std::fmt::Write) -> ::std::fmt::Result {
-                match self {
-                    $( $(#[$attr])* Self::$variant $( ($($value),*) )? $( { $($field),* } )? => {
-                        writer.write_str(concat!(stringify!($module), "::", stringify!($ty), "::", stringify!($variant)))?;
-                        $(
-                            writer.write_char('(')?;
-                            $( $crate::immutable_recipes::record::RenderId::render($value, writer)?; writer.write_char(',')?; )*
-                            writer.write_char(')')?;
-                        )?
-                        $(
-                            writer.write_char('{')?;
-                            $( writer.write_str(concat!(stringify!($field), ":"))?;
-                               $crate::immutable_recipes::record::RenderId::render($field, writer)?;
-                               writer.write_char(',')?; )*
-                            writer.write_char('}')?;
-                        )?
-                        Ok(())
-                    }, )*
-                }
-            }
-        }
-
-    };
-}
-
 #[doc(hidden)]
 #[macro_export]
 macro_rules! immutable_recipe_key {

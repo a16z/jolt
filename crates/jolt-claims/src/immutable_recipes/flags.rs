@@ -8,15 +8,11 @@ impl KeyVisit for CircuitFlags {
     }
 }
 
-crate::recipe_id! { jolt_riscv; InstructionFlags {
-    LeftOperandIsPC = 0,
-    RightOperandIsImm = 1,
-    LeftOperandIsRs1Value = 2,
-    RightOperandIsRs2Value = 3,
-    Branch = 4,
-    IsNoop = 5,
-    RightOperandIsRdWriteValue = 6,
-} }
+impl KeyVisit for InstructionFlags {
+    fn visit(&self, sink: &mut dyn KeySink) -> bool {
+        sink.word(u64::from(*self as u8))
+    }
+}
 
 #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
 impl super::record::RenderId for CircuitFlags {
@@ -48,5 +44,12 @@ impl super::record::RenderId for CircuitFlags {
             Self::FieldAdviceLimb => "FieldAdviceLimb",
         };
         write!(writer, "jolt_riscv::CircuitFlags::{variant}")
+    }
+}
+
+#[cfg(not(target_arch = "riscv64"))]
+impl super::record::RenderId for InstructionFlags {
+    fn render(&self, writer: &mut dyn std::fmt::Write) -> std::fmt::Result {
+        write!(writer, "jolt_riscv::InstructionFlags::{self:?}")
     }
 }
