@@ -1,5 +1,6 @@
 OUTPUT_ARCH(riscv)
 ENTRY(__jolt_start)
+ASSERT(DEFINED(__jolt_start), "jolt-sdk is incompatible with this jolt CLI; update jolt-sdk to match the CLI")
 
 MEMORY
 {
