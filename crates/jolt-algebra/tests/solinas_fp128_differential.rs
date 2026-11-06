@@ -319,6 +319,17 @@ fn fp128_offset_a7f7_matches() {
     assert!(two::is_registered_prime_offset(128, 275));
 }
 
+#[test]
+fn fp128_offset_801f_matches() {
+    let mut rng = rng();
+    check_prime128!(two::Prime128Offset801F, u128::MAX - 0x6A23_801E, &mut rng);
+    assert_eq!(
+        two::pseudo_mersenne_modulus(128, 0x6A23_801F),
+        Some(u128::MAX - 0x6A23_801E)
+    );
+    assert!(!two::is_registered_prime_offset(128, 0x6A23_801F));
+}
+
 /// `C = 2^a ± 1` moduli exercise the shift/add and shift/sub branches of
 /// `mul_c_wide` that no registered prime reaches. Primality of these moduli
 /// is unverified, so inverse checks are skipped (everything else is

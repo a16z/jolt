@@ -29,9 +29,10 @@ p(C) = 2^128 - C
 ```
 
 The generic theorems assume `0 < C < 2^32` and the reduction bound used by
-the Rust type. Both public offsets, 275 and A7F7 (`2^32 - 22537`), satisfy
-those assumptions. A separate certificate proves that the A7F7 modulus
-`0xffffffffffffffffffffffff00005809` is prime.
+the Rust type. The public offsets 275, A7F7 (`2^32 - 22537`) and 801F
+(`1780711455`) satisfy those assumptions. Separate certificates prove that the
+A7F7 modulus `0xffffffffffffffffffffffff00005809` and the 801F modulus
+`0xffffffffffffffffffffffff95dc7fe1` are prime.
 
 Every field value has one canonical integer representative from `0` through
 `p - 1`. Each kernel accepts two canonical values in two 64 bit limbs. It
