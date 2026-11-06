@@ -265,7 +265,7 @@ Both mechanisms run "in the emulator", but at different layers:
 |---|---|---|
 | **What runs** | Host code (addr2line on the host CPU) | Emulated RISC-V code (DWARF unwinder in guest) |
 | **When** | After guest terminates | During guest execution (part of panic handler) |
-| **Modifies generated code?** | No (only preserves symbols) | Yes (adds frame pointer prologues) |
+| **Modifies generated code?** | No (only preserves debug information) | Yes (adds frame pointer prologues) |
 | **Extra guest cycles** | 0 | ~446k for std, negligible for no_std |
 | **Affects no_std?** | Yes (full backtrace) | No (no built-in unwinder) |
 | **Affects std?** | Yes (full backtrace) | Yes (enables guest-side `<unknown>` backtrace) |

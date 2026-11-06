@@ -150,8 +150,8 @@ There are two ways to enable backtrace support, depending on your workflow:
   JOLT_BACKTRACE=full cargo run --release -p example
   ```
 
-- **`backtrace = "dwarf"` in `#[jolt::provable]`** — bakes symbol preservation +
-  `-Cforce-frame-pointers=yes` into the build. Use this for guests where you
+- **`backtrace = "dwarf"` in `#[jolt::provable]`** — preserves debug information and sets
+  `-Cforce-frame-pointers=yes` for the build. Use this for guests where you
   always want full debug support (test programs, dedicated debug builds), or when
   you need frame pointers for ZeroOS-level unwinding / external tooling. Not
   needed for normal debugging — `JOLT_BACKTRACE=1` is sufficient for most cases.
@@ -163,7 +163,7 @@ There are two ways to enable backtrace support, depending on your workflow:
 
   Valid values: `"off"`, `"dwarf"`, `"frame-pointers"`.
 
-You can also control symbol preservation directly via `jolt build --backtrace enable`.
+Use `jolt build --backtrace dwarf` or `--backtrace frame-pointers` to preserve debug information and add frame pointers.
 
 #### Printing and tracing
 
