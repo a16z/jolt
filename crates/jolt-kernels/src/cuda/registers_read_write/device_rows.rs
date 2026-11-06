@@ -14,6 +14,7 @@ use crate::cuda::common::error::CudaError;
 #[cfg(test)]
 use crate::cuda::common::ra_poly::COLD;
 use crate::cuda::common::read_write_matrix::{CoeffTables, DeviceCoeffs, DeviceReadWriteMatrix};
+use crate::cuda::common::xfer_stats::{self, Phase};
 
 const COEFF_WIDTH: usize = 2;
 
@@ -45,6 +46,52 @@ pub struct DeviceRegisterRows {
 }
 
 impl DeviceRegisterRows {
+    pub(super) fn copy_window(
+        &self,
+        context: &CudaKernelContext,
+        offset: usize,
+        cycles: usize,
+    ) -> Result<Self, CudaError> {
+        if cycles == 0 || offset > self.cycles || cycles > self.cycles - offset {
+            return Err(CudaError::InvariantViolation {
+                reason: "a register subdivision needs a nonempty covering resident window",
+            });
+        }
+        let copy_u32 = |source: &CudaSlice<u32>| {
+            let mut out = context.alloc_u32_unset(cycles)?;
+            context
+                .stream()
+                .memcpy_dtod(&source.slice(offset..offset + cycles), &mut out)?;
+            Ok::<_, CudaError>(out)
+        };
+        let copy_u64 = |source: &CudaSlice<u64>| {
+            let mut out = context.alloc_u64_unset(cycles)?;
+            context
+                .stream()
+                .memcpy_dtod(&source.slice(offset..offset + cycles), &mut out)?;
+            Ok::<_, CudaError>(out)
+        };
+        let result: Result<Self, CudaError> =
+            xfer_stats::timed(Phase::D2d, cycles * (3 * 4 + 4 * 8), || {
+                Ok(Self {
+                    rs1_address: copy_u32(&self.rs1_address)?,
+                    rs1_value: copy_u64(&self.rs1_value)?,
+                    rs2_address: copy_u32(&self.rs2_address)?,
+                    rs2_value: copy_u64(&self.rs2_value)?,
+                    rd_address: copy_u32(&self.rd_address)?,
+                    rd_pre_value: copy_u64(&self.rd_pre_value)?,
+                    rd_post_value: copy_u64(&self.rd_post_value)?,
+                    cycles,
+                })
+            });
+        // Finish this destination before a reverse cross-device copy can
+        // wait on its stream tail through cudarc's source readiness event.
+        let synced = context.stream().synchronize();
+        let rows = result?;
+        synced?;
+        Ok(rows)
+    }
+
     pub fn from_device(
         context: &CudaKernelContext,
         trace: &DeviceTrace,

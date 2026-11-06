@@ -7,8 +7,13 @@
 //! deferred startup, the value-coefficient array exists before the first bind.
 //!
 //! Cycle-first rounds merge sparse entries within device windows, then reduce
-//! the remaining address tables on GPU 0. Address-first execution instead uses
-//! the shared RAM-style sparse address engine on GPU 0; optimized uses register
+//! the remaining address tables on GPU 0. Padded traces with at least 2^26 cycles
+//! subdivide resident windows and distribute their halves cyclically before matrix
+//! construction, preserving logical cycle order for equality weights and claims.
+//! Subdivision requires at least a 25% reduction in the busiest GPU's row-count
+//! estimate from the nonconstant prefix, to amortize transfers and dispatches.
+//! Address-first execution uses the shared RAM-style sparse address engine on
+//! GPU 0; optimized uses register
 //! checkpoint chunks for that schedule. Final read claims are evaluated from
 //! the original register indices.
 //! Optimized omits trailing zero increments and, in address-first mode, keeps
@@ -23,6 +28,7 @@ use allocative::Key;
 #[cfg(feature = "allocative")]
 use allocative::Visitor;
 use cudarc::driver::CudaSlice;
+use cycle_balance::RegisterWindow;
 use device_rows::DeviceRegisterRows;
 use jolt_claims::protocols::jolt::relations::registers::{
     RegistersReadWriteInputClaims, RegistersReadWriteOutputClaims,
@@ -37,18 +43,23 @@ use jolt_witness::JoltWitnessPlane;
 
 use crate::cuda::witness::session_memory_window;
 
+use self::witness::RegistersReadWriteWitness;
 use super::{require_context, CudaBackend};
 use crate::cuda::common::address_major_matrix::DeviceAddressMajorMatrix;
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, DeviceFrVec};
-use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
+use crate::cuda::common::devices::{
+    fan_out, fan_out_bound, witness_windows, CycleWindow, DeviceTask,
+};
 use crate::cuda::common::error::{backend, CudaError};
 use crate::cuda::common::read_write_matrix::{CycleShard, ShardedReadWriteMatrix};
 use crate::cuda::common::split_eq::DeviceSplitEq;
+use crate::optimized::support::BundleAccess;
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+mod cycle_balance;
 pub(crate) mod device_rows;
 pub(crate) mod rs2_claim;
 pub(crate) mod witness;
@@ -296,9 +307,11 @@ impl<F: JoltField> SumcheckKernel<F> for RegistersReadWriteKernel<F> {
             .collect();
         let mut rs1_ra = F::zero();
         let mut rs2_ra = F::zero();
-        for [rs1, rs2] in fan_out(tasks).map_err(|_| SumcheckKernelError::InvariantViolation {
-            reason: "CUDA registers read-write read claims failed",
-        })? {
+        for [rs1, rs2] in
+            fan_out_bound(tasks).map_err(|_| SumcheckKernelError::InvariantViolation {
+                reason: "CUDA registers read-write read claims failed",
+            })?
+        {
             rs1_ra += rs1;
             rs2_ra += rs2;
         }
@@ -373,45 +386,61 @@ impl<F: JoltField> PrepareKernel<F, RegistersReadWriteChecking<F>> for CudaBacke
             resident.push((ordinal, device, trace, atoms));
         }
 
-        let tasks: Vec<DeviceTask<'_, PreparedShard<F>, CudaError>> = resident
+        let tasks: Vec<DeviceTask<'_, RegisterWindow, CudaError>> = resident
             .into_iter()
             .zip(windows.iter())
             .map(|((ordinal, device, trace, atoms), window)| {
-                let task: DeviceTask<'_, PreparedShard<F>, CudaError> = Box::new(move || {
+                let task: DeviceTask<'_, RegisterWindow, CudaError> = Box::new(move || {
                     let rows = DeviceRegisterRows::from_device(device, &trace, &atoms, window.len)?;
-                    let matrix = rows.matrix(device, device_gamma)?;
-                    let inc = rows.inc(device)?;
-                    let eq = DeviceSplitEq::new_window(
-                        device,
-                        r_cycle,
-                        BindingOrder::LowToHigh,
+                    Ok(RegisterWindow {
                         ordinal,
-                        shards,
-                    )?;
-                    Ok((
-                        CycleShard {
-                            ordinal,
-                            matrix,
-                            inc,
-                            eq,
+                        rows,
+                        window: CycleWindow {
+                            start: window.start,
+                            len: window.len,
                         },
-                        (
-                            ordinal,
-                            rows.into_read_addresses(),
-                            CycleWindow {
-                                start: window.start,
-                                len: window.len,
-                            },
-                        ),
-                    ))
+                    })
                 });
                 task
             })
             .collect();
+        let prepared = if log_t < 26 || shards < 2 {
+            let tasks: Vec<DeviceTask<'_, PreparedShard<F>, CudaError>> = tasks
+                .into_iter()
+                .enumerate()
+                .map(|(index, task)| {
+                    let task: DeviceTask<'_, PreparedShard<F>, CudaError> =
+                        Box::new(move || task()?.prepare(index, shards, r_cycle, device_gamma));
+                    task
+                })
+                .collect();
+            fan_out(tasks)?
+        } else {
+            let prefix = match witness.random_access() {
+                Some(view) if cycles <= view.cycles() => {
+                    BundleAccess::<RegistersReadWriteWitness>::View(&view)
+                        .constant_suffix_start(cycles)?
+                }
+                _ => cycles,
+            };
+            let rows = RegisterWindow::balance(fan_out(tasks)?, prefix)?;
+            let shards = rows.len();
+            let tasks: Vec<DeviceTask<'_, PreparedShard<F>, CudaError>> = rows
+                .into_iter()
+                .enumerate()
+                .map(|(index, window)| {
+                    let task: DeviceTask<'_, PreparedShard<F>, CudaError> =
+                        Box::new(move || window.prepare(index, shards, r_cycle, device_gamma));
+                    task
+                })
+                .collect();
+            fan_out_bound(tasks)?
+        };
 
+        let shards = prepared.len();
         let mut cycle_shards = Vec::with_capacity(shards);
         let mut read_windows = Vec::with_capacity(shards);
-        for (shard, rs2) in fan_out(tasks)? {
+        for (shard, rs2) in prepared {
             cycle_shards.push(shard);
             read_windows.push(rs2);
         }

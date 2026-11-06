@@ -21,7 +21,7 @@ use jolt_poly::BindingOrder;
 use super::address_major_matrix::DeviceAddressMajorMatrix;
 use super::context::{context_for, CudaKernelContext, BLOCK};
 use super::device::{require_fr, DeviceFrVec, LIMBS};
-use super::devices::{fan_out, DeviceTask};
+use super::devices::{fan_out_bound, DeviceTask};
 use super::error::CudaError;
 use super::split_eq::DeviceSplitEq;
 
@@ -820,6 +820,10 @@ impl DeviceReadWriteMatrix {
                              same number of bound rounds",
                 });
             }
+            // Empty windows never bind their coefficient LUTs into field arrays.
+            if window.entries == 0 {
+                continue;
+            }
             let device = context_for(*ordinal).ok_or(CudaError::InvariantViolation {
                 reason: "a read-write matrix window names an absent device",
             })?;
@@ -926,7 +930,7 @@ impl<F: JoltField> ShardedReadWriteMatrix<F> {
             })
             .collect();
         let mut total = [F::zero(); 3];
-        for part in fan_out(tasks)? {
+        for part in fan_out_bound(tasks)? {
             total[0] += part[0];
             total[1] += part[1];
             total[2] += part[2];
@@ -959,7 +963,7 @@ impl<F: JoltField> ShardedReadWriteMatrix<F> {
                 task
             })
             .collect();
-        let _ = fan_out(tasks)?;
+        let _ = fan_out_bound(tasks)?;
         if bound + 1 == self.local_rounds {
             self.collapse()?;
         }
@@ -1012,7 +1016,7 @@ mod tests {
     use jolt_poly::BindingOrder;
     use proptest::prelude::*;
 
-    use super::super::context::shared_context;
+    use super::super::context::{context_for, device_count, shared_context};
     use super::super::split_eq::DeviceSplitEq;
     use super::super::testing::{arb_point, fr, ram_matrix_cells};
     use super::{CoeffTables, DeviceReadWriteMatrix, LutEntry, MatrixEntry, MAX_COEFFS};
@@ -1147,6 +1151,8 @@ mod tests {
             let len = cycles / shards;
             let windows: Vec<CycleShard<Fr>> = (0..shards)
                 .map(|shard| {
+                    let ordinal = shard % device_count().min(2);
+                    let device = context_for(ordinal).expect("window device");
                     let base = (shard * len) as u32;
                     let entries: Vec<MatrixEntry> = fixture
                         .device
@@ -1158,14 +1164,14 @@ mod tests {
                         })
                         .collect();
                     CycleShard {
-                        ordinal: 0,
-                        matrix: DeviceReadWriteMatrix::new(context, &entries, 1, Some(gamma))
+                        ordinal,
+                        matrix: DeviceReadWriteMatrix::new(device, &entries, 1, Some(gamma))
                             .expect("window matrix"),
-                        inc: context
+                        inc: device
                             .upload(&inc_host[shard * len..(shard + 1) * len])
                             .expect("upload window inc"),
                         eq: DeviceSplitEq::<Fr>::new_window(
-                            context,
+                            device,
                             &point,
                             BindingOrder::LowToHigh,
                             shard,
@@ -1216,6 +1222,53 @@ mod tests {
                 "shards={shards}: an empty collapsed matrix would satisfy the comparison trivially",
             );
         }
+    }
+
+    #[test]
+    fn empty_indexed_windows_contribute_zero_through_collapse() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        let point = vec![fr(7); LOG_T];
+        let windows = (0..4)
+            .map(|index| {
+                let ordinal = index % device_count().min(2);
+                let device = context_for(ordinal).expect("window device");
+                CycleShard {
+                    ordinal,
+                    matrix: DeviceReadWriteMatrix::new_indexed(
+                        device,
+                        &[],
+                        &register_coeff_tables(fr(11)),
+                    )
+                    .expect("empty indexed matrix"),
+                    inc: device
+                        .upload(&[Fr::from_u64(0); (1 << LOG_T) / 4])
+                        .expect("increments"),
+                    eq: DeviceSplitEq::new_window(
+                        device,
+                        &point,
+                        BindingOrder::LowToHigh,
+                        index,
+                        4,
+                    )
+                    .expect("window equality weights"),
+                }
+            })
+            .collect();
+        let mut matrix = ShardedReadWriteMatrix::new(windows, LOG_T).expect("windowed matrix");
+        let mut eq = DeviceSplitEq::new(context, &point, BindingOrder::LowToHigh).expect("eq");
+        for round in 0..LOG_T {
+            assert_eq!(
+                matrix.quadratic_coeffs(&eq).expect("message"),
+                [Fr::from_u64(0); 3]
+            );
+            matrix.bind(fr(13), round).expect("bind");
+            eq.bind(fr(13));
+        }
+        let (matrix, inc) = matrix.take_parts().expect("collapsed matrix");
+        assert!(matrix.is_empty());
+        assert_eq!(inc.first().expect("increment"), Fr::from_u64(0));
     }
 
     struct LutFixture {
