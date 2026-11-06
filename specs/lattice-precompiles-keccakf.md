@@ -25,9 +25,9 @@ The spec has two parts:
 Two parts of Part II are open, and both depend on the opening:
 
 1. **One bit source for both readers.** A single committed bit source must answer both GF(2^128) claims (from the table relation) and prime-field claims (from the link).
-2. **Fields inside the opening.** The opening must stay inside the fields allowed for it.
+2. **A root compatible with Jolt's prime.** The opening may use larger fields internally, but Akita's current root works over a different prime than Jolt's, and its challenge argument does not carry over (II.4).
 
-Akita's binary-source commitment, which follows LaBinius, is the intended home for that opening. Its current internal field stages are the question this spec asks reviewers.
+Akita's binary-source commitment, which follows LaBinius, is the intended home for that opening. II.4 gives the construction, a candidate root and the open question.
 
 Three further items are open but do not depend on the opening:
 - where the link's trace claims are reduced (Open question 7);
@@ -402,46 +402,71 @@ $$z = \sum_j \Big( \sum_q \gamma_q\, Q_q(j)\, W_q(j) + \eta\, \mathrm{eq}(\zeta,
 
 #### II.4 Opening the table through Akita
 
+The table is opened through Akita's grouped binary-source opening. Its internal $\mathrm{GF}(2^{162})$ field and prime stages may be used inside this opening only. Claims delivered to Jolt remain in $H=\mathrm{GF}(2^{128})$ and the existing $\mathbb F_p$. The restriction to $H$ elsewhere is unchanged. Akita remains the only PCS, with one grouped opening session. A second PCS, a hash-based PCS and a parity encoding of the bits in the prime field are excluded.
+
+This choice permits a construction; it does not certify the existing experimental profile. Landing requires a prime evaluation plane over Jolt's exact prime with a same-source agreement proof, support for the full ordinary group roster, production parameters, and independent security review.
+
+**Committed source.** Commit the complete fixed-capacity record table before any link or relation challenge. Include states, parities, constants, pre-absorb words, block words, flavour and pointer bits, and padding. Inactive records hold the zero-input Keccak trajectory. Each record has $2^{17}$ bits, stored record-major with little-endian bits within each 64-bit word. Pack 128 consecutive bits into a physical carrier. Bind the layout, capacity, trace dimensions, logical word width, field basis, coordinate map, owner, setup and protocol version. A bit-table evaluation and a packed-word evaluation are different claims.
+
+For a malicious commitment, one extractor must recover a common Boolean table. Every accepted $H$-linear relation claim and every accepted $\mathbb F_p$-linear link claim must evaluate that table through the declared maps. Prime word readings use integer powers of two. All committed padding must be zero, including scalar coefficients above the 128-bit payload and unused pointer chunks on active records. Properties supplied by the reference constructor must become verifier-enforced properties of a hidden source.
+
+**Binary field switch.** There is no field embedding from $\mathrm{GF}(2^{128})$ into $\mathrm{GF}(2^{162})$, since 128 does not divide 162. Akita instead uses an injective $\mathbb F_2$-linear basis map and a sum-check reduction. Its frontend binds 128 partials before the selector challenges, then authenticates a whole-carrier terminal in the internal field. It does not cast the relation's field operations into the larger field. The public basis and coordinate permutation are part of the statement.
+
+**Prime plane and agreement.** Current Akita `dev` implements prime evaluation planes with one prime point per binary group and at most one value per committed polynomial. The plane is fixed before the response challenges and checked through the same outgoing witness and recursive opening. In the implemented profile it authenticates a prime reading over $P=2^{128}-275$ of an extracted rational source. That source must be P-integral, and the extraction failure event that establishes this is part of the security ledger. Agreement with the binary reading additionally requires an application proof that every extracted source coefficient is a signed bit or required zero.
+
+One concrete application reduction is to undo the public packing signs, obtaining the prime coefficient table $f$, and prove
+
+$$
+\sum_{x\in\{0,1\}^d}\operatorname{eq}(\tau,x)
+\bigl(f(x)(f(x)-1)+\eta Z(x)f(x)\bigr)=0,
+$$
+
+where $Z$ is the public mask of required zero positions and $d$ covers all committed coefficients, including the high padding coordinates. Sample $\eta$ and $\tau$ after commitment and use a degree-three sum-check. Its terminal must be authenticated, not merely asserted. Under the root's unit/cancellation and integer-bound hypotheses, this predicate lifts the extracted rational source to one integral signed-bit source, making both readings refer to the same bits. Booleanity only on the RAM endpoints is insufficient.
+
+**Application claims and grouping.**
+
+1. The link sends its checked terminal record readings and routes trace terminals through the RAM and bytecode reductions.
+2. The binary relation sends its three view values. After absorbing them, batch their source-linear parts in $H$ and use a 17-round degree-two reduction to a raw bit-table claim.
+3. Prove the full-source prime predicate above. After absorbing its terminal and all link readings, batch those prime linear claims and reduce them to the one point accepted by Akita's prime-plane interface. The coefficient compiler uses integer powers of two for word recomposition.
+4. Register both reduced claims against `RecordTable`, after `OneHotTrace` in the canonical ordinary group order. Open the full roster in one session with one outgoing witness, one composed setup prefix and one ordinary successor chain. Reject missing, duplicate, reordered or foreign-source obligations. Authenticate source terminals even when their public weights are zero.
+
+The multi-group architecture is specified in Akita #363; it is not yet implemented by the inspected `dev` driver. The driver still admits one binary group first and at most one restricted ordinary group second. Reuse the planned architecture and extend the Jolt adapter's final-one-hot-only assumption rather than adding a standalone table PCS.
+
+**Prime-profile compatibility remains open.** Jolt's current ordinary prime is $2^{128}-2^{32}+22537$. The implemented binary root uses $2^{128}-275$; the migration in #364–#367 targets $2^{64}-59$ with quadratic-extension challenges. These are different characteristics. Internal-field permission does not make their evaluation claims interchangeable.
+
+The existing deterministic challenge-family argument also cannot simply be reused at Jolt's prime. That prime is one modulo 243, so the degree-162 scalar polynomial splits completely; the current challenge family has more elements than the prime field. Evaluation at a root therefore collides for two distinct challenges, and their difference is not a unit. This rules out the universal unit-difference premise, not a probabilistic extraction using invertible sampled pairs. Such a route needs a proved evaluation point-mass bound for the actual signed-support family, a bad-pair forking argument, and a repriced extractor/error budget. A compatible root needs that argument, a different algebra, or a proved cross-characteristic reader. A VM-prime migration would be a separate change.
+
+**Parameters and costs.** The large block's $2^{27}$ carriers exceed the current single-group $2^{23}$ envelope. Publish the exact source geometry, response and carry bounds, induced SIS instances, selected recursive schedule, extraction/query budget and composed error ledger before admission. Neither a rank-sizing API nor a successful fixture supplies that certificate.
+
+Charge the initial commitment, terminal readings, application reductions, field switch, agreement work and changed shared suffix exactly once. Shared-session execution does not imply zero additional bytes. The reference measurements leave 8,251 and 7,679 extra bytes on the two blocks after removing disclosure, before a replacement opening. A conditional construction with compressed link/relation messages and the source-validity/fusion reductions above gives partial deltas of 15,040 and 15,306 bytes plus the signed backend and encoding change. Those are source-counted invoices conditional on the unpublished second-stage link construction and the typical-block version-two encoding, whose counts remain source-derived, not complete serialized proofs. A subsequent small-block reference run confirms the 1,640-byte link/relation saving and a further 18-byte saving in Akita encoding (86,660 to 86,642 bytes), giving $677748-1640-18=676090$ bytes for the complete reference proof; this validates that codec, not the proposed opening. Complete bytes and prover time await a compatible admitted profile and measurement; removing disclosure does not remove the dense link and relation work.
+
+**Research recommendation.** A concrete new-algebra candidate uses $\Phi_{149}(Z)$ and the rank-four carrier $\Phi_{149}(-Y^4)=\Phi_{1192}(Y)$. Both 2 and Jolt's prime have order 148 modulo 149, so the scalar polynomial is irreducible over both characteristics. Every difference of two distinct challenges from a family with one deterministic signing per support in $\{0,\ldots,147\}$ is a unit in both scalar fields. All nonzero coefficient signs must be fixed by the support; allowing opposite signs on the same singleton support would give a zero difference in characteristic two. This preserves Jolt's fields and the grouped architecture, but requires a new internal binary field, carrier kernels, profile and security certificate. Since $128\nmid148$, the candidate also uses the linear field switch, not an embedding. Its source-counted frontend substitution changes the partial deltas above to 14,958 / 15,196 bytes plus its own unknown backend change. Its response and carry bounds cover one binary owner; any shared response needs new sizing. It is a research candidate, not an admitted profile. Adopting a different internal binary field, $\mathrm{GF}(2^{148})$, is an open question for this spec and for the Akita maintainers. A probabilistic-invertibility variant could be cheaper if its missing concentration bound can be proved; a generic cross-prime bit-circuit reader is a more expensive fallback. Whether that fallback's re-commitment of all ordinary preimages fits the one-session, single-PCS requirement is also open. A VM-prime migration is a separate decision.
+
 **Requirements for an admissible opening:**
-1. **Single commitment scheme.** Akita is the only commitment scheme in the proof: no hash-based or Merkle commitment, and no second scheme instance.
-2. **Common source.** One committed bit table answers both kinds of claim, with one extractor:
-   - $H$-linear claims from the relation (II.2);
-   - $\mathbb F_p$-linear claims from the link (II.3).
 
-   This must hold for a malicious commitment, not only an honestly built one, and for queries chosen after the commitment. Prime readings recompose words with integer powers of two; binary readings use the coefficient basis of $H$. Casting a field element, matching a source identifier, or drawing both challenges from one transcript does not establish agreement.
-3. **Boolean source.** The extracted source is Boolean, including padding and unused pointer slots.
-4. **Claim fields.** Claims reach the Jolt verifier only in $H$ or $\mathbb F_p$. `jolt-field` also has `F192` ($\mathbb F_{2^{64}}[y]/(y^3+y+1)$), and `jolt-transcript` can sample it. Restricting claims to $H$ keeps one binary claim type in the claim pipeline and the stage-8 assembly; it is a scope choice, not a missing type. Whether the opening may use a larger field internally is Open question 1.
-5. **Default path.** With the feature off, the Akita proof is unchanged.
+1. One Akita PCS and grouped session, with no hash PCS or second instance.
+2. One extractor and a common Boolean source for all binary and prime claims, including malicious commitments and adaptive queries.
+3. Full committed zero support and canonical source layout, not just honest input-buffer checks.
+4. Jolt-facing claims only in H and its existing prime; internal fields are profile-bound and permitted only for this opening.
+5. Identical ordinary proof behavior and encoding when the feature is off.
 
-**What is committed.** The whole record table of II.2 and II.3, at its fixed capacity, before any link or relation challenge: round states, parities, constants, pre-absorb state, block, flavour bits, pointer chunks and padding. Inactive records hold the zero-input Keccak trajectory. Each record is $2^{17}$ bits, stored record-major with little-endian bits in each 64-bit word. The public descriptor fixes $K$, the trace dimensions, the layout, the bit order and the field basis. A bit-table evaluation and an evaluation of packed 128-bit words are different claims, so the opening binds the word width and the coordinate map between them.
+| Route | Status |
+|---|---|
+| Akita grouped binary-source opening | Selected architectural direction. Existing P prime plane, conditional agreement interface and field switch are reusable; exact-prime compatibility, full roster and production admission remain open. |
+| Standalone LaBinius appended to Jolt | Excluded as a second PCS instance; sharing a transcript alone does not merge openings. |
+| Prime-only bit commitment with a cast to H | No such field cast exists; a parity encoding in the prime field is excluded. |
+| Disclosed records | Correctness reference only; not a succinct production opening. |
 
-**How the claims reach the opening.**
-1. The link (II.3) finishes its sum-check and sends its terminal record readings: flavour bits, pointer bits and the input, block and output words at the final record point. Its trace-side terminals go through the RAM and bytecode reductions as in II.1.
-2. The relation (II.2) sends its three terminal view values. The verifier derives each view's source coefficients from the public layout, rotations and masks.
-3. Once these values are in the transcript, the source-linear claims are batched separately in each field. If the opening takes only point evaluations, one 17-round degree-two sum-check per field over the local record coordinates reduces them to one bit-table point each. The verifier evaluates the public coefficients at that point itself.
-4. Both claims are registered against one `RecordTable` group, placed after `OneHotTrace` in the grouped order of `specs/lattice-claims.md`, and opened with the ordinary groups in stage 8. A missing, duplicated or foreign-source obligation is rejected.
+**Reference mode and measurements.** The proof carries each record's canonical input state, block, flavour, start and output, absorbed before link or relation randomness. The verifier reconstructs the whole source and computes both fields' terminal readings directly. The complete prime link is proved. This establishes a reference for source interpretation, not a committed-opening theorem.
 
-| Route | Status | Cost |
-|---|---|---|
-| Akita binary-source mode: bit tables committed as in LaBinius and opened in one grouped session with the prime sources. Merged on Akita `main` in the binary-source PRs, #318 to #332. | The intended route. Its internal stages switch to $\mathrm{GF}(2^{162})$ and use prime-field root and recursion steps. It currently admits one binary group first and at most one ordinary group second, has no production security parameters, and names but does not implement the agreement proof that a prime reader of the same source needs. Its carrier relation cannot simply be moved to $H$: over $\mathbb F_2$ it is $(Y^{162}+Y^{81}+1)^4$, any root has multiplicative order 243, and $243 \nmid 2^{128}-1$, so $H$ has no root. An all-$H$ opening needs a different ring or module construction with its own binding and parameter argument. | Open |
-| Standalone LaBinius instance for the table | Sound, but it is a second commitment instance (fails 1), and it does not serve the prime link claims (fails 2). | Not priced here |
-| Prime Akita with the bits stored as integers mod $p$ | Serves the prime link and can authenticate Boolean prime readings, but does not directly supply the $H$-linear evaluations the relation needs. A proved common-source evaluation conversion is required. There is no nonzero ring homomorphism from an $\mathbb F_2$-algebra into a ring of odd characteristic, which rules out a naive conversion, but it does not settle the best conversion protocol, its granularity or its cost. | Open; not priced here |
-| Reference mode: disclose the records | Sound for testing; does not meet the production criteria. | 558,088 bytes at $K = 2^{10}$ and 71,434,248 bytes at $K = 2^{17}$, measured |
+| Block (calls, capacity) | Rows OFF to ON | Proof bytes OFF to ON | Disclosure bytes | Prover seconds OFF to ON | Verifier seconds OFF to ON |
+|---|---|---|---:|---|---|
+| 25,824,419 (918, $2^{10}$) | 6,886,179 to 4,061,493 | 111,409 to 677,748 | 558,088 | 8.38 to 13.06 | 0.08 to 1.82 |
+| 26,304,915 (94,938, $2^{17}$) | 850,024,492 to 557,900,266 | 123,161 to 71,565,088 | 71,434,248 | 562 to 1,166 | 0.18 to 213 |
 
-**Reference mode.** This is the opening used for the first end-to-end runs.
-- The proof carries the canonical record words: input state, block, flavour and start of each record. They are absorbed into the transcript before any link or relation challenge.
-- The verifier rebuilds the bit source from them and evaluates every $H$ and $\mathbb F_p$ terminal claim directly. A replacement opening must enforce what this reconstruction gives for free, for example zeros in unused pointer chunks of active records.
-- The prime link (II.3) is proved in full.
-- Its proofs and results are labelled reference-only.
+These are reference-mode measurements with one warmup and three warm runs per arm on a matched CPU host for each block; the blocks used different hosts. Neither block has an admitted committed-opening profile today. The small table lies inside the current geometry envelope; the large one does not. An independent review accepted the conditional source-validity, claim-fusion and candidate algebra/arithmetic lemmas within their stated scope. Full composition and production security approval remain open and are separate from these measurements.
 
-**Measured with the reference opening.** Two Ethereum blocks were proved and verified with the feature off and on, on one CPU host, with one warmup and three timed runs per arm.
-
-| Block (calls, $K$) | Rows, off to on | Proof bytes, off to on | Prover seconds, off to on | Verifier seconds, off to on |
-|---|---|---|---|---|
-| 25,824,419 (918, $2^{10}$) | 6,886,179 to 4,061,493 | 111,409 to 677,748 | 8.38 to 13.06 | 0.08 to 1.82 |
-| 26,304,915 (94,938, $2^{17}$) | 850,024,492 to 557,900,266 | 123,161 to 71,565,088 | 562 to 1,166 | 0.18 to 213 |
-
-The disclosed records dominate the bytes and the verifier time. Without them, the link, relation and Akita deltas still add 8,251 and 7,679 bytes respectively, before any committed opening is added. Meeting the byte target therefore also needs smaller link and relation messages. Part of the extra prover time is the dense link and relation work, which a committed opening does not remove by itself.
+Keep the reference mode labelled reference-only until the committed replacement passes. With the feature off, preserve the ordinary proof encoding and verify byte identity.
 
 #### II.5 Verifier changes (feature on)
 
@@ -572,7 +597,7 @@ The link and the opening were stubs there. End-to-end proofs on real blocks use 
 
 ## Open questions
 
-1. **Opening.** Which construction should close the two field claims of II.4 in one Akita session: an extension of Akita's binary-source mode with its larger internal binary field and prime steps admitted, provided only $H$ and $\mathbb F_p$ claims reach Jolt, or a new opening that uses only $H$ internally? Either way, the prime reader of the same source, its agreement proof, the full group order and production parameters still have to be specified.
+1. **Opening compatibility and admission.** The table opening may use Akita's existing $\mathrm{GF}(2^{162})$ internal binary field and prime stages; Jolt-facing claims stay in $H$ and the existing $\mathbb F_p$. Which reviewed root or cross-characteristic reader will make the binary-source opening compatible with that exact prime? Adopting a different internal field needs its own decision and agreement from the Akita maintainers. The remaining gates are the full-source agreement proof, implemented ordinary/binary group roster, block-sized production parameters and independent security review. Field permission alone does not close them.
 2. **Bytes.** Is 4,096 bytes per family the right target for about a third fewer rows on blocks, or should it scale with rows saved?
 3. **Capacity.** One $K$ per proving key, or a small set of keys from $2^{10}$ to $2^{18}$?
 4. **Key.** Is the block with opcode `0x0b` and funct7 `0x0a` acceptable for precompiles, or should precompiles get their own opcode?
