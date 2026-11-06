@@ -7,6 +7,7 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         return Err(Error::new_spanned(&input, "KeyVisit requires an enum"));
     };
     let name = &input.ident;
+    let module = format_ident!("__recipe_key_{}", name.to_string().to_lowercase());
     let namespace = input
         .attrs
         .iter()
@@ -76,10 +77,13 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         });
     }
     Ok(quote! {
+        mod #module {
+            use super::#name;
         impl #impl_generics ::jolt_claims::immutable_recipes::KeyVisit for #name #ty_generics #where_clause {
             fn visit(&self, sink: &mut dyn ::jolt_claims::immutable_recipes::KeySink) -> bool {
                 match self { #(#arms)* }
             }
+        }
         }
         #[cfg(not(target_arch = "riscv64"))]
         impl #impl_generics ::jolt_claims::immutable_recipes::record::RenderId for #name #ty_generics #where_clause {
