@@ -571,6 +571,39 @@ pub enum JoltDerivedId {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "immutable-recipes")]
+    #[test]
+    fn recipe_key_wire_order_and_early_stop() {
+        struct Words {
+            words: Vec<u64>,
+            limit: usize,
+        }
+        impl KeySink for Words {
+            fn word(&mut self, value: u64) -> bool {
+                assert!(self.words.len() < self.limit);
+                self.words.push(value);
+                self.words.len() < self.limit
+            }
+        }
+        let id = JoltOpeningId::Polynomial {
+            polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamRa(3)),
+            relation: JoltRelationId::RamReadWriteChecking,
+        };
+        let mut sink = Words { words: Vec::new(), limit: usize::MAX };
+        assert!(id.visit(&mut sink));
+        assert_eq!(sink.words, [0, 0, 5, 3, 7]);
+        sink.words.clear();
+        assert!(BytecodeClaimReductionPublic::OutputWeight.visit(&mut sink));
+        assert_eq!(sink.words, [1]);
+        sink.words.clear();
+        assert!(JoltDerivedId::Test.visit(&mut sink));
+        assert_eq!(sink.words, [24]);
+        sink.words.clear();
+        sink.limit = 3;
+        assert!(!id.visit(&mut sink));
+        assert_eq!(sink.words, [0, 0, 5]);
+    }
+
     #[test]
     fn advice_group_roles_fix_order_and_transcript_tags() {
         let untrusted = JoltAdviceKind::Untrusted.group_role();
