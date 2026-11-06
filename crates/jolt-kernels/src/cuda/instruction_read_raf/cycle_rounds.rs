@@ -6,7 +6,7 @@ use crate::cuda::common::context::{context_for, CudaKernelContext, BLOCK};
 use crate::cuda::common::device::{
     fr_into, fr_limbs, require_fr, require_fr_slice, DeviceFrVec, LIMBS,
 };
-use crate::cuda::common::devices::{fan_out, DeviceTask};
+use crate::cuda::common::devices::{fan_out_bound, DeviceTask};
 use crate::cuda::common::error::CudaError;
 use crate::cuda::common::primitives::reduce_lanes;
 
@@ -162,7 +162,7 @@ impl DeviceCycleRounds {
             })
             .collect();
         let mut total: Vec<Fr> = Vec::new();
-        for part in fan_out(tasks)? {
+        for part in fan_out_bound(tasks)? {
             if total.is_empty() {
                 total = part;
                 continue;
@@ -298,7 +298,7 @@ impl DeviceCycleRounds {
                     task
                 })
                 .collect();
-            let _ = fan_out(tasks)?;
+            let _ = fan_out_bound(tasks)?;
         }
         self.eq.bind(challenge);
         self.rounds_bound += 1;
@@ -328,7 +328,7 @@ impl DeviceCycleRounds {
             })
             .collect();
         let mut columns: Vec<Vec<Fr>> = Vec::new();
-        for scalars in fan_out(tasks)? {
+        for scalars in fan_out_bound(tasks)? {
             if columns.is_empty() {
                 columns = scalars.iter().map(|_| Vec::new()).collect();
             }

@@ -78,7 +78,10 @@ fn constant_tail_cycle_rounds_match_dense_polynomials() {
     };
     const LOG_T: usize = 6;
     const CYCLES: usize = 1 << LOG_T;
-    for shards in 1..=device_count().min(2) {
+    for shards in [1, 2, 4] {
+        if shards > 1 && device_count() < 2 {
+            continue;
+        }
         let width = CYCLES / shards;
         for prefix in [0, 1, 15, 16, 17, 31, 32, 33, CYCLES - 1, CYCLES] {
             for exceptional in [false, true] {
@@ -101,8 +104,9 @@ fn constant_tail_cycle_rounds_match_dense_polynomials() {
                     })
                     .collect();
                 let windows = (0..shards)
-                    .map(|ordinal| {
-                        let start = ordinal * width;
+                    .map(|index| {
+                        let start = index * width;
+                        let ordinal = index % device_count().min(2);
                         let retained = (prefix.saturating_sub(start) + 1).min(width);
                         let device = context_for(ordinal).unwrap();
                         CycleShard {

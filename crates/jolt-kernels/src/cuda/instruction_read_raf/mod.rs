@@ -3,11 +3,14 @@
 //! The address phase follows optimized's eight-variable prefix/suffix chunks
 //! over the 128-bit lookup index. CUDA balances retained row/weight pairs across
 //! GPUs for these reductions, then binds the small phase tables on GPU 0.
-//! The original resident windows remain available for cycle rounds and claims.
+//! The cycle partition stays independent of the address partition.
 //! Lookup-table prefix definitions and combination rules remain host-owned.
 //!
 //! At the address/cycle boundary, CUDA materializes the combined value and
-//! every virtual RA factor on each device. Optimized keeps RA factors lazy
+//! every virtual RA factor on each device. Before expansion, large, uneven cycle
+//! windows are split into halves and distributed cyclically across GPUs to balance
+//! retained rows. Their logical order is preserved for equality weights and final
+//! claims. Optimized keeps RA factors lazy
 //! through its early cycle rounds. CUDA and optimized use split-eq cycle
 //! reductions and evaluate final table/RAF flags from the original rows;
 //! CUDA reads those flags from the resident packed columns.
@@ -25,6 +28,7 @@ mod address_balance;
 pub(super) mod address_driver;
 pub(super) mod address_phase;
 mod combine;
+mod cycle_balance;
 mod cycle_handoff;
 mod cycle_rounds;
 mod padding;
@@ -68,7 +72,9 @@ use super::{require_context, CudaBackend};
 use crate::cuda::common::context::{context_for, CudaKernelContext};
 use crate::cuda::common::device::{fr_into, require_fr, require_fr_slice, DeviceFrVec};
 use crate::cuda::common::device_columns::device_trace_columns;
-use crate::cuda::common::devices::{fan_out, witness_windows, CycleWindow, DeviceTask};
+use crate::cuda::common::devices::{
+    fan_out, fan_out_bound, witness_windows, CycleWindow, DeviceTask,
+};
 use crate::cuda::common::error::backend;
 use crate::cuda::common::error::CudaError;
 use crate::optimized::support::BundleAccess;
@@ -169,7 +175,7 @@ impl<F: JoltField> DeviceInstructionReadRaf<F> {
             .collect();
         let mut flags: Vec<Fr> = Vec::new();
         let mut raf = Fr::from(0u64);
-        for (part, part_raf) in fan_out(tasks)? {
+        for (part, part_raf) in fan_out_bound(tasks)? {
             if flags.is_empty() {
                 flags = part;
             } else {
@@ -261,6 +267,16 @@ impl<F: JoltField> DeviceInstructionReadRaf<F> {
             .collect::<Result<_, _>>()
             .map_err(backend("cuda address-phase handoff"))?;
 
+        // Extra windows add copies and launches; keep smaller traces on their
+        // resident partition.
+        if self.rounds - ADDRESS_BITS >= 24 {
+            if let Some(shards) = RowShard::balance_cycles(&self.row_shards)
+                .map_err(backend("cuda cycle-window balance"))?
+            {
+                self.row_shards = shards;
+            }
+        }
+
         let host_v = &host_v;
         let table_values = &table_values;
         let ra_count = self.ra_count;
@@ -301,7 +317,7 @@ impl<F: JoltField> DeviceInstructionReadRaf<F> {
                 task
             })
             .collect();
-        let shards = fan_out(tasks).map_err(backend("cuda address-phase handoff"))?;
+        let shards = fan_out_bound(tasks).map_err(backend("cuda address-phase handoff"))?;
 
         self.cycle = Some(
             DeviceCycleRounds::from_windows(&self.r_reduction, shards, self.rounds - ADDRESS_BITS)
