@@ -195,7 +195,7 @@ class CalibrationTests(unittest.TestCase):
 
     def test_canonical_reference_refuses_wrong_actor_attempt_and_artifact_identity(self):
         actual = dict(id=456, run_attempt=1, repository={'full_name': 'a16z/jolt'},
-            head_repository={'full_name': 'a16z/jolt'}, name='End-to-end benchmark ingest',
+            head_repository={'full_name': 'a16z/jolt'}, name='e2e-bench ingest 123-1',
             path='.github/workflows/e2e-bench-ingest.yml', event='workflow_dispatch', head_branch='main',
             status='completed', conclusion='success', actor={'login': ingest.APP}, head_sha='a' * 40)
         artifact = dict(id=99, name='jolt-e2e-456-1', expired=False, size_in_bytes=1,
@@ -224,7 +224,7 @@ class CalibrationTests(unittest.TestCase):
         files.update({'ingest.json': json.dumps(receipt).encode(),
                       'calibration/reference.json': calibration.encoded(reference)})
         actual = dict(id=456, run_attempt=1, repository={'full_name': 'a16z/jolt'},
-            head_repository={'full_name': 'a16z/jolt'}, name='End-to-end benchmark ingest',
+            head_repository={'full_name': 'a16z/jolt'}, name='e2e-bench ingest 123-1',
             path='.github/workflows/e2e-bench-ingest.yml', event='workflow_dispatch', head_branch='main',
             status='completed', conclusion='success', actor={'login': ingest.APP}, head_sha='a' * 40,
             display_title='e2e-bench ingest 123-1')

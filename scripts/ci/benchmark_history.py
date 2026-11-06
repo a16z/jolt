@@ -253,11 +253,12 @@ def gh(path):
 
 
 def validate_source(run, run_id, attempt):
+    # REST run names expand run-name; the repository and workflow path identify the source.
     if (
         run["id"] != run_id or run["run_attempt"] != attempt
         or run["repository"]["full_name"] != REPOSITORY
         or (run.get("head_repository") or {}).get("full_name") != REPOSITORY
-        or run["path"] != WORKFLOW_FILE or run["name"] != WORKFLOW
+        or run["path"] != WORKFLOW_FILE
         or run["event"] != "workflow_dispatch" or run["head_branch"] != "main"
         or run["actor"]["login"] != APP
         or run["status"] != "completed" or run["conclusion"] != "success" or not revision(run["head_sha"])

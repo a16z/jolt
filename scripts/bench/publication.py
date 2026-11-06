@@ -179,7 +179,6 @@ def canonical_artifact(artifact_id, run_id, attempt):
     if (actual['id'] != run_id or actual['run_attempt'] != attempt
             or actual['repository']['full_name'] != 'a16z/jolt'
             or (actual['head_repository'] or {}).get('full_name') != 'a16z/jolt'
-            or actual['name'] != 'End-to-end benchmark ingest'
             or actual['path'] != '.github/workflows/e2e-bench-ingest.yml'
             or actual['event'] != 'workflow_dispatch' or actual['head_branch'] != 'main'
             or actual['status'] != 'completed' or actual['conclusion'] != 'success'
