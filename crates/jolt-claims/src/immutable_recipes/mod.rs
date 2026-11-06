@@ -2,23 +2,16 @@
 
 mod flags;
 mod key;
+use crate::protocols::composed::ComposedOpeningId;
+use crate::protocols::field_inline::{
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
+};
+use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 pub use key::{KeySink, KeyVisit};
-/// Exact source-owned base eligibility for generic composed relations.
-pub struct BasePermit<S> {
-    marker: PhantomData<fn() -> S>,
-}
-impl<S> BasePermit<S> {
-    pub(crate) fn new() -> Self {
-        Self {
-            marker: PhantomData,
-        }
-    }
-}
 
 use crate::{Expr, Source, Term};
 use jolt_field::{ImmutableRecipeField, Ring, IMMUTABLE_RECIPE_MODULUS};
-use std::cmp::Ordering;
-use std::{collections::BTreeSet, marker::PhantomData, slice::Iter};
+use std::{cmp::Ordering, collections::BTreeSet, slice::Iter};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
@@ -184,7 +177,8 @@ impl<'a, O, D, C> Table<'a, O, D, C> {
 
 pub struct Recipe<'a, F, O, D, C> {
     record: &'a Record<'a, O, D, C>,
-    _field: ImmutableRecipeField<F>, // Zero-size proof of the admitted guest field.
+    // Zero-size capability proving that F uses the admitted guest field implementation.
+    _field: ImmutableRecipeField<F>,
     unit_first: bool,
 }
 
@@ -439,12 +433,6 @@ pub fn evaluate_canonical<F: Ring, O, D, C, E>(
         derived,
     )
 }
-
-use crate::protocols::composed::ComposedOpeningId;
-use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
-};
-use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 
 pub type RecipeLookupResult<'a, F, O, D, C> = Result<Option<Recipe<'a, F, O, D, C>>, RecipeError>;
 

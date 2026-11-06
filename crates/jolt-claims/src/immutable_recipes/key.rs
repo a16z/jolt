@@ -103,7 +103,7 @@ macro_rules! immutable_base_recipe {
 #[macro_export]
 macro_rules! immutable_recipe_admitted {
     ($owner:ident; @base $family:literal) => {
-        $crate::SymbolicSumcheck::immutable_shape_permit(&$owner.base).is_some()
+        $crate::SymbolicSumcheck::immutable_shape_permit(&$owner.base)
     };
     ($owner:ident; $($field:ident),+ $(,)?) => {
         true
