@@ -7,9 +7,9 @@ pub type FieldInlineExpr<F> =
     Expr<F, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldInlineRelationId {
@@ -22,9 +22,9 @@ pub enum FieldInlineRelationId {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldRegistersClaimReductionChallenge {
@@ -32,9 +32,9 @@ pub enum FieldRegistersClaimReductionChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldRegistersClaimReductionPublic {
@@ -42,9 +42,9 @@ pub enum FieldRegistersClaimReductionPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldRegistersReadWriteChallenge {
@@ -52,9 +52,9 @@ pub enum FieldRegistersReadWriteChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldRegistersReadWritePublic {
@@ -62,9 +62,9 @@ pub enum FieldRegistersReadWritePublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldRegistersValEvaluationPublic {
@@ -72,9 +72,9 @@ pub enum FieldRegistersValEvaluationPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldRegistersIncClaimReductionChallenge {
@@ -84,9 +84,9 @@ pub enum FieldRegistersIncClaimReductionChallenge {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldInlineChallengeId {
@@ -96,9 +96,9 @@ pub enum FieldInlineChallengeId {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldInlineCommittedPolynomial {
@@ -111,9 +111,9 @@ impl FieldInlineCommittedPolynomial {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldInlineVirtualPolynomial {
@@ -131,9 +131,9 @@ pub enum FieldInlineVirtualPolynomial {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldInlinePolynomialId {
@@ -142,9 +142,9 @@ pub enum FieldInlinePolynomialId {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldInlineOpeningId {
@@ -181,9 +181,9 @@ impl FieldInlineOpeningId {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldRegistersIncClaimReductionPublic {
@@ -197,9 +197,9 @@ pub enum FieldRegistersIncClaimReductionPublic {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From, TryInto,
 )]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
 #[cfg_attr(
     feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
     recipe_namespace(crate::protocols::field_inline)
 )]
 pub enum FieldInlineDerivedId {
