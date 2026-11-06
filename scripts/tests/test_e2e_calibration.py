@@ -166,10 +166,10 @@ class CalibrationTests(unittest.TestCase):
             ingest.calibration_reference(files, root, plan, dispatch, config, receipt)
 
     def test_reference_selection_uses_newest_valid_exact_base_and_48_hour_expiry(self):
-        result, _, _, config, _ = null_fixture()
+        result, *_ = null_fixture()
         raw = json.dumps(result).encode()
         source = dict(plan_run_id=123, plan_run_attempt=1, ingest_run_id=456, ingest_run_attempt=1)
-        reference = calibration.reference(raw, result, source, json.loads(config))
+        reference = calibration.reference(raw, result, source)
         probe = copy.deepcopy(result)
         probe.update(started_at='2026-11-05T11:00:00Z', finished_at='2026-11-05T11:10:00Z')
         probe['suite']['repetitions'] = 3
@@ -277,9 +277,9 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(probe, original)
 
     def test_verify_calibration_requires_a_bootstrap_and_all_configured_resolved_rendered_cells(self):
-        result, _, _, config, _ = null_fixture(19)
+        result, *_ = null_fixture(19)
         reference = calibration.reference(json.dumps(result).encode(), result, dict(tier='calibration',
-            plan_run_id=123, plan_run_attempt=1, ingest_run_id=456, ingest_run_attempt=1), json.loads(config))
+            plan_run_id=123, plan_run_attempt=1, ingest_run_id=456, ingest_run_attempt=1))
         probe = copy.deepcopy(result)
         probe['suite']['repetitions'] = 3
         for case in probe['cases']:

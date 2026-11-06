@@ -16,7 +16,7 @@ The PR matrix has 33 cells and launches 264 proof processes, including warmups.
 `pr-baseline.json` preserves the initial three-cell, 24-proof matrix. Measured
 timing and noise references apply to their exact artifact inputs, not to an
 unmeasured later kernel or a future run. Automatic references use the exact-base
-lifecycle below; the measured bands below belong to the pinned manual experiment. No host installation, target setting change, or live check publication is part of this draft.
+lifecycle below; the measured bands below belong to the pinned manual experiment.
 
 ## Workloads and tiers
 
@@ -39,7 +39,10 @@ used; no protocol parameter is adjusted for the benchmark.
 | 24 | `2^24` | All five | — |
 | 24 | `2^27` | SHA2 only | — |
 
-The operation counts below determine fixed input bytes. Main retains its existing
+### PR and main inputs
+
+The operation counts below determine fixed input bytes for PR and main cases.
+Nightly input counts are defined separately in `suites.json`. Main uses
 `2^18` / `2^20` / `2^22` inputs at 1 / 8 / 24 cores respectively.
 
 | Workload | `2^16` | `2^18` | `2^20` | `2^22` | `2^24` | PR `2^27` |
@@ -67,19 +70,19 @@ the input generator uses no PRNG.
 |---|---|---:|
 | `pr` | The matrix above: 33 supported points, 264 fresh processes across both legs | 1 / 3 |
 | `main` | All five workloads, all three core counts, both PCS: 30 points | 1 / 3 |
-| `nightly` | The original 60 points plus Fibonacci/Akita and Fibonacci/Dory at `2^28`, and Fibonacci/Akita at `2^30`: 63 supported points | 1 / 5 |
+| `nightly` | Two larger inputs per main point, plus 24-core Fibonacci/Akita and Fibonacci/Dory at `2^28`, and Fibonacci/Akita at `2^30`: 63 supported points | 1 / 5 |
 
-The new nightly Fibonacci inputs are 16000000 operations at `2^28` and 64000000
-at `2^30`, all at 24 cores. Main and nightly retain their six unsupported
-Ethereum-block rows, so their configured totals are 36 and 69 cases. The prior
-five one-core `2^18` PR cases leave only the PR tier; other tiers are unchanged.
-An unchanged definition retains its ID, including the five `2^24` Akita cases
-already present in nightly. New definitions receive new IDs.
-Main and nightly launch 120 and 378 proof processes respectively, before the
-726-process calibration refresh. A one-commit main push therefore launches 846
-proof processes; nightly launches 1104. Unsupported rows launch none.
+Nightly Fibonacci inputs use 16000000 operations at `2^28` and 64000000 at
+`2^30`, all at 24 cores. Main and nightly each retain six unsupported
+Ethereum-block rows, for configured totals of 36 and 69 cases. Main still runs
+the five one-core `2^18` Akita cases. Unchanged definitions retain their IDs;
+new definitions receive new IDs.
 
-The historical sub-600-second interval below excludes compilation. The new PR
+Main and nightly launch 120 and 378 proof processes respectively, before a
+calibration refresh. A refresh adds 726 processes; a one-commit main job with a
+refresh launches 846 and nightly launches 1104. Unsupported rows launch none.
+
+The historical sub-600-second interval below excludes compilation. The PR
 route includes local builds and has no measured sub-600-second promise. A warm
 Cargo directory is not proof that a changed PR will compile quickly. Process
 count alone establishes neither a duration nor a future timing guarantee.
@@ -90,7 +93,7 @@ the matching harness. The original measurement artifacts retain their original
 configuration bytes and source revisions. Larger inputs remain bundled for
 separately scoped measurements.
 
-### November 6 size probes and runtime planning
+### Size probes
 
 The size probes ran on shared CherryPika, an EPYC 9354P, not jolt-bench's EPYC
 9254. They used source and harness
@@ -134,47 +137,35 @@ Fibonacci/Dory `2^30` is omitted for time, not an observed memory failure: its
 153.502 GiB RSS is below the supplied target MemTotal of 188.408 GiB, but six
 1257.241-second processes would add 125.72 minutes to nightly.
 
-Runtime planning uses full `process_s`, not only proving time. Existing cells use
-their 22 observed null processes in
-[ingest 42292532404](https://github.com/a16z/jolt/actions/runs/42292532404/attempts/1).
-New measured cells use the single CherryPika process. The five unmeasured
-24-core `2^20` cells use the existing 8-core `2^20` process times as an explicit
-model assumption, without assuming a parallel speedup. The resulting sum is
-127.619 seconds for one process per PR cell.
+The nightly worker limit is 240 minutes for a 223.86-minute planning scenario
+(108.21 minutes for six repetitions of the one-process-per-case 60-case pilot +
+68.86 for the large Fibonacci cases + 46.79 for calibration), not a completed
+nightly measurement.
 
-| Planned interval | Process-count basis | Forecast, not a measured new run |
-|---|---:|---:|
-| PR proof execution | `8 * 127.619` seconds; 264 processes | 17.02 minutes |
-| PR build plus execution | Above plus the last observed 29.45-minute two-leg preparation | 46.46 minutes; keep the 120-minute limit |
-| Null refresh on each main push/nightly | `22 * 127.619` seconds; 726 processes | 46.79 host-minutes |
-| Main push with one history commit | Above plus the observed 17.94-minute main-history interval | 64.74 host-minutes; each further commit adds its history interval |
-| Bootstrap proof execution | `30 * 127.619` seconds; 990 processes | 63.81 minutes, plus its local build |
+### Capacity
 
-The build anchor comes from
-[PR2313 ingest 42287204032](https://github.com/a16z/jolt/actions/runs/42287204032/attempts/1);
-it is not a guaranteed preparation time for another revision. The previous
-17-cell null took 18.03 minutes on the target, so this model adds 28.77 refresh
-minutes per main push. The five `2^24` Akita cases cost 13.57 refresh minutes and
-the selected SHA2/Akita `2^27` case costs 13.58. The excluded Dory SHA2/BTreeMap
-pairs at `2^24` and `2^27` would add 19.83 and 170.65 minutes respectively;
-all five Akita `2^27` cases would cost 71.16 minutes rather than the selected
-13.58. Every retained PR case still gets its own ten-pair reference.
+The planning model assigns 46.79 host-minutes to a calibration refresh and
+17.94 host-minutes to one main-history commit: a one-commit main job with a
+refresh is 64.74 host-minutes. These are forecasts, not throughput guarantees;
+they exclude PR jobs and depend on the measured hardware and inputs.
 
-No completed full-nightly measurement was found in the eight retained successful
-ingests examined on November 6. The only scheduled producer,
-[42178739170](https://github.com/a16z/jolt/actions/runs/42178739170), emitted a
-disabled receipt and ran no proofs. The historical October 31 60-cell pilot took
-1082.094 seconds with one process per case, not the full nightly repetition
-count. Repeating that cost six times gives 108.21 minutes. The three additions
-contribute 6.47 + 37.73 + 24.65 = 68.86 proxy minutes; adding the new 46.79-minute
-null gives a 223.86-minute planning scenario. The nightly worker limit is raised
-to 240 minutes; main and calibration remain 180. This is not a measured full-run
-duration or an upper bound: the pilot used a different source/harness, and
-transfer, orchestration and contention can change the result.
+Without skipped refreshes, fourteen one-commit main pushes plus one nightly
+would occupy 18.84 host-hours per day (about 78%) before any PR jobs; nineteen
+such pushes plus nightly would exceed 24 hours. These are capacity scenarios,
+not measured daily throughput.
 
-The root-owned installed `jolt-bench-entry` must be updated for that limit to be
-live. The dispatcher's nightly submitted-state deadline must also leave room
-above the worker limit. This repository change installs neither component.
+After acquiring the host lock, a main-push job checks the live main head before
+calibration. If its planned tip has already been superseded, it skips only the
+null and records the reason and both revisions in `calibration/skipped.json`.
+All planned history commits still run. A failed or malformed head lookup keeps
+calibration enabled. Manual main, nightly and calibration-tier jobs retain their
+refreshes. Each skipped null saves the model's 46.79 minutes; savings depend on
+queue timing and do not change the cost of a still-current tip.
+
+A PR based on a skipped tip retains its medians and signed changes. If there is
+no other unexpired exact-base reference, its check is neutral with reference
+unavailable; the sticky comment still lists executed sizes and qualifying
+changes. A reference from a matching nightly or bootstrap can still apply.
 
 ### Historical PR interval
 
@@ -585,13 +576,15 @@ comparisons. Proof sizes remain in the raw samples.
 
 ### External calibration lifecycle
 
-Every main push calibrates its tip once, before measuring all new first-parent
-commits. Nightly and manual main/nightly runs refresh their pinned tip. The null
+A main push calibrates its tip once unless the host finds that tip already
+superseded, then measures all new first-parent commits. Nightly and manual
+main/nightly runs refresh their pinned tip. The null
 uses the verified hosted tip bundle for both legs and every PR cell in the pinned
 suite, with one warmup and ten measured pairs per cell. For `N` PR cells this is
-`2 * (1 + 10) * N = 22N` proof processes. There is no extra
-build or timeout increase for ordinary refreshes. Failed calibration preserves
-independent history results; only a complete null produces a reference.
+`2 * (1 + 10) * N = 22N` proof processes. Ordinary refreshes add no build. They
+run inside the tier's job limit, and nightly's 240 minutes includes the refresh.
+Failed or skipped calibration preserves independent history results; only a
+complete null produces a reference.
 
 The target binds `calibration/raw/benchmark-results.json` by path and SHA256 in
 its root result. Trusted ingest validates the plan, hosted manifest digests,
@@ -883,11 +876,6 @@ The history publisher collects the ingest workflow's canonical artifacts, keeps 
 under `dev/prover-history/` on the existing `gh-pages` source. It never modifies
 `dev/bench/`. Nightly remains at 07:00 UTC. An interrupted or missing result is
 unavailable, never a pass.
-
-The historical pilot ran each of the original 60 supported nightly cases once.
-The expanded 63-case repeated nightly duration and variation remain unmeasured;
-the 240-minute limit follows the planning scenario above, not a completed sweep.
-Hosted-job and queue overhead remain unmeasured; no finish guarantee is established.
 
 Rerun all jobs together: a plan from an older run attempt is rejected.
 

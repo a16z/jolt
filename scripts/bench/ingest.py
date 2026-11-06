@@ -227,7 +227,7 @@ def calibration_reference(files, root, plan, dispatch, config, receipt):
             raise ValueError('bootstrap root differs from probe')
     return calibration.reference(raw, result, dict(receipt,
         tier=plan['tier'], build_index_sha256=dispatch['build_index_sha256'],
-        manifest_digests=dispatch['manifest_digests']), bench.parse_json(config))
+        manifest_digests=dispatch['manifest_digests']))
 
 
 def check_result(job_id, documents, exit_code, summary):

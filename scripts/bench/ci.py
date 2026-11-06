@@ -356,6 +356,18 @@ def execute(args, *, locked=False):
 
 def calibration_phase(args, plan):
     tip = plan['runs'][-1]['head']
+    if plan['tier'] == 'main' and plan['provenance'].get('event') == 'push':
+        try:
+            current = subprocess.check_output(['git', 'ls-remote', '--exit-code', 'origin',
+                'refs/heads/main'], cwd=bench.ROOT, text=True, stderr=subprocess.PIPE, timeout=30)
+        except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            current = ''
+        head = re.fullmatch(r'([0-9a-f]{40})\trefs/heads/main\n?', current)
+        if head and head[1] != tip:
+            bench.write_json(args.out / 'calibration/skipped.json', {
+                'reason': 'main tip superseded before calibration', 'planned_tip': tip,
+                'observed_main': head[1], 'checked_at': bench.utc_now()})
+            return False
     started, begin = bench.utc_now(), time.perf_counter()
     manifests = verified_bundles(args, plan, {tip})
     artifacts = {'id': args.artifact_id, 'index_sha256': args.index_sha256,

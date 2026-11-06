@@ -115,19 +115,13 @@ def timestamp(value):
     return parsed
 
 
-def reference(raw, result, source, config):
-    expected_ids = {case['id'] for case in config['tiers']['pr']['cases']}
-    if (result['kind'] != 'null' or result['status'] != 'complete' or not expected_ids
-            or len(result['cases']) != len(expected_ids)
-            or {case['id'] for case in result['cases']} != expected_ids
+def reference(raw, result, source):
+    if (result['kind'] != 'null' or result['status'] != 'complete'
             or result['suite']['warmups'] != 1 or result['suite']['repetitions'] != 10):
         raise ValueError('calibration is not a complete PR-suite ten-pair null')
     builds = [{k: v for k, v in build.items() if k != 'leg'} for build in result['builds']]
     if len(builds) != 2 or builds[0] != builds[1]:
         raise ValueError('calibration legs differ')
-    processes = len(expected_ids) * 2 * (result['suite']['warmups'] + result['suite']['repetitions'])
-    if sum(len(case['samples']) for case in result['cases']) != processes:
-        raise ValueError(f'calibration lacks {processes} proof processes')
     cells = []
     for case in result['cases']:
         if case['status'] != 'complete' or any(s['status'] != 'complete' or s['exit_code'] != 0 for s in case['samples']):
