@@ -419,6 +419,78 @@ class BuildCacheTests(unittest.TestCase):
         self.assertEqual(self.git('show', 'HEAD:new-source', cwd=source),
                          'new commit after the independent clone')
 
+    def test_shallow_harness_repairs_cached_history_before_build_metadata_is_read(self):
+        self.build('original')
+        source = bench.cache_root() / 'builds/x86-64/release/source'
+        for contents in ('missing-parent', 'tip'):
+            (self.workspace / 'unrelated').write_text(contents)
+            self.git('add', 'unrelated')
+            self.commit()
+        self.revision = self.git('rev-parse', 'HEAD')
+        shallow = self.root / 'shallow-harness'
+        self.git('clone', '--depth=1', self.workspace.as_uri(), str(shallow))
+        self.git('fetch', '--no-tags', str(shallow), self.revision, cwd=source)
+        self.git('checkout', '--detach', self.revision, cwd=source)
+        metadata = ['git', 'log', '-1', '--date=short', '--format=%H %h %cd', '--abbrev=9']
+        self.assertNotEqual(subprocess.run(metadata, cwd=source, capture_output=True).returncode, 0)
+        logged = bench.logged
+
+        def build_with_metadata(argv, cwd, env, log):
+            if argv[:2] == ['cargo', 'build']:
+                actual = subprocess.check_output(metadata, cwd=cwd, env=env, text=True).split()
+                self.assertEqual(actual, self.git(*metadata[1:]).split())
+            return logged(argv, cwd, env, log)
+
+        with patch.object(bench, 'ROOT', shallow), patch.object(bench, 'logged', side_effect=build_with_metadata):
+            self.build('shallow')
+
+    @unittest.skipUnless(hasattr(os, 'sched_getaffinity'), 'requires Linux process affinity')
+    def test_profile_symlinks_stay_outside_results_and_scratch_is_removed(self):
+        config = {'schema_version': 1, 'metric_contract': 1, 'id': 'owned-fixture',
+            'tiers': {'pr': {'warmups': 0, 'repetitions': 1, 'cases': [{
+                'id': 'owned-case', 'workload': 'fibonacci', 'pcs': 'akita', 'backend': 'optimized',
+                'physical_cores': 1, 'scale_log2': 3,
+                'input': {'parameters': {'operations': 1}, 'seed': None}}]}}}
+        bench.write_json(self.config, config)
+        self.git('add', str(self.config))
+        self.commit()
+        self.revision = self.git('rev-parse', 'HEAD')
+        manifest, _ = self.build('bundle', tier='pr')
+        bundle = self.root / 'bundle'
+        binary = bundle / 'jolt-prover-akita'
+        binary.write_text(f'#!{sys.executable}\n' + '''import json, os, sys
+from pathlib import Path
+scratch = Path.cwd()
+assert Path(os.environ['TMPDIR']) == scratch
+artifacts = scratch / 'benchmark-runs'
+(artifacts / 'run').mkdir(parents=True)
+(artifacts / 'latest').symlink_to('run', target_is_directory=True)
+print(scratch, flush=True)
+Path(sys.argv[sys.argv.index('--result-json') + 1]).write_text(json.dumps({
+    'workload': 'fibonacci', 'pcs': 'akita', 'backend': 'optimized', 'scale_log2': 3,
+    'e2e_s': 0.003, 'prove_s': 0.001, 'setup_s': 0.001, 'verify_s': 0.0001,
+    'verify_single_s': 0.0001, 'proof_bytes': 12, 'trace_rows': 4, 'padded_trace_rows': 8,
+    'public_output': [42]}))
+''')
+        binary.chmod(0o700)
+        manifest['binaries']['akita'] = bench.bundle_file(binary, bundle)
+        bench.write_json(bundle / 'manifest.json', manifest)
+        cpu = min(os.sched_getaffinity(0))
+        host = {'architecture': 'x86_64', 'cpu_flags': ['sse2'],
+                'topology': [{'cpu': cpu, 'core': 0, 'socket': 0, 'online': True}]}
+        args = argparse.Namespace(config=self.config, tier='pr', case=[], kind='null',
+            warmups=None, repetitions=None, out=self.root / 'result',
+            base=bundle / 'manifest.json', head=bundle / 'manifest.json')
+        with patch.object(bench, 'host_snapshot', return_value=host), \
+                patch.object(bench, 'provenance', return_value=({'run_id': None}, {})):
+            result = bench.run(args)
+        self.assertEqual(result['status'], 'complete')
+        self.assertFalse(any(path.is_symlink() for path in args.out.rglob('*')))
+        for log in args.out.glob('samples/*/process.log'):
+            scratch = Path(log.read_text().strip())
+            self.assertFalse(scratch.is_relative_to(args.out))
+            self.assertFalse(scratch.exists())
+
     def test_pr_build_failure_retries_with_the_legs_own_harness(self):
         preferred = self.revision
         profile = 'crates/jolt-prover/src/profile.rs'
