@@ -107,6 +107,8 @@
 #[cfg(test)]
 mod tests;
 
+mod key_visit;
+
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::quote;
@@ -114,6 +116,14 @@ use syn::{
     parse_macro_input, Attribute, Data, DeriveInput, Error, Field, Fields, GenericParam, Generics,
     Ident, Path, Result, Type,
 };
+
+/// Streams declaration-order variant tags followed by payloads in field order.
+#[proc_macro_derive(KeyVisit, attributes(recipe_namespace))]
+pub fn derive_key_visit(input: TokenStream) -> TokenStream {
+    key_visit::expand(parse_macro_input!(input as DeriveInput))
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
 
 /// Owning relation comes from the struct-level `#[relation(..)]`.
 #[proc_macro_derive(OutputClaims, attributes(relation, opening, protocol))]

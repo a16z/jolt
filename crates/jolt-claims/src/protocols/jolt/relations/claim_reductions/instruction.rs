@@ -78,7 +78,7 @@ impl SymbolicSumcheck for ClaimReduction {
     type Challenges<F> = InstructionClaimReductionChallenges<F>;
     type Inputs<C> = InstructionClaimReductionInputClaims<C>;
     type Outputs<C> = InstructionClaimReductionOutputClaims<C>;
-    crate::immutable_symbolic_recipe!(4, JOLT, Jolt; shape);
+    crate::immutable_symbolic_recipe!(InstructionClaimReduction, JOLT, Jolt, input_only = false, unit_first = true; shape);
     fn new(shape: TraceDimensions) -> Self {
         Self { shape }
     }
