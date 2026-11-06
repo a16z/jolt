@@ -71,9 +71,9 @@ def validate_verdict(answer: object, paths: set[str]) -> dict:
     return answer
 
 
-def request_cost(input_tokens: int, output_tokens: int, cached: int = 0, written: int = 0) -> float:
+def request_cost(input_tokens: int, output_tokens: int, cached: int = 0, written: int = 0, *, long_context: bool = False) -> float:
     # https://developers.openai.com/api/docs/models/gpt-6.1-sol#pricing
-    input_rate, output_rate = (4, 15) if input_tokens > 272_000 else (2, 10)
+    input_rate, output_rate = (4, 15) if long_context or input_tokens > 272_000 else (2, 10)
     fresh = input_tokens - cached - written
     return ((fresh + cached * .05 + written * 1.25) * input_rate + output_tokens * output_rate) / 1_000_000
 
@@ -122,7 +122,7 @@ class ModelBroker:
                 raise AgentFailure("invalid classifier input token count")
             if count > MAX_INPUT_TOKENS:
                 raise AgentFailure("classifier per-request input cap")
-            if self.cost_usd + request_cost(count, output, written=count) > MAX_SPEND_USD:
+            if self.cost_usd + request_cost(count, output, written=count, long_context=True) > MAX_SPEND_USD:
                 raise AgentFailure("classifier spend cap")
             self.inflight = True
             status, payload = self.request("/v1/responses", body, {})

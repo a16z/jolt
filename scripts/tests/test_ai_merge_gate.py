@@ -1401,6 +1401,7 @@ class ClassifierAgentTests(unittest.TestCase):
             (AGENT.MAX_INPUT_TOKENS + 1, 0, AGENT.MODEL, "per-request input cap"),
             (AGENT.MAX_INPUT_TOKENS, AGENT.MAX_SPEND_USD, AGENT.MODEL, "spend cap"),
             (300_000, 47, AGENT.MODEL, "spend cap"),
+            (272_000, 48.04, AGENT.MODEL, "spend cap"),
             (None, 0, AGENT.MODEL, "input token count"),
             (100, 0, "other-model", "unexpected requested model"),
         ):
