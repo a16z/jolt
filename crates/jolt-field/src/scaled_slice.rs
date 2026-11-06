@@ -31,7 +31,7 @@ macro_rules! fp128_methods {
                 // arithmetic consumes these limbs before canonical validation.
                 let limbs: &mut [[u64; 2]] =
                     unsafe { core::slice::from_raw_parts_mut(dst.as_mut_ptr().cast(), dst.len()) };
-                $crate::field_inline::setup_weight_tiles::add_scaled_tile(&scale.0, src, limbs);
+                $crate::field_inline::scaled_slice::add_scaled_tile(&scale.0, src, limbs);
                 for value in dst {
                     *value = Self::from_inline_limbs(value.0);
                 }

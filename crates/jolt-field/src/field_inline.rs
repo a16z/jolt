@@ -98,7 +98,7 @@ macro_rules! fixed {
 
 mod emit {
     use super::*;
-    include!("field_inline/terminal_emit.rs");
+    include!("field_inline/dot_product_emit.rs");
     /// Accumulate one word into a destination previously cleared by `clear`.
     #[inline(always)]
     pub fn load_accumulate(dst: u32, offset: usize, base: *const u64) {
@@ -315,7 +315,7 @@ mod emit {
 
 mod guest {
     use super::*;
-    include!("field_inline/terminal_guest.rs");
+    include!("field_inline/dot_product_guest.rs");
     static READY: AtomicBool = AtomicBool::new(false);
 
     /// Prove that the unit computes modulo `modulus`. Accumulating the
@@ -687,4 +687,4 @@ pub(crate) mod scale {
 pub use guest::sum_signed_bytes;
 
 #[cfg(feature = "setup-weight-tiles")]
-pub(crate) mod setup_weight_tiles;
+pub(crate) mod scaled_slice;
