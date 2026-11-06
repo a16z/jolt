@@ -14,7 +14,34 @@ pub trait SymbolicSumcheck {
     type OpeningId;
     type DerivedId;
     type ChallengeId;
-
+    #[cfg(feature = "immutable-recipes")]
+    fn immutable_shape_visit(
+        &self,
+        _family: u64,
+        _sink: &mut dyn crate::immutable_recipes::KeySink,
+    ) -> bool {
+        false
+    }
+    #[cfg(feature = "immutable-recipes")]
+    fn immutable_shape_permit(&self) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
+    #[cfg(feature = "immutable-recipes")]
+    fn immutable_recipe<F: ::jolt_field::Ring>(
+        &self,
+        _phase: crate::immutable_recipes::Phase,
+    ) -> crate::immutable_recipes::RecipeLookupResult<
+        '_,
+        F,
+        Self::OpeningId,
+        Self::DerivedId,
+        Self::ChallengeId,
+    > {
+        Ok(None)
+    }
     /// The construction input that fully determines this relation's structure (its
     /// expressions and sumcheck spec). Field-independent for every relation.
     type Shape;
@@ -98,6 +125,30 @@ pub fn referenced_openings<F, O: Ord, D, C>(
         }
     }
     openings
+}
+
+#[cfg(not(feature = "immutable-recipes"))]
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_symbolic_recipe {
+    ($($unused:tt)*) => {};
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_key_delegate {
+    ($family:ident; $($field:ident),+ $(,)?) => {
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_shape_permit(&self) -> bool {
+            true
+        }
+        #[cfg(feature = "immutable-recipes")]
+        fn immutable_shape_visit(&self, family: u64, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
+            if family != $crate::immutable_recipes::RecipeTag::$family as u64 { return false; }
+            let Self { $($field),+ } = self;
+            true $(&& $crate::immutable_recipes::KeyVisit::visit($field, sink))+
+        }
+    };
 }
 
 #[cfg(test)]

@@ -104,7 +104,7 @@ impl SymbolicSumcheck for OuterRemainder {
         let (az, bz) = self.output_factor_expressions();
         derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
     }
-
+    crate::immutable_symbolic_recipe!(SpartanOuterRemainder, COMPOSED, Composed, input_only = false, unit_first = true; shape);
     /// The openings of `az` and `bz`, without expanding their product: each
     /// expanded term is a distinct weight-indexed monomial with coefficient
     /// one, so no term cancels and the product references exactly these.
@@ -165,12 +165,19 @@ impl SymbolicSumcheck for ProductUniskip {
         lift(self.base.output_expression())
     }
 }
-
 #[derive(Clone)]
 pub struct ProductRemainder {
     base: base::ProductRemainder,
 }
 impl SymbolicSumcheck for ProductRemainder {
+    #[cfg(feature = "immutable-recipes")]
+    crate::immutable_base_recipe!(
+        SpartanProductRemainder,
+        COMPOSED,
+        Composed,
+        input_only = false,
+        unit_first = true
+    );
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
@@ -230,6 +237,14 @@ where
         Shape = BytecodeReadRafDimensions,
     >,
 {
+    #[cfg(feature = "immutable-recipes")]
+    crate::immutable_base_recipe!(
+        BytecodeReadRaf,
+        COMPOSED,
+        Composed,
+        input_only = false,
+        unit_first = true
+    );
     type RelationId = JoltRelationId;
     type OpeningId = ComposedOpeningId;
     type DerivedId = JoltDerivedId;
@@ -259,7 +274,6 @@ where
         lift(self.base.output_expression())
     }
 }
-
 impl<B> ReadRafAddressPhase<B> {
     fn bytecode_input_extension_expr<F: Ring>() -> ComposedExpr<F> {
         let gamma_public = |challenge: BytecodeReadRafChallenge| -> ComposedExpr<F> {

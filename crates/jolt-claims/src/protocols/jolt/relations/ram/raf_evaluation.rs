@@ -49,7 +49,7 @@ impl SymbolicSumcheck for RafEvaluation {
     type Challenges<F> = crate::NoChallenges<F>;
     type Inputs<C> = RamRafEvaluationInputClaims<C>;
     type Outputs<C> = RamRafEvaluationOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(RamRafEvaluation, JOLT, Jolt, input_only = false, unit_first = true; shape);
     fn new(shape: RamRafEvaluationDimensions) -> Self {
         Self { shape }
     }

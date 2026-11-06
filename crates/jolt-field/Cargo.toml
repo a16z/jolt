@@ -51,6 +51,8 @@ field-inline-guest = ["dep:jolt-riscv"]
 field-inline-guest-bn254 = ["field-inline-guest"]
 field-inline-guest-fp128 = ["field-inline-guest"]
 
+immutable-recipes = []
+
 [dev-dependencies]
 # The spine test's oracle field must satisfy `JoltField`, which requires
 # `Allocative` under the `allocative` feature; integration tests do not see

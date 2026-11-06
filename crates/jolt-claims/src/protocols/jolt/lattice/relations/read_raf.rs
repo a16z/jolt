@@ -99,7 +99,7 @@ impl SymbolicSumcheck for LatticeReadRafAddressPhase {
     type Challenges<F> = BytecodeReadRafAddressPhaseChallenges<F>;
     type Inputs<C> = LatticeReadRafAddressPhaseInputClaims<C>;
     type Outputs<C> = BytecodeReadRafAddressPhaseOutputClaims<C>;
-
+    crate::immutable_key_delegate!(BytecodeReadRaf; shape);
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }
     }
@@ -157,7 +157,7 @@ impl SymbolicSumcheck for LatticeReadRafCyclePhase {
     type Challenges<F> = BytecodeReadRafCyclePhaseChallenges<F>;
     type Inputs<C> = BytecodeReadRafInputClaims<C>;
     type Outputs<C> = LatticeBytecodeReadRafOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(BytecodeReadRafAddress, JOLT, Jolt, input_only = false, unit_first = false; shape);
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }
     }
@@ -199,7 +199,7 @@ impl SymbolicSumcheck for LatticeReadRafCyclePhaseCommitted {
     type Challenges<F> = BytecodeReadRafCyclePhaseCommittedChallenges<F>;
     type Inputs<C> = BytecodeReadRafInputClaims<C>;
     type Outputs<C> = LatticeBytecodeReadRafOutputClaims<C>;
-
+    crate::immutable_symbolic_recipe!(BytecodeReadRafCycle, JOLT, Jolt, input_only = true, unit_first = true; shape);
     fn new(shape: BytecodeReadRafDimensions) -> Self {
         Self { shape }
     }

@@ -60,3 +60,33 @@ macro_rules! recipe_shape {
         }
     };
 }
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_recipe_key {
+    ($owner:ident, $sink:ident; @base $family:ident) => {
+        $crate::SymbolicSumcheck::immutable_shape_visit(&$owner.base, $crate::immutable_recipes::RecipeTag::$family as u64, $sink)
+    };
+    ($owner:ident, $sink:ident; $($field:ident),+ $(,)?) => {{
+        let Self { $($field),+ } = $owner;
+        true $(&& $crate::immutable_recipes::KeyVisit::visit($field, $sink))+
+    }};
+}
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_base_recipe {
+    ($tag:ident, $family:ident, $native:ident, input_only = $input_only:literal, unit_first = $unit_first:literal) => {
+        $crate::immutable_symbolic_recipe!($tag, $family, $native, input_only = $input_only, unit_first = $unit_first; @base $tag);
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! immutable_recipe_admitted {
+    ($owner:ident; @base $family:ident) => {
+        $crate::SymbolicSumcheck::immutable_shape_permit(&$owner.base)
+    };
+    ($owner:ident; $($field:ident),+ $(,)?) => {
+        true
+    };
+}

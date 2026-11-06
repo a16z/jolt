@@ -126,6 +126,7 @@ pub fn increment_reduction_output<F: Ring, S: IncrementReductionIds>(
 macro_rules! instantiate_value_reduction {
     (
         relation = $relation:ident,
+        $(recipe = { $($recipe:tt)* },)?
         id = $id:expr,
         ids = ($relation_id:ty, $opening_id:ty, $derived_id:ty, $challenge_id:ty),
         dimensions = $dimensions:ty,
@@ -165,7 +166,7 @@ macro_rules! instantiate_value_reduction {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-
+            $($($recipe)*)?
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }
@@ -201,6 +202,7 @@ pub(crate) use instantiate_value_reduction;
 macro_rules! instantiate_increment_reduction {
     (
         relation = $relation:ident,
+        $(recipe = { $($recipe:tt)* },)?
         id = $id:expr,
         ids = ($relation_id:ty, $opening_id:ty, $derived_id:ty, $challenge_id:ty),
         dimensions = $dimensions:ty,
@@ -234,7 +236,7 @@ macro_rules! instantiate_increment_reduction {
             type Challenges<F> = $challenges<F>;
             type Inputs<C> = $inputs<C>;
             type Outputs<C> = $outputs<C>;
-
+            $($($recipe)*)?
             fn new(shape: $dimensions) -> Self {
                 Self { shape }
             }

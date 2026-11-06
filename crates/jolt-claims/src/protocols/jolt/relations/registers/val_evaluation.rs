@@ -39,6 +39,7 @@ pub struct ValEvaluation {
 
 twist::instantiate_val_evaluation! {
     relation = ValEvaluation,
+    recipe = { crate::immutable_symbolic_recipe!(RegistersValEvaluation, JOLT, Jolt, input_only = false, unit_first = true; shape); },
     id = JoltRelationId::RegistersValEvaluation,
     ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),
     dimensions = TraceDimensions,
