@@ -252,7 +252,9 @@ def render_pr_comment(result, summary_path, details_url, exit_code=0):
     if exit_code or result['status'] != 'complete' or result['kind'] != 'comparison':
         lines.append('Comparison unavailable; see full results for execution status.')
     elif rows:
-        lines += ['Cells with more than 3% change in time or peak RSS; positive means an increase.', '',
+        lines += ['Rows with more than 3% change in time or peak resident set size (RSS) are shown; '
+                  'positive means an increase. '
+                  'PCS is the polynomial commitment scheme: Akita is lattice-based; Dory is curve-based.', '',
                   '| Workload / PCS | Physical cores | End-to-end base / head (s) | Signed time change | Peak RSS base / head (bytes) | Signed RSS change |',
                   '|---|---:|---:|---:|---:|---:|', *rows]
     else:
