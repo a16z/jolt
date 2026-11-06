@@ -199,12 +199,12 @@ pub trait Field: Ring {
             .zip(b)
             .fold(<Self as Zero>::zero(), |acc, (x, y)| acc + *x * *y)
     }
-    crate::terminal_contraction::field_methods!();
+    crate::dot_product::field_methods!();
     #[cfg(feature = "signed-byte-sum")]
     crate::signed_byte_sum::field_methods!();
-    crate::algebra::fill_ingress_field_method!();
+    crate::algebra::scale_slice_field_method!();
     #[cfg(feature = "setup-weight-tiles")]
-    crate::setup_weight_tiles::field_methods!();
+    crate::scaled_slice::field_methods!();
     /// `Σ ±terms[i]`: each term is subtracted when its flag is set and added
     /// otherwise. Fields with a batched guest path (a register-resident sum
     /// read out once) override this.
@@ -689,7 +689,7 @@ pub(crate) fn signed_i16_dot_fold<F: Field>(
 // The default multiplies in software; a field with a field-inline guest path
 // overrides it to load the scale once per call. The trait gains the method
 // from this macro, invoked inside the trait.
-macro_rules! fill_ingress_field_method {
+macro_rules! scale_slice_field_method {
     () => {
         /// `dst[i] = src[i] * scale` over the shorter of the two slices.
         #[inline]
@@ -700,4 +700,4 @@ macro_rules! fill_ingress_field_method {
         }
     };
 }
-pub(crate) use fill_ingress_field_method;
+pub(crate) use scale_slice_field_method;
