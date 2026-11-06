@@ -18,6 +18,7 @@ use rayon::prelude::*;
 use super::challenge::{challenge_ring, challenge_times_ring, challenge_times_ring_transpose};
 use super::lift::{ChallengeRing, ClaimTable, DenseTerm, SValues, WitnessShape};
 use super::linear::BlockTarget;
+use super::linear_factored::{ColumnScales, ScaleWindow};
 use super::params::RESPONSE_LOG_BASIS;
 use super::response::{
     alpha_pow_ring_dim, alpha_powers, PlaneLayout, ResponseRows, ResponseSegment,
@@ -27,24 +28,35 @@ use super::segments::{SegmentMask, SegmentTable};
 use super::WhiteoutError;
 
 /// `eq(point, ·)` over `{0,1}^k` with `point[0]` the least significant bit.
-fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
+pub(super) fn eq_table<F: JoltField>(point: &[F]) -> Vec<F> {
     EqPolynomial::new(point.iter().rev().copied().collect()).evaluations()
 }
 
-/// `eq(point, j)` split at bit `lo_bits`.
+/// `eq(point, j)` split at bit `lo_bits`, with `eq(r_hi, h)` split again at
+/// bit `split` as `top[h >> split]·low[h mod 2^split]`, so that no table of
+/// `eq(r_hi, ·)` is written out.
 struct EqDual<F> {
     lo: Vec<F>,
-    hi: Vec<F>,
+    low: Vec<F>,
+    top: Vec<F>,
+    /// `r_hi`, for the narrower splits of [`Self::window_sums`].
+    hi_point: Vec<F>,
     lo_bits: usize,
+    split: usize,
 }
 
 impl<F: JoltField> EqDual<F> {
-    fn new(point: &[F], lo_bits: usize) -> Self {
+    fn new(point: &[F], lo_bits: usize, split: usize) -> Self {
         let (lo, hi) = point.split_at(lo_bits.min(point.len()));
+        let split = split.min(hi.len());
+        let (low, top) = hi.split_at(split);
         Self {
             lo: eq_table(lo),
-            hi: eq_table(hi),
+            low: eq_table(low),
+            top: eq_table(top),
+            hi_point: hi.to_vec(),
             lo_bits,
+            split,
         }
     }
 
@@ -54,17 +66,81 @@ impl<F: JoltField> EqDual<F> {
             .get(j & ((1 << self.lo_bits) - 1))
             .copied()
             .unwrap_or_default();
-        lo * self.hi.get(j >> self.lo_bits).copied().unwrap_or_default()
+        lo * self.hi(j >> self.lo_bits)
+    }
+
+    /// `eq(r_hi, h)`.
+    fn hi(&self, h: usize) -> F {
+        self.low_at(h) * self.top_at(h >> self.split)
     }
 
     /// `eq(r_hi, j / 2^lo_bits)`.
     fn high(&self, j: usize) -> F {
-        self.hi.get(j >> self.lo_bits).copied().unwrap_or_default()
+        self.hi(j >> self.lo_bits)
+    }
+
+    /// `low[h mod 2^split]`.
+    fn low_at(&self, h: usize) -> F {
+        self.low
+            .get(h & ((1 << self.split) - 1))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn top_at(&self, index: usize) -> F {
+        self.top.get(index).copied().unwrap_or_default()
     }
 
     /// `eq(r_lo, ·)` on `[offset, offset + len)`.
     fn low(&self, offset: usize, len: usize) -> &[F] {
         self.lo.get(offset..offset + len).unwrap_or_default()
+    }
+
+    /// `Σ_w w.weight·eq(r_hi, w.start + l)` for `l < len`, over windows whose
+    /// starts agree mod `2^split`: one sum of top entries per run of
+    /// `2^split` positions, then one product per position. Below the
+    /// tables' own split `s`, `eq(r_hi, ·)` splits at `split` as
+    /// `low'[h mod 2^split]·mid[(h >> split) mod 2^(s − split)]·top[h >> s]`,
+    /// with `low'` and `mid` the tables of `r_hi`'s bits below `split` and
+    /// in `[split, s)`: at most `2^s` entries each.
+    fn window_sums(&self, windows: &[ScaleWindow<F>], len: usize, split: usize) -> Vec<F> {
+        let split = split.min(self.split);
+        let gap = self.split - split;
+        let narrow = (gap > 0).then(|| {
+            (
+                eq_table(self.hi_point.get(..split).unwrap_or_default()),
+                eq_table(self.hi_point.get(split..self.split).unwrap_or_default()),
+            )
+        });
+        let (low, mid): (&[F], &[F]) = match &narrow {
+            Some((low, mid)) => (low, mid),
+            None => (&self.low, &[]),
+        };
+        let top_at = |index: usize| match narrow {
+            Some(_) => {
+                mid.get(index & ((1 << gap) - 1))
+                    .copied()
+                    .unwrap_or_default()
+                    * self.top_at(index >> gap)
+            }
+            None => self.top_at(index),
+        };
+        let mask = (1 << split) - 1;
+        let residue = windows.first().map_or(0, |window| window.start & mask);
+        debug_assert!(windows.iter().all(|window| window.start & mask == residue));
+        let runs = (residue + len).div_ceil(1 << split);
+        (0..runs)
+            .into_par_iter()
+            .flat_map_iter(|run| {
+                let sum = windows.iter().fold(F::zero(), |sum, window| {
+                    sum + window.weight * top_at((window.start >> split) + run)
+                });
+                let positions = (run << split).max(residue) - residue
+                    ..(((run + 1) << split) - residue).min(len);
+                positions
+                    .map(move |l| sum * low.get((residue + l) & mask).copied().unwrap_or_default())
+            })
+            .collect()
     }
 }
 
@@ -201,11 +277,17 @@ impl<F: JoltField, const D: usize> SValues<F> for FactoredS<F, D> {
     }
 }
 
-/// `eq(r, ·)` read through `e`'s layout: `z` factored over `s`, `V` and
-/// `θ` as field values, `V`'s digit columns as scales per `Ê` quarter, and
-/// each compression witness as its entries.
+/// `eq(r, ·)` read through `e`'s layout: `z` factored over `s`, its scales
+/// also as windows of `eq(r_hi, ·)`, `V` and `θ` as field values, `V`'s
+/// digit columns as scales per `Ê` quarter, and each compression witness as
+/// its entries.
 struct Dual<F: JoltField, const D: usize> {
     z: FactoredS<F, D>,
+    /// `z.scales` as windows of `eq(r_hi, ·)`, one per digit plane of each
+    /// response segment's plane block.
+    z_windows: Vec<ScaleWindow<F>>,
+    /// `r_hi`: the point past its `log₂ D` low variables.
+    hi_point: Vec<F>,
     v: Vec<F>,
     /// Per `V` digit column (64 digits), its scale, and which 64-entry
     /// block of `eq(r_lo, ·)` it reads.
@@ -298,10 +380,14 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
         drop(v_span);
         // Item 3: N z − f − c t, with the compressed t from their witnesses.
         let nz_span = tracing::info_span!("whiteout_weight_nz").entered();
-        let nz = self
-            .setup
-            .linear()
-            .apply_factored(&dual.z.scales, &dual.z.lo)?;
+        let nz = self.setup.linear().apply_factored(
+            &ColumnScales {
+                dense: &dual.z.scales,
+                windows: &dual.z_windows,
+                point: &dual.hi_point,
+            },
+            &dual.z.lo,
+        )?;
         let mut linear = flat(&nz);
         for (value, f) in linear.iter_mut().zip(&dual.v) {
             *value -= *f;
@@ -423,13 +509,19 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                 "point does not cover the response vector",
             ));
         }
-        let eq = EqDual::new(point, lo_bits);
+        // Split `eq(r_hi, ·)` in halves; a response block whose planes sit
+        // `width/D` elements apart is summed at that stride's lowest set bit
+        // (`EqDual::window_sums`), so all its planes share one residue.
+        let split = (point.len() - lo_bits).div_ceil(2);
+        let eq = EqDual::new(point, lo_bits, split);
         let radix = F::from_u64(1 << RESPONSE_LOG_BASIS);
         let mut dual = Dual {
             z: FactoredS {
                 scales: Vec::with_capacity(self.setup.table().num_coefficients() / D),
                 lo: CyclotomicRing::from_slice(eq.low(0, D)),
             },
+            z_windows: Vec::new(),
+            hi_point: point.get(lo_bits..).unwrap_or_default().to_vec(),
             v: Vec::new(),
             v_columns: Vec::new(),
             theta: vec![F::zero(); THETA_COEFFICIENTS],
@@ -458,24 +550,70 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                             "a response segment is not on native elements",
                         ));
                     }
-                    dual.z.scales.par_extend(
-                        (0..coefficients / D)
-                            .into_par_iter()
-                            .map(|element| planar(planes, element * D, &|j| eq.high(j))),
-                    );
+                    // Plane `p` of a plane block starting at coefficient
+                    // `k` reads `eq(r_hi, ·)` from digit `offset +
+                    // index(k, p)` on, one entry per native element.
+                    let first = dual.z.scales.len();
+                    for block in (0..coefficients).step_by(planes.width.max(1)) {
+                        let elements =
+                            first + block / D..first + (block + planes.width).min(coefficients) / D;
+                        let windows = dual.z_windows.len();
+                        let mut power = F::one();
+                        for plane in 0..planes.planes {
+                            dual.z_windows.push(ScaleWindow {
+                                elements: elements.clone(),
+                                start: (offset + planes.index(block, plane)) / D,
+                                weight: power,
+                            });
+                            power *= radix;
+                        }
+                        dual.z.scales.extend(eq.window_sums(
+                            dual.z_windows.get(windows..).unwrap_or_default(),
+                            elements.len(),
+                            (planes.width / D).trailing_zeros() as usize,
+                        ));
+                    }
                 }
                 (ResponseSegment::V { coefficients }, Some(planes)) => {
                     // A_D reads V's digits one 64-digit ring per column, each
-                    // inside one quarter of eq(r_lo, ·).
-                    if offset % CHALLENGE_RING_DIM != 0 {
+                    // inside one quarter of eq(r_lo, ·). So a ring's
+                    // coefficient `i` is `Σ_q eq(r_lo, 64q + i)·S_q`, with
+                    // `S_q` its planes' radix-weighted eq(r_hi, ·) entries
+                    // in quarter `q`.
+                    if offset % CHALLENGE_RING_DIM != 0 || planes.width != CHALLENGE_RING_DIM {
                         return Err(WhiteoutError::InvalidRelation(
                             "V's digits do not start on a challenge ring",
                         ));
                     }
+                    let quarters = D / CHALLENGE_RING_DIM;
                     dual.v.par_extend(
                         (0..coefficients)
                             .into_par_iter()
-                            .map(|k| planar(planes, k, &|j| eq.at(j))),
+                            .step_by(CHALLENGE_RING_DIM)
+                            .flat_map_iter(|block| {
+                                let mut sums = vec![F::zero(); quarters];
+                                let mut power = F::one();
+                                for plane in 0..planes.planes {
+                                    let digit = offset + planes.index(block, plane);
+                                    if let Some(sum) =
+                                        sums.get_mut((digit % D) / CHALLENGE_RING_DIM)
+                                    {
+                                        *sum += power * eq.high(digit);
+                                    }
+                                    power *= radix;
+                                }
+                                let eq = &eq;
+                                (0..CHALLENGE_RING_DIM.min(coefficients - block)).map(move |i| {
+                                    sums.iter().enumerate().fold(F::zero(), |value, (q, sum)| {
+                                        value
+                                            + *sum
+                                                * eq.low(q * CHALLENGE_RING_DIM + i, 1)
+                                                    .first()
+                                                    .copied()
+                                                    .unwrap_or_default()
+                                    })
+                                })
+                            }),
                     );
                     for column in
                         (offset..offset + segment.num_digits()).step_by(CHALLENGE_RING_DIM)
@@ -489,10 +627,18 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
                         *dst = planar(planes, k, &|j| eq.at(j));
                     }
                 }
+                // One eq(r_hi, ·) entry per native element's run of digits.
                 (ResponseSegment::Compression { digits, .. }, _) => dual.compression.push(
-                    (offset..offset + digits)
+                    (offset / D..(offset + digits).div_ceil(D))
                         .into_par_iter()
-                        .map(|j| eq.at(j))
+                        .flat_map_iter(|element| {
+                            let high = eq.hi(element);
+                            let eq = &eq;
+                            ((element * D).max(offset)..((element + 1) * D).min(offset + digits))
+                                .map(move |j| {
+                                    eq.low(j % D, 1).first().copied().unwrap_or_default() * high
+                                })
+                        })
                         .collect(),
                 ),
                 (_, None) => {
@@ -515,15 +661,16 @@ impl<F: JoltField, const D: usize> ResponseStatement<'_, F, D> {
 )]
 mod tests {
     use jolt_crypto::lattice::CHALLENGE_RING_DIM;
-    use jolt_field::{CyclotomicRing, Field};
+    use jolt_field::{CyclotomicRing, Field, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
     use super::super::fixture::F;
     use super::super::lift::{ChallengeRing, DenseTerm, SValues};
+    use super::super::linear_factored::ScaleWindow;
     use super::super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
     use super::super::SegmentTable;
-    use super::FactoredS;
+    use super::{eq_table, EqDual, FactoredS};
 
     /// `dense_sum` on a factored vector against `Σ_k σ(ℓ̂_k)·x_k` over the
     /// vector written out coefficient by coefficient. With `D = 64`, the
@@ -576,5 +723,45 @@ mod tests {
                     }))
             });
         assert_eq!(x.dense_sum(&table, &dense).unwrap(), expected);
+    }
+
+    /// `window_sums` at every split up to the balanced one against
+    /// `Σ_w weight_w·eq(r_hi, start_w + l)` with `eq(r_hi, ·)` written out:
+    /// the narrower splits rebuild `top` from `mid` and the balanced `top`.
+    #[test]
+    fn window_sums_match_the_written_out_eq_at_every_split() {
+        let mut rng = ChaCha20Rng::seed_from_u64(0x0_3c);
+        let (lo_bits, hi_bits): (usize, usize) = (3, 10);
+        let point: Vec<F> = (0..lo_bits + hi_bits)
+            .map(|_| F::random(&mut rng))
+            .collect();
+        let balanced = hi_bits.div_ceil(2);
+        let dual = EqDual::new(&point, lo_bits, balanced);
+        let eq_hi = eq_table(&point[lo_bits..]);
+        for split in 0..=balanced {
+            let step = 1 << split;
+            let residue = 1 % step;
+            let windows: Vec<ScaleWindow<F>> = [1, 3, 7]
+                .into_iter()
+                .map(|block| ScaleWindow {
+                    elements: 0..0,
+                    start: block * step + residue,
+                    weight: F::random(&mut rng),
+                })
+                .collect();
+            let len = 5 * step + 3;
+            let expected: Vec<F> = (0..len)
+                .map(|l| {
+                    windows.iter().fold(F::zero(), |sum, window| {
+                        sum + window.weight * eq_hi[window.start + l]
+                    })
+                })
+                .collect();
+            assert_eq!(
+                dual.window_sums(&windows, len, split),
+                expected,
+                "split {split}"
+            );
+        }
     }
 }

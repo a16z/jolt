@@ -12,9 +12,9 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use jolt_crypto::lattice::{PreparedMatrix, CHALLENGE_RING_DIM};
-use jolt_field::{lift_biased, CanonicalEncoding, CyclotomicRing, Field, LIFT_BIAS};
-
-use rayon::prelude::*;
+use jolt_field::{
+    lift_biased, CanonicalEncoding, CyclotomicRing, Field, WithAccumulator, LIFT_BIAS,
+};
 
 use super::WhiteoutError;
 use crate::secret::SecretVec;
@@ -70,7 +70,7 @@ impl GadgetTerm {
     /// the `d` native coefficients of `s` at `input.start + (row·levels +
     /// p)·d`. [`RingLinearMap::apply`], its adjoint and its factored form
     /// all read `G` here.
-    fn planes<F: Field>(&self, d: usize) -> Vec<(usize, F, Range<usize>)> {
+    pub(super) fn planes<F: Field>(&self, d: usize) -> Vec<(usize, F, Range<usize>)> {
         let radix = F::from_u64(1 << self.log_basis);
         let rows = self.input.len() / (self.levels * d).max(1);
         let mut out = Vec::with_capacity(rows * self.levels);
@@ -213,59 +213,15 @@ impl<F: Field + CanonicalEncoding, const D: usize> RingLinearMap<F, D> {
         Ok(())
     }
 
-    /// `N·x` for `x` laid out like `s` whose native element `E` is
-    /// `scales[E]·lo`: a column combination and one ring product per row,
-    /// with no product per matrix entry.
-    pub fn apply_factored(
-        &self,
-        scales: &[F],
-        lo: &CyclotomicRing<F, D>,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
-        let blocks: Vec<Vec<CyclotomicRing<F, D>>> = self
-            .blocks
-            .par_iter()
-            .enumerate()
-            .map(
-                |(index, block)| -> Result<Vec<CyclotomicRing<F, D>>, WhiteoutError> {
-                    let _span = tracing::info_span!(
-                        "whiteout_nz_product",
-                        block = self.profile_label(index)
-                    )
-                    .entered();
-                    let columns = scales
-                        .get(block.input.start / D..block.input.end / D)
-                        .ok_or(WhiteoutError::InvalidRelation(
-                            "linear block reads outside s",
-                        ))?;
-                    let mut rows: Vec<CyclotomicRing<F, D>> = block
-                        .matrix
-                        .combine_columns(columns)?
-                        .into_iter()
-                        .map(|row| row * *lo)
-                        .collect();
-                    if let Some(gadget) = &block.gadget {
-                        // Each plane is one native element: `scale·lo`.
-                        for (row, power, range) in gadget.planes::<F>(D) {
-                            let scale = scales
-                                .get(range.start / D)
-                                .ok_or(WhiteoutError::InvalidRelation("gadget reads outside s"))?;
-                            let row = rows.get_mut(row).ok_or(WhiteoutError::InvalidRelation(
-                                "gadget rows differ from M's",
-                            ))?;
-                            *row -= lo.scale(&(*scale * power));
-                        }
-                    }
-                    Ok(rows)
-                },
-            )
-            .collect::<Result<_, _>>()?;
-        Ok(blocks.into_iter().flatten().collect())
+    /// The blocks of `N`, in output order.
+    pub(super) fn blocks(&self) -> &[LinearBlock<F, D>] {
+        &self.blocks
     }
 
     /// The verifier profile's name for block `index`: the residual inner
     /// blocks `A_a` carry the gadget, and `SigmaSetup::new` stacks the pad
     /// commitment's block last, after the residual outer block `[B_a|B'_a]`.
-    fn profile_label(&self, index: usize) -> &'static str {
+    pub(super) fn profile_label(&self, index: usize) -> &'static str {
         match self.blocks.get(index).map(|block| block.gadget.is_some()) {
             Some(true) => "residual_a",
             Some(false) if index + 1 == self.blocks.len() => "pad",
@@ -310,12 +266,16 @@ impl<F: Field + CanonicalEncoding, const D: usize> LRow<F, D> {
         Ok(stride_component(row))
     }
 
-    /// `L·x` for `x` factored as in [`RingLinearMap::apply_factored`].
+    /// `L·x` for `x` laid out like `s` whose native element `E` is
+    /// `scales[E]·lo`, as in [`RingLinearMap::apply_factored`].
     pub fn apply_factored(
         &self,
         scales: &[F],
         lo: &CyclotomicRing<F, D>,
-    ) -> Result<CyclotomicRing<F, CHALLENGE_RING_DIM>, WhiteoutError> {
+    ) -> Result<CyclotomicRing<F, CHALLENGE_RING_DIM>, WhiteoutError>
+    where
+        F: WithAccumulator,
+    {
         let columns = scales
             .get(self.input.start / D..self.input.end / D)
             .ok_or(WhiteoutError::InvalidRelation("L reads outside s"))?;
