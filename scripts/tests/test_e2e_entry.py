@@ -63,6 +63,16 @@ class ExecutorTests(unittest.TestCase):
         self.assertEqual(set(entry.TIMEOUTS), set(ci.TIERS))
         self.assertEqual(entry.TIMEOUTS['calibration'], 180 * 60)
 
+    def test_fetch_still_refuses_symlinks_in_results(self):
+        root = self.job / 'result'
+        root.mkdir(parents=True)
+        (root / 'benchmark-results.json').write_text('{}')
+        (root / 'latest').symlink_to('benchmark-results.json')
+        with patch.object(entry, 'status', return_value={'state': 'finished', 'exit_code': 0}), \
+                patch.object(entry.subprocess, 'run'), \
+                self.assertRaisesRegex(ValueError, 'result contains a symlink'):
+            entry.fetch(self.job, io.BytesIO())
+
     def test_forced_command_refuses_shell_syntax_extra_arguments_and_invalid_job_ids(self):
         for command in ('', 'submit ../x', 'submit A', 'status a;id', 'fetch a b',
                         'remove a\n', 'submit ' + 'a' * 65, '--worker 123-1'):
