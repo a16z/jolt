@@ -118,7 +118,7 @@ use syn::{
 };
 
 /// Streams declaration-order variant tags followed by payloads in field order.
-#[proc_macro_derive(KeyVisit)]
+#[proc_macro_derive(KeyVisit, attributes(recipe_namespace))]
 pub fn derive_key_visit(input: TokenStream) -> TokenStream {
     key_visit::expand(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(Error::into_compile_error)

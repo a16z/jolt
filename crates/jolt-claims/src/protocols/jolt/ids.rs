@@ -8,7 +8,11 @@ use crate::Expr;
 pub type JoltExpr<F> = Expr<F, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltRelationId {
     SpartanOuter,
     SpartanProductVirtualization,
@@ -40,25 +44,41 @@ pub enum JoltRelationId {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamReadWriteChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamReadWritePublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamValCheckChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamValCheckPublic {
     LtCyclePlusGamma,
     /// `Val_init(r_address)`'s public portion — the part of the initial RAM
@@ -73,31 +93,51 @@ pub enum RamValCheckPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamRaClaimReductionChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamRaVirtualizationPublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamHammingBooleanityPublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamRafEvaluationPublic {
     UnmapAddress,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamOutputCheckPublic {
     EqAddress,
     IoMask,
@@ -105,7 +145,11 @@ pub enum RamOutputCheckPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RamRaClaimReductionPublic {
     EqCycleRaf,
     EqCycleReadWrite,
@@ -113,13 +157,21 @@ pub enum RamRaClaimReductionPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum BooleanityChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum BooleanityPublic {
     EqAddressCycle,
     /// The batching weight γ^exponent, shared by the two terms of one opening.
@@ -129,13 +181,21 @@ pub enum BooleanityPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum IncClaimReductionChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum IncClaimReductionPublic {
     EqRamReadWrite,
     EqRamValCheck,
@@ -144,13 +204,21 @@ pub enum IncClaimReductionPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum HammingWeightClaimReductionChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum HammingWeightClaimReductionPublic {
     EqBooleanity,
     /// Akita path: `eq(r_booleanity_address, 0)` — the digit-zero baseline
@@ -168,7 +236,11 @@ pub enum HammingWeightClaimReductionPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum BytecodeReadRafChallenge {
     Gamma,
     Stage1Gamma,
@@ -179,7 +251,11 @@ pub enum BytecodeReadRafChallenge {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum BytecodeReadRafPublic {
     StageValue(usize),
     /// Committed program mode: `eq(stage_cycle_point_s, r_cycle)` factor
@@ -199,7 +275,11 @@ pub enum BytecodeReadRafPublic {
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "allocative", derive(::allocative::Allocative))]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltAdviceKind {
     Trusted,
     Untrusted,
@@ -216,13 +296,21 @@ impl JoltAdviceKind {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum AdviceClaimReductionPublic {
     FinalScale(JoltAdviceKind),
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum BytecodeClaimReductionChallenge {
     Eta,
 }
@@ -232,7 +320,11 @@ pub enum BytecodeClaimReductionChallenge {
 pub enum RetiredIdentifier {}
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum BytecodeClaimReductionPublic {
     // Reserved codec slot; uninhabited and rejected during deserialization.
     Reserved0(RetiredIdentifier),
@@ -240,26 +332,42 @@ pub enum BytecodeClaimReductionPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum ProgramImageClaimReductionPublic {
     FinalScale,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum SpartanShiftChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum SpartanShiftPublic {
     EqPlusOneOuter,
     EqPlusOneProduct,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum SpartanProductVirtualizationPublic {
     UniskipLagrangeWeight(usize),
     LagrangeWeight(usize),
@@ -267,7 +375,11 @@ pub enum SpartanProductVirtualizationPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum SpartanOuterPublic {
     /// `LK(τ_high, r₀) · eq(τ_low, ·)` — the uni-skip kernel times the cycle eq.
     TauKernel,
@@ -283,67 +395,111 @@ pub enum SpartanOuterPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RegistersReadWriteChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RegistersReadWritePublic {
     EqCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RegistersValEvaluationPublic {
     LtCycle,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RegistersClaimReductionChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum RegistersClaimReductionPublic {
     EqSpartan,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionClaimReductionChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionClaimReductionPublic {
     EqSpartan,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionInputChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionInputPublic {
     EqProduct,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionReadRafChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionReadRafPublic {
     EqTableValue(usize),
     EqRafConstant,
@@ -351,13 +507,21 @@ pub enum InstructionReadRafPublic {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionRaVirtualizationChallenge {
     Gamma,
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum InstructionRaVirtualizationPublic {
     EqCycle,
 }
@@ -365,7 +529,11 @@ pub enum InstructionRaVirtualizationPublic {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltChallengeId {
     RamReadWrite(RamReadWriteChallenge),
     RamValCheck(RamValCheckChallenge),
@@ -387,7 +555,11 @@ pub enum JoltChallengeId {
 /// Lattice layouts supply an explicit canonical identifier order; `Ord` is
 /// used only for keyed lookup and does not assign physical slots.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltCommittedPolynomial {
     RdInc,
     RamInc,
@@ -406,7 +578,11 @@ pub enum JoltCommittedPolynomial {
 }
 
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltVirtualPolynomial {
     PC,
     UnexpandedPC,
@@ -462,7 +638,11 @@ pub enum JoltVirtualPolynomial {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltPolynomialId {
     Committed(JoltCommittedPolynomial),
     Virtual(JoltVirtualPolynomial),
@@ -473,7 +653,11 @@ pub enum JoltPolynomialId {
 // trace rows per byte for.
 #[derive(Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize)]
 #[repr(align(8))]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltOpeningId {
     Polynomial {
         polynomial: JoltPolynomialId,
@@ -529,7 +713,11 @@ impl JoltOpeningId {
 #[derive(
     Hash, PartialEq, Eq, Copy, Clone, Debug, PartialOrd, Ord, Serialize, Deserialize, From,
 )]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::jolt)
+)]
 pub enum JoltDerivedId {
     RamReadWrite(RamReadWritePublic),
     RamValCheck(RamValCheckPublic),
@@ -575,6 +763,17 @@ impl KeyVisit for RetiredIdentifier {
     }
 }
 
+#[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+use crate::immutable_recipes::record::RenderId;
+#[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+use std::fmt::{Result as FmtResult, Write};
+#[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+impl RenderId for RetiredIdentifier {
+    fn render(&self, _writer: &mut dyn Write) -> FmtResult {
+        match *self {}
+    }
+}
+
 #[cfg(test)]
 #[expect(clippy::unwrap_used, reason = "wire regression tests fail loudly")]
 mod tests {
@@ -598,6 +797,20 @@ mod tests {
             polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamRa(3)),
             relation: JoltRelationId::RamReadWriteChecking,
         };
+        #[cfg(not(target_arch = "riscv64"))]
+        {
+            let mut source = String::new();
+            id.render(&mut source).unwrap();
+            assert_eq!(
+                source,
+                concat!(
+                    "crate::protocols::jolt::JoltOpeningId::Polynomial{",
+                    "polynomial:crate::protocols::jolt::JoltPolynomialId::Committed(",
+                    "crate::protocols::jolt::JoltCommittedPolynomial::RamRa(3usize,),),",
+                    "relation:crate::protocols::jolt::JoltRelationId::RamReadWriteChecking,}",
+                )
+            );
+        }
         let mut sink = Words {
             words: Vec::new(),
             limit: usize::MAX,

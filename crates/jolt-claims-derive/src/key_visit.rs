@@ -1,6 +1,6 @@
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
-use syn::{Data, DeriveInput, Error, Fields, Result};
+use syn::{Data, DeriveInput, Error, Fields, Path, Result};
 
 pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
     let Data::Enum(data) = &input.data else {
@@ -8,8 +8,16 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
     };
     let name = &input.ident;
     let module = format_ident!("__recipe_key_{}", name.to_string().to_lowercase());
+    let namespace = input
+        .attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("recipe_namespace"))
+        .ok_or_else(|| Error::new_spanned(&input, "expected #[recipe_namespace(path)]"))?
+        .parse_args::<Path>()?;
+    let namespace = quote!(#namespace).to_string().replace(' ', "");
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let mut arms = Vec::new();
+    let mut render_arms = Vec::new();
     for (index, variant) in data.variants.iter().enumerate() {
         if variant.discriminant.is_some() {
             return Err(Error::new_spanned(
@@ -19,10 +27,11 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         }
         let tag = Literal::usize_unsuffixed(index);
         let variant_name = &variant.ident;
-        let attrs = variant
+        let attrs: Vec<_> = variant
             .attrs
             .iter()
-            .filter(|attr| attr.path().is_ident("cfg"));
+            .filter(|attr| attr.path().is_ident("cfg"))
+            .collect();
         let values: Vec<_> = variant
             .fields
             .iter()
@@ -43,6 +52,29 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
             #(#attrs)* Self::#variant_name #pattern => sink.word(#tag)
                 #(&& ::jolt_claims::immutable_recipes::KeyVisit::visit(#values, sink))*,
         });
+        let payload = match &variant.fields {
+            Fields::Unit => quote!(),
+            Fields::Unnamed(_) => quote! {
+                writer.write_char('(')?;
+                #(::jolt_claims::immutable_recipes::record::RenderId::render(#values, writer)?;
+                  writer.write_char(',')?;)*
+                writer.write_char(')')?;
+            },
+            Fields::Named(_) => quote! {
+                writer.write_char('{')?;
+                #(writer.write_str(concat!(stringify!(#values), ":"))?;
+                  ::jolt_claims::immutable_recipes::record::RenderId::render(#values, writer)?;
+                  writer.write_char(',')?;)*
+                writer.write_char('}')?;
+            },
+        };
+        render_arms.push(quote! {
+            #(#attrs)* Self::#variant_name #pattern => {
+                writer.write_str(concat!(#namespace, "::", stringify!(#name), "::", stringify!(#variant_name)))?;
+                #payload
+                Ok(())
+            },
+        });
     }
     Ok(quote! {
         mod #module {
@@ -51,6 +83,12 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
                 fn visit(&self, sink: &mut dyn ::jolt_claims::immutable_recipes::KeySink) -> bool {
                     match self { #(#arms)* }
                 }
+            }
+        }
+        #[cfg(not(target_arch = "riscv64"))]
+        impl #impl_generics ::jolt_claims::immutable_recipes::record::RenderId for #name #ty_generics #where_clause {
+            fn render(&self, writer: &mut dyn ::std::fmt::Write) -> ::std::fmt::Result {
+                match self { #(#render_arms)* }
             }
         }
     })

@@ -2,6 +2,8 @@
 
 mod flags;
 mod key;
+#[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+pub mod record;
 use crate::protocols::composed::ComposedOpeningId;
 use crate::protocols::field_inline::{
     FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
@@ -498,6 +500,30 @@ macro_rules! immutable_symbolic_recipe {
                         && $crate::immutable_recipe_key!(self, sink; $($key)+)
                 },
             )
+        }
+        #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+        fn immutable_record_expression<F: ::jolt_field::Ring>(
+            &self, phase: $crate::immutable_recipes::Phase,
+            expression: &$crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
+        ) {
+            if F::immutable_recipe_native_field().is_none() { return; }
+            if ($input_only && phase != $crate::immutable_recipes::Phase::Input)
+                || !$crate::immutable_recipe_admitted!(self; $($key)+) { return; }
+            $crate::immutable_recipes::record::expression(phase, |sink| {
+                sink.word(1) && sink.word($crate::immutable_recipes::RecipeTag::$tag as u64)
+                    && $crate::immutable_recipe_key!(self, sink; $($key)+)
+            }, expression, $crate::immutable_recipes::record::Captured::$native);
+        }
+        #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+        fn immutable_record_support<F: ::jolt_field::Ring>(
+            &self, openings: &::std::collections::BTreeSet<Self::OpeningId>,
+        ) {
+            if F::immutable_recipe_native_field().is_none() { return; }
+            if $input_only || !$crate::immutable_recipe_admitted!(self; $($key)+) { return; }
+            $crate::immutable_recipes::record::support::<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>(|sink| {
+                sink.word(1) && sink.word($crate::immutable_recipes::RecipeTag::$tag as u64)
+                    && $crate::immutable_recipe_key!(self, sink; $($key)+)
+            }, openings, $crate::immutable_recipes::record::Captured::$native);
         }
     };
 }

@@ -10,6 +10,19 @@ use crate::{Expr, Source, SumcheckDomain};
 /// holds only its [`Shape`](Self::Shape)) and emits expressions for any field on
 /// demand. See `specs/symbolic-sumcheck.md`.
 pub trait SymbolicSumcheck {
+    #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+    fn immutable_record_expression<F: ::jolt_field::Ring>(
+        &self,
+        _phase: crate::immutable_recipes::Phase,
+        _expression: &crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
+    ) {
+    }
+    #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
+    fn immutable_record_support<F: ::jolt_field::Ring>(
+        &self,
+        _openings: &::std::collections::BTreeSet<Self::OpeningId>,
+    ) {
+    }
     type RelationId;
     type OpeningId;
     type DerivedId;

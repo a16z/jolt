@@ -2,7 +2,11 @@ use crate::protocols::field_inline::FieldInlineOpeningId;
 use crate::protocols::jolt::JoltOpeningId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "immutable-recipes", derive(jolt_claims_derive::KeyVisit))]
+#[cfg_attr(
+    feature = "immutable-recipes",
+    derive(jolt_claims_derive::KeyVisit),
+    recipe_namespace(crate::protocols::composed)
+)]
 pub enum ComposedOpeningId {
     Jolt(JoltOpeningId),
     FieldInline(FieldInlineOpeningId),
