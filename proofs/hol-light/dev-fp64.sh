@@ -80,8 +80,8 @@ if [[ "$TARGET_TRIPLE" == x86_64-apple-darwin ]]; then
   mkdir -p "$ELF_OBJECT_DIR"
   for operation in add sub mul mul_bmi2; do
     clang --target=x86_64-unknown-linux-gnu \
-      -c -I "$REPO_ROOT/crates/jolt-field/asm/x86_64" \
-      "$REPO_ROOT/crates/jolt-field/asm/x86_64/fp64_$operation.S" \
+      -c -I "$REPO_ROOT/crates/jolt-algebra/asm/x86_64" \
+      "$REPO_ROOT/crates/jolt-algebra/asm/x86_64/fp64_$operation.S" \
       -o "$ELF_OBJECT_DIR/fp64_$operation.o"
   done
   ADD_OBJECT="$ELF_OBJECT_DIR/fp64_add.o"

@@ -116,8 +116,6 @@ pub fn setup_tracing_with_trace_path(
         tracing::info!("Chrome tracing enabled. Output: {}", trace_path.display());
     }
 
-    // Instruction sampling at span boundaries on this thread, plus RSS at
-    // the prover-stage spans.
     #[cfg(not(target_arch = "wasm32"))]
     layers.push(SpanBoundaryLayer.boxed());
 
@@ -137,14 +135,19 @@ pub fn setup_tracing_with_trace_path(
         )
     }));
 
-    // Opened after the chrome writer and monitor threads exist: the
-    // inherited counter covers only threads spawned from here on, keeping
-    // the profiler's own threads out of the span instruction counts.
+    // On Linux, opening after the profiler threads excludes them from
+    // inherited counts. macOS always includes every process thread.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Err(e) = crate::instructions::open_process_counter() {
-        tracing::warn!(
-            "hardware instruction counter unavailable ({e}); span instruction counts will be null"
-        );
+    match crate::counters::open_process_counter() {
+        Ok(()) => {
+            let scope = crate::counters::counter_source().map(|source| source.metadata());
+            tracing::info!(?scope, "hardware counters enabled");
+        }
+        Err(e) => {
+            tracing::warn!(
+                "hardware counters unavailable ({e}); span hardware counts will be null"
+            );
+        }
     }
 
     TracingGuards(guards)

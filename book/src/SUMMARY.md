@@ -10,6 +10,7 @@
     - [Profiling](./usage/profiling/profiling.md)
         - [zkVM profiling](./usage/profiling/zkvm_profiling.md)
         - [Guest profiling](./usage/profiling/guest_profiling.md)
+        - [Benchmark history](./usage/profiling/benchmark_history.md)
     - [Troubleshooting](./usage/troubleshooting.md)
 - [How it works](./how/how-it-works.md)
     - [Architecture overview](./how/architecture/architecture.md)

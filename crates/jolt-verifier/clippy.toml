@@ -2,7 +2,7 @@
 # tier 4). Field-element and verifier-expression arithmetic is side-effect
 # free (modular, no overflow), so it is exempted from
 # `clippy::arithmetic_side_effects`; primitive integer arithmetic is not.
-arithmetic-side-effects-allowed = ["F", "jolt_field::Fr", "jolt_claims::Expr"]
+arithmetic-side-effects-allowed = ["F", "jolt_algebra::Fr", "jolt_claims::Expr"]
 
 disallowed-methods = [
   { path = "u32::wrapping_add", reason = "explicit wrapping evades arithmetic_side_effects; use checked or widened arithmetic in the verifier" },

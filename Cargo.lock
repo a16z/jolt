@@ -93,7 +93,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -108,7 +108,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-error",
  "akita-transcript",
@@ -120,7 +120,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -135,7 +135,7 @@ dependencies = [
 [[package]]
 name = "akita-cpu-backend"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -156,7 +156,7 @@ dependencies = [
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "thiserror 2.0.21",
 ]
@@ -164,7 +164,7 @@ dependencies = [
 [[package]]
 name = "akita-params"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -181,7 +181,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -203,7 +203,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -215,7 +215,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -234,7 +234,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-challenges",
  "akita-error",
@@ -248,7 +248,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "jolt-field",
  "jolt-poly",
@@ -258,7 +258,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-config",
  "akita-cpu-backend",
@@ -273,7 +273,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -286,7 +286,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-error",
  "jolt-field",
@@ -298,7 +298,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -317,7 +317,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?rev=8d5821f451e62547113d23fc709c6e806c10d590#8d5821f451e62547113d23fc709c6e806c10d590"
+source = "git+https://github.com/LayerZero-Labs/akita.git?rev=28602b086d65f12fa5b1b2784d7dbbe560e9a642#28602b086d65f12fa5b1b2784d7dbbe560e9a642"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -3410,21 +3410,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-blindfold"
+name = "jolt-algebra"
 version = "0.1.0"
 dependencies = [
- "jolt-claims",
- "jolt-crypto",
- "jolt-field",
- "jolt-poly",
- "jolt-r1cs",
- "jolt-sumcheck",
- "jolt-transcript",
- "jolt-utils",
+ "allocative",
+ "ark-bn254",
+ "ark-ff 0.5.0",
+ "ark-serialize 0.5.0",
+ "bincode 2.0.1",
+ "bytemuck",
+ "cc",
+ "criterion",
+ "jolt-riscv",
+ "num-bigint",
+ "num-traits",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish",
  "thiserror 2.0.21",
 ]
 
@@ -3572,24 +3577,7 @@ dependencies = [
 name = "jolt-field"
 version = "0.1.0"
 dependencies = [
- "allocative",
- "ark-bn254",
- "ark-ff 0.5.0",
- "ark-serialize 0.5.0",
- "bincode 2.0.1",
- "bytemuck",
- "cc",
- "criterion",
- "jolt-riscv",
- "num-bigint",
- "num-traits",
- "rand 0.8.7",
- "rand_chacha 0.3.1",
- "rand_core 0.6.4",
- "rayon",
- "serde",
- "spongefish",
- "thiserror 2.0.21",
+ "jolt-algebra",
 ]
 
 [[package]]
@@ -3968,13 +3956,13 @@ dependencies = [
  "clap",
  "common",
  "jolt-akita",
- "jolt-blindfold",
  "jolt-claims",
  "jolt-crypto",
  "jolt-dory",
  "jolt-field",
  "jolt-host",
  "jolt-inlines-keccak256",
+ "jolt-inlines-secp256k1",
  "jolt-inlines-sha2",
  "jolt-kernels",
  "jolt-lookup-tables",
@@ -3988,6 +3976,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier",
  "jolt-witness",
+ "jolt-zk",
  "postcard",
  "rand_core 0.6.4",
  "rayon",
@@ -4159,7 +4148,6 @@ dependencies = [
  "bincode 2.0.1",
  "common",
  "jolt-akita",
- "jolt-blindfold",
  "jolt-claims",
  "jolt-claims-derive",
  "jolt-crypto",
@@ -4176,6 +4164,7 @@ dependencies = [
  "jolt-transcript",
  "jolt-verifier-derive",
  "jolt-witness",
+ "jolt-zk",
  "num-traits",
  "postcard",
  "quote",
@@ -4222,6 +4211,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.9",
+]
+
+[[package]]
+name = "jolt-zk"
+version = "0.1.0"
+dependencies = [
+ "jolt-claims",
+ "jolt-crypto",
+ "jolt-field",
+ "jolt-poly",
+ "jolt-r1cs",
+ "jolt-sumcheck",
+ "jolt-transcript",
+ "jolt-utils",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "rayon",
+ "serde",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

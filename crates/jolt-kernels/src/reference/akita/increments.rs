@@ -1,7 +1,6 @@
 use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use jolt_field::JoltField;
 use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
-use jolt_poly::Polynomial;
 use jolt_witness::witnesses::FusedInc;
 use jolt_witness::{collect_bundles, JoltWitnessPlane, WitnessBundle, WitnessError};
 #[cfg(feature = "parallel")]
@@ -29,8 +28,7 @@ where
 {
     let layout = FusedIncLayout::new(log_t);
     let cycles = 1usize << log_t;
-    let mut values = if let Some(access) = witness.random_access().filter(|a| cycles <= a.cycles())
-    {
+    let values = if let Some(access) = witness.random_access().filter(|a| cycles <= a.cycles()) {
         let extract = |cycle| -> Result<F, WitnessError> {
             Ok(F::from_i128(
                 access.window::<IncrementRow>(cycle)?.increment.0,
@@ -51,12 +49,7 @@ where
             .map(|row| F::from_i128(row.increment.0))
             .collect()
     };
-    values.resize(1usize << layout.num_vars(), F::zero());
-    let (object_setup, _) = PCS::transparent_object_setup(
-        PCS::transparent_setup_context(setup),
-        layout.num_vars(),
-        layout.layout_digest(),
-    )?;
-    let (commitment, hint) = PCS::commit(&Polynomial::new(values), &object_setup)?;
+    let (commitment, hint) =
+        PCS::commit_bounded_object(setup, layout.num_vars(), values, layout.layout_digest())?;
     Ok(FusedIncObject { commitment, hint })
 }
