@@ -20,6 +20,8 @@ allocative = ["dep:allocative", "jolt-claims/allocative"]
 prover-fixtures = []
 fs-audit = []
 immutable-recipes = [
+  "akita",
+  "field-inline",
   "jolt-claims/immutable-recipes",
   "jolt-verifier-derive/immutable-recipes",
 ]
