@@ -164,7 +164,6 @@ toml_edit.workspace = true
 anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true
-blake3.workspace = true
 zeroos-build.workspace = true
 
 jolt-sdk = { workspace = true, features = ["host"] }

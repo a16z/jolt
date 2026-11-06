@@ -255,9 +255,8 @@ impl Program {
                 None => cmd.env_remove(FIELD_INLINE_MODULUS_ENV),
             };
 
-            // Even a fresh Cargo build recreates the ELF hardlink without running
-            // the linker. Other processes share this directory, so read the ELF
-            // under this lock and never again by path.
+            // Builds sharing this directory can replace the ELF. Read it under
+            // this lock and keep the bytes instead of reopening the path.
             fs::create_dir_all(&guest_target_dir).expect("create the guest target directory");
             let build_lock = File::create(Path::new(&guest_target_dir).join(".jolt-build.lock"))
                 .expect("open the guest build lock");

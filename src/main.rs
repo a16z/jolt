@@ -2,13 +2,13 @@ mod build_wasm;
 
 use std::{
     fs::{self, File},
+    hash::{DefaultHasher, Hash, Hasher},
     io::Write,
     path::PathBuf,
     process::{exit, Command},
 };
 
 use anyhow::{Context, Result};
-use blake3::Hasher;
 use clap::{Parser, Subcommand};
 use log::{debug, info};
 use rand::prelude::SliceRandom;
@@ -184,10 +184,10 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
 
     let opt_flag = guest_opt_flag();
 
-    // rustc does not track -T script contents. Hash every rendering input without
-    // duplicating ZeroOS's private backtrace-mode resolution; revisit on ZeroOS updates.
-    let mut linker_inputs = Hasher::new();
-    for input in [
+    // rustc does not track -T contents. Keep these rendering inputs in sync with
+    // zeroos-build's LinkerConfig construction and private backtrace resolution.
+    let mut linker_inputs = DefaultHasher::new();
+    [
         LINKER_TEMPLATE,
         &args.base.memory_origin,
         &args.base.memory_size,
@@ -195,12 +195,12 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         &args.base.heap_size,
         &format!("{:?}", args.base.mode),
         &format!("{:?}", args.base.backtrace),
-        &zeroos_build::project::detect_profile(&args.base.cargo_args),
-    ] {
-        linker_inputs.update(input.as_bytes());
-        linker_inputs.update(&[0]);
-    }
-    let linker_cfg = format!("--cfg=jolt_linker_inputs=\"{}\"", linker_inputs.finalize());
+    ]
+    .hash(&mut linker_inputs);
+    let linker_cfg = format!(
+        "--cfg=jolt_linker_inputs=\"{:016x}\"",
+        linker_inputs.finish()
+    );
 
     // Strip symbols for smaller ELFs. Preserve them when JOLT_BACKTRACE is set
     // or --backtrace enable is passed, so the tracer can symbolize panic backtraces.
@@ -299,16 +299,6 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     if let Some(target_dir) = target_dir {
         std::env::set_var("CARGO_TARGET_DIR", target_dir);
     }
-
-    // ZeroOS writes its shared script before Cargo acquires the target-dir lock.
-    // Hold a separate lock through compilation so another layout cannot replace it.
-    let target_dir = zeroos_build::project::get_target_directory(&workspace_root)?;
-    fs::create_dir_all(&target_dir)?;
-    let linker_lock = File::create(target_dir.join(".jolt-linker.lock"))?;
-    debug!("Acquiring guest linker lock in {}", target_dir.display());
-    linker_lock
-        .lock()
-        .context("Failed to lock guest linker script")?;
 
     zeroos_build::cmds::build_binary_with_rustflags(
         &workspace_root,
