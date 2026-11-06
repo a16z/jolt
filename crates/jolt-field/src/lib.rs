@@ -280,4 +280,3 @@ impl<F> ImmutableRecipeNativeField<F> {
         }
     }
 }
-
