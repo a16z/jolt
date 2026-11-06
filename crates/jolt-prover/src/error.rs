@@ -63,18 +63,19 @@ pub enum ProverError<F: JoltField> {
     #[error("unsupported: {reason}")]
     Unsupported { reason: &'static str },
 
-    /// An explicit [`MemoryBudget`](crate::MemoryBudget) is below the bytes
-    /// reserved for the optimized prover's known eager allocations
-    /// ([`MemoryBudget::check_known_eager`](crate::MemoryBudget::check_known_eager)).
-    /// Raised after tracing, before proving.
-    #[error("memory budget of {budget} bytes is below the {required} bytes reserved for the optimized prover's known eager allocations")]
+    /// An explicit [`MemoryBudget`](crate::MemoryBudget) is below the
+    /// `required` total its checks reserve
+    /// ([`MemoryBudget::reserve`](crate::MemoryBudget::reserve)), such as the
+    /// optimized prover's known eager allocations
+    /// ([`MemoryBudget::check_known_eager`](crate::MemoryBudget::check_known_eager)),
+    /// raised after tracing and before proving.
+    #[error("memory budget of {budget} bytes is below the {required} bytes its checks reserve")]
     MemoryBudgetExceeded { budget: usize, required: usize },
 
-    /// The optimized prover's known eager reservation for the trace exceeds
-    /// `usize::MAX` bytes, so no [`MemoryBudget`](crate::MemoryBudget) covers
-    /// it ([`MemoryBudget::check_known_eager`](crate::MemoryBudget::check_known_eager)).
-    /// Raised after tracing, before proving.
-    #[error("the optimized prover's known eager reservation exceeds usize::MAX bytes, so the memory budget of {budget} bytes cannot cover it")]
+    /// The bytes a [`MemoryBudget`](crate::MemoryBudget)'s checks reserve
+    /// exceed `usize::MAX`, so no budget covers them
+    /// ([`MemoryBudget::reserve`](crate::MemoryBudget::reserve)).
+    #[error("the reservation exceeds usize::MAX bytes, so the memory budget of {budget} bytes cannot cover it")]
     MemoryReservationOverflow { budget: usize },
 
     /// The trace's last row is not a jump. Padding no-ops follow the last
