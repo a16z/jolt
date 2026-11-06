@@ -781,12 +781,15 @@ mod tests {
         {
             let mut source = String::new();
             id.render(&mut source).unwrap();
-            assert_eq!(source, concat!(
-                "crate::protocols::jolt::JoltOpeningId::Polynomial{",
-                "polynomial:crate::protocols::jolt::JoltPolynomialId::Committed(",
-                "crate::protocols::jolt::JoltCommittedPolynomial::RamRa(3,),),",
-                "relation:crate::protocols::jolt::JoltRelationId::RamReadWriteChecking,}",
-            ));
+            assert_eq!(
+                source,
+                concat!(
+                    "crate::protocols::jolt::JoltOpeningId::Polynomial{",
+                    "polynomial:crate::protocols::jolt::JoltPolynomialId::Committed(",
+                    "crate::protocols::jolt::JoltCommittedPolynomial::RamRa(3,),),",
+                    "relation:crate::protocols::jolt::JoltRelationId::RamReadWriteChecking,}",
+                )
+            );
         }
         let mut sink = Words {
             words: Vec::new(),
