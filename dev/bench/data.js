@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793993916188,
+  "lastUpdate": 1793998184458,
   "repoUrl": "https://github.com/a16z/jolt",
   "entries": {
     "Benchmarks": [
@@ -235114,6 +235114,270 @@ window.BENCHMARK_DATA = {
           {
             "name": "stdlib-mem",
             "value": 783932,
+            "unit": "KB",
+            "extra": ""
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "atretyakov@a16z.com",
+            "name": "Andrew Tretyakov",
+            "username": "0xAndoroid"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3942fe6148539e0feab499f84dc25188e28781d9",
+          "message": "feat(jolt-prover,jolt-akita): reserve RAM storage by phase and reject unfit Akita setups (#2123)\n\n* feat(jolt-prover,jolt-akita): reserve RAM storage by phase and reject unfit Akita setups\n\nfeat(jolt-prover): reserve the RAM value check's first bind in the eager check\n\nStage 4 of the known-eager check charged the RAM value check only its two\nRAM access column generations. It now charges the check from preparation\nthrough its first bind (ram_val_check::first_bind_bytes): those columns,\ncounted once, plus the larger of the parallel collector's chunk views and\nthe address eq table, the doubled table its first bind builds and the split\nLT tables. Stages 2, 3 and 5 keep their single-generation allowance.\n\nfeat(jolt-akita): reject budgeted profile setups whose sources cannot fit\n\nUnder Akita, an explicit --memory-budget now also bounds PCS setup. After\nthe known eager check, the profile subtracts the bytes the trace output,\nprogram and program preprocessing hold at capacity (owner-local heap_bytes\naccessors) and passes the remainder to\nAkitaScheme::setup_with_known_source_limit. Before allocating the one-hot\nbackend setup, that computes Akita's SetupRequirements from the selected\none-hot catalog, rejects the request when the flat public matrix plus the\nsetup-prefix sources exported beside it exceed the limit, and allocates\nthrough new_prover_setup with the same requirements. Passing prices only\nthose buffers, not the whole setup or proof; the sizing trace still queued\nfor a background drop is not counted.\n\nThe limit prices only the one-hot single-chunk setup without grouped rows;\nany other shape is rejected under a limit. Unbudgeted setup is unchanged.\nAkita disk-persistence stays off: a cache hit skips generation and export,\nso enabling it requires gating or repricing the check.\n\nram_val_check::first_bind_bytes now states that it holds only for the\ncanonical prover dimensions its caller receives (log_t >= 8, or >= 12\nunder Akita).\n\nfeat(jolt-prover): reserve stage-2 RAM and instruction storage by phase\n\nStage 2 of the known-eager check charged the product remainder and one\ngeneration of RAM access columns. The driver prepares every member before\nany member binds, so stage 2 now pairs phases instead: the RAM read-write\nkernel from its preparation through its first bind, with RAF's folded and\nunmap K tables (ram_read_write::first_bind_bytes), beside the instruction\nclaim reduction's storage after its preparation\n(OptimizedInstructionClaimReduction::post_prepare_peak_bytes). The RAM\nterm prices the cycle- or address-major matrix at its largest entry\ncount, which also covers the reduction's construction collect. A phase\nsplit that prepare rejects before allocating prices zero.\n\nOwner-local helpers size the low-to-high split-eq tables, the round-0\nand address-major first-bind collects (pinned Rust 1.95 and Rayon 1.12\ngrowth and list-node facts) and the reduction's post-preparation window.\nThe address-first single-copy allowance assumes the optimized backend's\nsequential member scheduler, and the reduction's narrower window relies\non the unconditional RAM term; both conditions are documented where they\napply. The check remains a partial request reservation.\n\nfeat(jolt-prover): reserve the RAM value check's scalar windows in the eager check\n\nStage 4 of the known-eager check priced the RAM value check only through\nits first bind. It now prices the larger of the check's two largest\nscalar-table windows (ram_val_check::scalar_window_bytes): the second\nbind, which builds the T/4 increment table beside both value-column\ngenerations and the 2K address table, and the fourth bind, which holds\nthe 8K and 16K address tables; both add the split LT tables and price the\nincrement table at T/4. A compile-time assertion pins the eight-wide lazy\naddress tables the windows assume. W4's chunk-view helper in ram_trace.rs\nhas no caller left and is reverted.\n\nThe larger stage 4 masked the stage-2 phase fixtures and the register\nfloors' retained-increment signal. The phase tests move to geometries\nwhere stage 2 still dominates (Fr cycle-first, 2^18 cycles and 2^12\naddresses; Akita address-first, 2^14 and 2^10), a literal test pins the\naddress-first half-length copy at the stage-2 RAM term the check\nconsumes, and the register floors add stage 4's RAM term as the check\nprices it. The book names the stage-2 instruction-reduction and RAM terms.\n\n* fix(jolt-akita): accept grouped one-hot setups under a known source limit\n\nThe profile's budgeted Akita setup always failed: setup_with_known_source_limit\nrejected any grouped schedule, and grouped_setup_params always adds the\nbounded-dense increment group (FusedIncLayout), so every --memory-budget\nprofile run returned InvalidSetup and panicked at \"Akita PCS setup\".\n\nGrouped rows extend the one-hot catalog the priced setup requirements are\nbuilt from, so the flat public matrix check already covers them. Only\nfull-width dense groups build separate, unpriced backend setups; those are\nstill rejected. The new test builds parameters through grouped_setup_params.\n\n* docs(jolt-prover): drop the stale sizing-trace caveat before Akita setup\n\nrun_workload traces the guest once since #2189, so no sizing trace is queued for a background drop.\n\n* fix(jolt-prover,jolt-kernels,jolt-akita): compose budget checks and pin the collector bounds\n\nMemoryBudget records what each check reserves, so the eager reservation,\nthe profile's caller buffers and the Akita setup matrix share one budget.\nA rejected setup matrix is a typed OpeningsError::SetupExceedsBudget, and\nthe profile returns budget and setup rejections instead of panicking.\nsetup_with_known_source_limit becomes setup_with_matrix_byte_limit.\n\nThe round-0 and first address-major collectors (fold plus par_concat since\nRAM phase split fails the eager check with the kernel's own error, stage 2's\nwindow where RAM prepares beside the reduction's table is an explicit term,\nshift sizes use checked_shl, and the stage-2 and read-write tests pin exact\nbyte counts.",
+          "timestamp": "2026-11-06T14:34:29-05:00",
+          "tree_id": "246fd11c79b5fb9fed870bc300b6bbb24d09ea73",
+          "url": "https://github.com/a16z/jolt/commit/3942fe6148539e0feab499f84dc25188e28781d9"
+        },
+        "date": 1793998177404,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "advice-demo-time",
+            "value": 3.9805,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "advice-demo-mem",
+            "value": 783684,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "alloc-time",
+            "value": 1.6439,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "alloc-mem",
+            "value": 426088,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "backtrace-mem",
+            "value": 425400,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "btreemap-mem",
+            "value": 428364,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-time",
+            "value": 0.8199,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "fibonacci-mem",
+            "value": 425828,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-time",
+            "value": 0,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "large-alloc-mem",
+            "value": 871764,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-time",
+            "value": 1.8811,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "memory-ops-mem",
+            "value": 425992,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-time",
+            "value": 4.6835,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-mem",
+            "value": 428360,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-time",
+            "value": 4.6682,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "merkle-tree-save-mem",
+            "value": 132216,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "modinv-time",
+            "value": 1.9526,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "modinv-mem",
+            "value": 782232,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-time",
+            "value": 0.6175,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "muldiv-mem",
+            "value": 425580,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-time",
+            "value": 0.465,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "multi-function-mem",
+            "value": 425912,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-time",
+            "value": 24.9776,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "p256-ecdsa-verify-mem",
+            "value": 425792,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "random-time",
+            "value": 6.1022,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "random-mem",
+            "value": 425352,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-time",
+            "value": 35.599,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "recover-ecdsa-mem",
+            "value": 700456,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-time",
+            "value": 18.1025,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "secp256k1-ecdsa-verify-mem",
+            "value": 622464,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-time",
+            "value": 72.1247,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-chain-mem",
+            "value": 636888,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-time",
+            "value": 1.7807,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha2-ex-mem",
+            "value": 425920,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-time",
+            "value": 2.0755,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "sha3-ex-mem",
+            "value": 425904,
+            "unit": "KB",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-time",
+            "value": 19.0019,
+            "unit": "s",
+            "extra": ""
+          },
+          {
+            "name": "stdlib-mem",
+            "value": 782544,
             "unit": "KB",
             "extra": ""
           }
