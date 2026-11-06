@@ -298,8 +298,8 @@ mod whiteout {
         // version as a one-byte varint.
         let mut wire = bincode::serde::encode_to_vec(&plans, bincode::config::standard())
             .expect("encode plans");
-        assert_eq!(wire[4], 1);
-        wire[4] = 2;
+        assert_eq!(wire[4], 2);
+        wire[4] = 1;
         let (versioned, _): (WhiteoutPlans, _) =
             bincode::serde::decode_from_slice(&wire, bincode::config::standard())
                 .expect("decode plans");
@@ -312,7 +312,7 @@ mod whiteout {
         assert!(
             error
                 .to_string()
-                .contains("version 2 are not this build's format"),
+                .contains("version 1 are not this build's format"),
             "{error}"
         );
 
