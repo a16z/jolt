@@ -262,18 +262,9 @@ pub fn compute_advice_tape(
     Ok(trace.advice_tape)
 }
 
-/// `memory_budget`, when set, selects the trace with
-/// [`TracerBackend::limited_for_row_domain`] over the preprocessing's maximum
-/// padded trace length. That routing proxy is not a peak: a run far shorter
-/// than the domain can take the limited trace although the original trace
-/// would fit, and a budget just above the proxy keeps an original trace whose
-/// unpriced requests can exceed it. The limited trace rejects parallel tracing
-/// (`TRACER_PARALLEL`), fails at the first covered request the budget cannot
-/// hold, starting with its setup requests (over 1 GiB by default), and keeps
-/// its row reserve in the trace, where the known-eager check counts it.
-/// That check, [`MemoryBudget::check_known_eager`], runs after tracing and
-/// before the witness is built. Passing does not mean the proof fits in the
-/// budget, and [`compute_advice_tape`]'s trace is not budgeted.
+/// `memory_budget` admits tracing against its remaining bytes through
+/// [`TracerBackend::limited_for_row_domain`], then reserves the known eager
+/// allocations before building the witness; [`compute_advice_tape`] is unbudgeted.
 #[cfg(all(feature = "host", not(feature = "akita")))]
 #[expect(
     clippy::too_many_arguments,
@@ -309,7 +300,9 @@ pub fn prove_program(
     };
     let max_trace_length = preprocessing.verifier.program.max_padded_trace_length();
     let mut tracer = memory_budget
-        .and_then(|budget| TracerBackend::limited_for_row_domain(budget.bytes(), max_trace_length))
+        .and_then(|budget| {
+            TracerBackend::limited_for_row_domain(budget.remaining(), max_trace_length)
+        })
         .unwrap_or_default();
     let trace_inputs = TraceInputs::new(
         inputs.to_vec(),
@@ -413,6 +406,42 @@ mod tests {
         *proved.err().unwrap().downcast::<TraceError>().unwrap()
     }
 
+    #[test]
+    fn prove_program_preserves_existing_budget_reservations() {
+        let mut program = host::Program::new("muldiv-guest");
+        #[cfg(feature = "field-inline")]
+        program.enable_field_inline();
+        let preprocessing = preprocess_program(
+            &mut program,
+            MemoryConfig::default(),
+            1 << 16,
+            ProgramPreprocessingMode::Full,
+        )
+        .unwrap();
+        let budget = MemoryBudget::from_bytes(1500 << 20)
+            .reserve::<F>(1492 << 20)
+            .unwrap();
+        let error = trace_error(prove_program(
+            &program,
+            &preprocessing,
+            &INPUTS,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            Some(budget),
+        ));
+        assert!(matches!(
+            error,
+            TraceError::TraceAllocation(TraceAllocationError::LimitExceeded {
+                phase: TraceAllocationPhase::Initial,
+                limit_bytes,
+                ..
+            }) if limit_bytes == budget.remaining()
+        ));
+    }
+
     /// The budget reaches the tracer's route over the preprocessing domain.
     /// The threshold is the least budget at which the factory, over that
     /// domain, keeps the original trace. With `TRACER_PARALLEL=2`, set only in
@@ -424,6 +453,8 @@ mod tests {
     fn prove_program_routes_its_trace_by_its_memory_budget() {
         if let Ok(parallel) = std::env::var(ROUTE_CHILD) {
             let mut program = host::Program::new("muldiv-guest");
+            #[cfg(feature = "field-inline")]
+            program.enable_field_inline();
             let memory_config = MemoryConfig {
                 heap_size: 1 << 15,
                 ..Default::default()
