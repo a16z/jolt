@@ -17,6 +17,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import tomllib
 
@@ -368,7 +369,9 @@ def build_attempt(args, native_harness, fallback_reason=None):
                 logged(['git', 'clone', '--no-local', '--no-checkout', '--no-tags', str(ROOT), str(source)], ROOT, env, log)
             if not (source / '.git').is_dir() or (source / '.git/objects/info/alternates').exists():
                 raise ValueError('build source must be an independent private Git checkout')
-            logged(['git', 'fetch', '--no-tags', str(ROOT), revision], source, env, log)
+            # Reestablish the shallow boundary even if a previous fetch imported
+            # the tip without its parents; otherwise build.rs's git log fails.
+            logged(['git', 'fetch', '--depth=1', '--no-tags', str(ROOT), revision], source, env, log)
             logged(['git', 'checkout', '--force', '--detach', revision], source, env, log)
             logged(['git', 'clean', '-ffdx', '-e', '/target/'], source, env, log)
             for path in paths:
@@ -582,18 +585,21 @@ def sample_order(paired, warmups, repetitions):
 
 
 def measure(command, env, cwd, log_path):
+    rss_path = log_path.with_suffix('.rss').resolve()
+    # GNU time forks after exec, so the measured child never inherits this
+    # harness's address space and its Linux ru_maxrss floor.
+    timed = ['/usr/bin/time', '--quiet', '--format=%M', '--output', str(rss_path), '--', *command]
     with log_path.open('wb') as log:
         started = time.perf_counter()
-        with subprocess.Popen(command, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
+        with subprocess.Popen(timed, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
                               start_new_session=True) as child:
             try:
-                _, status, usage = os.wait4(child.pid, 0)
+                child.wait()
                 finished = time.perf_counter()
-                child.returncode = os.waitstatus_to_exitcode(status)
             except BaseException:
                 stop_child(child)
                 raise
-    return child.returncode, finished - started, int(usage.ru_maxrss) * 1024
+    return child.returncode, finished - started, int(rss_path.read_text()) * 1024
 
 
 def validate_metrics(metrics, case):
@@ -751,7 +757,7 @@ def run(args):
                        '--format', 'none', '--backend', 'optimized', '--guest-elf', str(elf),
                        '--input-file', str(input_file), '--result-json', str(raw)]
             env = {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG': 'C.UTF-8',
-                   'TMPDIR': str(directory), 'LOCALAPPDATA': str(cache),
+                   'LOCALAPPDATA': str(cache),
                    'RAYON_NUM_THREADS': str(case['physical_cores']), 'RUST_BACKTRACE': '1'}
             if 'RUNNER_TRACKING_ID' in os.environ:
                 env['RUNNER_TRACKING_ID'] = os.environ['RUNNER_TRACKING_ID']
@@ -761,7 +767,10 @@ def run(args):
             sample['started_at'] = utc_now()
             write_json(result_path, result)
             try:
-                code, seconds, rss = measure(command, env, directory, directory / 'process.log')
+                # Even --format none creates benchmark-runs/latest_* symlinks.
+                with tempfile.TemporaryDirectory(prefix='jolt-bench-') as scratch:
+                    env['TMPDIR'] = scratch
+                    code, seconds, rss = measure(command, env, Path(scratch), directory / 'process.log')
                 sample['exit_code'] = code
                 if code:
                     raise ValueError(f'profile exited {code}; see samples/{sample["order"]:05d}/process.log')
@@ -832,6 +841,7 @@ def render_comment(result, out):
                           len(diff['text']) > MAX_HARNESS_DIFF or len(code) > MAX_HARNESS_DIFF else '', ''])
     identities = ['| Workload / PCS / physical cores | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
                   '|---|---|---|---|']
+    notable_rows = []
     for case in result['cases']:
         name = case['workload']
         if not re.fullmatch(r'[a-z0-9-]+', name) or case['pcs'] not in ('dory', 'akita'):
@@ -855,8 +865,9 @@ def render_comment(result, out):
                          for key in ('e2e_s', 'peak_rss_bytes')}
                    for leg, values in measurements.items()}
         base, head = medians['base'], medians['head']
-        changes = {key: f'{(head[key] / base[key] - 1) * 100:+.2f}%' if base[key] else 'unavailable (zero base)'
-                   for key in base}
+        ratios = {key: head[key] / base[key] if base[key] else None for key in base}
+        changes = {key: f'{(ratio - 1) * 100:+.2f}%' if ratio is not None else 'unavailable (zero base)'
+                   for key, ratio in ratios.items()}
         calibrated, reason = calibration.for_case(result, case)
         basis = {key: (f"{calibrated[key]['threshold_pct']:.2f}% "
                        f"(max symmetric null {calibrated[key]['max_symmetric_window_delta_pct']:.2f}%)"
@@ -864,9 +875,12 @@ def render_comment(result, out):
         for key in base:
             if not base[key]:
                 basis[key] = 'unavailable: zero base median'
-        lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {base['e2e_s']:.6f} / "
-                     f"{head['e2e_s']:.6f} | {changes['e2e_s']} | {basis['e2e_s']} | {base['peak_rss_bytes']:.0f} / "
-                     f"{head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']} | {basis['peak_rss_bytes']} |")
+        label = f"| {name} / {case['pcs']} | {case['physical_cores']} |"
+        time_values = f"{base['e2e_s']:.6f} / {head['e2e_s']:.6f} | {changes['e2e_s']}"
+        rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
+        lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
+        if any(ratio is not None and not 0.97 <= ratio <= 1.03 for ratio in ratios.values()):
+            notable_rows.append(f'{label} {time_values} | {rss_values} |')
         rows, binaries, guests = [], [], []
         for leg in ('base', 'head'):
             rows.append('; '.join(f'{raw},{padded}' for raw, padded in sorted({
@@ -934,6 +948,7 @@ def render_comment(result, out):
     lines.extend(harness_notes)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text('\n'.join(lines))
+    return notable_rows
 
 
 def suite(args):

@@ -76,7 +76,8 @@ impl BytecodePreprocessing {
     /// the rows in the buffer the prepended no-op moves them into, which the
     /// padding fits (`max(2 · len, 4)` rows under Rust 1.95's amortized
     /// growth, a pinned toolchain fact), and the PC map's slot table, whose
-    /// address range the address-0 no-op leaves unchanged.
+    /// address range the address-0 no-op leaves unchanged; the incoming copy
+    /// must have capacity equal to its length, as a slice's `to_vec` does.
     pub fn retained_bytes(bytecode: &[JoltInstructionRow]) -> Result<usize, PreprocessingError> {
         let slots = BytecodePCMapper::required_allocation_bytes(bytecode)?;
         bytecode
@@ -527,8 +528,8 @@ mod tests {
         assert_eq!(preprocessing.heap_bytes(), expected);
     }
 
-    /// The prices match what `preprocess` keeps, the rows at their grown
-    /// capacity and the slot table, and, at its peak, the copy it receives.
+    /// Retained storage is exact; the allocation estimate is a conservative
+    /// upper bound including a copy whose capacity equals its length.
     #[test]
     fn allocation_prices_match_the_copy_and_what_preprocess_keeps() {
         for len in [0, 1, 3, 4, 7] {

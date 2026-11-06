@@ -19,6 +19,8 @@ use jolt_riscv::{FieldInlineOp, RV64IMAC_JOLT_FIELD_INLINE};
 use super::*;
 use crate::emulator::cpu::PrivilegeMode;
 use crate::emulator::elf_analyzer::test_elf::{build_elf64, StrtabOrder};
+#[cfg(feature = "field-inline")]
+use crate::emulator::memory::Memory;
 use crate::emulator::mmu::{AddressingMode, DRAM_BASE};
 use crate::emulator::{cpu::Cpu, default_terminal::DefaultTerminal};
 use crate::instruction::format::format_inline::FormatInline;
@@ -27,6 +29,10 @@ use crate::instruction::inline::{
 };
 use crate::instruction::{Instruction, RISCVInstruction};
 use crate::TracerInlineExpansionProvider;
+
+mod allocations;
+
+use allocations::Requests;
 
 #[cfg(feature = "field-inline")]
 const PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_FIELD_INLINE;
@@ -54,7 +60,11 @@ fn guest(words: &[u32]) -> (JoltProgram, TraceInputs) {
 fn limited(limit: usize) -> TracerBackend {
     TracerBackend {
         elf_path: None,
-        trace_allocation_limit: Some(limit),
+        trace_allocation_limit: Some(TraceLimit {
+            bytes: limit,
+            initial_rows: crate::trace_capacity_reserve(),
+            batch_rows: SERIAL_BATCH_ROWS,
+        }),
     }
 }
 
@@ -65,7 +75,7 @@ fn storage(limit: usize, cycles: Vec<Cycle>, rows: Vec<JoltTraceRow>) -> Limited
         cycles,
         rows,
         chunks: Vec::new(),
-        fields: 0,
+        field_bytes: 0,
     }
 }
 
@@ -182,6 +192,134 @@ fn setup_is_checked_before_any_setup_request() {
     ));
 }
 
+#[test]
+fn setup_charge_matches_allocator_requests() {
+    use crate::emulator::elf_analyzer::test_elf::TestSymbol;
+
+    for symbols in [
+        Vec::new(),
+        vec![TestSymbol {
+            name: "tohost",
+            value: 0x8000_3000,
+            info: 0x10,
+            size: 8,
+        }],
+    ] {
+        let elf = build_elf64(&[0x0010_0093, 0x0000_006f], &symbols, StrtabOrder::GnuLd);
+        let program = jolt_program::build_jolt_program_with_inline_provider(
+            &elf,
+            &mut TracerInlineExpansionProvider::new(),
+            PROFILE,
+        )
+        .unwrap();
+        let inputs = TraceInputs {
+            inputs: vec![1; 17],
+            untrusted_advice: vec![2; 19],
+            trusted_advice: vec![3; 23],
+            memory_config: MemoryConfig {
+                heap_size: 1 << 15,
+                stack_size: 64,
+                max_input_size: 64,
+                max_output_size: 64,
+                max_trusted_advice_size: 64,
+                max_untrusted_advice_size: 64,
+                program_size: Some(elf.len() as u64),
+            },
+            ..Default::default()
+        };
+        let mut backend = TracerBackend::limited_for_row_domain(0, 4).unwrap();
+        let (_, required) = rejection(backend.trace(&program, inputs.clone())).unwrap();
+        let mut limit = backend.trace_allocation_limit.unwrap();
+        limit.bytes = required - 1;
+        Requests::start();
+        let denied = limit.admit(&program, &inputs);
+        let denied_requests = Requests::stop();
+        assert!(matches!(
+            denied,
+            Err(TraceError::TraceAllocation(
+                TraceAllocationError::LimitExceeded { .. }
+            ))
+        ));
+        assert_eq!(denied_requests.count_requests(elf.len()), 0);
+        limit.bytes = required;
+        let setup = limit.admit(&program, &inputs).unwrap();
+        Requests::start();
+        let bytecode = BytecodePreprocessing::preprocess(
+            program.expanded_bytecode.clone(),
+            program.entry_address,
+            program.profile,
+        )
+        .unwrap();
+        let preprocessing = usize::try_from(Requests::stop().live).unwrap();
+        Requests::start();
+        let mut emulator = crate::create_emulator(
+            program.elf_bytes(),
+            None,
+            &inputs.inputs,
+            &inputs.untrusted_advice,
+            &inputs.trusted_advice,
+            &inputs.memory_config,
+            None,
+        );
+        let trace = LimitedTrace::reserve(
+            limit,
+            setup.reserve_device(&mut emulator).unwrap() + bytecode.heap_bytes(),
+        )
+        .unwrap();
+        let requests = Requests::stop();
+        let cpu = emulator.get_cpu();
+        let device = cpu.mmu.jolt_device.as_ref().unwrap();
+        let flat = cpu.mmu.memory.memory.data.flat_parts().0;
+        let measured = preprocessing
+            + inputs.inputs.capacity()
+            + inputs.untrusted_advice.capacity()
+            + inputs.trusted_advice.capacity()
+            + requests.bytes(device.inputs.as_ptr())
+            + requests.bytes(device.untrusted_advice.as_ptr())
+            + requests.bytes(device.trusted_advice.as_ptr())
+            + requests.bytes(device.outputs.as_ptr())
+            + requests.bytes(flat.as_ptr().cast())
+            + requests.bytes(trace.rows.as_ptr().cast())
+            + requests.bytes(trace.cycles.as_ptr().cast())
+            + elf.len();
+        assert_eq!(requests.count_requests(elf.len()), 1);
+        assert_eq!(required, measured);
+    }
+}
+
+#[test]
+fn limited_trace_reports_missing_elf_before_setup() {
+    assert!(matches!(
+        limited(0).trace(&JoltProgram::default(), TraceInputs::default()),
+        Err(TraceError::MissingElfBytes)
+    ));
+}
+
+#[test]
+fn overflowing_route_proxy_selects_the_limited_trace() {
+    assert!(TracerBackend::limited_for_row_domain(usize::MAX, usize::MAX).is_some());
+}
+
+#[test]
+fn overflowing_pending_window_returns_a_typed_error() {
+    let (program, inputs) = guest(&[0x0010_0093, 0x0000_006f]);
+    assert!(matches!(
+        limited(usize::MAX).trace_limited(
+            &program,
+            inputs,
+            TraceLimit {
+                batch_rows: usize::MAX,
+                ..limited(usize::MAX).trace_allocation_limit.unwrap()
+            }
+        ),
+        Err(TraceError::TraceAllocation(
+            TraceAllocationError::SizeOverflow {
+                phase: TraceAllocationPhase::Initial
+            }
+        ))
+    ));
+}
+
 /// The pending window has room for the longest legal expansion on top of a
 /// batch that is one cycle short of converting.
 #[test]
@@ -201,7 +339,7 @@ fn pending_window_holds_the_longest_tick_without_growing() {
 /// Row growth is charged with the old and new row buffers, the held chunk
 /// metadata and the pending cycles live together; chunk-metadata growth with
 /// its old and new buffers, and a first metadata buffer, likewise, each before
-/// it is allocated. A rejection changes nothing.
+/// it is allocated; a later conversion refusal can retain an admitted row growth.
 #[test]
 fn conversion_growth_is_checked_before_it_is_made() {
     let row = size_of::<JoltTraceRow>();
@@ -295,13 +433,13 @@ fn conversion_admits_every_slice_field_buffer_together() {
     );
     trace.limit = both;
     trace.convert_pending(&bytecode, 0).unwrap();
+    assert_eq!(trace.field_bytes, 2 * event);
     let lengths: Vec<_> = trace
         .chunks
         .iter()
         .map(|chunk| chunk.fields.len())
         .collect();
     assert_eq!(lengths, [1, 1]);
-    assert_eq!(trace.fields, 2 * event);
     assert_eq!(
         (trace.rows.len(), trace.rows.capacity()),
         (threshold + 1, threshold + 1)
@@ -320,15 +458,17 @@ fn field_merge_is_checked_beside_its_sources() {
     let converted = |limit| {
         let mut trace = storage(
             usize::MAX,
-            cycles.clone(),
+            cycles[..threshold].to_vec(),
             Vec::with_capacity(threshold + 1),
         );
+        trace.convert_pending(&bytecode, 0).unwrap();
+        trace.cycles.extend_from_slice(&cycles[threshold..]);
         trace.convert_pending(&bytecode, 0).unwrap();
         LimitedTrace { limit, ..trace }
     };
     let trace = converted(0);
     let sources = 2 * size_of::<FieldEvent>();
-    assert_eq!(trace.fields, sources);
+    assert_eq!(trace.field_bytes, sources);
     let needed = heap_bytes(&trace.cycles)
         + heap_bytes(&trace.rows)
         + heap_bytes(&trace.chunks)
@@ -378,10 +518,10 @@ fn limited_trace_matches_the_original_trace() {
     let rows = original.trace.rows();
     let wide = 2 * PARALLEL_ROW_CONVERSION_THRESHOLD - 100;
     assert!(rows.len() > 4 * wide);
-    for batch_rows in [3, wide] {
-        let limited = TracerBackend::new()
-            .trace_limited(&program, inputs.clone(), usize::MAX, batch_rows)
-            .unwrap();
+    for row_domain in [0, 1, 3, wide] {
+        let mut backend = TracerBackend::limited_for_row_domain(0, row_domain).unwrap();
+        backend.trace_allocation_limit.as_mut().unwrap().bytes = usize::MAX;
+        let limited = backend.trace(&program, inputs.clone()).unwrap();
         assert_eq!(limited.trace.rows(), rows);
         assert_eq!(limited.dimensions, original.dimensions);
         assert_eq!(limited.device, original.device);

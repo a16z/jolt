@@ -20,14 +20,13 @@ import urllib.request
 
 MODEL = "gpt-6.1-sol"
 EFFORT = "xhigh"
-MAX_INPUT_TOKENS = 150_000
-MAX_OUTPUT_TOKENS = 20_000
-MAX_RUN_INPUT_TOKENS = 750_000
-MAX_RUN_OUTPUT_TOKENS = 100_000
-MAX_SPEND_USD = 2.875
-MAX_TURNS = 32
-WALL_SECONDS = 40 * 60
+MODEL_CONTEXT_WINDOW = 1_050_000
+MAX_OUTPUT_TOKENS = 128_000
+MAX_INPUT_TOKENS = MODEL_CONTEXT_WINDOW - MAX_OUTPUT_TOKENS
+MAX_SPEND_USD = 50
+WALL_SECONDS = 5 * 60 * 60
 MAX_VERDICT_BYTES = 60_000
+MAX_FAILURE_CHARS = 512
 
 CLASSIFICATION_SCHEMA = {
     "type": "object",
@@ -48,6 +47,11 @@ CLASSIFICATION_SCHEMA = {
 
 class AgentFailure(Exception):
     """A failed or bounded attempt, never evidence for an approval."""
+
+
+def failure_text(error: object, key: str) -> str:
+    message = str(error)
+    return (message.replace(key, "[REDACTED]") if key else message)[:MAX_FAILURE_CHARS]
 
 
 def validate_verdict(answer: object, paths: set[str]) -> dict:
@@ -73,6 +77,13 @@ def validate_verdict(answer: object, paths: set[str]) -> dict:
     return answer
 
 
+def request_cost(input_tokens: int, output_tokens: int, cached: int = 0, written: int = 0, *, long_context: bool = False) -> float:
+    # https://developers.openai.com/api/docs/models/gpt-6.1-sol#pricing
+    input_rate, output_rate = (4, 15) if long_context or input_tokens > 272_000 else (2, 10)
+    fresh = input_tokens - cached - written
+    return ((fresh + cached * .05 + written * 1.25) * input_rate + output_tokens * output_rate) / 1_000_000
+
+
 class ModelBroker:
     """Keep the API key in a non-dumpable process; forward model traffic, not tool calls."""
 
@@ -93,35 +104,51 @@ class ModelBroker:
         request = urllib.request.Request("https://api.openai.com" + endpoint,
             json.dumps(body).encode(), {"Authorization": f"Bearer {self.key}", "Content-Type": "application/json"}, method="POST")
         try:
-            with urllib.request.urlopen(request, timeout=max(1, min(15 * 60, WALL_SECONDS - (time.monotonic() - self.started)))) as response:
+            with urllib.request.urlopen(request, timeout=max(1, WALL_SECONDS - (time.monotonic() - self.started))) as response:
                 return response.status, response.read()
         except urllib.error.HTTPError as error:
-            return error.code, b'{"type":"error","error":{"type":"api_error","message":"model API refused request"}}'
+            with error:
+                return error.code, error.read(64 * 1024)
+
+    def request_failure(self, message: str, status: int, payload: bytes) -> AgentFailure:
+        try:
+            response = json.loads(payload)
+        except ValueError:
+            response = None
+        error = response.get("error") if isinstance(response, dict) else None
+        details = []
+        for name in ("type", "code"):
+            if isinstance(error, dict) and isinstance(error.get(name), str):
+                value = json.dumps(failure_text(error[name], self.key))[:128]
+                details.append(f"{name}={value}")
+        suffix = ", " + ", ".join(details) if details else ""
+        return AgentFailure(failure_text(f"{message} (HTTP {status}{suffix})", self.key))
 
     def forward(self, body: dict, headers: dict) -> tuple[int, bytes]:
         with self.lock:
             if self.failure:
                 raise AgentFailure(self.failure)
-            if body.get("model") != MODEL or len(self.usage) >= MAX_TURNS:
-                raise AgentFailure("model or turn limit")
+            if body.get("model") != MODEL:
+                raise AgentFailure("unexpected requested model")
             body["max_output_tokens"] = MAX_OUTPUT_TOKENS
             body["service_tier"] = "default"
             count_body = {key: value for key, value in body.items() if key in
                 ("model", "input", "instructions", "previous_response_id", "tools", "tool_choice", "text", "reasoning")}
             status, counted = self.request("/v1/responses/input_tokens", count_body, {})
             if status != 200:
-                raise AgentFailure("model token preflight failed")
+                raise self.request_failure("model token preflight failed", status, counted)
             count = json.loads(counted).get("input_tokens")
             output = body["max_output_tokens"]
-            if type(count) is not int or count < 0 or count > MAX_INPUT_TOKENS \
-                    or self.input_tokens + count > MAX_RUN_INPUT_TOKENS \
-                    or self.output_tokens + output > MAX_RUN_OUTPUT_TOKENS \
-                    or self.cost_usd + (count * 2.50 + output * 10) / 1_000_000 > MAX_SPEND_USD:
-                raise AgentFailure("classifier token or spend cap")
+            if type(count) is not int or count < 0:
+                raise AgentFailure("invalid classifier input token count")
+            if count > MAX_INPUT_TOKENS:
+                raise AgentFailure("classifier per-request input cap")
+            if self.cost_usd + request_cost(count, output, written=count, long_context=True) > MAX_SPEND_USD:
+                raise AgentFailure("classifier spend cap")
             self.inflight = True
             status, payload = self.request("/v1/responses", body, {})
             if status != 200:
-                raise AgentFailure("model request failed")
+                raise self.request_failure("model request failed", status, payload)
             events = [json.loads(line[6:]) for line in payload.splitlines() if line.startswith(b"data: {")] \
                 if body.get("stream") else [json.loads(payload)]
             completed = [event["response"] for event in events if event.get("type") in ("response.completed", "response.incomplete")]
@@ -136,10 +163,9 @@ class ModelBroker:
             details = usage.get("input_tokens_details", {})
             cached = details.get("cached_tokens", 0)
             written = details.get("cache_write_tokens", 0)
-            fresh = usage["input_tokens"] - cached - written
             self.input_tokens += usage["input_tokens"]
             self.output_tokens += usage["output_tokens"]
-            self.cost_usd += (fresh * 2 + cached * .10 + written * 2.50 + usage["output_tokens"] * 10) / 1_000_000
+            self.cost_usd += request_cost(usage["input_tokens"], usage["output_tokens"], cached, written)
             self.usage.append(usage)
             self.inflight = False
             if response.get("status") != "completed":
@@ -161,7 +187,7 @@ class ModelBroker:
                         raise AgentFailure("unsupported model request")
                     status, payload = broker.forward(json.loads(self.rfile.read(size)), {})
                 except Exception as error:
-                    broker.failure = str(error).replace(broker.key, "[REDACTED]")
+                    broker.failure = failure_text(error, broker.key)
                     status = 429
                     payload = b'{"type":"error","error":{"type":"rate_limit_error","message":"classifier stopped"}}'
                 self.send_response(status)
@@ -200,6 +226,7 @@ def configure_codex(endpoint: str, directory: Path) -> None:
     config = f'''
 model = "{MODEL}"
 model_reasoning_effort = "{EFFORT}"
+model_context_window = {MODEL_CONTEXT_WINDOW}
 model_provider = "gate"
 approval_policy = "never"
 allow_login_shell = false
@@ -215,6 +242,7 @@ base_url = "{endpoint}/v1"
 wire_api = "responses"
 request_max_retries = 0
 stream_max_retries = 0
+stream_idle_timeout_ms = {WALL_SECONDS * 1000}
 [features]
 shell_snapshot = false
 hooks = false
@@ -269,7 +297,7 @@ def run_agent(directory: Path, key: str, prompt: str | None = None) -> tuple[dic
                 raise AgentFailure(f"read-only agent exited {process.returncode}")
             answer = validate_verdict(json.loads((state / "answer.json").read_text()), set(plan["paths"]))
     except (AgentFailure, OSError, ValueError, subprocess.CalledProcessError) as error:
-        failure = str(error).replace(key, "[REDACTED]") if key else str(error)
+        failure = failure_text(error, key)
     receipt = {"wall_seconds": time.monotonic() - start, "input_tokens": broker.input_tokens,
                "output_tokens": broker.output_tokens, "cost_usd": broker.cost_usd,
                "requests": len(broker.usage), "usage": broker.usage, "usage_complete": not broker.inflight, "failure": failure}

@@ -3,9 +3,10 @@ use std::{path::PathBuf, sync::Arc};
 
 use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
-    MemoryImage, RamAddressBounds, TraceAllocationError, TraceAllocationPhase, TraceData,
-    TraceError, TraceInputs, TraceOutput,
+    MemoryImage, RamAddressBounds, TraceData, TraceError, TraceInputs, TraceOutput,
 };
+#[cfg(test)]
+use jolt_program::execution::{TraceAllocationError, TraceAllocationPhase};
 use jolt_program::expand::MAX_EXPANDED_ROWS_PER_SOURCE;
 use jolt_program::preprocess::BytecodePreprocessing;
 #[cfg(feature = "field-inline")]
@@ -13,25 +14,25 @@ use jolt_program::{execution::FieldEvent, field_inline::FieldInlineTraceData};
 use jolt_riscv::{CircuitFlags, JoltTraceRow};
 use rayon::prelude::*;
 
-use common::jolt_device::{JoltDevice, MemoryLayout};
+use common::jolt_device::JoltDevice;
+#[cfg(test)]
+use common::jolt_device::MemoryLayout;
 
 use crate::emulator::cpu::AdviceTape;
 use crate::emulator::decode_cache::DecodeCache;
-use crate::emulator::memory::{flat_doublewords, Memory};
-use crate::emulator::{Emulator, TEST_MEMORY_CAPACITY};
 use crate::instruction::Cycle;
 #[cfg(feature = "field-inline")]
 use crate::instruction::RISCVCycle;
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
-use crate::trace_allocation::{
-    bytes_of, growth_target, reserve_exact, sum_bytes, TraceAllocationAllowance,
-};
+mod limited;
+use crate::trace_allocation::TraceAllocationAllowance;
 use crate::trace_row::cycle_to_trace_row;
+use limited::{LimitedSetup, LimitedTrace, TraceLimit};
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
     pub elf_path: Option<PathBuf>,
-    trace_allocation_limit: Option<usize>,
+    trace_allocation_limit: Option<TraceLimit>,
 }
 
 impl TracerBackend {
@@ -46,54 +47,53 @@ impl TracerBackend {
         }
     }
 
-    /// A backend whose [`ExecutionBackend::trace`] checks selected
-    /// trace-storage requests against `limit_bytes`, or `None` when the
-    /// original full-cycle trace's row payload over `row_domain` rows fits in
-    /// `limit_bytes`; callers then keep their unlimited backend.
+    /// Selects limited serial tracing when the original trace's row payload
+    /// over `row_domain` exceeds `limit_bytes`, or when that payload overflows.
+    /// Otherwise returns `None`, preserving the original backend and its
+    /// `TRACER_PARALLEL` opt-in.
     ///
-    /// The payload is `D = size_of::<Cycle>() * max(R0, N) +
-    /// size_of::<JoltTraceRow>() * N` for `N = row_domain` and the initial cycle
-    /// reserve `R0` (`JOLT_TRACER_CAPACITY_ROWS`, default 2^24 rows): one cycle
-    /// backing of at least `max(R0, N)` entries beside `N` rows. `D` at or
-    /// below `limit_bytes` keeps the original trace, including its
-    /// `TRACER_PARALLEL` opt-in; `D` above it, or overflowing, selects the
-    /// limited serial trace.
+    /// The original payload proxy is `D = size_of::<Cycle>() * max(R0, N) +
+    /// size_of::<JoltTraceRow>() * N`, where `N = row_domain` and `R0` is
+    /// `JOLT_TRACER_CAPACITY_ROWS` (default 2^24): original tracing reserves
+    /// `R0` cycles; limited tracing instead reserves `min(R0, N)` rows with
+    /// checked growth and converts at `max(1, min(N, 2^20))` pending cycles,
+    /// with room for one instruction's full expansion past that threshold.
+    /// The domain neither counts nor caps emitted
+    /// rows, and D is not a peak: a short run can take the limited route even
+    /// when the original fits, while an original trace admitted at D can
+    /// exceed the limit through its uncounted requests or cycle-buffer growth.
     ///
-    /// `D` is a routing proxy for a configured domain, not a measured demand or
-    /// a peak: `N` neither counts nor caps the rows a run emits, and the `R0`
-    /// reserve counts although it is mostly unfaulted. A run much shorter than
-    /// `N`, or one dominated by the `R0` reserve, can take the limited trace
-    /// even when the original trace would fit. A limit at or just above `D`
-    /// keeps the original trace even when its unpriced requests exceed the
-    /// limit: the cycle vector's growth past `R0`, which holds the old and new
-    /// backings together (by itself above `D` when a field-inline run fills
-    /// a domain larger than `R0`), the final memory image, the pristine
-    /// emulator clone, flat guest memory and the bytecode preprocessing.
+    /// Limited tracing checks requested payload before allocation, counting
+    /// buffers at observed capacity; a refusal returns a typed error without
+    /// output, but does not roll back guest effects or earlier allocations.
     ///
-    /// The limited trace checks before each covered request that the covered
-    /// buffers at observed capacity plus the request stay within
-    /// `limit_bytes`; otherwise it returns [`TraceError::TraceAllocation`] and
-    /// no output. Covered: the bytecode preprocessing (its copy of the expanded
-    /// bytecode and the PC map), flat guest memory, the ELF copy made during
-    /// emulator setup, the caller's input and advice buffers and
-    /// the device's copies, the output reserve, the `R0`-row reserve and its
-    /// growth, a pending window of one full tick past the batch, converted-chunk
-    /// metadata and field events and their merge, the advice tape and each host
-    /// advice write's guest-copy scratch and tape growth, and the final memory
-    /// image. Not covered: ELF headers and symbols, decode and expansion
-    /// caches, inline advice and provider temporaries, cycle markers, prints
-    /// and backtraces, the caller's program and preprocessing, and allocator
-    /// and runtime overhead. The limit bounds requested payload, not process
-    /// memory or whether a proof of the trace fits, and a rejected trace's
-    /// guest effects are discarded, not rolled back. A limit below the setup
-    /// requests, which exceed 1 GiB with the default `R0`, fails before setup,
-    /// and the output keeps the reserved row capacity.
+    /// Counted:
+    /// - Bytecode preprocessing, including its input copy and PC map.
+    /// - Flat guest memory, the emulator's ELF copy, caller input/advice buffers,
+    ///   device copies and output reserve.
+    /// - Rows and their old/new buffers during growth, the pending cycle window,
+    ///   converted-chunk metadata, field events and their merge.
+    /// - Advice tape, host advice writes' guest-copy scratch and tape growth,
+    ///   and the final memory image.
     ///
-    /// Under the limit, `TRACER_PARALLEL` of 2 or more and
-    /// [`ChunkedExecutionBackend::execute`] fail with
-    /// [`TraceError::UnsupportedTraceAllocationMode`].
-    /// [`ChunkedExecutionBackend::replay_chunk`] is outside the limit: it
-    /// replays a checkpoint without checking any request.
+    /// Not counted:
+    /// - ELF headers/symbols, decode/expansion caches, inline advice and
+    ///   provider temporaries.
+    /// - Cycle markers, prints/backtraces, the caller's program/preprocessing,
+    ///   and allocator/runtime overhead.
+    ///
+    /// The SDK's budgeted compute-advice run checks setup and host advice
+    /// writes without allocating a trace; its caches and overhead are uncounted.
+    ///
+    /// This is not a process-memory cap or a guarantee that proving fits.
+    /// Doubling row/chunk growth can reject a near-limit request that exact
+    /// growth would admit. On the limited route, the pending cycle window imposes
+    /// a setup floor even for a short domain; the trace retains its row capacity for
+    /// subsequent prover-budget checks.
+    ///
+    /// Limited tracing rejects `TRACER_PARALLEL >= 2` and
+    /// [`ChunkedExecutionBackend::execute`] with
+    /// [`TraceError::UnsupportedTraceAllocationMode`]; chunk replay is unchecked.
     pub fn limited_for_row_domain(limit_bytes: usize, row_domain: usize) -> Option<Self> {
         let payload = size_of::<Cycle>()
             .checked_mul(crate::trace_capacity_reserve().max(row_domain))
@@ -103,7 +103,11 @@ impl TracerBackend {
         payload
             .is_none_or(|payload| payload > limit_bytes)
             .then(|| Self {
-                trace_allocation_limit: Some(limit_bytes),
+                trace_allocation_limit: Some(TraceLimit {
+                    bytes: limit_bytes,
+                    initial_rows: crate::trace_capacity_reserve().min(row_domain),
+                    batch_rows: row_domain.clamp(1, SERIAL_BATCH_ROWS),
+                }),
                 ..Self::default()
             })
     }
@@ -137,42 +141,27 @@ impl TracerBackend {
     }
 
     /// [`ExecutionBackend::trace`] under `limit`, serially: after every tick
-    /// that leaves at least `batch_rows` cycles pending, and at the end, the
+    /// that leaves at least `limit.batch_rows` cycles pending, and at the end, the
     /// pending cycles are converted into the resident rows.
     #[tracing::instrument(skip_all, name = "trace")]
     fn trace_limited(
         &self,
         program: &JoltProgram,
         inputs: TraceInputs,
-        limit: usize,
-        batch_rows: usize,
+        limit: TraceLimit,
     ) -> Result<TraceOutput, TraceError> {
         if crate::parallel_config_from_env().is_some() {
             return Err(TraceError::UnsupportedTraceAllocationMode);
         }
-        let phase = TraceAllocationPhase::Initial;
-        let rows = crate::trace_capacity_reserve();
-        let window =
-            pending_window(batch_rows).ok_or(TraceAllocationError::SizeOverflow { phase })?;
-        let storage = sum_bytes(
-            [
-                BytecodePreprocessing::retained_bytes(&program.expanded_bytecode)?,
-                bytes_of::<JoltTraceRow>(rows, phase)?,
-                bytes_of::<Cycle>(window, phase)?,
-            ],
-            phase,
-        )?;
-        let preprocess =
-            BytecodePreprocessing::required_allocation_bytes(&program.expanded_bytecode)?;
-        let setup = LimitedSetup::admit(limit, program, &inputs, storage, preprocess)?;
+        if program.elf_bytes().is_empty() {
+            return Err(TraceError::MissingElfBytes);
+        }
+        let setup = limit.admit(program, &inputs)?;
         let bytecode = BytecodePreprocessing::preprocess(
             program.expanded_bytecode.clone(),
             program.entry_address,
             program.profile,
         )?;
-        if program.elf_bytes().is_empty() {
-            return Err(TraceError::MissingElfBytes);
-        }
         let mut emulator = crate::create_emulator(
             program.elf_bytes(),
             self.elf_path.as_ref(),
@@ -185,9 +174,10 @@ impl TracerBackend {
         let resident = setup
             .reserve_device(&mut emulator)?
             .saturating_add(bytecode.heap_bytes());
-        let mut trace = LimitedTrace::reserve(limit, resident, rows, window)?;
-        let cpu = emulator.get_mut_cpu();
-        cpu.set_advice_write_allowance(trace.advice_write_allowance());
+        let mut trace = LimitedTrace::reserve(limit, resident)?;
+        emulator
+            .get_mut_cpu()
+            .set_advice_write_allowance(trace.advice_write_allowance());
         loop {
             let pending = trace.cycles.len();
             crate::step_emulator(&mut emulator, Some(&mut trace.cycles));
@@ -198,11 +188,12 @@ impl TracerBackend {
             if trace.cycles.len() == pending {
                 break;
             }
-            if trace.cycles.len() >= batch_rows {
+            if trace.cycles.len() >= limit.batch_rows {
                 let tape = emulator.get_cpu().advice_tape.capacity();
                 trace.convert_pending(&bytecode, tape)?;
-                let cpu = emulator.get_mut_cpu();
-                cpu.set_advice_write_allowance(trace.advice_write_allowance());
+                emulator
+                    .get_mut_cpu()
+                    .set_advice_write_allowance(trace.advice_write_allowance());
             }
         }
         let (advice_tape, final_memory, device) = crate::finish_emulator(emulator);
@@ -216,33 +207,23 @@ impl TracerBackend {
             Some(advice_tape.into_bytes()),
         ))
     }
-
     /// The advice tape `program` writes in one serial run without a trace,
     /// with its requests checked against `limit_bytes`: the compute-advice run
     /// the SDK makes under a memory budget.
     ///
-    /// The run allocates no cycles, rows, bytecode preprocessing or final
-    /// memory image. Before setup, the device's input copies and output
-    /// reserve, flat guest memory and the ELF copy setup makes are checked
-    /// beside the caller's buffers and advice tape, as for
-    /// [`Self::limited_for_row_domain`]'s trace, and each host advice write's
-    /// guest-copy scratch and tape growth beside the tape and those buffers. A
-    /// refused request returns [`TraceError::TraceAllocation`] and no tape; the
-    /// guest effects before it are discarded, not rolled back. The run ends as
-    /// a trace does, at a PC stall or at the first step that emits no row, and
-    /// does not read `TRACER_PARALLEL`. Not covered: decode and expansion
-    /// caches, inline advice and provider temporaries, cycle markers, prints
-    /// and backtraces, the caller's program, and allocator and runtime
-    /// overhead; the limit bounds requested payload, not process memory.
+    /// This checks the setup and host advice-write requests listed in
+    /// [`Self::limited_for_row_domain`], without cycles, rows, bytecode
+    /// preprocessing or a final memory image; the same omissions apply.
+    /// It stops at a PC stall or zero-row tick, ignoring `TRACER_PARALLEL`.
     pub fn execute_advice_tape(
         program: &JoltProgram,
         inputs: TraceInputs,
         limit_bytes: usize,
     ) -> Result<Vec<u8>, TraceError> {
-        let setup = LimitedSetup::admit(limit_bytes, program, &inputs, 0, 0)?;
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
+        let setup = LimitedSetup::admit(limit_bytes, program, &inputs, 0, 0)?;
         let mut emulator = crate::create_emulator(
             program.elf_bytes(),
             None,
@@ -286,7 +267,7 @@ impl ExecutionBackend for TracerBackend {
         inputs: TraceInputs,
     ) -> Result<TraceOutput, TraceError> {
         if let Some(limit) = self.trace_allocation_limit {
-            return self.trace_limited(program, inputs, limit, SERIAL_BATCH_ROWS);
+            return self.trace_limited(program, inputs, limit);
         }
         let bytecode = BytecodePreprocessing::preprocess(
             program.expanded_bytecode.clone(),
@@ -307,8 +288,8 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-/// Pending cycles at which a limited trace converts a batch: 96 MiB of
-/// default-build cycles, 64 parallel conversion slices.
+/// Maximum conversion threshold: 96 MiB of default-build cycles;
+/// a full instruction can carry a batch past this threshold.
 const SERIAL_BATCH_ROWS: usize = 1 << 20;
 
 /// Cycles a limited trace can hold pending: each tick starts with fewer than
@@ -445,311 +426,6 @@ fn finish_rows(
         ram_bounds,
     };
     Ok((data, dimensions))
-}
-
-/// Setup requests of a limited run, admitted together with the run's own
-/// setup storage before any of them is made.
-struct LimitedSetup {
-    output_bytes: usize,
-    /// The caller's input and advice buffers, which outlive the run.
-    caller_bytes: usize,
-}
-
-impl LimitedSetup {
-    /// Checks the device's input copies and output reserve, flat guest
-    /// memory, the ELF copy setup makes and `storage` bytes of the run's own
-    /// setup requests beside the caller's buffers and advice tape, and the
-    /// `preprocess` bytes its bytecode preprocessing requests at most, before
-    /// any of those, beside the caller's buffers and tape alone.
-    fn admit(
-        limit: usize,
-        program: &JoltProgram,
-        inputs: &TraceInputs,
-        storage: usize,
-        preprocess: usize,
-    ) -> Result<Self, TraceError> {
-        let phase = TraceAllocationPhase::Initial;
-        let overflow = TraceAllocationError::SizeOverflow { phase };
-        let layout = MemoryLayout::try_new(&inputs.memory_config)?;
-        let output_bytes = usize::try_from(layout.max_output_size).map_err(|_| overflow)?;
-        // `setup_program` sizes a riscv-tests ELF (one with `tohost`) by the
-        // test capacity instead of the layout.
-        let memory_words =
-            flat_doublewords(layout.get_total_memory_size().max(TEST_MEMORY_CAPACITY));
-        let caller_bytes = [
-            &inputs.inputs,
-            &inputs.untrusted_advice,
-            &inputs.trusted_advice,
-        ]
-        .into_iter()
-        .map(heap_bytes)
-        .fold(0, usize::saturating_add);
-        let tape_bytes = inputs.advice_tape.as_ref().map_or(0, heap_bytes);
-        let requests = sum_bytes(
-            [
-                inputs.inputs.len(),
-                inputs.untrusted_advice.len(),
-                inputs.trusted_advice.len(),
-                output_bytes,
-                bytes_of::<u64>(usize::try_from(memory_words).map_err(|_| overflow)?, phase)?,
-                // `ElfAnalyzer` copies the ELF for the length of setup.
-                program.elf_bytes().len(),
-                storage,
-            ],
-            phase,
-        )?;
-        // The bytecode preprocessing frees its copy of the bytecode before any
-        // other setup request, so its peak needs room only beside the caller's
-        // buffers.
-        let held = caller_bytes.saturating_add(tape_bytes);
-        TraceAllocationAllowance::new(limit, 0).check_request(
-            phase,
-            held,
-            requests.max(preprocess),
-        )?;
-        Ok(Self {
-            output_bytes,
-            caller_bytes,
-        })
-    }
-
-    /// Makes the admitted output reservation and returns the bytes the
-    /// caller's buffers, the device's input copies and outputs and flat guest
-    /// memory hold at their observed capacity.
-    #[expect(clippy::expect_used, reason = "create_emulator installs the device")]
-    fn reserve_device(&self, emulator: &mut Emulator) -> Result<usize, TraceAllocationError> {
-        let phase = TraceAllocationPhase::Initial;
-        let cpu = emulator.get_mut_cpu();
-        let device = cpu
-            .mmu
-            .jolt_device
-            .as_mut()
-            .expect("JoltDevice was not initialized");
-        reserve_exact(&mut device.outputs, self.output_bytes, phase)?;
-        Ok([
-            self.caller_bytes,
-            heap_bytes(&device.inputs),
-            heap_bytes(&device.untrusted_advice),
-            heap_bytes(&device.trusted_advice),
-            heap_bytes(&device.outputs),
-            cpu.mmu.memory.memory.flat_heap_bytes(),
-        ]
-        .into_iter()
-        .fold(0, usize::saturating_add))
-    }
-}
-
-/// A limited trace's storage, every buffer counted at its observed capacity.
-struct LimitedTrace {
-    limit: usize,
-    /// The bytecode preprocessing, the caller's buffers, the device's input
-    /// copies and output reserve, and flat guest memory, none of which grows
-    /// after setup.
-    resident: usize,
-    /// The pending cycles, in a window that holds one full tick past the
-    /// batch.
-    cycles: Vec<Cycle>,
-    rows: Vec<JoltTraceRow>,
-    chunks: Vec<ConvertedChunk>,
-    /// Bytes of the converted chunks' field-event buffers.
-    fields: usize,
-}
-
-impl LimitedTrace {
-    /// Makes the admitted reservations of `rows` rows and a `window`-cycle
-    /// pending window beside `resident` bytes.
-    fn reserve(
-        limit: usize,
-        resident: usize,
-        rows: usize,
-        window: usize,
-    ) -> Result<Self, TraceAllocationError> {
-        let phase = TraceAllocationPhase::Initial;
-        let mut row_buffer = Vec::new();
-        reserve_exact(&mut row_buffer, rows, phase)?;
-        let mut cycles = Vec::new();
-        reserve_exact(&mut cycles, window, phase)?;
-        Ok(Self {
-            limit,
-            resident,
-            cycles,
-            rows: row_buffer,
-            chunks: Vec::new(),
-            fields: 0,
-        })
-    }
-
-    /// What an advice write may request beside every buffer of this trace;
-    /// the write's own check counts the advice tape.
-    fn advice_write_allowance(&self) -> TraceAllocationAllowance {
-        let live = [
-            self.resident,
-            heap_bytes(&self.cycles),
-            heap_bytes(&self.rows),
-            heap_bytes(&self.chunks),
-            self.fields,
-        ]
-        .into_iter()
-        .fold(0, usize::saturating_add);
-        TraceAllocationAllowance::new(self.limit, live)
-    }
-
-    /// What a request may take beside the resident buffers, the pending
-    /// window, the chunks' field events and `tape` bytes of advice tape.
-    fn others(&self, tape: usize) -> TraceAllocationAllowance {
-        let live = [self.resident, heap_bytes(&self.cycles), self.fields, tape]
-            .into_iter()
-            .fold(0, usize::saturating_add);
-        TraceAllocationAllowance::new(self.limit, live)
-    }
-
-    /// Appends the rows of the pending cycles, which follow every converted
-    /// row, and one chunk per conversion slice, then clears the cycles. Row
-    /// growth is checked with the old and new row buffers and the chunk
-    /// metadata live; one request then covers the metadata growth and every
-    /// slice's field events, which the slices' workers reserve exactly.
-    fn convert_pending(
-        &mut self,
-        bytecode: &BytecodePreprocessing,
-        tape: usize,
-    ) -> Result<(), TraceError> {
-        let others = self.others(tape);
-        let cycles = &self.cycles;
-        let parallel = cycles.len() > PARALLEL_ROW_CONVERSION_THRESHOLD;
-        let _span = tracing::info_span!(
-            "trace_rows_from_cycles",
-            cycles = cycles.len(),
-            mode = if parallel { "parallel" } else { "serial" }
-        )
-        .entered();
-        let slices = if parallel {
-            cycles.len().div_ceil(PARALLEL_ROW_CONVERSION_THRESHOLD)
-        } else {
-            1
-        };
-        let phase = TraceAllocationPhase::RowGrowth;
-        let required = self
-            .rows
-            .len()
-            .checked_add(cycles.len())
-            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
-        if required > self.rows.capacity() {
-            let target = growth_target(self.rows.capacity(), required);
-            let held = heap_bytes(&self.rows).saturating_add(heap_bytes(&self.chunks));
-            others.check_request(phase, held, bytes_of::<JoltTraceRow>(target, phase)?)?;
-            let additional = target - self.rows.len();
-            reserve_exact(&mut self.rows, additional, phase)?;
-        }
-        let phase = TraceAllocationPhase::Conversion;
-        let overflow = TraceAllocationError::SizeOverflow { phase };
-        let required = self.chunks.len().checked_add(slices).ok_or(overflow)?;
-        let target = (required > self.chunks.capacity())
-            .then(|| growth_target(self.chunks.capacity(), required));
-        let new_chunks = bytes_of::<ConvertedChunk>(target.unwrap_or(0), phase)?;
-        #[cfg(feature = "field-inline")]
-        let new_fields = bytes_of::<FieldEvent>(field_event_count(cycles), phase)?;
-        #[cfg(not(feature = "field-inline"))]
-        let new_fields = 0;
-        let held = heap_bytes(&self.rows).saturating_add(heap_bytes(&self.chunks));
-        others.check_request(
-            phase,
-            held,
-            new_chunks.checked_add(new_fields).ok_or(overflow)?,
-        )?;
-        if let Some(target) = target {
-            let additional = target - self.chunks.len();
-            reserve_exact(&mut self.chunks, additional, phase)?;
-        }
-        let start = self.rows.len();
-        let first_chunk = self.chunks.len();
-        self.chunks
-            .resize_with(first_chunk + slices, ConvertedChunk::default);
-        let chunks = &mut self.chunks[first_chunk..];
-        let slots = &mut self.rows.spare_capacity_mut()[..cycles.len()];
-        let fill = |first: usize,
-                    chunk: &mut ConvertedChunk,
-                    slots: &mut [MaybeUninit<JoltTraceRow>],
-                    cycles: &[Cycle]| {
-            #[cfg(feature = "field-inline")]
-            reserve_exact(&mut chunk.fields, field_event_count(cycles), phase)?;
-            chunk.fill(first, slots, cycles, bytecode)
-        };
-        if parallel {
-            chunks
-                .par_iter_mut()
-                .zip(slots.par_chunks_mut(PARALLEL_ROW_CONVERSION_THRESHOLD))
-                .zip(cycles.par_chunks(PARALLEL_ROW_CONVERSION_THRESHOLD))
-                .enumerate()
-                .try_for_each(|(index, ((chunk, slots), cycles))| {
-                    fill(
-                        start + index * PARALLEL_ROW_CONVERSION_THRESHOLD,
-                        chunk,
-                        slots,
-                        cycles,
-                    )
-                })?;
-        } else {
-            fill(start, &mut chunks[0], slots, cycles)?;
-        }
-        // SAFETY: every worker returned, and all of them initialized their
-        // slots: the `cycles.len()` slots from `start`. JoltTraceRow is Copy,
-        // so partially written rows need no cleanup on error or unwinding.
-        unsafe { self.rows.set_len(start + cycles.len()) };
-        #[cfg(feature = "field-inline")]
-        {
-            let fields = self.chunks[first_chunk..]
-                .iter()
-                .map(|chunk| heap_bytes(&chunk.fields))
-                .fold(0, usize::saturating_add);
-            self.fields = self.fields.saturating_add(fields);
-        }
-        self.cycles.clear();
-        Ok(())
-    }
-
-    /// The trace data, its dimensions and the final memory image. The merged
-    /// field events are checked with every source buffer, the pending window
-    /// and `tape` bytes of advice tape live; the image after the window drops,
-    /// beside the trace data, the tape and the resident buffers.
-    fn finish(
-        self,
-        final_memory: &Memory,
-        tape: usize,
-    ) -> Result<(TraceData, ExecutionDimensions, MemoryImage), TraceError> {
-        #[cfg(feature = "field-inline")]
-        let fields = {
-            let phase = TraceAllocationPhase::FieldMerge;
-            let count = self.chunks.iter().map(|chunk| chunk.fields.len()).sum();
-            let held = heap_bytes(&self.rows).saturating_add(heap_bytes(&self.chunks));
-            self.others(tape)
-                .check_request(phase, held, bytes_of::<FieldEvent>(count, phase)?)?;
-            let mut fields = Vec::new();
-            reserve_exact(&mut fields, count, phase)?;
-            fields
-        };
-        let Self {
-            limit,
-            resident,
-            cycles,
-            rows,
-            chunks,
-            ..
-        } = self;
-        let (data, dimensions) = finish_rows(
-            rows,
-            chunks,
-            #[cfg(feature = "field-inline")]
-            fields,
-        )?;
-        // Freed before the image request, which does not count it.
-        drop(cycles);
-        let live = [resident, tape, data.heap_bytes()]
-            .into_iter()
-            .fold(0, usize::saturating_add);
-        let bytes =
-            final_memory.try_flat_nonzero_bytes(TraceAllocationAllowance::new(limit, live))?;
-        Ok((data, dimensions, MemoryImage { bytes }))
-    }
 }
 
 /// A resume point for the chunked-execution contract, built on the two-pass
