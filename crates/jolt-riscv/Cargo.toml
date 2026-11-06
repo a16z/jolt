@@ -17,6 +17,7 @@ serialization = ["dep:ark-serialize", "dep:serde"]
 field-inline = []
 
 [dependencies]
+jolt-platform.workspace = true
 ark-serialize = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 strum = { workspace = true, features = ["derive"] }

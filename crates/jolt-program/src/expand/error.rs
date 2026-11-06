@@ -1,5 +1,28 @@
+/// Invalid linked inline registrations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InlineRegistryError {
+    #[error("duplicate inline key ({opcode:#x}, {funct3:#x}, {funct7:#x}): {first} and {second}")]
+    Duplicate {
+        opcode: u32,
+        funct3: u32,
+        funct7: u32,
+        first: &'static str,
+        second: &'static str,
+    },
+    #[error(
+        "inline {name} uses reserved PCALL block (opcode {:#x}, funct7 {:#x}), funct3 {funct3}",
+        jolt_riscv::PCALL_OPCODE,
+        jolt_riscv::PCALL_FUNCT7
+    )]
+    ReservedPrecompile { funct3: u32, name: &'static str },
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ExpansionError {
+    #[error("PCALL key not supported by this host or profile")]
+    UnsupportedPrecompile,
+    #[error(transparent)]
+    Registry(#[from] InlineRegistryError),
     #[error("no virtual registers available in {pool} pool")]
     VirtualRegisterExhausted { pool: &'static str },
     #[error("virtual register {register} is outside the allocator range")]
