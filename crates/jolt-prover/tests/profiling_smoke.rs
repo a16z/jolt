@@ -36,8 +36,12 @@ fn profile_run_emits_conformant_artifacts() {
         scale: Some(13),
         format: OutputFormat::Chrome,
         backend: BackendKind::Reference,
+        guest_elf: None,
+        input_file: None,
+        result_json: None,
         #[cfg(feature = "akita")]
         akita_chunk_profile: AkitaChunkProfile::new(1, 0),
+        memory_budget: None,
     });
 
     let trace_path = artifacts.trace_path.expect("trace path");

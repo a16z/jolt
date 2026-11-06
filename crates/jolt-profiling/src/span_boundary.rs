@@ -1,25 +1,25 @@
-//! Span-boundary sampling of process RSS and instructions retired.
+//! Span-boundary sampling of process RSS and hardware counters.
 //!
 //! [`SpanBoundaryLayer`] samples at every span enter and exit, the instance
 //! boundaries the chrome trace records:
 //!
-//! - **Instructions** for every span entered on the thread that opened the
-//!   process counter (the private `instructions` module), however the span
+//! - **Hardware counters** for every span entered on the thread that opened the
+//!   process counter (the `counters` module), however the span
 //!   was declared. Each enter/exit pair adds its process-wide delta to its
-//!   label's [`SpanInstructions`]; spans on other threads are skipped,
+//!   label's [`SpanCounters`]; spans on other threads are skipped,
 //!   because concurrent siblings would share their deltas.
 //! - **RSS** for the prover-stage spans (`prove_stage0`..`prove_stage8` plus
 //!   the `jolt_prover::prove` root) on any thread, recorded with the same
-//!   instance's instruction count as a [`StageBoundaryRow`] and emitted as a
+//!   instance's counter values as a [`StageBoundaryRow`] and emitted as a
 //!   `stage_boundary` tracing event, so a Chrome/Perfetto trace carries the
 //!   samples as an instant event next to the stage's slice.
 //!
 //! Boundary sampling attributes *retained* growth per stage; short
 //! intra-stage spikes are invisible to it. The headline number for a run is
 //! [`peak_rss_bytes`](crate::memory::peak_rss_bytes), the kernel-maintained
-//! high-water mark. Instruction counts are process-wide: a span's count
+//! high-water mark. Hardware counts cover the source's thread scope: a span's count
 //! covers every counted thread during the span's interval, which is the
-//! instruction analogue of its wallclock. A span entered again before it
+//! hardware-counter analogue of its wallclock. A span entered again before it
 //! exits keeps only its innermost sample, so its label records fewer
 //! instances than the trace and the summary reports no total for it.
 
@@ -33,7 +33,9 @@ use tracing_subscriber::layer::Context;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::Layer;
 
-use crate::instructions::{read_process_counter, InstructionReading};
+use crate::counters::{
+    counter_source, read_process_counter, CounterSource, CounterValues, Reading,
+};
 use crate::taxonomy::ROOT_SPAN;
 use crate::units::{format_memory_size, BYTES_PER_GIB};
 
@@ -41,7 +43,7 @@ use crate::units::{format_memory_size, BYTES_PER_GIB};
 struct EnterSample {
     /// Stage and root spans only.
     rss_bytes: Option<u64>,
-    instructions: Option<InstructionReading>,
+    counters: Option<Reading>,
 }
 
 /// One stage or root span instance's boundary samples.
@@ -50,29 +52,31 @@ pub struct StageBoundaryRow {
     pub stage: &'static str,
     pub rss_open_bytes: u64,
     pub rss_close_bytes: u64,
-    /// User-space instructions the process retired between enter and exit;
-    /// `None` off the counter's opening thread, without a hardware counter,
-    /// or when the kernel multiplexed it.
-    pub instructions: Option<u64>,
+    /// Counts between enter and exit, with the scope reported by
+    /// `BoundarySamples::counter_source`. Absent off the opening thread,
+    /// without hardware support, on read failure, or after multiplexing.
+    pub counters: Option<CounterValues>,
 }
 
-/// One span label's instruction totals over its instances entered on the
+/// One span label's hardware-counter totals over its instances entered on the
 /// counter's opening thread.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct SpanInstructions {
+pub struct SpanCounters {
     /// Sampled enter/exit pairs.
     pub instances: u64,
     /// Summed process-wide deltas; `None` once any instance's count was
     /// unavailable.
-    pub instructions: Option<u64>,
+    pub counters: Option<CounterValues>,
 }
 
-impl SpanInstructions {
-    fn add(&mut self, instructions: Option<u64>) {
-        self.instructions = if self.instances == 0 {
-            instructions
+impl SpanCounters {
+    fn add(&mut self, counters: Option<CounterValues>) {
+        self.counters = if self.instances == 0 {
+            counters
         } else {
-            self.instructions.zip(instructions).map(|(sum, n)| sum + n)
+            self.counters
+                .zip(counters)
+                .and_then(|(sum, n)| sum.checked_add(n))
         };
         self.instances += 1;
     }
@@ -83,7 +87,8 @@ impl SpanInstructions {
 pub struct BoundarySamples {
     /// Stage and root span instances, in exit order.
     pub stage_rows: Vec<StageBoundaryRow>,
-    pub span_instructions: BTreeMap<&'static str, SpanInstructions>,
+    pub span_counters: BTreeMap<&'static str, SpanCounters>,
+    pub counter_source: Option<CounterSource>,
 }
 
 /// Cap on retained stage rows: a prove records ~11 rows, so this covers
@@ -103,7 +108,8 @@ struct BoundaryLog {
 static BOUNDARY_LOG: Mutex<BoundaryLog> = Mutex::new(BoundaryLog {
     samples: BoundarySamples {
         stage_rows: Vec::new(),
-        span_instructions: BTreeMap::new(),
+        span_counters: BTreeMap::new(),
+        counter_source: None,
     },
     warned_full: false,
 });
@@ -112,7 +118,7 @@ fn is_stage(name: &str) -> bool {
     name.starts_with("prove_stage") || name == ROOT_SPAN
 }
 
-/// A `tracing_subscriber` layer sampling instructions retired at the
+/// A `tracing_subscriber` layer sampling hardware counters at the
 /// boundaries of every span on the counter's opening thread, and process
 /// RSS at stage-span boundaries. Installed by
 /// [`setup_tracing`](crate::setup_tracing).
@@ -131,35 +137,35 @@ where
         };
         // Read last on enter and first on exit, so the span's count
         // excludes this layer's own bookkeeping.
-        let instructions = read_process_counter();
-        if rss_bytes.is_none() && instructions.is_none() {
+        let counters = read_process_counter();
+        if rss_bytes.is_none() && counters.is_none() {
             return;
         }
         let _ = span.extensions_mut().replace(EnterSample {
             rss_bytes,
-            instructions,
+            counters,
         });
     }
 
     fn on_exit(&self, id: &Id, ctx: Context<'_, S>) {
-        let instructions_at_exit = read_process_counter();
+        let counters_at_exit = read_process_counter();
         let Some(span) = ctx.span(id) else { return };
-        if instructions_at_exit.is_none() && !is_stage(span.name()) {
+        if counters_at_exit.is_none() && !is_stage(span.name()) {
             return;
         }
         let Some(entered) = span.extensions_mut().remove::<EnterSample>() else {
             return;
         };
-        let instructions = instructions_at_exit
-            .zip(entered.instructions)
-            .and_then(|(exit, enter)| exit.instructions_since(enter));
+        let counters = counters_at_exit
+            .zip(entered.counters)
+            .and_then(|(exit, enter)| exit.since(enter));
         let row = entered.rss_bytes.and_then(|rss_open_bytes| {
             let stats = memory_stats()?;
             Some(StageBoundaryRow {
                 stage: span.name(),
                 rss_open_bytes,
                 rss_close_bytes: stats.physical_mem as u64,
-                instructions,
+                counters,
             })
         });
         if let Some(row) = row {
@@ -167,18 +173,27 @@ where
                 stage = row.stage,
                 rss_open_gib = row.rss_open_bytes as f64 / BYTES_PER_GIB,
                 rss_close_gib = row.rss_close_bytes as f64 / BYTES_PER_GIB,
-                instructions = row.instructions,
+                instructions = row.counters.map(|values| values.instructions),
+                cycles = row.counters.and_then(|values| values.cycles),
+                perflevel0_instructions = row
+                    .counters
+                    .and_then(|values| values.perflevel0)
+                    .map(|values| values.instructions),
+                perflevel0_cycles = row
+                    .counters
+                    .and_then(|values| values.perflevel0)
+                    .map(|values| values.cycles),
                 "stage_boundary"
             );
         }
 
         let mut log = BOUNDARY_LOG.lock().unwrap_or_else(|e| e.into_inner());
-        if entered.instructions.is_some() {
+        if entered.counters.is_some() {
             log.samples
-                .span_instructions
+                .span_counters
                 .entry(span.name())
                 .or_default()
-                .add(instructions);
+                .add(counters);
         }
         let Some(row) = row else { return };
         if log.samples.stage_rows.len() >= MAX_STAGE_BOUNDARY_ROWS {
@@ -199,37 +214,44 @@ where
 pub fn take_boundary_samples() -> BoundarySamples {
     let mut log = BOUNDARY_LOG.lock().unwrap_or_else(|e| e.into_inner());
     log.warned_full = false;
-    std::mem::take(&mut log.samples)
+    let mut samples = std::mem::take(&mut log.samples);
+    samples.counter_source = counter_source();
+    samples
 }
 
-/// Print the recorded per-stage RSS and instruction table to stdout and
+/// Print the recorded per-stage RSS and hardware-counter table to stdout and
 /// clear the log. Call once at the end of a benchmark run.
 #[expect(
     clippy::print_stdout,
     reason = "benchmark-harness reporting; stdout is the deliverable"
 )]
 pub fn report_stage_boundaries() {
-    let rows = take_boundary_samples().stage_rows;
+    let samples = take_boundary_samples();
+    let rows = samples.stage_rows;
     if rows.is_empty() {
         return;
     }
-    println!(
-        "Per-stage boundaries (RSS start → end, Δ retained; user-space instructions retired):"
-    );
+    println!("Per-stage boundaries (RSS start → end, Δ retained; instructions; cycles):");
+    if let Some(source) = samples.counter_source {
+        println!("  Hardware counter scope: {:?}", source.metadata());
+    }
     for row in rows {
         let open_gib = row.rss_open_bytes as f64 / BYTES_PER_GIB;
         let close_gib = row.rss_close_bytes as f64 / BYTES_PER_GIB;
-        let instructions = row.instructions.map_or_else(
-            || "n/a".to_string(),
-            |count| format!("{:.3}G", count as f64 / 1e9),
-        );
+        let format_count = |count: Option<u64>| {
+            count.map_or_else(
+                || "n/a".to_string(),
+                |count| format!("{:.3}G", count as f64 / 1e9),
+            )
+        };
         println!(
-            "  {:<14} {:>10} → {:>10}  (Δ {:>10})  {:>10}",
+            "  {:<14} {:>10} → {:>10}  (Δ {:>10})  {:>10}  {:>10}",
             row.stage,
             format_memory_size(open_gib),
             format_memory_size(close_gib),
             format_memory_size(close_gib - open_gib),
-            instructions,
+            format_count(row.counters.map(|values| values.instructions)),
+            format_count(row.counters.and_then(|values| values.cycles)),
         );
     }
 }

@@ -1,5 +1,5 @@
 // Deferred-reduction accumulators for jolt::Fp128<C>, the counterparts of
-// crates/jolt-field/src/fp128_accumulators.rs.
+// crates/jolt-algebra/src/fp128_accumulators.rs.
 //
 // - Fp128Accumulator<C>: a 288-bit unsigned integer in nine carried 32-bit
 //   words. fmadd adds the 256-bit product from mul_wide with one carry chain.

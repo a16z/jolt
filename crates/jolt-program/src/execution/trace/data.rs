@@ -79,6 +79,15 @@ impl TraceData {
         self.proof_len
     }
 
+    /// Bytes the row and field-event buffers hold on the heap, at capacity.
+    pub fn heap_bytes(&self) -> usize {
+        #[cfg(feature = "field-inline")]
+        let events = self.field_events.capacity() * size_of::<FieldEvent>();
+        #[cfg(not(feature = "field-inline"))]
+        let events = 0;
+        self.rows.capacity() * size_of::<JoltTraceRow>() + events
+    }
+
     #[expect(
         clippy::indexing_slicing,
         reason = "private proof_len is bounded by rows at construction"

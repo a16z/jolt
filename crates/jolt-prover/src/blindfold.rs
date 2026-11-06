@@ -19,7 +19,6 @@
 //! stage recipes prove over.
 
 use common::jolt_device::JoltDevice;
-use jolt_blindfold::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
 use jolt_claims::protocols::composed::geometry::SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::composed::r1cs::SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 use jolt_claims::protocols::jolt::JoltRelationId;
@@ -34,6 +33,7 @@ use jolt_verifier::stages::{
     stage1, stage2, stage3, stage4, stage5, stage6a, stage6b, stage7, stage8,
 };
 use jolt_verifier::{VerifierError, JOLT_SESSION};
+use jolt_zk::{BlindFoldProof, BlindFoldProtocol, BlindFoldWitness};
 
 use crate::{JoltProverPreprocessing, ProverError};
 
@@ -157,7 +157,7 @@ where
         .ok_or(ProverError::Verifier(
             VerifierError::MissingVectorCommitmentSetup,
         ))?;
-    let proof = jolt_blindfold::prove::<F, VC, T, _>(
+    let proof = jolt_zk::prove::<F, VC, T, _>(
         vc_setup,
         &protocol,
         &mut transcript,

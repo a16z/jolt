@@ -52,6 +52,7 @@ impl MetricsMonitor {
                     }
                 };
 
+                system.refresh_cpu_all();
                 thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
 
                 while !stop.load(Ordering::Acquire) {

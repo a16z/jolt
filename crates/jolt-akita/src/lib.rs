@@ -34,6 +34,7 @@
 
 mod adapters;
 pub mod configs;
+pub mod deferred;
 pub mod family_contract;
 mod native_batching;
 mod one_hot_family;
@@ -56,17 +57,19 @@ pub use adapters::{
     with_single_threaded_verifier_backend,
 };
 pub use adapters::{
-    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaHidingCommitment,
-    AkitaProverHint, AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16,
-    AKITA_ONE_HOT_K256,
+    AkitaBackendFlavor, AkitaBatchProof, AkitaCommitment, AkitaField, AkitaProverHint,
+    AkitaProverSetup, AkitaSetupParams, AkitaVerifierSetup, AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256,
 };
 pub use configs::AkitaChunkProfile;
+pub use deferred::AkitaVerificationContext;
 pub use native_batching::{
     AkitaNativeBatchPolynomials, AkitaNativeBatchStatement, AkitaNativeBatching,
 };
 pub use schedule_artifacts::{AkitaOneHotScheduleArtifact, AkitaScheduleArtifacts};
 pub use schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
-pub use scheme::{AkitaScheme, TraceOneHotCommitment};
+pub use scheme::{
+    AkitaProverTranscript, AkitaScheme, AkitaVerifierTranscript, TraceOneHotCommitment,
+};
 pub use trace_onehot::{no_selected_row, TraceOneHotColumn, TraceOneHotRows};
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw

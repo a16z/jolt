@@ -1,6 +1,8 @@
 //! Polynomial commitment scheme (PCS) trait hierarchy.
 //!
 //! - [`CommitmentScheme`] — commit, open, verify for multilinear polynomials.
+//! - [`GroupBatchOpening`] — one opening of several commitment groups inside
+//!   the caller's transcript.
 //! - [`AdditivelyHomomorphic`] — linear combination of commitments.
 //! - [`StreamingCommitment`] — chunked commitment without full materialization.
 //! - [`ZkOpeningScheme`] — zero-knowledge commitments and opening proofs.
@@ -9,10 +11,11 @@
 use std::{fmt::Debug, marker::PhantomData};
 
 use jolt_crypto::{Commitment, HomomorphicCommitment};
-use jolt_field::{JoltField, Ring};
-use jolt_poly::{MultilinearPoly, Point, RlcSource, HIGH_TO_LOW};
-use jolt_transcript::{Encoding, FieldTranscript};
+use jolt_field::{JoltField, Ring, Zero};
+use jolt_poly::{MultilinearPoly, Point, Polynomial, RlcSource, HIGH_TO_LOW};
+use jolt_transcript::{Encoding, FieldTranscript, ProverState, VerifierState};
 use serde::{de::DeserializeOwned, Serialize};
+use spongefish::DuplexSpongeInterface;
 
 use crate::claims::{VerifierOpeningClaim, VerifierRlcClaims, ZkEvaluationClaim};
 use crate::error::OpeningsError;
@@ -56,6 +59,11 @@ pub trait CommitmentScheme: Commitment {
     type Proof: Clone + Debug + Eq + Send + Sync + 'static + Serialize + DeserializeOwned;
     type ProverSetup: Clone + Send + Sync;
     type VerifierSetup: Clone + Send + Sync + Serialize + DeserializeOwned;
+
+    /// Per-verification state, separate from reusable keys and proof transport.
+    /// The default context must perform complete verification. Backends without
+    /// additional verification state use `()`.
+    type VerificationContext<'a>: Default;
 
     /// Auxiliary data from commit reused during opening (e.g. Dory row commitments).
     type OpeningHint: Clone + Send + Sync + Default;
@@ -105,38 +113,50 @@ pub trait CommitmentScheme: Commitment {
             "this commitment scheme has no native commitment group".to_owned(),
         ))
     }
+}
 
-    /// Proves one batch containing zero or more independently committed groups
-    /// followed by a final commitment group. Every opening runs from retained
-    /// commit-time state; there is deliberately no polynomial argument.
+/// Opens zero or more independently committed groups, then a final
+/// commitment group, in one proof that runs inside the caller's Fiat-Shamir
+/// state. The scheme writes its messages to the caller's argument string and
+/// draws its challenges from the caller's sponge, so the caller must bind
+/// every commitment before the challenges that depend on it.
+pub trait GroupBatchOpening: CommitmentScheme {
+    /// The sponge the caller's transcript must run on.
+    type Sponge: DuplexSpongeInterface;
+    /// A verifier acceptance that still needs [`Self::check_eof`].
+    type PendingEof;
+
+    /// Proves the batch. Every opening runs from retained commit-time state;
+    /// there is deliberately no polynomial argument.
     // TODO(#1782): fold the retained-state contract into a first-class
     // committed-object type on this trait instead of the `OpeningHint`
     // side-channel.
     fn prove_batch(
-        _setup: &Self::ProverSetup,
-        _groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
-        _final_group: GroupOpeningClaim<Self::Field, Self::Output>,
-        _final_hint: Self::OpeningHint,
-        _transcript: &mut impl FieldTranscript<Self::Field>,
-    ) -> Result<Self::Proof, OpeningsError> {
-        Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native group-batch opening".to_owned(),
-        ))
-    }
+        setup: &Self::ProverSetup,
+        groups: Vec<GroupOpeningWithHint<Self::Field, Self::Output, Self::OpeningHint>>,
+        final_group: GroupOpeningClaim<Self::Field, Self::Output>,
+        final_hint: Self::OpeningHint,
+        transcript: &mut ProverState<Self::Sponge>,
+    ) -> Result<Self::Proof, OpeningsError>;
 
-    /// Verifies one proof opening zero or more independently committed groups
-    /// at their group-local points, followed by a final commitment group.
+    /// Verifies the batch at the groups' local points. The caller must stop on
+    /// an error, and pass its transcript to [`Self::check_eof`] after its own
+    /// last message. `Ok` alone does not mean the batch was accepted.
     fn verify_batch(
-        _setup: &Self::VerifierSetup,
-        _groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
-        _final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
-        _proof: &Self::Proof,
-        _transcript: &mut impl FieldTranscript<Self::Field>,
-    ) -> Result<(), OpeningsError> {
-        Err(OpeningsError::InvalidBatch(
-            "this commitment scheme has no native group-batch opening".to_owned(),
-        ))
-    }
+        setup: &Self::VerifierSetup,
+        groups: &[TaggedGroupOpeningClaim<Self::Field, Self::Output>],
+        final_group: &GroupOpeningClaim<Self::Field, Self::Output>,
+        proof: &Self::Proof,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
+        context: &mut Self::VerificationContext<'_>,
+    ) -> Result<Self::PendingEof, OpeningsError>;
+
+    /// Completes a verification: checks that the whole argument string was
+    /// read.
+    fn check_eof(
+        pending: Self::PendingEof,
+        transcript: VerifierState<'_, Self::Sponge>,
+    ) -> Result<(), OpeningsError>;
 }
 
 /// Transparent derivation of a singleton commitment-object setup from an
@@ -151,6 +171,35 @@ pub trait TransparentObjectSetup: CommitmentScheme {
         num_vars: usize,
         layout_digest: [u8; 32],
     ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError>;
+
+    /// Commit under the default transparent object's coefficient contract for a
+    /// later native group-batch opening on `setup`. Backends may retain the
+    /// source on the eventual opening owner and consume its evaluation buffer.
+    /// `values` is a prefix of a `2^num_vars` table; omitted evaluations are zero.
+    /// Preprocessing must admit this object's arity and coefficient bound.
+    fn commit_bounded_object(
+        setup: &Self::ProverSetup,
+        num_vars: usize,
+        mut values: Vec<Self::Field>,
+        layout_digest: [u8; 32],
+    ) -> Result<(Self::Output, Self::OpeningHint), OpeningsError> {
+        let domain_len = u32::try_from(num_vars)
+            .ok()
+            .and_then(|shift| 1usize.checked_shl(shift))
+            .ok_or_else(|| OpeningsError::InvalidBatch("object domain overflows usize".into()))?;
+        if values.len() > domain_len {
+            return Err(OpeningsError::InvalidBatch(
+                "object prefix exceeds its domain".into(),
+            ));
+        }
+        let (object_setup, _) = Self::transparent_object_setup(
+            Self::transparent_setup_context(setup),
+            num_vars,
+            layout_digest,
+        )?;
+        values.resize(domain_len, Self::Field::zero());
+        Self::commit(&Polynomial::new(values), &object_setup)
+    }
 
     /// Commit an arbitrary field-valued object for a later native group-batch opening.
     /// Its source bound is independent of the default object setup's bound.

@@ -298,7 +298,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "jolt-field"
+name = "jolt-algebra"
 version = "0.1.0"
 dependencies = [
  "ark-bn254",
@@ -309,6 +309,13 @@ dependencies = [
  "rand_core",
  "serde",
  "thiserror",
+]
+
+[[package]]
+name = "jolt-field"
+version = "0.1.0"
+dependencies = [
+ "jolt-algebra",
 ]
 
 [[package]]

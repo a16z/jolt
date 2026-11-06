@@ -4,11 +4,11 @@ pub mod lloc;
 
 pub(crate) const PROOF_SYSTEM_CRATE_DIRS: &[&str] = &[
     "crates/jolt-akita",
-    "crates/jolt-blindfold",
+    "crates/jolt-zk",
     "crates/jolt-claims",
     "crates/jolt-crypto",
     "crates/jolt-dory",
-    "crates/jolt-field",
+    "crates/jolt-algebra",
     "crates/jolt-host",
     "crates/jolt-kernels",
     "crates/jolt-lookup-tables",

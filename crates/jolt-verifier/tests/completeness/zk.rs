@@ -21,6 +21,8 @@ use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{Keccak, VerifierState};
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
 use jolt_verifier::JoltProofClaims;
+#[cfg(all(feature = "prover-fixtures", feature = "zk"))]
+use jolt_zk::BlindFoldProof;
 
 #[test]
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
@@ -164,9 +166,7 @@ struct BlindFoldProofShape {
 }
 
 #[cfg(all(feature = "prover-fixtures", feature = "zk"))]
-fn blindfold_proof_shape(
-    proof: &jolt_blindfold::BlindFoldProof<Fr, Bn254G1>,
-) -> BlindFoldProofShape {
+fn blindfold_proof_shape(proof: &BlindFoldProof<Fr, Bn254G1>) -> BlindFoldProofShape {
     BlindFoldProofShape {
         auxiliary_rows: proof.auxiliary_row_commitments.len(),
         random_round_commitment_rows: proof.random_round_commitments.len(),
