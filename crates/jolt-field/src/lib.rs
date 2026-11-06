@@ -280,3 +280,9 @@ impl<F> ImmutableRecipeNativeField<F> {
         }
     }
 }
+
+#[cfg(feature = "setup-weight-tiles")]
+mod setup_weight_tiles;
+#[cfg(feature = "signed-byte-sum")]
+mod signed_byte_sum;
+mod terminal_contraction;

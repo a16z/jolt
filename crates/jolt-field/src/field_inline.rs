@@ -87,18 +87,18 @@ const BN254_R2: [u64; 4] = [
 ];
 
 // Guest instruction emitters.
+macro_rules! fixed {
+    ($w:expr) => {
+        // SAFETY: one fixed field-inline word; no Rust memory is touched.
+        unsafe {
+            core::arch::asm!(".word {w}", w = const $w, options(nostack));
+        }
+    };
+}
+
 mod emit {
     use super::*;
-
-    macro_rules! fixed {
-        ($w:expr) => {
-            // SAFETY: one fixed field-inline word; no Rust memory is touched.
-            unsafe {
-                core::arch::asm!(".word {w}", w = const $w, options(nostack));
-            }
-        };
-    }
-    pub(super) use fixed;
+    include!("field_inline/terminal_emit.rs");
     /// Accumulate one word into a destination previously cleared by `clear`.
     #[inline(always)]
     pub fn load_accumulate(dst: u32, offset: usize, base: *const u64) {
@@ -315,6 +315,7 @@ mod emit {
 
 mod guest {
     use super::*;
+    include!("field_inline/terminal_guest.rs");
     static READY: AtomicBool = AtomicBool::new(false);
 
     /// Prove that the unit computes modulo `modulus`. Accumulating the
@@ -497,10 +498,8 @@ mod guest {
         // index is the only loop state: the scalar bookkeeping around each
         // field-inline word costs as much as the word itself, so the inner
         // loop is unrolled per block width and indexes without bounds checks.
-        // Copy the row slices into locals: memory-writing asm would otherwise
-        // reload their base pointers from block_rows for every term.
         macro_rules! accumulate_block {
-            ($($row:ident => $k:literal),+) => {{ $( let $row: &[[u64; N]] = *$row; )+
+            ($($row:ident => $k:literal),+) => {{ $( let $row: &[[u64; N]] = *$row; )+ // Locals retain row pointers across memory-writing asm.
                 for j in 0..len {
                     // SAFETY: `j < len`, and every row has `len` elements
                     // (asserted above).
@@ -596,8 +595,6 @@ mod guest {
             rows.iter().all(|row| row.len() == len),
             "every row has one element per shared operand"
         );
-        // Copy the row slices into locals: memory-writing asm would otherwise
-        // reload their base pointers from block_rows for every term.
         macro_rules! accumulate_block {
             ($($row:ident => $k:literal),+) => {
                 for j in 0..len {
@@ -649,6 +646,8 @@ mod guest {
         }
         finish()
     }
+    #[cfg(feature = "signed-byte-sum")]
+    include!("field_inline/signed_byte_sum.rs");
 }
 
 pub use guest::{
@@ -656,4 +655,36 @@ pub use guest::{
     sum_of_products, weighted_dot_rows,
 };
 
+pub use guest::signed_i16_dot;
 pub(crate) mod horner;
+
+// `out(i, src[i] * scale)` with
+// `scale` loaded into `REG_B` once. Each element is loaded into `REG_A`,
+// multiplied into `REG_OUT` and read out canonically (the caller range checks
+// the limbs). Only the operand, output and readout scratch registers are
+// written; no caller code but `out` (integer work on the readout) runs while
+// the scale is resident. Canonical limbs.
+pub(crate) mod scale {
+    use super::guest::{load, read_out};
+    use super::{emit, REG_A, REG_B, REG_OUT};
+
+    #[inline(always)]
+    pub(crate) fn scale_into<const N: usize>(
+        scale: &[u64; N],
+        src: &[[u64; N]],
+        mut out: impl FnMut(usize, [u64; N]),
+    ) {
+        load(REG_B, scale);
+        for (index, value) in src.iter().enumerate() {
+            load(REG_A, value);
+            emit::mul_out();
+            out(index, read_out(REG_OUT));
+        }
+    }
+}
+
+#[cfg(feature = "signed-byte-sum")]
+pub use guest::sum_signed_bytes;
+
+#[cfg(feature = "setup-weight-tiles")]
+pub(crate) mod setup_weight_tiles;
