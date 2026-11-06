@@ -32,7 +32,7 @@ fn budgeted_profile_proves_through_the_limited_route() {
             "--format",
             "none",
             "--memory-budget",
-            "512MiB",
+            "64MiB",
             "--guest-elf",
         ])
         .arg(&elf)

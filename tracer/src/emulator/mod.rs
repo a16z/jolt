@@ -273,8 +273,8 @@ impl Emulator {
                         let SymbolFlags::Elf { st_info, .. } = symbol.flags() else {
                             return None;
                         };
-                        // Match ElfAnalyzer::create_symbol_map's accepted entries and
-                        // last-definition rule without copying the ELF before admission.
+                        // Match the legacy symbol-type filter and last definition within
+                        // the ELF's single static symbol table, without copying before admission.
                         if ((st_info.0 & 0x2) == 0x2 || (st_info.0 & 0xf) == 0)
                             && symbol.name().ok() == Some("tohost")
                         {

@@ -56,8 +56,10 @@ impl TracerBackend {
     /// The original payload proxy is `D = size_of::<Cycle>() * max(R0, N) +
     /// size_of::<JoltTraceRow>() * N`, where `N = row_domain` and `R0` is
     /// `JOLT_TRACER_CAPACITY_ROWS` (default 2^24): original tracing reserves
-    /// `R0` cycles; limited tracing instead reserves `min(R0, N)` rows and
-    /// checks subsequent growth. The domain neither counts nor caps emitted
+    /// `R0` cycles; limited tracing instead reserves `min(R0, N)` rows with
+    /// checked growth and converts at `max(1, min(N, 2^20))` pending cycles,
+    /// with room for one instruction's full expansion past that threshold.
+    /// The domain neither counts nor caps emitted
     /// rows, and D is not a peak: a short run can take the limited route even
     /// when the original fits, while an original trace admitted at D can
     /// exceed the limit through its uncounted requests or cycle-buffer growth.
@@ -101,6 +103,7 @@ impl TracerBackend {
                 trace_allocation_limit: Some(TraceLimit {
                     bytes: limit_bytes,
                     initial_rows: crate::trace_capacity_reserve().min(row_domain),
+                    batch_rows: row_domain.clamp(1, SERIAL_BATCH_ROWS),
                 }),
                 ..Self::default()
             })
@@ -135,7 +138,7 @@ impl TracerBackend {
     }
 
     /// [`ExecutionBackend::trace`] under `limit`, serially: after every tick
-    /// that leaves at least `batch_rows` cycles pending, and at the end, the
+    /// that leaves at least `limit.batch_rows` cycles pending, and at the end, the
     /// pending cycles are converted into the resident rows.
     #[tracing::instrument(skip_all, name = "trace")]
     fn trace_limited(
@@ -143,7 +146,6 @@ impl TracerBackend {
         program: &JoltProgram,
         inputs: TraceInputs,
         limit: TraceLimit,
-        batch_rows: usize,
     ) -> Result<TraceOutput, TraceError> {
         if crate::parallel_config_from_env().is_some() {
             return Err(TraceError::UnsupportedTraceAllocationMode);
@@ -151,7 +153,7 @@ impl TracerBackend {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
-        let setup = LimitedSetup::admit(limit, program, &inputs, batch_rows)?;
+        let setup = LimitedSetup::admit(limit, program, &inputs)?;
         let bytecode = BytecodePreprocessing::preprocess(
             program.expanded_bytecode.clone(),
             program.entry_address,
@@ -174,7 +176,7 @@ impl TracerBackend {
             if trace.cycles.len() == pending {
                 break;
             }
-            if trace.cycles.len() >= batch_rows {
+            if trace.cycles.len() >= limit.batch_rows {
                 let tape = emulator.get_cpu().advice_tape.capacity();
                 trace.convert_pending(&bytecode, tape)?;
             }
@@ -208,7 +210,7 @@ impl ExecutionBackend for TracerBackend {
         inputs: TraceInputs,
     ) -> Result<TraceOutput, TraceError> {
         if let Some(limit) = self.trace_allocation_limit {
-            return self.trace_limited(program, inputs, limit, SERIAL_BATCH_ROWS);
+            return self.trace_limited(program, inputs, limit);
         }
         let bytecode = BytecodePreprocessing::preprocess(
             program.expanded_bytecode.clone(),
@@ -229,8 +231,8 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-/// Pending cycles at which a limited trace converts a batch: 96 MiB of
-/// default-build cycles, 64 parallel conversion slices.
+/// Maximum conversion batch: 96 MiB of default-build cycles, 64 parallel
+/// conversion slices; the configured domain can select a smaller batch.
 const SERIAL_BATCH_ROWS: usize = 1 << 20;
 
 /// Cycles a limited trace can hold pending: each tick starts with fewer than

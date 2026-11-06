@@ -26,6 +26,7 @@ use rayon::prelude::*;
 pub(super) struct TraceLimit {
     pub bytes: usize,
     pub initial_rows: usize,
+    pub batch_rows: usize,
 }
 
 /// Setup requests of a limited trace, admitted together before any of them
@@ -49,7 +50,6 @@ impl LimitedSetup {
         limit: TraceLimit,
         program: &JoltProgram,
         inputs: &TraceInputs,
-        batch_rows: usize,
     ) -> Result<Self, TraceError> {
         let phase = TraceAllocationPhase::Initial;
         let overflow = TraceAllocationError::SizeOverflow { phase };
@@ -60,7 +60,7 @@ impl LimitedSetup {
             Some(&layout),
         ));
         let rows = limit.initial_rows;
-        let window = pending_window(batch_rows).ok_or(overflow)?;
+        let window = pending_window(limit.batch_rows).ok_or(overflow)?;
         let caller_bytes = [
             &inputs.inputs,
             &inputs.untrusted_advice,

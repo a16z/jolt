@@ -57,6 +57,7 @@ fn limited(limit: usize) -> TracerBackend {
         trace_allocation_limit: Some(TraceLimit {
             bytes: limit,
             initial_rows: crate::trace_capacity_reserve(),
+            batch_rows: SERIAL_BATCH_ROWS,
         }),
     }
 }
@@ -197,14 +198,12 @@ fn setup_charge_matches_allocator_requests() {
             },
             ..Default::default()
         };
-        let (_, required) = rejection(limited(0).trace(&program, inputs.clone())).unwrap();
+        let mut backend = TracerBackend::limited_for_row_domain(0, 4).unwrap();
+        let (_, required) = rejection(backend.trace(&program, inputs.clone())).unwrap();
+        let mut limit = backend.trace_allocation_limit.unwrap();
+        limit.bytes = required - 1;
         Requests::start();
-        let denied = LimitedSetup::admit(
-            limited(required - 1).trace_allocation_limit.unwrap(),
-            &program,
-            &inputs,
-            SERIAL_BATCH_ROWS,
-        );
+        let denied = LimitedSetup::admit(limit, &program, &inputs);
         let denied_requests = Requests::stop();
         assert!(matches!(
             denied,
@@ -213,13 +212,8 @@ fn setup_charge_matches_allocator_requests() {
             ))
         ));
         assert_eq!(denied_requests.count_requests(elf.len()), 0);
-        let setup = LimitedSetup::admit(
-            limited(required).trace_allocation_limit.unwrap(),
-            &program,
-            &inputs,
-            SERIAL_BATCH_ROWS,
-        )
-        .unwrap();
+        limit.bytes = required;
+        let setup = LimitedSetup::admit(limit, &program, &inputs).unwrap();
         Requests::start();
         let bytecode = BytecodePreprocessing::preprocess(
             program.expanded_bytecode.clone(),
@@ -280,8 +274,10 @@ fn overflowing_pending_window_returns_a_typed_error() {
         limited(usize::MAX).trace_limited(
             &program,
             inputs,
-            limited(usize::MAX).trace_allocation_limit.unwrap(),
-            usize::MAX
+            TraceLimit {
+                batch_rows: usize::MAX,
+                ..limited(usize::MAX).trace_allocation_limit.unwrap()
+            }
         ),
         Err(TraceError::TraceAllocation(
             TraceAllocationError::SizeOverflow {
@@ -489,15 +485,10 @@ fn limited_trace_matches_the_original_trace() {
     let rows = original.trace.rows();
     let wide = 2 * PARALLEL_ROW_CONVERSION_THRESHOLD - 100;
     assert!(rows.len() > 4 * wide);
-    for batch_rows in [3, wide] {
-        let limited = TracerBackend::new()
-            .trace_limited(
-                &program,
-                inputs.clone(),
-                limited(usize::MAX).trace_allocation_limit.unwrap(),
-                batch_rows,
-            )
-            .unwrap();
+    for row_domain in [0, 1, 3, wide] {
+        let mut backend = TracerBackend::limited_for_row_domain(0, row_domain).unwrap();
+        backend.trace_allocation_limit.as_mut().unwrap().bytes = usize::MAX;
+        let limited = backend.trace(&program, inputs.clone()).unwrap();
         assert_eq!(limited.trace.rows(), rows);
         assert_eq!(limited.dimensions, original.dimensions);
         assert_eq!(limited.device, original.device);
