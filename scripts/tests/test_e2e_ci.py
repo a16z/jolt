@@ -176,6 +176,7 @@ class E2eCiTests(unittest.TestCase):
                 return {'status': 'complete', 'fixture_revision': options.head.parent.name,
                         'wall_time': {'benchmark_s': 0}}
             with patch.object(ci.bench, 'git_revision', return_value='c' * 40), \
+                    patch.object(ci.subprocess, 'check_output', return_value='c' * 40 + '\trefs/heads/main\n'), \
                     patch.dict(os.environ, GITHUB_RUN_ID='123', GITHUB_RUN_ATTEMPT='1'), \
                     patch.object(ci.bench, 'capture') as capture, \
                     patch.object(ci.bench, 'build', side_effect=AssertionError('target must not build')), \
@@ -206,7 +207,7 @@ class E2eCiTests(unittest.TestCase):
             with patch.object(ci.bench, 'provenance', return_value=({'run_id': None}, {})):
                 result = ci.bench.disabled(args)
             self.assertEqual(result['status'], 'disabled')
-            self.assertEqual(len(result['cases']), 17)
+            self.assertEqual(len(result['cases']), len(ci.bench.config_cases(ci.bench.DEFAULT_CONFIG, 'pr')[1]))
             self.assertEqual({case['pcs'] for case in result['cases']}, {'akita', 'dory'})
             self.assertTrue(all(c['status'] == 'missing' and not c['samples'] for c in result['cases']))
             self.assertIsNone(result['wall_time']['total_s'])
@@ -511,6 +512,44 @@ if __name__ == '__main__':
 
 
 class CalibrationSchedulingTests(unittest.TestCase):
+    def test_skip_only_superseded_main_calibration_and_keep_refresh_on_lookup_failure(self):
+        for tier, event, current, skip in [('main', 'push', 'b' * 40, False),
+                ('main', 'push', 'c' * 40, True), ('main', 'push', None, False),
+                ('main', 'workflow_dispatch', 'c' * 40, False),
+                ('nightly', 'schedule', None, False), ('calibration', 'workflow_dispatch', None, False)]:
+            with self.subTest(tier=tier, event=event, current=current), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                args = argparse.Namespace(plan=root / 'plan.json', out=root / 'out',
+                    bundles=root / 'hosted', artifact_id=44, index_sha256='a' * 64)
+                args.plan.write_text('{}')
+                plan = dict(tier=tier, config={'path': 'scripts/bench/suites.json'}, provenance={'event': event},
+                            runs=[{'head': 'b' * 40}])
+
+                def lookup(*_args, **_kwargs):
+                    if tier != 'main' or event != 'push':
+                        raise AssertionError('only main pushes may query the live main head')
+                    if current is None:
+                        raise subprocess.CalledProcessError(128, 'git ls-remote')
+                    return current + '\trefs/heads/main\n'
+
+                def prepare(options, **_kwargs):
+                    ci.bench.write_json(options.out / 'builds.json', {})
+
+                with patch.object(ci.subprocess, 'check_output', side_effect=lookup), \
+                        patch.object(ci, 'verified_bundles', return_value={'b' * 40: root / 'manifest.json'}), \
+                        patch.object(ci, 'prepare', side_effect=prepare), \
+                        patch.object(ci.bench, 'run', side_effect=lambda _: dict(status='complete', wall_time={})):
+                    self.assertFalse(ci.calibration_phase(args, plan))
+                raw = args.out / 'calibration/raw/benchmark-results.json'
+                skipped = args.out / 'calibration/skipped.json'
+                self.assertEqual(raw.exists(), not skip)
+                self.assertEqual(skipped.exists(), skip)
+                if skip:
+                    reason = json.loads(skipped.read_text())
+                    self.assertIn('superseded', reason['reason'])
+                    self.assertEqual(reason['planned_tip'], 'b' * 40)
+                    self.assertEqual(reason['observed_main'], current)
+
     def test_main_nightly_and_bootstrap_use_tip_null_before_optional_local_probe(self):
         for tier in ('main', 'nightly', 'calibration'):
             with self.subTest(tier=tier), tempfile.TemporaryDirectory() as directory:
@@ -518,10 +557,12 @@ class CalibrationSchedulingTests(unittest.TestCase):
                 args = argparse.Namespace(plan=root / 'plan.json', out=root / 'out',
                     bundles=root / 'hosted', artifact_id=44, index_sha256='a' * 64)
                 args.plan.write_text('{}')
-                plan = dict(tier=tier, config={'path': 'scripts/bench/suites.json'}, provenance={},
+                plan = dict(tier=tier, config={'path': 'scripts/bench/suites.json'},
+                            provenance={'event': 'push' if tier == 'main' else 'workflow_dispatch'},
                             runs=[{'head': 'a' * 40}, {'head': 'b' * 40}])
                 events = []
                 def prove(options):
+                    self.assertEqual(options.case, [])
                     events.append((options.kind, options.tier, options.warmups, options.repetitions,
                                    options.base, options.head, len(ci.bench.config_cases(options.config, 'pr')[1])))
                     return dict(status='complete', wall_time={'benchmark_s': 0})
@@ -530,10 +571,12 @@ class CalibrationSchedulingTests(unittest.TestCase):
                     ci.bench.write_json(options.out / 'builds.json', {})
                 with patch.object(ci, 'verified_bundles', side_effect=lambda options, *_:
                         {'b' * 40: options.bundles / 'manifest.json'}), \
+                        patch.object(ci.subprocess, 'check_output', return_value='b' * 40 + '\trefs/heads/main\n'), \
                         patch.object(ci.bench, 'run', side_effect=prove), patch.object(ci, 'prepare', side_effect=prepare):
                     self.assertFalse(ci.calibration_phase(args, plan))
                 self.assertEqual(events[0], ('null', 'pr', 1, 10,
-                    args.bundles / 'manifest.json', args.bundles / 'manifest.json', 17))
+                    args.bundles / 'manifest.json', args.bundles / 'manifest.json',
+                    len(ci.bench.config_cases(ci.bench.DEFAULT_CONFIG, 'pr')[1])))
                 if tier == 'calibration':
                     self.assertEqual(events[1], 'local-build')
                     self.assertEqual(events[2][0:4], ('null', 'pr', 1, 3))
