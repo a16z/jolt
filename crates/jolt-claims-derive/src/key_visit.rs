@@ -11,14 +11,28 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
     let mut arms = Vec::new();
     for (index, variant) in data.variants.iter().enumerate() {
         if variant.discriminant.is_some() {
-            return Err(Error::new_spanned(variant, "recipe tags use declaration order"));
+            return Err(Error::new_spanned(
+                variant,
+                "recipe tags use declaration order",
+            ));
         }
         let tag = Literal::usize_unsuffixed(index);
         let variant_name = &variant.ident;
-        let attrs = variant.attrs.iter().filter(|attr| attr.path().is_ident("cfg"));
-        let values: Vec<_> = variant.fields.iter().enumerate().map(|(index, field)| {
-            field.ident.clone().unwrap_or_else(|| format_ident!("value{index}"))
-        }).collect();
+        let attrs = variant
+            .attrs
+            .iter()
+            .filter(|attr| attr.path().is_ident("cfg"));
+        let values: Vec<_> = variant
+            .fields
+            .iter()
+            .enumerate()
+            .map(|(index, field)| {
+                field
+                    .ident
+                    .clone()
+                    .unwrap_or_else(|| format_ident!("value{index}"))
+            })
+            .collect();
         let pattern = match &variant.fields {
             Fields::Unit => quote!(),
             Fields::Unnamed(_) => quote!((#(#values),*)),
