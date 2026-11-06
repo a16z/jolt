@@ -248,4 +248,3 @@ impl<F> ImmutableRecipeField<F> {
 
 #[cfg(all(feature = "immutable-recipes", feature = "solinas"))]
 pub const IMMUTABLE_RECIPE_MODULUS: u128 = FIELD_INLINE_FP128_MODULUS;
-
