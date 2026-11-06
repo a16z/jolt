@@ -35,3 +35,6 @@ pub mod size_class_alloc;
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 mod malloc_shim;
+
+#[cfg(target_arch = "riscv64")]
+mod word_memory;
