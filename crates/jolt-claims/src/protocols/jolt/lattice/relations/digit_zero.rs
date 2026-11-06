@@ -287,3 +287,9 @@ mod tests {
         assert_eq!(output, expected_output);
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(HammingWeightClaimReductionDimensions {
+    layout,
+    log_k_chunk
+});

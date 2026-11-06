@@ -287,3 +287,13 @@ mod tests {
         assert_eq!(SpartanOuterDimensions::new(8, Vec::new(), false), None);
     }
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(SpartanOuterDimensions {
+    log_t,
+    variables,
+    include_affine_terms
+});
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(SpartanProductDimensions { log_t });

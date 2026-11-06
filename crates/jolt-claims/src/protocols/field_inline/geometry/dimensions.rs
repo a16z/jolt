@@ -133,3 +133,14 @@ pub struct FieldRegistersReadWriteOpeningPoint<F: JoltField> {
     pub r_cycle: Vec<F>,
     pub opening_point: Vec<F>,
 }
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(FieldRegistersTraceDimensions { log_t });
+
+#[cfg(feature = "immutable-recipes")]
+crate::recipe_shape!(FieldRegistersReadWriteDimensions {
+    log_t,
+    log_k,
+    phase1_num_rounds,
+    phase2_num_rounds
+});
