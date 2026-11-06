@@ -22,7 +22,6 @@ MODEL = "gpt-6.1-sol"
 EFFORT = "xhigh"
 MAX_INPUT_TOKENS = 150_000
 MAX_OUTPUT_TOKENS = 20_000
-MAX_RUN_INPUT_TOKENS = 750_000
 MAX_RUN_OUTPUT_TOKENS = 100_000
 MAX_SPEND_USD = 2.875
 MAX_TURNS = 32
@@ -114,7 +113,6 @@ class ModelBroker:
             count = json.loads(counted).get("input_tokens")
             output = body["max_output_tokens"]
             if type(count) is not int or count < 0 or count > MAX_INPUT_TOKENS \
-                    or self.input_tokens + count > MAX_RUN_INPUT_TOKENS \
                     or self.output_tokens + output > MAX_RUN_OUTPUT_TOKENS \
                     or self.cost_usd + (count * 2.50 + output * 10) / 1_000_000 > MAX_SPEND_USD:
                 raise AgentFailure("classifier token or spend cap")

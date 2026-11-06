@@ -1338,16 +1338,29 @@ class AiMergeGateTests(unittest.TestCase):
 
 
 class ClassifierAgentTests(unittest.TestCase):
+    def test_cached_context_can_repeat_within_spend_budget(self):
+        usage = {"input_tokens": 100_000, "output_tokens": 1000,
+                 "input_tokens_details": {"cached_tokens": 100_000}}
+        response = {"type": "response.completed", "response": {
+            "model": AGENT.MODEL, "status": "completed", "usage": usage}}
+        payload = json.dumps(response).encode()
+        def request(endpoint, _body, _headers):
+            return 200, (json.dumps({"input_tokens": 100_000}).encode()
+                         if endpoint.endswith("input_tokens") else payload)
+        broker = AGENT.ModelBroker("fake", request=request)
+        for _ in range(8):
+            self.assertEqual(broker.forward({"model": AGENT.MODEL}, {}), (200, payload))
+        self.assertEqual(broker.input_tokens, 800_000)
+        self.assertAlmostEqual(broker.cost_usd, .16)
+
     def test_budget_preflight_blocks_payment_and_incomplete_usage_is_retained(self):
-        for limit in ("request", "input", "output", "spend", "turns"):
+        for limit in ("request", "output", "spend", "turns"):
             with self.subTest(limit=limit):
                 calls = []
                 def request(endpoint, _body, _headers):
                     calls.append(endpoint)
                     return 200, json.dumps({"input_tokens": AGENT.MAX_INPUT_TOKENS + (limit == "request")}).encode()
                 broker = AGENT.ModelBroker("fake", request=request)
-                if limit == "input":
-                    broker.input_tokens = AGENT.MAX_RUN_INPUT_TOKENS
                 if limit == "output":
                     broker.output_tokens = AGENT.MAX_RUN_OUTPUT_TOKENS
                 if limit == "spend":
