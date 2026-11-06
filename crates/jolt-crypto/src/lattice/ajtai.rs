@@ -12,14 +12,15 @@
 //! admits no NTT over `F_q` for `X^256 + 1`, which is why the arithmetic runs
 //! over CRT primes.
 
+use std::ops::Range;
 use std::sync::OnceLock;
 
 use jolt_algebra::parallel::*;
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use jolt_algebra::tables::{q128_primes, validate_profile_crt_ring_degree, Q128_MAX_RING_D};
 use jolt_algebra::{
-    balanced_decompose_coefficients_pow2_i8_into, CanonicalEncoding, CrtNttParamSet,
-    CyclotomicCrtNtt, CyclotomicRing, Field, RADIX_SUM_BITS,
+    balanced_decompose_coefficients_pow2_i8_into, Accumulator, CanonicalEncoding, CrtNttParamSet,
+    CyclotomicCrtNtt, CyclotomicRing, Field, WithAccumulator, RADIX_SUM_BITS,
 };
 use zeroize::Zeroizing;
 
@@ -180,48 +181,6 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
 
     pub fn shape(&self) -> MatrixShape {
         self.shape
-    }
-
-    /// `Σ_col scales[col] · M[row][col]` for every row, over `F`: the
-    /// matrix applied to columns that are each a public scalar times one
-    /// common ring element, before that element. Not constant time: the
-    /// scales must be public.
-    pub fn combine_columns(&self, scales: &[F]) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
-        if scales.len() != self.shape.width {
-            return Err(CryptoError::InvalidSize {
-                expected: self.shape.width,
-                actual: scales.len(),
-            });
-        }
-        let coefficients = &self.coefficients;
-        // Parallel over column chunks as well as rows: matrices are a few
-        // rows by thousands of columns.
-        const COLUMN_CHUNK: usize = 256;
-        let width = self.shape.width;
-        Ok((0..self.shape.rows)
-            .map(|row| {
-                let row_entries = coefficients
-                    .get(row * width..(row + 1) * width)
-                    .unwrap_or_default();
-                cfg_fold_reduce!(
-                    0..width.div_ceil(COLUMN_CHUNK),
-                    CyclotomicRing::zero,
-                    |mut sum, chunk| {
-                        let range = chunk * COLUMN_CHUNK..((chunk + 1) * COLUMN_CHUNK).min(width);
-                        for (entry, scale) in row_entries
-                            .get(range.clone())
-                            .unwrap_or_default()
-                            .iter()
-                            .zip(scales.get(range).unwrap_or_default())
-                        {
-                            entry.scale_accumulate_into(&mut sum, *scale);
-                        }
-                        sum
-                    },
-                    |a, b| a + b
-                )
-            })
-            .collect())
     }
 
     /// The CRT+NTT entries and blind, built on the first CRT product and
@@ -484,6 +443,78 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         Ok(accumulators
             .iter()
             .map(|accumulator| accumulator.to_ring_ct(&self.params) - self.blind)
+            .collect())
+    }
+}
+
+impl<F: Field + CanonicalEncoding + WithAccumulator, const D: usize> PreparedMatrix<F, D> {
+    /// `Σ_col scales[col] · M[row][col]` for every row, over `F`: the
+    /// matrix applied to columns that are each a public scalar times one
+    /// common ring element, before that element. Not constant time: the
+    /// scales must be public.
+    pub fn combine_columns(&self, scales: &[F]) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
+        self.combine_column_range(0..self.shape.width, scales)
+    }
+
+    /// [`Self::combine_columns`] over the columns in `columns` alone:
+    /// `Σ_{col ∈ columns} scales[col − columns.start] · M[row][col]`. Each
+    /// output coefficient sums its products unreduced and reduces once.
+    pub fn combine_column_range(
+        &self,
+        columns: Range<usize>,
+        scales: &[F],
+    ) -> Result<Vec<CyclotomicRing<F, D>>, CryptoError> {
+        if columns.start > columns.end
+            || columns.end > self.shape.width
+            || scales.len() != columns.len()
+        {
+            return Err(CryptoError::InvalidSize {
+                expected: columns.len(),
+                actual: scales.len(),
+            });
+        }
+        let coefficients = &self.coefficients;
+        // Parallel over column chunks as well as rows: matrices are a few
+        // rows by thousands of columns.
+        const COLUMN_CHUNK: usize = 256;
+        let width = self.shape.width;
+        let len = columns.len();
+        Ok((0..self.shape.rows)
+            .map(|row| {
+                let row_entries = coefficients
+                    .get(row * width + columns.start..row * width + columns.end)
+                    .unwrap_or_default();
+                let sums = cfg_fold_reduce!(
+                    0..len.div_ceil(COLUMN_CHUNK),
+                    || [F::Accumulator::default(); D],
+                    |mut sums, chunk| {
+                        let range = chunk * COLUMN_CHUNK..((chunk + 1) * COLUMN_CHUNK).min(len);
+                        for (entry, scale) in row_entries
+                            .get(range.clone())
+                            .unwrap_or_default()
+                            .iter()
+                            .zip(scales.get(range).unwrap_or_default())
+                        {
+                            // Scales are public; callers pass sparse ones
+                            // (one nonzero quarter per V plane).
+                            if scale.is_zero() {
+                                continue;
+                            }
+                            for (sum, coefficient) in sums.iter_mut().zip(entry.coefficients()) {
+                                sum.fmadd(*coefficient, *scale);
+                            }
+                        }
+                        sums
+                    },
+                    |mut sums, other| {
+                        for (sum, other) in sums.iter_mut().zip(other) {
+                            sum.merge(other);
+                        }
+                        sums
+                    }
+                );
+                CyclotomicRing::from_coefficients(sums.map(Accumulator::reduce))
+            })
             .collect())
     }
 }
