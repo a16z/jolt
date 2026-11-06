@@ -335,6 +335,19 @@ where
         output_points: &SumcheckOutputPoints<F, Self>,
         challenges: &ConcreteSumcheckChallenges<F, Self>,
     ) -> Result<F, VerifierError> {
+        self.evaluate_output_expression(output_values, challenges, |id| {
+            self.derive_output_term(id, input_points, output_points, challenges)
+        })
+    }
+    /// Evaluate the canonical output expression with a per-call derived-value
+    /// resolver. Relations can share public computations across terms without
+    /// restating the expression or changing opening and challenge resolution.
+    fn evaluate_output_expression(
+        &self,
+        output_values: &SumcheckOutputClaims<F, Self>,
+        challenges: &ConcreteSumcheckChallenges<F, Self>,
+        derived: impl FnMut(&DerivedIdOf<F, Self>) -> Result<F, VerifierError>,
+    ) -> Result<F, VerifierError> {
         self.symbolic().output_expression::<F>().try_evaluate(
             |id| {
                 output_values
@@ -346,7 +359,7 @@ where
                     .resolve_challenge(id)
                     .ok_or(VerifierError::MissingStageClaimChallenge { id: (*id).into() })
             },
-            |id| self.derive_output_term(id, input_points, output_points, challenges),
+            derived,
         )
     }
 }
