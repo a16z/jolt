@@ -589,7 +589,10 @@ mod tests {
             polynomial: JoltPolynomialId::Committed(JoltCommittedPolynomial::RamRa(3)),
             relation: JoltRelationId::RamReadWriteChecking,
         };
-        let mut sink = Words { words: Vec::new(), limit: usize::MAX };
+        let mut sink = Words {
+            words: Vec::new(),
+            limit: usize::MAX,
+        };
         assert!(id.visit(&mut sink));
         assert_eq!(sink.words, [0, 0, 5, 3, 7]);
         sink.words.clear();
