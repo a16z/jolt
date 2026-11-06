@@ -48,7 +48,7 @@ fn check<F: Field>() {
 }
 
 #[test]
-fn setup_weight_tiles_randomized_and_boundary_equivalence() {
+fn scaled_slice_randomized_and_boundary_equivalence() {
     check::<Prime128OffsetA7F7>();
     check::<Prime128Offset275>();
 }
