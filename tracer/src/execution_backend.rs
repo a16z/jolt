@@ -231,8 +231,8 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-/// Maximum conversion batch: 96 MiB of default-build cycles, 64 parallel
-/// conversion slices; the configured domain can select a smaller batch.
+/// Maximum conversion threshold: 96 MiB of default-build cycles;
+/// a full instruction can carry a batch past this threshold.
 const SERIAL_BATCH_ROWS: usize = 1 << 20;
 
 /// Cycles a limited trace can hold pending: each tick starts with fewer than
