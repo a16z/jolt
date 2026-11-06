@@ -7,6 +7,7 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         return Err(Error::new_spanned(&input, "KeyVisit requires an enum"));
     };
     let name = &input.ident;
+    let module = format_ident!("__recipe_key_{}", name.to_string().to_lowercase());
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let mut arms = Vec::new();
     for (index, variant) in data.variants.iter().enumerate() {
@@ -31,7 +32,8 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
                     .ident
                     .clone()
                     .unwrap_or_else(|| format_ident!("value{index}"))
-            })
+                }
+    })
             .collect();
         let pattern = match &variant.fields {
             Fields::Unit => quote!(),
@@ -41,13 +43,17 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
         arms.push(quote! {
             #(#attrs)* Self::#variant_name #pattern => sink.word(#tag)
                 #(&& ::jolt_claims::immutable_recipes::KeyVisit::visit(#values, sink))*,
-        });
+            }
+    });
     }
     Ok(quote! {
+        mod #module {
+            use super::#name;
         impl #impl_generics ::jolt_claims::immutable_recipes::KeyVisit for #name #ty_generics #where_clause {
             fn visit(&self, sink: &mut dyn ::jolt_claims::immutable_recipes::KeySink) -> bool {
                 match self { #(#arms)* }
             }
+        }
         }
     })
 }
