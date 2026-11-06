@@ -72,7 +72,7 @@ pub struct ReadWriteChecking {
 
 twist::instantiate_read_write_checking! {
     relation = ReadWriteChecking,
-    recipe = { crate::immutable_symbolic_recipe!(12, FIELD, Field; shape); },
+    recipe = { crate::immutable_symbolic_recipe!(FieldRegistersReadWrite, FIELD, Field, input_only = false, unit_first = true; shape); },
     id = FieldInlineRelationId::FieldRegistersReadWriteChecking,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
     dimensions = FieldRegistersReadWriteDimensions,
@@ -125,7 +125,7 @@ pub struct ValEvaluation {
 
 twist::instantiate_val_evaluation! {
     relation = ValEvaluation,
-    recipe = { crate::immutable_symbolic_recipe!(17, FIELD, Field; shape); },
+    recipe = { crate::immutable_symbolic_recipe!(FieldRegistersValEvaluation, FIELD, Field, input_only = false, unit_first = true; shape); },
     id = FieldInlineRelationId::FieldRegistersValEvaluation,
     ids = (FieldInlineRelationId, FieldInlineOpeningId, FieldInlineDerivedId, FieldInlineChallengeId),
     dimensions = FieldRegistersTraceDimensions,

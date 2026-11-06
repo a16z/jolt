@@ -4,23 +4,47 @@ mod flags;
 mod key;
 #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
 pub mod record;
+use crate::protocols::composed::ComposedOpeningId;
+use crate::protocols::field_inline::{
+    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
+};
+use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
 pub use key::{KeySink, KeyVisit};
-/// Exact source-owned base eligibility for generic composed relations.
-pub struct BasePermit<S> {
-    marker: PhantomData<fn() -> S>,
-}
-impl<S> BasePermit<S> {
-    pub(crate) fn new() -> Self {
-        Self {
-            marker: PhantomData,
-        }
-    }
-}
 
 use crate::{Expr, Source, Term};
 use jolt_field::{ImmutableRecipeField, Ring, IMMUTABLE_RECIPE_MODULUS};
-use std::cmp::Ordering;
-use std::{collections::BTreeSet, marker::PhantomData, slice::Iter};
+use std::{cmp::Ordering, collections::BTreeSet, slice::Iter};
+
+/// Stable recipe-key tags shared by generic bases and composed wrappers.
+#[repr(u64)]
+pub enum RecipeTag {
+    SpartanOuterRemainder = 1,
+    RamReadWrite = 2,
+    SpartanProductRemainder = 3,
+    InstructionClaimReduction = 4,
+    FieldRegistersClaimReduction = 5,
+    RamRafEvaluation = 6,
+    RamOutputCheck = 7,
+    SpartanShift = 8,
+    InstructionInputVirtualization = 9,
+    RegistersClaimReduction = 10,
+    RegistersReadWrite = 11,
+    FieldRegistersReadWrite = 12,
+    RamValCheck = 13,
+    InstructionReadRaf = 14,
+    RamRaClaimReduction = 15,
+    RegistersValEvaluation = 16,
+    FieldRegistersValEvaluation = 17,
+    BytecodeReadRaf = 18,
+    BooleanityAddress = 19,
+    BytecodeReadRafAddress = 20,
+    BytecodeReadRafCycle = 21,
+    RamHammingBooleanity = 23,
+    RamRaVirtualization = 24,
+    InstructionRaVirtualization = 25,
+    FieldRegistersIncClaimReduction = 26,
+    DigitZero = 27,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Phase {
@@ -186,7 +210,8 @@ impl<'a, O, D, C> Table<'a, O, D, C> {
 
 pub struct Recipe<'a, F, O, D, C> {
     record: &'a Record<'a, O, D, C>,
-    _field: ImmutableRecipeField<F>, // Zero-size proof of the admitted guest field.
+    // Zero-size capability proving that F uses the admitted guest field implementation.
+    _field: ImmutableRecipeField<F>,
     unit_first: bool,
 }
 
@@ -442,12 +467,6 @@ pub fn evaluate_canonical<F: Ring, O, D, C, E>(
     )
 }
 
-use crate::protocols::composed::ComposedOpeningId;
-use crate::protocols::field_inline::{
-    FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
-};
-use crate::protocols::jolt::{JoltChallengeId, JoltDerivedId, JoltOpeningId};
-
 pub type RecipeLookupResult<'a, F, O, D, C> = Result<Option<Recipe<'a, F, O, D, C>>, RecipeError>;
 
 pub type JoltTable = Table<'static, JoltOpeningId, JoltDerivedId, JoltChallengeId>;
@@ -471,19 +490,19 @@ pub(crate) mod compiled {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! immutable_symbolic_recipe {
-    ($tag:literal, $family:ident, $native:ident; $($key:tt)+) => {
+    ($tag:ident, $family:ident, $native:ident, input_only = $input_only:literal, unit_first = $unit_first:literal; $($key:tt)+) => {
         #[cfg(feature = "immutable-recipes")]
         fn immutable_recipe<F: ::jolt_field::Ring>(
             &self, phase: $crate::immutable_recipes::Phase,
         ) -> $crate::immutable_recipes::RecipeLookupResult<'_, F, Self::OpeningId, Self::DerivedId, Self::ChallengeId> {
             if F::immutable_recipe_field().is_none() { return Ok(None); }
-            if ($tag == 21 && phase != $crate::immutable_recipes::Phase::Input)
+            if ($input_only && phase != $crate::immutable_recipes::Phase::Input)
                 || !$crate::immutable_recipe_admitted!(self; $($key)+) { return Ok(None); }
             $crate::immutable_recipes::find::<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>(
                 &$crate::immutable_recipes::compiled::$family, phase,
-                phase == $crate::immutable_recipes::Phase::Output && $tag != 20 && $tag != 26,
+                phase == $crate::immutable_recipes::Phase::Output && $unit_first,
                 |sink| {
-                    sink.word(1) && sink.word($tag)
+                    sink.word(1) && sink.word($crate::immutable_recipes::RecipeTag::$tag as u64)
                         && $crate::immutable_recipe_key!(self, sink; $($key)+)
                 },
             )
@@ -494,10 +513,10 @@ macro_rules! immutable_symbolic_recipe {
             expression: &$crate::Expr<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>,
         ) {
             if F::immutable_recipe_native_field().is_none() { return; }
-            if ($tag == 21 && phase != $crate::immutable_recipes::Phase::Input)
+            if ($input_only && phase != $crate::immutable_recipes::Phase::Input)
                 || !$crate::immutable_recipe_admitted!(self; $($key)+) { return; }
             $crate::immutable_recipes::record::expression(phase, |sink| {
-                sink.word(1) && sink.word($tag)
+                sink.word(1) && sink.word($crate::immutable_recipes::RecipeTag::$tag as u64)
                     && $crate::immutable_recipe_key!(self, sink; $($key)+)
             }, expression, $crate::immutable_recipes::record::Captured::$native);
         }
@@ -506,9 +525,9 @@ macro_rules! immutable_symbolic_recipe {
             &self, openings: &::std::collections::BTreeSet<Self::OpeningId>,
         ) {
             if F::immutable_recipe_native_field().is_none() { return; }
-            if $tag == 21 || !$crate::immutable_recipe_admitted!(self; $($key)+) { return; }
+            if $input_only || !$crate::immutable_recipe_admitted!(self; $($key)+) { return; }
             $crate::immutable_recipes::record::support::<F, Self::OpeningId, Self::DerivedId, Self::ChallengeId>(|sink| {
-                sink.word(1) && sink.word($tag)
+                sink.word(1) && sink.word($crate::immutable_recipes::RecipeTag::$tag as u64)
                     && $crate::immutable_recipe_key!(self, sink; $($key)+)
             }, openings, $crate::immutable_recipes::record::Captured::$native);
         }

@@ -56,7 +56,7 @@ impl SymbolicSumcheck for RaVirtualization {
     type Challenges<F> = InstructionRaVirtualizationChallenges<F>;
     type Inputs<C> = InstructionRaVirtualizationInputClaims<C>;
     type Outputs<C> = InstructionRaVirtualizationOutputClaims<C>;
-    crate::immutable_symbolic_recipe!(25, JOLT, Jolt; shape);
+    crate::immutable_symbolic_recipe!(InstructionRaVirtualization, JOLT, Jolt, input_only = false, unit_first = true; shape);
     fn new(shape: InstructionRaVirtualizationDimensions) -> Self {
         Self { shape }
     }

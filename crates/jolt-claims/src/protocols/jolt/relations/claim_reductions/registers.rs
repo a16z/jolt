@@ -60,7 +60,7 @@ pub struct ClaimReduction {
 
 twist::instantiate_value_reduction! {
     relation = ClaimReduction,
-    recipe = { crate::immutable_symbolic_recipe!(10, JOLT, Jolt; shape); },
+    recipe = { crate::immutable_symbolic_recipe!(RegistersClaimReduction, JOLT, Jolt, input_only = false, unit_first = true; shape); },
     id = JoltRelationId::RegistersClaimReduction,
     ids = (JoltRelationId, JoltOpeningId, JoltDerivedId, JoltChallengeId),
     dimensions = TraceDimensions,
