@@ -336,31 +336,9 @@ pub struct ProfileArgs {
     #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
 
-    /// Explicit memory budget in bytes: an integer with an optional binary
-    /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
-    /// optimized`. The budget first routes the trace over the `2^scale`
-    /// domain with `TracerBackend::limited_for_row_domain`, a routing proxy,
-    /// not a peak: at or above it the original tracer runs, as without a budget;
-    /// below it, once through the limited serial trace, which rejects parallel
-    /// tracing (`TRACER_PARALLEL`), fails at the first covered request the
-    /// budget cannot hold (its setup alone requests over 1 GiB by default) and
-    /// keeps its rows' observed capacity in the trace output the checks below
-    /// count: a run holding every cycle to the end requests exactly its rows;
-    /// a batched run keeps at least its row reserve, even when it converts only
-    /// at the end. A run
-    /// much shorter than the domain can take the limited trace although the
-    /// original would fit, and a budget just above the proxy keeps an original
-    /// trace whose unpriced requests can exceed it.
-    /// The profile then reserves against the budget in turn and returns an
-    /// error at the first reservation that does not fit: the optimized
-    /// prover's known eager reservation, which covers the trace buffers and
-    /// named eager tables only, after tracing and before proving; then, under
-    /// Akita, the rest of the trace output, the program and program
-    /// preprocessing buffers, and the one-hot setup's flat public matrix,
-    /// before PCS setup allocates it. Under Akita every budget fails for
-    /// multi-chunk or field-inline setups, which the matrix check does not
-    /// price. Passing does not mean the whole proof fits, and the budget does
-    /// not cap process memory.
+    /// Budget for selected trace/prover allocations in bytes (KiB/MiB/GiB/TiB
+    /// accepted; optimized backend only, not a process-memory cap); see
+    /// https://github.com/a16z/jolt/blob/main/tracer/src/execution_backend.rs.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -823,22 +801,16 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     }
     #[cfg(feature = "field-inline")]
     program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
-    let limited = args
+    program.build(&default_target_dir().to_string_lossy());
+    let elf = program.elf.as_ref().expect("guest build produces an ELF");
+    let mut tracer = args
         .memory_budget
-        .and_then(|budget| TracerBackend::limited_for_row_domain(budget.bytes(), max_trace_length));
-    // Reuse the execution trace for sizing, memory layout, and proving. A
-    // preliminary legacy trace duplicates execution and can leave large
-    // allocator-retained buffers in the measured process.
-    let trace_output = if let Some(mut tracer) = limited {
-        // The tracer symbolizes a guest panic's backtrace from the ELF path;
-        // building here sets it, so `trace_with_backend` does not rebuild.
-        program.build(&default_target_dir().to_string_lossy());
-        let elf = program.elf.as_ref().expect("guest build produces an ELF");
-        tracer.elf_path = Some(elf.path().clone());
-        program.trace_with_backend(&mut tracer, &input, &[], &[])
-    } else {
-        program.trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
-    }?;
+        .and_then(|budget| {
+            TracerBackend::limited_for_row_domain(budget.remaining(), max_trace_length)
+        })
+        .unwrap_or_default();
+    tracer.elf_path = Some(elf.path().clone());
+    let trace_output = program.trace_with_backend(&mut tracer, &input, &[], &[])?;
     let trace_length = trace_output.trace.proof_len();
     assert!(
         trace_length.next_power_of_two() <= max_trace_length,

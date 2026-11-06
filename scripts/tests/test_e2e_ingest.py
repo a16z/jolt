@@ -75,6 +75,66 @@ def inputs(tier='pr'):
 
 
 class IngestTests(unittest.TestCase):
+    def test_pr_comment_filters_strict_three_percent_in_either_metric_and_direction(self):
+        result = inputs()[0]
+        template = result['cases'].pop()
+        for cores, seconds, rss in [(1, 104, 10000), (2, 96, 10000),
+                                    (3, 100, 10400), (4, 100, 9600),
+                                    (5, 103, 9700), (6, 97, 10300), (7, 103.001, 10000),
+                                    (8, 0.97, 10000), (9, 1.03, 10000)]:
+            case = copy.deepcopy(template)
+            case['physical_cores'] = cores
+            for sample in case['samples']:
+                if sample['phase'] == 'warmup':
+                    sample['metrics'].update(e2e_s=1000, peak_rss_bytes=1000000)
+                else:
+                    base_seconds = 1 if cores in (8, 9) else 100
+                    sample['metrics'].update(e2e_s=base_seconds if sample['leg'] == 'base' else seconds,
+                        peak_rss_bytes=10000 if sample['leg'] == 'base' else rss)
+            result['cases'].append(case)
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / 'summary.md'
+            comment = ingest.render_pr_comment(result, summary, 'https://fixture.invalid/results')
+            self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
+                          f"Measured merge: `{'c' * 40}`.", comment)
+            for cores, values in [(1, '100.000000 / 104.000000 | +4.00%'),
+                                  (2, '100.000000 / 96.000000 | -4.00%'),
+                                  (3, '10000 / 10400 | +4.00%'),
+                                  (4, '10000 / 9600 | -4.00%'),
+                                  (7, '100.000000 / 103.001000 | +3.00%')]:
+                row = next(line for line in comment.splitlines()
+                           if line.startswith(f'| fibonacci / dory | {cores} |'))
+                self.assertIn(values, row)
+                full = next(line for line in summary.read_text().splitlines()
+                            if line.startswith(f'| fibonacci / dory | {cores} |'))
+                full_cells, short_cells = full.split('|'), row.split('|')
+                self.assertEqual(short_cells[1:-1], [full_cells[i] for i in (1, 2, 3, 4, 6, 7)])
+            for cores in (5, 6, 8, 9):
+                self.assertNotIn(f'| fibonacci / dory | {cores} |', comment)
+
+    def test_pr_comment_no_change_marker_and_links(self):
+        with tempfile.TemporaryDirectory() as directory:
+            comment = ingest.render_pr_comment(inputs()[0], Path(directory) / 'summary.md',
+                'https://github.com/a16z/jolt/actions/runs/456/attempts/2')
+        self.assertTrue(comment.startswith('<!-- jolt-e2e-benchmark-comment -->\n'))
+        self.assertIn('[Full results](https://github.com/a16z/jolt/actions/runs/456/attempts/2)', comment)
+        self.assertIn('[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', comment)
+        self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
+                      f"Measured merge: `{'c' * 40}`.", comment)
+        self.assertIn('No change above 3%', comment)
+        self.assertNotIn('| Workload', comment)
+
+    def test_pr_comment_does_not_claim_no_change_for_unavailable_comparisons(self):
+        for changes, exit_code in [({'status': 'failed'}, 0), ({'status': 'incomplete'}, 0), ({}, 1)]:
+            with self.subTest(changes=changes, exit_code=exit_code), tempfile.TemporaryDirectory() as directory:
+                result = dict(inputs()[0], **changes)
+                comment = ingest.render_pr_comment(result, Path(directory) / 'summary.md',
+                                                   'https://fixture.invalid/results', exit_code)
+                self.assertIn('Comparison unavailable', comment)
+                self.assertNotIn('No change', comment)
+                self.assertIn(f"Base: `{'a' * 40}`. Submitted head: `{'b' * 40}`. "
+                              f"Measured merge: `{'c' * 40}`.", comment)
+
     def test_hosted_validation_accepts_each_tier_and_refuses_result_or_build_substitution(self):
         for tier in ('pr', 'main', 'nightly', 'calibration'):
             result, plan, dispatch, config, receipt, _ = inputs(tier)
@@ -199,8 +259,10 @@ class IngestTests(unittest.TestCase):
             argv = ['ingest.py', '--job-id', '123-1', '--plan-run-id', '123', '--plan-run-attempt', '1',
                 '--result-url', f'https://fixture.invalid/github-bench/{digest}.zip', '--result-sha256', digest,
                 '--executor-exit-code', '0', '--out', str(out)]
+            job_summary, outputs = Path(directory) / 'job-summary.md', Path(directory) / 'outputs'
             with patch.object(sys, 'argv', argv), patch.dict(os.environ, GITHUB_ACTOR=ingest.APP,
-                    GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='456', GITHUB_RUN_ATTEMPT='2'), \
+                    GITHUB_REF='refs/heads/main', GITHUB_RUN_ID='456', GITHUB_RUN_ATTEMPT='2',
+                    GITHUB_STEP_SUMMARY=str(job_summary), GITHUB_OUTPUT=str(outputs)), \
                     patch.object(ingest, 'trusted_plan', return_value=(plan, dispatch, config, receipt)), \
                     patch.object(ingest, 'download', return_value=raw):
                 ingest.main()
@@ -210,6 +272,9 @@ class IngestTests(unittest.TestCase):
             self.assertEqual(check['job_id'], '123-1')
             self.assertEqual(check['conclusion'], 'neutral')
             self.assertLessEqual(len(check['summary']), 60000)
+            self.assertEqual(job_summary.read_text(), check['summary'] + '\n')
+            self.assertEqual(outputs.read_text(), 'pr_number=7\n')
+            self.assertIn('No change above 3%', (out / 'result/pr-comment.md').read_text())
 
     def test_check_conclusions_distinguish_execution_failure_partial_and_complete_results(self):
         result = inputs('main')[0]
@@ -242,6 +307,21 @@ class IngestTests(unittest.TestCase):
                 self.assertEqual(checked[0]['status'], 'incomplete')
                 self.assertEqual(checked[0]['builds'], [])
                 self.assertEqual(ingest.check_result('123-1', checked, 1, 'failed')['conclusion'], 'failure')
+
+    def test_download_sends_descriptive_user_agent(self):
+        for url, authenticated in [('https://fixture.invalid/result.zip', False),
+                ('https://api.github.com/repos/a16z/jolt/actions/artifacts/42/zip', True)]:
+            with self.subTest(url=url), patch.dict(os.environ, GH_TOKEN='fixture-token'), \
+                    patch.object(ingest.urllib.request, 'build_opener') as opener:
+                opener.return_value.open.return_value = io.BytesIO(b'owned result')
+                self.assertEqual(ingest.download(url, 100, authenticated=authenticated), b'owned result')
+                request = opener.return_value.open.call_args.args[0]
+                self.assertEqual(request.get_header('User-agent'),
+                                 'jolt-e2e-ingest/1 (+https://github.com/a16z/jolt)')
+                redirected = ingest.DownloadRedirect().redirect_request(request, None, 302, 'Found', {},
+                                                                        'https://storage.invalid/result.zip')
+                self.assertEqual(redirected.get_header('User-agent'), request.get_header('User-agent'))
+                self.assertFalse(redirected.has_header('Authorization'))
 
     def test_untrusted_zip_paths_and_download_caps_are_enforced(self):
         self.assertEqual(ingest.result_files(zipped({'builds/fixture/build.log': b'owned log'})),

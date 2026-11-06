@@ -794,12 +794,8 @@ impl MacroBuilder {
             /// The unbudgeted prover's proof under `__jolt_memory_budget`, or the
             /// first error `jolt::compute_advice_tape` or `jolt::prove_program`
             /// returns; serialization and output decoding still panic.
-            /// The budget bounds the compute-advice run's named
-            /// requests and routes and checks the proof's trace
-            /// (`jolt::prove_program`). It does not cap process memory: argument
-            /// serialization, program builds, caches, allocator overhead and
-            /// prover buffers beyond `jolt::prove_program`'s checks are outside
-            /// it.
+            /// See [the tracer contract](https://github.com/a16z/jolt/blob/main/tracer/src/execution_backend.rs)
+            /// for the budget's counted requests and omissions.
             #[cfg(all(not(target_arch = "wasm32"), not(feature = "guest")))]
             #[allow(clippy::too_many_arguments)]
             pub fn #prove_budgeted_fn_name(

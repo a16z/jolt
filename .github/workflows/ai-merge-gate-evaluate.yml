@@ -54,7 +54,7 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.needed == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 305
     permissions:
       contents: read
     steps:

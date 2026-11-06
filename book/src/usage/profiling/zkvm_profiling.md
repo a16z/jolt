@@ -60,19 +60,9 @@ tier, slotting into the same instrumented seams.
 
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
-The budget first routes the trace over the `2^scale` domain
-(`TracerBackend::limited_for_row_domain`); that routing proxy is not a peak.
-At or above it, the profile uses the original tracer, as without a budget.
-Below it, one limited serial trace feeds the proof: it rejects parallel
-tracing (`TRACER_PARALLEL`), fails at the first covered trace-storage request
-the budget cannot hold (its setup alone requests over 1 GiB by default, so
-smaller budgets fail during tracing, before the checks below), and keeps its
-rows' observed capacity in the trace output those checks count: a run holding
-every cycle to the end requests exactly its rows; a batched run keeps at least
-its row reserve, even when it converts only at the end. A run much shorter than
-its domain can take the limited trace although the original would fit, and a
-budget just above the proxy keeps an original trace whose unpriced requests
-can exceed it.
+Tracing uses the remaining budget through
+[`TracerBackend::limited_for_row_domain`](https://github.com/a16z/jolt/blob/main/tracer/src/execution_backend.rs),
+which documents the routing proxy, counted storage and omissions.
 
 The profile then reserves bytes against the budget in this order and exits
 with an error at the first reservation that does not fit:
