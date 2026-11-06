@@ -132,8 +132,7 @@ Heap totals are included in `summary.json` and rendered in `memory.html`.
 Tracer, Jolt's emulator, doesn't currently support attaching a debugger.
 
 However, it supports backtraces for panics that happen in guest programs.
-Release guest ELFs retain the symbol table but strip DWARF debug information by default.
-The tracer can resolve function names when given the ELF path; file:line resolution needs debug information.
+By default, debug information is stripped from release guest ELFs and backtraces won't have much information.
 Debug/dev builds preserve debug information automatically.
 
 #### Backtrace flags

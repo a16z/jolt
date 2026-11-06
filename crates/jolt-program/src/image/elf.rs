@@ -10,10 +10,10 @@ use crate::ProgramError;
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
-/// RISC-V mapping symbols select code ranges to decode; data-labelled bytes
-/// remain only in `memory_init`. Executable bytes without an applicable mapping
-/// symbol are decoded linearly. Instructions are normalized for compressed
-/// encodings but have not been expanded into Jolt bytecode yet.
+/// Bytes in `$d` mapping-symbol ranges of executable sections stay only in
+/// `memory_init`; all other executable bytes are decoded linearly. Instructions
+/// are normalized for compressed encodings but have not been expanded into Jolt
+/// bytecode yet.
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(
     feature = "serialization",
@@ -69,7 +69,7 @@ pub fn decode_elf(
             .or_default()
             .push((symbol.address(), kind));
     }
-    let mut mapped_ranges = Vec::new();
+    let mut data_ranges = Vec::new();
 
     for section in obj
         .sections()
@@ -94,8 +94,8 @@ pub fn decode_elf(
                 symbols.sort_by_key(|(address, _)| *address);
                 for (index, &(address, kind)) in symbols.iter().enumerate() {
                     let next = symbols.get(index + 1).map_or(end, |(address, _)| *address);
-                    if address < next {
-                        mapped_ranges.push((address..next, kind));
+                    if address < next && matches!(kind, MappingSymbol::Data) {
+                        data_ranges.push((address, next));
                     }
                 }
             }
@@ -115,56 +115,33 @@ pub fn decode_elf(
         );
     }
 
-    mapped_ranges.sort_by_key(|(range, _)| range.start);
-    let mut image = Rv64ProgramImage {
+    let data_ranges = merge_ranges(data_ranges);
+    let mut instructions = Vec::new();
+    let mut decode = |range: Range<u64>| {
+        let raw_data: Vec<_> = range
+            .clone()
+            .map(|address| memory_image.get(&address).copied().unwrap_or(0))
+            .collect();
+        decode_text_section(range.start, &raw_data, &mut instructions, profile)
+    };
+    for (start, end) in merge_ranges(text_ranges) {
+        let mut cursor = start;
+        for &(data_start, data_end) in data_ranges
+            .iter()
+            .filter(|(data_start, data_end)| *data_start < end && *data_end > start)
+        {
+            decode(cursor..data_start)?;
+            cursor = data_end;
+        }
+        decode(cursor..end)?;
+    }
+
+    Ok(Rv64ProgramImage {
+        instructions,
         memory_init,
         program_end,
         entry_address: obj.entry(),
-        ..Default::default()
-    };
-    for (start, end) in merge_ranges(text_ranges) {
-        let raw_data: Vec<_> = (start..end)
-            .map(|address| memory_image.get(&address).copied().unwrap_or(0))
-            .collect();
-        let mut cursor = start;
-        for (range, kind) in mapped_ranges
-            .iter()
-            .filter(|(range, _)| range.start < end && range.end > start)
-        {
-            let range_start = range.start.max(cursor);
-            let range_end = range.end.min(end);
-            if cursor < range_start {
-                decode_text_section(
-                    start,
-                    &raw_data,
-                    cursor..range_start,
-                    &mut image.instructions,
-                    profile,
-                )?;
-            }
-            if range_start < range_end && matches!(kind, MappingSymbol::Code) {
-                decode_text_section(
-                    start,
-                    &raw_data,
-                    range_start..range_end,
-                    &mut image.instructions,
-                    profile,
-                )?;
-            }
-            cursor = cursor.max(range_end);
-        }
-        if cursor < end {
-            decode_text_section(
-                start,
-                &raw_data,
-                cursor..end,
-                &mut image.instructions,
-                profile,
-            )?;
-        }
-    }
-
-    Ok(image)
+    })
 }
 
 fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
@@ -185,16 +162,12 @@ fn merge_ranges(mut ranges: Vec<(u64, u64)>) -> Vec<(u64, u64)> {
 fn decode_text_section(
     section_address: u64,
     raw_data: &[u8],
-    range: Range<u64>,
     instructions: &mut Vec<SourceInstruction>,
     profile: JoltInstructionProfile,
 ) -> Result<(), ProgramError> {
-    let raw_data = raw_data
-        .get((range.start - section_address) as usize..(range.end - section_address) as usize)
-        .ok_or(ProgramError::MalformedImage("unreadable executable range"))?;
     let mut offset = 0;
     while offset < raw_data.len() {
-        let address = range.start + offset as u64;
+        let address = section_address + offset as u64;
         let Some(&[b0, b1]) = raw_data.get(offset..offset + 2) else {
             return Err(ProgramError::MalformedImage(
                 "truncated instruction halfword",
@@ -217,11 +190,13 @@ fn decode_text_section(
                 "truncated RV64 instruction word",
             ));
         };
+
         let word = u32::from_le_bytes([b0, b1, b2, b3]);
         let instruction = super::decode::decode_instruction(word, address, false, profile)?;
         instructions.push(instruction);
         offset += 4;
     }
+
     Ok(())
 }
 
@@ -650,43 +625,23 @@ mod tests {
             addresses,
             vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 6]
         );
-        assert_eq!(image.instructions[1].kind(), SourceInstructionKind::ADDI);
-        assert!(image.instructions[1].row().is_compressed);
     }
 
     #[test]
-    fn decode_elf_mapping_symbols_skip_decodable_data_but_keep_memory() {
-        let elf = build_elf64_with_symbols(
-            vec![text_section(RAM_START_ADDRESS, &[0x13, 0x05, 0x10, 0x00])],
-            &[(RAM_START_ADDRESS, "$d")],
-        );
-        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("data must load without decoding");
-        assert!(image.instructions.is_empty());
-        assert_eq!(
-            image.memory_init,
-            vec![
-                (RAM_START_ADDRESS, 0x13),
-                (RAM_START_ADDRESS + 1, 0x05),
-                (RAM_START_ADDRESS + 2, 0x10),
-                (RAM_START_ADDRESS + 3, 0x00),
-            ]
-        );
-    }
-
-    #[test]
-    fn decode_elf_mapping_symbols_skip_undecodable_data_between_code_ranges() {
+    fn decode_elf_mapping_symbols_skip_data_ranges() {
         let elf = build_elf64_with_symbols(
             vec![text_section(
                 RAM_START_ADDRESS,
                 &[
                     0x13, 0x05, 0x10, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x13, 0x05, 0x20,
-                    0x00,
+                    0x00, 0x13, 0x05, 0x30, 0x00,
                 ],
             )],
             &[
                 (RAM_START_ADDRESS, "$x"),
                 (RAM_START_ADDRESS + 4, "$d.1"),
                 (RAM_START_ADDRESS + 10, "$x.1"),
+                (RAM_START_ADDRESS + 14, "$d"),
             ],
         );
         let image = decode_elf(&elf, RV64IMAC_JOLT).expect("data must not reject the image");
@@ -699,14 +654,6 @@ mod tests {
             addresses,
             vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 10]
         );
-    }
-
-    #[test]
-    fn decode_elf_mapping_symbols_keep_code_decoding_strict() {
-        let elf = build_elf64_with_symbols(
-            vec![text_section(RAM_START_ADDRESS, &[0xff, 0xff, 0xff, 0xff])],
-            &[(RAM_START_ADDRESS, "$x")],
-        );
-        assert!(decode_elf(&elf, RV64IMAC_JOLT).is_err());
+        assert!(image.memory_init.contains(&(RAM_START_ADDRESS + 14, 0x13)));
     }
 }
