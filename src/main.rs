@@ -192,7 +192,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
         BacktraceMode::Dwarf | BacktraceMode::FramePointers
     );
 
-    let preserve_symbols = backtrace_via_env
+    let preserve_debuginfo = backtrace_via_env
         || force_frame_pointers
         || match args.base.backtrace {
             BacktraceMode::Auto => {
@@ -252,7 +252,7 @@ fn build_command(args: JoltBuildArgs) -> Result<()> {
     std::env::set_var("CARGO_PROFILE_DEV_TRIM_PATHS", "all");
     std::env::set_var("CARGO_PROFILE_RELEASE_TRIM_PATHS", "all");
 
-    if !preserve_symbols {
+    if !preserve_debuginfo {
         // The ELF loader needs $x/$d mapping symbols to classify executable bytes.
         jolt_rustflags.push("-Cstrip=debuginfo");
     }

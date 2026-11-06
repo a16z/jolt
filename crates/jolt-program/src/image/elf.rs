@@ -1,24 +1,19 @@
 use common::constants::RAM_START_ADDRESS;
-use jolt_riscv::{
-    uncompress_rv64_instruction, JoltInstructionProfile, JoltInstructionRow, SourceExtension,
-    SourceInstruction,
-};
+use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
 use object::{Object, ObjectSection, ObjectSymbol, SectionKind};
 use std::{
     collections::{BTreeMap, HashMap},
     ops::Range,
 };
 
-use crate::{
-    expand::{expand_instruction_with_provider, ExpansionAllocator, InlineExpansionProvider},
-    ProgramError,
-};
+use crate::ProgramError;
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
-/// The instruction rows here match the executable text after RV64 decoding and
-/// compressed-instruction normalization. They have not been expanded into Jolt
-/// bytecode yet.
+/// RISC-V mapping symbols select code ranges to decode; data-labelled bytes
+/// remain only in `memory_init`. Executable bytes without an applicable mapping
+/// symbol are decoded linearly. Instructions are normalized for compressed
+/// encodings but have not been expanded into Jolt bytecode yet.
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(
     feature = "serialization",
@@ -33,69 +28,6 @@ pub struct Rv64ProgramImage {
     pub program_end: u64,
     /// ELF entry point.
     pub entry_address: u64,
-    data_ranges: Vec<Range<u64>>,
-}
-
-impl Rv64ProgramImage {
-    pub(crate) fn expanded_bytecode<P: InlineExpansionProvider + ?Sized>(
-        &self,
-        inline_provider: &mut P,
-        profile: JoltInstructionProfile,
-    ) -> Result<Vec<JoltInstructionRow>, ProgramError> {
-        let mut allocator = ExpansionAllocator::new();
-        let mut expanded = Vec::new();
-        let mut data_ranges = self.data_ranges.iter().peekable();
-        for instruction in &self.instructions {
-            let address = instruction.row().address as u64;
-            while data_ranges.peek().is_some_and(|range| range.end <= address) {
-                let _ = data_ranges.next();
-            }
-            let is_data = data_ranges
-                .peek()
-                .is_some_and(|range| range.contains(&address));
-            let saved_allocator = is_data.then(|| allocator.clone());
-            let result = expand_instruction_with_provider(
-                instruction,
-                &mut allocator,
-                inline_provider,
-                profile,
-            );
-            match (result, saved_allocator) {
-                (Ok(rows), _) => expanded.extend(rows.into_iter().map(JoltInstructionRow::from)),
-                (Err(_), Some(saved)) => allocator = saved,
-                (Err(error), None) => return Err(error.into()),
-            }
-        }
-        Ok(expanded)
-    }
-
-    fn decode_data_range(
-        &mut self,
-        section_address: u64,
-        raw_data: &[u8],
-        range: Range<u64>,
-        profile: JoltInstructionProfile,
-    ) {
-        let alignment = if profile.source_extensions.contains(&SourceExtension::Rv64C) {
-            2
-        } else {
-            4
-        };
-        let Some(first) = range.start.checked_next_multiple_of(alignment) else {
-            return;
-        };
-        // Assemblers label both constants and .word-encoded instructions as $d.
-        // Candidate widths cannot advance the next candidate or the next $x start.
-        for address in (first..range.end).step_by(alignment as usize) {
-            let offset = (address - section_address) as usize;
-            if let Ok((Some(instruction), _)) =
-                decode_instruction_at(section_address, raw_data, offset, profile)
-            {
-                self.instructions.push(instruction);
-            }
-        }
-        self.data_ranges.push(range);
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -210,19 +142,14 @@ pub fn decode_elf(
                     profile,
                 )?;
             }
-            if range_start < range_end {
-                match kind {
-                    MappingSymbol::Code => decode_text_section(
-                        start,
-                        &raw_data,
-                        range_start..range_end,
-                        &mut image.instructions,
-                        profile,
-                    )?,
-                    MappingSymbol::Data => {
-                        image.decode_data_range(start, &raw_data, range_start..range_end, profile);
-                    }
-                }
+            if range_start < range_end && matches!(kind, MappingSymbol::Code) {
+                decode_text_section(
+                    start,
+                    &raw_data,
+                    range_start..range_end,
+                    &mut image.instructions,
+                    profile,
+                )?;
             }
             cursor = cursor.max(range_end);
         }
@@ -267,46 +194,35 @@ fn decode_text_section(
         .ok_or(ProgramError::MalformedImage("unreadable executable range"))?;
     let mut offset = 0;
     while offset < raw_data.len() {
-        let (instruction, width) = decode_instruction_at(range.start, raw_data, offset, profile)?;
-        if let Some(instruction) = instruction {
-            instructions.push(instruction);
+        let address = range.start + offset as u64;
+        let Some(&[b0, b1]) = raw_data.get(offset..offset + 2) else {
+            return Err(ProgramError::MalformedImage(
+                "truncated instruction halfword",
+            ));
+        };
+
+        let first_halfword = u16::from_le_bytes([b0, b1]);
+        if (first_halfword & 0b11) != 0b11 {
+            if first_halfword != 0 {
+                let word = uncompress_rv64_instruction(first_halfword);
+                let instruction = super::decode::decode_instruction(word, address, true, profile)?;
+                instructions.push(instruction);
+            }
+            offset += 2;
+            continue;
         }
-        offset += width;
+
+        let Some(&[b0, b1, b2, b3]) = raw_data.get(offset..offset + 4) else {
+            return Err(ProgramError::MalformedImage(
+                "truncated RV64 instruction word",
+            ));
+        };
+        let word = u32::from_le_bytes([b0, b1, b2, b3]);
+        let instruction = super::decode::decode_instruction(word, address, false, profile)?;
+        instructions.push(instruction);
+        offset += 4;
     }
     Ok(())
-}
-
-fn decode_instruction_at(
-    section_address: u64,
-    raw_data: &[u8],
-    offset: usize,
-    profile: JoltInstructionProfile,
-) -> Result<(Option<SourceInstruction>, usize), ProgramError> {
-    let address = section_address + offset as u64;
-    let Some(&[b0, b1]) = raw_data.get(offset..offset + 2) else {
-        return Err(ProgramError::MalformedImage(
-            "truncated instruction halfword",
-        ));
-    };
-
-    let first_halfword = u16::from_le_bytes([b0, b1]);
-    if first_halfword == 0 {
-        return Ok((None, 2));
-    }
-    if (first_halfword & 0b11) != 0b11 {
-        let word = uncompress_rv64_instruction(first_halfword);
-        let instruction = super::decode::decode_instruction(word, address, true, profile)?;
-        return Ok((Some(instruction), 2));
-    }
-
-    let Some(&[b0, b1, b2, b3]) = raw_data.get(offset..offset + 4) else {
-        return Err(ProgramError::MalformedImage(
-            "truncated RV64 instruction word",
-        ));
-    };
-    let word = u32::from_le_bytes([b0, b1, b2, b3]);
-    let instruction = super::decode::decode_instruction(word, address, false, profile)?;
-    Ok((Some(instruction), 4))
 }
 
 #[cfg(test)]
@@ -317,9 +233,9 @@ fn decode_instruction_at(
 )]
 mod tests {
     use super::{decode_elf, merge_ranges};
-    use crate::{build_jolt_program, ProgramError, RV64I};
+    use crate::{ProgramError, RV64I};
     use common::constants::RAM_START_ADDRESS;
-    use jolt_riscv::{JoltInstructionKind, SourceInstructionKind, RV64IMAC_JOLT, RV64IM_JOLT};
+    use jolt_riscv::{SourceInstructionKind, RV64IMAC_JOLT, RV64IM_JOLT};
 
     const SHSTRTAB: &[u8] = b"\0.text\0.data\0.shstrtab\0";
     const TEXT_NAME: u32 = 1;
@@ -732,34 +648,28 @@ mod tests {
             .collect();
         assert_eq!(
             addresses,
-            vec![
-                RAM_START_ADDRESS as usize,
-                RAM_START_ADDRESS as usize + 4,
-                RAM_START_ADDRESS as usize + 6
-            ]
+            vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 6]
         );
-        assert_eq!(image.instructions[2].kind(), SourceInstructionKind::ADDI);
-        assert!(image.instructions[2].row().is_compressed);
+        assert_eq!(image.instructions[1].kind(), SourceInstructionKind::ADDI);
+        assert!(image.instructions[1].row().is_compressed);
     }
 
     #[test]
-    fn decode_elf_data_candidates_omit_invalid_and_unexpandable_starts() {
+    fn decode_elf_mapping_symbols_skip_decodable_data_but_keep_memory() {
         let elf = build_elf64_with_symbols(
-            vec![text_section(
-                RAM_START_ADDRESS,
-                &[0x13, 0x05, 0x10, 0x00, 0x73, 0x10, 0x00, 0x00, 0xff, 0xff],
-            )],
+            vec![text_section(RAM_START_ADDRESS, &[0x13, 0x05, 0x10, 0x00])],
             &[(RAM_START_ADDRESS, "$d")],
         );
-        let program = build_jolt_program(&elf).expect("invalid data candidates must be omitted");
-        assert_eq!(program.expanded_bytecode.len(), 1);
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("data must load without decoding");
+        assert!(image.instructions.is_empty());
         assert_eq!(
-            program.expanded_bytecode[0].address,
-            RAM_START_ADDRESS as usize
-        );
-        assert_eq!(
-            program.expanded_bytecode[0].instruction_kind,
-            JoltInstructionKind::ADDI
+            image.memory_init,
+            vec![
+                (RAM_START_ADDRESS, 0x13),
+                (RAM_START_ADDRESS + 1, 0x05),
+                (RAM_START_ADDRESS + 2, 0x10),
+                (RAM_START_ADDRESS + 3, 0x00),
+            ]
         );
     }
 
@@ -798,24 +708,5 @@ mod tests {
             &[(RAM_START_ADDRESS, "$x")],
         );
         assert!(decode_elf(&elf, RV64IMAC_JOLT).is_err());
-    }
-
-    #[test]
-    fn decode_elf_data_candidates_follow_profile_alignment() {
-        let elf = build_elf64_with_symbols(
-            vec![text_section(
-                RAM_START_ADDRESS,
-                &[0, 0, 0x13, 0x05, 0x10, 0],
-            )],
-            &[(RAM_START_ADDRESS, "$d")],
-        );
-        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("halfword-aligned candidate is legal");
-        assert_eq!(image.instructions.len(), 1);
-        assert_eq!(
-            image.instructions[0].row().address,
-            RAM_START_ADDRESS as usize + 2
-        );
-        let image = decode_elf(&elf, RV64IM_JOLT).expect("unaligned data candidates are omitted");
-        assert!(image.instructions.is_empty());
     }
 }
