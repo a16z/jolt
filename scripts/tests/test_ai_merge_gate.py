@@ -1340,6 +1340,43 @@ class AiMergeGateTests(unittest.TestCase):
 
 
 class ClassifierAgentTests(unittest.TestCase):
+    def test_upstream_failures_keep_safe_bounded_diagnostics(self):
+        key = "fixture-secret-key"
+        for phase, status, body, details in (
+            ("preflight", 401, {"error": {"type": "invalid_request_error", "code": "invalid_api_key",
+                                         "message": key}}, ("invalid_request_error", "invalid_api_key")),
+            ("request", 429, {"error": {"type": "insufficient_quota", "code": "insufficient_quota",
+                                       "message": key}}, ("insufficient_quota",)),
+            ("preflight", 502, b"not JSON: " + key.encode(), ()),
+            ("request", 503, {"error": {"type": key + "x" * 5000, "code": "code_" + key}},
+             ("[REDACTED]", "code_[REDACTED]")),
+            ("request", None, key + "x" * 5000, ("[REDACTED]",)),
+        ):
+            with self.subTest(phase=phase, status=status):
+                payload = body if isinstance(body, bytes) else json.dumps(body).encode()
+                def upstream(request, **_kwargs):
+                    if phase == "request" and request.full_url.endswith("input_tokens"):
+                        response = io.BytesIO(b'{"input_tokens": 100}')
+                        response.status = 200
+                        return response
+                    if status is None:
+                        raise RuntimeError(body)
+                    raise HTTPError(request.full_url, status, "upstream refused", None, io.BytesIO(payload))
+                broker = AGENT.ModelBroker(key)
+                with mock.patch.object(AGENT.urllib.request, "urlopen", side_effect=upstream), broker.serve() as endpoint:
+                    with self.assertRaises(HTTPError) as stopped:
+                        urlopen(Request(endpoint + "/v1/responses", json.dumps({"model": AGENT.MODEL}).encode(),
+                                        {"Content-Type": "application/json"}), timeout=5)
+                    with stopped.exception as response:
+                        self.assertEqual(json.load(response)["error"]["message"], "classifier stopped")
+                if status is not None:
+                    self.assertIn(f"HTTP {status}", broker.failure)
+                self.assertNotIn(key, broker.failure)
+                self.assertLessEqual(len(broker.failure), 512)
+                for detail in details:
+                    self.assertIn(detail, broker.failure)
+                self.assertEqual(broker.usage, [])
+
     def test_cached_context_can_repeat_within_spend_budget(self):
         usage = {"input_tokens": 100_000, "output_tokens": 4000,
                  "input_tokens_details": {"cached_tokens": 100_000}}
