@@ -1,3 +1,4 @@
+use common::constants::DEFAULT_PCALL_KECCAKF_CAPACITY;
 use common::{constants, jolt_device::MemoryConfig};
 
 /// Groups the constants used for a specific instruction set / decomposition strategy / memory
@@ -22,5 +23,6 @@ impl JoltParameterSet for RV64IParameterSet {
         program_size: None,
         max_trusted_advice_size: constants::DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
         max_untrusted_advice_size: constants::DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+        pcall_keccakf_capacity: DEFAULT_PCALL_KECCAKF_CAPACITY,
     };
 }

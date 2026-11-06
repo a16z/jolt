@@ -8,6 +8,8 @@ use jolt_riscv::{
 
 #[cfg(feature = "field-inline")]
 use crate::field_inline::validate_field_inline_instruction;
+#[cfg(feature = "pcall-keccakf")]
+use crate::preprocess::pcall::PcallPreprocessing;
 use crate::preprocess::PreprocessingError;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
@@ -21,6 +23,8 @@ use crate::preprocess::PreprocessingError;
     )
 )]
 pub struct BytecodePreprocessing {
+    #[cfg(feature = "pcall-keccakf")]
+    pub pcall: PcallPreprocessing,
     pub code_size: usize,
     pub bytecode: Vec<JoltInstructionRow>,
     /// Maps each unexpanded instruction address to its virtual bytecode index.
@@ -51,6 +55,8 @@ impl BytecodePreprocessing {
         bytecode.resize(code_size, noop_instruction());
 
         Ok(Self {
+            #[cfg(feature = "pcall-keccakf")]
+            pcall: PcallPreprocessing::new(&bytecode)?,
             code_size,
             bytecode,
             pc_map,

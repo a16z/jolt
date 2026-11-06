@@ -21,9 +21,17 @@ use jolt_program::expand::{
     ExpandedInstructionSequence, ExpansionError, InlineExpansionBuilder, InlineExpansionProvider,
     InlineOperands,
 };
+#[cfg(any(not(feature = "pcall-keccakf"), test))]
+use jolt_riscv::RV64IMAC_JOLT_ALL_INLINES;
+#[cfg(not(feature = "pcall-keccakf"))]
+const INLINE_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_ALL_INLINES;
+#[cfg(feature = "pcall-keccakf")]
+use jolt_riscv::RV64IMAC_JOLT_PRECOMPILES;
+#[cfg(feature = "pcall-keccakf")]
+const INLINE_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_PRECOMPILES;
 use jolt_riscv::{
     InlineExtension, JoltInstructionProfile, JoltInstructionRow, SourceInlineKey,
-    SourceInstructionKind, PCALL_FUNCT7, PCALL_OPCODE, RV64IMAC_JOLT_ALL_INLINES,
+    SourceInstructionKind, PCALL_FUNCT7, PCALL_OPCODE,
 };
 use serde::{Deserialize, Serialize};
 
@@ -357,7 +365,7 @@ impl INLINE {
             &source,
             &mut expansion_allocator,
             &mut provider,
-            RV64IMAC_JOLT_ALL_INLINES,
+            INLINE_PROFILE,
         )
         .expect("jolt-program inline expansion failed")
         .into_iter()
@@ -375,6 +383,11 @@ impl INLINE {
         trace: Option<&mut Vec<Cycle>>,
         sequence: &[Instruction],
     ) {
+        #[cfg(feature = "pcall-keccakf")]
+        if self.opcode == PCALL_OPCODE && self.funct7 == PCALL_FUNCT7 && self.funct3 <= 1 {
+            cpu.execute_pcall_keccakf(self, trace, sequence);
+            return;
+        }
         let reg = find_inline(self.opcode, self.funct3, self.funct7);
         // The reference tracer has no error channel at instruction level, so
         // an advice fault (invalid guest pointer in an operand register)
@@ -468,6 +481,39 @@ mod tests {
     }
 
     #[test]
+    fn precompile_decode_rejects_reserved_flavours_and_disabled_feature() {
+        for flavour in 0..8 {
+            let word = (PCALL_FUNCT7 << 25) | (flavour << 12) | (10 << 15) | PCALL_OPCODE;
+            let decoded = Instruction::decode(word, 0x8000_0000, false);
+            if !cfg!(feature = "pcall-keccakf") {
+                assert_eq!(
+                    decoded.unwrap_err(),
+                    "UnsupportedPrecompile: enable pcall-keccakf on the host"
+                );
+            } else if flavour > 1 {
+                assert_eq!(
+                    decoded.unwrap_err(),
+                    "UnsupportedPrecompile: reserved KECCAKF flavour"
+                );
+            } else {
+                assert!(decoded.is_ok());
+                for (malformed, compressed) in [(word | (1 << 7), false), (word, true)] {
+                    assert_eq!(
+                        Instruction::decode(malformed, 0x8000_0000, compressed).unwrap_err(),
+                        "MalformedPrecompile: rd=x0 and flavour 0 requires rs2=x0"
+                    );
+                }
+                if flavour == 0 {
+                    assert_eq!(
+                        Instruction::decode(word | (1 << 20), 0x8000_0000, false).unwrap_err(),
+                        "MalformedPrecompile: rd=x0 and flavour 0 requires rs2=x0"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn inline_registry_reserves_entire_precompile_block() {
         for funct3 in 0..8 {
             let registration = Box::leak(Box::new(InlineRegistration {
@@ -517,13 +563,16 @@ mod tests {
     #[test]
     fn provider_rejects_unregistered_inline() {
         let mut provider = TracerInlineExpansionProvider::new();
-        let instruction = Instruction::from(INLINE::new(0xfe00_7fab, 0x8000_0000, false, false))
-            .source_instruction();
-
-        assert!(matches!(
-            provider.expand_inline(&instruction, jolt_riscv::RV64IMAC_JOLT_ALL_INLINES,),
-            Err(ExpansionError::UnsupportedInstruction)
-        ));
+        // Unknown families fail closed in both custom opcode blocks.
+        for opcode in [0x0b, 0x2b] {
+            let instruction =
+                Instruction::from(INLINE::new(0xfe00_7f80 | opcode, 0x8000_0000, false, false))
+                    .source_instruction();
+            assert!(matches!(
+                provider.expand_inline(&instruction, RV64IMAC_JOLT_ALL_INLINES),
+                Err(ExpansionError::UnsupportedInstruction)
+            ));
+        }
     }
 
     #[test]

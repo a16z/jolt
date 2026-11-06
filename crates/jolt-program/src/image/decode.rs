@@ -9,7 +9,7 @@ use jolt_riscv::{
 };
 use jolt_riscv::{
     JoltInstructionProfile, NormalizedOperands, SourceExtension, SourceInlineKey,
-    SourceInstruction, SourceInstructionKind, SourceInstructionRow,
+    SourceInstruction, SourceInstructionKind, SourceInstructionRow, PCALL_FUNCT7, PCALL_OPCODE,
 };
 
 use crate::ProgramError;
@@ -82,6 +82,27 @@ pub fn decode_instruction(
         },
         0b0101111 => decode_amo(word)?,
         0b1110011 => decode_system(word)?,
+        // The entire funct7 block is reserved, independent of inventory linkage.
+        PCALL_OPCODE if funct7(word) == PCALL_FUNCT7 => {
+            #[cfg(not(feature = "pcall-keccakf"))]
+            return Err(ProgramError::IllegalSourceInstruction(
+                SourceInstructionKind::Inline,
+            ));
+            #[cfg(feature = "pcall-keccakf")]
+            {
+                if !profile.supports_precompiles()
+                    || is_compressed
+                    || funct3(word) > 1
+                    || rd(word) != 0
+                    || (funct3(word) == 0 && rs2(word) != 0)
+                {
+                    return Err(ProgramError::IllegalSourceInstruction(
+                        SourceInstructionKind::Inline,
+                    ));
+                }
+                SourceInstructionKind::Inline
+            }
+        }
         0b0001011 | 0b0101011 => SourceInstructionKind::Inline,
         0b1011011 => decode_custom(word)?,
         #[cfg(feature = "field-inline")]

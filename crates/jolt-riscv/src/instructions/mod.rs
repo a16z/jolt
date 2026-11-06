@@ -15,6 +15,11 @@ use serde::ser::SerializeStruct;
 #[cfg(feature = "serialization")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+#[cfg(feature = "pcall-keccakf")]
+mod pcall;
+#[cfg(feature = "pcall-keccakf")]
+pub use pcall::{PcallCall, PcallRead, PcallReturn, PcallWrite};
+
 pub mod a;
 pub mod assert;
 #[cfg(feature = "field-inline")]
@@ -462,6 +467,14 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     FieldLoadAccumulateFromMemory(FieldLoadAccumulateFromMemory<T>),
     #[cfg(feature = "field-inline")]
     FieldAdviceLimb(FieldAdviceLimb<T>),
+    #[cfg(feature = "pcall-keccakf")]
+    PcallCall(PcallCall<T>),
+    #[cfg(feature = "pcall-keccakf")]
+    PcallRead(PcallRead<T>),
+    #[cfg(feature = "pcall-keccakf")]
+    PcallWrite(PcallWrite<T>),
+    #[cfg(feature = "pcall-keccakf")]
+    PcallReturn(PcallReturn<T>),
 }
 
 macro_rules! impl_jolt_instruction_from_row {
@@ -690,6 +703,14 @@ impl_jolt_instructions_flags! {
     FieldLoadAccumulateFromMemory => FIELD_LOAD_ACCUMULATE_FROM_MEMORY,
     #[cfg(feature = "field-inline")]
     FieldAdviceLimb => FIELD_ADVICE_LIMB,
+    #[cfg(feature = "pcall-keccakf")]
+    PcallCall => PcallCall,
+    #[cfg(feature = "pcall-keccakf")]
+    PcallRead => PcallRead,
+    #[cfg(feature = "pcall-keccakf")]
+    PcallWrite => PcallWrite,
+    #[cfg(feature = "pcall-keccakf")]
+    PcallReturn => PcallReturn,
 }
 #[cfg(test)]
 mod tests {

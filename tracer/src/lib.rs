@@ -14,14 +14,26 @@ use alloc::{boxed::Box, vec::Vec};
 use common::{self, jolt_device::MemoryConfig};
 use emulator::{cpu, default_terminal::DefaultTerminal};
 use instruction::{Cycle, Instruction};
+#[cfg(not(feature = "pcall-keccakf"))]
 use jolt_riscv::RV64IMAC_JOLT;
+#[cfg(not(feature = "pcall-keccakf"))]
+const TRACER_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT;
+#[cfg(feature = "pcall-keccakf")]
+use jolt_riscv::RV64IMAC_JOLT_PRECOMPILES;
+#[cfg(feature = "pcall-keccakf")]
+const TRACER_PROFILE: JoltInstructionProfile = RV64IMAC_JOLT_PRECOMPILES;
+use jolt_riscv::JoltInstructionProfile;
 use parallel::TwoPassConfig;
+#[cfg(feature = "pcall-keccakf")]
+use pcall_keccakf::PcallState;
 
 pub mod emulator;
 pub mod execution_backend;
 pub mod instruction;
 mod jolt_cycle_adapter;
 pub mod parallel;
+#[cfg(feature = "pcall-keccakf")]
+pub mod pcall_keccakf;
 pub mod trace_row;
 pub mod utils;
 
@@ -360,6 +372,11 @@ pub fn create_emulator(
 ) -> Emulator {
     let term = DefaultTerminal::default();
     let mut emulator = Emulator::new(Box::new(term));
+    #[cfg(feature = "pcall-keccakf")]
+    {
+        emulator.get_mut_cpu().pcall = PcallState::new(memory_config.pcall_keccakf_capacity)
+            .unwrap_or_else(|error| panic!("{error}"));
+    }
     if let Some(tape) = advice_tape {
         emulator.set_advice_tape(tape);
     }
@@ -706,7 +723,7 @@ pub fn decode(elf: &[u8]) -> (Vec<Instruction>, Vec<(u64, u8)>, u64, u64) {
         panic!("tracer only supports RV64 ELF inputs");
     }
 
-    let image = jolt_program::image::decode_elf(elf, RV64IMAC_JOLT)
+    let image = jolt_program::image::decode_elf(elf, TRACER_PROFILE)
         .expect("jolt-program ELF64 decoding failed");
     let instructions = image
         .instructions
@@ -898,6 +915,18 @@ mod tests {
             program_size: Some(elf.len() as u64),
             ..Default::default()
         }
+    }
+
+    #[cfg(feature = "pcall-keccakf")]
+    #[test]
+    fn emulator_uses_configured_precompile_capacity() {
+        let elf = tiny_guest_elf();
+        let memory_config = MemoryConfig {
+            pcall_keccakf_capacity: 4,
+            ..tiny_guest_config(&elf)
+        };
+        let emulator = create_emulator(&elf, None, &[], &[], &[], &memory_config, None);
+        assert_eq!(emulator.get_cpu().pcall, PcallState::new(4).unwrap());
     }
 
     #[test]

@@ -78,6 +78,7 @@ pub fn load_guest(elf_path: &Path) -> (Vec<u8>, MemoryConfig) {
         max_trusted_advice_size: DEFAULT_MAX_TRUSTED_ADVICE_SIZE,
         max_output_size: DEFAULT_MAX_OUTPUT_SIZE,
         program_size: Some(image.program_end - RAM_START_ADDRESS),
+        ..Default::default()
     };
     (elf, memory_config)
 }

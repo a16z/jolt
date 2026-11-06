@@ -33,6 +33,7 @@ pub struct Program {
     max_untrusted_advice_size: u64,
     max_trusted_advice_size: u64,
     max_output_size: u64,
+    pcall_keccakf_capacity: usize,
     std: bool,
     backtrace: Option<String>,
     pub elf: Option<GuestElf>,

@@ -90,6 +90,7 @@ pub fn verify_with_claims(
         stack_size: memory_layout.stack_size,
         heap_size: memory_layout.heap_size,
         program_size: Some(memory_layout.program_size),
+        ..Default::default()
     };
     let mut io_device = JoltDevice::new(&memory_config);
     io_device.inputs = inputs.to_vec();
@@ -126,6 +127,7 @@ pub trait GuestConfig: Default + Send + Sync {
             stack_size: 4096,
             heap_size: 32768,
             program_size: None,
+            ..Default::default()
         }
     }
 

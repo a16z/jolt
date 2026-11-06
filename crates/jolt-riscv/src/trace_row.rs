@@ -315,29 +315,47 @@ impl JoltTraceRow {
         let rs2_value = registers.rs2.map_or(0, |read| read.value);
         let rd_pre_value = registers.rd.map_or(0, |write| write.pre_value);
         let rd_write_value = registers.rd.map_or(0, |write| write.post_value);
+        let pcall_read = is_pcall_read(Some(kind));
+        let pcall_write = is_pcall_write(Some(kind));
         let values = if circuit_flags.get(CircuitFlags::Load) {
             let RamAccess::Read(read) = ram_access else {
                 return Err(TraceRowError::RamAccessMismatch { kind });
             };
-            if registers.rs2.is_some() || read.value != rd_write_value {
+            if registers.rs2.is_some()
+                || if pcall_read {
+                    registers.rd.is_some()
+                } else {
+                    read.value != rd_write_value
+                }
+            {
                 return Err(TraceRowError::MemoryValueMismatch { kind });
             }
             TraceValueSlots {
                 slot0: rs1_value,
                 slot1: read.address,
                 slot2: rd_pre_value,
-                slot3: rd_write_value,
+                slot3: if pcall_read {
+                    read.value
+                } else {
+                    rd_write_value
+                },
             }
         } else if circuit_flags.get(CircuitFlags::Store) {
             let RamAccess::Write(write) = ram_access else {
                 return Err(TraceRowError::RamAccessMismatch { kind });
             };
-            if registers.rd.is_some() || write.post_value != rs2_value {
+            if registers.rd.is_some()
+                || if pcall_write {
+                    registers.rs2.is_some()
+                } else {
+                    write.post_value != rs2_value
+                }
+            {
                 return Err(TraceRowError::MemoryValueMismatch { kind });
             }
             TraceValueSlots {
                 slot0: rs1_value,
-                slot1: rs2_value,
+                slot1: write.post_value,
                 slot2: write.pre_value,
                 slot3: write.address,
             }
@@ -390,7 +408,7 @@ impl JoltTraceRow {
 
     #[inline(always)]
     pub fn rs2_value(&self) -> u64 {
-        if self.is_load() {
+        if self.is_load() || is_pcall_write(self.instruction_kind()) {
             0
         } else {
             self.values.slot1
@@ -408,7 +426,7 @@ impl JoltTraceRow {
 
     #[inline(always)]
     pub fn rd_write_value(&self) -> u64 {
-        if self.is_store() {
+        if self.is_store() || is_pcall_read(self.instruction_kind()) {
             0
         } else {
             self.values.slot3
@@ -621,6 +639,31 @@ fn checked_register_id(id: Option<u8>) -> Result<u8, TraceRowError> {
 #[inline(always)]
 fn register_index(id: u8) -> Option<u8> {
     (id != REGISTER_NONE).then_some(id)
+}
+
+#[inline(always)]
+fn is_pcall_read(kind: Option<JoltInstructionKind>) -> bool {
+    #[cfg(feature = "pcall-keccakf")]
+    {
+        matches!(kind, Some(JoltInstructionKind::PcallRead(_)))
+    }
+    #[cfg(not(feature = "pcall-keccakf"))]
+    {
+        let _ = kind;
+        false
+    }
+}
+#[inline(always)]
+fn is_pcall_write(kind: Option<JoltInstructionKind>) -> bool {
+    #[cfg(feature = "pcall-keccakf")]
+    {
+        matches!(kind, Some(JoltInstructionKind::PcallWrite(_)))
+    }
+    #[cfg(not(feature = "pcall-keccakf"))]
+    {
+        let _ = kind;
+        false
+    }
 }
 
 #[cfg(test)]

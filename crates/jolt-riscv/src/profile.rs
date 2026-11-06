@@ -12,6 +12,8 @@ pub enum SourceExtension {
     JoltInline,
     #[cfg(feature = "field-inline")]
     FieldInline,
+    #[cfg(feature = "pcall-keccakf")]
+    Precompile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -28,6 +30,8 @@ pub enum JoltTargetExtension {
     BitManipulation,
     #[cfg(feature = "field-inline")]
     FieldInline,
+    #[cfg(feature = "pcall-keccakf")]
+    Precompile,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -95,6 +99,25 @@ pub const RV64IMAC_JOLT_ALL_INLINES: JoltInstructionProfile = JoltInstructionPro
     ],
 };
 
+/// Explicit opt-in profile for the reserved KECCAKF instruction block.
+#[cfg(feature = "pcall-keccakf")]
+pub const RV64IMAC_JOLT_PRECOMPILES: JoltInstructionProfile = JoltInstructionProfile {
+    source_extensions: &[
+        SourceExtension::Rv64I,
+        SourceExtension::Rv64M,
+        SourceExtension::Rv64A,
+        SourceExtension::Rv64C,
+        SourceExtension::Zicsr,
+        SourceExtension::RvPrivileged,
+        SourceExtension::JoltCustom,
+        SourceExtension::JoltInline,
+        SourceExtension::Precompile,
+        #[cfg(feature = "field-inline")]
+        SourceExtension::FieldInline,
+    ],
+    inline_extensions: RV64IMAC_JOLT_ALL_INLINES.inline_extensions,
+};
+
 #[cfg(feature = "field-inline")]
 pub const RV64IMAC_JOLT_FIELD_INLINE: JoltInstructionProfile = JoltInstructionProfile {
     source_extensions: &[
@@ -107,6 +130,8 @@ pub const RV64IMAC_JOLT_FIELD_INLINE: JoltInstructionProfile = JoltInstructionPr
         SourceExtension::JoltCustom,
         SourceExtension::JoltInline,
         SourceExtension::FieldInline,
+        #[cfg(feature = "pcall-keccakf")]
+        SourceExtension::Precompile,
     ],
     inline_extensions: RV64IMAC_JOLT_ALL_INLINES.inline_extensions,
 };
@@ -134,6 +159,12 @@ impl JoltInstructionProfile {
     pub fn supports_field_inline(self) -> bool {
         self.source_extensions
             .contains(&SourceExtension::FieldInline)
+    }
+
+    #[cfg(feature = "pcall-keccakf")]
+    pub fn supports_precompiles(self) -> bool {
+        self.source_extensions
+            .contains(&SourceExtension::Precompile)
     }
 
     pub fn source_dense_index(
@@ -207,6 +238,8 @@ impl JoltInstructionProfile {
                     .contains(&SourceExtension::JoltCustom)
                     || !self.inline_extensions.is_empty()
             }
+            #[cfg(feature = "pcall-keccakf")]
+            JoltTargetExtension::Precompile => self.supports_precompiles(),
             #[cfg(feature = "field-inline")]
             JoltTargetExtension::FieldInline => self.supports_field_inline(),
         }
@@ -273,6 +306,8 @@ const fn source_extension_code(extension: SourceExtension) -> u8 {
         SourceExtension::RvPrivileged => 5,
         SourceExtension::JoltCustom => 6,
         SourceExtension::JoltInline => 7,
+        #[cfg(feature = "pcall-keccakf")]
+        SourceExtension::Precompile => 9,
         #[cfg(feature = "field-inline")]
         SourceExtension::FieldInline => 8,
     }

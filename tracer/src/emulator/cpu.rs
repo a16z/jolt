@@ -3,9 +3,13 @@ extern crate fnv;
 
 #[cfg(feature = "std")]
 use self::fnv::FnvHashMap;
+#[cfg(feature = "pcall-keccakf")]
+use crate::pcall_keccakf::PcallState;
 #[cfg(not(feature = "std"))]
 use alloc::collections::btree_map::BTreeMap as FnvHashMap;
 use common::constants::REGISTER_COUNT;
+#[cfg(feature = "pcall-keccakf")]
+use common::jolt_device::MemoryConfig;
 use tracing::{info, warn};
 
 use crate::instruction::{uncompress_instruction, Cycle, Instruction};
@@ -226,6 +230,8 @@ pub(crate) struct ChunkCpuState {
     advice_suffix: Vec<u8>,
     #[cfg(feature = "field-inline")]
     field_registers: FieldRegisterFile,
+    #[cfg(feature = "pcall-keccakf")]
+    pcall: PcallState,
 }
 
 impl ChunkCpuState {
@@ -235,6 +241,10 @@ impl ChunkCpuState {
     /// row-uniform across modes and is compared too — a replay row-count
     /// drift shows up here at the boundary that caused it.
     pub(crate) fn diff_vs_cpu(&self, cpu: &Cpu) -> Option<String> {
+        #[cfg(feature = "pcall-keccakf")]
+        if self.pcall != cpu.pcall {
+            return Some(format!("pcall: {:?} vs {:?}", self.pcall, cpu.pcall));
+        }
         if self.trace_len != cpu.trace_len {
             return Some(format!(
                 "trace_len: {} vs {}",
@@ -340,6 +350,8 @@ pub struct Cpu {
     host_io: HostIo,
     #[cfg(feature = "field-inline")]
     pub field_registers: FieldRegisterFile,
+    #[cfg(feature = "pcall-keccakf")]
+    pub pcall: PcallState,
 }
 
 /// Width of an LR/SC reservation set. Ordered `Word < Doubleword` so
@@ -455,6 +467,9 @@ impl Cpu {
             is_reservation_set: false,
             reservation_width: ReservationWidth::Word,
             unsigned_data_mask: 0xffffffffffffffff,
+            #[cfg(feature = "pcall-keccakf")]
+            pcall: PcallState::new(MemoryConfig::default().pcall_keccakf_capacity)
+                .expect("default PCALL capacity"),
             trace_len: 0,
             executed_instrs: 0,
             active_markers: FnvHashMap::default(),
@@ -1198,6 +1213,8 @@ impl Cpu {
             is_reservation_set: self.is_reservation_set,
             reservation_width: self.reservation_width,
             unsigned_data_mask: self.unsigned_data_mask,
+            #[cfg(feature = "pcall-keccakf")]
+            pcall: self.pcall.clone(),
             trace_len: self.trace_len,
             executed_instrs: self.executed_instrs,
             active_markers: self.active_markers.clone(),
@@ -1233,6 +1250,8 @@ impl Cpu {
             reservation,
             is_reservation_set,
             reservation_width,
+            #[cfg(feature = "pcall-keccakf")]
+            pcall,
             // Constants, re-established by worker construction.
             unsigned_data_mask: _,
             trace_len,
@@ -1256,6 +1275,8 @@ impl Cpu {
             "chunk capture with outstanding virtual-register guards (mid-tick capture?)"
         );
         ChunkCpuState {
+            #[cfg(feature = "pcall-keccakf")]
+            pcall: pcall.clone(),
             clock: *clock,
             privilege_mode: *privilege_mode,
             wfi: *wfi,
@@ -1282,6 +1303,10 @@ impl Cpu {
             self.vr_allocator.is_quiescent(),
             "chunk install with outstanding virtual-register guards"
         );
+        #[cfg(feature = "pcall-keccakf")]
+        {
+            self.pcall = state.pcall.clone();
+        }
         self.clock = state.clock;
         self.privilege_mode = state.privilege_mode;
         self.wfi = state.wfi;

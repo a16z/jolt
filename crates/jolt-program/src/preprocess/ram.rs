@@ -189,6 +189,7 @@ mod tests {
             max_output_size: 16,
             stack_size: 8,
             heap_size: 8,
+            ..Default::default()
         })
     }
 
@@ -244,6 +245,7 @@ mod tests {
             max_output_size: 16,
             stack_size: 8,
             heap_size: 8,
+            ..Default::default()
         });
         assert_eq!(
             compute_min_ram_k(0x8000_0000, 7, &device.memory_layout),

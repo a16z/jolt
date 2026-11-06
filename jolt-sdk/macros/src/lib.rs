@@ -148,6 +148,7 @@ impl MacroBuilder {
                     stack_size: #stack_size,
                     heap_size: #heap_size,
                     program_size: ::core::option::Option::None,
+                    ..Default::default()
                 }
             }
         }
@@ -269,6 +270,7 @@ impl MacroBuilder {
                         stack_size: __jolt_memory_layout.stack_size,
                         heap_size: __jolt_memory_layout.heap_size,
                         program_size: ::core::option::Option::Some(__jolt_memory_layout.program_size),
+                        ..Default::default()
                     };
                     let mut __jolt_io_device = jolt::JoltDevice::new(&__jolt_memory_config);
 
@@ -772,6 +774,7 @@ impl MacroBuilder {
             heap_size: attributes.heap_size,
             // Not needed for the main function, but we need the io region information from MemoryLayout.
             program_size: Some(0),
+            ..Default::default()
         });
         let input_start = memory_layout.input_start;
         let output_start = memory_layout.output_start;

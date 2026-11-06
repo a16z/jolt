@@ -13,6 +13,7 @@ workspace = true
 
 [features]
 default = ["serialization"]
+pcall-keccakf = []
 serialization = ["dep:ark-serialize", "dep:serde"]
 field-inline = []
 
