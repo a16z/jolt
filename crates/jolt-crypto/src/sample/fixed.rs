@@ -33,24 +33,22 @@ impl Fix192 {
         Self([rng.next_u64(), rng.next_u64(), rng.next_u64()])
     }
 
-    /// The top 192 bits of the 384-bit product: `⌊a·b·2^{192}⌋ / 2^{192}`.
-    #[expect(
-        clippy::indexing_slicing,
-        reason = "loop indices are bounded by the fixed limb counts"
-    )]
+    /// `a·b` truncated to 192 bits, within `6·2^{−192}` below the floor of
+    /// the exact product. Only the partial products at limb 3 and above
+    /// enter, with the high halves of limb 2's; the dropped low part of the
+    /// 384-bit product is below `6·2^{192}`.
     pub(crate) fn mul(&self, rhs: &Self) -> Self {
-        let mut wide = [0u64; 6];
-        for i in 0..3 {
-            let mut carry = 0u128;
-            for j in 0..3 {
-                let cur =
-                    u128::from(wide[i + j]) + u128::from(self.0[i]) * u128::from(rhs.0[j]) + carry;
-                wide[i + j] = cur as u64;
-                carry = cur >> 64;
-            }
-            wide[i + 3] = carry as u64;
-        }
-        Self([wide[3], wide[4], wide[5]])
+        let [a0, a1, a2] = self.0.map(u128::from);
+        let [b0, b1, b2] = rhs.0.map(u128::from);
+        let (p12, p21, p22) = (a1 * b2, a2 * b1, a2 * b2);
+        let limb3 = ((a0 * b2) >> 64)
+            + ((a1 * b1) >> 64)
+            + ((a2 * b0) >> 64)
+            + u128::from(p12 as u64)
+            + u128::from(p21 as u64);
+        let limb4 = (limb3 >> 64) + (p12 >> 64) + (p21 >> 64) + u128::from(p22 as u64);
+        let limb5 = (limb4 >> 64) + (p22 >> 64);
+        Self([limb3 as u64, limb4 as u64, limb5 as u64])
     }
 
     /// `self < rhs`, from the borrow of `self − rhs`.
@@ -297,6 +295,25 @@ mod tests {
                 expected,
                 "{dividend} / {divisor}"
             );
+        }
+    }
+
+    #[test]
+    fn products_stay_within_six_ulps_below_the_floor() {
+        let mut rng = ChaCha20Rng::seed_from_u64(8);
+        let value = |f: &Fix192| {
+            BigUint::from(f.0[2]) << 128u32 | BigUint::from(f.0[1]) << 64u32 | BigUint::from(f.0[0])
+        };
+        let mut cases: Vec<(Fix192, Fix192)> = (0..10_000)
+            .map(|_| (Fix192::random(&mut rng), Fix192::random(&mut rng)))
+            .collect();
+        cases.push((Fix192::ALMOST_ONE, Fix192::ALMOST_ONE));
+        cases.push((Fix192([u64::MAX, u64::MAX, 0]), Fix192::ALMOST_ONE));
+        cases.push((Fix192([u64::MAX, 0, 0]), Fix192([0, 0, u64::MAX])));
+        for (a, b) in cases {
+            let floor = (value(&a) * value(&b)) >> 192u32;
+            let product = value(&a.mul(&b));
+            assert!(product <= floor && floor <= product + 6u32);
         }
     }
 
