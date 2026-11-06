@@ -18,8 +18,8 @@ authorized, inside the sandbox you were given.
 
 Settle questions by running the reviewed head: the existing tests that reach the changed paths
 (`cargo nextest run -p <crate> -E 'test(<name>)'`, with each mode's features), and temporary
-tests, scripts, executables, fuzz or property harnesses, and TLA+ or Lean models in an untracked
-scratch directory. Never commit or push to the pull request's branch; delete helpers when done.
+tests, scripts, executables, fuzz or property harnesses, and TLA+ or Lean models in the snapshot
+below. Never commit or push to the pull request's branch; delete helpers when done.
 Never re-run CI or the full suite: read its result (`gh pr checks`) and spend runs on what it does
 not check.
 
@@ -31,26 +31,37 @@ keychain, SSH-agent or Docker socket, or authenticated proxy. Codex's sandbox do
 Codex CLI 0.166.0 on macOS, commands under `read-only` or `workspace-write` still read
 `~/.codex/auth.json`, `~/.config/gh/hosts.yml` and `~/.ssh` and see your shell profile's tokens.
 A session holding a credential (its model login, the `gh` login it posts with) runs that code in a
-disposable container or machine holding only the checkout and toolchain, or reports the run
-unchecked. With Docker, from the review checkout:
+disposable container or machine holding only a snapshot of the head and the toolchain, or reports
+the run unchecked. With Docker, from the review checkout:
 
 ```bash
-sandbox() {
-  docker run --rm -v "$PWD":/src -w /src \
-    -v jolt-review-cargo:/usr/local/cargo -v jolt-review-rustup:/usr/local/rustup "$@"
+snap=$(mktemp -d "$HOME/jolt-review.XXXXXX") && mkdir "$snap/docker" &&
+  git clone -q --depth 1 "file://$PWD" "$snap/src"
+sandbox() {  # this review's snapshot, an empty Docker client config, and its own stores
+  r=$(basename "$snap")
+  DOCKER_HOST=$(docker context inspect -f '{{.Endpoints.docker.Host}}') DOCKER_CONFIG="$snap/docker" \
+    docker run --rm -v "$snap/src":/src -w /src -v "$r-cargo":/usr/local/cargo \
+    -v "$r-rustup":/usr/local/rustup -v "$r-home":/root "$@"
 }
 # Network on: pinned toolchain, nextest, dependency sources. `cargo fetch` runs no build script.
 sandbox rust sh -c 'rustup toolchain install && cargo install cargo-nextest --locked && cargo fetch --locked'
+# Network on, for guest-building tests: CI's `Test jolt-prover` setup and the standard library's sources.
+sandbox rust sh -c 'rustup component add rust-src && mkdir -p ~/.zeroos &&
+  curl -fsSL "<CI's ZeroOS musl toolchain URL, for Linux-$(uname -m)>" | tar -xz -C ~/.zeroos &&
+  RUSTC_BOOTSTRAP=1 cargo fetch --manifest-path "$(rustc --print sysroot)/lib/rustlib/src/rust/library/Cargo.toml"'
+sandbox --network none rust env   # must list no proxy or credential variable
 # Network off: every build, test and helper.
 sandbox --network none -e CARGO_NET_OFFLINE=true rust cargo nextest run -p <crate> -E 'test(<name>)'
-docker volume rm jolt-review-cargo jolt-review-rustup   # when the review ends
+docker volume rm "$(basename "$snap")"-{cargo,rustup,home} && rm -rf "$snap"   # at the end
 ```
 
-The container sees only the checkout and the two volumes. Guest-building tests also need what
-CI's `Test jolt-prover` job installs: in the network-on step, add `rustup component add rust-src`
-and unpack the ZeroOS musl toolchain CI downloads, for the container's architecture, under
-`/usr/local/cargo`; in the network-off run, pass `-e RISCV_MUSL_PATH=/usr/local/cargo/musl` and
-run `cargo install --path . --locked` first.
+The container sees only the snapshot and this review's three volumes. The snapshot has its own
+`.git` without your remotes' credentials, so the pull request's code cannot plant hooks or config
+that git in your checkout would run; never run git or cargo on the host inside the snapshot. The
+empty client config stops Docker from copying your proxy settings, credentials included, into the
+container. The snapshot sits under your home because Docker Desktop and Colima share it with
+their VM by default. Keep `snap` for the whole review; a new shell must set it again. Offline,
+guest-building tests need `cargo install --path . --locked` first.
 
 ## Fan out
 
