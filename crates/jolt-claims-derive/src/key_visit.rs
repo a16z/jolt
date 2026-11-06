@@ -47,11 +47,11 @@ pub(crate) fn expand(input: DeriveInput) -> Result<TokenStream> {
     Ok(quote! {
         mod #module {
             use super::#name;
-        impl #impl_generics ::jolt_claims::immutable_recipes::KeyVisit for #name #ty_generics #where_clause {
-            fn visit(&self, sink: &mut dyn ::jolt_claims::immutable_recipes::KeySink) -> bool {
-                match self { #(#arms)* }
+            impl #impl_generics ::jolt_claims::immutable_recipes::KeyVisit for #name #ty_generics #where_clause {
+                fn visit(&self, sink: &mut dyn ::jolt_claims::immutable_recipes::KeySink) -> bool {
+                    match self { #(#arms)* }
+                }
             }
-        }
         }
     })
 }
