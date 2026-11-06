@@ -469,14 +469,16 @@ comparisons. Proof sizes remain in the raw samples.
 
 Every main push calibrates its tip once, before measuring all new first-parent
 commits. Nightly and manual main/nightly runs refresh their pinned tip. The null
-uses the verified hosted tip bundle for both legs and the 17 PR cells, with one
-warmup and ten measured pairs per cell: 374 proof processes. There is no extra
+uses the verified hosted tip bundle for both legs and every PR cell in the pinned
+suite, with one warmup and ten measured pairs per cell. For `N` PR cells this is
+`2 * (1 + 10) * N = 22N` proof processes. There is no extra
 build or timeout increase for ordinary refreshes. Failed calibration preserves
 independent history results; only a complete null produces a reference.
 
 The target binds `calibration/raw/benchmark-results.json` by path and SHA256 in
 its root result. Trusted ingest validates the plan, hosted manifest digests,
-identical legs, all 374 zero-exit samples, alternating order, affinity and metrics.
+identical legs, the complete configured PR case set, all `22N` zero-exit samples,
+alternating order, affinity and metrics.
 It recomputes eight overlapping three-pair windows. For each metric and window,
 `d = 100 * (max(median(A)/median(B), median(B)/median(A)) - 1)`; nonpositive
 denominators are unavailable. The envelope is `0.5 * ceil(max(floor, 1.5 * max(d))
@@ -535,7 +537,7 @@ unavailable reason. Target-supplied calibration overrides remain rejected.
 With the trusted workflows and history publisher on main, a maintainer dispatches
 `e2e-bench.yml` on main with `tier=calibration`. This tier alone is permitted while
 `JOLT_E2E_ENABLED` is disabled. It runs the hosted null, then a three-pair
-same-source probe built with the local PR recipe: 374 + 136 = 510 proof processes
+same-source probe built with the local PR recipe: `22N + 8N = 30N` proof processes
 plus a local build, with no PR source or comments. The root binds the probe
 sidecar too. Bootstrap probes do not enter ordinary history trends.
 
@@ -547,10 +549,11 @@ uv run --no-project python scripts/bench/publication.py verify-calibration \
   --ingest-run-id "$INGEST_RUN_ID" --ingest-run-attempt "$INGEST_RUN_ATTEMPT"
 ```
 
-It authenticates the bootstrap source and resolves/renders all 17 probe cells
+It authenticates the bootstrap source and resolves/renders every configured PR probe cell
 through the same published catalog/artifact path used by PR ingest. Acceptance
-requires all 17 reference cells, 374 verified exits, estimator contract vectors,
-matching reference/raw hashes, and all 17 probe bands. Record actual build,
+requires the pinned suite's complete reference case set, `22N` verified exits,
+estimator contract vectors, matching reference/raw hashes, and a band for every
+probe case. It reports the actual number of resolved cells. Record actual build,
 target and queue intervals; process counts are not timing acceptance evidence.
 After a real main advance, repeat bootstrap: the new reference must publish and
 resolve without a reference commit, and the old exact-base reference must refuse
@@ -747,7 +750,7 @@ deltas and calibration context never produce a regression verdict. An ingest
 failure or missing/invalid `check.json` fails the check with the ingest link.
 Bootstrap checks succeed with the validated reference SHA, or fail with the
 reference-unavailable reason; executor failures remain failures. Published
-bootstrap acceptance then requires all 17 probe bands.
+bootstrap acceptance then requires bands for every configured PR probe case.
 PR-tier ingests create or update one sticky `github-actions[bot]` comment linking
 the full table in the ingest attempt's job summary and the history dashboard.
 Only cells with more than 3% change in either time or peak RSS are listed, using

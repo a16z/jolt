@@ -268,11 +268,12 @@ def main():
     probe = bench.parse_json(files['calibration/probe/benchmark-results.json'].decode())
     rendered = resolve_references(probe)
     reasons = {case['id']: calibration.for_case(rendered, case)[1] for case in rendered['cases']}
-    if len(reasons) != 17 or any(reasons.values()):
+    expected_ids = {cell['key']['case']['id'] for cell in reference['cells']}
+    if set(reasons) != expected_ids or any(reasons.values()):
         raise ValueError(f'bootstrap probe references unavailable: {reasons}')
     with tempfile.TemporaryDirectory() as directory:
         bench.render_comment(rendered, Path(directory) / 'summary.md')
-    print(calibration.encoded({'reference_sha256': calibration.digest(reference), 'resolved_cells': 17,
+    print(calibration.encoded({'reference_sha256': calibration.digest(reference), 'resolved_cells': len(reasons),
                               'catalog_revision': rendered['external_references']['catalog_revision']}).decode())
 
 

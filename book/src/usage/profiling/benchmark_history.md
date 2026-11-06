@@ -173,8 +173,10 @@ source and preview checks do not establish live execution or deployment.
 
 ### Calibration references
 
-Each main-push tip and nightly run first measures a 17-cell, ten-pair null using
-its hosted tip bundle twice. Trusted ingest validates all 374 proof processes and
+Each main-push tip and nightly run first measures a ten-pair null for every PR
+case in its pinned suite, using its hosted tip bundle twice. With `N` PR cases,
+one warmup and ten measured pairs require `22N` proof processes. Trusted ingest
+validates the complete configured case set and every process, then
 recomputes the informational time/RSS envelopes. It retains the reference and raw
 evidence in the canonical ingest artifact for 30 days. The publisher appends them
 under `dev/prover-history/calibration/<reference-sha256>/` and lists immutable
@@ -192,5 +194,6 @@ Main-only `tier=calibration` bootstrap is allowed while ordinary execution is
 disabled. It adds a local same-source PR-recipe probe after the hosted null;
 bootstrap probes do not enter history trends. After catalog publication, this
 workflow runs `publication.py verify-calibration` against its immutable ingest
-artifact and requires bands for all 17 probe cells. The README's first-run and
+artifact and requires bands for every probe case in that run's pinned PR suite.
+The README's first-run and
 post-main-advance acceptance steps remain prerequisites to ordinary enablement.

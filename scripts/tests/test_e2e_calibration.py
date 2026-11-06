@@ -17,13 +17,13 @@ calibration = ingest.calibration
 publication = ingest.publication
 
 
-def null_fixture():
+def null_fixture(case_count=17):
     repetitions = 10
     result, plan, dispatch, config, receipt, _ = inputs('main')
     spec = json.loads(config)
     template = spec['tiers']['main']['cases'][0]
     spec['tiers']['pr'] = dict(warmups=1, repetitions=3,
-        cases=[dict(copy.deepcopy(template), id=f'cell-{index}') for index in range(17)])
+        cases=[dict(copy.deepcopy(template), id=f'cell-{index}') for index in range(case_count)])
     config = json.dumps(spec).encode()
     result.update(tier='pr', kind='null', started_at='2026-11-05T10:00:00Z',
                   finished_at='2026-11-05T10:10:00Z')
@@ -145,14 +145,17 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(calibration.cell_key(changed, changed['cases'][0]), key)
 
     def test_sidecar_validation_recomputes_bands_and_refuses_substitution(self):
-        result, plan, dispatch, config, receipt = null_fixture()
+        result, plan, dispatch, config, receipt = null_fixture(19)
         root, files = evidence(result)
         reference = ingest.calibration_reference(files, root, plan, dispatch, config, receipt)
-        self.assertEqual(len(reference['cells']), 17)
+        self.assertEqual(len(reference['cells']), 19)
         self.assertTrue(all(c['metrics']['e2e_s']['threshold_pct'] == 3 for c in reference['cells']))
         for mutate in (lambda r: r['cases'][0]['samples'][0].update(exit_code=7),
                        lambda r: r['cases'][0]['samples'].reverse(),
-                       lambda r: r['builds'][1]['binaries']['dory'].update(sha256='f' * 64)):
+                       lambda r: r['builds'][1]['binaries']['dory'].update(sha256='f' * 64),
+                       lambda r: r['cases'].pop(),
+                       lambda r: r['cases'][-1].update(id=r['cases'][0]['id']),
+                       lambda r: r['cases'][0]['samples'].pop()):
             changed = copy.deepcopy(result)
             mutate(changed)
             changed_root, changed_files = evidence(changed)
@@ -163,10 +166,10 @@ class CalibrationTests(unittest.TestCase):
             ingest.calibration_reference(files, root, plan, dispatch, config, receipt)
 
     def test_reference_selection_uses_newest_valid_exact_base_and_48_hour_expiry(self):
-        result, *_ = null_fixture()
+        result, _, _, config, _ = null_fixture()
         raw = json.dumps(result).encode()
         source = dict(plan_run_id=123, plan_run_attempt=1, ingest_run_id=456, ingest_run_attempt=1)
-        reference = calibration.reference(raw, result, source)
+        reference = calibration.reference(raw, result, source, json.loads(config))
         probe = copy.deepcopy(result)
         probe.update(started_at='2026-11-05T11:00:00Z', finished_at='2026-11-05T11:10:00Z')
         probe['suite']['repetitions'] = 3
@@ -273,10 +276,10 @@ class CalibrationTests(unittest.TestCase):
             self.assertEqual(rejected['cases'], original['cases'])
         self.assertEqual(probe, original)
 
-    def test_verify_calibration_requires_a_bootstrap_and_all_17_resolved_rendered_cells(self):
-        result, *_ = null_fixture()
+    def test_verify_calibration_requires_a_bootstrap_and_all_configured_resolved_rendered_cells(self):
+        result, _, _, config, _ = null_fixture(19)
         reference = calibration.reference(json.dumps(result).encode(), result, dict(tier='calibration',
-            plan_run_id=123, plan_run_attempt=1, ingest_run_id=456, ingest_run_attempt=1))
+            plan_run_id=123, plan_run_attempt=1, ingest_run_id=456, ingest_run_attempt=1), json.loads(config))
         probe = copy.deepcopy(result)
         probe['suite']['repetitions'] = 3
         for case in probe['cases']:
@@ -291,7 +294,7 @@ class CalibrationTests(unittest.TestCase):
                 patch.object(publication, 'resolve_references', return_value=probe), \
                 patch.object(sys, 'stdout', new_callable=io.StringIO) as output:
             publication.main()
-            self.assertEqual(json.loads(output.getvalue())['resolved_cells'], 17)
+            self.assertEqual(json.loads(output.getvalue())['resolved_cells'], 19)
             probe['cases'].pop()
             with self.assertRaisesRegex(ValueError, 'probe references unavailable'):
                 publication.main()
