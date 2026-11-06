@@ -307,6 +307,11 @@ impl<const P: u128> Unreduced for Fp128<P> {
     type SmallProduct = Fp128MulU64Accum;
     type Wide = Fp128x8i32;
 
+    // Each product contributes four nonnegative u64 limbs. Up to 2^64 - 1
+    // products fit in the u128 slots, including the carry chain in
+    // `reduce_product`, so delayed reduction equals the per-term sum.
+    const SUM_IS_EXACT: bool = true;
+
     #[inline]
     fn mul_unreduced(self, other: Self) -> Fp128ProductAccum {
         let [r0, r1, r2, r3] = self.mul_wide(other);
