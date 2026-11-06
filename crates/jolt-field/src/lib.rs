@@ -250,7 +250,7 @@ impl<F> ImmutableRecipeField<F> {
 pub const IMMUTABLE_RECIPE_MODULUS: u128 = FIELD_INLINE_FP128_MODULUS;
 
 #[cfg(feature = "setup-weight-tiles")]
-mod setup_weight_tiles;
+mod scaled_slice;
 #[cfg(feature = "signed-byte-sum")]
 mod signed_byte_sum;
-mod terminal_contraction;
+mod dot_product;
