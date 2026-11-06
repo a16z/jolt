@@ -61,25 +61,6 @@ macro_rules! recipe_shape {
     };
 }
 
-#[macro_export]
-macro_rules! recipe_id {
-    ($ty:ty { $( $(#[$attr:meta])* $variant:ident
-        $( ( $($value:ident : $tuple:ty),* $(,)? ) )?
-        $( { $($field:ident : $named:ty),* $(,)? } )? = $tag:literal ),* $(,)? }) => {
-        impl $crate::immutable_recipes::KeyVisit for $ty {
-            fn visit(&self, sink: &mut dyn $crate::immutable_recipes::KeySink) -> bool {
-                match self {
-                    $( $(#[$attr])* Self::$variant $( ($($value),*) )? $( { $($field),* } )?
-                        => sink.word($tag)
-                            $( $(&& $crate::immutable_recipes::KeyVisit::visit($value, sink))* )?
-                            $( $(&& $crate::immutable_recipes::KeyVisit::visit($field, sink))* )?, )*
-                }
-            }
-        }
-
-    };
-}
-
 #[doc(hidden)]
 #[macro_export]
 macro_rules! immutable_recipe_key {

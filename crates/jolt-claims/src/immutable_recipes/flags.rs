@@ -8,12 +8,8 @@ impl KeyVisit for CircuitFlags {
     }
 }
 
-crate::recipe_id! { InstructionFlags {
-    LeftOperandIsPC = 0,
-    RightOperandIsImm = 1,
-    LeftOperandIsRs1Value = 2,
-    RightOperandIsRs2Value = 3,
-    Branch = 4,
-    IsNoop = 5,
-    RightOperandIsRdWriteValue = 6,
-} }
+impl KeyVisit for InstructionFlags {
+    fn visit(&self, sink: &mut dyn KeySink) -> bool {
+        sink.word(u64::from(*self as u8))
+    }
+}
