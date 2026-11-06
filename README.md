@@ -132,15 +132,15 @@ Heap totals are included in `summary.json` and rendered in `memory.html`.
 Tracer, Jolt's emulator, doesn't currently support attaching a debugger.
 
 However, it supports backtraces for panics that happen in guest programs.
-By default, symbols are stripped from release guest ELFs and backtraces won't have much information.
-Debug/dev builds preserve symbols automatically.
+By default, debug information is stripped from release guest ELFs and backtraces won't have much information.
+Debug/dev builds preserve debug information automatically.
 
 #### Backtrace flags
 
 There are two ways to enable backtrace support, depending on your workflow:
 
 - **`JOLT_BACKTRACE=1`** — ad-hoc debugging; set it in your shell and the guest
-  auto-rebuilds with symbols preserved. The call stack is always captured; this
+  auto-rebuilds with debug information preserved. The call stack is always captured; this
   just enables symbol resolution (function names, file:line). Use
   `JOLT_BACKTRACE=full` for register snapshots + cycle counts per frame.
 
@@ -149,8 +149,8 @@ There are two ways to enable backtrace support, depending on your workflow:
   JOLT_BACKTRACE=full cargo run --release -p example
   ```
 
-- **`backtrace = "dwarf"` in `#[jolt::provable]`** — bakes symbol preservation +
-  `-Cforce-frame-pointers=yes` into the build. Use this for guests where you
+- **`backtrace = "dwarf"` in `#[jolt::provable]`** — preserves debug information and sets
+  `-Cforce-frame-pointers=yes` for the build. Use this for guests where you
   always want full debug support (test programs, dedicated debug builds), or when
   you need frame pointers for ZeroOS-level unwinding / external tooling. Not
   needed for normal debugging — `JOLT_BACKTRACE=1` is sufficient for most cases.
@@ -162,7 +162,7 @@ There are two ways to enable backtrace support, depending on your workflow:
 
   Valid values: `"off"`, `"dwarf"`, `"frame-pointers"`.
 
-You can also control symbol preservation directly via `jolt build --backtrace enable`.
+Use `jolt build --backtrace dwarf` or `--backtrace frame-pointers` to preserve debug information and add frame pointers.
 
 #### Printing and tracing
 

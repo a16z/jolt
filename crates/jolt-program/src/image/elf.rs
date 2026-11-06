@@ -1,14 +1,18 @@
 use common::constants::RAM_START_ADDRESS;
 use jolt_riscv::{uncompress_rv64_instruction, JoltInstructionProfile, SourceInstruction};
-use object::{Object, ObjectSection, SectionKind};
-use std::collections::BTreeMap;
+use object::{Object, ObjectSection, ObjectSymbol, SectionKind};
+use std::{
+    collections::{BTreeMap, HashMap},
+    ops::Range,
+};
 
 use crate::ProgramError;
 
 /// Contents decoded directly from an RV64 ELF program image.
 ///
-/// The instruction rows here match the executable text after RV64 decoding and
-/// compressed-instruction normalization. They have not been expanded into Jolt
+/// Bytes in `$d` mapping-symbol ranges of executable sections stay only in
+/// `memory_init`; all other executable bytes are decoded linearly. Instructions
+/// are normalized for compressed encodings but have not been expanded into Jolt
 /// bytecode yet.
 #[derive(Default, Debug, Clone)]
 #[cfg_attr(
@@ -24,6 +28,12 @@ pub struct Rv64ProgramImage {
     pub program_end: u64,
     /// ELF entry point.
     pub entry_address: u64,
+}
+
+#[derive(Clone, Copy)]
+enum MappingSymbol {
+    Code,
+    Data,
 }
 
 pub fn decode_elf(
@@ -42,6 +52,24 @@ pub fn decode_elf(
     let mut memory_image = BTreeMap::new();
     let mut program_end = RAM_START_ADDRESS;
     let mut text_ranges = Vec::new();
+    let mut mapping_symbols: HashMap<_, Vec<_>> = HashMap::new();
+    for symbol in obj.symbols() {
+        let (Some(section), Ok(name)) = (symbol.section_index(), symbol.name()) else {
+            continue;
+        };
+        let kind = if name.starts_with("$x") {
+            MappingSymbol::Code
+        } else if name == "$d" || name.starts_with("$d.") {
+            MappingSymbol::Data
+        } else {
+            continue;
+        };
+        mapping_symbols
+            .entry(section)
+            .or_default()
+            .push((symbol.address(), kind));
+    }
+    let mut data_ranges = Vec::new();
 
     for section in obj
         .sections()
@@ -61,6 +89,16 @@ pub fn decode_elf(
 
         if section.kind() == SectionKind::Text {
             text_ranges.push((start, end));
+            if let Some(symbols) = mapping_symbols.get_mut(&section.index()) {
+                symbols.retain(|(address, _)| (start..end).contains(address));
+                symbols.sort_by_key(|(address, _)| *address);
+                for (index, &(address, kind)) in symbols.iter().enumerate() {
+                    let next = symbols.get(index + 1).map_or(end, |(address, _)| *address);
+                    if address < next && matches!(kind, MappingSymbol::Data) {
+                        data_ranges.push((address, next));
+                    }
+                }
+            }
         }
 
         memory_init.extend(
@@ -77,12 +115,25 @@ pub fn decode_elf(
         );
     }
 
+    let data_ranges = merge_ranges(data_ranges);
     let mut instructions = Vec::new();
-    for (start, end) in merge_ranges(text_ranges) {
-        let raw_data: Vec<_> = (start..end)
+    let mut decode = |range: Range<u64>| {
+        let raw_data: Vec<_> = range
+            .clone()
             .map(|address| memory_image.get(&address).copied().unwrap_or(0))
             .collect();
-        decode_text_section(start, &raw_data, &mut instructions, profile)?;
+        decode_text_section(range.start, &raw_data, &mut instructions, profile)
+    };
+    for (start, end) in merge_ranges(text_ranges) {
+        let mut cursor = start;
+        for &(data_start, data_end) in data_ranges
+            .iter()
+            .filter(|(data_start, data_end)| *data_start < end && *data_end > start)
+        {
+            decode(cursor..data_start)?;
+            cursor = data_end;
+        }
+        decode(cursor..end)?;
     }
 
     Ok(Rv64ProgramImage {
@@ -169,6 +220,7 @@ mod tests {
     const SHF_ALLOC: u64 = 0x2;
     const SHF_EXECINSTR: u64 = 0x4;
     const SHT_PROGBITS: u32 = 1;
+    const SHT_SYMTAB: u32 = 2;
     const SHT_STRTAB: u32 = 3;
     const SHT_NOBITS: u32 = 8;
 
@@ -294,6 +346,41 @@ mod tests {
             "fixture layout is inconsistent"
         );
         out
+    }
+
+    fn build_elf64_with_symbols(
+        mut sections: Vec<TestSection>,
+        symbols: &[(u64, &str)],
+    ) -> Vec<u8> {
+        let strtab_index = sections.len() as u32 + 1;
+        let symtab_index = strtab_index + 1;
+        let mut strings = vec![0];
+        let mut entries = vec![0; 24];
+        for &(address, name) in symbols {
+            push_u32(&mut entries, strings.len() as u32);
+            entries.extend_from_slice(&[0, 0]);
+            push_u16(&mut entries, 1);
+            push_u64(&mut entries, address);
+            push_u64(&mut entries, 0);
+            strings.extend_from_slice(name.as_bytes());
+            strings.push(0);
+        }
+        for (section_type, data) in [(SHT_STRTAB, strings), (SHT_SYMTAB, entries)] {
+            sections.push(TestSection {
+                name_offset: 0,
+                section_type,
+                flags: 0,
+                address: 0,
+                data,
+                size_override: None,
+            });
+        }
+        let mut elf = build_elf64(&sections);
+        let header = 64 + symtab_index as usize * 64;
+        elf[header + 40..header + 44].copy_from_slice(&strtab_index.to_le_bytes());
+        elf[header + 44..header + 48].copy_from_slice(&(symbols.len() as u32 + 1).to_le_bytes());
+        elf[header + 56..header + 64].copy_from_slice(&24u64.to_le_bytes());
+        elf
     }
 
     /// Minimal valid ELF32 header (class = ELFCLASS32, no sections).
@@ -514,5 +601,59 @@ mod tests {
         assert_eq!(image.instructions[0].kind(), SourceInstructionKind::ADDI);
         assert_eq!(image.instructions[0].row().address, address as usize);
         assert!(!image.instructions[0].row().is_compressed);
+    }
+
+    #[test]
+    fn decode_elf_mapping_symbols_preserve_code_after_a_data_halfword() {
+        let elf = build_elf64_with_symbols(
+            vec![text_section(
+                RAM_START_ADDRESS,
+                &[0x6f, 0x00, 0x60, 0x00, 0x03, 0x00, 0x05, 0x45],
+            )],
+            &[
+                (RAM_START_ADDRESS + 4, "$d"),
+                (RAM_START_ADDRESS + 6, "$xrv64i2p1_m2p0_a2p1_c2p0"),
+            ],
+        );
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("mixed text must decode");
+        let addresses: Vec<_> = image
+            .instructions
+            .iter()
+            .map(|row| row.row().address)
+            .collect();
+        assert_eq!(
+            addresses,
+            vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 6]
+        );
+    }
+
+    #[test]
+    fn decode_elf_mapping_symbols_skip_data_ranges() {
+        let elf = build_elf64_with_symbols(
+            vec![text_section(
+                RAM_START_ADDRESS,
+                &[
+                    0x13, 0x05, 0x10, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x13, 0x05, 0x20,
+                    0x00, 0x13, 0x05, 0x30, 0x00,
+                ],
+            )],
+            &[
+                (RAM_START_ADDRESS, "$x"),
+                (RAM_START_ADDRESS + 4, "$d.1"),
+                (RAM_START_ADDRESS + 10, "$x.1"),
+                (RAM_START_ADDRESS + 14, "$d"),
+            ],
+        );
+        let image = decode_elf(&elf, RV64IMAC_JOLT).expect("data must not reject the image");
+        let addresses: Vec<_> = image
+            .instructions
+            .iter()
+            .map(|row| row.row().address)
+            .collect();
+        assert_eq!(
+            addresses,
+            vec![RAM_START_ADDRESS as usize, RAM_START_ADDRESS as usize + 10]
+        );
+        assert!(image.memory_init.contains(&(RAM_START_ADDRESS + 14, 0x13)));
     }
 }

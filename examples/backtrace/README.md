@@ -139,7 +139,7 @@ ERROR tracer: Guest program terminated due to panic after 463691 cycles.
 note: run `trace_and_analyze` with `JOLT_BACKTRACE=1` environment variable to enable backtraces
 ```
 
-The guest's own std backtrace fires but shows `<unknown>` because symbols are stripped in release builds. The tracer has no symbolized backtrace either.
+The guest's own std backtrace fires but shows `<unknown>`. The tracer has no symbolized backtrace either.
 
 #### `JOLT_BACKTRACE=1`
 
@@ -236,8 +236,8 @@ The tracer **always** records a software call stack by watching every JAL/JALR i
 
 When the guest panics, what `JOLT_BACKTRACE` controls is **symbol resolution**:
 
-- **Unset**: The tracer has the call stack but doesn't have access to symbols (stripped ELF) or the ELF path. It prints `<no backtrace available>`.
-- **`=1`**: The `jolt build` step skips `-Cstrip=symbols`, preserving symbol/debug info in the ELF. The tracer then uses `addr2line` on the **host** to resolve call-site addresses → function names + file:line. Zero extra guest cycles.
+- **Unset**: The tracer has the call stack but not the ELF path. It prints `<no backtrace available>`.
+- **`=1`**: The `jolt build` step skips `-Cstrip=debuginfo`, preserving DWARF debug information in the ELF. The tracer then uses `addr2line` on the **host** to resolve call-site addresses → function names + file:line. Zero extra guest cycles.
 - **`=full`**: Same as `=1`, plus prints register snapshots and cycle counts per frame.
 
 #### 2. Guest-side backtrace (controlled by `backtrace = "dwarf"`)
@@ -248,7 +248,7 @@ This only affects **std guests**. When `backtrace = "dwarf"` is set in `#[jolt::
 - Enables std's built-in panic handler to do **DWARF unwinding inside the guest** as emulated RISC-V instructions
 - The guest writes its backtrace via `write()` syscalls, which the emulator intercepts and prints to stdout
 
-This is the `<unknown>` output you see for std guests — it's the **guest code itself** printing a backtrace, but symbols are stripped in release builds so it can only show raw addresses. This guest-side unwinding is expensive (~446k extra cycles vs ~17k with `"off"`).
+This is the `<unknown>` output you see for std guests — it's the **guest code itself** printing a backtrace, and it has no symbol resolver, so it can only show raw addresses. This guest-side unwinding is expensive (~446k extra cycles vs ~17k with `"off"`).
 
 For **no_std guests**, there is no built-in panic handler that does unwinding, so `backtrace = "dwarf"` has essentially no effect.
 
@@ -260,7 +260,7 @@ Both mechanisms run "in the emulator", but at different layers:
 |---|---|---|
 | **What runs** | Host code (addr2line on the host CPU) | Emulated RISC-V code (DWARF unwinder in guest) |
 | **When** | After guest terminates | During guest execution (part of panic handler) |
-| **Modifies generated code?** | No (only preserves symbols) | Yes (adds frame pointer prologues) |
+| **Modifies generated code?** | No (only preserves debug information) | Yes (adds frame pointer prologues) |
 | **Extra guest cycles** | 0 | ~446k for std, negligible for no_std |
 | **Affects no_std?** | Yes (full backtrace) | No (no built-in unwinder) |
 | **Affects std?** | Yes (full backtrace) | Yes (enables guest-side `<unknown>` backtrace) |
