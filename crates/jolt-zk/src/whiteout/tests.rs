@@ -487,7 +487,8 @@ fn l_row_is_row_rank_of_the_pad_view() {
     );
 }
 
-/// `Q_μ(c, z) = c² h + c B_μ + Q_μ(0, y)` for `z = c·s + y`, and
+/// `Q_μ(c, z) = c² h + c B_μ + Q_μ(0, y)` for `z = c·s + y`, the linear
+/// parts at `z` are those at `y` plus `c` times those at `s`, and
 /// `N(c·s) = c·N(s)`. (θ is pinned by the statement check on every honest
 /// proof and by the θ-digit tamper.)
 #[test]
@@ -517,6 +518,7 @@ fn quadratic_polar_quotient_and_linearity_identities() {
     let parts_y = aggregated.linear_parts(&tables, &y[..], false).unwrap();
     let parts_z = aggregated.linear_parts(&tables, &z[..], false).unwrap();
     let h = aggregated.quadratic(&constant_ring(F::one()), &parts_s);
+    assert!(parts_y.shifted(&c_ring, &parts_s) == parts_z);
     assert_eq!(
         aggregated.quadratic(&c_ring, &parts_z),
         c_ring * c_ring * h

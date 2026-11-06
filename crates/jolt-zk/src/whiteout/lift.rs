@@ -462,8 +462,8 @@ impl<F: JoltField> LiftedRelation<F> {
     #[cfg(feature = "whiteout-prover")]
     /// The field value of every row on `s`, in the order affine rows,
     /// scalarity rows, product rows, then `ct(g)`; the index of the first
-    /// nonzero one, if any. The prover's per-row check before the
-    /// aggregation challenges: constant terms only.
+    /// nonzero one, if any: the prover names the row once the aggregated
+    /// check `ct(h) = 0` fails.
     pub(crate) fn first_violation(
         &self,
         tables: &ClaimTables<F>,
@@ -813,6 +813,41 @@ pub(crate) struct LinearParts<F: JoltField> {
     z: SecretVec<ChallengeRing<F>>,
     lambda: ChallengeRing<F>,
     g: ChallengeRing<F>,
+}
+
+#[cfg(test)]
+impl<F: JoltField> PartialEq for LinearParts<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.x[..] == other.x[..]
+            && self.y[..] == other.y[..]
+            && self.z[..] == other.z[..]
+            && self.lambda == other.lambda
+            && self.g == other.g
+    }
+}
+
+#[cfg(feature = "whiteout-prover")]
+impl<F: JoltField> LinearParts<F> {
+    /// The parts at `y + c·s` from those at `y` and `s`: every form is
+    /// linear over the challenge ring, and `c·s` multiplies each
+    /// challenge-ring component of `s` by `c`.
+    pub(crate) fn shifted(&self, c: &ChallengeRing<F>, s: &Self) -> Self {
+        let shift = |y: &SecretVec<ChallengeRing<F>>, s: &SecretVec<ChallengeRing<F>>| {
+            SecretVec::from(
+                y.par_iter()
+                    .zip(s.par_iter())
+                    .map(|(y, s)| *y + *c * *s)
+                    .collect::<Vec<_>>(),
+            )
+        };
+        Self {
+            x: shift(&self.x, &s.x),
+            y: shift(&self.y, &s.y),
+            z: shift(&self.z, &s.z),
+            lambda: self.lambda + *c * s.lambda,
+            g: self.g + *c * s.g,
+        }
+    }
 }
 
 impl<F: JoltField> AggregatedRelation<'_, F> {
