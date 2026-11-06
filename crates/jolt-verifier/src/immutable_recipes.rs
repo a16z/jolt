@@ -34,13 +34,6 @@ fn invalid_recipe(error: RecipeError) -> VerifierError {
     }
 }
 
-fn evaluation_error(error: EvaluationError<VerifierError>) -> VerifierError {
-    match error {
-        EvaluationError::Recipe(error) => invalid_recipe(error),
-        EvaluationError::Resolver(error) => error,
-    }
-}
-
 fn evaluate<S: SymbolicSumcheck, F: Ring>(
     symbolic: &S,
     phase: Phase,
@@ -50,26 +43,32 @@ fn evaluate<S: SymbolicSumcheck, F: Ring>(
     challenge: impl FnMut(&S::ChallengeId) -> Result<F, VerifierError>,
     derived: impl FnMut(&S::DerivedId) -> Result<F, VerifierError>,
 ) -> Result<F, VerifierError> {
-    let permits_full = context.permits_full();
-    if permits_full && F::immutable_recipe_field().is_some() {
+    if context.permits_full() && F::immutable_recipe_field().is_some() {
         if let Some(recipe) = symbolic
             .immutable_recipe::<F>(phase)
             .map_err(invalid_recipe)?
         {
             return recipe
                 .try_evaluate(opening, challenge, derived)
-                .map_err(evaluation_error);
+                .map_err(|error| match error {
+                    EvaluationError::Recipe(error) => invalid_recipe(error),
+                    EvaluationError::Resolver(error) => error,
+                });
         }
     }
     let expression = canonical();
     #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
-    if permits_full {
+    if context.permits_full() {
         symbolic.immutable_record_expression(phase, &expression);
     }
-    if permits_full {
+    if context.permits_full() {
         if let Some(field) = F::immutable_recipe_field() {
-            return evaluate_canonical(&expression, field, opening, challenge, derived)
-                .map_err(evaluation_error);
+            return evaluate_canonical(&expression, field, opening, challenge, derived).map_err(
+                |error| match error {
+                    EvaluationError::Recipe(error) => invalid_recipe(error),
+                    EvaluationError::Resolver(error) => error,
+                },
+            );
         }
     }
     expression.try_evaluate(opening, challenge, derived)
@@ -82,8 +81,7 @@ fn support<S: SymbolicSumcheck, F: Ring>(
 where
     S::OpeningId: Ord + Clone,
 {
-    let permits_full = context.permits_full();
-    if permits_full && F::immutable_recipe_field().is_some() {
+    if context.permits_full() && F::immutable_recipe_field().is_some() {
         if let Some(recipe) = symbolic
             .immutable_recipe::<F>(Phase::Support)
             .map_err(invalid_recipe)?
@@ -93,7 +91,7 @@ where
     }
     let openings = symbolic.expected_output_openings::<F>();
     #[cfg(all(feature = "immutable-recipes", not(target_arch = "riscv64")))]
-    if permits_full {
+    if context.permits_full() {
         symbolic.immutable_record_support::<F>(&openings);
     }
     Ok(openings)
