@@ -3674,6 +3674,7 @@ version = "0.1.0"
 dependencies = [
  "hex-literal",
  "jolt-inlines-sdk",
+ "jolt-platform",
  "rand 0.8.7",
  "sha3 0.12.0",
  "tiny-keccak",

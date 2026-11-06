@@ -9,9 +9,11 @@ repository = "https://github.com/a16z/jolt"
 
 [features]
 default = []
+pcall-keccakf = []
 host = ["jolt-inlines-sdk/host"]
 
 [dependencies]
+jolt-platform.workspace = true
 jolt-inlines-sdk = { workspace = true, optional = true }
 
 [dev-dependencies]

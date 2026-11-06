@@ -31,6 +31,7 @@
         - [Batched sumcheck](./how/optimizations/batched-sumcheck.md)
         - [Batched openings](./how/optimizations/batched-openings.md)
         - [Inlines](./how/optimizations/inlines.md)
+        - [Precompiles](./how/optimizations/precompiles.md)
         - [Small value optimizations](./how/optimizations/small-value.md)
         - [EQ optimizations](./how/optimizations/eq.md)
         - [Torus compression](./how/optimizations/compression.md)
