@@ -743,9 +743,15 @@ failure or missing/invalid `check.json` fails the check with the ingest link.
 Bootstrap checks succeed with the validated reference SHA, or fail with the
 reference-unavailable reason; executor failures remain failures. Published
 bootstrap acceptance then requires all 17 probe bands.
-No GitHub Actions comment or separate comment-enable variable exists. Executor
-failures before a result and failed ingests leave no history record; their App
-check or hosted workflow failure is the visible outcome.
+PR-tier ingests create or update one sticky `github-actions[bot]` comment linking
+the full table in the ingest attempt's job summary and the history dashboard.
+Only cells with more than 3% change in either time or peak RSS are listed, using
+the check summary's values and rounding, independently of the noise references.
+Validated failed, partial or non-comparison PR results replace the comment with
+a comparison-unavailable message. A failed ingest leaves the previous comment
+unchanged. Comment-posting errors do not fail ingest or the benchmark check.
+Executor failures before a result and failed ingests leave no history record;
+their App check or hosted workflow failure is the visible outcome.
 
 The history publisher collects the ingest workflow's canonical artifacts, keeps PR comparisons separate, and appends only
 under `dev/prover-history/` on the existing `gh-pages` source. It never modifies

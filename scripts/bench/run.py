@@ -841,6 +841,7 @@ def render_comment(result, out):
                           len(diff['text']) > MAX_HARNESS_DIFF or len(code) > MAX_HARNESS_DIFF else '', ''])
     identities = ['| Workload / PCS / physical cores | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
                   '|---|---|---|---|']
+    notable_rows = []
     for case in result['cases']:
         name = case['workload']
         if not re.fullmatch(r'[a-z0-9-]+', name) or case['pcs'] not in ('dory', 'akita'):
@@ -873,9 +874,12 @@ def render_comment(result, out):
         for key in base:
             if not base[key]:
                 basis[key] = 'unavailable: zero base median'
-        lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {base['e2e_s']:.6f} / "
-                     f"{head['e2e_s']:.6f} | {changes['e2e_s']} | {basis['e2e_s']} | {base['peak_rss_bytes']:.0f} / "
-                     f"{head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']} | {basis['peak_rss_bytes']} |")
+        label = f"| {name} / {case['pcs']} | {case['physical_cores']} |"
+        time_values = f"{base['e2e_s']:.6f} / {head['e2e_s']:.6f} | {changes['e2e_s']}"
+        rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
+        lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
+        if any(base[key] and abs(head[key] - base[key]) > base[key] * 0.03 for key in base):
+            notable_rows.append(f'{label} {time_values} | {rss_values} |')
         rows, binaries, guests = [], [], []
         for leg in ('base', 'head'):
             rows.append('; '.join(f'{raw},{padded}' for raw, padded in sorted({
@@ -943,6 +947,7 @@ def render_comment(result, out):
     lines.extend(harness_notes)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text('\n'.join(lines))
+    return notable_rows
 
 
 def suite(args):
