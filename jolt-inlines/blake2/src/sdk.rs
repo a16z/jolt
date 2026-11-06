@@ -169,6 +169,7 @@ pub struct Blake2b {
     h: [u64; STATE_VECTOR_LEN],
     buffer: CompressionBlock,
     buffer_len: usize,
+    /// Digest length folded into the IV; the finalize paths must emit exactly this many bytes.
     output_len: usize,
 }
 
@@ -225,33 +226,6 @@ impl Blake2b {
             buffer: CompressionBlock::new(),
             buffer_len: 0,
             output_len,
-        }
-    }
-
-    /// Finalize into `out`, which must be exactly the digest length this
-    /// hasher was created with (the leading bytes of the state).
-    ///
-    /// # Panics
-    /// Panics if `out.len()` differs from that digest length. A shorter
-    /// digest is its own hash function, so truncating is never correct.
-    #[inline(always)]
-    pub fn finalize_into(mut self, out: &mut [u8]) {
-        assert_eq!(
-            out.len(),
-            self.output_len,
-            "Blake2b::finalize_into buffer must match the digest length"
-        );
-        self.compress_final();
-        let len = out.len();
-        if len.is_multiple_of(WORD_BYTES) && (out.as_mut_ptr() as usize).is_multiple_of(WORD_BYTES)
-        {
-            for (chunk, word) in out.chunks_exact_mut(WORD_BYTES).zip(&self.h) {
-                // SAFETY: `out` starts on an 8-byte boundary and its length is
-                // a multiple of 8, so every chunk is an aligned 8-byte word.
-                unsafe { chunk.as_mut_ptr().cast::<u64>().write(word.to_le()) };
-            }
-        } else {
-            out.copy_from_slice(&to_bytes(self.h)[..len]);
         }
     }
 
@@ -331,6 +305,33 @@ impl Blake2b {
         );
         self.compress_final();
         to_bytes(self.h)
+    }
+
+    /// Finalize into `out`, which must be exactly the digest length this
+    /// hasher was created with (the leading bytes of the state).
+    ///
+    /// # Panics
+    /// Panics if `out.len()` differs from that digest length. A shorter
+    /// digest is its own hash function, so truncating is never correct.
+    #[inline(always)]
+    pub fn finalize_into(mut self, out: &mut [u8]) {
+        assert_eq!(
+            out.len(),
+            self.output_len,
+            "Blake2b::finalize_into buffer must match the digest length"
+        );
+        self.compress_final();
+        let len = out.len();
+        if len.is_multiple_of(WORD_BYTES) && (out.as_mut_ptr() as usize).is_multiple_of(WORD_BYTES)
+        {
+            for (chunk, word) in out.chunks_exact_mut(WORD_BYTES).zip(&self.h) {
+                // SAFETY: `out` starts on an 8-byte boundary and its length is
+                // a multiple of 8, so every chunk is an aligned 8-byte word.
+                unsafe { chunk.as_mut_ptr().cast::<u64>().write(word.to_le()) };
+            }
+        } else {
+            out.copy_from_slice(&to_bytes(self.h)[..len]);
+        }
     }
 
     /// Computes BLAKE2b hash in one call.
