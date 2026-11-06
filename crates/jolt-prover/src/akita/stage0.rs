@@ -96,6 +96,11 @@ where
         }
     }
     let untrusted_advice_present = !public_io.untrusted_advice.is_empty();
+    if cfg!(feature = "pcall-keccakf") {
+        return Err(ProverError::Unsupported {
+            reason: "proving with `pcall-keccakf` is not supported yet",
+        });
+    }
     let checked = validate_inputs_from_parts(
         &preprocessing.verifier,
         public_io,

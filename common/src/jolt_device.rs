@@ -15,8 +15,8 @@ use std::vec::Vec;
 
 use crate::constants::{
     DEFAULT_HEAP_SIZE, DEFAULT_MAX_INPUT_SIZE, DEFAULT_MAX_OUTPUT_SIZE,
-    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE, DEFAULT_STACK_SIZE,
-    RAM_START_ADDRESS, STACK_CANARY_SIZE,
+    DEFAULT_MAX_TRUSTED_ADVICE_SIZE, DEFAULT_MAX_UNTRUSTED_ADVICE_SIZE,
+    DEFAULT_PCALL_KECCAKF_CAPACITY, DEFAULT_STACK_SIZE, RAM_START_ADDRESS, STACK_CANARY_SIZE,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -278,6 +278,8 @@ pub struct MemoryConfig {
     pub stack_size: u64,
     pub heap_size: u64,
     pub program_size: Option<u64>,
+    /// Maximum KECCAKF calls per execution; must be a nonzero power of two.
+    pub pcall_keccakf_capacity: usize,
 }
 
 impl Default for MemoryConfig {
@@ -290,6 +292,7 @@ impl Default for MemoryConfig {
             stack_size: DEFAULT_STACK_SIZE,
             heap_size: DEFAULT_HEAP_SIZE,
             program_size: None,
+            pcall_keccakf_capacity: DEFAULT_PCALL_KECCAKF_CAPACITY,
         }
     }
 }
@@ -762,6 +765,7 @@ mod tests {
             max_output_size: 9,
             stack_size: 100,
             heap_size: 12,
+            ..Default::default()
         });
         assert_eq!(layout.max_input_size, 16);
         assert_eq!(layout.max_output_size, 16);

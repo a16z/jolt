@@ -1,5 +1,10 @@
 #![allow(clippy::upper_case_acronyms)]
 
+#[cfg(feature = "pcall-keccakf")]
+pub mod pcall;
+#[cfg(feature = "pcall-keccakf")]
+use pcall::{PcallCall, PcallRead, PcallReturn, PcallWrite};
+
 pub const CUSTOM_OPCODE: u8 = 0x5B;
 pub const INLINE_OPCODE: u8 = 0x2B;
 
@@ -1330,7 +1335,24 @@ impl Instruction {
             // funct7:
             // - 0x00: SHA256
             // - 0x01: Keccak256
-            0b0001011 => Ok(INLINE::new(instr, address, false, compressed).into()),
+            jolt_riscv::PCALL_OPCODE => {
+                if (instr >> 25) & 0x7f == jolt_riscv::PCALL_FUNCT7 {
+                    if !cfg!(feature = "pcall-keccakf") {
+                        return Err("UnsupportedPrecompile: enable pcall-keccakf on the host");
+                    }
+                    let flavour = (instr >> 12) & 7;
+                    if flavour > 1 {
+                        return Err("UnsupportedPrecompile: reserved KECCAKF flavour");
+                    }
+                    if compressed
+                        || (instr >> 7) & 31 != 0
+                        || (flavour == 0 && (instr >> 20) & 31 != 0)
+                    {
+                        return Err("MalformedPrecompile: rd=x0 and flavour 0 requires rs2=x0");
+                    }
+                }
+                Ok(INLINE::new(instr, address, false, compressed).into())
+            }
             // 0x2B is reserved for external inlines
             0b0101011 => Ok(INLINE::new(instr, address, false, compressed).into()),
             // 0x5B is reserved for custom/virtual instructions.

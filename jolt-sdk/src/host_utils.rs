@@ -247,6 +247,7 @@ pub fn compute_advice_tape(
         stack_size: memory_layout.stack_size,
         heap_size: memory_layout.heap_size,
         program_size: Some(program.program_end - RAM_START_ADDRESS),
+        ..Default::default()
     };
     let trace = program.trace_with(
         &mut TracerBackend::new(),
@@ -291,6 +292,7 @@ pub fn prove_program(
         stack_size: memory_layout.stack_size,
         heap_size: memory_layout.heap_size,
         program_size: Some(memory_layout.program_size),
+        ..Default::default()
     };
     let trace_inputs = TraceInputs::new(
         inputs.to_vec(),

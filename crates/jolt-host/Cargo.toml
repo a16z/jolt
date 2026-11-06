@@ -11,6 +11,11 @@ workspace = true
 
 [features]
 default = []
+pcall-keccakf = [
+  "jolt-program/pcall-keccakf",
+  "jolt-riscv/pcall-keccakf",
+  "tracer/pcall-keccakf",
+]
 field-inline = [
   "jolt-program/field-inline",
   "dep:jolt-field",

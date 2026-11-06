@@ -102,6 +102,7 @@ mod pipeline {
             stack_size: memory_layout.stack_size,
             heap_size: memory_layout.heap_size,
             program_size: Some(memory_layout.program_size),
+            ..Default::default()
         };
         let trace_output = TracerBackend::new()
             .trace(
