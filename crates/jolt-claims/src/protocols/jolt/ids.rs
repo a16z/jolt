@@ -806,7 +806,7 @@ mod tests {
                 concat!(
                     "crate::protocols::jolt::JoltOpeningId::Polynomial{",
                     "polynomial:crate::protocols::jolt::JoltPolynomialId::Committed(",
-                    "crate::protocols::jolt::JoltCommittedPolynomial::RamRa(3,),),",
+                    "crate::protocols::jolt::JoltCommittedPolynomial::RamRa(3usize,),),",
                     "relation:crate::protocols::jolt::JoltRelationId::RamReadWriteChecking,}",
                 )
             );
