@@ -90,6 +90,7 @@ SECTIONS
     /* Start data LOAD segment - TLS sections will be included here */
     .data : {
         *(.data .data.*)
+        *(.got .got.*)
         PROVIDE(__sdata_start = .);
         *(.sdata .sdata.*)
         . = ALIGN(8);
