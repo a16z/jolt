@@ -350,9 +350,11 @@ recommended (`06_evaluation.tex:169-170,237-246`).
 coefficient packing, so w_k is the witness before the evaluation-trace folds
 shrink it. One more masked fold divides w_k, and with it the Σ-protocol's
 `s` and `e`, by about 2.2–2.9 at the one-hot catalog rows. At k = 3 the
-re-priced A ranks of all three masked levels of the 36:1 row equal the
-clear ranks (Akita test W2-d), so the re-ranking the paper anticipates for
-k ≥ 3 (`06_evaluation.tex:155-162`) does not arise there.
+clear 36:1 row's fixed geometry, re-priced with the one-shot digit ranges,
+keeps its A rank at all three masked levels (Akita test W2-d), so the
+re-ranking the paper anticipates for k ≥ 3 (`06_evaluation.tex:155-162`)
+does not arise from the one-shot digits alone. The ZK row itself is planned
+separately, with its own geometry and ranks.
 
 **Argument / security impact.** The per-level conditions of
 Def. `wo:def:source-cutoff` are checked by admission at every masked level
