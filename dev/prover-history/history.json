@@ -1,4 +1,49 @@
 {
   "format_version": 1,
-  "runs": []
+  "runs": [
+    {
+      "key": "github-9b1704a3345901f3a9a352134c31523a618b4203-42186600721-1",
+      "source": {
+        "type": "github",
+        "repository": "a16z/jolt",
+        "commit": "9b1704a3345901f3a9a352134c31523a618b4203",
+        "run_head_sha": "92688c2d4618a84e2012cc72c1c46fc2bb1b587b",
+        "run_id": 42186600721,
+        "run_attempt": 1,
+        "event": "pull_request_target",
+        "workflow": "End-to-end benchmark ingest",
+        "workflow_file": ".github/workflows/e2e-bench-ingest.yml",
+        "url": "https://github.com/a16z/jolt/actions/runs/42186600721/attempts/1",
+        "conclusion": "success",
+        "artifact": {
+          "id": 13487273633,
+          "name": "jolt-e2e-42186600721-1",
+          "digest": "sha256:58d71379d7ef45e9bf50fe51f400c46dddba9995b2300a7faab1c44c86a1e762"
+        },
+        "plan_run_id": 42184034906,
+        "plan_run_attempt": 1,
+        "plan_artifact_id": 13485863891,
+        "plan_sha256": "5e06670a1b140751afbb51409a82ce6e31883aec8d94c53197f8ec4ddabe2798",
+        "pr_number": 2306,
+        "base_commit": "92688c2d4618a84e2012cc72c1c46fc2bb1b587b",
+        "merge_commit": "1e8c2028822c2acebaee7cd429655fb2456b9dc8",
+        "harness_revision": "92688c2d4618a84e2012cc72c1c46fc2bb1b587b",
+        "label_event_id": 35326521919,
+        "label_actor": "0xAndoroid",
+        "commit_index": 0
+      },
+      "started_at": "2026-11-06T07:55:12+00:00",
+      "tier": "pr",
+      "kind": "comparison",
+      "status": "complete",
+      "publication_status": "ready",
+      "reason": null,
+      "benchmark_schema": 1,
+      "sha256": "7af406a65325a4d2b225e84b0d30c2b7387c4d31d175f51e62271cb28d197c79",
+      "push_index": null,
+      "push_index_sha256": null,
+      "publisher_revision": "92688c2d4618a84e2012cc72c1c46fc2bb1b587b",
+      "raw": "runs/github-9b1704a3345901f3a9a352134c31523a618b4203-42186600721-1.json"
+    }
+  ]
 }
