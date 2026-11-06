@@ -28,7 +28,7 @@ fn segment(
 
 /// Rank over R_256 of the residual commitment's A and [B|B′] and of the pad
 /// commitment at the headline: a setup input (Akita's planner sizes it for
-/// the ten-digit collision radius, `specs/whiteout-sigma.md` §5.1), owned
+/// the eight-digit collision radius, `specs/whiteout-sigma.md` §5.2), owned
 /// here for the whole table.
 const RANK: usize = 5;
 /// Inner-digit R_64 elements per unit of A's rank: Gaussian and public.
@@ -114,28 +114,28 @@ fn headline_parameters_match_the_closed_form() {
     let params = SigmaParams::derive(&headline(SegmentShape::ConstantPoly)).unwrap();
     // σ = αΓ·√(Σ_b γ_b²), k = σ √(2 ln 2), rounded up, plus one.
     assert_eq!(params.width(), WIDTH);
-    assert_eq!(params.response_digits(), [3, 10, 3, 10, 10, 10, 10, 10]);
+    assert_eq!(params.response_digits(), [3, 8, 3, 8, 8, 8, 8, 8]);
     assert!(params
         .blocks()
         .iter()
-        .all(|block| block.box_bound == 513_105_426_295));
-    // Per-attempt rejection at most 2^{−13.2}: ten attempts reach 2^{−128}.
-    assert_eq!(params.max_attempts(), Ok(10));
+        .all(|block| block.box_bound == 2_004_318_071));
+    // Per-attempt rejection about 2^{−5.23}: 25 attempts reach 2^{−128}.
+    assert_eq!(params.max_attempts(), Ok(25));
     let _rejection = params.rejection().unwrap();
 }
 
 /// The binding radius is the paper's coefficientwise `4Γ_Δ B` with
-/// `Γ_Δ = 2κ₁ = 106` (paper: preliminaries) and `B` the ten-digit
-/// radix-16 box magnitude `8(16^10 − 1)/15`.
+/// `Γ_Δ = 2κ₁ = 106` (paper: preliminaries) and `B` the eight-digit
+/// radix-16 box magnitude `8(16^8 − 1)/15`.
 #[test]
-fn binding_radius_is_four_gamma_delta_times_the_ten_digit_box() {
-    assert_eq!(BINDING_RESPONSE_DIGITS, 10);
-    let magnitude: u128 = 8 * (16u128.pow(10) - 1) / 15;
+fn binding_radius_is_four_gamma_delta_times_the_eight_digit_box() {
+    assert_eq!(BINDING_RESPONSE_DIGITS, 8);
+    let magnitude: u128 = 8 * (16u128.pow(8) - 1) / 15;
     assert_eq!(binding_collision_radius(), 4 * 106 * magnitude);
-    assert_eq!(binding_collision_radius(), 248_636_229_427_520);
+    assert_eq!(binding_collision_radius(), 971_235_270_976);
 }
 
-/// A table whose responses need an eleventh digit leaves the box the
+/// A table whose responses need a ninth digit leaves the box the
 /// commitments were priced for, and is rejected.
 #[test]
 fn responses_above_the_binding_digits_are_rejected() {
@@ -145,12 +145,12 @@ fn responses_above_the_binding_digits_are_rejected() {
     let wide = SegmentTable::new(segments).unwrap();
     assert_eq!(
         SigmaParams::derive(&wide),
-        Err(WhiteoutError::BindingDigitsExceeded { digits: 11 })
+        Err(WhiteoutError::BindingDigitsExceeded { digits: 9 })
     );
 }
 
 /// The headline's derived width multiplier.
-const WIDTH: u64 = 58_642_511_897;
+const WIDTH: u64 = 229_072_314;
 
 #[test]
 fn width_check_rejects_narrower_widths() {

@@ -322,7 +322,7 @@ layouts use R_256 throughout and pass.
 
 ## 2. The Σ-protocol
 
-### 2.1 Inputs and checks before ρ
+### 2.1 Inputs and checks before anything is sent
 
 `whiteout::prove` takes three groups of inputs:
 
@@ -337,8 +337,9 @@ layouts use R_256 throughout and pass.
 It assembles **s** in segment order: w_k, t̂_a, r_a, regular digits and g
 digits, operand digits, r_p.
 
-Before any transcript operation it runs the following **release checks**.
-Each failure is fatal and maps to a typed `ZkError`.
+Before anything is sent it runs the following **release checks**. Each
+failure is fatal and maps to a typed `ZkError`; the order of precedence is
+check 2, then 3, then 1.
 
 1. **Segment alphabets.** Every coefficient lies in its segment's alphabet,
    and every `ConstantPoly` element has zero coefficients outside native
@@ -350,21 +351,25 @@ Each failure is fatal and maps to a typed `ZkError`.
      ℓ₂ norm can exceed the constant-polynomial bound by 8×.
    - The check is constant time per coefficient, branching only on the
      aggregate.
-2. **Every row of R_res, individually.** This covers each affine row, each
-   product row, each scalarity row, and `ct(g) = 0`, evaluated on the
-   decoded values.
+2. **Every row of R_res, aggregated.** ρ is squeezed and the prover
+   computes `h = Q_μ(1, s)`. `ct(h) = Σ_a μ_a·row_a(s)` is multilinear in ρ
+   with one monomial per label (label 0 is `ct(g)`), covering each affine
+   row, each product row, each scalarity row, and `ct(g) = 0`. So
+   `ct(h) = 0` shows every row vanishes except with probability ℓ/|F|
+   (Schwartz–Zippel). On failure the per-row scan (`first_violation`) runs
+   only to name the row.
 3. **N·s = t,** with t the raw images. They must equal the sent commitments:
    t_p as sent by `commit_pads`, and u_a as Akita's masked levels sent it.
 
-After ρ is squeezed and before σ, it computes `h = Q_μ(1, s)` and asserts
-`ct(h) = 0`. Given check 2 this cannot fail, so the assertion is a release
-invariant check.
-
-**Why check 2 runs before ρ.** h is a coordinate of V, V lies in e, and the
-response proof is not zero knowledge. If ct(h) ≠ 0, then ct(h) =
-Σ_i μ_i·violation_i would publish one field element, a ρ-weighted combination
-of the violated rows. H6 needs `ct(Q′) = 0`. Checking each row before ρ keeps
-the transcript free of any such value.
+**Why check 2 runs before anything is sent.** h is a coordinate of V, V
+lies in e, and the response proof is not zero knowledge. If ct(h) ≠ 0, then
+ct(h) = Σ_i μ_i·violation_i would publish one field element, a ρ-weighted
+combination of the violated rows. H6 needs `ct(Q′) = 0`. Squeezing ρ sends
+nothing, and the prover aborts on `ct(h) ≠ 0` before σ, so the transcript
+never carries such a value. This is a self-check of the honest prover, not a
+soundness check: the verifier's guarantees do not depend on it, and the
+ℓ/|F| miss only means a faulty witness reaches the verifier, which rejects
+it.
 
 ### 2.2 Lifting the rows
 
@@ -979,12 +984,12 @@ g enters only through Q_μ's `u·g(s)` term.
 | Parameter | Headline value | Lives in | Validated by |
 |---|---|---|---|
 | challenge family | d = 64, 31 × ±1, 11 × ±2, ‖c‖_op ≤ Γ = 18, 2^128.06 elements, κ₁ = 53 | `jolt-crypto::challenge` | `SigmaParams::new`: `OperatorNormRejection::D64_SELECTIVE_L2.validate(64, cfg)` and `validate_min_entropy_for_ring_dim(64, 128)`. The latter bounds the unfiltered family; the filtered family's 2^128.06 is the certificate checked when the table is built |
-| α, ε | 2^17, 2^−137 (M − 1 ≈ 1.05·10^−4; §5.1) | `SigmaParams` (`ALPHA`, `EPSILON_BITS`) | `JointRejection::new` |
-| width k | one for every Gaussian coordinate, derived (below): 58,642,511,897 ≈ 2^35.8 (headline table at rank 5, ΣN = 6,597,888) | `SigmaParams::derive(segments)` | exact check (below) |
-| digits D_b, D_pub | 10 for every Gaussian segment; 3 | derived | `⌊L_b²/k²⌋ ≥ 1 + ⌈log₂(2^21 N)⌉` (below), here 76 ≥ 45; `D_pub` covers `κ₁·B` |
-| box L_b | `7(16^{D_b}−1)/15` = 513,105,426,295 ≈ 2^38.9, the positive end of the certified range (§9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 2^−21` |
+| α, ε | 2^9, 2^−137 (M − 1 ≈ 2.7·10^−2; §5.2) | `SigmaParams` (`ALPHA`, `EPSILON_BITS`) | `JointRejection::new` |
+| width k | one for every Gaussian coordinate, derived (below): 229,072,314 ≈ 2^27.8 (headline table at rank 5, ΣN = 6,597,888) | `SigmaParams::derive(segments)` | exact check (below) |
+| digits D_b, D_pub | 8 for every Gaussian segment; 3 | derived | `⌊L_b²/k²⌋ ≥ 1 + ⌈log₂(2^21 N)⌉` (below), here 76 ≥ 45; `D_pub` covers `κ₁·B` |
+| box L_b | `7(16^{D_b}−1)/15` = 2,004,318,071 ≈ 2^30.9, the positive end of the certified range (§9) | derived | implied by the digit rule: `p_𝓑 ≥ 1 − 2^−21` |
 | shift bound | `κ₁ · B_b` | derived | `JointRejection::accept` |
-| T_att | 10 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M and `p_𝓑 ≥ 1 − 2^−20` | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
+| T_att | 25 | prover-only: `JointRejection::max_attempts`, from the sampler's realized M and `p_𝓑 ≥ 1 − 2^−20` | smallest T with `(1 − (p_𝓑 − ε)/M′)^T ≤ 2^−128`, in 128-bit fixed point with every rounding against acceptance |
 | rejection arithmetic | — | derived | `SigmaParams::new` mirrors `JointRejection::new`'s bounds: boxes and shifts ≤ 2^62, the denominator k² < 2^126 (always, as k ≤ 2^58), worst-case exponent numerator < 2^126. A table the prover could not run is rejected by both roles |
 | ν | 256 | const | — |
 | ℓ | 14 | `RowLabels` | — |
@@ -1022,7 +1027,7 @@ one width gives 6,962,124 and the same digits. At α = 2^17 and rank 5 the
 response part of e grows from 64,191,232 (rank 3, α = 16) to 87,802,368
 cells, public coordinates included.
 
-### 5.1 Almost-never rejection
+### 5.1 Almost-never rejection (superseded by §5.2)
 
 Review asked for a rejection probability that almost never
 rejects, accepting larger parameters for a predictable prover. This
@@ -1144,18 +1149,94 @@ fold in.
 
 | Item | Paper | Here | Why |
 |---|---|---|---|
-| α, M | α = 16, M ≈ 2.37 (paper: preliminaries, paper: evaluation) | α = 2^17, M = 1 + 1.05·10^−4 | Almost-never rejection (review). α = 2^17 is the largest power of two whose box fits ten digits. |
+| α, M | α = 16, M ≈ 2.37 (paper: preliminaries, paper: evaluation) | α = 2^9, M = 1 + 2.7·10^−2 | Occasional rejection (§5.2, the cost optimum at measured prices). α = 2^9 is the largest power of two whose box fits eight digits. |
 | Widths | per-block `σ_b = αΓγ_bω_b^{−1/2}`, optimized ω_b (paper: preliminaries, paper: evaluation) | one width `σ = αΓ√(Σγ_b²)`, i.e. `ω_b = γ_b²/Σγ²` | Keeps the exact rejection arithmetic's denominator `k²` below 2^126 at large α. It satisfies the same hypothesis `‖cs‖_σ ≤ 1/α`; no block changes digit count at α = 16. |
 | Box | `p_𝓑 ≥ 0.999` (paper: evaluation) | `p_𝓑 ≥ 1 − 2^−20` | The box failure must sit well below the rejection target; it costs no digit. |
-| Response digits, \|z\| | seven radix-16 digits, \|z\| ≈ 2^27 (paper: evaluation) | ten digits, \|z\| ≤ 2^38.9 | Width × 2^13. |
-| Per-attempt rejection | 1 − 1/2.37 ≈ 0.58 (implied, paper: evaluation) | ≤ 2^−13.2 | As above. |
-| T_att, E[attempts] | 163 and 2.37 (paper: evaluation) | 10 and 1.0001 | `(2^−13.2)^10 ≤ 2^−128`, the same completeness target (Thm `wo:thm:completeness`, paper: security). |
-| ZK error | about 2^−128.8 with rejection term 2^−130.9 (paper: evaluation) | about 2^−129.1 with rejection term 2^−133.7, plus the computational PRG term `n_ch · Adv^PRG_ChaCha20` (≤ 2^−144 for `t ≤ 2^100`) | Thm `wo:thm:zk` (paper: security) unchanged except for the mask coins (row below); only T_att moves. |
-| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (paper: evaluation) | radius `4Γ_Δ B(10) ≈ 2^47.8`; as built (Akita's `specs/whiteout-akita.md` §5.5.2) `A_a` rank 18–19 and `[B_a \| B′_a]` rank 19 over R_64, randomness r_a 610 R_64 columns; `A_p` not yet sized (the Jolt integration) | The radius follows the ten-digit box. Ranks are the setup's (Akita planner), not this note's; the planner's dimension ceiling keeps the cut successor at R_64. This supersedes this note's estimate of 5 / 5 / 5 over R_256 with r_a 161. |
-| e, ν, proof, verifier | e ≈ 65.5M (2^26); +7.28 KB; verifier scans +0.7% (paper: evaluation, paper: evaluation table) | e ≈ 90M (2^27); +9.66 KB; scans +23% | Consequences of the digits and ranks (the cost script at α = 2^17, R_256 only). |
-| Prover-time model | 2.37 attempts × 10 ns per sample (paper: evaluation) | one attempt; per-sample cost grows with ℓ = 77 bits; the mask is sampled in parallel | Measured in §9 (cost). The paper's 10 ns is a per-sample cost with no thread count; ours is 655 ns on one thread, divided by the threads. |
+| Response digits, \|z\| | seven radix-16 digits, \|z\| ≈ 2^27 (paper: evaluation) | eight digits, \|z\| ≤ 2^30.9 | Width × 2^5. |
+| Per-attempt rejection | 1 − 1/2.37 ≈ 0.58 (implied, paper: evaluation) | ≈ 2^−5.23 | As above. |
+| T_att, E[attempts] | 163 and 2.37 (paper: evaluation) | 25 and 1.027 | `(2^−5.23)^25 ≤ 2^−128`, the same completeness target (Thm `wo:thm:completeness`, paper: security). |
+| ZK error | about 2^−128.8 with rejection term 2^−130.9 (paper: evaluation) | about 2^−129.0 with rejection term 2^−132.4, plus the computational PRG term `n_ch · Adv^PRG_ChaCha20` (≤ 2^−144 for `t ≤ 2^100`) | Thm `wo:thm:zk` (paper: security) unchanged except for the mask coins (row below); only T_att moves. |
+| Commitment ranks | collision radii up to 2^36, 704–768 rows, rank 3 over R_256 (paper: evaluation) | radius `4Γ_Δ B(8) ≈ 2^39.82` (§5.2; it was `4Γ_Δ B(10) ≈ 2^47.8`, where Akita built (Akita's `specs/whiteout-akita.md` §5.5.2) `A_a` rank 18–19 and `[B_a \| B′_a]` rank 19 over R_64, randomness r_a 610 R_64 columns); Akita's Σ-binding table is regenerated at the new radius. The pad commitment `A_p` at d 128 drops from rank 9 to 8, and r_p from 289 to 257 columns (pinned by jolt-akita's `whiteout_pad_rank_steps_at_the_sigma_binding_brackets` in the Jolt integration). The residual's as-built ranks have not been re-read | The radius follows the eight-digit box. Ranks are the setup's (Akita planner), not this note's; the planner's dimension ceiling keeps the cut successor at R_64. This supersedes this note's estimate of 5 / 5 / 5 over R_256 with r_a 161. |
+| e, ν, proof, verifier | e ≈ 65.5M (2^26); +7.28 KB; verifier scans +0.7% (paper: evaluation, paper: evaluation table) | e ≈ 84M cells by the §5.2 model (8·\|s\| + 0.4M at sha2-chain 2^24, ν = 27); proof 108,107 B against 108,454 B at α = 2^17 (§5.2) | Consequences of the digits and ranks. The 9.66 KB and +23% scan figures were the cost script's at α = 2^17 (R_256 only) and are not recomputed. |
+| Prover-time model | 2.37 attempts × 10 ns per sample (paper: evaluation) | 1.027 attempts; per-sample cost grows with ℓ = 61 bits, about `93 + 2.04·ℓ` ns on one thread with the truncated product (§5.2); the mask is sampled in parallel | The paper's 10 ns is a per-sample cost with no thread count; ours is per thread, divided by the threads. §9 (cost) measured 655 ns at ℓ = 77 before the truncated product. |
 | Mask coins | true randomness, implicitly (Thm `wo:thm:zk` is statistical, paper: security) | ChaCha20 streams keyed by 256-bit seeds from the prover's RNG, one per 2^14-coordinate chunk | Parallel sampling with an output independent of the thread count. Adds `n_ch · Adv^PRG_ChaCha20` to the ZK error, so the statement becomes computational in that term only (§2.4.1). |
 | Constant time | outside the model (H2 discussion, paper: security) | unchanged: §2.8's rule still applies | Rejected attempts still occur, and the accepted attempt's y reveals s. |
+
+### 5.2 Occasional rejection
+
+The Σ owner relaxed §5.1's almost-never-rejection requirement: pick the α
+that minimizes prover and verifier cost at measured prices. The choice is
+eight response digits:
+
+- α = 2^9 (`ALPHA`); D = 8 response digits (`BINDING_RESPONSE_DIGITS`).
+- The radius is `R_Σ = 8κ₁·B(8) = 971,235,270,976 ≈ 2^39.82`. It was
+  2^47.82. Akita's Σ-binding table is regenerated at this radius.
+- Per-attempt rejection is about 2^−5.23, one attempt in 38. E[attempts]
+  is 1.027 and T_att is 25.
+- ZK: the rejection term `T_att·ε/M` is 2^−132.4 (it was 2^−133.7). The
+  sampler term is at most 2^−154 (`whiteout-gaussian.md`). Thm `wo:thm:zk`
+  holds unchanged, with only these numbers moved.
+
+α/16² tracks L(D)/16², so ⌊L(8)²/k²⌋ is 76, as at ten digits. The headroom in
+instance size is therefore the same, about 1.7× the headline's N before a
+ninth digit.
+
+**Prices.** These are measured on an M4 Max at sha2-chain 2^24, after
+the following Σ engineering. That engineering has three parts:
+
+- The prover's per-row self-check is replaced by the aggregated `ct(h) = 0`.
+  This is Schwartz–Zippel over the ρ already drawn, and the per-row scan
+  now runs only to name a failing row.
+- The parts at z are derived as `parts_y + c·parts_s`.
+- The sampler uses a truncated 192-bit product.
+
+The sampler costs about `93 + 2.04·ℓ` ns per sample on one thread, and an
+attempt is about 0.38 s at 16 threads. The neighbouring digit counts,
+priced this way:
+
+- Nine digits keep (about 10.45M e cells, roughly 90 ms of response
+  proving and one verifier rank at d = 128) to save 0.025 attempts.
+- Seven digits drop one but add 0.51 attempts, about 0.19 s against about
+  0.09 s saved in the response. They reach the same certified rank as eight.
+
+So eight digits are the optimum until an attempt falls below about 0.17 s.
+
+**Measured.** M4 Max, 16 threads, sha2-chain 2^24, four
+interleaved runs per build at 1-minute load 7–8. The entries are the
+minimum, then the median, in ms. "Engineering" is the three changes above at
+α = 2^17; "retune" adds α = 2^9 and Akita's regenerated Σ-binding table.
+Σ is `whiteout_prove_tail − whiteout_prove_response`.
+
+| | before | engineering | retune |
+|---|---|---|---|
+| prove | 5,948 / 6,039 | 5,885 / 6,191 | 5,395 / 5,603 |
+| Σ | 811 / 817 | 714 / 750 | 535 / 537 |
+| response proof | 1,862 / 1,876 | 1,858 / 2,067 | 1,300 / 1,340 |
+| verify, 16 threads | 65 / 74 | 66 / 69 | 57 / 60 |
+| verify, 1 thread | 320 / 321 | 321 / 328 | 252 / 255 |
+| proof bytes (median) | 108,454 | 108,500 | 108,107 |
+| peak RSS (median) | 5.50 GiB | 5.75 GiB | 4.90 GiB |
+
+The first two columns use one Akita revision. The retune builds against a
+later Akita revision plus the regenerated table, and that revision also
+carries Akita's own response kernels. A second session separates the two
+effects. Its control is the engineering build at α = 2^17 on the later Akita
+revision with its original table. The control matches the engineering
+column, so the gains come from the retune:
+
+| | control | retune |
+|---|---|---|
+| prove | 6,071 / 6,134 | 5,361 / 5,539 |
+| Σ | 733 / 740 | 536 / 561 |
+| response proof | 1,942 / 1,959 | 1,318 / 1,368 |
+| `whiteout_prove_masked` | 622 / 633 | 671 / 692 |
+| verify, 1 thread | 324 / 324 | 254 / 256 |
+| peak RSS (median) | 5.97 GiB | 4.91 GiB |
+
+`whiteout_prove_masked` is about 50 ms slower under the retune in both sessions;
+the cause is not identified. The trace does not record attempts. The eight
+retune Σ times (535–585 ms) are consistent with one attempt each; a rejection
+somewhere in eight runs has probability about 19% at 2^−5.23 per attempt.
 
 ## 6. Soundness and zero knowledge, mapped to the paper
 
@@ -1176,10 +1257,10 @@ fold in.
 | Secret uniform 256-bit n_i; oracle input (σ ⊇ τ, t_D, n_i) in its own fork domain; only the accepted attempt is sent | H2: Pr[Bad] ≤ (T_att Q_tot + T_att²)/2^256 |
 | Constant-time attempt body (§2.8) | keeps H2's "answers at rejected inputs are never observed" true against a timing adversary (outside the paper's model) |
 | Fresh y per attempt; the Gaussian sampler's joint rejection | H3: ε/M per attempt |
-| T_att = 10 (§5.1) | `wo:thm:completeness`; the `T_att ε/M` term |
-| Per-row checks before ρ; ct(h) assertion | H6 precondition; no ρ-weighted leak (§2.1) |
+| T_att = 25 (§5.2) | `wo:thm:completeness`; the `T_att ε/M` term |
+| Aggregated ct(h) = 0 check before anything is sent | H6 precondition; no ρ-weighted leak (§2.1) |
 | Raw t_p and t_D | Their compressed forms are functions of them (§2.4), so sending them raw removes nothing from H4 or H8: the hybrids already replace the raw images with uniform ones |
-| Sampler precision (`specs/whiteout-gaussian.md`) | +2^−157 on 2^−129.1 (`whiteout-gaussian.md`, update note) |
+| Sampler precision (`specs/whiteout-gaussian.md`, truncated products) | at most +2^−154 at the headline and about +2^−150 at larger traces, on 2^−129.0 (`whiteout-gaussian.md`, production regime) |
 | ChaCha20 seed expansion of the Gaussian sampler, now in `fill_parallel` | adds a computational term, `n_ch · Adv^PRG_ChaCha20` with `n_ch ≤ 4,050` (§2.4.1) |
 
 ## 7. Test plan
@@ -1189,11 +1270,13 @@ fold in.
    - Over 300 deterministic proofs each at α = 16 (the paper's) and α = 10, the
      mean attempt count lies within 4σ of the repetition rate M that α and
      `EPSILON_BITS` predict (M ≈ 2.37 and 3.99). The production α rejects
-     too rarely to measure this way; the headline test pins its T_att = 10.
+     about one attempt in 38, too rarely to measure this way; the headline
+     test pins its T_att = 25.
 2. **Tamper rejection.**
    - Flipping a byte of t_D, of n, of t_p or of u_a is rejected.
    - Reordering ρ is rejected.
-   - Each of these witness faults fails the prover's per-row check: an
+   - Each of these witness faults fails the prover's aggregated check,
+     which names the row: an
      affine row, a product row, a scalarity row (a non-constant operand
      pad), `ct(g) ≠ 0`, and an alphabet or shape violation. With the check
      bypassed through a test-only path, the checking prover rejects the

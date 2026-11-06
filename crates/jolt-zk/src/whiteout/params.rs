@@ -5,9 +5,9 @@
 //! response vector's layout. The attempt cap `T_att` is the prover's alone and
 //! comes from the sampling layer's realized repetition rate.
 //!
-//! Rejection almost never happens (`specs/whiteout-sigma.md` §5.1): `α` is
-//! large enough that one attempt is rejected with probability at most about
-//! `2^{−13.2}`. Every Gaussian coordinate has one width
+//! Rejection is occasional (`specs/whiteout-sigma.md` §5.2): one attempt is
+//! rejected with probability about `2^{−5.23}`, so a proof takes 1.027
+//! attempts on average. Every Gaussian coordinate has one width
 //! `σ = αΓ·√(Σ_b γ_b²)`, with `γ_b²` segment `b`'s honest `ℓ₂²` bound, so the
 //! rejection rule's denominator is the single `k²`. The derivation never
 //! trusts its own output: [`SigmaParams::new`] checks
@@ -24,18 +24,18 @@ use jolt_crypto::sample::{BlockParams, GaussianWidth, JointRejection};
 use super::segments::{balanced_range, SegmentMask, SegmentTable};
 use super::WhiteoutError;
 
-/// Rejection parameter α: the largest power of two whose box fits ten
-/// response digits at the headline, so `M − 1 ≈ 1.05·10^{−4}`.
-pub const ALPHA: u32 = 1 << 17;
+/// Rejection parameter α: the largest power of two whose box fits eight
+/// response digits at the headline, so `M − 1 ≈ 2.7·10^{−2}`.
+pub const ALPHA: u32 = 1 << 9;
 /// `ε = 2^{−137}` per attempt (§6.2).
 pub const EPSILON_BITS: u32 = 137;
 /// Response digits are balanced radix 16.
 pub const RESPONSE_LOG_BASIS: u32 = 4;
 /// The response digit count the commitments that `s` opens are priced for
-/// (`specs/whiteout-sigma.md` §5.1's regime): [`SigmaParams`] rejects a table whose
+/// (`specs/whiteout-sigma.md` §5.2): [`SigmaParams`] rejects a table whose
 /// responses need more, so every certified box is inside the one
 /// [`binding_collision_radius`] was computed for.
-pub const BINDING_RESPONSE_DIGITS: usize = 10;
+pub const BINDING_RESPONSE_DIGITS: usize = 8;
 /// The largest `ν = ⌈log₂|e|⌉` the response proof's soundness ledger is
 /// priced for (its `ν/q`, `ν/q` and `3ν/q` rows total about `2^−119.7` at
 /// 27). [`SigmaSetup::response_layout`]
