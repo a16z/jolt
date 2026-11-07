@@ -1,8 +1,8 @@
 //! Symbolic relations composing ordinary Jolt with field-inline constraints.
 
 use super::claims::{
-    ComposedClaims, ComposedExpr, FieldInlineBytecodeReadRafInputs, OuterInputs, OuterOutputs,
-    ProductInputs, ProductOutputs, UniskipInputs, UniskipOutputs,
+    ComposedClaims, ComposedExpr, ComposedFactoredExpr, FieldInlineBytecodeReadRafInputs,
+    OuterInputs, OuterOutputs, ProductInputs, ProductOutputs, UniskipInputs, UniskipOutputs,
 };
 use super::geometry::{
     SPARTAN_PRODUCT_BASE_LANES, SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE,
@@ -27,8 +27,8 @@ use crate::protocols::jolt::{
     SpartanOuterPublic, SpartanProductVirtualizationPublic,
 };
 use crate::{
-    derived, opening, referenced_openings, Expr, NoChallenges, Source, SumcheckDomain,
-    SymbolicSumcheck, Term,
+    derived, opening, referenced_openings, Expr, FactoredExpr, NoChallenges, Source,
+    SumcheckDomain, SymbolicSumcheck, Term,
 };
 use jolt_field::Ring;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -101,8 +101,15 @@ impl SymbolicSumcheck for OuterRemainder {
         opening(spartan::outer_uniskip_opening())
     }
     fn output_expression<F: Ring>(&self) -> ComposedExpr<F> {
+        self.output_factored().expand()
+    }
+    fn output_factored<F: Ring>(&self) -> ComposedFactoredExpr<F> {
         let (az, bz) = self.output_factor_expressions();
-        derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
+        FactoredExpr::product(vec![
+            derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)),
+            az,
+            bz,
+        ])
     }
 
     /// The openings of `az` and `bz`, without expanding their product: each
@@ -197,6 +204,9 @@ impl SymbolicSumcheck for ProductRemainder {
         lift(self.base.input_expression())
     }
     fn output_expression<F: Ring>(&self) -> ComposedExpr<F> {
+        self.output_factored().expand()
+    }
+    fn output_factored<F: Ring>(&self) -> ComposedFactoredExpr<F> {
         let mut left = lift(self.base.left_factor_expression());
         let mut right = lift(self.base.right_factor_expression());
         for (index, lane) in
@@ -209,10 +219,13 @@ impl SymbolicSumcheck for ProductRemainder {
             left = left + weight.clone() * opening(l);
             right = right + weight * opening(r);
         }
-        derived(JoltDerivedId::from(
-            SpartanProductVirtualizationPublic::TauKernel,
-        )) * left
-            * right
+        FactoredExpr::product(vec![
+            derived(JoltDerivedId::from(
+                SpartanProductVirtualizationPublic::TauKernel,
+            )),
+            left,
+            right,
+        ])
     }
 }
 

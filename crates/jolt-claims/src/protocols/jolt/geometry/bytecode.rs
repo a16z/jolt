@@ -6,11 +6,11 @@ use jolt_riscv::{
     JoltInstructionRow, CIRCUIT_FLAGS, NUM_CIRCUIT_FLAGS,
 };
 
-use crate::{challenge, derived, opening};
+use crate::{challenge, derived, opening, FactoredExpr};
 
 use super::super::{
     BytecodeReadRafChallenge, BytecodeReadRafPublic, JoltCommittedPolynomial, JoltExpr,
-    JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
+    JoltFactoredExpr, JoltOpeningId, JoltRelationId, JoltVirtualPolynomial,
 };
 use super::claim_reductions::bytecode::NUM_BYTECODE_VAL_STAGES;
 use super::dimensions::PointGeometryError;
@@ -146,10 +146,14 @@ where
         + gamma_power_expr(num_val_stages + 1) * opening(pc_shift())
 }
 
+/// The cycle output `(Σ_t c_t) · ∏_i ra_i` with public weights `c_t`: the
+/// γ-weighted stage values, the two PC RAFs and the entry term. The RA
+/// product is one factor list, so a masked lowering computes it once rather
+/// than once per weight.
 pub(crate) fn read_raf_cycle_output<F>(
     dimensions: BytecodeReadRafDimensions,
     num_val_stages: usize,
-) -> JoltExpr<F>
+) -> JoltFactoredExpr<F>
 where
     F: Ring,
 {
@@ -163,7 +167,9 @@ where
         + gamma_power_expr(num_val_stages + 1) * derived(BytecodeReadRafPublic::SpartanShiftRaf)
         + gamma_power_expr(num_val_stages + 2) * derived(BytecodeReadRafPublic::Entry);
 
-    output_coeff * bytecode_ra_product(dimensions)
+    let mut factors = vec![output_coeff];
+    factors.extend(bytecode_ra_factors(dimensions));
+    FactoredExpr::product(factors)
 }
 
 pub(crate) fn read_raf_cycle_output_committed<F>(
@@ -946,11 +952,19 @@ fn bytecode_ra_product<F>(dimensions: BytecodeReadRafDimensions) -> JoltExpr<F>
 where
     F: Ring,
 {
-    let mut product = JoltExpr::one();
-    for i in 0..dimensions.num_committed_ra_polys() {
-        product = product * opening(bytecode_ra(i));
-    }
-    product
+    bytecode_ra_factors(dimensions)
+        .into_iter()
+        .fold(JoltExpr::one(), |product, factor| product * factor)
+}
+
+/// The committed bytecode-RA openings whose product is the read-RAF RA factor.
+fn bytecode_ra_factors<F>(dimensions: BytecodeReadRafDimensions) -> Vec<JoltExpr<F>>
+where
+    F: Ring,
+{
+    (0..dimensions.num_committed_ra_polys())
+        .map(|i| opening(bytecode_ra(i)))
+        .collect()
 }
 
 pub(crate) fn unexpanded_pc_spartan_outer() -> JoltOpeningId {

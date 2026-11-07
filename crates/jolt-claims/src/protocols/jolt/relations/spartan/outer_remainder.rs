@@ -6,11 +6,15 @@ use crate::protocols::jolt::geometry::spartan::{
     outer_opening, outer_uniskip_opening, SpartanOuterDimensions, OUTER_REMAINDER_DEGREE,
 };
 use crate::protocols::jolt::{
-    JoltChallengeId, JoltDerivedId, JoltExpr, JoltOpeningId, JoltRelationId, SpartanOuterPublic,
+    JoltChallengeId, JoltDerivedId, JoltExpr, JoltFactoredExpr, JoltOpeningId, JoltRelationId,
+    SpartanOuterPublic,
 };
 use std::collections::BTreeSet;
 
-use crate::{derived, opening, referenced_openings, InputClaims, OutputClaims, SymbolicSumcheck};
+use crate::{
+    derived, opening, referenced_openings, FactoredExpr, InputClaims, OutputClaims,
+    SymbolicSumcheck,
+};
 
 /// Consumed Spartan outer remainder input: the uni-skip's reduced opening. The
 /// relation reads only this value (its output point comes from its own sumcheck
@@ -201,8 +205,16 @@ impl SymbolicSumcheck for OuterRemainder {
     }
 
     fn output_expression<F: Ring>(&self) -> JoltExpr<F> {
+        self.output_factored().expand()
+    }
+
+    fn output_factored<F: Ring>(&self) -> JoltFactoredExpr<F> {
         let (az, bz) = self.output_factor_expressions();
-        derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)) * az * bz
+        FactoredExpr::product(vec![
+            derived(JoltDerivedId::from(SpartanOuterPublic::TauKernel)),
+            az,
+            bz,
+        ])
     }
 
     /// The openings of `az` and `bz`, without expanding their product: each
