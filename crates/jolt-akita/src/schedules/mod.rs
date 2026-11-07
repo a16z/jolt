@@ -33,7 +33,13 @@ pub mod emit {
         JoltOneHotK256Direct,
     };
     use crate::one_hot_family::OneHotFamily;
+    #[cfg(feature = "zk")]
+    use crate::schedule_artifacts::RESPONSE_CATALOG_FILE;
+    #[cfg(feature = "zk")]
+    use crate::whiteout::WhiteoutResponse;
     use crate::{AKITA_ONE_HOT_K16, AKITA_ONE_HOT_K256};
+    #[cfg(feature = "zk")]
+    use jolt_zk::whiteout::MAX_RESPONSE_NUM_VARS;
 
     /// Admitted production trace exponents for K=16.
     pub const K16_TRACE_LOG_T: (usize, usize) = (12, 31);
@@ -45,6 +51,12 @@ pub mod emit {
     pub const ONE_HOT_SCALAR_NUM_POLYS: &[usize] = &[1, 2];
     /// Bounded-dense advice and committed-program byte objects.
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 35);
+    /// Whiteout response lengths `ν` of `e` the packaged catalog holds (muldiv
+    /// is 24, fib 2^16 and 2^20 are 25 and 26). The top is the longest `e`
+    /// the response proof admits; a length below the floor is planned in
+    /// process.
+    #[cfg(feature = "zk")]
+    pub const RESPONSE_NUM_VARS: (usize, usize) = (18, MAX_RESPONSE_NUM_VARS as usize);
 
     /// First logical trace exponent eligible for setup offloading.
     pub const RECURSIVE_TRACE_LOG_T_CUTOVER: usize = 21;
@@ -292,6 +304,15 @@ pub mod emit {
                 None,
             )?,
         ]);
+        #[cfg(feature = "zk")]
+        specs.push(spec::<WhiteoutResponse>(
+            ChunkedWitnessCfg::default_non_chunked(),
+            (RESPONSE_NUM_VARS.0..=RESPONSE_NUM_VARS.1)
+                .map(PolynomialGroupLayout::singleton)
+                .collect(),
+            output_dir.join(RESPONSE_CATALOG_FILE),
+            None,
+        )?);
         Ok(specs)
     }
 }
