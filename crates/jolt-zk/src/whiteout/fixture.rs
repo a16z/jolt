@@ -1,6 +1,7 @@
 //! A synthetic Whiteout instance over `R_D`: a residual witness (public and
 //! Gaussian parts) under a two-level commitment, five masked messages and one
-//! masked product. Shared by the in-crate tests and the test-support response prover.
+//! masked product. Shared by the in-crate tests, the test-support response prover and the
+//! timing diagnostics.
 
 #![expect(
     clippy::unwrap_used,
@@ -226,7 +227,7 @@ impl<const D: usize> Instance<D> {
     }
 
     /// The prover's setup with raw images.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "whiteout-diagnostics"))]
     pub(crate) fn setup(&self) -> SigmaSetup<F, D> {
         self.setup_with(self.targets(&RawImages))
     }
