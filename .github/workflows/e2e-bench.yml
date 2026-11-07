@@ -23,8 +23,7 @@ jobs:
     if: >-
       github.ref == 'refs/heads/main' &&
       (github.event_name != 'pull_request_target' ||
-       (github.event.pull_request.head.repo.full_name == github.repository &&
-        contains(github.event.pull_request.labels.*.name, 'benchmark') &&
+       (contains(github.event.pull_request.labels.*.name, 'benchmark') &&
         (github.event.action == 'synchronize' || github.event.label.name == 'benchmark')))
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -2,6 +2,9 @@ name: End-to-end benchmark ingest
 run-name: e2e-bench ingest ${{ inputs.job_id }}
 
 on:
+  workflow_run:
+    workflows: [End-to-end prover benchmarks]
+    types: [completed]
   workflow_dispatch:
     inputs:
       job_id:
@@ -27,7 +30,12 @@ permissions: {}
 
 jobs:
   ingest:
-    if: github.actor == '0xandoroid-ai-agent[bot]' && github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'a16z/jolt' && github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && github.actor == '0xandoroid-ai-agent[bot]') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'pull_request_target' &&
+        github.event.workflow_run.path == '.github/workflows/e2e-bench.yml'))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -43,6 +51,7 @@ jobs:
         with:
           enable-cache: false
       - name: Download, bind provenance, and validate without executing result code
+        if: github.event_name == 'workflow_dispatch'
         id: ingest
         env:
           GH_TOKEN: ${{ github.token }}
@@ -57,20 +66,33 @@ jobs:
           --job-id "$JOB_ID" --plan-run-id "$PLAN_RUN_ID" --plan-run-attempt "$PLAN_RUN_ATTEMPT"
           --result-url "$RESULT_URL" --result-sha256 "$RESULT_SHA256"
           --executor-exit-code "$EXECUTOR_EXIT_CODE" --out "$RUNNER_TEMP/e2e-ingest"
+      - name: Read a refused PR plan without executing PR code
+        if: github.event_name == 'workflow_run'
+        id: refusal
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_RUN_ID: ${{ github.event.workflow_run.id }}
+          PLAN_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: >-
+          uv run --no-project python scripts/bench/ingest.py --refusal
+          --plan-run-id "$PLAN_RUN_ID" --plan-run-attempt "$PLAN_RUN_ATTEMPT"
+          --out "$RUNNER_TEMP/e2e-ingest"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: github.event_name == 'workflow_dispatch' || steps.refusal.outputs.pr_number != ''
         with:
           name: jolt-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/e2e-ingest/result
           if-no-files-found: error
           retention-days: 30
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: github.event_name == 'workflow_dispatch'
         with:
           name: jolt-e2e-check-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/e2e-ingest/check/check.json
           if-no-files-found: error
           retention-days: 30
       - name: Post end-to-end benchmark comparison
-        if: steps.ingest.outputs.pr_number != ''
+        if: steps.ingest.outputs.pr_number != '' || steps.refusal.outputs.pr_number != ''
         timeout-minutes: 2
         continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
@@ -96,4 +118,4 @@ jobs:
             }
         env:
           COMMENT_PATH: ${{ runner.temp }}/e2e-ingest/result/pr-comment.md
-          PR_NUMBER: ${{ steps.ingest.outputs.pr_number }}
+          PR_NUMBER: ${{ steps.ingest.outputs.pr_number || steps.refusal.outputs.pr_number }}

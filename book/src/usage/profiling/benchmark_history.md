@@ -38,7 +38,10 @@ measurements but has a neutral reference-unavailable check.
 
 The PR label persists across pushes. The trusted producer checks the actual label
 applier, current label and merge parents; a write-only collaborator or fork is
-not admitted. The target rechecks the label and PR head after queue/lock waits.
+not admitted. The merge must have exactly two parents: a commit on main's fetched
+first-parent history and the submitted PR head. A stale merge ref remains valid
+against that exact older base; it need not include the newest main commit.
+The target rechecks the label and PR head after queue/lock waits.
 The dashboard shows the PR link, submitted head, base and measured merge, source
 run/attempt, admission event, and raw result. Select a PR, workload/input/core
 count, base or head leg, host/build configuration, and metric. PR legs do not enter
@@ -53,6 +56,10 @@ The sticky PR comment links to full results and benchmark history. It lists ever
 core-count/trace-ceiling pair with a recorded process exit, even when no change
 exceeds 3%. Its table keeps only larger time or peak-RSS changes and identifies
 each row's physical cores, `2^k` ceiling and measured base/head trace rows.
+If planning refuses a labelled PR, the same sticky comment instead gives the
+reason and links to the planning run. Ingest authenticates that run's plan
+without dispatching target work or executing PR code; no App check is created
+for this refusal-only path.
 
 A point is the median of complete measured repetitions. The table shows its
 minimum–maximum range; raw JSON retains warmups. Failed cases/builds, incomplete

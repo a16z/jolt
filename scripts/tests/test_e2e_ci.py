@@ -110,7 +110,8 @@ class E2eCiTests(unittest.TestCase):
                      'sender': {'login': 'maintainer'}, 'pull_request': pr}
             with self.subTest(action=action), patch.object(ci, 'github', side_effect=api), \
                     patch.object(ci.bench, 'git_revision', side_effect=revisions.__getitem__), \
-                    patch.object(ci.bench, 'capture'):
+                    patch.object(ci.bench, 'capture', side_effect=lambda argv:
+                        'a' * 40 + ' ' + 'b' * 40 if argv[1] == 'show' else 'a' * 40):
                 harness, runs, number, admission = ci.resolve('pull_request_target', event, 'a16z/jolt', 'a' * 40)
             self.assertEqual((harness, number), ('a' * 40, 7))
             self.assertEqual(runs, [{'base': 'a' * 40, 'head': 'c' * 40, 'submitted_head': 'b' * 40}])
@@ -155,6 +156,44 @@ class E2eCiTests(unittest.TestCase):
             self.assertEqual([item['head'] for item in runs], [first, merge, after])
             self.assertIsNone(number)
             self.assertIsNone(request)
+
+    def test_pr_merge_accepts_stale_main_base_but_not_side_history_or_wrong_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            env = dict(os.environ, GIT_AUTHOR_NAME='fixture', GIT_COMMITTER_NAME='fixture',
+                       GIT_AUTHOR_EMAIL='fixture@example.invalid', GIT_COMMITTER_EMAIL='fixture@example.invalid')
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            subprocess.run(['git', 'remote', 'add', 'origin', str(repo)], cwd=repo, check=True)
+            tree = subprocess.check_output(['git', 'mktree'], input='', text=True, cwd=repo).strip()
+            def commit(label, parents):
+                argv = ['git', 'commit-tree', tree, '-m', label]
+                for parent in parents:
+                    argv.extend(['-p', parent])
+                return subprocess.check_output(argv, cwd=repo, env=env, text=True).strip()
+            base = commit('old main', [])
+            side = commit('side history', [base])
+            newer = commit('newer main', [base])
+            main = commit('current main', [newer, side])
+            head = commit('submitted head', [base])
+            subprocess.run(['git', 'update-ref', 'refs/heads/main', main], cwd=repo, check=True)
+            subprocess.run(['git', 'update-ref', 'HEAD', main], cwd=repo, check=True)
+            pr = {'number': 7, 'head': {'sha': head, 'ref': 'candidate', 'repo': {'full_name': 'a16z/jolt'}}}
+            event = {'action': 'synchronize', 'pull_request': pr}
+            real_capture = ci.bench.capture
+            for parents, accepted in [([base, head], True), ([main, head], True),
+                                      ([side, head], False), ([base, side], False),
+                                      ([base, head, side], False)]:
+                merge = commit('merge', parents)
+                subprocess.run(['git', 'update-ref', 'refs/pull/7/merge', merge], cwd=repo, check=True)
+                with self.subTest(parents=parents), patch.object(ci, 'labelled_pr', return_value=(pr, {})), \
+                        patch.object(ci.bench, 'capture', side_effect=lambda argv, **kwargs: real_capture(argv, cwd=repo)):
+                    if accepted:
+                        harness, runs, number, _ = ci.resolve('pull_request_target', event, 'a16z/jolt', main)
+                        self.assertEqual((harness, number), (main, 7))
+                        self.assertEqual(runs, [{'base': parents[0], 'head': merge, 'submitted_head': head}])
+                    else:
+                        with self.assertRaises(ValueError):
+                            ci.resolve('pull_request_target', event, 'a16z/jolt', main)
 
     def test_batch_artifact_has_root_tip_and_explicit_earlier_commit_documents(self):
         with tempfile.TemporaryDirectory() as directory:

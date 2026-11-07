@@ -554,8 +554,14 @@ unavailable; there is no source-equivalence exception registry.
 The schema-1 `benchmark-results.json` contains the expected `cases`, each with all
 raw warmup and measured `samples`. A successful sample is `complete`, exit code
 zero, and has all numeric metrics. Failed, incomplete, unsupported, and missing
-points are explicit, with reasons and null metrics. Non-executed workflows emit
-a `disabled` result and no dispatch request. The CI artifact keeps
+points are explicit, with reasons and null metrics. Non-executed plans emit
+a `disabled` or `unsupported` result and no dispatch request. For a labelled PR,
+the completed planning workflow also triggers the existing ingest workflow. It
+authenticates the plan's producer attempt and submitted head, then updates the
+same sticky PR comment with the refusal reason and a planning-run link. This
+path executes no PR code and creates no target job or App check. Unlabelled PRs
+whose planning job was skipped, and plans admitted for execution, produce no
+refusal comment. The CI artifact keeps
 raw sample logs, embedded manifests, compiler flags, toolchain and lockfile
 hashes, binary/guest hashes, CPU topology, and host settings. It excludes the
 runtime URS cache and local build payloads. For main/nightly, the separate
@@ -726,8 +732,13 @@ token is needed.
 The hosted planner reads the current PR and all issue-event pages. It requires
 an open same-repository PR into main, its current `benchmark` label application,
 and an applier whose current API `role_name` is `maintain` or `admin`, not merely
-`write`. It resolves and pins the current main base, submitted head and merge
-parents. Replays older than the label application are refused. Later pushes
+`write`. It pins the submitted head and GitHub's merge commit. That commit must
+have exactly two parents: a commit on main's fetched first-parent history, then
+the submitted head. GitHub's merge ref can lag main; the comparison uses its
+actual first parent as the base, not a newer unmerged main revision. Exact-base
+calibration matching and its 48-hour expiry are unchanged. If that older base
+has no matching reference, measurements still run with an unavailable reference.
+Replays older than the label application are refused. Later pushes
 remain admitted while the same label application stays current.
 
 The App repeats admission when enqueueing and immediately before submitting.
@@ -846,8 +857,11 @@ queued at admission and in progress at submission. It fetches the finished
 result ZIP, excluding `runtime-cache` and build payloads but retaining build logs, and serves it for 14 days at
 `<public_base_url>/github-bench/<sha256>.zip`. It dispatches
 `e2e-bench-ingest.yml` on main with the job, producer run/attempt, URL, digest and
-executor exit code. The ingest workflow accepts only `0xandoroid-ai-agent[bot]`
-on main. It caps the download at 1 GiB, verifies SHA-256 before opening the ZIP,
+executor exit code. Executor-result ingest accepts only `0xandoroid-ai-agent[bot]`
+on main. Refusal-only ingest instead accepts completion of the trusted PR
+planning workflow and reads its exact-attempt plan artifact; it needs no dispatch
+artifact or executor download. Executor-result ingest caps the download at 1 GiB,
+verifies SHA-256 before opening the ZIP,
 and treats all downloaded files as data.
 
 The default branch's `publication.py` validates provenance, planned revisions,

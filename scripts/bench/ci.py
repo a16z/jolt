@@ -72,7 +72,7 @@ def recheck_pr(plan):
     # The hosted planner checks permissions. Public reads on the target bind the
     # same label application after queue/lock waits, without passing it a token.
     # The plan pins the base and merge it builds. The API base.sha lags merge^1,
-    # and merge_commit_sha changes whenever main advances, so neither is rechecked.
+    # and GitHub's merge ref can lag main, so neither is rechecked.
     pr, admission = labelled_pr(plan['provenance']['pr_number'], authenticated=False)
     if admission != plan['admission'] or pr['head']['sha'] != plan['runs'][0]['submitted_head']:
         raise ValueError('PR label, branch or head changed after trusted admission')
@@ -97,10 +97,11 @@ def resolve(event_name, event, repository, sha):
                        '+refs/heads/main:refs/e2e/main',
                        f'+refs/pull/{number}/merge:refs/e2e/merge'])
         merge = bench.git_revision('refs/e2e/merge')
-        base = bench.git_revision(f'{merge}^1')
-        head = bench.git_revision(f'{merge}^2')
-        if head != pr['head']['sha'] or base != bench.git_revision('refs/e2e/main'):
-            raise ValueError('the PR merge ref does not contain the current main and submitted head')
+        parents = bench.capture(['git', 'show', '-s', '--format=%P', merge]).split()
+        if (len(parents) != 2 or parents[1] != pr['head']['sha']
+                or parents[0] not in bench.capture(['git', 'rev-list', '--first-parent', 'refs/e2e/main']).splitlines()):
+            raise ValueError('the PR merge ref must merge a first-parent main commit with the submitted head')
+        base, head = parents
         return harness, [{'base': base, 'head': merge, 'submitted_head': head}], number, admission
     if event_name == 'push':
         before, after = event['before'], event['after']
@@ -127,6 +128,8 @@ def plan(args):
     enabled = os.environ.get('JOLT_E2E_ENABLED') == 'true' or bootstrap
     plan = {'tier': tier, 'enabled': False, 'reason': None, 'target_cpu': TARGET_CPU,
             'push_before': event.get('before'), 'push_after': event.get('after'),
+            'request': ({key: event.get('pull_request', {}).get('head', {}).get(key) for key in ('sha', 'ref')}
+                        if name == 'pull_request_target' else None),
             'harness': None, 'runs': [], 'provenance': bench.provenance()[0],
             'config': bench.bundle_file(args.config.resolve(), bench.ROOT), 'expected_builds': {}}
     try:
