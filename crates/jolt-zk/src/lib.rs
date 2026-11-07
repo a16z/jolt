@@ -1,5 +1,6 @@
 //! Zero knowledge for Jolt: generic BlindFold claim, protocol, layout and
-//! verifier-equation types, and the masking front end ([`masking`]).
+//! verifier-equation types, the masking front end ([`masking`]), and, under
+//! `whiteout`, the lattice back end's building blocks (`whiteout`).
 
 // In the jolt-verifier runtime closure: stricter panic and unsafe discipline
 // than the workspace lints (specs/verifier-closure-lints.md).
@@ -30,6 +31,8 @@ mod relaxed;
 mod secret;
 mod statements;
 mod verify;
+#[cfg(feature = "whiteout")]
+pub mod whiteout;
 
 pub use assignment::AssignedBlindFoldWitness;
 pub use builder::{BlindFoldProtocolBuilder, BlindFoldStageBuilder};

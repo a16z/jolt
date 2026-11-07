@@ -259,7 +259,7 @@ Open size reductions, not implemented:
 
 Muldiv's layout has 108 auxiliary slots: 106 product slots and 2 defining
 slots. The count does not depend on T, and it grows with the number of
-one-hot chunks. The paper's count of 32 (`06_evaluation.tex:83-88`) rests on
+one-hot chunks. The paper's count of 32 (paper: evaluation) rests on
 two assumptions:
 
 - the last product of every term lands in its stage check without a slot;

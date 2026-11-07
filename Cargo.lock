@@ -4202,17 +4202,21 @@ version = "0.1.0"
 dependencies = [
  "jolt-claims",
  "jolt-crypto",
+ "jolt-dit",
  "jolt-field",
  "jolt-poly",
  "jolt-r1cs",
  "jolt-sumcheck",
  "jolt-transcript",
  "jolt-utils",
+ "rand 0.8.7",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
  "rayon",
  "serde",
+ "spongefish",
  "thiserror 2.0.21",
+ "tracing",
  "zeroize",
 ]
 

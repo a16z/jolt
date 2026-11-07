@@ -970,3 +970,15 @@ mod single_instance {
         ));
     }
 }
+
+/// A rerun answers only a fold overflow or exhausted Σ attempts.
+#[cfg(feature = "whiteout")]
+#[test]
+fn only_fold_overflow_and_exhausted_attempts_are_rerunnable() {
+    use crate::whiteout::WhiteoutError;
+
+    assert!(ZkError::FoldOverflow { level: 1 }.is_rerunnable());
+    assert!(ZkError::from(WhiteoutError::AttemptsExhausted).is_rerunnable());
+    assert!(!ZkError::from(WhiteoutError::ResidualOpeningMismatch).is_rerunnable());
+    assert!(!ZkError::OperandPadsMismatch.is_rerunnable());
+}

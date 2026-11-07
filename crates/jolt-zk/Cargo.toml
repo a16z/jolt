@@ -9,6 +9,28 @@ description = "Generic BlindFold verifier infrastructure for the Jolt zkVM"
 # The prove side: `prove` and the proof-of-work search before its challenges,
 # which copies the sponge state. Verifier builds leave it off.
 prover = ["jolt-sumcheck/prover", "jolt-transcript/prover-grinding"]
+# Whiteout's verifier-side building blocks (the constant-term lift, the
+# Σ-protocol's segment table and parameters, the Σ verifier). Off by default
+# so the Dory verifier never compiles the lattice ring.
+whiteout = [
+  "dep:spongefish",
+  "dep:tracing",
+  "jolt-crypto/lattice",
+  "jolt-field/solinas",
+  "jolt-transcript/solinas",
+]
+# Whiteout's prover-only pieces (the Σ prover, the zero-constant-term mask
+# sampler, the witness alphabet check, the rejection rule). A verifier that
+# enables only `whiteout` does not compile them.
+whiteout-prover = ["dep:jolt-dit", "jolt-crypto/sample", "prover", "whiteout"]
+# Synthetic Σ-protocol statements and the statement-checking response
+# prover, for response provers' tests (Akita's lattice response prover).
+# Test support only.
+whiteout-test-support = [
+  "dep:rand_chacha",
+  "jolt-transcript/transcript-blake2b",
+  "whiteout-prover",
+]
 # `CommittedPads::uncommitted`, for tests of protocols written over the
 # masked channel in other crates (Akita's masked levels).
 test-support = []
@@ -19,16 +41,20 @@ workspace = true
 [dependencies]
 jolt-claims.workspace = true
 jolt-crypto = { workspace = true, features = ["bn254"] }
+jolt-dit = { workspace = true, optional = true }
 jolt-field.workspace = true
 jolt-poly.workspace = true
 jolt-r1cs.workspace = true
 jolt-sumcheck = { workspace = true, features = ["committed", "r1cs"] }
 jolt-transcript.workspace = true
 jolt-utils.workspace = true
+rand_chacha = { workspace = true, optional = true }
 rand_core.workspace = true
 rayon.workspace = true
 serde = { workspace = true, features = ["derive"] }
+spongefish = { workspace = true, optional = true }
 thiserror.workspace = true
+tracing = { workspace = true, optional = true }
 zeroize.workspace = true
 
 [dev-dependencies]
@@ -40,8 +66,21 @@ jolt-transcript = { workspace = true, features = [
   "prover-grinding",
   "test-utils",
 ] }
+rand = { workspace = true, features = ["std_rng"] }
 rand_chacha.workspace = true
 rand_core.workspace = true
+
+[[test]]
+name = "whiteout_sample"
+required-features = ["whiteout-prover"]
+
+[[test]]
+name = "whiteout_params"
+required-features = ["whiteout-prover"]
+
+[[test]]
+name = "whiteout_zeroize"
+required-features = ["whiteout-prover"]
 
 [[test]]
 name = "assignment_pipeline"
