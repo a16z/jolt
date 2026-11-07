@@ -153,7 +153,7 @@ jobs:
       # enable them.
       - name: Check the verifier graph leaves out the prover samplers
         run: |
-          for features in "" "--features zk" "--features akita" "--all-features"; do
+          for features in "" "--features zk" "--features akita" "--features whiteout" "--all-features"; do
             if cargo tree -p jolt-verifier $features -e normal,features --prefix none \
                  | grep -E 'jolt-crypto feature "sample|jolt-zk feature "whiteout-prover|^jolt-dit'; then
               echo "jolt-verifier $features enables a prover sampler" >&2
@@ -205,6 +205,30 @@ jobs:
         run: cargo clippy -p jolt-prover --all-targets --features akita
       - name: cargo clippy -p jolt-prover --features akita,prover-fixtures
         run: cargo clippy -p jolt-prover --all-targets --features akita,prover-fixtures
+      # Whiteout, with and without the fixture prover and the verifier's
+      # `logging` census.
+      - name: cargo clippy Whiteout
+        run: |
+          cargo clippy -p jolt-verifier --all-targets --features whiteout
+          cargo clippy -p jolt-verifier --all-targets --features whiteout,prover-fixtures,logging
+          cargo clippy -p jolt-prover --all-targets --features whiteout
+          cargo clippy -p jolt-prover --all-targets --features whiteout,prover-fixtures
+      # jolt-akita's Whiteout halves: the verifier's `zk` alone (with and
+      # without default features), then the prover's `zk-prover`.
+      - name: cargo clippy -p jolt-akita --features zk / zk-prover
+        run: |
+          cargo clippy -p jolt-akita --all-targets --features zk
+          cargo check -p jolt-akita --no-default-features --features zk
+          cargo clippy -p jolt-akita --all-targets --features zk-prover
+      # jolt-akita's verifier half compiles no prover sampler either; only
+      # its `zk-prover` may reach them.
+      - name: Check jolt-akita's zk graph leaves out the prover samplers
+        run: |
+          if cargo tree -p jolt-akita --features zk -e normal,features --prefix none \
+               | grep -E 'jolt-crypto feature "sample|jolt-zk feature "whiteout-prover|^jolt-dit'; then
+            echo "jolt-akita --features zk enables a prover sampler" >&2
+            exit 1
+          fi
       # The Dory arms of the guest x mode matrix and the e2e suites compile
       # only under prover-fixtures; lint both protocols like the akita pair.
       - name: cargo clippy -p jolt-prover --features prover-fixtures
