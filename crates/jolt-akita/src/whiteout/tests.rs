@@ -514,8 +514,8 @@ fn pads_refusal(fixture: &Fixture, proof: &Proof) -> ZkError {
 
 /// A proof verifies against a setup decoded with the prover's exported
 /// plans, whose response set is then exhaustive: a length it lacks is
-/// refused, not planned, and a response plan that is not a response
-/// schedule is refused, both at the pads.
+/// refused at the pads, not planned, and a response plan that is not a
+/// response schedule is refused when the setup loads its plans.
 #[test]
 fn whiteout_persisted_response_plan_verifies_and_is_validated() {
     let setup = fresh();
@@ -550,10 +550,7 @@ fn whiteout_persisted_response_plan_verifies_and_is_validated() {
     for response in swapped.responses.iter_mut().flat_map(BTreeMap::values_mut) {
         response.clone_from(&plans.catalog.trace);
     }
-    let error = pads_refusal(
-        &fixture.with_shape(loading(swapped).shape(&opening()).unwrap()),
-        &proof,
-    );
+    let error = refusal(swapped, &opening());
     assert!(matches!(
         plan_error(&error),
         Some(WhiteoutPlanError::Inadmissible(_))
@@ -565,17 +562,13 @@ fn whiteout_persisted_response_plan_verifies_and_is_validated() {
 /// digest a planning setup derives.
 #[test]
 fn packaged_response_rows_are_the_planned_rows() {
-    let plans = ResponsePlans::new(None, Some(Arc::new(response_catalog())));
+    let rows = ResponseRows::new(None, Some(&response_catalog())).unwrap();
     for num_vars in RESPONSE_NUM_VARS.0..=RESPONSE_NUM_VARS.1 {
-        assert!(
-            plans.packaged_row(num_vars).unwrap().is_some(),
-            "ν = {num_vars}"
-        );
+        assert!(rows.row(num_vars).unwrap().is_some(), "ν = {num_vars}");
     }
     let num_vars = RESPONSE_NUM_VARS.0;
-    let (profile, schedule) = plans.packaged_row(num_vars).unwrap().unwrap();
-    let packaged = PlannedResponse::from_row(num_vars, profile, schedule).unwrap();
-    let planned = PlannedResponse::plan(num_vars).unwrap();
+    let packaged = rows.row(num_vars).unwrap().unwrap();
+    let planned = ResponseRow::plan(num_vars).unwrap();
     assert_eq!(packaged.plan, planned.plan);
     assert_eq!(packaged.digest, planned.digest);
 }

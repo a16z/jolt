@@ -43,13 +43,7 @@ impl AkitaVerifierRequirements {
         if setups.is_empty() {
             return Err(invalid_setup("verifier provisioning requires a catalog"));
         }
-        let mut requirements = Self {
-            max_num_vars: 0,
-            max_total_batch_polys: 0,
-            retained_field_elements: 1,
-            prefix_field_elements: 1,
-            prefix_slots: BTreeSet::new(),
-        };
+        let mut requirements = Self::new(0, 0);
         for setup in setups {
             let mut max_num_vars = setup.max_num_vars;
             if setup.schedule_artifacts.one_hot().is_some() {
@@ -70,24 +64,54 @@ impl AkitaVerifierRequirements {
             {
                 continue;
             }
+            let (max_num_vars, max_total_batch_polys) = (
+                requirements.max_num_vars,
+                requirements.max_total_batch_polys,
+            );
             if setup.schedule_artifacts.dense().is_some() {
-                requirements.include(setup.dense_scheme()?.schedules())?;
+                requirements.include(
+                    setup.dense_scheme()?.schedules(),
+                    max_num_vars,
+                    max_total_batch_polys,
+                )?;
             }
             if setup.schedule_artifacts.one_hot().is_some() {
                 with_one_hot_family!(scheme setup.one_hot_scheme()?, |scheme| {
-                    requirements.include(scheme.schedules())
+                    requirements.include(scheme.schedules(), max_num_vars, max_total_batch_polys)
                 })?;
             }
         }
         Ok(requirements)
     }
 
-    fn include<Cfg: CommitmentConfig<Field = AkitaField>>(
+    /// Material of capacity `max_num_vars` × `max_total_batch_polys` that
+    /// retains nothing yet.
+    pub(crate) fn new(max_num_vars: usize, max_total_batch_polys: usize) -> Self {
+        Self {
+            max_num_vars,
+            max_total_batch_polys,
+            retained_field_elements: 1,
+            prefix_field_elements: 1,
+            prefix_slots: BTreeSet::new(),
+        }
+    }
+
+    /// Retains at least `num_field_elements` of the stream.
+    pub(crate) fn retain(&mut self, num_field_elements: usize) {
+        self.retained_field_elements = self.retained_field_elements.max(num_field_elements);
+    }
+
+    /// Covers what a verifier of `catalog` at capacity `max_num_vars` ×
+    /// `max_total_batch_polys` reads: the matrix of every row it admits and
+    /// those rows' prefix slots.
+    pub(crate) fn include<Cfg: CommitmentConfig<Field = AkitaField>>(
         &mut self,
         catalog: &TrustedScheduleCatalog<Cfg>,
+        max_num_vars: usize,
+        max_total_batch_polys: usize,
     ) -> Result<(), OpeningsError> {
         let rows = catalog
-            .rows_within_setup_capacity(self.max_num_vars, self.max_total_batch_polys)
+            .rows_within_setup_capacity(max_num_vars, max_total_batch_polys)
             .map_err(invalid_setup)?;
         if rows.is_empty() {
             return Err(invalid_setup(
@@ -98,13 +122,10 @@ impl AkitaVerifierRequirements {
             let layout = row.profiles().opening_layout().map_err(invalid_setup)?;
             let capacity = verifier_setup_matrix_capacity_for_schedule(row.schedule(), &layout)
                 .map_err(invalid_setup)?;
-            self.retained_field_elements = self
-                .retained_field_elements
-                .max(capacity.num_field_elements);
+            self.retain(capacity.num_field_elements);
         }
-        let akita =
-            SetupRequirements::from_catalog(catalog, self.max_num_vars, self.max_total_batch_polys)
-                .map_err(invalid_setup)?;
+        let akita = SetupRequirements::from_catalog(catalog, max_num_vars, max_total_batch_polys)
+            .map_err(invalid_setup)?;
         for id in akita.prefix_slot_ids() {
             self.prefix_field_elements = self
                 .prefix_field_elements
@@ -150,7 +171,7 @@ impl AkitaVerifierRequirements {
     }
 }
 
-fn generate_material(
+pub(crate) fn generate_material(
     requirements: &AkitaVerifierRequirements,
 ) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
     let seed = sample_akita_setup_seed();

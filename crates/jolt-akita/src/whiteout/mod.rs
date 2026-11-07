@@ -38,9 +38,9 @@ use akita_params::{
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, ScheduleLookupKey,
 };
 #[cfg(feature = "zk-prover")]
-use akita_pcs::zk::{prove_masked_prefix, ResidualOpening};
+use akita_pcs::zk::{prove_masked_prefix, AkitaResponseProver, ResidualOpening};
 use akita_pcs::zk::{
-    AkitaResponseProver, CompressionShape, MaskedPrefix, ResidualMatrices, ResidualShape,
+    AkitaResponseVerifier, CompressionShape, MaskedPrefix, ResidualMatrices, ResidualShape,
     ZkCommitmentConfig,
 };
 #[cfg(feature = "zk-prover")]
@@ -53,6 +53,7 @@ use akita_types::{CommittedGroup, GroupBatchStatement, OpeningClaims, Polynomial
 use jolt_crypto::lattice::{
     derive_public_matrix_prefix, PreparedMatrix, PublicMatrixSeed, CHALLENGE_RING_DIM,
 };
+use jolt_openings::OpeningsError;
 use jolt_transcript::Transcript;
 #[cfg(feature = "zk-prover")]
 use jolt_zk::masking::CommittedPads;
@@ -72,14 +73,17 @@ use rand_core::{CryptoRng, RngCore};
 
 #[cfg(feature = "zk-prover")]
 use crate::adapters::AkitaBackendHint;
+use crate::adapters::{
+    with_backend_pool, AkitaBackendVerifierSetup, AkitaCommitment, AkitaField, WhiteoutSource,
+};
 #[cfg(feature = "zk-prover")]
-use crate::adapters::AkitaBackendProverSetup;
-use crate::adapters::{AkitaBackend, AkitaCommitment, AkitaField, WhiteoutSource};
+use crate::adapters::{AkitaBackend, AkitaBackendProverSetup};
 use crate::configs::{JoltDenseBounded, JoltDenseFull, JoltOneHotK16};
 use crate::schedule_registry::GroupedScheduleParams;
 #[cfg(feature = "zk-prover")]
 use crate::scheme::AkitaProverTranscript;
 use crate::scheme::AkitaVerifierTranscript;
+use crate::verifier_resources::{generate_material, AkitaVerifierRequirements};
 #[cfg(feature = "zk-prover")]
 use akita_transcript::TranscriptSponge;
 
@@ -391,12 +395,13 @@ impl From<WhiteoutPlanError> for ZkError {
 
 /// A setup's zero-knowledge catalog: one row per masked opening shape the
 /// setup admits (its trace group with each admitted combination of
-/// precommitted groups), the precommitted groups' hiding profiles, the Akita
-/// verifier, and, for a prover, the prover's setup (the one the verifier's is
-/// derived from, so both share one public matrix) and its backend, built only
-/// on the first prover call (a verifier never builds a backend). One backend
-/// commits every hiding group and proves every opening: Akita cannot import a
-/// hiding commitment into another backend.
+/// precommitted groups), the precommitted groups' hiding profiles, and the
+/// Akita verifier over the setup's verifier material: one prefix of Akita's
+/// setup stream, derived from its seed, that also holds the residual matrices
+/// and the response verifiers' matrices. A prover's setup and backend are
+/// built only on the first prover call. One backend commits every hiding
+/// group and proves every opening: Akita cannot import a hiding commitment
+/// into another backend.
 pub struct WhiteoutCatalog {
     scheme: AkitaCommitmentScheme<WhiteoutOneHot>,
     verifier: AkitaVerifier<WhiteoutOneHot>,
@@ -404,25 +409,32 @@ pub struct WhiteoutCatalog {
     num_vars: usize,
     num_polys: usize,
     #[cfg(feature = "zk-prover")]
+    prover: OnceLock<CatalogProver>,
+}
+
+/// A prover's setup over the catalog's capacity and the backend built on it.
+#[cfg(feature = "zk-prover")]
+struct CatalogProver {
     setup: AkitaBackendProverSetup,
-    backend: OnceLock<AkitaBackend>,
+    backend: AkitaBackend,
 }
 
 impl WhiteoutCatalog {
     /// Plans the zero-knowledge row of a trace group of `num_polys` K=16
     /// one-hot polynomials in `num_vars` variables beside each admitted
-    /// list of precommitted groups, and builds the verifier. Deterministic,
-    /// so both roles derive the same catalog, whose digest the opening
-    /// absorbs.
+    /// list of precommitted groups, and builds the verifier, whose material
+    /// also covers `responses`. Deterministic, so both roles derive the same
+    /// catalog, whose digest the opening absorbs.
     ///
     /// # Errors
     ///
-    /// [`AkitaError`] if a shape has no zero-knowledge row.
+    /// [`ZkError`] if a shape has no zero-knowledge row.
     fn plan(
         num_vars: usize,
         num_polys: usize,
         admitted: &BTreeSet<Vec<PrecommittedShape>>,
-    ) -> Result<(Self, PlannedRows), AkitaError> {
+        responses: &ResponseRows,
+    ) -> Result<(Self, PlannedRows), ZkError> {
         let chunking = ChunkedWitnessCfg::default_non_chunked();
         let mut precommitted = BTreeMap::new();
         for shape in admitted.iter().flatten() {
@@ -462,7 +474,14 @@ impl WhiteoutCatalog {
             row_keys(&catalog, final_group, &precommitted, admitted)?,
         )?;
         Ok((
-            Self::build(catalog, precommitted, num_vars, num_polys, admitted)?,
+            Self::build(
+                catalog,
+                precommitted,
+                (num_vars, num_polys),
+                admitted,
+                &residuals,
+                responses,
+            )?,
             residuals,
         ))
     }
@@ -478,6 +497,7 @@ impl WhiteoutCatalog {
         num_vars: usize,
         num_polys: usize,
         admitted: &BTreeSet<Vec<PrecommittedShape>>,
+        responses: &ResponseRows,
     ) -> Result<(Self, PlannedRows), ZkError> {
         let statement = |what: String| WhiteoutPlanError::Statement(AkitaError::InvalidSetup(what));
         if (plan.num_vars, plan.num_polys) != (num_vars, num_polys) {
@@ -513,20 +533,30 @@ impl WhiteoutCatalog {
             .map_err(WhiteoutPlanError::Statement)?;
         let residuals = residuals(&catalog, keys).map_err(WhiteoutPlanError::Inadmissible)?;
         Ok((
-            Self::build(catalog, precommitted, num_vars, num_polys, admitted)?,
+            Self::build(
+                catalog,
+                precommitted,
+                (num_vars, num_polys),
+                admitted,
+                &residuals,
+                responses,
+            )?,
             residuals,
         ))
     }
 
-    /// The catalog of `catalog`'s rows and the `precommitted` rows, with
-    /// its verifier.
+    /// The catalog of `catalog`'s rows and the `precommitted` rows, with its
+    /// verifier over material derived from Akita's setup seed. The material
+    /// covers what this catalog's verifier, the `residuals`' matrices and
+    /// every row of `responses` read, so each is a view of it.
     fn build(
         catalog: TrustedScheduleCatalog<WhiteoutOneHot>,
         precommitted: BTreeMap<PrecommittedShape, PrecommittedRow>,
-        num_vars: usize,
-        num_polys: usize,
+        (num_vars, num_polys): (usize, usize),
         admitted: &BTreeSet<Vec<PrecommittedShape>>,
-    ) -> Result<Self, AkitaError> {
+        residuals: &PlannedRows,
+        responses: &ResponseRows,
+    ) -> Result<Self, ZkError> {
         let scheme = AkitaCommitmentScheme::new(catalog);
         let max_batched_polys = admitted
             .iter()
@@ -541,19 +571,26 @@ impl WhiteoutCatalog {
             .keys()
             .map(|shape| shape.num_vars)
             .fold(num_vars, usize::max);
-        // Akita derives a verifier setup only from a prover setup, which
-        // only a prover keeps.
-        let setup = scheme.setup_prover(max_num_vars, max_batched_polys)?;
-        let verifier = scheme.verifier(scheme.setup_verifier(&setup)?)?;
+        let mut requirements = AkitaVerifierRequirements::new(max_num_vars, max_batched_polys);
+        requirements
+            .include(scheme.schedules(), max_num_vars, max_batched_polys)
+            .map_err(material_error)?;
+        for (_, residual) in residuals.values() {
+            requirements.retain(residual.stream_len()?);
+        }
+        responses.include(&mut requirements)?;
+        let material = {
+            let _span = tracing::info_span!("whiteout_verifier_material").entered();
+            with_backend_pool(|| generate_material(&requirements)).map_err(material_error)?
+        };
         Ok(Self {
+            verifier: scheme.verifier(material)?,
             scheme,
-            verifier,
             precommitted,
             num_vars,
             num_polys,
             #[cfg(feature = "zk-prover")]
-            setup,
-            backend: OnceLock::new(),
+            prover: OnceLock::new(),
         })
     }
 
@@ -571,25 +608,33 @@ impl WhiteoutCatalog {
         })
     }
 
+    /// The prover's setup at the verifier's capacity and its backend, built
+    /// on first use. Its matrix is a longer prefix of the stream the
+    /// verifier's material is cut from.
+    #[cfg(feature = "zk-prover")]
+    fn prover(&self) -> Result<&CatalogProver, AkitaError> {
+        if let Some(prover) = self.prover.get() {
+            return Ok(prover);
+        }
+        // Built outside the cell, as `WhiteoutRow::residual_matrices`.
+        let _span = tracing::info_span!("whiteout_catalog_prover_setup").entered();
+        let descriptor = self.verifier.setup().expanded().descriptor();
+        let setup = self
+            .scheme
+            .setup_prover(descriptor.max_num_vars, descriptor.max_num_batched_polys)?;
+        let backend = AkitaBackend::new(Arc::clone(&setup.expanded))?;
+        Ok(self.prover.get_or_init(|| CatalogProver { setup, backend }))
+    }
+
     /// The backend every hiding source is imported into, built on first
     /// use.
     ///
     /// # Errors
     ///
     /// [`AkitaError`] if the backend cannot be built.
+    #[cfg(feature = "zk-prover")]
     pub fn backend(&self) -> Result<&AkitaBackend, AkitaError> {
-        if let Some(backend) = self.backend.get() {
-            return Ok(backend);
-        }
-        let _span = tracing::info_span!("whiteout_catalog_prover_setup").entered();
-        // The prover setup's matrix, which `prove_masked` pairs with that
-        // setup's descriptor and prefix slots.
-        #[cfg(feature = "zk-prover")]
-        let expanded = &self.setup.expanded;
-        #[cfg(not(feature = "zk-prover"))]
-        let expanded = self.verifier.setup().expanded();
-        let backend = AkitaBackend::new(Arc::clone(expanded))?;
-        Ok(self.backend.get_or_init(|| backend))
+        Ok(&self.prover()?.backend)
     }
 
     /// Commits `source`, one dense polynomial, hiding as a precommitted group
@@ -626,6 +671,11 @@ impl WhiteoutCatalog {
 
 /// Each admitted list of precommitted groups' row key and residual shape.
 type PlannedRows = BTreeMap<Vec<PrecommittedShape>, (ScheduleLookupKey, ResidualShape)>;
+
+/// A verifier-material sizing or derivation failure as Akita's setup error.
+fn material_error(error: OpeningsError) -> AkitaError {
+    AkitaError::InvalidSetup(error.to_string())
+}
 
 /// The lookup key of the row folding `groups` beside the trace group
 /// `final_group`, and the groups' producer contracts.
@@ -784,8 +834,7 @@ impl WhiteoutRow {
         transcript: &mut AkitaProverTranscript,
         compression: &dyn ImageCompression<F>,
     ) -> Result<(ResidualOpening<F, F>, Vec<F>), AkitaError> {
-        let backend = self.catalog.backend()?;
-        let setup = &self.catalog.setup;
+        let CatalogProver { setup, backend } = self.catalog.prover()?;
         let mut claims = Vec::with_capacity(groups.len());
         let mut handles = Vec::with_capacity(groups.len());
         for group in groups {
@@ -993,7 +1042,7 @@ pub struct WhiteoutTail {
 const MAX_CACHED_LAYOUTS: usize = 8;
 
 /// The public state one pad layout fixes under a row: the pad commitment
-/// `A_p` (with `L`), `A_D`, and the response prover of `e`'s length. Each is
+/// `A_p` (with `L`), `A_D`, and the response verifier of `e`'s length. Each is
 /// a deterministic function of the row, the layout and the setup's plans,
 /// never of a proof.
 struct LayoutState<const D: usize> {
@@ -1072,7 +1121,7 @@ impl WhiteoutTail {
             },
             Arc::clone(&v_matrix),
         )?;
-        let num_vars = AkitaResponseProver::<WhiteoutResponse>::num_vars(
+        let num_vars = AkitaResponseVerifier::<WhiteoutResponse>::num_vars(
             &sigma.response_layout(&CompressionShape::<WhiteoutResponse>::default())?,
         )?;
         Ok(LayoutState {
@@ -1170,7 +1219,7 @@ impl WhiteoutTail {
         let digests = [
             self.row.catalog.scheme.schedules().catalog_digest(),
             *self.row.selection()?.row_digest.as_bytes(),
-            state.response.digest,
+            state.response.row.digest,
         ];
         Ok((digests, state))
     }
@@ -1188,7 +1237,7 @@ impl WhiteoutTail {
         layout: &PadLayout,
     ) -> Result<Arc<AkitaResponseProver<WhiteoutResponse>>, ZkError> {
         with_ring_dim!(self.row.ring_dim(), D, {
-            Ok(Arc::clone(&self.layout_state::<D>(layout)?.response.prover))
+            Ok(self.layout_state::<D>(layout)?.response.prover()?)
         })
     }
 
@@ -1210,7 +1259,7 @@ impl WhiteoutTail {
             absorb_pad_statement(transcript, &digests);
             commit_lattice_pads(
                 &state.pads,
-                state.response.prover.as_ref() as &dyn ImageCompression<F>,
+                state.response.prover()?.as_ref() as &dyn ImageCompression<F>,
                 layout,
                 transcript,
                 rng,
@@ -1282,7 +1331,7 @@ impl WhiteoutTail {
                 opening.opening(),
                 transcript,
                 rng,
-                &ProfiledResponse(state.response.prover.as_ref()),
+                &ProfiledResponse(state.response.prover()?.as_ref()),
             )?;
             tracing::info!(attempts, "Whiteout Σ accepted");
             Ok(())
@@ -1319,9 +1368,8 @@ impl WhiteoutTail {
             let claims = self.row.shape.claims(claim.point())?;
             let lifted =
                 tracing::info_span!("whiteout_lift").in_scope(|| sigma.lift(relation, &claims))?;
-            tracing::info_span!("whiteout_verify_sigma").in_scope(|| {
-                verify_sigma(&sigma, &lifted, transcript, state.response.prover.as_ref())
-            })
+            tracing::info_span!("whiteout_verify_sigma")
+                .in_scope(|| verify_sigma(&sigma, &lifted, transcript, &state.response.verifier))
         })
     }
 }
@@ -1346,7 +1394,7 @@ impl WhiteoutShape {
 /// opening shapes it admits (its trace group beside each admitted list of
 /// precommitted groups, `GroupedScheduleParams::whiteout_admitted`), the
 /// plans it was constructed with, and derived state shared by clones (the
-/// catalog, each shape's row, the response provers).
+/// catalog, each shape's row, the response verifiers).
 ///
 /// A setup is constructed either fresh, planning its catalog at
 /// construction ([`Self::new`]), or from persisted [`WhiteoutPlans`] (serde,
@@ -1408,10 +1456,13 @@ impl PlannedSetup {
         catalog: WhiteoutCatalog,
         residuals: PlannedRows,
         plan: CatalogPlan,
-        responses: ResponsePlans,
+        responses: ResponseRows,
     ) -> Self {
+        let responses = Arc::new(ResponsePlans::new(
+            responses,
+            catalog.verifier.setup().clone(),
+        ));
         let catalog = Arc::new(catalog);
-        let responses = Arc::new(responses);
         let shapes = residuals
             .into_iter()
             .map(|(precommitted, (key, shape))| {
@@ -1562,24 +1613,21 @@ impl WhiteoutSetup {
                 }
                 .into());
             }
+            let responses = ResponseRows::new(
+                plans.responses.as_ref(),
+                self.response_catalog.as_deref().map(Vec::as_slice),
+            )?;
             let (catalog, residuals) =
-                WhiteoutCatalog::load(&plans.catalog, num_vars, num_polys, &admitted)?;
-            PlannedSetup::new(
-                catalog,
-                residuals,
-                plans.catalog.clone(),
-                ResponsePlans::new(plans.responses.clone(), self.response_catalog.clone()),
-            )
+                WhiteoutCatalog::load(&plans.catalog, num_vars, num_polys, &admitted, &responses)?;
+            PlannedSetup::new(catalog, residuals, plans.catalog.clone(), responses)
         } else {
             let _span = tracing::info_span!("whiteout_plan_catalog").entered();
-            let (catalog, residuals) = WhiteoutCatalog::plan(num_vars, num_polys, &admitted)?;
+            let responses =
+                ResponseRows::new(None, self.response_catalog.as_deref().map(Vec::as_slice))?;
+            let (catalog, residuals) =
+                WhiteoutCatalog::plan(num_vars, num_polys, &admitted, &responses)?;
             let plan = catalog.plan_of()?;
-            PlannedSetup::new(
-                catalog,
-                residuals,
-                plan,
-                ResponsePlans::new(None, self.response_catalog.clone()),
-            )
+            PlannedSetup::new(catalog, residuals, plan, responses)
         };
         Ok(self.planned.get_or_init(|| planned))
     }
@@ -1622,61 +1670,136 @@ impl WhiteoutSetup {
     }
 }
 
-/// A setup's response provers, shared by its shapes, by `e`'s variable
-/// count. With a persisted set, each is loaded from its plan and a length
-/// the set lacks is refused. Without one, each is taken from the packaged
-/// response catalog's row for its length, and planned on first use only for
-/// a length the catalog lacks; the packaged row and the planned one are the
-/// same row, so either gives the same one-row plan and digest.
+/// The response rows a setup holds before any proof, audited when its
+/// catalog is: its persisted response set, which fixes every row, or else
+/// the packaged response catalog, if the setup carries one.
+enum ResponseRows {
+    Persisted(BTreeMap<usize, ResponseRow>),
+    Packaged(Option<TrustedScheduleCatalog<WhiteoutResponse>>),
+}
+
+impl ResponseRows {
+    /// Audits `persisted`, else `packaged`. A row or catalog that fails
+    /// admission is refused, never replaced by planning.
+    fn new(
+        persisted: Option<&BTreeMap<usize, Vec<u8>>>,
+        packaged: Option<&[u8]>,
+    ) -> Result<Self, ZkError> {
+        if let Some(persisted) = persisted {
+            return Ok(Self::Persisted(
+                persisted
+                    .iter()
+                    .map(|(num_vars, artifact)| {
+                        Ok((*num_vars, ResponseRow::load(*num_vars, artifact)?))
+                    })
+                    .collect::<Result<_, ZkError>>()?,
+            ));
+        }
+        let Some(bytes) = packaged else {
+            return Ok(Self::Packaged(None));
+        };
+        let _span = tracing::info_span!("whiteout_load_response_catalog").entered();
+        Ok(Self::Packaged(Some(
+            TrustedScheduleCatalog::from_artifact_bytes(
+                bytes,
+                ChunkedWitnessCfg::default_non_chunked(),
+            )
+            .map_err(WhiteoutPlanError::Inadmissible)?,
+        )))
+    }
+
+    /// Covers every row's response verifier in `requirements`.
+    fn include(&self, requirements: &mut AkitaVerifierRequirements) -> Result<(), ZkError> {
+        match self {
+            Self::Persisted(rows) => {
+                for (num_vars, row) in rows {
+                    include_response(requirements, row.scheme.schedules(), *num_vars)?;
+                }
+            }
+            Self::Packaged(Some(catalog)) => {
+                let longest = catalog
+                    .rows()
+                    .map(|row| row.profiles().final_group.group.num_vars())
+                    .max();
+                if let Some(num_vars) = longest {
+                    include_response(requirements, catalog, num_vars)?;
+                }
+            }
+            Self::Packaged(None) => {}
+        }
+        Ok(())
+    }
+
+    /// The row of `e` with `num_vars` variables, or `None` for a length the
+    /// setup plans.
+    fn row(&self, num_vars: usize) -> Result<Option<ResponseRow>, ZkError> {
+        match self {
+            Self::Persisted(rows) => rows.get(&num_vars).cloned().map(Some).ok_or_else(|| {
+                WhiteoutPlanError::Statement(AkitaError::UnsupportedSchedule(format!(
+                    "no persisted response plan for e of {num_vars} variables"
+                )))
+                .into()
+            }),
+            Self::Packaged(Some(catalog)) => {
+                let group = PolynomialGroupLayout::singleton(num_vars);
+                catalog
+                    .rows()
+                    .find(|row| {
+                        row.profiles().final_group.group == group
+                            && row.profiles().precommitteds.is_empty()
+                    })
+                    .map(|row| {
+                        ResponseRow::from_row(
+                            num_vars,
+                            row.profiles().clone(),
+                            row.schedule().clone(),
+                        )
+                    })
+                    .transpose()
+            }
+            Self::Packaged(None) => Ok(None),
+        }
+    }
+}
+
+/// Covers in `requirements` what a response verifier over `catalog` of
+/// every `e` of up to `num_vars` variables reads.
+fn include_response(
+    requirements: &mut AkitaVerifierRequirements,
+    catalog: &TrustedScheduleCatalog<WhiteoutResponse>,
+    num_vars: usize,
+) -> Result<(), ZkError> {
+    requirements
+        .include(catalog, num_vars, 1)
+        .map_err(material_error)?;
+    requirements.retain(AkitaResponseVerifier::setup_field_elements(
+        catalog, num_vars,
+    )?);
+    Ok(())
+}
+
+/// A setup's response verifiers, shared by its shapes, by `e`'s variable
+/// count: each over a view of the catalog's verifier material for a row of
+/// `rows`, and over its own material for a length `rows` lacks, which is
+/// planned on first use. The packaged row and the planned one are the same
+/// row, so either gives the same one-row plan and digest.
 struct ResponsePlans {
-    persisted: Option<BTreeMap<usize, Vec<u8>>>,
-    packaged: Option<Arc<Vec<u8>>>,
-    /// `packaged`, decoded and admitted on first use.
-    catalog: OnceLock<TrustedScheduleCatalog<WhiteoutResponse>>,
+    rows: ResponseRows,
+    /// The catalog's verifier material, which covers every row of `rows`.
+    material: AkitaBackendVerifierSetup,
     derived: Mutex<BTreeMap<usize, Arc<PlannedResponse>>>,
 }
 
 impl ResponsePlans {
-    fn new(persisted: Option<BTreeMap<usize, Vec<u8>>>, packaged: Option<Arc<Vec<u8>>>) -> Self {
+    fn new(rows: ResponseRows, material: AkitaBackendVerifierSetup) -> Self {
         Self {
-            persisted,
-            packaged,
-            catalog: OnceLock::new(),
+            rows,
+            material,
             derived: Mutex::default(),
         }
     }
 
-    /// The packaged catalog's row for `e` of `num_vars` variables, if the
-    /// setup carries a catalog with that row. A catalog that fails
-    /// admission is refused, never replaced by planning.
-    fn packaged_row(
-        &self,
-        num_vars: usize,
-    ) -> Result<Option<(CommittedGroupBatchProfile, FoldSchedule)>, ZkError> {
-        let Some(bytes) = &self.packaged else {
-            return Ok(None);
-        };
-        let catalog = if let Some(catalog) = self.catalog.get() {
-            catalog
-        } else {
-            let _span = tracing::info_span!("whiteout_load_response_catalog").entered();
-            let catalog = TrustedScheduleCatalog::<WhiteoutResponse>::from_artifact_bytes(
-                bytes,
-                ChunkedWitnessCfg::default_non_chunked(),
-            )
-            .map_err(WhiteoutPlanError::Inadmissible)?;
-            self.catalog.get_or_init(|| catalog)
-        };
-        let group = PolynomialGroupLayout::singleton(num_vars);
-        Ok(catalog
-            .rows()
-            .find(|row| {
-                row.profiles().final_group.group == group && row.profiles().precommitteds.is_empty()
-            })
-            .map(|row| (row.profiles().clone(), row.schedule().clone())))
-    }
-
-    /// The response prover of `e` with `num_vars` variables.
+    /// The response verifier of `e` with `num_vars` variables.
     fn get(&self, num_vars: usize) -> Result<Arc<PlannedResponse>, ZkError> {
         if let Some(response) = self
             .derived
@@ -1686,25 +1809,19 @@ impl ResponsePlans {
         {
             return Ok(Arc::clone(response));
         }
-        // Planned outside the lock: planning runs on Rayon, and a worker
-        // waiting in it could steal a job that waits on this lock. Two
-        // callers may plan one length; they plan the same row, and the first
-        // inserted is kept.
-        let response = Arc::new(match &self.persisted {
-            Some(persisted) => {
-                let artifact = persisted.get(&num_vars).ok_or_else(|| {
-                    WhiteoutPlanError::Statement(AkitaError::UnsupportedSchedule(format!(
-                        "no persisted response plan for e of {num_vars} variables"
-                    )))
-                })?;
-                PlannedResponse::load(num_vars, artifact)?
-            }
-            None => match self.packaged_row(num_vars)? {
-                Some((profile, schedule)) => {
-                    PlannedResponse::from_row(num_vars, profile, schedule)?
-                }
-                None => PlannedResponse::plan(num_vars)?,
-            },
+        // Built outside the lock: planning and deriving run on Rayon, and a
+        // worker waiting in them could steal a job that waits on this lock.
+        // Two callers may build one length; they build the same row, and the
+        // first inserted is kept.
+        let response = Arc::new(if let Some(row) = self.rows.row(num_vars)? {
+            PlannedResponse::new(row, &self.material)?
+        } else {
+            let row = ResponseRow::plan(num_vars)?;
+            let mut requirements = AkitaVerifierRequirements::new(num_vars, 1);
+            include_response(&mut requirements, row.scheme.schedules(), num_vars)?;
+            let material =
+                with_backend_pool(|| generate_material(&requirements)).map_err(material_error)?;
+            PlannedResponse::new(row, &material)?
         });
         Ok(Arc::clone(
             self.derived
@@ -1717,21 +1834,130 @@ impl ResponsePlans {
 
     /// The persisted plans with the derived ones.
     fn plans(&self) -> BTreeMap<usize, Vec<u8>> {
-        let mut plans = self.persisted.clone().unwrap_or_default();
+        let mut plans = match &self.rows {
+            ResponseRows::Persisted(rows) => rows
+                .iter()
+                .map(|(num_vars, row)| (*num_vars, row.plan.clone()))
+                .collect(),
+            ResponseRows::Packaged(_) => BTreeMap::new(),
+        };
         let derived = self.derived.lock().unwrap_or_else(PoisonError::into_inner);
         for (num_vars, response) in derived.iter() {
-            let _ = plans.insert(*num_vars, response.plan.clone());
+            let _ = plans.insert(*num_vars, response.row.plan.clone());
         }
         plans
     }
 }
 
-/// A response prover with its plan as persisted and the plan's catalog
-/// digest, which the pads absorb.
-struct PlannedResponse {
-    prover: Arc<AkitaResponseProver<WhiteoutResponse>>,
+/// One response row: its one-row scheme, its plan as persisted and the
+/// plan's catalog digest, which the pads absorb.
+#[derive(Clone)]
+struct ResponseRow {
+    num_vars: usize,
+    scheme: AkitaCommitmentScheme<WhiteoutResponse>,
     plan: Vec<u8>,
     digest: [u8; 32],
+}
+
+impl ResponseRow {
+    /// Plans the response row of `e` with `num_vars` variables.
+    fn plan(num_vars: usize) -> Result<Self, ZkError> {
+        let _span = tracing::info_span!("whiteout_plan_response", num_vars).entered();
+        let chunking = ChunkedWitnessCfg::default_non_chunked();
+        let group = PolynomialGroupLayout::singleton(num_vars);
+        let key = ScheduleLookupKey::single(group);
+        let planned = tracing::info_span!("find_schedule").in_scope(|| {
+            akita_planner::find_schedule(
+                &key,
+                WhiteoutResponse::committed_source_contract()?,
+                &[],
+                &policy_of::<WhiteoutResponse>(chunking),
+                WhiteoutResponse::ring_challenge_config,
+            )
+        })?;
+        let profile = CommittedGroupBatchProfile {
+            final_group: GroupCommitPhaseParams::try_from_params(
+                group,
+                &planned.schedule.root.params,
+            )?,
+            precommitteds: Vec::new(),
+        };
+        Self::from_row(num_vars, profile, planned.schedule)
+    }
+
+    /// The response row of `e` with `num_vars` variables as its one-row
+    /// catalog, admitted as [`Self::plan`] admits a planned row.
+    fn from_row(
+        num_vars: usize,
+        profile: CommittedGroupBatchProfile,
+        schedule: FoldSchedule,
+    ) -> Result<Self, ZkError> {
+        let catalog = TrustedScheduleCatalog::try_from_rows(
+            [(profile, schedule)],
+            ChunkedWitnessCfg::default_non_chunked(),
+        )?;
+        let plan = catalog.to_artifact_bytes()?;
+        Ok(Self::new(num_vars, catalog, plan))
+    }
+
+    /// The response row of `e` with `num_vars` variables from its persisted
+    /// one-row catalog, audited by Akita and required to be that length's
+    /// row ([`load_single_row`]).
+    fn load(num_vars: usize, artifact: &[u8]) -> Result<Self, ZkError> {
+        let _span = tracing::info_span!("whiteout_load_response", num_vars).entered();
+        let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+        let (_, catalog) = load_single_row::<WhiteoutResponse>(artifact, &key)?;
+        Ok(Self::new(num_vars, catalog, artifact.to_vec()))
+    }
+
+    fn new(
+        num_vars: usize,
+        catalog: TrustedScheduleCatalog<WhiteoutResponse>,
+        plan: Vec<u8>,
+    ) -> Self {
+        Self {
+            num_vars,
+            digest: catalog.catalog_digest(),
+            scheme: AkitaCommitmentScheme::new(catalog),
+            plan,
+        }
+    }
+}
+
+/// A response row's verifier and, for a prover, its response prover, built
+/// on first use.
+struct PlannedResponse {
+    row: ResponseRow,
+    verifier: AkitaResponseVerifier<WhiteoutResponse>,
+    #[cfg(feature = "zk-prover")]
+    prover: OnceLock<Arc<AkitaResponseProver<WhiteoutResponse>>>,
+}
+
+impl PlannedResponse {
+    /// `row`'s verifier over a view of `material` at `row`'s length.
+    fn new(row: ResponseRow, material: &AkitaBackendVerifierSetup) -> Result<Self, AkitaError> {
+        Ok(Self {
+            verifier: AkitaResponseVerifier::new(
+                row.scheme.clone(),
+                material.with_capacity(row.num_vars, 1),
+            )?,
+            row,
+            #[cfg(feature = "zk-prover")]
+            prover: OnceLock::new(),
+        })
+    }
+
+    /// `row`'s response prover, over its own prover setup.
+    #[cfg(feature = "zk-prover")]
+    fn prover(&self) -> Result<Arc<AkitaResponseProver<WhiteoutResponse>>, AkitaError> {
+        if let Some(prover) = self.prover.get() {
+            return Ok(Arc::clone(prover));
+        }
+        // Built outside the cell, as `WhiteoutRow::residual_matrices`.
+        let setup = AkitaResponseProver::setup(&self.row.scheme, self.row.num_vars)?;
+        let prover = Arc::new(AkitaResponseProver::new(self.row.scheme.clone(), setup)?);
+        Ok(Arc::clone(self.prover.get_or_init(|| prover)))
+    }
 }
 
 /// The response prover under a `whiteout_prove_response` span that logs the
@@ -1776,73 +2002,6 @@ impl<const D: usize> ResponseProver<F, D> for ProfiledResponse<'_> {
         transcript: &mut AkitaVerifierTranscript<'_>,
     ) -> Result<(), ZkError> {
         ResponseProver::<F, D>::verify_response(self.0, statement, transcript)
-    }
-}
-
-impl PlannedResponse {
-    /// Plans the response row of `e` with `num_vars` variables.
-    fn plan(num_vars: usize) -> Result<Self, ZkError> {
-        let _span = tracing::info_span!("whiteout_plan_response", num_vars).entered();
-        let chunking = ChunkedWitnessCfg::default_non_chunked();
-        let group = PolynomialGroupLayout::singleton(num_vars);
-        let key = ScheduleLookupKey::single(group);
-        let planned = tracing::info_span!("find_schedule").in_scope(|| {
-            akita_planner::find_schedule(
-                &key,
-                WhiteoutResponse::committed_source_contract()?,
-                &[],
-                &policy_of::<WhiteoutResponse>(chunking),
-                WhiteoutResponse::ring_challenge_config,
-            )
-        })?;
-        let profile = CommittedGroupBatchProfile {
-            final_group: GroupCommitPhaseParams::try_from_params(
-                group,
-                &planned.schedule.root.params,
-            )?,
-            precommitteds: Vec::new(),
-        };
-        Self::from_row(num_vars, profile, planned.schedule)
-    }
-
-    /// The response row of `e` with `num_vars` variables as its one-row
-    /// catalog, admitted as [`Self::plan`] admits a planned row.
-    fn from_row(
-        num_vars: usize,
-        profile: CommittedGroupBatchProfile,
-        schedule: FoldSchedule,
-    ) -> Result<Self, ZkError> {
-        let catalog = TrustedScheduleCatalog::try_from_rows(
-            [(profile, schedule)],
-            ChunkedWitnessCfg::default_non_chunked(),
-        )?;
-        let plan = catalog.to_artifact_bytes()?;
-        Ok(Self::new(num_vars, catalog, plan)?)
-    }
-
-    /// The response row of `e` with `num_vars` variables from its persisted
-    /// one-row catalog, audited by Akita and required to be that length's
-    /// row ([`load_single_row`]).
-    fn load(num_vars: usize, artifact: &[u8]) -> Result<Self, ZkError> {
-        let _span = tracing::info_span!("whiteout_load_response", num_vars).entered();
-        let key = ScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
-        let (_, catalog) = load_single_row::<WhiteoutResponse>(artifact, &key)?;
-        Ok(Self::new(num_vars, catalog, artifact.to_vec())?)
-    }
-
-    fn new(
-        num_vars: usize,
-        catalog: TrustedScheduleCatalog<WhiteoutResponse>,
-        plan: Vec<u8>,
-    ) -> Result<Self, AkitaError> {
-        let digest = catalog.catalog_digest();
-        let scheme = AkitaCommitmentScheme::new(catalog);
-        let setup = AkitaResponseProver::setup(&scheme, num_vars)?;
-        Ok(Self {
-            prover: Arc::new(AkitaResponseProver::new(scheme, setup)?),
-            plan,
-            digest,
-        })
     }
 }
 
