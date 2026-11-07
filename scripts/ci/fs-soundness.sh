@@ -33,11 +33,12 @@ if cargo check \
   --features akita,fs-audit,zk \
   --quiet \
   2>"$unsupported_log"; then
-  echo "Akita+ZK now builds; add it to the Fiat-Shamir fixture matrix." >&2
+  echo "akita+zk built without the explicit whiteout feature" >&2
   exit 1
 fi
-if ! grep -q "features are mutually exclusive" "$unsupported_log"; then
+if ! grep -q "needs the explicit \`whiteout\` feature" "$unsupported_log"; then
   cat "$unsupported_log" >&2
-  echo "Akita+ZK failed for an unexpected reason." >&2
+  echo "akita+zk failed for an unexpected reason." >&2
   exit 1
 fi
+cargo check -p jolt-verifier --lib --features fs-audit,whiteout --quiet

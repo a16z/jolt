@@ -147,7 +147,7 @@ where
 
     /// A masked proof's tape of masked messages and its back end's proof.
     #[cfg_attr(
-        feature = "akita",
+        all(feature = "akita", not(feature = "zk")),
         expect(dead_code, reason = "a clear Akita build reads no masked payload")
     )]
     pub(crate) fn masked_payload(

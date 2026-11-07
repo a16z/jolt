@@ -293,7 +293,7 @@ mod matrix {
         guests!(emit_tests);
     }
 
-    #[cfg(feature = "zk")]
+    #[cfg(all(feature = "zk", not(feature = "akita")))]
     mod zk {
         #[cfg(not(feature = "field-inline"))]
         use super::*;
@@ -319,12 +319,12 @@ mod matrix {
         use crate::support::{self, GuestCase};
 
         pub fn prove_and_verify(case: &GuestCase) {
-            #[cfg(feature = "zk")]
+            #[cfg(all(feature = "zk", not(feature = "akita")))]
             {
                 let case = case.clone();
                 support::with_zk_stack(move || prove_case(&case));
             }
-            #[cfg(not(feature = "zk"))]
+            #[cfg(not(all(feature = "zk", not(feature = "akita"))))]
             prove_case(case);
         }
 
@@ -458,7 +458,7 @@ mod matrix {
         #[cfg(not(feature = "akita"))]
         use jolt_prover::JoltBackend;
 
-        #[cfg(feature = "zk")]
+        #[cfg(all(feature = "zk", not(feature = "akita")))]
         use crate::support;
         #[cfg(feature = "akita")]
         use crate::support::field_inline::akita;
@@ -467,12 +467,12 @@ mod matrix {
         use crate::support::GuestCase;
 
         pub fn prove_and_verify(case: &GuestCase) {
-            #[cfg(feature = "zk")]
+            #[cfg(all(feature = "zk", not(feature = "akita")))]
             {
                 let case = case.clone();
                 support::with_zk_stack(move || prove_case(&case));
             }
-            #[cfg(not(feature = "zk"))]
+            #[cfg(not(all(feature = "zk", not(feature = "akita"))))]
             prove_case(case);
         }
 

@@ -125,6 +125,17 @@ where
             sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage6bOutput::Zk(Stage6bZkOutput {
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            members: sumchecks.masked_members(
+                &input_points,
+                &batch.output_points,
+                &cycle_challenges,
+            )?,
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            bytecode_reduction_weights: sumchecks
+                .bytecode_reduction
+                .as_ref()
+                .map(|reduction| reduction.weights().clone()),
             challenges: Stage6bCarriedChallenges {
                 instruction_ra_gamma: draws.instruction_ra_gamma,
                 #[cfg(not(feature = "akita"))]

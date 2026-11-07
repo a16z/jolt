@@ -10,9 +10,12 @@ use crate::stages::relations::MaskedClaims;
 use crate::VerifierError;
 
 /// The residual relation over Jolt's stages 1–7.
-#[cfg(not(feature = "akita"))]
+#[cfg(any(not(feature = "akita"), feature = "zk"))]
 #[doc(hidden)]
 pub mod residual;
+
+#[cfg(all(feature = "akita", feature = "zk"))]
+pub use residual::MaskedMember;
 
 /// A masked stage batch as the ZK verifier reads it: the masked rounds with
 /// their batching data, the output points derived at the batch point, and the

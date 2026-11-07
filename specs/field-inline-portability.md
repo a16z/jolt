@@ -25,7 +25,7 @@ out of scope:
     elements of the sumcheck field F itself; any base/extension split is a
     separate spec)
   any change to the Twist identities or the virtual/committed split
-  zk over the Akita axis (akita x zk stays mutually exclusive)
+  zk over the Akita axis (Whiteout, `specs/whiteout-jolt-integration.md`)
 ```
 
 ## Shared invariants

@@ -237,6 +237,32 @@ impl PrefixPackedObjectPlan {
         &self,
         claims: &BTreeMap<JoltCommittedPolynomial, EvaluationClaim<F>>,
     ) -> Result<PrefixPackedClaims<F>, OpeningsError> {
+        let packed = self.packed_leaves(|id| {
+            claims
+                .get(&id)
+                .map(|claim| (claim.point.as_slice(), &claim.value))
+        })?;
+        Ok(PrefixPackedClaims::new(
+            self.layout_digest,
+            packed.point,
+            packed
+                .slots
+                .into_iter()
+                .map(|(scale, value)| scale * *value)
+                .collect(),
+        ))
+    }
+
+    /// The packing geometry of one leaf per column, whatever the leaf's
+    /// value is (a clear evaluation, or under Whiteout an affine form): the
+    /// common logical point, the widest column's, and per slot its
+    /// zero-prefix scale `eq(common_prefix, 0)` and its leaf's value. Every
+    /// leaf point must be a suffix of the common point. The one owner of the
+    /// embedding [`Self::packed_claims`] applies.
+    pub fn packed_leaves<'a, F: JoltField + 'a, V>(
+        &self,
+        leaf: impl Fn(JoltCommittedPolynomial) -> Option<(&'a [F], &'a V)>,
+    ) -> Result<PackedLeaves<'a, F, V>, OpeningsError> {
         let common_num_vars = self.packing.logical_num_vars();
         let common_point = self
             .packing
@@ -244,7 +270,7 @@ impl PrefixPackedObjectPlan {
             .iter()
             .find_map(|id| {
                 (self.logical_num_vars(*id) == Some(common_num_vars))
-                    .then(|| claims.get(id))
+                    .then(|| leaf(*id))
                     .flatten()
             })
             .ok_or_else(|| {
@@ -252,16 +278,15 @@ impl PrefixPackedObjectPlan {
                     "prefix-packed object is missing a widest logical claim".to_string(),
                 )
             })?
-            .point
-            .as_slice()
+            .0
             .to_vec();
 
-        let evaluations = self
+        let slots = self
             .packing
             .ids()
             .iter()
             .map(|id| {
-                let claim = claims.get(id).ok_or_else(|| {
+                let (point, value) = leaf(*id).ok_or_else(|| {
                     OpeningsError::InvalidBatch(format!("missing prefix-packed claim for {id:?}"))
                 })?;
                 let own_num_vars = self.logical_num_vars(*id).ok_or_else(|| {
@@ -269,27 +294,34 @@ impl PrefixPackedObjectPlan {
                         "missing logical arity for prefix-packed claim {id:?}"
                     ))
                 })?;
-                if claim.point.len() != own_num_vars {
+                if point.len() != own_num_vars {
                     return Err(OpeningsError::InvalidBatch(format!(
                         "claim for {id:?} has {} variables, expected {own_num_vars}",
-                        claim.point.len()
+                        point.len()
                     )));
                 }
                 let prefix_len = common_num_vars - own_num_vars;
-                if &common_point[prefix_len..] != claim.point.as_slice() {
+                if &common_point[prefix_len..] != point {
                     return Err(OpeningsError::InvalidBatch(format!(
                         "claim for {id:?} is not a suffix of the common packed point"
                     )));
                 }
-                Ok(eq_index_msb(&common_point[..prefix_len], 0) * claim.value)
+                Ok((eq_index_msb(&common_point[..prefix_len], 0), value))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(PrefixPackedClaims::new(
-            self.layout_digest,
-            common_point,
-            evaluations,
-        ))
+        Ok(PackedLeaves {
+            point: common_point,
+            slots,
+        })
     }
+}
+
+/// [`PrefixPackedObjectPlan::packed_leaves`]' output: the common logical
+/// point and, in slot order, each slot's zero-prefix scale and leaf value.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackedLeaves<'a, F, V> {
+    pub point: Vec<F>,
+    pub slots: Vec<(F, &'a V)>,
 }
 
 fn direct_program_role(

@@ -33,13 +33,14 @@ use super::outputs::{
 };
 #[cfg(not(feature = "akita"))]
 use crate::stages::stage6b::committed_reduction_cycle_phase::advice_reference_point_from_upstream;
+use crate::stages::stage6b::outputs::BytecodeReductionWeights;
+use crate::stages::zk::masked_channel;
 use crate::{
     proof::JoltProof,
     stages::{
         pow::{check_pow, PowSite},
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
-        zk::masked_channel,
         PrecommittedSchedule,
     },
     verifier::CheckedInputs,
@@ -70,15 +71,26 @@ where
         proof.one_hot_config.committed_chunk_bits(),
     )?;
 
-    // The clear-only reference geometry each address phase's expected-output term
-    // reads (advice / program-image RAM address points, bytecode cycle-phase
-    // weights) lives in the stage 4/6 clear outputs, absent in ZK where those
-    // terms are proved by BlindFold and the relations' `derive_output_term` never
-    // runs.
-    let clear = if checked.zk.is_masked() {
-        None
-    } else {
-        Some((stage4.clear()?, stage6.clear()?))
+    // The reference geometry each address phase's output publics read
+    // (advice / program-image RAM address points, bytecode cycle-phase
+    // weights): from the clear outputs, from Whiteout's masked carriers (its
+    // residual lowers through the same publics), and absent under BlindFold,
+    // whose residual derives its own.
+    let references = match (stage4, stage6) {
+        (Stage4Output::Clear(stage4), Stage6bOutput::Clear(stage6)) => {
+            Stage7References::from_clear(stage4, stage6)
+        }
+        #[cfg(all(feature = "akita", feature = "zk"))]
+        (Stage4Output::Zk(stage4), Stage6bOutput::Zk(stage6)) => Stage7References {
+            bytecode_weights: stage6.bytecode_reduction_weights.clone(),
+            program_image_point: stage4.staged_points.program_image.clone(),
+        },
+        #[cfg(not(all(feature = "akita", feature = "zk")))]
+        (Stage4Output::Zk(_), Stage6bOutput::Zk(_)) => Stage7References::default(),
+        (Stage4Output::Clear(_), Stage6bOutput::Zk(_))
+        | (Stage4Output::Zk(_), Stage6bOutput::Clear(_)) => {
+            return Err(VerifierError::ExpectedMaskedProof { field: "stage6" });
+        }
     };
 
     // One construction serves both paths: the hamming reduction from the stage-6
@@ -90,7 +102,12 @@ where
         hamming_dimensions,
         &checked.precommitted,
         stage6.output_points(),
-        clear,
+        references,
+        #[cfg(not(feature = "akita"))]
+        match stage4 {
+            Stage4Output::Clear(stage4) => Some(stage4),
+            Stage4Output::Zk(_) => None,
+        },
     )?;
 
     // Draw the hamming-weight reduction's batching gamma (a single `challenge()`,
@@ -104,13 +121,16 @@ where
     if checked.zk.is_masked() {
         // The produced opening points, derived off the masked rounds; stage 8
         // reads the hamming point and resolves the precommitted finals off
-        // them. The residual relation recomputes each relation's sumcheck point
-        // and publics independently from `batch_rounds`.
+        // them. BlindFold's residual recomputes each relation's sumcheck point
+        // and publics independently from `batch_rounds`; Whiteout reads the
+        // publics off the members' own `derive_output_term`.
         let input_points = sumchecks.empty_input_points();
         let batch =
             sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            members: sumchecks.masked_members(&input_points, &batch.output_points, &challenges)?,
             challenges,
             batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
@@ -147,17 +167,42 @@ where
     }))
 }
 
+/// The stage 4/6 references the address phases' output publics read. Each is
+/// present when its reduction is, in a clear proof and in a Whiteout one; all
+/// are absent under BlindFold, whose residual derives its own publics.
+#[derive(Clone, Debug, Default)]
+pub struct Stage7References<F: JoltField> {
+    /// The stage-6b bytecode cycle-phase output weights.
+    pub bytecode_weights: Option<BytecodeReductionWeights<F>>,
+    /// The RAM address point of the staged program-image opening (stage 4).
+    pub program_image_point: Option<Vec<F>>,
+}
+
+impl<F: JoltField> Stage7References<F> {
+    pub fn from_clear(stage4: &Stage4ClearOutput<F>, stage6: &Stage6bClearOutput<F>) -> Self {
+        Self {
+            bytecode_weights: stage6.bytecode_reduction_weights.clone(),
+            program_image_point: stage4
+                .ram_val_check_init
+                .program_image_contribution
+                .as_ref()
+                .map(|(point, _)| point.clone()),
+        }
+    }
+}
+
 /// Build the stage-7 sumcheck batch once, for both proving paths. The hamming
 /// reduction and reduction-backed address phases are constructed from the stage-6
-/// output points (mode-agnostic) and the clear-only stage 4/6 references (`None`
-/// in ZK, where the address phases' `FinalScale` term is proved by BlindFold and
-/// `derive_output_term` never runs). Advice reductions are skipped on Akita: the
-/// final grouped opening checks their direct stage-4 claims.
+/// output points (mode-agnostic) and `references`. Advice reductions are skipped
+/// on Akita: the final grouped opening checks their direct stage-4 claims; the
+/// homomorphic build reads the advice references off the clear stage 4 output
+/// (`clear_stage4`, `None` in ZK, where BlindFold derives them).
 pub fn build_stage7_sumchecks<F: JoltField>(
     hamming_dimensions: HammingWeightClaimReductionDimensions,
     schedule: &PrecommittedSchedule,
     stage6_points: &Stage6bOutputPoints<F>,
-    clear: Option<(&Stage4ClearOutput<F>, &Stage6bClearOutput<F>)>,
+    references: Stage7References<F>,
+    #[cfg(not(feature = "akita"))] clear_stage4: Option<&Stage4ClearOutput<F>>,
 ) -> Result<Stage7Sumchecks<F>, VerifierError> {
     let booleanity_opening = stage6_points.booleanity_opening_point().ok_or(
         VerifierError::StageClaimPublicInputFailed {
@@ -187,7 +232,7 @@ pub fn build_stage7_sumchecks<F: JoltField>(
     // in ZK), the clear-only reference the advice `FinalScale` term reads.
     #[cfg(not(feature = "akita"))]
     let advice_reference = |kind| {
-        clear.and_then(|(stage4, _)| {
+        clear_stage4.and_then(|stage4| {
             advice_reference_point_from_upstream(&stage4.ram_val_check_init, kind)
         })
     };
@@ -227,7 +272,7 @@ pub fn build_stage7_sumchecks<F: JoltField>(
             |layout, cycle_phase_variables| {
                 BytecodeReductionAddressPhase::new(
                     layout,
-                    clear.and_then(|(_, stage6)| stage6.bytecode_reduction_weights.clone()),
+                    references.bytecode_weights.clone(),
                     cycle_phase_variables,
                 )
             },
@@ -239,13 +284,7 @@ pub fn build_stage7_sumchecks<F: JoltField>(
             |layout, cycle_phase_variables| {
                 ProgramImageReductionAddressPhase::new(
                     layout,
-                    clear.and_then(|(stage4, _)| {
-                        stage4
-                            .ram_val_check_init
-                            .program_image_contribution
-                            .as_ref()
-                            .map(|(point, _)| point.clone())
-                    }),
+                    references.program_image_point.clone(),
                     cycle_phase_variables,
                 )
             },

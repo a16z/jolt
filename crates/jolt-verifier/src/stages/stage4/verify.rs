@@ -240,6 +240,8 @@ where
             batch_rounds: batch.rounds,
             batch_output_claims: batch.output_claims,
             ram_val_check_public_eval,
+            #[cfg(all(feature = "akita", feature = "zk"))]
+            staged_points,
             output_points: batch.output_points,
         }))
     }

@@ -22,14 +22,14 @@ use crate::JoltBackend;
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_claims::protocols::jolt::JoltRelationId;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_crypto::{Bn254, JoltGroup, PedersenSetup};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_field::Ring;
 #[cfg(feature = "akita")]
 use jolt_kernels::{
@@ -45,13 +45,13 @@ use jolt_riscv::{
     NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
     TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_transcript::{prover_transcript, verifier_transcript, Keccak, ProverState};
 use jolt_verifier::config::{ZkConfig, SELECTED_ZK_CONFIG};
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::PrecommittedSchedule;
 use jolt_verifier::CheckedInputs;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_verifier::{
     config::JoltProtocolConfig,
     proof::{JoltCommitments, JoltProof, JoltProofClaims, JoltStageProofs},
@@ -65,7 +65,7 @@ use jolt_verifier::{
 use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 use jolt_zk::masking::{CommittedPadsView, MaskedMessages, MaskedReader, MaskedSession};
 
 use crate::{JoltProverPreprocessing, ProofMode, ProverConfig};
@@ -522,13 +522,13 @@ pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
 /// A fresh prover transcript under Jolt's session over an empty statement.
 /// The fixture prover starts at stage 1 (no stage 0), so [`verify_through`]
 /// seeds the verifier the same way.
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 pub(crate) fn fixture_transcript() -> ProverState<Keccak> {
     prover_transcript::<Keccak>(&JOLT_SESSION, &0u64)
 }
 
 /// The last production verifier stage [`verify_through`] runs.
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Through {
     Stage1,
@@ -541,7 +541,7 @@ pub(crate) enum Through {
 /// fixture prover's masked tape (from `mode`), counting pads, and requires
 /// the verifier to consume the whole tape and land on the prover's sponge
 /// state. The fixture's field has no stage proof of work.
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 pub(crate) fn verify_through(
     last: Through,
     checked: &CheckedInputs,

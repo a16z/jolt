@@ -25,6 +25,11 @@ blake2-inline = [
 ]
 debug = ["zeroos?/debug"]
 zk = ["jolt-prover?/zk", "jolt-verifier?/zk"]
+# Whiteout: zero knowledge over Akita. `zk` with `akita` alone is a compile
+# error; this feature is the explicit opt-in. Whiteout's Σ-protocol is not yet
+# shown constant time on every platform: a timing residual in its `N·y`
+# product is open (specs/whiteout-sigma.md, specs/whiteout-jolt-integration.md).
+whiteout = ["zk", "akita", "jolt-prover?/whiteout", "jolt-verifier?/whiteout"]
 # Akita-backed proving for the recursion flow. Not additive: it compiles out
 # the Dory host helpers `#[jolt::provable]` expands to, so a host build that
 # unifies it with a provable crate fails with a compile error naming this
