@@ -40,6 +40,8 @@ pub struct PadPlacement {
     layout: PadLayout,
     places: Vec<PadPlace>,
     regular_groups: usize,
+    pad_rings: usize,
+    operand_rings: usize,
 }
 
 impl PadPlacement {
@@ -54,6 +56,15 @@ impl PadPlacement {
                 ));
             }
         }
+        let regular_groups = (layout.num_pads - operand_of.len()).div_ceil(CHALLENGE_RING_DIM);
+        let pad_rings = regular_groups
+            .checked_add(1)
+            .and_then(|groups| groups.checked_mul(PAD_LEVELS))
+            .ok_or(WhiteoutError::Overflow)?;
+        let operand_rings = operand_of
+            .len()
+            .checked_mul(OPERAND_LEVELS)
+            .ok_or(WhiteoutError::Overflow)?;
         let mut regular = 0;
         let places = (0..layout.num_pads)
             .map(|pad| {
@@ -71,7 +82,9 @@ impl PadPlacement {
         Ok(Self {
             layout: layout.clone(),
             places,
-            regular_groups: regular.div_ceil(CHALLENGE_RING_DIM),
+            regular_groups,
+            pad_rings,
+            operand_rings,
         })
     }
 
@@ -126,11 +139,11 @@ impl PadPlacement {
 
     /// Challenge-ring elements the regular pads and g take.
     pub(crate) fn pad_rings(&self) -> usize {
-        (self.regular_groups + 1) * PAD_LEVELS
+        self.pad_rings
     }
 
     /// Challenge-ring elements the operand digit polynomials take.
     pub(crate) fn operand_rings(&self) -> usize {
-        self.num_operands() * OPERAND_LEVELS
+        self.operand_rings
     }
 }

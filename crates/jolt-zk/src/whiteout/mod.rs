@@ -27,12 +27,14 @@ mod error;
     feature = "whiteout-test-support"
 ))]
 mod fixture;
+mod geometry;
 mod labels;
 mod lift;
 mod linear;
 mod linear_factored;
 mod opening;
 mod pad_commitment;
+pub use geometry::SigmaGeometry;
 mod params;
 mod placement;
 mod response;
@@ -61,7 +63,7 @@ pub use opening::{
 };
 #[cfg(feature = "whiteout-prover")]
 pub use pad_commitment::LatticePadOpening;
-pub use pad_commitment::{LatticePadCommitment, PAD_RANDOMNESS_LOG_BASIS};
+pub use pad_commitment::{LatticePadCommitment, PadGeometry, PAD_RANDOMNESS_LOG_BASIS};
 pub use params::{
     binding_collision_radius, GaussianBlock, SigmaParams, ALPHA, BINDING_RESPONSE_DIGITS,
     EPSILON_BITS, MAX_RESPONSE_NUM_VARS, RESPONSE_LOG_BASIS,

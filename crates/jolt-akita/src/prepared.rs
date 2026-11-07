@@ -87,7 +87,7 @@ impl PreparedBytes {
 
     /// The bytes of a payload used without checks: refuses an inline copy
     /// decoded from a setup record.
-    fn trusted_bytes(&self) -> Result<&[u8], OpeningsError> {
+    pub(crate) fn trusted_bytes(&self) -> Result<&[u8], OpeningsError> {
         match self {
             Self::Decoded(_) => Err(invalid_setup(
                 "an unchecked prepared payload decoded from a setup record is not used; \
@@ -127,6 +127,36 @@ impl PreparedBytes {
             .skip(skew)
             .ok_or_else(|| invalid_setup("truncated prepared payload body"))?;
         Ok(Self::Attached(payload))
+    }
+}
+
+impl PreparedBytes {
+    /// The backend key: viewed in place when attached, else decoded without
+    /// re-deriving the matrix from the seed.
+    pub(crate) fn backend_key(&self) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
+        match self {
+            PreparedBytes::Attached(bytes) => {
+                AkitaBackendVerifierSetup::borrow_trusted(*bytes).map_err(invalid_setup)
+            }
+            key @ (PreparedBytes::Owned(_)
+            | PreparedBytes::Decoded(_)
+            | PreparedBytes::Detached) => AkitaBackendVerifierSetup::deserialize_with_mode(
+                key.trusted_bytes()?,
+                Compress::No,
+                Validate::No,
+                &(),
+            )
+            .map_err(invalid_setup),
+        }
+    }
+
+    pub(crate) fn terminal_cache(&self) -> Result<TrustedTerminalCache<'_>, OpeningsError> {
+        Ok(match self {
+            PreparedBytes::Attached(bytes) => TrustedTerminalCache::View(bytes.bytes()),
+            artifact @ (PreparedBytes::Owned(_)
+            | PreparedBytes::Decoded(_)
+            | PreparedBytes::Detached) => TrustedTerminalCache::Decode(artifact.trusted_bytes()?),
+        })
     }
 }
 
@@ -177,32 +207,11 @@ impl PreparedVerifier {
         }
     }
 
-    /// The backend key: viewed in place when attached, else decoded without
-    /// re-deriving the matrix from the seed.
     pub(crate) fn backend_key(&self) -> Result<AkitaBackendVerifierSetup, OpeningsError> {
-        match &self.key {
-            PreparedBytes::Attached(bytes) => {
-                AkitaBackendVerifierSetup::borrow_trusted(*bytes).map_err(invalid_setup)
-            }
-            key @ (PreparedBytes::Owned(_)
-            | PreparedBytes::Decoded(_)
-            | PreparedBytes::Detached) => AkitaBackendVerifierSetup::deserialize_with_mode(
-                key.trusted_bytes()?,
-                Compress::No,
-                Validate::No,
-                &(),
-            )
-            .map_err(invalid_setup),
-        }
+        self.key.backend_key()
     }
-
     pub(crate) fn terminal_cache(&self) -> Result<TrustedTerminalCache<'_>, OpeningsError> {
-        Ok(match &self.terminal_ntt {
-            PreparedBytes::Attached(bytes) => TrustedTerminalCache::View(bytes.bytes()),
-            artifact @ (PreparedBytes::Owned(_)
-            | PreparedBytes::Decoded(_)
-            | PreparedBytes::Detached) => TrustedTerminalCache::Decode(artifact.trusted_bytes()?),
-        })
+        self.terminal_ntt.terminal_cache()
     }
 }
 
@@ -265,10 +274,16 @@ impl AkitaVerifierSetup {
     /// Returns an error when a payload is already detached or the key header
     /// cannot be parsed.
     pub fn detach_prepared_payloads(&mut self) -> Result<Vec<Vec<u8>>, OpeningsError> {
+        #[cfg(feature = "zk")]
+        self.prepare_whiteout_payloads()?;
         // Check every payload before moving any, so an error leaves the setup
         // as it was.
-        for slot in Arc::make_mut(&mut self.schedule_artifacts).slots() {
-            let _ = slot.bytes()?;
+        for (slot, align) in Arc::make_mut(&mut self.schedule_artifacts).slots() {
+            let bytes = slot.bytes()?;
+            if align {
+                let _ = AkitaExpandedSetup::<AkitaField>::coefficient_offset(bytes)
+                    .map_err(invalid_setup)?;
+            }
         }
         // Aligning the key's coefficients lets the guest view them in place.
         let key_offset = match &self.prepared {
@@ -283,8 +298,14 @@ impl AkitaVerifierSetup {
             None => None,
         };
         let mut bodies = Vec::new();
-        for slot in Arc::make_mut(&mut self.schedule_artifacts).slots() {
-            bodies.push(slot.detach(0)?);
+        for (slot, align) in Arc::make_mut(&mut self.schedule_artifacts).slots() {
+            let offset = if align {
+                AkitaExpandedSetup::<AkitaField>::coefficient_offset(slot.bytes()?)
+                    .map_err(invalid_setup)?
+            } else {
+                0
+            };
+            bodies.push(slot.detach(offset)?);
         }
         if let (Some(prepared), Some(offset)) = (&mut self.prepared, key_offset) {
             bodies.push(prepared.key.detach(offset)?);
@@ -313,6 +334,7 @@ impl AkitaVerifierSetup {
         let slots = Arc::make_mut(&mut self.schedule_artifacts)
             .slots()
             .into_iter()
+            .map(|(slot, _)| slot)
             .chain(self.prepared.iter_mut().flat_map(|prepared| {
                 [
                     &mut prepared.key,
@@ -332,6 +354,8 @@ impl AkitaVerifierSetup {
             ));
         }
         self.backend_cache = Default::default();
+        #[cfg(feature = "zk")]
+        self.attach_whiteout_payloads()?;
         Ok(())
     }
 }

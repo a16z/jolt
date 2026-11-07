@@ -13,7 +13,7 @@
 //! over CRT primes.
 
 use std::ops::Range;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use jolt_algebra::parallel::*;
 use jolt_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -121,7 +121,7 @@ impl AjtaiLevel {
 
 /// A public matrix, ready to apply.
 ///
-/// It holds its entries over `F`, copied from the stream, which is all
+/// It holds a bounded view of shared coefficients over `F`, which is all
 /// [`Self::combine_columns`] reads: a verifier never transforms. The
 /// CRT+NTT form the constant-time products read ([`Self::apply_centered`],
 /// [`Self::apply_transposed`]) is built from them on the first such product
@@ -129,11 +129,12 @@ impl AjtaiLevel {
 pub struct PreparedMatrix<F: Field, const D: usize> {
     shape: MatrixShape,
     /// Row-major entries over `F`.
-    coefficients: Vec<CyclotomicRing<F, D>>,
+    coefficients: Arc<dyn AsRef<[F]> + Send + Sync>,
+    range: Range<usize>,
     /// The same entries in CRT+NTT form, row-major, and [`Self::blind`]'s
     /// image.
     ntt: OnceLock<NttForm<D>>,
-    params: CrtNttParamSet<i32, CRT_PRIMES, D>,
+    params: Arc<CrtNttParamSet<i32, CRT_PRIMES, D>>,
     /// The public blind `K` every constant-time accumulator starts from
     /// ([`Self::apply_centered`]).
     blind: CyclotomicRing<F, D>,
@@ -159,13 +160,34 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
         // The CRT residues read each coefficient as a u128.
         field_bits::<F>().map(|_| ())?;
-        let coefficients = cfg_into_iter!(0..shape.rows * shape.width)
-            .map(|index| {
-                Ok(CyclotomicRing::<F, D>::from_slice(
-                    view.entry(index / shape.width, index % shape.width)?,
-                ))
-            })
-            .collect::<Result<Vec<_>, CryptoError>>()?;
+        let mut coefficients = Vec::with_capacity(shape.num_field_elements()?);
+        for row in 0..shape.rows {
+            for column in 0..shape.width {
+                coefficients.extend_from_slice(view.entry(row, column)?);
+            }
+        }
+        Self::from_shared(shape, Arc::new(coefficients))
+    }
+
+    /// Prepares a prefix of shared coefficients. Subviews share the blind and CRT parameters.
+    pub fn from_shared<S: AsRef<[F]> + Send + Sync + 'static>(
+        shape: MatrixShape,
+        coefficients: Arc<S>,
+    ) -> Result<Self, CryptoError> {
+        if shape.ring_dim != D {
+            return Err(CryptoError::InvalidSetup(
+                "matrix ring dimension differs from D".into(),
+            ));
+        }
+        validate_profile_crt_ring_degree(D, Q128_MAX_RING_D)?;
+        let _ = field_bits::<F>()?;
+        let len = shape.num_field_elements()?;
+        if len > coefficients.as_ref().as_ref().len() {
+            return Err(CryptoError::InvalidSize {
+                expected: len,
+                actual: coefficients.as_ref().as_ref().len(),
+            });
+        }
         let blind = CyclotomicRing::from_slice(&derive_public_matrix_prefix::<F>(
             D,
             &PublicMatrixSeed::shake256_paged_v1(BLIND_SEED),
@@ -173,10 +195,62 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
         Ok(Self {
             shape,
             coefficients,
+            range: 0..len,
             ntt: OnceLock::new(),
-            params: CrtNttParamSet::new(q128_primes()),
+            params: Arc::new(CrtNttParamSet::new(q128_primes())),
             blind,
         })
+    }
+
+    /// Prepares another stream with this dimension's already-derived blind and CRT parameters.
+    pub fn with_shared<S: AsRef<[F]> + Send + Sync + 'static>(
+        &self,
+        shape: MatrixShape,
+        coefficients: Arc<S>,
+    ) -> Result<Self, CryptoError> {
+        let len = shape.num_field_elements()?;
+        if shape.ring_dim != D || len > coefficients.as_ref().as_ref().len() {
+            return Err(CryptoError::InvalidSetup(
+                "matrix stream shape mismatch".into(),
+            ));
+        }
+        Ok(Self {
+            shape,
+            coefficients,
+            range: 0..len,
+            ntt: OnceLock::new(),
+            params: Arc::clone(&self.params),
+            blind: self.blind,
+        })
+    }
+
+    /// A bounded view starting at a coefficient offset within this matrix.
+    pub fn view(&self, shape: MatrixShape, offset: usize) -> Result<Self, CryptoError> {
+        let len = shape.num_field_elements()?;
+        let end = offset
+            .checked_add(len)
+            .ok_or_else(|| CryptoError::InvalidSetup("matrix view overflows".into()))?;
+        if shape.ring_dim != D || !offset.is_multiple_of(D) || end > self.range.len() {
+            return Err(CryptoError::InvalidSetup(
+                "matrix view outside its backing or ring dimension".into(),
+            ));
+        }
+        Ok(Self {
+            shape,
+            coefficients: Arc::clone(&self.coefficients),
+            range: self.range.start + offset..self.range.start + end,
+            ntt: OnceLock::new(),
+            params: Arc::clone(&self.params),
+            blind: self.blind,
+        })
+    }
+
+    fn coefficients(&self) -> &[F] {
+        self.coefficients
+            .as_ref()
+            .as_ref()
+            .get(self.range.clone())
+            .unwrap_or_default()
     }
 
     pub fn shape(&self) -> MatrixShape {
@@ -196,8 +270,17 @@ impl<F: Field + CanonicalEncoding, const D: usize> PreparedMatrix<F, D> {
             return form;
         }
         let form = NttForm {
-            entries: cfg_iter!(self.coefficients)
-                .map(|entry| CyclotomicCrtNtt::from_ring(entry, &self.params))
+            entries: cfg_into_iter!(0..self.range.len() / D)
+                .map(|index| {
+                    CyclotomicCrtNtt::from_ring(
+                        &CyclotomicRing::<F, D>::from_slice(
+                            self.coefficients()
+                                .get(index * D..(index + 1) * D)
+                                .unwrap_or_default(),
+                        ),
+                        &self.params,
+                    )
+                })
                 .collect(),
             blind: CyclotomicCrtNtt::from_ring(&self.blind, &self.params),
         };
@@ -473,7 +556,7 @@ impl<F: Field + CanonicalEncoding + WithAccumulator, const D: usize> PreparedMat
                 actual: scales.len(),
             });
         }
-        let coefficients = &self.coefficients;
+        let coefficients = self.coefficients();
         // Parallel over column chunks as well as rows: matrices are a few
         // rows by thousands of columns.
         const COLUMN_CHUNK: usize = 256;
@@ -482,7 +565,7 @@ impl<F: Field + CanonicalEncoding + WithAccumulator, const D: usize> PreparedMat
         Ok((0..self.shape.rows)
             .map(|row| {
                 let row_entries = coefficients
-                    .get(row * width + columns.start..row * width + columns.end)
+                    .get((row * width + columns.start) * D..(row * width + columns.end) * D)
                     .unwrap_or_default();
                 let sums = cfg_fold_reduce!(
                     0..len.div_ceil(COLUMN_CHUNK),
@@ -490,9 +573,9 @@ impl<F: Field + CanonicalEncoding + WithAccumulator, const D: usize> PreparedMat
                     |mut sums, chunk| {
                         let range = chunk * COLUMN_CHUNK..((chunk + 1) * COLUMN_CHUNK).min(len);
                         for (entry, scale) in row_entries
-                            .get(range.clone())
+                            .get(range.start * D..range.end * D)
                             .unwrap_or_default()
-                            .iter()
+                            .chunks_exact(D)
                             .zip(scales.get(range).unwrap_or_default())
                         {
                             // Scales are public; callers pass sparse ones
@@ -500,7 +583,7 @@ impl<F: Field + CanonicalEncoding + WithAccumulator, const D: usize> PreparedMat
                             if scale.is_zero() {
                                 continue;
                             }
-                            for (sum, coefficient) in sums.iter_mut().zip(entry.coefficients()) {
+                            for (sum, coefficient) in sums.iter_mut().zip(entry) {
                                 sum.fmadd(*coefficient, *scale);
                             }
                         }

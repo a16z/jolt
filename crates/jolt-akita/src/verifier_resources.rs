@@ -24,6 +24,8 @@ use crate::adapters::{
 };
 use crate::one_hot_family::with_one_hot_family;
 use crate::one_hot_family::AkitaOneHotBackendScheme;
+#[cfg(feature = "zk")]
+use crate::whiteout::PreparedWhiteout;
 use crate::{AkitaField, AkitaVerifierSetup};
 
 #[derive(Clone, Debug)]
@@ -201,6 +203,16 @@ impl Prepared {
             let dense = artifacts.dense().map(|_| material.clone());
             let one_hot = artifacts.one_hot().map(|_| material.clone());
             setup.prime_backend_cache(dense, one_hot)?;
+            #[cfg(feature = "zk")]
+            if let Some(whiteout) = setup.whiteout() {
+                let prepared = whiteout.prepared.as_ref().ok_or_else(|| {
+                    invalid_setup("Whiteout payloads must be attached before provisioning")
+                })?;
+                let _ = setup
+                    .backend_cache
+                    .whiteout
+                    .get_or_init(|| Arc::clone(prepared));
+            }
             catalogs.push(setup);
         }
         Ok(Self { material, catalogs })
@@ -311,6 +323,11 @@ impl PreparedRegistry {
         setup: &AkitaVerifierSetup,
     ) -> Option<Arc<AkitaOneHotBackendScheme>> {
         self.prepared_catalog(setup, BackendVerifierCache::decoded_one_hot)
+    }
+
+    #[cfg(feature = "zk")]
+    pub(crate) fn whiteout(&self, setup: &AkitaVerifierSetup) -> Option<Arc<PreparedWhiteout>> {
+        self.prepared_catalog(setup, |cache| cache.whiteout.get().cloned())
     }
 
     /// Attach `setup` to the smallest live state that covers it, the newest among

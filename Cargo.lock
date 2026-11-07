@@ -93,7 +93,7 @@ dependencies = [
 [[package]]
 name = "akita-algebra"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-error",
  "akita-serialization",
@@ -107,7 +107,7 @@ dependencies = [
 [[package]]
 name = "akita-challenges"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-error",
  "akita-transcript",
@@ -123,7 +123,7 @@ dependencies = [
 [[package]]
 name = "akita-config"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-error",
  "akita-params",
@@ -138,7 +138,7 @@ dependencies = [
 [[package]]
 name = "akita-cpu-backend"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -163,7 +163,7 @@ dependencies = [
 [[package]]
 name = "akita-error"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "jolt-algebra",
  "jolt-crypto",
@@ -174,7 +174,7 @@ dependencies = [
 [[package]]
 name = "akita-labinius-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -192,7 +192,7 @@ dependencies = [
 [[package]]
 name = "akita-labinius-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -209,7 +209,7 @@ dependencies = [
 [[package]]
 name = "akita-params"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -229,7 +229,7 @@ dependencies = [
 [[package]]
 name = "akita-pcs"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -255,7 +255,7 @@ dependencies = [
 [[package]]
 name = "akita-planner"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-error",
  "akita-params",
@@ -268,7 +268,7 @@ dependencies = [
 [[package]]
 name = "akita-prover"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-config",
@@ -290,7 +290,7 @@ dependencies = [
 [[package]]
 name = "akita-schedules"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-error",
  "akita-params",
@@ -304,7 +304,7 @@ dependencies = [
 [[package]]
 name = "akita-serialization"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "jolt-algebra",
  "jolt-crypto",
@@ -315,7 +315,7 @@ dependencies = [
 [[package]]
 name = "akita-setup"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-config",
  "akita-cpu-backend",
@@ -331,7 +331,7 @@ dependencies = [
 [[package]]
 name = "akita-sumcheck"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-error",
@@ -344,7 +344,7 @@ dependencies = [
 [[package]]
 name = "akita-transcript"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-error",
  "jolt-algebra",
@@ -356,7 +356,7 @@ dependencies = [
 [[package]]
 name = "akita-types"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-challenges",
@@ -380,7 +380,7 @@ dependencies = [
 [[package]]
 name = "akita-verifier"
 version = "0.1.0"
-source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#4b2810e2bb0ba03bc4405a0e60bbae5ff20b4b24"
+source = "git+https://github.com/LayerZero-Labs/akita.git?branch=whiteout%2Fpreview#1ec69e9e7e495c3119de8d7ba50f2f16ccd658a6"
 dependencies = [
  "akita-algebra",
  "akita-config",
