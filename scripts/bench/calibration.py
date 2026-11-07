@@ -116,14 +116,12 @@ def timestamp(value):
 
 
 def reference(raw, result, source):
-    if (result['kind'] != 'null' or result['status'] != 'complete' or len(result['cases']) != 17
+    if (result['kind'] != 'null' or result['status'] != 'complete'
             or result['suite']['warmups'] != 1 or result['suite']['repetitions'] != 10):
-        raise ValueError('calibration is not a complete 17-cell ten-pair null')
+        raise ValueError('calibration is not a complete PR-suite ten-pair null')
     builds = [{k: v for k, v in build.items() if k != 'leg'} for build in result['builds']]
     if len(builds) != 2 or builds[0] != builds[1]:
         raise ValueError('calibration legs differ')
-    if sum(len(case['samples']) for case in result['cases']) != 374:
-        raise ValueError('calibration lacks 374 proof processes')
     cells = []
     for case in result['cases']:
         if case['status'] != 'complete' or any(s['status'] != 'complete' or s['exit_code'] != 0 for s in case['samples']):
