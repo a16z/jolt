@@ -180,56 +180,26 @@ impl<const P: u128> Accumulator for Fp128SignedAccumulator<P> {
 /// Each slot has headroom for at least 2^64 - 1 field additions, including
 /// additions represented by merged partial sums.
 #[derive(Clone, Copy, Default)]
-#[repr(align(16))]
-pub struct Fp128SumAccumulator<const P: u128> {
-    limbs: [u64; 2],
-    carries: [u64; 2],
-}
-
-impl<const P: u128> Fp128SumAccumulator<P> {
-    #[inline(always)]
-    fn add_limbs(&mut self, value: [u64; 2]) {
-        #[cfg(all(target_arch = "aarch64", target_feature = "neon"))]
-        {
-            use core::arch::aarch64::{vaddq_u64, vcgtq_u64, vld1q_u64, vst1q_u64, vsubq_u64};
-            // SAFETY: NEON is enabled and each load/store covers a two-limb
-            // array. A comparison lane is all ones on overflow, so subtracting
-            // it increments that limb's carry without propagating between lanes.
-            unsafe {
-                let old = vld1q_u64(self.limbs.as_ptr());
-                let sum = vaddq_u64(old, vld1q_u64(value.as_ptr()));
-                let carries = vsubq_u64(vld1q_u64(self.carries.as_ptr()), vcgtq_u64(old, sum));
-                vst1q_u64(self.limbs.as_mut_ptr(), sum);
-                vst1q_u64(self.carries.as_mut_ptr(), carries);
-            }
-        }
-        #[cfg(not(all(target_arch = "aarch64", target_feature = "neon")))]
-        for ((limb, carry), value) in self.limbs.iter_mut().zip(&mut self.carries).zip(value) {
-            let (sum, overflow) = limb.overflowing_add(value);
-            *limb = sum;
-            *carry += u64::from(overflow);
-        }
-    }
-}
+pub struct Fp128SumAccumulator<const P: u128>([u128; 2]);
 
 impl<const P: u128> Accumulator for Fp128SumAccumulator<P> {
     type Element = Fp128<P>;
 
     #[inline(always)]
     fn add(&mut self, value: Fp128<P>) {
-        self.add_limbs(value.to_limbs());
+        for (slot, limb) in self.0.iter_mut().zip(value.to_limbs()) {
+            *slot += u128::from(limb);
+        }
     }
     #[inline(always)]
     fn merge(&mut self, other: Self) {
-        self.add_limbs(other.limbs);
-        for (carry, other) in self.carries.iter_mut().zip(other.carries) {
-            *carry += other;
+        for (slot, other) in self.0.iter_mut().zip(other.0) {
+            *slot += other;
         }
     }
     #[inline(always)]
     fn reduce(self) -> Fp128<P> {
-        let slots = [0, 1].map(|i| u128::from(self.limbs[i]) | (u128::from(self.carries[i]) << 64));
-        Fp128::<P>::reduce_product(Fp128ProductAccum([slots[0], slots[1], 0, 0]))
+        Fp128::<P>::reduce_product(Fp128ProductAccum([self.0[0], self.0[1], 0, 0]))
     }
     #[inline(always)]
     fn fmadd(&mut self, a: Fp128<P>, b: Fp128<P>) {
