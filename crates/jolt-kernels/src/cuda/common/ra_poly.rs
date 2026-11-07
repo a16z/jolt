@@ -1,0 +1,600 @@
+//! Lazily bound one-hot selectors from device hot indices and address-eq tables.
+//!
+//! Each early bind doubles the challenge-scaled lookup tables; gathers sum the
+//! branches for a cycle without materializing its full one-hot grid. RAM uses
+//! optimized's adaptive schedule: materialize by the fourth bind, or sooner
+//! when the expanded lookup tables would cost at least as much as the bound
+//! dense vector. That storage comparison uses each resident device window;
+//! optimized uses the whole source. Direct gather-and-bind avoids expanding
+//! oversized tables. Register write RA retains its third-bind `T/8` schedule.
+//! Materialization releases the indices and lookup tables.
+//! Optimized retains only a nonconstant prefix when its source establishes
+//! one; this device helper uses the full cycle domain.
+//! Both binding orders use the same representation with different gather strides.
+
+#[cfg(test)]
+use super::device::require_fr_slice;
+use cudarc::driver::{CudaSlice, PushKernelArg};
+use jolt_field::{Fr, JoltField};
+use jolt_poly::BindingOrder;
+
+use super::context::CudaKernelContext;
+use super::device::{fr_limbs, require_fr, DeviceFrVec};
+use super::error::CudaError;
+
+#[derive(Clone, Copy)]
+pub enum RaMaterialization {
+    ThirdBind,
+    Adaptive,
+}
+
+impl RaMaterialization {
+    pub(crate) const fn round(self) -> usize {
+        match self {
+            Self::ThirdBind => 3,
+            Self::Adaptive => 4,
+        }
+    }
+
+    pub(crate) const fn before_bind(self, table_elements: usize, cycles: usize) -> bool {
+        matches!(self, Self::Adaptive) && table_elements.saturating_mul(2) >= cycles / 2
+    }
+}
+
+pub use crate::cuda::common::pack::COLD;
+
+pub struct DeviceRaPolynomial {
+    indices: CudaSlice<u32>,
+    tables: DeviceFrVec,
+    addresses: usize,
+    cycles: usize,
+    order: BindingOrder,
+    materialization: RaMaterialization,
+    rounds_bound: usize,
+    dense: Option<DeviceFrVec>,
+}
+
+pub(crate) struct RaGatherView<'a> {
+    pub(crate) indices: &'a CudaSlice<u32>,
+    pub(crate) tables: &'a DeviceFrVec,
+    pub(crate) bases: CudaSlice<u32>,
+    pub(crate) slots: u32,
+    pub(crate) addresses: u32,
+    pub(crate) stride: u32,
+}
+
+fn reverse_bits(value: usize, bits: usize) -> usize {
+    (0..bits).fold(0, |acc, bit| {
+        acc | (((value >> bit) & 1) << (bits - 1 - bit))
+    })
+}
+
+impl DeviceRaPolynomial {
+    #[cfg(test)]
+    pub fn new<F: JoltField>(
+        context: &CudaKernelContext,
+        hot_indices: &[Option<usize>],
+        eq_address: &[F],
+        order: BindingOrder,
+        materialization: RaMaterialization,
+    ) -> Result<Self, CudaError> {
+        let cycles = hot_indices.len();
+        let addresses = eq_address.len();
+        if !cycles.is_power_of_two() || !addresses.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a one-hot polynomial needs power-of-two cycle and address counts",
+            });
+        }
+        let mut raw = Vec::with_capacity(cycles);
+        for hot in hot_indices {
+            let encoded = match *hot {
+                None => COLD,
+                Some(address) if address < addresses => {
+                    u32::try_from(address).map_err(|_| CudaError::LengthMismatch {
+                        expected: addresses,
+                        got: address,
+                    })?
+                }
+                Some(address) => {
+                    return Err(CudaError::LengthMismatch {
+                        expected: addresses,
+                        got: address,
+                    })
+                }
+            };
+            raw.push(encoded);
+        }
+        Self::from_words(context, &raw, eq_address, order, materialization)
+    }
+
+    #[cfg(test)]
+    pub fn from_words<F: JoltField>(
+        context: &CudaKernelContext,
+        words: &[u32],
+        eq_address: &[F],
+        order: BindingOrder,
+        materialization: RaMaterialization,
+    ) -> Result<Self, CudaError> {
+        let tables = context.upload(require_fr_slice(eq_address)?)?;
+        Self::from_device_tables(context, words, tables, order, materialization)
+    }
+
+    pub fn from_device_columns(
+        indices: CudaSlice<u32>,
+        tables: DeviceFrVec,
+        cycles: usize,
+        order: BindingOrder,
+        materialization: RaMaterialization,
+    ) -> Result<Self, CudaError> {
+        let addresses = tables.len();
+        if !cycles.is_power_of_two() || !addresses.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a one-hot polynomial needs power-of-two cycle and address counts",
+            });
+        }
+        if indices.len() < cycles {
+            return Err(CudaError::LengthMismatch {
+                expected: cycles,
+                got: indices.len(),
+            });
+        }
+        Ok(Self {
+            indices,
+            tables,
+            addresses,
+            cycles,
+            order,
+            materialization,
+            rounds_bound: 0,
+            dense: None,
+        })
+    }
+
+    #[cfg(test)]
+    pub fn from_device_tables(
+        context: &CudaKernelContext,
+        words: &[u32],
+        tables: DeviceFrVec,
+        order: BindingOrder,
+        materialization: RaMaterialization,
+    ) -> Result<Self, CudaError> {
+        let cycles = words.len();
+        let addresses = tables.len();
+        if !cycles.is_power_of_two() || !addresses.is_power_of_two() {
+            return Err(CudaError::InvariantViolation {
+                reason: "a one-hot polynomial needs power-of-two cycle and address counts",
+            });
+        }
+        Ok(Self {
+            indices: context.upload_u32_slice(words)?,
+            tables,
+            addresses,
+            cycles,
+            order,
+            materialization,
+            rounds_bound: 0,
+            dense: None,
+        })
+    }
+
+    pub const fn len(&self) -> usize {
+        self.cycles >> self.rounds_bound
+    }
+
+    pub const fn order(&self) -> BindingOrder {
+        self.order
+    }
+
+    #[cfg(test)]
+    pub const fn is_collapsed(&self) -> bool {
+        self.dense.is_some()
+    }
+
+    pub const fn dense(&self) -> Option<&DeviceFrVec> {
+        self.dense.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn coefficients(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
+        if let Some(dense) = &self.dense {
+            return dense.try_clone();
+        }
+        self.gather(context)
+    }
+
+    pub(crate) fn lazy_view(
+        &self,
+        context: &CudaKernelContext,
+    ) -> Result<Option<RaGatherView<'_>>, CudaError> {
+        if self.dense.is_some() {
+            return Ok(None);
+        }
+        self.gather_view(context).map(Some)
+    }
+
+    fn gather_view(&self, context: &CudaKernelContext) -> Result<RaGatherView<'_>, CudaError> {
+        let rounds = self.rounds_bound;
+        Ok(RaGatherView {
+            indices: &self.indices,
+            tables: &self.tables,
+            bases: context.upload_u32_slice(&self.slot_bases(rounds))?,
+            slots: CudaKernelContext::count_of(1usize << rounds)?,
+            addresses: CudaKernelContext::count_of(self.addresses)?,
+            stride: CudaKernelContext::count_of(match self.order {
+                BindingOrder::LowToHigh => 1usize << rounds,
+                BindingOrder::HighToLow => 1,
+            })?,
+        })
+    }
+
+    fn slot_bases(&self, rounds: usize) -> Vec<u32> {
+        let slots = 1usize << rounds;
+        let len = self.cycles >> rounds;
+        (0..slots)
+            .map(|slot| {
+                let offset = match self.order {
+                    BindingOrder::LowToHigh => slot,
+                    BindingOrder::HighToLow => reverse_bits(slot, rounds) * len,
+                };
+                offset as u32
+            })
+            .collect()
+    }
+
+    fn gather(&self, context: &CudaKernelContext) -> Result<DeviceFrVec, CudaError> {
+        let len = self.len();
+        let mut output = context.alloc(len)?;
+        if len == 0 {
+            return Ok(output);
+        }
+        let view = self.gather_view(context)?;
+        let count = CudaKernelContext::count_of(len)?;
+        let mut builder = context.stream().launch_builder(context.ra_gather());
+        let _ = builder.arg(view.indices);
+        let _ = builder.arg(view.tables.limbs());
+        let _ = builder.arg(&view.bases);
+        let _ = builder.arg(&view.slots);
+        let _ = builder.arg(&view.addresses);
+        let _ = builder.arg(&view.stride);
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `j < len` writes only `out[j]`, and reads
+        // `indices[j * stride + bases[slot]]` for `slots` slots — every offset is
+        // below `cycles` (`stride * len == cycles` for LowToHigh; for HighToLow
+        // `reverse_bits(slot) * len + j < cycles`), and a non-`COLD` entry is
+        // `< addresses` — checked by `new` per index, and by `from_words`'s
+        // callers, which encode through `common::pack::encode_address` with the
+        // same `addresses` bound — so the table read is inside `tables`'s
+        // `slots * addresses`. `out` is a distinct allocation.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        context.stream().synchronize()?;
+        Ok(output)
+    }
+
+    fn split_tables<F: JoltField>(
+        &mut self,
+        context: &CudaKernelContext,
+        challenge: F,
+    ) -> Result<(), CudaError> {
+        let challenge = require_fr(challenge)?;
+        let eq_zero = fr_limbs(Fr::from(1u64) - challenge);
+        let eq_one = fr_limbs(challenge);
+        let len = self.tables.len();
+        let mut doubled = context.alloc(len * 2)?;
+        let count = CudaKernelContext::count_of(len)?;
+        let mut builder = context.stream().launch_builder(context.ra_split_tables());
+        let _ = builder.arg(self.tables.limbs());
+        for limb in &eq_zero {
+            let _ = builder.arg(limb);
+        }
+        for limb in &eq_one {
+            let _ = builder.arg(limb);
+        }
+        let _ = builder.arg(doubled.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: thread `i < len` reads `in[i]` and writes exactly `out[i]` and
+        // `out[len + i]` — disjoint across threads. The two eq weights arrive as
+        // by-value limbs, so no device buffer backs them. `in` holds `len`, `out`
+        // holds `2 * len`, and `out` is a distinct allocation, so no thread reads
+        // another's write.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        self.tables = doubled;
+        Ok(())
+    }
+
+    fn gather_and_bind<F: JoltField>(
+        &self,
+        context: &CudaKernelContext,
+        challenge: F,
+    ) -> Result<DeviceFrVec, CudaError> {
+        let mut output = context.alloc(self.len() / 2)?;
+        let view = self.gather_view(context)?;
+        let count = CudaKernelContext::count_of(output.len())?;
+        let low_to_high = u32::from(matches!(self.order, BindingOrder::LowToHigh));
+        let challenge = fr_limbs(require_fr(challenge)?);
+        let mut builder = context.stream().launch_builder(context.ra_gather_bind());
+        let _ = builder.arg(view.indices);
+        let _ = builder.arg(view.tables.limbs());
+        let _ = builder.arg(&view.bases);
+        let _ = builder.arg(&view.slots);
+        let _ = builder.arg(&view.addresses);
+        let _ = builder.arg(&view.stride);
+        let _ = builder.arg(&low_to_high);
+        for limb in &challenge {
+            let _ = builder.arg(limb);
+        }
+        let _ = builder.arg(output.limbs_mut());
+        let _ = builder.arg(&count);
+        // SAFETY: each thread writes a distinct output and gathers two positions
+        // below the old length: (2*j, 2*j+1) or (j, j+count). The unchanged view
+        // has the same index/table bounds as `gather`; output is a separate
+        // allocation. `bind` only calls this with at least two remaining rows.
+        let _ = unsafe { builder.launch(CudaKernelContext::launch_config(count)) }?;
+        context.stream().synchronize()?;
+        Ok(output)
+    }
+
+    pub fn bind<F: JoltField>(
+        &mut self,
+        context: &CudaKernelContext,
+        challenge: F,
+    ) -> Result<(), CudaError> {
+        if let Some(dense) = &self.dense {
+            let bound = context.bind(dense, require_fr(challenge)?, self.order)?;
+            self.dense = Some(bound);
+            self.rounds_bound += 1;
+            return Ok(());
+        }
+        if self.len() < 2 {
+            return Err(CudaError::LengthMismatch {
+                expected: 2,
+                got: self.len(),
+            });
+        }
+        if self
+            .materialization
+            .before_bind(self.tables.len(), self.len())
+        {
+            self.dense = Some(self.gather_and_bind(context, challenge)?);
+        } else {
+            self.split_tables(context, challenge)?;
+        }
+        self.rounds_bound += 1;
+        if self.dense.is_none() && self.rounds_bound >= self.materialization.round() {
+            self.dense = Some(self.gather(context)?);
+        }
+        if self.dense.is_some() {
+            self.tables = context.alloc(0)?;
+            self.indices = context.alloc_u32(0)?;
+        }
+        Ok(())
+    }
+
+    pub fn final_claim(&self, context: &CudaKernelContext) -> Result<Fr, CudaError> {
+        if self.len() != 1 {
+            return Err(CudaError::LengthMismatch {
+                expected: 1,
+                got: self.len(),
+            });
+        }
+        match &self.dense {
+            Some(dense) => dense.first(),
+            None => self.gather(context)?.first(),
+        }
+    }
+}
+
+#[cfg(test)]
+#[expect(
+    clippy::expect_used,
+    reason = "test module: device operations fail loudly"
+)]
+mod tests {
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::{BindingOrder, EqPolynomial, Polynomial};
+    use proptest::prelude::*;
+
+    use super::super::context::shared_context;
+    use super::super::testing::arb_point;
+    use super::{reverse_bits, DeviceRaPolynomial, RaMaterialization};
+
+    struct HostRaPolynomial {
+        indices: Vec<Option<usize>>,
+        tables: Vec<Vec<Fr>>,
+        order: BindingOrder,
+        rounds_bound: usize,
+    }
+
+    impl HostRaPolynomial {
+        fn new(indices: &[Option<usize>], eq_address: &[Fr], order: BindingOrder) -> Self {
+            Self {
+                indices: indices.to_vec(),
+                tables: vec![eq_address.to_vec()],
+                order,
+                rounds_bound: 0,
+            }
+        }
+
+        fn len(&self) -> usize {
+            self.indices.len() >> self.rounds_bound
+        }
+
+        fn coefficient(&self, j: usize) -> Fr {
+            let fold = 1usize << self.rounds_bound;
+            let mut total = Fr::from_u64(0);
+            for (slot, table) in self.tables.iter().enumerate() {
+                let position = match self.order {
+                    BindingOrder::LowToHigh => fold * j + slot,
+                    BindingOrder::HighToLow => {
+                        j + reverse_bits(slot, self.rounds_bound) * self.len()
+                    }
+                };
+                if let Some(Some(address)) = self.indices.get(position) {
+                    total += table[*address];
+                }
+            }
+            total
+        }
+
+        fn coefficients(&self) -> Vec<Fr> {
+            (0..self.len()).map(|j| self.coefficient(j)).collect()
+        }
+
+        fn bind(&mut self, challenge: Fr) {
+            let one = Fr::from_u64(1);
+            let eq_zero = one - challenge;
+            let eq_one = challenge;
+            let mut split: Vec<Vec<Fr>> = Vec::with_capacity(self.tables.len() * 2);
+            for table in &self.tables {
+                split.push(table.iter().map(|value| *value * eq_zero).collect());
+            }
+            for table in &self.tables {
+                split.push(table.iter().map(|value| *value * eq_one).collect());
+            }
+            self.tables = split;
+            self.rounds_bound += 1;
+        }
+    }
+
+    fn fixture(log_t: usize, log_k: usize, seed: u64) -> (Vec<Option<usize>>, Vec<Fr>) {
+        let cycles = 1usize << log_t;
+        let addresses = 1usize << log_k;
+        let indices: Vec<Option<usize>> = (0..cycles)
+            .map(|c| {
+                if (c as u64 + seed) % 5 == 3 {
+                    None
+                } else {
+                    Some(((c as u64 * 7 + seed) as usize) % addresses)
+                }
+            })
+            .collect();
+        let address: Vec<Fr> = (0..log_k)
+            .map(|i| Fr::from_u64(11 + 5 * i as u64))
+            .collect();
+        (indices, EqPolynomial::new(address).evaluations())
+    }
+
+    #[test]
+    fn host_model_matches_dense_binding() {
+        for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+            let log_t = 5usize;
+            let (indices, eq_address) = fixture(log_t, 3, 1);
+
+            let mut model = HostRaPolynomial::new(&indices, &eq_address, order);
+            let mut dense = Polynomial::new(model.coefficients());
+
+            for round in 0..log_t {
+                assert_eq!(
+                    model.coefficients(),
+                    dense.evals().to_vec(),
+                    "host model diverged from dense at round {round} for {order:?}",
+                );
+                let challenge = Fr::from_u64(101 + 7 * round as u64);
+                model.bind(challenge);
+                dense.bind_with_order(challenge, order);
+            }
+        }
+    }
+
+    #[test]
+    fn adaptive_materialization_respects_storage_and_width_limits() {
+        let Some(context) = shared_context() else {
+            return;
+        };
+        for (log_t, log_k, materialize_at) in [
+            (1, 0, 1),
+            (8, 3, 3),
+            (8, 4, 2),
+            (8, 5, 2),
+            (8, 6, 1),
+            (10, 1, 4),
+            (10, 2, 4),
+        ] {
+            for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+                let (indices, eq_address) = fixture(log_t, log_k, 1);
+                let mut expected = Polynomial::new(
+                    indices
+                        .iter()
+                        .map(|index| index.map_or(Fr::from_u64(0), |i| eq_address[i]))
+                        .collect::<Vec<_>>(),
+                );
+                let mut got = DeviceRaPolynomial::new(
+                    context,
+                    &indices,
+                    &eq_address,
+                    order,
+                    RaMaterialization::Adaptive,
+                )
+                .expect("device RA polynomial");
+                for round in 1..=log_t {
+                    let challenge = Fr::from_u64(101 + 7 * round as u64);
+                    got.bind(context, challenge).expect("device bind");
+                    expected.bind_with_order(challenge, order);
+                    assert_eq!(got.is_collapsed(), round >= materialize_at);
+                    assert_eq!(
+                        got.coefficients(context)
+                            .expect("device coefficients")
+                            .to_host()
+                            .expect("download"),
+                        expected.evals().to_vec(),
+                        "log_t={log_t}, log_k={log_k}, round={round}, order={order:?}",
+                    );
+                }
+            }
+        }
+    }
+
+    proptest! {
+        #[test]
+        fn ra_poly_matches_the_host_model(
+            log_t in 1usize..=10,
+            log_k in 1usize..=4,
+            seed in any::<u64>(),
+            challenges in arb_point(10),
+        ) {
+            let Some(context) = shared_context() else { return Ok(()); };
+            for order in [BindingOrder::LowToHigh, BindingOrder::HighToLow] {
+                for materialization in [RaMaterialization::ThirdBind, RaMaterialization::Adaptive] {
+                    let (indices, eq_address) = fixture(log_t, log_k, seed);
+
+                    let mut expected = HostRaPolynomial::new(&indices, &eq_address, order);
+                    let mut got = DeviceRaPolynomial::new(
+                        context, &indices, &eq_address, order, materialization,
+                    )
+                    .expect("device ra poly");
+
+                    for (round, &challenge) in challenges.iter().enumerate().take(log_t) {
+                        let got_coeffs = got
+                            .coefficients(context)
+                            .expect("device coefficients")
+                            .to_host()
+                            .expect("download");
+                        prop_assert_eq!(
+                            got_coeffs,
+                            expected.coefficients(),
+                            "coefficients diverged at round {} for {:?}",
+                            round,
+                            order
+                        );
+                        prop_assert_eq!(got.len(), expected.len());
+                        match materialization {
+                            RaMaterialization::ThirdBind => {
+                                prop_assert_eq!(got.is_collapsed(), round >= materialization.round());
+                            }
+                            RaMaterialization::Adaptive if round >= materialization.round() => {
+                                prop_assert!(got.is_collapsed());
+                            }
+                            RaMaterialization::Adaptive => {}
+                        }
+                        got.bind(context, challenge).expect("device bind");
+                        expected.bind(challenge);
+                    }
+                    prop_assert_eq!(
+                        got.final_claim(context).expect("final claim"),
+                        expected.coefficients()[0]
+                    );
+                }
+            }
+        }
+    }
+}
