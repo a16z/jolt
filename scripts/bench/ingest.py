@@ -246,7 +246,7 @@ def check_result(job_id, documents, exit_code, summary):
 
 def render_pr_comment(result, summary_path, details_url, exit_code=0):
     rows = bench.render_comment(result, summary_path)
-    lines = ['<!-- jolt-e2e-benchmark-comment -->', '## End-to-end CPU benchmark', '',
+    lines = [ci.COMMENT_HEADER, '',
              f'[Full results]({details_url}) · '
              '[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', '',
              f"Base: `{result['revisions']['base']}`. Submitted head: `{result['revisions']['head']}`. "
