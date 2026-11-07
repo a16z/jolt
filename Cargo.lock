@@ -3473,6 +3473,7 @@ dependencies = [
  "jolt-algebra",
  "jolt-poly",
  "jolt-transcript",
+ "libm",
  "num-bigint",
  "num-integer",
  "num-traits",
@@ -3483,7 +3484,9 @@ dependencies = [
  "serde_json",
  "shake",
  "smallvec",
+ "subtle",
  "thiserror 2.0.21",
+ "zeroize",
 ]
 
 [[package]]

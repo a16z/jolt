@@ -39,6 +39,9 @@ lattice = ["dep:shake", "dep:smallvec", "dep:thiserror", "jolt-algebra/solinas"]
 # The D64 selective-L2 operator-norm table reads its base tables from
 # generated static data (the same entries) instead of building them.
 ont-static-base = ["lattice"]
+# Constant-time discrete Gaussian sampler and joint rejection rule. Prover-only:
+# no verifier build may enable it.
+sample = ["dep:subtle", "dep:num-bigint", "dep:rand_chacha", "dep:zeroize"]
 
 [dependencies]
 jolt-algebra = { path = "../jolt-algebra", default-features = false }
@@ -51,6 +54,9 @@ shake = { workspace = true, optional = true }
 smallvec = { version = "1.15.2", features = [
   "const_generics",
 ], optional = true }
+rand_chacha = { workspace = true, optional = true }
+subtle = { workspace = true, optional = true }
+zeroize = { workspace = true, optional = true }
 
 # Arkworks — BN254 backend (internal, gated behind `bn254` feature)
 ark-bn254 = { workspace = true, features = ["curve"], optional = true }
@@ -73,6 +79,7 @@ rand_chacha = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }
 bincode = { workspace = true }
 criterion = { workspace = true }
+libm = { workspace = true }
 jolt-transcript = { workspace = true, features = [
   "bn254",
   "transcript-blake2b",
@@ -97,6 +104,10 @@ required-features = ["bn254"]
 [[test]]
 name = "serialization"
 required-features = ["bn254"]
+
+[[example]]
+name = "sample_dudect"
+required-features = ["sample", "parallel"]
 
 [[bench]]
 name = "crypto"
