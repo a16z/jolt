@@ -8,7 +8,16 @@
 //!
 //! - Packed trace windows and derived columns live in the [`ProofSession`],
 //!   so successive relations can reuse uploads. Device contexts and compiled
-//!   modules are process-wide; witness data is not.
+//!   modules are process-wide; live witness allocations belong to the session.
+//! - The default CUDA allocator retains reusable backing memory across stream
+//!   synchronizations and proofs. Its release threshold is three quarters of
+//!   device memory; this is not a live-allocation limit or an upfront reservation.
+//!   Custom pools and existing nonzero thresholds are left to the caller.
+//!   CUDA's zero default threshold would otherwise return reusable memory to
+//!   the OS at frequent challenge readbacks and allocate it again.
+//!   Retired buffers become reusable once their stream dependencies
+//!   complete; backing memory can remain reserved until process exit or an
+//!   explicit CUDA pool trim. Allocation initialization and ordering are unchanged.
 //! - Cycle work is partitioned into aligned windows. Sharded round kernels
 //!   combine local messages on the host and move the remaining tables to GPU 0
 //!   once the local cycle variables are bound. Small domains use one device.

@@ -4,6 +4,8 @@ use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use cudarc::driver::result::{device, mem_pool};
+use cudarc::driver::sys::CUmemPool_attribute as MemoryPoolAttribute;
 use cudarc::driver::{
     CudaContext as DriverContext, CudaFunction, CudaSlice, CudaStream, DevicePtr, DevicePtrMut,
     LaunchConfig, PushKernelArg,
@@ -263,6 +265,29 @@ pub struct CudaKernelContext {
 impl CudaKernelContext {
     pub fn new(ordinal: usize) -> Result<Self, CudaError> {
         let context = DriverContext::new(ordinal)?;
+        if context.has_async_alloc() {
+            let mut release_threshold = 0u64;
+            // SAFETY: context keeps the device and its driver-owned default pool
+            // alive. RELEASE_THRESHOLD reads/writes a u64 through each pointer.
+            unsafe {
+                let pool = device::get_default_mem_pool(context.cu_device())?;
+                if pool == device::get_mem_pool(context.cu_device())? {
+                    mem_pool::get_attribute(
+                        pool,
+                        MemoryPoolAttribute::CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
+                        std::ptr::from_mut(&mut release_threshold).cast(),
+                    )?;
+                    if release_threshold == 0 {
+                        release_threshold = (context.total_mem()? as u64 / 4) * 3;
+                        mem_pool::set_attribute(
+                            pool,
+                            MemoryPoolAttribute::CU_MEMPOOL_ATTR_RELEASE_THRESHOLD,
+                            std::ptr::from_mut(&mut release_threshold).cast(),
+                        )?;
+                    }
+                }
+            }
+        }
         // Explicit streams make cudarc bind the owning context before freeing
         // buffers retired by main's background-drop workers.
         let stream = context.new_stream()?;
