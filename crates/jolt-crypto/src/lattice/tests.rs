@@ -6,6 +6,7 @@ use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 use shake::digest::{ExtendableOutput, Update, XofReader};
 use shake::Shake256;
+use std::sync::Arc;
 
 use super::*;
 use crate::CryptoError;
@@ -412,4 +413,46 @@ fn box_digits_cover_exactly_the_balanced_alphabet() {
     assert!(digits.iter().all(|d| (-8..=7).contains(d)));
     assert!((-8..=7).all(|v| digits.contains(&v)));
     assert!(sample_box_digits(&mut rng, 1, 9).is_err());
+}
+
+#[test]
+fn offset_view_products_use_only_the_bounded_entries() {
+    const D: usize = 64;
+    let data = stream(12 * D, 42);
+    let matrix = PreparedMatrix::<F, D>::from_shared(
+        MatrixShape {
+            rows: 3,
+            width: 4,
+            ring_dim: D,
+        },
+        Arc::new(data.clone()),
+    )
+    .unwrap();
+    let shape = MatrixShape {
+        rows: 1,
+        width: 2,
+        ring_dim: D,
+    };
+    let offset = 10 * D;
+    let view = matrix.view(shape, offset).unwrap();
+    let input: Vec<_> = (0..2 * D).map(|index| (index % 7) as i64 - 3).collect();
+    assert_eq!(
+        view.apply_centered(&input, 3).unwrap(),
+        schoolbook(shape, &data[offset..], &lift::<D>(&input))
+    );
+    let scales = [F::from_u64(3), F::from_u64(5)];
+    let expected = CyclotomicRing::<F, D>::from_coefficients(std::array::from_fn(|index| {
+        data[offset + index] * scales[0] + data[offset + D + index] * scales[1]
+    }));
+    assert_eq!(view.combine_columns(&scales).unwrap(), vec![expected]);
+    assert!(view.view(shape, D).is_err());
+    assert!(matrix.view(shape, usize::MAX).is_err());
+}
+
+#[test]
+fn public_stream_rejects_an_unallocatable_length() {
+    let error =
+        derive_public_matrix_prefix::<F>(usize::MAX, &PublicMatrixSeed::shake256_paged_v1([0; 32]))
+            .unwrap_err();
+    assert!(matches!(error, CryptoError::InvalidSetup(_)));
 }
