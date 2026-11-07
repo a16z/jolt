@@ -112,14 +112,16 @@ pub(super) use impl_trace_serde;
 #[cfg(test)]
 mod tests {
     use super::super::{Cycle, Instruction};
+    use blake3::Hasher;
     use serde::{de::DeserializeOwned, Serialize};
+    use std::fmt::Debug;
     use strum::IntoEnumIterator;
 
-    fn legacy_digest<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(
+    fn legacy_digest<T: Serialize + DeserializeOwned + PartialEq + Debug>(
         items: impl Iterator<Item = T>,
         cutoff: u32,
     ) -> String {
-        let mut hash = blake3::Hasher::new();
+        let mut hash = Hasher::new();
         for item in items {
             let bytes = postcard::to_stdvec(&item).unwrap();
             let (tag, _) = postcard::take_from_bytes::<u32>(&bytes).unwrap();
