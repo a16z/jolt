@@ -7,8 +7,8 @@ use std::sync::Arc;
 use akita_params::FlatMatrix;
 use akita_pcs::{AkitaDeserialize, AkitaSerialize, Compress, Validate};
 use akita_types::{
-    sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor, AkitaSetupSeed,
-    AkitaVerifierSetup as BackendSetup, SetupPrefixVerifierRegistry,
+    sample_akita_setup_seed, AkitaExpandedSetup, AkitaSetupDescriptor,
+    AkitaVerifierSetup as BackendSetup, PublicMatrixSeed, SetupPrefixVerifierRegistry,
 };
 use jolt_akita::{
     AkitaBatchProof, AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaNativeBatching,
@@ -330,7 +330,7 @@ fn full_setup_import_rejects_wrong_capacity_seed_and_truncated_bodies() {
         AkitaSetupDescriptor::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())
             .unwrap();
     let mut wrong_seed = descriptor.clone();
-    wrong_seed.setup_seed = AkitaSetupSeed::shake256_paged_v1([42; 32]);
+    wrong_seed.setup_seed = PublicMatrixSeed::shake256_paged_v1([42; 32]);
     let mut wrong_count = descriptor;
     wrong_count.num_field_elements = usize::MAX;
     for descriptor in [wrong_seed, wrong_count] {
