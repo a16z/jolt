@@ -75,7 +75,7 @@ Jolt's per-proof auxiliary groups (untrusted advice, `FieldInc` under field-inli
 - The catalog's one backend commits every hiding group and proves the opening: Akita cannot import a hiding commitment into another backend. Its matrix covers the widest group.
 - Trusted advice and committed programs are committed hiding at preprocessing, and the prover keeps the randomness. A commitment made before the pads and reused across proofs stays hiding: its randomness is never revealed, and each proof's masked opening adds fresh masks.
 
-**Trust root.** The trust root of a trusted-advice or committed-program commitment C is the holder of its hiding randomness r. Without r, C cannot be recomputed from the data, so the verifier accepts C on the strength of whoever holds r, and r is as secret as the data.
+**Trust root.** The trust root of a trusted-advice or committed-program commitment C is the holder of its hiding randomness r. Without r, C cannot be recomputed from the data, so the verifier accepts C on the strength of whoever holds r, and r is as secret as the data. The committing process exports (C, r) (`AdviceObject::hiding_opening`, `DirectProgramObjects::hiding_openings`); a prover in another process rebuilds its hint with `reopen_trusted_advice` or `preprocess_committed_reopened`. The rebuild fails unless (data, r) reproduce exactly C, so the same calls are an auditor's check of C.
 
 ## 6. Rerun semantics
 

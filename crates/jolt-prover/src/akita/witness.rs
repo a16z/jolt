@@ -1,6 +1,8 @@
 //! Akita advice and direct committed-program objects.
 
 #[cfg(feature = "zk")]
+use jolt_akita::HidingRandomness;
+#[cfg(feature = "zk")]
 use jolt_akita::TraceOneHotCommitment;
 use jolt_claims::protocols::jolt::lattice::packing::{
     advice_packing_plan, PrecommittedPackingPlan, PrefixPackedObjectPlan,
@@ -70,26 +72,65 @@ where
     })
 }
 
-/// Whiteout: commits the advice-word object hiding, with fresh randomness,
-/// as a precommitted group on the grouped trace `setup`'s Whiteout backend,
-/// the one that opens it.
+/// Whiteout: commits the advice-word object hiding, as a precommitted group
+/// on the grouped trace `setup`'s Whiteout backend, the one that opens it:
+/// with fresh randomness, or, given `reopen`, rebuilding exactly that
+/// commitment (`specs/whiteout-jolt-integration.md` §5).
 #[cfg(feature = "zk")]
 pub fn commit_advice_hiding<PCS>(
     setup: &PCS::ProverSetup,
     kind: JoltAdviceKind,
     advice_bytes: &[u8],
     max_advice_bytes: usize,
+    reopen: Option<&HidingOpening<PCS>>,
 ) -> Result<AdviceObject<PCS>, ProverError<PCS::Field>>
 where
     PCS: TraceOneHotCommitment,
 {
     let (plan, polynomial) = advice_polynomial(kind, advice_bytes, max_advice_bytes)?;
-    let (commitment, hint) = commit_bounded_hiding::<PCS>(setup, &plan, &polynomial)?;
+    let (commitment, hint) = commit_bounded_hiding::<PCS>(setup, &plan, &polynomial, reopen)?;
     Ok(AdviceObject {
         plan,
         commitment,
         hint,
     })
+}
+
+/// Whiteout: what lets a process other than the committing one open a
+/// statement-fixed hiding commitment (trusted advice, a committed program
+/// object): the public commitment and the secret randomness it was made with
+/// (`specs/whiteout-jolt-integration.md` §5). Whoever holds it and the
+/// committed data can also check the commitment.
+#[cfg(feature = "zk")]
+pub struct HidingOpening<PCS: CommitmentScheme> {
+    pub commitment: PCS::Output,
+    pub randomness: HidingRandomness,
+}
+
+#[cfg(feature = "zk")]
+impl<PCS: TraceOneHotCommitment> HidingOpening<PCS> {
+    fn export(
+        commitment: &PCS::Output,
+        hint: &PCS::OpeningHint,
+    ) -> Result<Self, ProverError<PCS::Field>> {
+        Ok(Self {
+            commitment: commitment.clone(),
+            randomness: PCS::whiteout_hiding_randomness(hint).map_err(commit_failed)?,
+        })
+    }
+}
+
+#[cfg(feature = "zk")]
+impl<PCS: TraceOneHotCommitment> AdviceObject<PCS> {
+    /// Whiteout: this hiding advice commitment and its randomness, which a
+    /// trusted party ships with the advice.
+    ///
+    /// # Errors
+    ///
+    /// If the object was not committed hiding.
+    pub fn hiding_opening(&self) -> Result<HidingOpening<PCS>, ProverError<PCS::Field>> {
+        HidingOpening::export(&self.commitment, &self.hint)
+    }
 }
 
 /// A commitment and the hint that opens it.
@@ -99,12 +140,14 @@ type Committed<PCS> = (
     <PCS as CommitmentScheme>::OpeningHint,
 );
 
-/// Whiteout: commits one bounded prefix-packed object hiding.
+/// Whiteout: commits one bounded prefix-packed object hiding, or rebuilds
+/// `reopen`'s commitment of it.
 #[cfg(feature = "zk")]
 fn commit_bounded_hiding<PCS>(
     setup: &PCS::ProverSetup,
     plan: &PrefixPackedObjectPlan,
     polynomial: &Polynomial<PCS::Field>,
+    reopen: Option<&HidingOpening<PCS>>,
 ) -> Result<Committed<PCS>, ProverError<PCS::Field>>
 where
     PCS: TraceOneHotCommitment,
@@ -113,8 +156,19 @@ where
         num_vars: plan.packing().packed_num_vars(),
         source: DenseSource::Bounded,
     };
-    PCS::whiteout_commit_precommitted(setup, shape, polynomial, plan.layout_digest())
-        .map_err(commit_failed)
+    match reopen {
+        None => PCS::whiteout_commit_precommitted(setup, shape, polynomial, plan.layout_digest()),
+        Some(opening) => PCS::whiteout_recommit_precommitted(
+            setup,
+            shape,
+            polynomial,
+            plan.layout_digest(),
+            &opening.commitment,
+            &opening.randomness,
+        )
+        .map(|hint| (opening.commitment.clone(), hint)),
+    }
+    .map_err(commit_failed)
 }
 
 fn commit_failed<F: JoltField>(error: impl ToString) -> ProverError<F> {
@@ -226,24 +280,54 @@ where
     })
 }
 
+/// Whiteout: the hiding openings of a committed program's objects, which a
+/// trusted party ships with the program.
+#[cfg(feature = "zk")]
+pub struct DirectProgramOpenings<PCS: CommitmentScheme> {
+    pub bytecode: HidingOpening<PCS>,
+    pub program_image: HidingOpening<PCS>,
+}
+
+#[cfg(feature = "zk")]
+impl<PCS: TraceOneHotCommitment> DirectProgramObjects<PCS> {
+    /// Whiteout: these hiding program commitments and their randomness.
+    ///
+    /// # Errors
+    ///
+    /// If the objects were not committed hiding.
+    pub fn hiding_openings(&self) -> Result<DirectProgramOpenings<PCS>, ProverError<PCS::Field>> {
+        Ok(DirectProgramOpenings {
+            bytecode: HidingOpening::export(&self.bytecode.commitment, &self.bytecode.hint)?,
+            program_image: HidingOpening::export(
+                &self.program_image.commitment,
+                &self.program_image.hint,
+            )?,
+        })
+    }
+}
+
 /// Whiteout: assembles the whole bytecode and program-image objects and
-/// commits them hiding, with fresh randomness, as precommitted groups on the
-/// grouped trace `setup`'s Whiteout backend (`specs/whiteout-jolt-integration.md` §5).
+/// commits them hiding, as precommitted groups on the grouped trace
+/// `setup`'s Whiteout backend: with fresh randomness, or, given `reopen`,
+/// rebuilding exactly those commitments
+/// (`specs/whiteout-jolt-integration.md` §5).
 #[cfg(feature = "zk")]
 pub(super) fn commit_direct_program_hiding<PCS>(
     setup: &PCS::ProverSetup,
     program: &JoltProgramPreprocessing,
     trace_order: TracePolynomialOrder,
     plan: &PrecommittedPackingPlan,
+    reopen: Option<&DirectProgramOpenings<PCS>>,
 ) -> Result<DirectProgramObjects<PCS>, ProverError<PCS::Field>>
 where
     PCS: TraceOneHotCommitment,
 {
     let [bytecode, program_image] = direct_program_polynomials(program, trace_order, plan)?;
     let commit = |object_plan: &PrefixPackedObjectPlan,
-                  witness: &Polynomial<PCS::Field>|
+                  witness: &Polynomial<PCS::Field>,
+                  reopen: Option<&HidingOpening<PCS>>|
      -> Result<DirectProgramObject<PCS>, ProverError<PCS::Field>> {
-        let (commitment, hint) = commit_bounded_hiding::<PCS>(setup, object_plan, witness)?;
+        let (commitment, hint) = commit_bounded_hiding::<PCS>(setup, object_plan, witness, reopen)?;
         Ok(DirectProgramObject {
             plan: object_plan.clone(),
             commitment,
@@ -251,7 +335,15 @@ where
         })
     };
     Ok(DirectProgramObjects {
-        bytecode: commit(&plan.bytecode, &bytecode)?,
-        program_image: commit(&plan.program_image, &program_image)?,
+        bytecode: commit(
+            &plan.bytecode,
+            &bytecode,
+            reopen.map(|openings| &openings.bytecode),
+        )?,
+        program_image: commit(
+            &plan.program_image,
+            &program_image,
+            reopen.map(|openings| &openings.program_image),
+        )?,
     })
 }
