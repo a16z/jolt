@@ -46,15 +46,35 @@ impl TracerBackend {
             return Err(TraceError::MissingElfBytes);
         }
 
-        let (_lazy_trace, cycles, final_memory, device, advice_tape) = crate::trace(
-            program.elf_bytes(),
-            self.elf_path.as_ref(),
-            &inputs.inputs,
-            &inputs.untrusted_advice,
-            &inputs.trusted_advice,
-            &inputs.memory_config,
-            inputs.advice_tape.map(AdviceTape::from_bytes),
-        );
+        let (cycles, final_memory, device, advice_tape) =
+            if let Some(config) = crate::parallel_config_from_env() {
+                let emulator = crate::create_emulator(
+                    program.elf_bytes(),
+                    self.elf_path.as_ref(),
+                    &inputs.inputs,
+                    &inputs.untrusted_advice,
+                    &inputs.trusted_advice,
+                    &inputs.memory_config,
+                    inputs.advice_tape.map(AdviceTape::from_bytes),
+                );
+                let (chunks, finished) = crate::parallel::run_two_pass_chunks(emulator, &config);
+                let (advice_tape, final_memory, device) = crate::finish_emulator(finished);
+                let chunks = std::iter::once(chunks.prefix)
+                    .chain(chunks.suffix)
+                    .collect();
+                (chunks, final_memory, device, advice_tape)
+            } else {
+                let (_lazy_trace, cycles, final_memory, device, advice_tape) = crate::trace(
+                    program.elf_bytes(),
+                    self.elf_path.as_ref(),
+                    &inputs.inputs,
+                    &inputs.untrusted_advice,
+                    &inputs.trusted_advice,
+                    &inputs.memory_config,
+                    inputs.advice_tape.map(AdviceTape::from_bytes),
+                );
+                (vec![cycles], final_memory, device, advice_tape)
+            };
         Ok(TraceExecution {
             cycles,
             final_memory: MemoryImage {
@@ -67,7 +87,7 @@ impl TracerBackend {
 }
 
 struct TraceExecution {
-    cycles: Vec<Cycle>,
+    cycles: Vec<Vec<Cycle>>,
     final_memory: MemoryImage,
     device: JoltDevice,
     advice_tape: Vec<u8>,
@@ -87,7 +107,7 @@ impl ExecutionBackend for TracerBackend {
             program.profile,
         )?;
         let execution = self.trace_execution(program, inputs)?;
-        let (data, dimensions) = collect_rows(&execution.cycles, &bytecode)?;
+        let (data, dimensions) = collect_owned_chunks(execution.cycles, &bytecode)?;
         Ok(TraceOutput::with_dimensions(
             dimensions,
             Arc::new(data),
@@ -119,43 +139,63 @@ fn collect_rows(
     .entered();
     let mut rows = Vec::<JoltTraceRow>::with_capacity(cycles.len());
     let slots = &mut rows.spare_capacity_mut()[..cycles.len()];
-    let fill = |batch: usize, slots: &mut [MaybeUninit<JoltTraceRow>], cycles: &[Cycle]| {
-        #[cfg(not(feature = "field-inline"))]
-        let _ = batch;
-        let mut chunk = ConvertedChunk {
-            bounds: RamAddressBounds::default(),
-            #[cfg(feature = "field-inline")]
-            fields: Vec::new(),
-        };
-        for (offset, (slot, cycle)) in slots.iter_mut().zip(cycles).enumerate() {
-            #[cfg(not(feature = "field-inline"))]
-            let _ = offset;
-            let row = cycle_to_trace_row(cycle, bytecode)?;
-            chunk.bounds.observe(row.ram_address());
-            slot.write(row);
-            #[cfg(feature = "field-inline")]
-            if let Some(data) = cycle.field_inline_trace() {
-                chunk.fields.push(FieldEvent {
-                    cycle: batch * PARALLEL_ROW_CONVERSION_THRESHOLD + offset,
-                    data,
-                });
-            }
-        }
-        Ok::<_, TraceError>(chunk)
-    };
     let batches = if parallel {
         slots
             .par_chunks_mut(PARALLEL_ROW_CONVERSION_THRESHOLD)
             .zip(cycles.par_chunks(PARALLEL_ROW_CONVERSION_THRESHOLD))
             .enumerate()
-            .map(|(batch, (slots, cycles))| fill(batch, slots, cycles))
+            .map(|(batch, (slots, cycles))| {
+                fill_rows(
+                    batch * PARALLEL_ROW_CONVERSION_THRESHOLD,
+                    slots,
+                    cycles,
+                    bytecode,
+                )
+            })
             .collect::<Result<Vec<_>, _>>()?
     } else {
-        vec![fill(0, slots, cycles)?]
+        vec![fill_rows(0, slots, cycles, bytecode)?]
     };
     // SAFETY: successful workers initialized every slot. JoltTraceRow is Copy,
     // so partially written rows need no cleanup on error or unwinding.
     unsafe { rows.set_len(cycles.len()) };
+    finish_rows(rows, batches)
+}
+
+fn fill_rows(
+    batch_start: usize,
+    slots: &mut [MaybeUninit<JoltTraceRow>],
+    cycles: &[Cycle],
+    bytecode: &BytecodePreprocessing,
+) -> Result<ConvertedChunk, TraceError> {
+    #[cfg(not(feature = "field-inline"))]
+    let _ = batch_start;
+    let mut chunk = ConvertedChunk {
+        bounds: RamAddressBounds::default(),
+        #[cfg(feature = "field-inline")]
+        fields: Vec::new(),
+    };
+    for (offset, (slot, cycle)) in slots.iter_mut().zip(cycles).enumerate() {
+        #[cfg(not(feature = "field-inline"))]
+        let _ = offset;
+        let row = cycle_to_trace_row(cycle, bytecode)?;
+        chunk.bounds.observe(row.ram_address());
+        slot.write(row);
+        #[cfg(feature = "field-inline")]
+        if let Some(data) = cycle.field_inline_trace() {
+            chunk.fields.push(FieldEvent {
+                cycle: batch_start + offset,
+                data,
+            });
+        }
+    }
+    Ok::<_, TraceError>(chunk)
+}
+
+fn finish_rows(
+    rows: Vec<JoltTraceRow>,
+    batches: Vec<ConvertedChunk>,
+) -> Result<(TraceData, ExecutionDimensions), TraceError> {
     let ram_bounds = batches
         .iter()
         .fold(RamAddressBounds::default(), |bounds, batch| {
@@ -180,6 +220,52 @@ fn collect_rows(
         ram_bounds,
     };
     Ok((data, dimensions))
+}
+
+fn collect_owned_chunks(
+    chunks: Vec<Vec<Cycle>>,
+    bytecode: &BytecodePreprocessing,
+) -> Result<(TraceData, ExecutionDimensions), TraceError> {
+    if let [cycles] = chunks.as_slice() {
+        return collect_rows(cycles, bytecode);
+    }
+    let len = chunks.iter().map(Vec::len).sum();
+    let _span =
+        tracing::info_span!("trace_rows_from_cycles", cycles = len, mode = "parallel").entered();
+    let mut rows = Vec::<JoltTraceRow>::with_capacity(len);
+    let mut spare = &mut rows.spare_capacity_mut()[..len];
+    let mut offset = 0;
+    let windows: Vec<_> = chunks
+        .into_iter()
+        .map(|cycles| {
+            let start = offset;
+            offset += cycles.len();
+            let (window, rest) = core::mem::take(&mut spare).split_at_mut(cycles.len());
+            spare = rest;
+            (start, window, cycles)
+        })
+        .collect();
+    let converted = windows
+        .into_par_iter()
+        .map(|(start, slots, cycles)| {
+            slots
+                .par_chunks_mut(PARALLEL_ROW_CONVERSION_THRESHOLD)
+                .zip(cycles.par_chunks(PARALLEL_ROW_CONVERSION_THRESHOLD))
+                .enumerate()
+                .map(|(batch, (slots, cycles))| {
+                    fill_rows(
+                        start + batch * PARALLEL_ROW_CONVERSION_THRESHOLD,
+                        slots,
+                        cycles,
+                        bytecode,
+                    )
+                })
+                .collect::<Result<Vec<_>, TraceError>>()
+        })
+        .collect::<Result<Vec<_>, TraceError>>()?;
+    // SAFETY: the disjoint output windows cover len slots; each successful batch initialized its window.
+    unsafe { rows.set_len(len) };
+    finish_rows(rows, converted.into_iter().flatten().collect())
 }
 
 /// A resume point for the chunked-execution contract, built on the two-pass
@@ -670,20 +756,31 @@ mod tests {
             instruction.trace(&mut cpu, Some(&mut captured));
             trace[position] = captured[0];
         }
-        let (data, _) = collect_rows(&trace, &bytecode).unwrap();
-        assert_eq!(data.len(), trace.len());
-        let event_cycles: Vec<_> = data
-            .field_events()
-            .iter()
-            .map(|event| event.cycle)
-            .collect();
-        assert_eq!(event_cycles, positions);
-        for (cycle, (row, captured)) in data.rows().iter().zip(&trace).enumerate() {
-            if let Some(payload) = data.field_inline(cycle) {
-                assert_eq!(*payload, captured.field_inline_trace().unwrap());
-                assert_eq!(row.pc(), 1);
-            } else {
-                assert_eq!(*row, JoltTraceRow::default());
+        for (data, _) in [
+            collect_rows(&trace, &bytecode).unwrap(),
+            collect_owned_chunks(
+                trace
+                    .chunks(PARALLEL_ROW_CONVERSION_THRESHOLD - 1)
+                    .map(<[Cycle]>::to_vec)
+                    .collect(),
+                &bytecode,
+            )
+            .unwrap(),
+        ] {
+            assert_eq!(data.len(), trace.len());
+            let event_cycles: Vec<_> = data
+                .field_events()
+                .iter()
+                .map(|event| event.cycle)
+                .collect();
+            assert_eq!(event_cycles, positions);
+            for (cycle, (row, captured)) in data.rows().iter().zip(&trace).enumerate() {
+                if let Some(payload) = data.field_inline(cycle) {
+                    assert_eq!(*payload, captured.field_inline_trace().unwrap());
+                    assert_eq!(row.pc(), 1);
+                } else {
+                    assert_eq!(*row, JoltTraceRow::default());
+                }
             }
         }
     }
@@ -763,6 +860,13 @@ mod conversion_tests {
                 mismatched_bytecode.bytecode[1].operands.imm = 8;
                 assert!(matches!(
                     collect_rows(&cycles, &mismatched_bytecode),
+                    Err(TraceError::BytecodeInstructionMismatch { pc: 1, .. })
+                ));
+                assert!(matches!(
+                    collect_owned_chunks(
+                        cycles.chunks(2).map(<[Cycle]>::to_vec).collect(),
+                        &mismatched_bytecode
+                    ),
                     Err(TraceError::BytecodeInstructionMismatch { pc: 1, .. })
                 ));
                 let empty_bytecode =
