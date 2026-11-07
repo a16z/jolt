@@ -9,8 +9,9 @@
 //! impl; the seam (the traits, [`JoltBackend`], `ProofSession`, the wire
 //! types) never depends on this directory. The reference tier is the
 //! equivalence anchor optimized backends are tested against and the
-//! fallback partial backends compose over; it is eager-dense throughout — a
-//! test oracle at harness scale, never a performance path.
+//! fallback partial backends compose over. Its sumcheck implementations are
+//! eager-dense test oracles at harness scale. The Akita witness builders are
+//! shared production code used by both reference and optimized backends.
 
 #[cfg(feature = "akita")]
 use jolt_akita::TraceOneHotCommitment;

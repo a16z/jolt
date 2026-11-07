@@ -208,6 +208,7 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
     let mut selected_rows = vec![NO_SELECTED_ROW; row_index_count];
     let mut committed_zero_masks = vec![0u64; rows_per_ring];
     let ring_end = ring_end.min(source.rows.nonzero_prefix_len().div_ceil(rows_per_ring));
+    let invalid = |hot| hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k;
     for ring in ring_start..ring_end {
         let row_start = ring * rows_per_ring;
         let populated_rows = source
@@ -220,16 +221,11 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
         source
             .rows
             .fill_rows_with_masks(row_start, populated_indices, populated_masks);
-        // A maximum reduction vectorizes the valid-input scan. Keep the
-        // original error path to report the first invalid selector.
-        if populated_indices
-            .iter()
-            .copied()
-            .max()
-            .is_some_and(|hot| hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k)
-        {
+        // Invalid selectors form an upper interval, so checking the maximum
+        // suffices. Rescan only to report the first invalid selector.
+        if populated_indices.iter().copied().max().is_some_and(invalid) {
             for &hot in populated_indices.iter() {
-                if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
+                if invalid(hot) {
                     return Err(AkitaError::InvalidInput(format!(
                         "trace one-hot row {hot} is outside K={}",
                         source.one_hot_k
