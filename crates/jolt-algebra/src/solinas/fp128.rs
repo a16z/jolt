@@ -1241,7 +1241,7 @@ impl<const P: u128> Fp128<P> {
     /// guest selected `field-inline-guest-fp128` and `P` is its modulus.
     /// Routing any other `Fp128` through the unit would reduce modulo the
     /// wrong prime.
-    const FIELD_INLINE: bool =
+    pub(super) const FIELD_INLINE: bool =
         cfg!(feature = "field-inline-guest-fp128") && P == FIELD_INLINE_FP128_MODULUS;
 }
 

@@ -12,9 +12,9 @@
 //! Headroom boundaries: the `i32`-lane bound (32768 max-lane accumulations)
 //! is tested exactly, with the one-past case asserted to panic in debug
 //! builds. The `u128`-slot headrooms (≥ 2^61 terms) are analytically
-//! derived in `solinas/unreduced.rs` and computationally untestable; the
-//! adversarial all-max batches here exercise the worst per-term slot
-//! contributions those derivations bound.
+//! derived in `solinas/unreduced.rs`. For Fp128, repeated doubling constructs
+//! sums at the 2^64 - 1 term boundary without iterating over that many terms;
+//! an independent BigUint oracle checks their reductions.
 
 #![cfg(feature = "solinas")]
 // NB: no `expect(clippy::unwrap_used)` — every unwrap here sits inside a
@@ -164,8 +164,6 @@ macro_rules! base_field_suite {
             let mut rng = ChaCha20Rng::seed_from_u64($seed);
             let f2 = |v: u128| <$F2 as CanonicalEncoding>::from_u128_checked(v).unwrap();
             let val2 = |x: &$F2| x.to_u128_checked().unwrap();
-
-            assert!(!<$F2 as Unreduced>::SUM_IS_EXACT);
 
             let check_products = |pairs: &[(u128, u128)]| {
                 let expect = pairs
@@ -764,4 +762,48 @@ fn dot_base_rows_rejects_short_rows() {
     let row = [F::one(); 2];
     let mut out = [F::zero()];
     F::dot_base_rows(&pows, &[&row], &mut out);
+}
+
+/// Exercise the advertised Fp128 bound, including carries between all four
+/// slots, without allocating or iterating over 2^64 products.
+#[expect(
+    clippy::unwrap_used,
+    reason = "test operands are canonical and reduced oracles fit u128"
+)]
+fn check_fp128_exact_sum_headroom<const P: u128>() {
+    use num_bigint::BigUint;
+    use two::solinas::Fp128ProductAccum;
+    let operands = [0, 1, u128::from(u64::MAX), 1u128 << 64, 1u128 << 127, P - 1];
+    for a in operands {
+        for b in operands {
+            let product = two::Fp128::<P>::from_u128_checked(a)
+                .unwrap()
+                .mul_unreduced(two::Fp128::<P>::from_u128_checked(b).unwrap());
+            for count in [0, 1, u64::from(u32::MAX), 1u64 << 63, u64::MAX] {
+                let mut accumulated = Fp128ProductAccum::zero();
+                for bit in (0..64).rev() {
+                    accumulated += accumulated;
+                    if count & (1u64 << bit) != 0 {
+                        accumulated += product;
+                    }
+                }
+                let expected =
+                    BigUint::from(a) * BigUint::from(b) * BigUint::from(count) % BigUint::from(P);
+                let actual = two::Fp128::<P>::reduce_product(accumulated)
+                    .to_u128_checked()
+                    .unwrap();
+                assert_eq!(
+                    BigUint::from(actual),
+                    expected,
+                    "a={a}, b={b}, count={count}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn fp128_exact_sum_headroom_boundary() {
+    check_fp128_exact_sum_headroom::<{ u128::MAX - 274 }>();
+    check_fp128_exact_sum_headroom::<{ u128::MAX - 0xFFFF_A7F6 }>();
 }

@@ -46,12 +46,19 @@ pub trait Unreduced: Field {
     /// Whether delayed reduction over [`Product`](Self::Product) is exact:
     /// `reduce_product(Σᵢ mul_unreduced(aᵢ, bᵢ)) = Σᵢ aᵢ·bᵢ` for batches
     /// within the accumulator's documented headroom.
+    /// This guarantees sums only, not subtraction or negation in `Product`.
     ///
     /// Conservative default `false`; a field opts in only once its
     /// accumulator is proven exact. Callers that must stay term-for-term
     /// identical to `Mul` keep the per-term reduce path when this is
     /// `false`.
     const SUM_IS_EXACT: bool = false;
+
+    /// Whether callers choosing a product-sum implementation should prefer
+    /// canonical multiplication to widening products. An accelerated guest
+    /// multiplication can be cheaper even when [`SUM_IS_EXACT`](Self::SUM_IS_EXACT)
+    /// holds. This is a cost preference, not an exactness guarantee.
+    const PREFER_REDUCED_PRODUCTS: bool = false;
 
     /// Widening `self × other` with no reduction.
     fn mul_unreduced(self, other: Self) -> Self::Product;
