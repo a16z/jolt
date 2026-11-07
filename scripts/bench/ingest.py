@@ -244,6 +244,30 @@ def check_result(job_id, documents, exit_code, summary):
     return {'schema': 1, 'job_id': job_id, 'conclusion': conclusion, 'title': title, 'summary': summary[:60000]}
 
 
+def render_pr_comment(result, summary_path, details_url, exit_code=0):
+    rows = bench.render_comment(result, summary_path)
+    lines = ['<!-- jolt-e2e-benchmark-comment -->', '## End-to-end CPU benchmark', '',
+             f'[Full results]({details_url}) · '
+             '[Benchmark history](https://a16z.github.io/jolt/dev/prover-history/)', '',
+             f"Base: `{result['revisions']['base']}`. Submitted head: `{result['revisions']['head']}`. "
+             f"Measured merge: `{result['revisions']['merge']}`.", '']
+    sizes = sorted({(case['physical_cores'], case['scale_log2']) for case in result['cases']
+                    if any(sample['exit_code'] is not None for sample in case['samples'])})
+    lines += ['Sizes run (physical cores × trace ceiling): ' +
+              (', '.join(f'{cores} × 2^{scale}' for cores, scale in sizes) if sizes else 'none recorded') + '.', '']
+    if exit_code or result['status'] != 'complete':
+        lines.append('Comparison unavailable; see full results for execution status.')
+    elif rows:
+        lines += ['Rows with more than 3% change in time or peak resident set size (RSS) are shown; '
+                  'positive means an increase. '
+                  'PCS is the polynomial commitment scheme: Akita is lattice-based; Dory is curve-based.', '',
+                  '| Workload / PCS | Physical cores | Trace ceiling | Trace rows base / head | End-to-end base / head (s) | Signed time change | Peak RSS base / head (bytes) | Signed RSS change |',
+                  '|---|---:|---:|---:|---:|---:|---:|---:|', *rows]
+    else:
+        lines.append('No change above 3% in end-to-end proving time or peak RSS.')
+    return '\n'.join(lines) + '\n'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('job-id', 'result-url', 'result-sha256'):
@@ -290,12 +314,14 @@ def main():
         if args.executor_exit_code:
             summary = f'Benchmark executor exited {args.executor_exit_code}. ' + summary
     elif root['tier'] == 'pr':
-        bench.render_comment(root, summary_path)
+        details_url = (f'https://github.com/a16z/jolt/actions/runs/{receipt["ingest_run_id"]}'
+                       f'/attempts/{receipt["ingest_run_attempt"]}')
+        comment = render_pr_comment(root, summary_path, details_url, args.executor_exit_code)
         summary = summary_path.read_text()
         files['comparison.json'] = calibration.encoded({'references': root.get('comparison_references', {}),
             'availability': {case['id']: calibration.for_case(root, case)[1] for case in root['cases']},
             'catalog_revision': root.get('external_references', {}).get('catalog_revision'), 'summary': summary})
-        files['pr-comment.md'] = summary.encode()
+        files['pr-comment.md'] = comment.encode()
     else:
         summary = '\n'.join(f'{item["revisions"]["head"]}: {item["status"]}' if item else
                             'Planned commit result unavailable.' for item in documents)
@@ -310,6 +336,12 @@ def main():
         check.update(conclusion='success' if success else 'failure',
                      title='Calibration reference validated' if success else 'Calibration failed')
     bench.write_json(args.out / 'check/check.json', check)
+    if os.environ.get('GITHUB_STEP_SUMMARY'):
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+            output.write(summary + '\n')
+    if plan['tier'] == 'pr' and plan['provenance'].get('pr_number') and os.environ.get('GITHUB_OUTPUT'):
+        with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+            output.write(f'pr_number={plan["provenance"]["pr_number"]}\n')
 
 
 if __name__ == '__main__':
