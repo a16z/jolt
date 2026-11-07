@@ -88,7 +88,7 @@ Pinned Codex 0.162.0 [clamps the configured window to its model catalog's maximu
 872,000 tokens for this model, and [auto-compacts at 90%](https://github.com/openai/codex/blob/rust-v0.162.0/codex-rs/protocol/src/openai_models.rs)
 (784,800 tokens). Compaction requests use the same model checks and spend accounting.
 
-The gate allows two paid attempts per head and three per PR. Preparation reserves the attempt;
+The gate allows two paid attempts per head. Preparation reserves the attempt;
 publication consumes that reservation without counting it again. Failed attempts are not cached.
 Verified snapshots are bounded to 500,000,000 bytes per revision. These are resource limits,
 not risk-level rules.

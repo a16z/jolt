@@ -32,11 +32,12 @@
     reason = "profile harness: fail loudly and report to stdout"
 )]
 
+use std::error::Error;
 use std::fs;
 use std::io::{Result, Write as _};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::result::Result as ParseResult;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -281,7 +282,7 @@ impl BackendKind {
 }
 
 #[cfg(feature = "akita")]
-fn parse_akita_chunk_profile(value: &str) -> ParseResult<AkitaChunkProfile, String> {
+fn parse_akita_chunk_profile(value: &str) -> StdResult<AkitaChunkProfile, String> {
     let (chunks, levels) = value
         .strip_prefix('w')
         .and_then(|value| value.split_once('r'))
@@ -343,16 +344,22 @@ pub struct ProfileArgs {
 
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
-    /// optimized`. A budget below the optimized prover's known eager
-    /// reservation, which covers named eager tables only, fails after
-    /// tracing, before proving; passing it does not mean the whole proof
-    /// fits, and the budget does not cap process memory.
+    /// optimized`. The profile reserves against it in turn and returns an
+    /// error at the first reservation that does not fit: the optimized
+    /// prover's known eager reservation, which covers the trace buffers and
+    /// named eager tables only, after tracing and before proving; then, under
+    /// Akita, the rest of the trace output, the program and program
+    /// preprocessing buffers, and the one-hot setup's flat public matrix,
+    /// before PCS setup allocates it. Under Akita every budget fails for
+    /// multi-chunk or field-inline setups, which the matrix check does not
+    /// price. Passing does not mean the whole proof fits, and the budget does
+    /// not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
 
 /// `--memory-budget`: bytes, optionally scaled by a binary suffix.
-fn parse_memory_budget(value: &str) -> ParseResult<MemoryBudget, String> {
+fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
     let (digits, shift) = [("KiB", 10), ("MiB", 20), ("GiB", 30), ("TiB", 40)]
         .into_iter()
         .find_map(|(suffix, shift)| value.strip_suffix(suffix).map(|digits| (digits, shift)))
@@ -487,17 +494,27 @@ impl Drop for RunLock {
     }
 }
 
+/// A profile run's outcome; the errors are the ones [`run`] documents.
+type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
+
 /// Runs one profile invocation end to end. The bin's `main` is a thin
 /// wrapper over this so the smoke test can call it in-process.
 ///
+/// # Errors
+///
+/// Returns a `--memory-budget` below what its checks reserve
+/// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
+/// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
+/// matrix limit does not price.
+///
 /// # Panics
 ///
-/// Panics on any pipeline failure (harness semantics), if `--scale` is out
+/// Panics on any other pipeline failure (harness semantics), if `--scale` is out
 /// of range, if another run of the same (workload, scale) holds the
 /// artifact lock, and if called twice in one process with a
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
-pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
+pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
     assert!(
         args.memory_budget.is_none() || args.backend == BackendKind::Optimized,
         "--memory-budget checks the optimized prover's reservation; pass --backend optimized"
@@ -535,7 +552,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
         )),
     };
 
-    run_workload(args, scale, &run_dir);
+    run_workload(args, scale, &run_dir)?;
 
     // The workload's high-water mark, sampled before the flush-time trace
     // parse/rewrite below can inflate it with tooling allocations.
@@ -548,7 +565,7 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     if args.format != OutputFormat::Chrome {
         report_stage_boundaries();
         update_latest_link(&trace_name, &run_dir);
-        return ProfileArtifacts::default();
+        return Ok(ProfileArtifacts::default());
     }
 
     let ctx = SummaryContext {
@@ -578,11 +595,11 @@ pub fn run(args: &ProfileArgs) -> ProfileArtifacts {
     println!("Trace:   {}", trace_path.display());
     println!("Summary: {}", summary_file.display());
 
-    ProfileArtifacts {
+    Ok(ProfileArtifacts {
         trace_path: Some(trace_path),
         summary_path: Some(summary_file),
         summary: Some(summary),
-    }
+    })
 }
 
 /// Points `benchmark-runs/latest_{trace_name}` at this run's directory —
@@ -772,7 +789,7 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     fs::write(path, migrated)
 }
 
-fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
+fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult<()> {
     let workload = args.name;
     let backend = args.backend;
     let bench_name = workload.as_str();
@@ -832,7 +849,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
         trace_output,
         args,
         e2e_start,
-    );
+    )?;
     let (duration, proof_size) = (run.duration, run.proof_size);
 
     if let Some(path) = &args.result_json {
@@ -942,6 +959,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     {
         eprintln!("Failed to write consolidated timing: {e}");
     }
+    Ok(())
 }
 
 #[cfg(not(feature = "akita"))]
@@ -951,7 +969,7 @@ fn prove_workload(
     trace_output: TraceOutput,
     args: &ProfileArgs,
     e2e_start: Instant,
-) -> ProvenRun {
+) -> ProfileResult<ProvenRun> {
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
 
@@ -964,9 +982,7 @@ fn prove_workload(
     )
     .expect("derive config");
     if let Some(budget) = args.memory_budget {
-        budget
-            .check_known_eager::<Fr>(&config, &trace_output.trace)
-            .expect("memory budget covers the known eager reservation");
+        let _ = budget.check_known_eager::<Fr>(&config, &trace_output.trace)?;
     }
     let shared_preprocessing =
         JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
@@ -1040,7 +1056,7 @@ fn prove_workload(
     let verifier_single_threaded = single_threaded_pool
         .install(|| measure_verifier(VerificationMode::SingleThreaded, 1, verify));
 
-    ProvenRun {
+    Ok(ProvenRun {
         duration,
         e2e_duration,
         setup_duration,
@@ -1049,7 +1065,7 @@ fn prove_workload(
         proof_size,
         padded_trace_rows: config.trace_length,
         public_output: public_io.outputs,
-    }
+    })
 }
 
 #[cfg(feature = "akita")]
@@ -1059,11 +1075,11 @@ fn prove_workload(
     trace_output: TraceOutput,
     args: &ProfileArgs,
     e2e_start: Instant,
-) -> ProvenRun {
+) -> ProfileResult<ProvenRun> {
     use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-    use jolt_openings::CommitmentScheme;
+    use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
@@ -1079,11 +1095,10 @@ fn prove_workload(
     )
     .expect("derive config");
     config.akita_chunk_profile = args.akita_chunk_profile;
-    if let Some(budget) = args.memory_budget {
-        budget
-            .check_known_eager::<AkitaField>(&config, &trace_output.trace)
-            .expect("memory budget covers the known eager reservation");
-    }
+    let budget = args
+        .memory_budget
+        .map(|budget| budget.check_known_eager::<AkitaField>(&config, &trace_output.trace))
+        .transpose()?;
     let schedule_artifacts =
         AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
     let params = crate::akita::preprocessing::grouped_setup_params(
@@ -1096,10 +1111,35 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
+    // The eager check reserved the trace buffers; the setup matrix stays live
+    // beside them, the rest of the trace output, the program and its
+    // preprocessing. Counts those named buffers only.
+    let budget = budget
+        .map(|budget| {
+            budget.reserve::<AkitaField>(
+                trace_output.heap_bytes() - trace_output.trace.heap_bytes()
+                    + jolt_program.heap_bytes()
+                    + shared.program.heap_bytes(),
+            )
+        })
+        .transpose()?;
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
-    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params).expect("Akita PCS setup");
+    let (pcs_setup, verifier_setup) = match budget {
+        Some(budget) => {
+            match AkitaScheme::setup_with_matrix_byte_limit(params, budget.remaining()) {
+                Err(OpeningsError::SetupExceedsBudget { required, .. }) => {
+                    return Err(budget
+                        .reserve::<AkitaField>(required)
+                        .expect_err("the matrix exceeds the remaining budget")
+                        .into());
+                }
+                setup => setup?,
+            }
+        }
+        None => AkitaScheme::setup(params)?,
+    };
     let prover_pool = args.akita_prover_idle_spin_us.map(|micros| {
         use jolt_akita::AkitaProverPool;
         let threads = NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
@@ -1190,7 +1230,7 @@ fn prove_workload(
         measure_verifier(VerificationMode::SingleThreaded, 1, verify)
     });
 
-    ProvenRun {
+    Ok(ProvenRun {
         duration,
         e2e_duration,
         setup_duration,
@@ -1199,7 +1239,7 @@ fn prove_workload(
         proof_size,
         padded_trace_rows: config.trace_length,
         public_output: public_io.outputs,
-    }
+    })
 }
 
 fn profile_witness(config: JoltVmWitnessConfig, inputs: JoltVmWitnessInputs) -> TraceBackend {

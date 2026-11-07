@@ -44,7 +44,8 @@ fn profile_run_emits_conformant_artifacts() {
         #[cfg(feature = "akita")]
         akita_prover_idle_spin_us: None,
         memory_budget: None,
-    });
+    })
+    .unwrap();
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");

@@ -69,7 +69,6 @@ AGENT_WORKFLOW = ".github/workflows/ai-merge-gate-evaluate.yml"
 CLASSIFIER_INPUTS = ("scripts/ci/classifier_agent.py", AGENT_WORKFLOW, "scripts/ci/ai_merge_gate.py",
                      "scripts/ci/diff_classifier.py", WORKFLOW, ".claude/skills/verifier-classifier/SKILL.md")
 MAX_HEAD_ATTEMPTS = 2
-MAX_PR_ATTEMPTS = 3
 MAX_TREE_BYTES = 500_000_000
 MAX_TEXT = 60_000
 
@@ -111,7 +110,10 @@ def log(message: str) -> None:
 def clip(text: str) -> str:
     if len(text) <= MAX_TEXT:
         return text
-    return text[:MAX_TEXT] + f"\n\n[display clipped: {len(text) - MAX_TEXT} more characters]"
+    clipped = text[:MAX_TEXT] + f"\n\n[display clipped: {len(text) - MAX_TEXT} more characters]"
+    if "<details>" in clipped and "</details>" not in clipped:
+        clipped += "\n\n</details>" + text.partition("</details>")[2]
+    return clipped
 
 
 class GitHub:
@@ -499,12 +501,10 @@ class Gate:
         self.ledger = self.attempts()
         source = self.pinned(pull)
         paths = source.changed()
-        used = sum(self.ledger.values())
-        if not self.model.prepaid(source) and (self.ledger.get(head, 0) >= MAX_HEAD_ATTEMPTS or used >= MAX_PR_ATTEMPTS):
+        if not self.model.prepaid(source) and self.ledger.get(head, 0) >= MAX_HEAD_ATTEMPTS:
             self.records.append(Record(CLASSIFIER, "skipped", "Verifier classifier: attempts spent",
                                        f"This head has used {self.ledger.get(head, 0)} of {MAX_HEAD_ATTEMPTS} "
-                                       f"paid classifier attempts and the pull request {used} of "
-                                       f"{MAX_PR_ATTEMPTS}. The head stays unclassified, so only a person can "
+                                       "paid classifier attempts. The head stays unclassified, so only a person can "
                                        "approve it. No risk label is assigned; policy requires an independent "
                                        "current-head maintainer approval.", None))
             return
@@ -513,8 +513,7 @@ class Gate:
             # Counted durably before the first paid request, so a timeout or crash still counts.
             self.ledger[head] = self.ledger.get(head, 0) + 1
             self.comment(number, head, "Verifier classifier: running",
-                         f"Paid attempt {self.ledger[head]} of {MAX_HEAD_ATTEMPTS} for this head and "
-                         f"{used + 1} of {MAX_PR_ATTEMPTS} for this pull request. The verdict replaces "
+                         f"Paid attempt {self.ledger[head]} of {MAX_HEAD_ATTEMPTS} for this head. The verdict replaces "
                          "this text; without one, the attempt failed and the head has no classifier result.")
 
         skill = (ROOT / ".claude/skills/verifier-classifier/SKILL.md").read_text()
@@ -528,9 +527,10 @@ class Gate:
         conclusion = "success" if risk < 4 else "neutral"
         self.records.append(Record(CLASSIFIER, conclusion, f"Verifier classifier: risk-{risk}",
                                    f"{model_text(answer['reasoning'])}\n\nRisk: risk-{risk}\n\n" +
+                                   f"<details>\n<summary>Per-path ratings ({len(answer['risks'])} files)</summary>\n\n" +
                                    "\n".join(f"- {model_text(item['path'])}: risk-{item['level']} — {model_text(item['reasoning'])}"
                                              for item in answer["risks"]) +
-                                   f"\n\n_{MODEL}, reasoning effort {EFFORT}_", risk))
+                                   f"\n\n</details>\n\n_{MODEL}, reasoning effort {EFFORT}_", risk))
 
     def attester(self, pull: dict) -> str | None:
         """Who attests, in the comments `decide` read, a clean review of the current head."""
