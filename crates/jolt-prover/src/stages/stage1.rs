@@ -15,8 +15,6 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::CommitmentScheme;
-#[cfg(feature = "zk")]
-use jolt_sumcheck::CommittedSumcheckWitness;
 use jolt_sumcheck::SumcheckProof;
 use jolt_transcript::{FieldTranscript, ProverTranscript};
 use jolt_verifier::stages::pow::PowSite;
@@ -44,17 +42,13 @@ pub struct Stage1ProverOutput<F: JoltField, C> {
     pub sumcheck_proof: SumcheckProof<F, C>,
     pub claims: Stage1OutputClaims<F>,
     pub clear_output: Stage1ClearOutput<F>,
-    #[cfg(feature = "zk")]
-    pub uniskip_witness: CommittedSumcheckWitness<F>,
-    #[cfg(feature = "zk")]
-    pub committed_witness: CommittedSumcheckWitness<F>,
 }
 
 /// Prove stage 1 on `transcript` (positioned at the stage-0 boundary).
 #[tracing::instrument(skip_all)]
 pub fn prove_stage1<F, PCS, VC, T>(
     backend: &mut KernelContext<'_, F, JoltBackend<F, PCS>>,
-    mode: &ProofMode<'_, VC>,
+    mode: &mut ProofMode<VC>,
     log_t: usize,
     transcript: &mut T,
 ) -> Result<Stage1ProverOutput<F, VC::Output>, ProverError<F>>
@@ -90,11 +84,6 @@ where
             uniskip_challenge,
         ),
     };
-    // The committed path grinds no stage-1 nonce, matching the verifier's ZK
-    // branch (ZK runs over BN254 only, where no site needs one).
-    #[cfg(feature = "zk")]
-    let pow_nonce = None;
-    #[cfg(not(feature = "zk"))]
     let pow_nonce = grind_pow::<F, _>(PowSite::Stage1, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
     let input_points = sumchecks.empty_input_points();
@@ -111,12 +100,9 @@ where
         &inputs,
         &input_points,
         &challenges,
-        mode.recorder()?,
+        mode.recorder(),
         transcript,
     )?;
-    #[cfg(feature = "zk")]
-    let (sumcheck_proof, committed_witness) = crate::recorder::split_recorded(proved.recorded)?;
-    #[cfg(not(feature = "zk"))]
     let sumcheck_proof = proved.recorded.proof.into();
 
     let claims = Stage1OutputClaims::new(proved_uniskip.output_claim, proved.output_claims.clone());
@@ -128,10 +114,6 @@ where
         sumcheck_proof,
         claims,
         clear_output,
-        #[cfg(feature = "zk")]
-        uniskip_witness: proved_uniskip.witness,
-        #[cfg(feature = "zk")]
-        committed_witness,
     })
 }
 
@@ -159,20 +141,20 @@ mod field_inline_round_trip {
     use jolt_witness::{JoltWitnessOracle as _, TraceBackend};
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, LOG_T};
+    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, test_mode, LOG_T};
 
     fn round_trip(trace_backend: TraceBackend) {
         let witness = trace_backend.with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(None).unwrap();
+        let mut mode = test_mode();
         let mut prover_state = prover_transcript::<Keccak>(
             &jolt_transcript::protocol_tag(b"stage1-field-inline"),
             b"",
         );
         let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             LOG_T,
             &mut prover_state,
         )
@@ -213,125 +195,44 @@ mod field_inline_round_trip {
     }
 }
 
-/// ZK with field-inline enabled: the committed stage-1 shell and the verifier replay. Mirrors
-/// `blindfold.rs`'s hard transcript check at stage scope — the replay runs
-/// `stage1::verify`'s zk body over its public constituents (the tau draw,
-/// `uniskip::verify_zk`, the batch `verify_zk`) and must land on the
-/// prover's forward transcript bytes.
-#[cfg(all(test, feature = "field-inline", feature = "zk"))]
+/// ZK with field-inline enabled: the committed stage-1 witness carries the
+/// composed rows, and the production `stage1::verify` zk branch consumes the
+/// prover's argument string.
+#[cfg(all(test, feature = "field-inline", feature = "zk", not(feature = "akita")))]
 #[expect(clippy::unwrap_used, reason = "test module")]
 mod field_inline_zk {
-    use common::constants::MAX_BLINDFOLD_GENERATORS;
-    use common::jolt_device::JoltDevice;
-    use jolt_crypto::{Bn254G1, Pedersen, PedersenSetup};
+    use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::DoryScheme;
     use jolt_field::Fr;
-    use jolt_transcript::{prover_transcript, Keccak, ProverState};
-    use jolt_verifier::stages::uniskip::{self, UniskipParams};
-    use jolt_verifier::stages::PrecommittedSchedule;
-    use jolt_verifier::CheckedInputs;
+    use jolt_transcript::{Keccak, ProverState};
 
     use super::*;
-    use crate::stages::field_inline_fixtures::{field_arithmetic_backend, ENTRY, LOG_T};
-
-    const CAPACITY: usize = MAX_BLINDFOLD_GENERATORS;
+    use crate::stages::field_inline_fixtures::{
+        field_arithmetic_backend, field_arithmetic_preprocessing, fixture_transcript,
+        test_checked_inputs, test_mode, verify_through, Through, LOG_T,
+    };
 
     #[test]
-    fn committed_stage1_shell_carries_the_composed_rows_and_replays() {
+    fn masked_stage1_round_trips_the_masked_verifier() {
         let witness = field_arithmetic_backend().with_field_inline().unwrap();
         let backend = crate::stages::field_inline_fixtures::reference_backend();
         let mut context = backend.with_witness(&witness);
-        let setup = PedersenSetup::new(vec![Bn254G1::default(); CAPACITY], Bn254G1::default());
-        let mode = ProofMode::<Pedersen<Bn254G1>>::new(Some(&setup)).unwrap();
-        let mut prover_state = prover_transcript::<Keccak>(
-            &jolt_transcript::protocol_tag(b"stage1-field-inline-zk"),
-            b"",
-        );
-        let out = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
+        let mut mode = test_mode();
+        let mut prover_transcript = fixture_transcript();
+        let _ = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
             &mut context,
-            &mode,
+            &mut mode,
             LOG_T,
-            &mut prover_state,
+            &mut prover_transcript,
         )
         .unwrap();
 
-        // The committed shell carries the composed 50 output-claim values
-        // (45 common openings + five field value/product openings), row-committed in
-        // capacity-sized chunks — the shape the verifier's
-        // `composed_output_claim_count` check derives.
-        let total: usize = out
-            .committed_witness
-            .output_claim_rows
-            .iter()
-            .map(Vec::len)
-            .sum();
-        assert_eq!(total, 50);
-        let row_lens: Vec<usize> = out
-            .committed_witness
-            .output_claim_rows
-            .iter()
-            .map(Vec::len)
-            .collect();
-        let expected_row_lens: Vec<usize> = {
-            let mut remaining = 50usize;
-            let mut lens = Vec::new();
-            while remaining > 0 {
-                let take = remaining.min(CAPACITY);
-                lens.push(take);
-                remaining -= take;
-            }
-            lens
-        };
-        assert_eq!(row_lens, expected_row_lens);
-        let committed = out.sumcheck_proof.as_committed().unwrap();
-        assert_eq!(
-            committed.output_claims.commitments.len(),
-            50usize.div_ceil(CAPACITY)
-        );
-
-        let checked = CheckedInputs {
-            public_io: JoltDevice::default(),
-            zk: true,
-            trace_length: 1 << LOG_T,
-            ram_K: 1 << 4,
-            entry_address: ENTRY,
-            preprocessing_digest: [0u8; 32],
-            untrusted_advice_commitment_present: false,
-            trusted_advice_commitment_present: false,
-            vc_capacity: Some(CAPACITY),
-            precommitted: PrecommittedSchedule {
-                trusted_advice: None,
-                untrusted_advice: None,
-                bytecode: None,
-                program_image: None,
-            },
-        };
-        let mut transcript = prover_transcript::<Keccak>(
-            &jolt_transcript::protocol_tag(b"stage1-field-inline-zk"),
-            b"",
-        );
-        let tau = draw_spartan_outer_tau(&mut transcript, LOG_T).unwrap();
-        let uniskip_step = uniskip::verify_zk(
-            &checked,
-            &out.uniskip_proof,
-            &UniskipParams::spartan_outer(),
-            &mut transcript,
-        )
-        .unwrap();
-        let sumchecks = Stage1BatchSumchecks {
-            outer_remainder: OuterRemainder::new(
-                SpartanOuterDimensions::rv64(LOG_T),
-                tau,
-                uniskip_step.challenge,
-            ),
-        };
-        let _consistency = sumchecks
-            .verify_zk(&out.sumcheck_proof, &mut transcript)
-            .unwrap();
-
-        assert_eq!(
-            transcript.verifier_message::<[u8; 32]>(),
-            prover_state.verifier_message::<[u8; 32]>()
+        verify_through(
+            Through::Stage1,
+            &test_checked_inputs(),
+            &field_arithmetic_preprocessing(),
+            mode,
+            &mut prover_transcript,
         );
     }
 }

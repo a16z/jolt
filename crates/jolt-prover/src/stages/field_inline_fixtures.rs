@@ -22,9 +22,15 @@ use crate::JoltBackend;
 use common::constants::{MAX_BLINDFOLD_GENERATORS, RAM_START_ADDRESS};
 use common::jolt_device::{JoltDevice, MemoryConfig, MemoryLayout};
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
+#[cfg(feature = "zk")]
+use jolt_claims::protocols::jolt::JoltRelationId;
+#[cfg(feature = "zk")]
+use jolt_crypto::{Bn254, JoltGroup, PedersenSetup};
 use jolt_crypto::{Bn254G1, Pedersen};
 use jolt_dory::DoryScheme;
 use jolt_field::Fr;
+#[cfg(feature = "zk")]
+use jolt_field::Ring;
 #[cfg(feature = "akita")]
 use jolt_kernels::{
     CommitWitness, KernelError, ProofSession, WitnessCommitRequest, WitnessCommitment,
@@ -39,14 +45,30 @@ use jolt_riscv::{
     NormalizedOperands, RamAccess, RamWrite, RegisterRead, RegisterState, RegisterWrite,
     TraceRowError, RV64IMAC_JOLT_FIELD_INLINE,
 };
+#[cfg(feature = "zk")]
+use jolt_transcript::{prover_transcript, verifier_transcript, Keccak, ProverState};
+use jolt_verifier::config::{ZkConfig, SELECTED_ZK_CONFIG};
 use jolt_verifier::preprocessing::{JoltVerifierPreprocessing, ProgramPreprocessing};
 use jolt_verifier::stages::PrecommittedSchedule;
 use jolt_verifier::CheckedInputs;
+#[cfg(feature = "zk")]
+use jolt_verifier::{
+    config::JoltProtocolConfig,
+    proof::{JoltCommitments, JoltProof, JoltProofClaims, JoltStageProofs},
+    stages::{
+        build_formula_dimensions, pow::StagePowNonces, stage1, stage2, stage3, stage4, stage5,
+        stage6a, stage6b,
+    },
+    JOLT_SESSION,
+};
 #[cfg(feature = "akita")]
 use jolt_witness::JoltWitnessPlane;
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
 
-use crate::{JoltProverPreprocessing, ProverConfig};
+#[cfg(feature = "zk")]
+use jolt_zk::masking::{CommittedPadsView, MaskedMessages, MaskedReader, MaskedSession};
+
+use crate::{JoltProverPreprocessing, ProofMode, ProverConfig};
 
 pub(crate) const ENTRY: u64 = RAM_START_ADDRESS;
 // 3, not 2: the last physical cycle must be a noop (constraint 21's
@@ -409,14 +431,15 @@ pub(crate) fn addi_only_preprocessing() -> JoltProverPreprocessing<DoryScheme, P
 pub(crate) fn test_checked_inputs() -> CheckedInputs {
     CheckedInputs {
         public_io: test_public_io(),
-        zk: cfg!(feature = "zk"),
+        zk: SELECTED_ZK_CONFIG,
         trace_length: 1 << LOG_T,
         ram_K: 1 << RAM_LOG_K,
         entry_address: ENTRY,
         preprocessing_digest: [0u8; 32],
         untrusted_advice_commitment_present: false,
         trusted_advice_commitment_present: false,
-        vc_capacity: cfg!(feature = "zk").then_some(MAX_BLINDFOLD_GENERATORS),
+        vc_capacity: matches!(SELECTED_ZK_CONFIG, ZkConfig::BlindFold)
+            .then_some(MAX_BLINDFOLD_GENERATORS),
         precommitted: PrecommittedSchedule {
             #[cfg(not(feature = "akita"))]
             trusted_advice: None,
@@ -463,6 +486,184 @@ pub(crate) fn test_public_io() -> JoltDevice {
         memory_layout: test_memory_layout(),
         ..Default::default()
     }
+}
+
+/// The compiled mode for the stage recipes. ZK builds mask with pads
+/// committed on a throwaway transcript: the fixture prover starts at stage 1,
+/// and [`verify_through`] counts pads rather than reading their commitment.
+pub(crate) fn test_mode() -> ProofMode<Pedersen<Bn254G1>> {
+    #[cfg(feature = "zk")]
+    {
+        use jolt_zk::{
+            blindfold::BlindFold,
+            masking::{PadLayout, ZkBackend},
+        };
+        use rand_core::OsRng;
+        let generator = Bn254::g1_generator();
+        let generators = (2..2 + MAX_BLINDFOLD_GENERATORS as u64)
+            .map(|k| generator.scalar_mul(&Fr::from_u64(k)))
+            .collect();
+        let setup = PedersenSetup::new(generators, generator.scalar_mul(&Fr::from_u64(1)));
+        let (pads, _) = BlindFold::<Pedersen<Bn254G1>>::commit_pads(
+            &setup,
+            &PadLayout::new(1 << 14, 0).unwrap(),
+            &mut fixture_transcript(),
+            &mut OsRng,
+        )
+        .unwrap();
+        ProofMode::masked(pads)
+    }
+    #[cfg(not(feature = "zk"))]
+    {
+        ProofMode::clear()
+    }
+}
+
+/// A fresh prover transcript under Jolt's session over an empty statement.
+/// The fixture prover starts at stage 1 (no stage 0), so [`verify_through`]
+/// seeds the verifier the same way.
+#[cfg(feature = "zk")]
+pub(crate) fn fixture_transcript() -> ProverState<Keccak> {
+    prover_transcript::<Keccak>(&JOLT_SESSION, &0u64)
+}
+
+/// The last production verifier stage [`verify_through`] runs.
+#[cfg(feature = "zk")]
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Through {
+    Stage1,
+    Stage2,
+    Stage4,
+    Stage6b,
+}
+
+/// Runs the production masked stage verifiers through `last` over the
+/// fixture prover's masked tape (from `mode`), counting pads, and requires
+/// the verifier to consume the whole tape and land on the prover's sponge
+/// state. The fixture's field has no stage proof of work.
+#[cfg(feature = "zk")]
+pub(crate) fn verify_through(
+    last: Through,
+    checked: &CheckedInputs,
+    preprocessing: &JoltProverPreprocessing<DoryScheme, Pedersen<Bn254G1>>,
+    mode: ProofMode<Pedersen<Bn254G1>>,
+    prover: &mut ProverState<Keccak>,
+) {
+    let (_, tape) = mode.into_parts();
+    let config = test_prover_config();
+    let empty = || JoltCommitments {
+        rd_inc: Default::default(),
+        ram_inc: Default::default(),
+        instruction_ra: Vec::new(),
+        ram_ra: Vec::new(),
+        bytecode_ra: Vec::new(),
+        field_inline: None,
+    };
+    let shell: JoltProof<DoryScheme, Pedersen<Bn254G1>, (), ()> = JoltProof {
+        protocol: JoltProtocolConfig::for_zk(checked.zk),
+        commitments: empty(),
+        stages: JoltStageProofs::masked(StagePowNonces::default()),
+        joint_opening_proof: (),
+        untrusted_advice_commitment: None,
+        claims: JoltProofClaims::Zk {
+            masked: MaskedMessages::default(),
+            zk_proof: (),
+        },
+        trace_length: config.trace_length,
+        ram_K: config.ram_K,
+        rw_config: config.rw_config,
+        one_hot_config: config.one_hot_config,
+        trace_polynomial_order: config.trace_polynomial_order,
+        narg: Vec::new(),
+    };
+    let mut transcript = verifier_transcript::<Keccak>(&JOLT_SESSION, &0u64, &[]);
+    let verifier = &preprocessing.verifier;
+    let formula_dimensions = build_formula_dimensions(
+        &shell,
+        verifier,
+        checked,
+        LOG_T,
+        JoltRelationId::InstructionReadRaf,
+    )
+    .unwrap();
+    let mut session = MaskedSession::new(CommittedPadsView::counting(), MaskedReader::new(&tape));
+    'stages: {
+        let t = &mut transcript;
+        let masked = &mut session;
+        let stage1 = stage1::verify(checked, &shell, t, Some(&mut *masked)).unwrap();
+        if last == Through::Stage1 {
+            break 'stages;
+        }
+        let stage2 = stage2::verify(checked, &shell, t, Some(&mut *masked), &stage1).unwrap();
+        if last == Through::Stage2 {
+            break 'stages;
+        }
+        let stage3 =
+            stage3::verify(checked, &shell, t, Some(&mut *masked), &stage1, &stage2).unwrap();
+        let stage4 = stage4::verify(
+            checked,
+            verifier,
+            &shell,
+            t,
+            Some(&mut *masked),
+            &stage2,
+            &stage3,
+        )
+        .unwrap();
+        if last == Through::Stage4 {
+            break 'stages;
+        }
+        let stage5 = stage5::verify(
+            checked,
+            &shell,
+            &formula_dimensions,
+            t,
+            Some(&mut *masked),
+            &stage2,
+            &stage4,
+        )
+        .unwrap();
+        let stage6a = stage6a::verify(
+            checked,
+            verifier,
+            &shell,
+            &formula_dimensions,
+            t,
+            Some(&mut *masked),
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+        )
+        .unwrap();
+        let _stage6b = stage6b::verify(
+            checked,
+            verifier,
+            &shell,
+            &formula_dimensions,
+            t,
+            Some(&mut *masked),
+            &stage1,
+            &stage2,
+            &stage3,
+            &stage4,
+            &stage5,
+            &stage6a,
+        )
+        .unwrap();
+    }
+    session.tape.finish().unwrap();
+    let forward = prover.verifier_message::<[u8; 32]>();
+    let replayed: [u8; 32] = transcript.verifier_message_as(32, |bytes| {
+        let mut out = [0u8; 32];
+        out.copy_from_slice(bytes);
+        out
+    });
+    assert_eq!(
+        replayed, forward,
+        "verifier and prover sponge states diverge"
+    );
 }
 
 /// Twin-transcript replays of the already-round-tripped upstream stages, for
@@ -956,7 +1157,7 @@ pub(crate) mod proving {
 
     pub(crate) struct FixtureProver<'a, 'w> {
         pub(crate) backend: &'a mut KernelContext<'w, Fr, JoltBackend<Fr, DoryScheme>>,
-        pub(crate) mode: &'a ProofMode<'a, Pedersen<Bn254G1>>,
+        pub(crate) mode: &'a mut ProofMode<Pedersen<Bn254G1>>,
         pub(crate) config: &'a ProverConfig,
         pub(crate) public_io: &'a JoltDevice,
         pub(crate) checked: &'a CheckedInputs,
@@ -968,14 +1169,14 @@ pub(crate) mod proving {
         pub(crate) fn through_stage3(&mut self) -> Stages3 {
             let stage1 = prove_stage1::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 LOG_T,
                 self.transcript,
             )
             .unwrap();
             let stage2 = prove_stage2::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.config,
                 self.public_io,
                 &stage1.clear_output,
@@ -984,7 +1185,7 @@ pub(crate) mod proving {
             .unwrap();
             let stage3 = prove_stage3::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.config,
                 &stage1.clear_output,
                 &stage2.clear_output,
@@ -997,7 +1198,7 @@ pub(crate) mod proving {
             let (stage1, stage2, stage3) = self.through_stage3();
             let stage4 = prove_stage4::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,
@@ -1012,7 +1213,7 @@ pub(crate) mod proving {
             let ((stage1, stage2, stage3), stage4) = self.through_stage4();
             let stage5 = prove_stage5::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,
@@ -1027,7 +1228,7 @@ pub(crate) mod proving {
             let (((stage1, stage2, stage3), stage4), stage5) = self.through_stage5();
             let stage6a = prove_stage6a::<Fr, DoryScheme, Pedersen<Bn254G1>, ProverState<Keccak>>(
                 self.backend,
-                self.mode,
+                &mut *self.mode,
                 self.checked,
                 self.config,
                 self.preprocessing,

@@ -13,6 +13,7 @@ use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_transcript::FieldTranscript;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_claim_reduction::{
@@ -38,8 +39,8 @@ use crate::{
         pow::{check_pow, PowSite},
         relations::ConcreteSumcheck,
         stage1::{Stage1ClearOutput, Stage1Output},
-        uniskip,
-        zk::committed,
+        uniskip::{self, UniskipMasked},
+        zk::masked_channel,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -49,16 +50,16 @@ use crate::{
 /// reduction challenge are extracted mode-agnostically (clear: the single-entry
 /// reduction point; ZK: the committed round challenge) so the batch relations —
 /// `ProductRemainder::new` in particular — can be built before the mode branch.
-struct ProductUniskipStep<F: JoltField, C> {
+struct ProductUniskipStep<F: JoltField> {
     tau_low: Vec<F>,
     tau_high: F,
     challenge: F,
-    verified: ProductUniskipVerified<F, C>,
+    verified: ProductUniskipVerified<F>,
 }
 
-enum ProductUniskipVerified<F: JoltField, C> {
+enum ProductUniskipVerified<F: JoltField> {
     Clear,
-    Zk(uniskip::UniskipZk<F, C>),
+    Zk(UniskipMasked<F>),
 }
 
 /// Assemble the stage-2 batch consumed opening *values* from the upstream clear outputs into
@@ -86,20 +87,21 @@ pub fn stage2_batch_input_values_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage2)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-) -> Result<Stage2Output<PCS::Field, VC::Output>, VerifierError>
+    mut masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage1: &Stage1Output<PCS::Field>,
+) -> Result<Stage2Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
     T: FieldTranscript<PCS::Field>,
 {
-    match (checked.zk, stage1) {
+    match (checked.zk.is_masked(), stage1) {
         (true, Stage1Output::Clear(_)) => {
-            return Err(VerifierError::ExpectedCommittedProof { field: "stage1" });
+            return Err(VerifierError::ExpectedMaskedProof { field: "stage1" });
         }
         (false, Stage1Output::Zk(_)) => {
             return Err(VerifierError::ExpectedClearProof { field: "stage1" });
@@ -120,8 +122,13 @@ where
             }
         })?;
 
-    let uniskip =
-        verify_product_uniskip::<PCS, VC, T, ZkProof>(checked, proof, transcript, stage1)?;
+    let uniskip = verify_product_uniskip::<PCS, VC, T, ZkProof, O, P>(
+        checked,
+        proof,
+        transcript,
+        masked.as_deref_mut(),
+        stage1,
+    )?;
 
     // Build the batch relations once, pre-branch; each owns its input/output
     // claim algebra (single-sourced with its jolt-claims formula and the BlindFold
@@ -175,35 +182,25 @@ where
 
     let input_points = sumchecks.empty_input_points();
 
-    if checked.zk {
+    if checked.zk.is_masked() {
         let ProductUniskipVerified::Zk(product_uniskip) = uniskip.verified else {
-            return Err(VerifierError::ExpectedCommittedProof {
+            return Err(VerifierError::ExpectedMaskedProof {
                 field: "stage2_uni_skip_first_round_proof",
             });
         };
-        let consistency = sumchecks.verify_zk(&proof.stages.stage2_sumcheck_proof, transcript)?;
-        // Both modes omit aliases from the canonical member output rows.
-        let output_claim_count = sumchecks.output_claim_count();
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage2_sumcheck_proof,
-            "stage2_sumcheck_proof",
-            output_claim_count,
-            JoltRelationId::RamReadWriteChecking,
-        )?;
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage2Output::Zk(Stage2ZkOutput {
             challenges,
             product_uniskip_challenge: uniskip.challenge,
             product_tau_low: uniskip.tau_low,
             product_tau_high: uniskip.tau_high,
-            product_uniskip_consistency: product_uniskip.consistency,
+            product_uniskip_rounds: product_uniskip.rounds,
             product_uniskip_output_claims: product_uniskip.output_claims,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_rounds: batch.rounds,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }));
     }
 
@@ -265,12 +262,13 @@ pub fn product_tau_low<F: JoltField>(
     Ok(tau_low)
 }
 
-fn verify_product_uniskip<PCS, VC, T, ZkProof>(
+fn verify_product_uniskip<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    stage1: &Stage1Output<PCS::Field, VC::Output>,
-) -> Result<ProductUniskipStep<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage1: &Stage1Output<PCS::Field>,
+) -> Result<ProductUniskipStep<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -306,12 +304,8 @@ where
             })
         }
         Stage1Output::Zk(_) => {
-            let verified = uniskip::verify_zk(
-                checked,
-                &proof.stages.stage2_uni_skip_first_round_proof,
-                &uniskip_params,
-                transcript,
-            )?;
+            let verified =
+                uniskip::verify_masked(&uniskip_params, &mut masked_channel(masked, transcript)?)?;
             Ok(ProductUniskipStep {
                 tau_low,
                 tau_high,

@@ -1,59 +1,29 @@
-//! Jolt-specific BlindFold protocol construction.
+//! The residual relation of Jolt's stages over a masked transcript.
 //!
-//! This module lowers the already-verified committed-sumcheck frontier into the
-//! generic `jolt-zk` statement API. It does not build R1CS matrices
-//! directly. Instead, it describes the verifier equations in typed Jolt terms:
-//! sumcheck statements, domains, committed round consistency, committed output
-//! claim rows, input/output claim expressions, public constants, transcript
-//! challenges, and the final PCS opening binding. `jolt-zk` then lowers
-//! that statement into `jolt-r1cs` constraints and exposes the row layout used
-//! by the BlindFold verifier.
+//! The stage verifiers record each masked message with its pad; this module
+//! states every check they would have run on the hidden values as rows over
+//! the pads (`specs/whiteout-masking.md`):
 //!
-//! Each Stage 1-7 entry added here has four pieces:
+//! - each stage's sumcheck rounds reduce its batched input claim to a running
+//!   claim, an affine form in the pads ([`sumcheck_rows`]; uni-skip rounds
+//!   add their explicit round-sum row);
+//! - one row equates that running claim with the batched output claim; each
+//!   output term's last product lands in that row as one of its pairs;
+//! - claim formulas come from `jolt-claims` in factored form and lower through
+//!   [`lower_factored`], one auxiliary slot per other intermediate product,
+//!   shared by every term that repeats it;
+//! - runtime claim aliases, which a masked proof sends, become equality rows.
 //!
-//! - a `SumcheckStatement` and `SumcheckDomainSpec`, which determine the
-//!   generic round-sum and round-evaluation constraints checked for every
-//!   committed sumcheck round;
-//! - committed consistency data from the stage verifier, which supplies the
-//!   committed round polynomial rows, round challenges, degrees, and batching
-//!   coefficients already checked against the transcript;
-//! - committed output claim rows, whose opening IDs are listed in the exact row
-//!   order used by the stage's vector commitments; aliases map duplicate
-//!   semantic openings to the same R1CS variable instead of allocating another
-//!   hidden value;
-//! - `jolt-claims` expressions for the stage input and output claims. These
-//!   expressions bind the sumcheck chain endpoints to openings, public values,
-//!   and challenges. Public values and challenges are inserted explicitly into
-//!   `SourceValues`; missing sources fail construction.
-//!
-//! Batched stages are represented as one committed sumcheck statement. Their
-//! input expression is the batched sum of each component input expression,
-//! including the power-of-two scaling required by the batched committed
-//! sumcheck. Their output expression is the batching-coefficient-weighted sum
-//! of component output expressions. This keeps the hidden claim relation in one
-//! place: the same formula metadata used by clear verification is what
-//! BlindFold lowers into R1CS.
-//!
-//! Stage 8 contributes the final opening binding. The verifier has already
-//! formed the linear PCS batch, so the BlindFold statement adds one final
-//! equation
-//!
-//! ```text
-//! evaluation = sum_i coefficient_i * opening_i
-//! ```
-//!
-//! and carries the hiding evaluation commitment for that evaluation. The
-//! generic BlindFold verifier opens the folded witness at the fixed coordinates
-//! for the folded evaluation and its blinding, checks that those coordinates
-//! equal the folded eval scalars in the proof, checks the opened rows are
-//! dedicated to those scalars, and then checks the folded eval commitment. This
-//! binds the hidden R1CS witness value used in the Jolt claim relation to the
-//! hidden PCS evaluation proved by Stage 8.
-//!
-//! In ZK mode this is the link between the committed stage proofs and the
-//! final PCS opening proof: no clear output claim scalars are accepted by the
-//! verifier, and every hidden scalar that crosses a stage boundary is either in
-//! a committed output-claim row or in the final hiding evaluation commitment.
+//! Each stage file computes the stage's public values (eq/lt evaluations,
+//! challenges) and registers its members' factored formulas with
+//! [`ResidualBuilder`]. The claim lowering is one routine run in three value
+//! domains: [`OperandShapeDomain`] counts auxiliary slots and records the
+//! product operands for the pad layout,
+//! [`ValuesDomain`] computes the prover's auxiliary values, and
+//! [`RowsDomain`] builds the rows. Stage 8's row, which ties the PCS
+//! evaluation to the masked claims, belongs to the back end's PCS integration
+//! and is built from [`JoltResidual::opening_form`].
+
 use jolt_claims::protocols::composed::geometry::{
     SPARTAN_PRODUCT_UNISKIP_DOMAIN_SIZE, SPARTAN_PRODUCT_UNISKIP_FIRST_ROUND_DEGREE,
 };
@@ -67,46 +37,51 @@ use jolt_claims::protocols::field_inline::{FieldInlineChallengeId, FieldInlineDe
 use jolt_claims::protocols::jolt::geometry::bytecode::BytecodeReadRafCommittedEvaluationInputs;
 use jolt_claims::protocols::jolt::geometry::bytecode::READ_RAF_CYCLE_STAGES;
 use jolt_claims::protocols::jolt::relations;
+use jolt_claims::protocols::jolt::{
+    geometry::{
+        booleanity::BooleanityDimensions,
+        bytecode::{self, BytecodeReadRafEvaluationInputs},
+        claim_reductions::{
+            advice,
+            bytecode::{self as bytecode_reduction},
+            hamming_weight::{self, HammingWeightClaimReductionDimensions},
+            program_image,
+        },
+        dimensions::JoltFormulaDimensions,
+    },
+    AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge, BooleanityPublic,
+    BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout, BytecodeClaimReductionPublic,
+    BytecodeReadRafChallenge, BytecodeReadRafPublic, HammingWeightClaimReductionChallenge,
+    HammingWeightClaimReductionPublic, IncClaimReductionChallenge, IncClaimReductionPublic,
+    InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
+    InstructionReadRafChallenge, InstructionReadRafPublic, PrecommittedReductionLayout,
+    ProgramImageClaimReductionLayout, ProgramImageClaimReductionPublic, RamHammingBooleanityPublic,
+    RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
+    RegistersValEvaluationPublic, TraceDimensions,
+};
 #[cfg(feature = "fuzzing")]
-use jolt_claims::protocols::jolt::JoltExpr;
+use jolt_claims::protocols::jolt::{JoltExpr, JoltOpeningId};
+use jolt_claims::protocols::jolt::{JoltOneHotConfig, JoltReadWriteConfig};
 use jolt_claims::SumcheckDomain;
 use jolt_claims::{
-    opening,
     protocols::jolt::{
         geometry::{
-            booleanity::{self, BooleanityDimensions},
-            bytecode::{self, BytecodeReadRafEvaluationInputs},
-            claim_reductions::{
-                advice,
-                bytecode::{self as bytecode_reduction},
-                hamming_weight, program_image,
-            },
-            dimensions::{JoltFormulaDimensions, REGISTER_ADDRESS_BITS},
-            instruction, ram,
-            spartan::{
-                outer_opening, outer_uniskip_opening, product_uniskip_opening,
-                SpartanOuterDimensions, SpartanProductDimensions,
-            },
+            dimensions::REGISTER_ADDRESS_BITS,
+            ram::{RamValCheckInit, RamValCheckInitContribution},
+            spartan::{SpartanOuterDimensions, SpartanProductDimensions},
         },
-        AdviceClaimReductionLayout, AdviceClaimReductionPublic, BooleanityChallenge,
-        BooleanityPublic, BytecodeClaimReductionChallenge, BytecodeClaimReductionLayout,
-        BytecodeClaimReductionPublic, BytecodeReadRafChallenge, BytecodeReadRafPublic,
-        HammingWeightClaimReductionChallenge, HammingWeightClaimReductionPublic,
-        IncClaimReductionChallenge, IncClaimReductionPublic, InstructionClaimReductionChallenge,
-        InstructionClaimReductionPublic, InstructionInputChallenge, InstructionInputPublic,
-        InstructionRaVirtualizationChallenge, InstructionRaVirtualizationPublic,
-        InstructionReadRafChallenge, InstructionReadRafPublic, JoltAdviceKind, JoltChallengeId,
-        JoltCommittedPolynomial, JoltDerivedId, JoltOpeningId, JoltPolynomialId, JoltRelationId,
-        PrecommittedReductionLayout, ProgramImageClaimReductionLayout,
-        ProgramImageClaimReductionPublic, RamHammingBooleanityPublic, RamOutputCheckPublic,
-        RamRaClaimReductionChallenge, RamRaClaimReductionPublic, RamRaVirtualizationPublic,
-        RamRafEvaluationPublic, RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge,
-        RamValCheckPublic, RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
-        RegistersReadWriteChallenge, RegistersReadWritePublic, RegistersValEvaluationPublic,
-        SpartanOuterPublic, SpartanShiftChallenge, SpartanShiftPublic,
+        InstructionClaimReductionChallenge, InstructionClaimReductionPublic,
+        InstructionInputChallenge, InstructionInputPublic, JoltAdviceKind, JoltChallengeId,
+        JoltDerivedId, JoltRelationId, RamOutputCheckPublic, RamRafEvaluationPublic,
+        RamReadWriteChallenge, RamReadWritePublic, RamValCheckChallenge, RamValCheckPublic,
+        RegistersClaimReductionChallenge, RegistersClaimReductionPublic,
+        RegistersReadWriteChallenge, RegistersReadWritePublic, SpartanOuterPublic,
+        SpartanShiftChallenge, SpartanShiftPublic,
     },
-    Expr, OutputClaims, Source, SymbolicSumcheck, Term,
+    FactoredExpr, Source, SymbolicSumcheck,
 };
+#[cfg(any(feature = "fuzzing", all(test, feature = "field-inline")))]
+use jolt_claims::{Expr, Term};
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
@@ -115,21 +90,31 @@ use jolt_poly::{
     block_selector_mle_msb,
     lagrange::{centered_lagrange_evals, centered_lagrange_kernel},
     try_eq_mle, EqPlusOnePolynomial, IdentityPolynomial, LtPolynomial, MultilinearEvaluation,
-    OperandPolynomial, OperandSide,
 };
+use jolt_poly::{OperandPolynomial, OperandSide};
 use jolt_program::preprocess::PublicIoMemory;
 use jolt_sumcheck::{
-    BatchedCommittedSumcheckConsistency, CommittedSumcheckConsistency, SumcheckDomainSpec,
-    SumcheckStatement,
+    BatchedMaskedRounds, DegreeSchedule, MaskedRound, SumcheckDomainSpec, SumcheckError,
 };
-use jolt_zk::blindfold::{BlindFoldProtocol, BlindFoldProtocolBuilder, OpeningAlias};
-use num_traits::Zero;
+use jolt_transcript::ClaimDomain;
+use jolt_zk::masking::{
+    lower_factored, sumcheck_rows, AffineRow, LoweringDomain, MaskedOperand, OperandRule,
+    OperandShapeDomain, PadLayout, ProductMemo, ProductSum, ResidualRelation, ResidualRows,
+    RoundFormat, RowsDomain, ValuesDomain, ZkError,
+};
+use std::collections::btree_map::Entry;
+use std::collections::BTreeMap;
 
-use super::{inputs::BlindFoldInputs, outputs::CommittedOutputClaimOutput};
+use crate::preprocessing::JoltVerifierPreprocessing;
+use crate::stages::relations::MaskedClaims;
+use crate::stages::stage2::ram_output_check::ram_output_check_publics;
+use crate::stages::stage6b::{committed_reduction_cycle_phase, outputs::BytecodeReductionWeights};
 use crate::stages::{
-    stage2::ram_output_check::ram_output_check_publics,
-    stage6b::{committed_reduction_cycle_phase, outputs::BytecodeReductionWeights},
+    stage1::Stage1ZkOutput, stage2::Stage2ZkOutput, stage3::Stage3ZkOutput, stage4::Stage4ZkOutput,
+    stage5::Stage5ZkOutput, stage6a::Stage6aZkOutput, stage6b::Stage6bZkOutput,
+    stage7::Stage7ZkOutput,
 };
+use crate::verifier::CheckedInputs;
 use crate::VerifierError;
 
 #[cfg(feature = "field-inline")]
@@ -143,20 +128,21 @@ mod stage6a;
 mod stage6b;
 mod stage7;
 
-/// The lowering's opening-id type: the composite [`ComposedOpeningId`], so hidden witness rows
-/// from either protocol family (jolt, field-inline) live in one claim-source namespace. Builds
-/// without field-inline construct only `Jolt`-wrapped ids, so the layout is unchanged.
+/// The lowering's opening-id type: the composite [`ComposedOpeningId`], so hidden values
+/// from either protocol family (jolt, field-inline) live in one claim-source namespace.
 use jolt_claims::protocols::composed::ComposedOpeningId;
 
-type Builder<F, C> = BlindFoldProtocolBuilder<F, ComposedOpeningId, C, VerifierPublicId>;
+#[cfg(any(feature = "fuzzing", all(test, feature = "field-inline")))]
 type VerifierExpr<F> = Expr<F, ComposedOpeningId, VerifierPublicId>;
+type VerifierFactored<F> = FactoredExpr<F, ComposedOpeningId, VerifierPublicId>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum VerifierPublicId {
+/// A public source of the residual's claim formulas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum VerifierPublicId {
     Jolt(JoltDerivedId),
     SpartanOuter(JoltSpartanOuterPublic),
     /// Gamma values that remain as `JoltChallengeId` variants (not moved to Public) but are
-    /// treated as public inputs in the BlindFold R1CS wiring.
+    /// treated as public inputs of the residual relation.
     Challenge(JoltChallengeId),
     #[cfg(feature = "field-inline")]
     FieldInline(FieldInlineDerivedId),
@@ -203,183 +189,450 @@ impl From<FieldInlineChallengeId> for VerifierPublicId {
 
 #[derive(Default)]
 struct SourceValues<F: JoltField> {
-    publics: Vec<(VerifierPublicId, F)>,
+    publics: BTreeMap<VerifierPublicId, F>,
 }
 
-pub fn build<PCS, VC, ZkProof>(
-    input: BlindFoldInputs<'_, PCS, VC, ZkProof>,
-) -> Result<BlindFoldProtocol<PCS::Field, VC::Output>, VerifierError>
+/// The masked stage outputs the residual relation is built from.
+pub struct ResidualInputs<'a, PCS, VC>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
-    VC::Output: Clone,
 {
-    let mut values = SourceValues::default();
-    let mut builder = BlindFoldProtocol::<PCS::Field, VC::Output>::builder::<
-        ComposedOpeningId,
-        VerifierPublicId,
-        usize,
-    >();
-
-    builder = stage1::add_stage1(&input, builder, &mut values)?;
-    builder = stage2::add_stage2(&input, builder, &mut values)?;
-    builder = stage3::add_stage3(&input, builder, &mut values)?;
-    builder = stage4::add_stage4(&input, builder, &mut values)?;
-    builder = stage5::add_stage5(&input, builder, &mut values)?;
-    builder = stage6a::add_stage6a(&input, builder, &mut values)?;
-    builder = stage6b::add_stage6b(&input, builder, &mut values)?;
-    builder = stage7::add_stage7(&input, builder, &mut values)?;
-
-    for (id, value) in values.publics {
-        builder = builder.public(id, value);
-    }
-
-    // The stage-8 plan carries composite ids and the lowering is
-    // composite-typed, so the plan passes through unchanged: each id (jolt or
-    // field-inline) resolves to the committed output-claim row the stages
-    // above registered, and the final-opening equation binds them all in one
-    // RLC — the composed final opening order the clear path verified.
-    let protocol = builder
-        .final_opening(
-            input.stage8.opening_ids.clone(),
-            input.stage8.constraint_coefficients.clone(),
-            input.stage8.hiding_evaluation_commitment,
-        )
-        .build()
-        .map_err(blindfold_error)?;
-
-    Ok(protocol)
+    pub checked: &'a CheckedInputs,
+    pub preprocessing: &'a JoltVerifierPreprocessing<PCS, VC>,
+    /// The proof's read-write and one-hot configurations, which shape the
+    /// stages' dimensions.
+    pub rw_config: JoltReadWriteConfig,
+    pub one_hot_config: JoltOneHotConfig,
+    pub stage1: &'a Stage1ZkOutput<PCS::Field>,
+    pub stage2: &'a Stage2ZkOutput<PCS::Field>,
+    pub stage3: &'a Stage3ZkOutput<PCS::Field>,
+    pub stage4: &'a Stage4ZkOutput<PCS::Field>,
+    pub stage5: &'a Stage5ZkOutput<PCS::Field>,
+    pub stage6a: &'a Stage6aZkOutput<PCS::Field>,
+    pub stage6b: &'a Stage6bZkOutput<PCS::Field>,
+    pub stage7: &'a Stage7ZkOutput<PCS::Field>,
+    /// The back end's operand rule, which every lowering of the relation
+    /// allocates its slots by.
+    pub operands: OperandRule,
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "BlindFold stages are deliberately explicit."
-)]
-fn add_batched_stage<F, C>(
-    builder: Builder<F, C>,
+/// One batch member: its round count and its factored input and output
+/// formulas, with its batching coefficient.
+struct Member<F: JoltField> {
+    rounds: usize,
+    input: VerifierFactored<F>,
+    output: VerifierFactored<F>,
+    coefficient: F,
+}
+
+/// One masked sumcheck of the residual relation.
+struct Stage<F: JoltField> {
+    name: &'static str,
+    format: RoundFormat<F>,
+    degrees: DegreeSchedule,
+    rounds: Vec<MaskedRound<F>>,
+    members: Vec<Member<F>>,
+}
+
+/// The stages a residual relation is built from, accumulated by the stage
+/// files in protocol order, with every masked claim they received.
+#[derive(Default)]
+struct ResidualBuilder<F: JoltField> {
+    stages: Vec<Stage<F>>,
+    openings: BTreeMap<ComposedOpeningId, MaskedOperand<F>>,
+    aliases: BTreeMap<ComposedOpeningId, ComposedOpeningId>,
+    equalities: Vec<(ComposedOpeningId, ComposedOpeningId)>,
+}
+
+impl<F: JoltField> ResidualBuilder<F> {
+    fn record_claims(&mut self, claims: &MaskedClaims<F>) -> Result<(), VerifierError> {
+        for (id, value) in &claims.received {
+            if self.openings.insert(*id, *value).is_some() {
+                return Err(residual_error(format!("opening {id:?} was received twice")));
+            }
+        }
+        for (alias, source) in &claims.aliases {
+            if self.aliases.insert(*alias, *source).is_some() {
+                return Err(residual_error(format!(
+                    "opening {alias:?} is aliased twice"
+                )));
+            }
+        }
+        self.equalities.extend_from_slice(&claims.equalities);
+        Ok(())
+    }
+}
+
+/// The residual relation of Jolt's stages 1–7 over a masked transcript.
+pub struct JoltResidual<F: JoltField> {
+    stages: Vec<Stage<F>>,
+    openings: BTreeMap<ComposedOpeningId, MaskedOperand<F>>,
+    aliases: BTreeMap<ComposedOpeningId, ComposedOpeningId>,
+    equalities: Vec<(ComposedOpeningId, ComposedOpeningId)>,
+    publics: SourceValues<F>,
+    operands: OperandRule,
+}
+
+impl<F: JoltField> JoltResidual<F> {
+    /// Collects the stages' residual structure from the masked stage outputs.
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError`] if a stage's public values cannot be derived or its
+    /// masked records are malformed.
+    pub fn build<PCS, VC>(input: ResidualInputs<'_, PCS, VC>) -> Result<Self, VerifierError>
+    where
+        PCS: CommitmentScheme<Field = F>,
+        VC: VectorCommitment<Field = F>,
+    {
+        let mut values = SourceValues::default();
+        let mut builder = ResidualBuilder::default();
+
+        builder = stage1::add_stage1(&input, builder, &mut values)?;
+        builder = stage2::add_stage2(&input, builder, &mut values)?;
+        builder = stage3::add_stage3(&input, builder, &mut values)?;
+        builder = stage4::add_stage4(&input, builder, &mut values)?;
+        builder = stage5::add_stage5(&input, builder, &mut values)?;
+        builder = stage6a::add_stage6a(&input, builder, &mut values)?;
+        builder = stage6b::add_stage6b(&input, builder, &mut values)?;
+        builder = stage7::add_stage7(&input, builder, &mut values)?;
+
+        Ok(Self {
+            stages: builder.stages,
+            openings: builder.openings,
+            aliases: builder.aliases,
+            equalities: builder.equalities,
+            publics: values,
+            operands: input.operands,
+        })
+    }
+
+    /// The masked value a proof received for `id`, through its alias.
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError::MissingOpeningClaim`] if no stage received it.
+    pub fn opening(&self, id: &ComposedOpeningId) -> Result<MaskedOperand<F>, VerifierError> {
+        let source = self.aliases.get(id).unwrap_or(id);
+        self.openings
+            .get(source)
+            .copied()
+            .ok_or(VerifierError::MissingOpeningClaim { id: *source })
+    }
+
+    /// The decoded value of `id`, m̂ − p, as an affine form over the pads.
+    ///
+    /// # Errors
+    ///
+    /// As [`opening`](Self::opening).
+    pub fn opening_form(&self, id: &ComposedOpeningId) -> Result<AffineRow<F>, VerifierError> {
+        Ok(self.opening(id)?.form())
+    }
+
+    /// The pad layout of a schedule with `base` message slots: the
+    /// auxiliary slots the relation's products take, and their operand pads.
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError`] if a formula does not lower.
+    pub fn pad_layout(&self, base: usize) -> Result<PadLayout, VerifierError> {
+        Ok(self.shape(OperandShapeDomain::new(base))?.layout()?)
+    }
+
+    /// Allocates this relation's auxiliary slots and records its product
+    /// operands in `shape`, after whatever `shape` already holds, under this
+    /// relation's operand rule (the one its rows use).
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError`] if a formula does not lower.
+    pub fn shape(&self, shape: OperandShapeDomain) -> Result<OperandShapeDomain, VerifierError> {
+        let mut shape = shape.with_operands(self.operands);
+        let shape_ref = &mut shape;
+        let claims = self.lower_claims(shape_ref, &mut |id| {
+            Ok(Some(
+                self.opening(id)
+                    .map_err(|_| ZkError::InvalidRelation {
+                        reason: "a claim formula names an opening no stage received",
+                    })?
+                    .pad,
+            ))
+        })?;
+        self.check_stages(shape_ref, claims, |_, _, input| Ok(input))?;
+        Ok(shape)
+    }
+
+    /// The prover's auxiliary values, in slot order, from the decoded
+    /// openings.
+    ///
+    /// # Errors
+    ///
+    /// [`VerifierError`] if a formula does not lower or `decode` fails.
+    pub fn auxiliary_values(
+        &self,
+        decode: impl Fn(MaskedOperand<F>) -> Result<F, ZkError>,
+    ) -> Result<Vec<F>, VerifierError> {
+        let mut values = ValuesDomain::with_operands(self.operands);
+        let _ = self.lower_claims(&mut values, &mut |id| {
+            decode(self.opening(id).map_err(|_| ZkError::InvalidRelation {
+                reason: "a claim formula names an opening no stage received",
+            })?)
+        })?;
+        Ok(values.auxiliary)
+    }
+
+    /// The rows over `masked_auxiliary`, the received auxiliary block.
+    pub fn rows<'r>(&'r self, masked_auxiliary: &'r [F]) -> JoltResidualRows<'r, F> {
+        JoltResidualRows {
+            residual: self,
+            masked_auxiliary,
+            first_slot: None,
+        }
+    }
+
+    /// The rows over `masked_auxiliary`, whose slots start at `first_slot`:
+    /// the relation's part of an auxiliary block another protocol's part
+    /// leads.
+    pub fn rows_from<'r>(
+        &'r self,
+        masked_auxiliary: &'r [F],
+        first_slot: usize,
+    ) -> JoltResidualRows<'r, F> {
+        JoltResidualRows {
+            residual: self,
+            masked_auxiliary,
+            first_slot: Some(first_slot),
+        }
+    }
+
+    /// Each stage's batched input and output claims, in one fixed order
+    /// (stage by stage; inputs, then outputs, member by member) so every
+    /// domain allocates the same auxiliary slots.
+    fn lower_claims<D: LoweringDomain<F, Error = ZkError>>(
+        &self,
+        domain: &mut D,
+        opening: &mut impl FnMut(&ComposedOpeningId) -> Result<D::Value, ZkError>,
+    ) -> Result<Vec<StageClaims<D::Value>>, VerifierError> {
+        let mut public = |source: &Source<ComposedOpeningId, VerifierPublicId, usize>| {
+            match source {
+                Source::Derived(id) => self.publics.value(*id),
+                Source::Opening(_) | Source::Challenge(_) => None,
+            }
+            .ok_or(ZkError::InvalidRelation {
+                reason: "a claim formula names a public value no stage supplied",
+            })
+        };
+        let mut claims = Vec::with_capacity(self.stages.len());
+        let mut products = ProductMemo::default();
+        for stage in &self.stages {
+            let mut input = domain.constant(F::zero());
+            let max_num_vars = stage.degrees.num_rounds();
+            for member in &stage.members {
+                let extra = max_num_vars.checked_sub(member.rounds).ok_or_else(|| {
+                    residual_error(format!(
+                        "{}: member rounds {} exceed the batch's {max_num_vars}",
+                        stage.name, member.rounds
+                    ))
+                })?;
+                let value =
+                    lower_factored(&member.input, domain, &mut products, opening, &mut public)?
+                        .into_value(domain)?;
+                input = domain.add(
+                    &input,
+                    &domain.scale(&value, member.coefficient * F::pow2(extra)),
+                );
+            }
+            let mut output = ProductSum::zero(domain);
+            for member in &stage.members {
+                let value =
+                    lower_factored(&member.output, domain, &mut products, opening, &mut public)?;
+                output = output.add(value.scale(member.coefficient, domain), domain);
+            }
+            claims.push(StageClaims { input, output });
+        }
+        Ok(claims)
+    }
+
+    /// Each stage's check, running claim = batched output: one row whose
+    /// pairs are the output terms' last products. `running` reduces a
+    /// stage's input claim to its running claim. The pad layout and the rows
+    /// both state the checks here, so the operand pads they record agree.
+    fn check_stages<D: ClaimDomain<F, Error = ZkError>>(
+        &self,
+        domain: &mut D,
+        claims: Vec<StageClaims<D::Value>>,
+        mut running: impl FnMut(&mut D, &Stage<F>, D::Value) -> Result<D::Value, ZkError>,
+    ) -> Result<(), VerifierError> {
+        for (stage, StageClaims { input, output }) in self.stages.iter().zip(claims) {
+            let running = running(domain, stage, input)?;
+            output.check_equals(running, domain)?;
+        }
+        Ok(())
+    }
+}
+
+/// One stage's batched input and output claims in a lowering domain.
+struct StageClaims<V> {
+    input: V,
+    output: ProductSum<V>,
+}
+
+/// [`JoltResidual`]'s rows over a received auxiliary block.
+pub struct JoltResidualRows<'r, F: JoltField> {
+    residual: &'r JoltResidual<F>,
+    masked_auxiliary: &'r [F],
+    /// The first auxiliary slot, when not the layout's.
+    first_slot: Option<usize>,
+}
+
+impl<F: JoltField> ResidualRows<F> for JoltResidualRows<'_, F> {
+    type Error = VerifierError;
+
+    fn append_rows(&self, relation: &mut ResidualRelation<F>) -> Result<(), VerifierError> {
+        let residual = self.residual;
+        let first = self.first_slot.unwrap_or(relation.layout.auxiliary.start);
+        let mut rows = RowsDomain::from_slot(relation, self.masked_auxiliary, first)
+            .with_operands(residual.operands);
+        let claims = residual.lower_claims(&mut rows, &mut |id| {
+            residual
+                .opening_form(id)
+                .map_err(|_| ZkError::InvalidRelation {
+                    reason: "a claim formula names an opening no stage received",
+                })
+        })?;
+        rows.finish()?;
+        residual.check_stages(&mut rows, claims, |rows, stage, input| {
+            sumcheck_rows(
+                rows.relation(),
+                input,
+                &stage.rounds,
+                &stage.degrees,
+                &stage.format,
+            )
+        })?;
+        for (cell, source) in &residual.equalities {
+            rows.check_zero(
+                residual
+                    .opening_form(cell)?
+                    .add_scaled(&residual.opening_form(source)?, -F::one()),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+/// Registers a batched sumcheck: the members' factored claims (declaration
+/// order, one per batching coefficient), its masked rounds and its masked
+/// output claims.
+fn add_batched_stage<F: JoltField>(
+    mut builder: ResidualBuilder<F>,
     name: &'static str,
     batch_domain: SumcheckDomain,
-    claims: &[(usize, VerifierExpr<F>, VerifierExpr<F>)],
-    consistency: &BatchedCommittedSumcheckConsistency<F, C>,
-    output_claims: &CommittedOutputClaimOutput<C>,
+    claims: &[MemberClaim<F>],
+    rounds: &BatchedMaskedRounds<F>,
+    output_claims: &MaskedClaims<F>,
     values: &SourceValues<F>,
-    opening_ids: Vec<ComposedOpeningId>,
-    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
-) -> Result<Builder<F, C>, VerifierError>
-where
-    F: JoltField,
-    C: Clone,
-{
+) -> Result<ResidualBuilder<F>, VerifierError> {
     if claims.is_empty() {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!("{name}: empty batched claims"),
-        });
+        return Err(residual_error(format!("{name}: empty batched claims")));
     }
-    if claims.len() != consistency.batching_coefficients.len() {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "{name}: expected {} batching coefficients, got {}",
-                claims.len(),
-                consistency.batching_coefficients.len()
-            ),
-        });
+    if claims.len() != rounds.batching_coefficients.len() {
+        return Err(residual_error(format!(
+            "{name}: expected {} batching coefficients, got {}",
+            claims.len(),
+            rounds.batching_coefficients.len()
+        )));
     }
-    let input_claim = claims
+    let members = claims
         .iter()
-        .zip(&consistency.batching_coefficients)
-        .try_fold(
-            VerifierExpr::zero(),
-            |acc, ((rounds, input_expr, _), coefficient)| {
-                let extra_vars =
-                    consistency
-                        .max_num_vars
-                        .checked_sub(*rounds)
-                        .ok_or_else(|| VerifierError::BlindFoldConstructionFailed {
-                            reason: format!(
-                                "{name}: claim rounds {rounds} exceed the batch's {} variables",
-                                consistency.max_num_vars
-                            ),
-                        })?;
-                let scale = *coefficient * F::pow2(extra_vars);
-                Ok::<_, VerifierError>(acc + scale_expr(input_expr.clone(), scale))
-            },
-        )?;
-    let output_claim = claims.iter().zip(&consistency.batching_coefficients).fold(
-        VerifierExpr::zero(),
-        |acc, ((_, _, output_expr), coefficient)| {
-            acc + scale_expr(output_expr.clone(), *coefficient)
-        },
-    );
-    add_stage(
-        builder,
+        .zip(&rounds.batching_coefficients)
+        .map(|(claim, &coefficient)| {
+            require_expr_sources(name, "input claim", &claim.input, values)?;
+            require_expr_sources(name, "output claim", &claim.output, values)?;
+            Ok(Member {
+                rounds: claim.rounds,
+                input: claim.input.clone(),
+                output: claim.output.clone(),
+                coefficient,
+            })
+        })
+        .collect::<Result<Vec<_>, VerifierError>>()?;
+    builder.record_claims(output_claims)?;
+    builder.stages.push(Stage {
         name,
-        SumcheckStatement::new(consistency.max_num_vars, consistency.max_degree),
-        domain_spec(batch_domain),
-        consistency.consistency.clone(),
-        output_claims,
-        values,
-        opening_ids,
-        aliases,
-        input_claim,
-        output_claim,
-    )
+        format: round_format(batch_domain, false),
+        degrees: rounds.degrees.clone(),
+        rounds: rounds.rounds.clone(),
+        members,
+    });
+    Ok(builder)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "BlindFold stages are deliberately explicit."
-)]
-fn add_stage<F, C>(
-    builder: Builder<F, C>,
+/// A uni-skip first round as the masked verifier received it.
+struct UniskipRound<'a, F: JoltField> {
+    degree: usize,
+    domain: SumcheckDomain,
+    rounds: &'a [MaskedRound<F>],
+    output_claims: &'a MaskedClaims<F>,
+}
+
+/// Registers a uni-skip first round: one member over the centered domain,
+/// every coefficient sent.
+fn add_uniskip_stage<F: JoltField>(
+    mut builder: ResidualBuilder<F>,
     name: &'static str,
-    statement: SumcheckStatement,
-    domain: SumcheckDomainSpec,
-    consistency: CommittedSumcheckConsistency<F, C>,
-    output_claims: &CommittedOutputClaimOutput<C>,
+    round: UniskipRound<'_, F>,
     values: &SourceValues<F>,
-    opening_ids: Vec<ComposedOpeningId>,
-    aliases: Vec<OpeningAlias<ComposedOpeningId>>,
-    input_claim: VerifierExpr<F>,
-    output_claim: VerifierExpr<F>,
-) -> Result<Builder<F, C>, VerifierError>
-where
-    F: JoltField,
-    C: Clone,
-{
-    require_expr_sources(name, "input claim", &input_claim, values)?;
-    require_expr_sources(name, "output claim", &output_claim, values)?;
-    if opening_ids.len() != output_claims.shape.output_claim_count {
-        return Err(VerifierError::BlindFoldConstructionFailed {
-            reason: format!(
-                "{name}: output opening id count mismatch: expected {}, got {}",
-                output_claims.shape.output_claim_count,
-                opening_ids.len()
-            ),
-        });
-    }
-    builder
-        .stage(name)
-        .sumcheck(statement)
-        .domain(domain)
-        .consistency(consistency)
-        .output_claim_rows(
-            opening_ids,
-            output_claims.shape.row_len,
-            output_claims.commitments.clone(),
-        )
-        .output_claim_aliases(aliases)
-        .input_claim(input_claim)
-        .output_claim(output_claim)
-        .finish_stage()
-        .map_err(blindfold_error)
+    claim: MemberClaim<F>,
+) -> Result<ResidualBuilder<F>, VerifierError> {
+    let UniskipRound {
+        degree,
+        domain,
+        rounds,
+        output_claims,
+    } = round;
+    require_expr_sources(name, "input claim", &claim.input, values)?;
+    require_expr_sources(name, "output claim", &claim.output, values)?;
+    builder.record_claims(output_claims)?;
+    builder.stages.push(Stage {
+        name,
+        format: round_format(domain, true),
+        degrees: DegreeSchedule::uniform(claim.rounds, degree),
+        rounds: rounds.to_vec(),
+        members: vec![Member {
+            rounds: claim.rounds,
+            input: claim.input,
+            output: claim.output,
+            coefficient: F::one(),
+        }],
+    });
+    Ok(builder)
 }
 
-/// Lower one symbolic relation into its `(rounds, input, output)` batch tuple.
-/// Generic over the relation's id family: jolt and field-inline relations both
-/// lower through [`map_expr`] into the composite-id [`VerifierExpr`], so the
-/// hidden claim algebra is single-sourced from each family's symbolic
-/// expressions.
-fn relation_claim<F, S>(relation: &S) -> (usize, VerifierExpr<F>, VerifierExpr<F>)
+/// The round wire of a stage: uni-skip rounds send every coefficient, batched
+/// rounds the compressed Boolean-hypercube form.
+fn round_format<F>(domain: SumcheckDomain, full: bool) -> RoundFormat<F> {
+    if full {
+        RoundFormat::Full(domain_spec(domain))
+    } else {
+        RoundFormat::Compressed
+    }
+}
+
+/// One relation's `(rounds, input, output)` in factored form.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MemberClaim<F: JoltField> {
+    rounds: usize,
+    input: VerifierFactored<F>,
+    output: VerifierFactored<F>,
+}
+
+/// Lower one symbolic relation into its member claim. Generic over the
+/// relation's id family: jolt and field-inline relations both map into the
+/// composite-id [`VerifierFactored`], so the hidden claim algebra is
+/// single-sourced from each family's symbolic formulas.
+fn relation_claim<F, S>(relation: &S) -> MemberClaim<F>
 where
     F: JoltField,
     S: SymbolicSumcheck,
@@ -387,26 +640,33 @@ where
     S::DerivedId: Into<VerifierPublicId>,
     S::ChallengeId: Into<VerifierPublicId>,
 {
-    (
-        relation.rounds(),
-        map_expr(relation.input_expression::<F>()),
-        map_expr(relation.output_expression::<F>()),
-    )
+    MemberClaim {
+        rounds: relation.rounds(),
+        input: relation.input_factored::<F>().map_sources(map_source),
+        output: relation.output_factored::<F>().map_sources(map_source),
+    }
 }
 
-fn scale_expr<F: JoltField>(mut expr: VerifierExpr<F>, scale: F) -> VerifierExpr<F> {
-    if scale.is_zero() {
-        return VerifierExpr::zero();
+/// Map a protocol-family source into the composite ids: openings become
+/// hidden values named by the composite id; derived values and challenges
+/// both become publics.
+fn map_source<O, P, C>(
+    source: Source<O, P, C>,
+) -> Source<ComposedOpeningId, VerifierPublicId, usize>
+where
+    O: Into<ComposedOpeningId>,
+    P: Into<VerifierPublicId>,
+    C: Into<VerifierPublicId>,
+{
+    match source {
+        Source::Opening(id) => Source::Opening(id.into()),
+        Source::Derived(id) => Source::Derived(id.into()),
+        Source::Challenge(id) => Source::Derived(id.into()),
     }
-    for term in &mut expr.terms {
-        term.coefficient *= scale;
-    }
-    expr
 }
 
-/// Map a protocol-family expression into the composite-id [`VerifierExpr`]:
-/// openings become hidden witness rows named by the composite id; derived
-/// values and challenges both become baked publics.
+/// Map a protocol-family expression into the composite-id [`VerifierExpr`].
+#[cfg(any(feature = "fuzzing", all(test, feature = "field-inline")))]
 fn map_expr<F, O, P, C>(expr: Expr<F, O, P, C>) -> VerifierExpr<F>
 where
     F: JoltField,
@@ -420,35 +680,13 @@ where
             .into_iter()
             .map(|term| Term {
                 coefficient: term.coefficient,
-                factors: term
-                    .factors
-                    .into_iter()
-                    .map(|source| match source {
-                        Source::Opening(id) => Source::Opening(id.into()),
-                        Source::Derived(id) => Source::Derived(id.into()),
-                        Source::Challenge(id) => Source::Derived(id.into()),
-                    })
-                    .collect(),
+                factors: term.factors.into_iter().map(map_source).collect(),
             })
             .collect(),
     }
 }
 
-fn composite_ids(ids: impl IntoIterator<Item = JoltOpeningId>) -> Vec<ComposedOpeningId> {
-    ids.into_iter().map(Into::into).collect()
-}
-
-/// Lift jolt-typed `(aliased, source)` pairs into composite [`OpeningAlias`] rows.
-fn composite_aliases<O: Into<ComposedOpeningId>>(
-    pairs: impl IntoIterator<Item = (O, O)>,
-) -> Vec<OpeningAlias<ComposedOpeningId>> {
-    pairs
-        .into_iter()
-        .map(|(aliased, source)| OpeningAlias::new(aliased.into(), source.into()))
-        .collect()
-}
-
-/// Evaluates the BlindFold form of a Jolt claim expression with the same
+/// Evaluates the residual form of a Jolt claim expression with the same
 /// source values used by the clear verifier.
 ///
 /// This is exposed only for differential fuzzing of the expression boundary.
@@ -476,7 +714,7 @@ where
                 unreachable!("Jolt expressions do not contain field-inline openings")
             }
         },
-        |_| unreachable!("Jolt challenges map to BlindFold public inputs"),
+        |_| unreachable!("Jolt challenges map to residual public inputs"),
         |id| match id {
             VerifierPublicId::Jolt(id) => derived(id),
             VerifierPublicId::Challenge(id) => challenge(id),
@@ -498,15 +736,21 @@ where
 fn require_expr_sources<F: JoltField>(
     stage: &'static str,
     expression: &'static str,
-    expr: &VerifierExpr<F>,
+    expr: &VerifierFactored<F>,
     values: &SourceValues<F>,
 ) -> Result<(), VerifierError> {
-    for factor in expr.terms.iter().flat_map(|term| term.factors.iter()) {
-        if let Source::Derived(id) = factor {
-            if !values.has_public(*id) {
-                return Err(VerifierError::BlindFoldConstructionFailed {
-                    reason: format!("{stage} {expression} is missing public source {id:?}"),
-                });
+    let sources = expr
+        .terms
+        .iter()
+        .flat_map(|term| &term.factors)
+        .flat_map(|factor| &factor.terms)
+        .flat_map(|term| &term.factors);
+    for source in sources {
+        if let Source::Derived(id) = source {
+            if values.value(*id).is_none() {
+                return Err(residual_error(format!(
+                    "{stage} {expression} is missing public source {id:?}"
+                )));
             }
         }
     }
@@ -522,18 +766,18 @@ fn domain_spec(domain: SumcheckDomain) -> SumcheckDomainSpec {
     }
 }
 
-fn formula_dimensions<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn formula_dimensions<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
 ) -> Result<JoltFormulaDimensions, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
 {
-    crate::stages::build_formula_dimensions(
-        input.proof,
-        input.preprocessing,
-        input.checked,
+    crate::stages::formula_dimensions_from_parts(
+        input.one_hot_config,
         crate::num::ilog2(input.checked.trace_length),
+        input.preprocessing.program.bytecode_len(),
+        input.checked.ram_K,
         JoltRelationId::BytecodeReadRaf,
     )
 }
@@ -542,8 +786,8 @@ where
     clippy::type_complexity,
     reason = "the three RAM output-check publics (eq, mask, val_io)"
 )]
-fn ram_output_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_output_publics<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     output_address_challenges: &[PCS::Field],
     ram_output_address: &[PCS::Field],
 ) -> Result<(PCS::Field, PCS::Field, PCS::Field), VerifierError>
@@ -567,9 +811,9 @@ where
 // Binding the scalar field to a bare `F` parameter (rather than spelling
 // `PCS::Field`) lets clippy.toml's `arithmetic-side-effects-allowed = ["F"]`
 // recognize the side-effect-free field negations in the body.
-fn ram_val_check_init<F, PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-) -> Result<ram::RamValCheckInit<F>, VerifierError>
+fn ram_val_check_init<F, PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
+) -> Result<RamValCheckInit<F>, VerifierError>
 where
     F: JoltField,
     PCS: CommitmentScheme<Field = F>,
@@ -580,24 +824,24 @@ where
     // clear-path decomposition in stage4/verify.rs.
     let mut contributions = Vec::new();
     if input.checked.precommitted.program_image.is_some() {
-        contributions.push(ram::RamValCheckInitContribution::program_image(-F::one()));
+        contributions.push(RamValCheckInitContribution::program_image(-F::one()));
     }
-    if input.proof.untrusted_advice_commitment.is_some() {
+    if input.checked.untrusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Untrusted, &r_address)?;
-        contributions.push(ram::RamValCheckInitContribution::untrusted(-selector.0));
+        contributions.push(RamValCheckInitContribution::untrusted(-selector.0));
     }
     if input.checked.trusted_advice_commitment_present {
         let selector = advice_selector(input, JoltAdviceKind::Trusted, &r_address)?;
-        contributions.push(ram::RamValCheckInitContribution::trusted(-selector.0));
+        contributions.push(RamValCheckInitContribution::trusted(-selector.0));
     }
-    Ok(ram::RamValCheckInit::decomposed(
+    Ok(RamValCheckInit::decomposed(
         input.stage4.ram_val_check_public_eval,
         contributions,
     ))
 }
 
-fn ram_val_check_address<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn ram_val_check_address<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -616,8 +860,8 @@ where
         })
 }
 
-fn advice_selector<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_selector<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
     r_address: &[PCS::Field],
 ) -> Result<(PCS::Field, Vec<PCS::Field>), VerifierError>
@@ -670,8 +914,8 @@ where
     Ok((selector, opening_point))
 }
 
-fn advice_source_point<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_source_point<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Result<Vec<PCS::Field>, VerifierError>
 where
@@ -682,8 +926,8 @@ where
     advice_selector(input, kind, &r_address).map(|(_, point)| point)
 }
 
-fn advice_layout<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn advice_layout<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     kind: JoltAdviceKind,
 ) -> Option<AdviceClaimReductionLayout>
 where
@@ -697,8 +941,8 @@ where
     clippy::too_many_arguments,
     reason = "Stage 6 has several protocol components."
 )]
-fn add_stage6_publics_and_challenges<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_stage6_publics_and_challenges<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     bytecode_address_rounds: usize,
     bytecode_rounds: usize,
@@ -715,7 +959,7 @@ where
 {
     let log_t = crate::num::ilog2(input.checked.trace_length);
     let log_k = crate::num::ilog2(input.checked.ram_K);
-    let trace_dimensions = jolt_claims::protocols::jolt::TraceDimensions::new(log_t);
+    let trace_dimensions = TraceDimensions::new(log_t);
 
     let bytecode_challenges = &input.stage6a.challenges.bytecode_read_raf;
     let challenge_publics: [(JoltChallengeId, PCS::Field); 9] = [
@@ -762,7 +1006,7 @@ where
 
     let bytecode_address_point = input
         .stage6a
-        .consistency
+        .rounds
         .try_instance_point(bytecode_address_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_address = bytecode_address_point
@@ -772,15 +1016,15 @@ where
         .collect::<Vec<_>>();
     let bytecode_point = input
         .stage6b
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(bytecode_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::BytecodeReadRaf, error))?;
     let bytecode_r_cycle = bytecode_point.iter().rev().copied().collect::<Vec<_>>();
-    let stage1_remainder_challenges = input.stage1.remainder_consistency.challenges();
+    let stage1_remainder_challenges = input.stage1.remainder_rounds.challenges();
     let stage1_cycle = input.stage2.product_tau_low.clone();
     let stage2_product_point = input
         .stage2
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(log_t)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::SpartanProductVirtualization, error)
@@ -792,7 +1036,7 @@ where
         .collect::<Vec<_>>();
     let stage3_shift_point = input
         .stage3
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(log_t)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::SpartanShift, error))?;
     let stage3_cycle = stage3_shift_point.iter().rev().copied().collect::<Vec<_>>();
@@ -947,12 +1191,12 @@ where
 
     let booleanity_address_point = input
         .stage6a
-        .consistency
+        .rounds
         .try_instance_point(booleanity_address_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     let booleanity_point = input
         .stage6b
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(booleanity_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::Booleanity, error))?;
     // The (little-endian) reference cycle is the reversed stage-5 instruction
@@ -980,7 +1224,7 @@ where
 
     let ram_hamming_point = input
         .stage6b
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(ram_hamming_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamHammingBooleanity, error))?;
     let stage1_cycle_binding = point_suffix(
@@ -996,7 +1240,7 @@ where
 
     let ram_ra_point = input
         .stage6b
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(ram_ra_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::RamRaVirtualization, error))?;
     let ram_ra_cycle = trace_dimensions
@@ -1015,7 +1259,7 @@ where
 
     let instruction_ra_point = input
         .stage6b
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(instruction_ra_rounds)
         .map_err(|error| {
             stage_sumcheck_error(JoltRelationId::InstructionRaVirtualization, error)
@@ -1034,7 +1278,7 @@ where
 
     let inc_point = input
         .stage6b
-        .batch_consistency
+        .batch_rounds
         .try_instance_point(inc_rounds)
         .map_err(|error| stage_sumcheck_error(JoltRelationId::IncClaimReduction, error))?;
     let inc_opening_point = trace_dimensions
@@ -1107,8 +1351,8 @@ where
     Ok(())
 }
 
-fn bytecode_reduction_weights<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn bytecode_reduction_weights<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     layout: &BytecodeClaimReductionLayout,
 ) -> Result<BytecodeReductionWeights<PCS::Field>, VerifierError>
 where
@@ -1151,8 +1395,8 @@ where
     )
 }
 
-fn add_bytecode_reduction_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_bytecode_reduction_cycle_publics<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
 ) -> Result<(), VerifierError>
@@ -1183,8 +1427,8 @@ where
     )
 }
 
-fn add_bytecode_reduction_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_bytecode_reduction_address_publics<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &BytecodeClaimReductionLayout,
     sumcheck_point: &[PCS::Field],
@@ -1214,8 +1458,8 @@ where
     )
 }
 
-fn add_program_image_reduction_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_program_image_reduction_cycle_publics<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
 ) -> Result<(), VerifierError>
@@ -1245,8 +1489,8 @@ where
     )
 }
 
-fn add_program_image_reduction_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_program_image_reduction_address_publics<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &ProgramImageClaimReductionLayout,
     sumcheck_point: &[PCS::Field],
@@ -1272,8 +1516,8 @@ where
     )
 }
 
-fn add_advice_cycle_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_cycle_publics<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1305,8 +1549,8 @@ where
     )
 }
 
-fn add_advice_address_publics<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
+fn add_advice_address_publics<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
     values: &mut SourceValues<PCS::Field>,
     layout: &AdviceClaimReductionLayout,
     kind: JoltAdviceKind,
@@ -1333,9 +1577,9 @@ where
     )
 }
 
-fn stage6_virtualization_points<PCS, VC, ZkProof>(
-    input: &BlindFoldInputs<'_, PCS, VC, ZkProof>,
-    dimensions: hamming_weight::HammingWeightClaimReductionDimensions,
+fn stage6_virtualization_points<PCS, VC>(
+    input: &ResidualInputs<'_, PCS, VC>,
+    dimensions: HammingWeightClaimReductionDimensions,
 ) -> Result<Vec<Vec<PCS::Field>>, VerifierError>
 where
     PCS: CommitmentScheme,
@@ -1368,28 +1612,34 @@ fn hamming_virtualization_address_point<F: JoltField>(
 }
 
 impl<F: JoltField> SourceValues<F> {
-    fn public(&mut self, id: impl Into<VerifierPublicId>, value: F) -> Result<(), VerifierError> {
-        let id = id.into();
-        if let Some((_, existing)) = self.publics.iter().find(|(candidate, _)| *candidate == id) {
-            if *existing != value {
-                return Err(VerifierError::BlindFoldConstructionFailed {
-                    reason: format!("public source {id:?} was assigned inconsistent values"),
-                });
-            }
-            return Ok(());
-        }
-        self.publics.push((id, value));
-        Ok(())
+    fn has_public(&self, id: VerifierPublicId) -> bool {
+        self.publics.contains_key(&id)
     }
 
-    fn has_public(&self, id: VerifierPublicId) -> bool {
-        self.publics.iter().any(|(candidate, _)| *candidate == id)
+    fn public(&mut self, id: impl Into<VerifierPublicId>, value: F) -> Result<(), VerifierError> {
+        let id = id.into();
+        match self.publics.entry(id) {
+            Entry::Occupied(existing) if *existing.get() != value => {
+                Err(VerifierError::ResidualConstructionFailed {
+                    reason: format!("public source {id:?} was assigned inconsistent values"),
+                })
+            }
+            Entry::Occupied(_) => Ok(()),
+            Entry::Vacant(slot) => {
+                let _ = slot.insert(value);
+                Ok(())
+            }
+        }
+    }
+
+    fn value(&self, id: VerifierPublicId) -> Option<F> {
+        self.publics.get(&id).copied()
     }
 }
 
 fn stage_sumcheck_error<F: JoltField>(
     stage: JoltRelationId,
-    error: jolt_sumcheck::SumcheckError<F>,
+    error: SumcheckError<F>,
 ) -> VerifierError {
     VerifierError::StageClaimSumcheckFailed {
         stage: format!("{stage:?}"),
@@ -1436,9 +1686,9 @@ fn point_suffix<F: JoltField>(
     })
 }
 
-fn blindfold_error(error: impl ToString) -> VerifierError {
-    VerifierError::BlindFoldConstructionFailed {
-        reason: error.to_string(),
+fn residual_error(reason: impl ToString) -> VerifierError {
+    VerifierError::ResidualConstructionFailed {
+        reason: reason.to_string(),
     }
 }
 
@@ -1469,9 +1719,9 @@ mod field_inline_relation_parity {
         FieldInlineChallengeId, FieldInlineDerivedId, FieldInlineOpeningId,
         FieldRegistersTraceDimensions,
     };
-    use jolt_claims::{InputClaims, SumcheckChallenges};
+    use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
     use jolt_field::{Fr, Ring};
-    use jolt_sumcheck::VerifiedCommittedRound;
+    use jolt_transcript::PadSlots;
 
     fn fr(value: u64) -> Fr {
         Fr::from_u64(value)
@@ -1507,17 +1757,11 @@ mod field_inline_relation_parity {
             .unwrap();
 
         let clear_input = relation.input_claim(inputs, challenges).unwrap();
-        let (_, lowered_input_expr, lowered_output_expr) =
-            relation_claim::<Fr, S::Symbolic>(relation.symbolic());
+        let claim = relation_claim::<Fr, S::Symbolic>(relation.symbolic());
+        let lowered_input_expr = claim.input.expand();
+        let lowered_output_expr = claim.output.expand();
         let publics = assemble_publics(&output_points);
-        let resolve_challenge = |id: &VerifierPublicId| {
-            publics
-                .publics
-                .iter()
-                .find(|(candidate, _)| candidate == id)
-                .unwrap()
-                .1
-        };
+        let resolve_challenge = |id: &VerifierPublicId| publics.value(*id).unwrap();
         let lowered_input = lowered_input_expr.evaluate(
             |id| match id {
                 ComposedOpeningId::FieldInline(id) => inputs.resolve_input(id).unwrap(),
@@ -1574,17 +1818,16 @@ mod field_inline_relation_parity {
                 let rounds = point(900, 2)
                     .into_iter()
                     .chain(point(60, log_t))
-                    .map(|challenge| VerifiedCommittedRound {
-                        commitment: (),
-                        degree: 3,
+                    .map(|challenge| MaskedRound {
+                        wire: Vec::new(),
+                        slots: PadSlots::default(),
                         challenge,
                     })
                     .collect();
-                let batch = BatchedCommittedSumcheckConsistency {
-                    consistency: CommittedSumcheckConsistency { rounds },
+                let batch = BatchedMaskedRounds {
+                    rounds,
                     batching_coefficients: vec![fr(1)],
-                    max_num_vars: log_t + 2,
-                    max_degree: 3,
+                    degrees: DegreeSchedule::uniform(log_t + 2, 3),
                 };
                 let _ = field_inline::stage2_claim_reduction(
                     &mut publics,

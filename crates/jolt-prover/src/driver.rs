@@ -41,6 +41,7 @@ use jolt_verifier::stages::relations::{
 };
 use jolt_verifier::VerifierError;
 
+use crate::recorder::ClaimRecorder;
 use crate::ProverError;
 
 /// The generated per-stage driver: implemented for each batch struct by
@@ -58,7 +59,7 @@ pub trait StageProver<F: JoltField>: Sized {
     type Kernels;
 
     /// Prove this stage's batch on `transcript`, recorder-generically: the
-    /// recorder type decides clear vs. committed recording, never a runtime
+    /// recorder type decides clear vs. masked recording, never a runtime
     /// flag. Returns the [`Proved`] carrier (recorded proof, typed output
     /// claims, derived points, hard-checked final claim).
     #[expect(
@@ -78,7 +79,7 @@ pub trait StageProver<F: JoltField>: Sized {
     where
         B: ?Sized,
         for<'a> KernelContext<'a, F, B>: KernelSource<F, Self>,
-        Rec: SumcheckRecorder<F>,
+        Rec: SumcheckRecorder<F> + ClaimRecorder,
         T: FieldTranscript<F> + ProverTranscript;
 
     /// The stage's absorbed opening scalars, in the stage's curated order
@@ -479,7 +480,7 @@ macro_rules! impl_stage_prover {
             where
                 B: ?Sized,
                 for<'a> ::jolt_kernels::KernelContext<'a, F, B>: $crate::driver::KernelSource<F, Self>,
-                Rec: ::jolt_sumcheck::SumcheckRecorder<F>,
+                Rec: ::jolt_sumcheck::SumcheckRecorder<F> + $crate::recorder::ClaimRecorder,
                 T: ::jolt_transcript::FieldTranscript<F> + ::jolt_transcript::ProverTranscript,
             {
                 let __stage_span =
@@ -532,8 +533,19 @@ macro_rules! impl_stage_prover {
                 };
                 $($crate::driver::__stage_member!(park $presence $member, kernels);)+
 
-                let __opening_values =
-                    self.curate_opening_values(&__output_claims, &__output_points)?;
+                // A clear proof absorbs the stage's curated order; a masked one
+                // sends the cells on its wire routes, as the generated
+                // `verify_masked` reads them.
+                let __opening_values = if <Rec as $crate::recorder::ClaimRecorder>::MASKED {
+                    Self::wire_claim_values(
+                        &__output_claims,
+                        &<Rec as $crate::recorder::ClaimRecorder>::wire_routes(
+                            Self::claim_routes(&__output_points)?,
+                        ),
+                    )
+                } else {
+                    self.curate_opening_values(&__output_claims, &__output_points)?
+                };
                 $crate::driver::__stage_shape_check!($shape, self, __output_claims);
 
                 let __expected = self.expected_final_claim(

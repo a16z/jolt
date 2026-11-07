@@ -7,16 +7,23 @@ use jolt_crypto::{HomomorphicCommitment, VectorCommitment};
 use jolt_field::{Accumulator, JoltField, WithAccumulator};
 use jolt_kernels::{JoltBackend, KernelContext};
 use jolt_openings::{AdditivelyHomomorphic, CommitmentScheme, ZkOpeningScheme};
-use jolt_transcript::{Encoding, FieldTranscript, ProverInit};
+use jolt_transcript::{ChallengeCodec, Encoding, FieldTranscript, ProverInit};
 use jolt_verifier::config::JoltProtocolConfig;
+#[cfg(not(feature = "zk"))]
+use jolt_verifier::config::ZkConfig;
+#[cfg(feature = "zk")]
+use jolt_verifier::config::SELECTED_ZK_CONFIG;
 #[cfg(not(feature = "zk"))]
 use jolt_verifier::proof::ClearProofClaims;
 use jolt_verifier::proof::{JoltProof, JoltProofClaims, JoltStageProofs};
 use jolt_verifier::stages::pow::{PowSite, StagePowNonces};
 
+#[cfg(feature = "zk")]
+use crate::blindfold::{commit_pads, prove_blindfold, ZkFinalOpening};
 use crate::boundary::finish_stage;
 use crate::dory::stages::stage0::{prove_stage0, TrustedAdviceCommitment};
 use crate::dory::stages::stage8::prove_stage8;
+#[cfg(not(feature = "zk"))]
 use crate::recorder::ProofMode;
 use crate::stages::stage1::prove_stage1;
 use crate::stages::stage2::prove_stage2;
@@ -58,7 +65,7 @@ pub fn prove<F, PCS, VC, T>(
     public_io: &JoltDevice,
 ) -> Result<JoltProof<PCS, VC>, ProverError<F>>
 where
-    F: JoltField + Encoding,
+    F: JoltField + Encoding + ChallengeCodec,
     PCS: CommitmentScheme<Field = F>
         + AdditivelyHomomorphic
         + ZkOpeningScheme<HidingCommitment = VC::Output, Blind = F>,
@@ -68,7 +75,6 @@ where
     T: FieldTranscript<F> + ProverInit,
     <F as WithAccumulator>::Accumulator: Accumulator<Element = F>,
 {
-    let mode = ProofMode::<VC>::new(preprocessing.verifier.vc_setup.as_ref())?;
     let stage0 = prove_stage0::<F, PCS, VC, T>(
         &mut backend,
         preprocessing,
@@ -80,12 +86,27 @@ where
     finish_stage("stage0", log_t, backend.session(), &());
     let checked = stage0.checked;
     let mut transcript = stage0.transcript;
+    #[cfg(feature = "zk")]
+    let mut committed = commit_pads::<F, PCS, VC, T>(
+        preprocessing,
+        config,
+        &checked,
+        &stage0.commitments,
+        stage0.untrusted_advice_commitment.as_ref(),
+        &mut transcript,
+    )?;
+    #[cfg(feature = "zk")]
+    let mode = &mut committed.mode;
+    #[cfg(not(feature = "zk"))]
+    let mut clear_mode = ProofMode::<VC>::clear();
+    #[cfg(not(feature = "zk"))]
+    let mode = &mut clear_mode;
 
-    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, &mode, log_t, &mut transcript)?;
+    let stage1 = prove_stage1::<F, PCS, VC, T>(&mut backend, mode, log_t, &mut transcript)?;
     finish_stage("stage1", log_t, backend.session(), &stage1.clear_output);
     let stage2 = prove_stage2::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        mode,
         config,
         public_io,
         &stage1.clear_output,
@@ -94,7 +115,7 @@ where
     finish_stage("stage2", log_t, backend.session(), &stage2.clear_output);
     let stage3 = prove_stage3::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        mode,
         config,
         &stage1.clear_output,
         &stage2.clear_output,
@@ -103,7 +124,7 @@ where
     finish_stage("stage3", log_t, backend.session(), &stage3.clear_output);
     let stage4 = prove_stage4::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -114,7 +135,7 @@ where
     finish_stage("stage4", log_t, backend.session(), &stage4.clear_output);
     let stage5 = prove_stage5::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -125,7 +146,7 @@ where
     finish_stage("stage5", log_t, backend.session(), &stage5.clear_output);
     let stage6a = prove_stage6a::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -139,7 +160,7 @@ where
     finish_stage("stage6a", log_t, backend.session(), &stage6a.clear_output);
     let stage6b = prove_stage6b::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -154,7 +175,7 @@ where
     finish_stage("stage6b", log_t, backend.session(), &stage6b.clear_output);
     let stage7 = prove_stage7::<F, PCS, VC, T>(
         &mut backend,
-        &mode,
+        mode,
         &checked,
         config,
         preprocessing,
@@ -181,39 +202,39 @@ where
     finish_stage("stage8", log_t, backend.session(), &());
     backend.finish();
 
-    let stages = JoltStageProofs {
-        stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
-        stage1_sumcheck_proof: stage1.sumcheck_proof,
-        stage2_uni_skip_first_round_proof: stage2.uniskip_proof,
-        stage2_sumcheck_proof: stage2.sumcheck_proof,
-        stage3_sumcheck_proof: stage3.sumcheck_proof,
-        stage4_sumcheck_proof: stage4.sumcheck_proof,
-        stage5_sumcheck_proof: stage5.sumcheck_proof,
-        stage6a_sumcheck_proof: stage6a.sumcheck_proof,
-        stage6b_sumcheck_proof: stage6b.sumcheck_proof,
-        stage7_sumcheck_proof: stage7.sumcheck_proof,
-        // The homomorphic opening draws no selector point, so stage 8 has no
-        // nonce.
-        pow_nonces: StagePowNonces::from_iter([
-            (PowSite::Stage1Tau, stage1.tau_pow_nonce),
-            (PowSite::Stage1, stage1.pow_nonce),
-            (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
-            (PowSite::Stage2, stage2.pow_nonce),
-            (PowSite::Stage3, stage3.pow_nonce),
-            (PowSite::Stage4, stage4.pow_nonce),
-            (PowSite::Stage5, stage5.pow_nonce),
-            (PowSite::Stage6a, stage6a.pow_nonce),
-            (PowSite::Stage6b, stage6b.pow_nonce),
-            (PowSite::Stage7, stage7.pow_nonce),
-        ]),
-    };
+    // The homomorphic opening draws no selector point, so stage 8 has no
+    // nonce.
+    let pow_nonces = StagePowNonces::from_iter([
+        (PowSite::Stage1Tau, stage1.tau_pow_nonce),
+        (PowSite::Stage1, stage1.pow_nonce),
+        (PowSite::Stage2TauHigh, stage2.tau_high_pow_nonce),
+        (PowSite::Stage2, stage2.pow_nonce),
+        (PowSite::Stage3, stage3.pow_nonce),
+        (PowSite::Stage4, stage4.pow_nonce),
+        (PowSite::Stage5, stage5.pow_nonce),
+        (PowSite::Stage6a, stage6a.pow_nonce),
+        (PowSite::Stage6b, stage6b.pow_nonce),
+        (PowSite::Stage7, stage7.pow_nonce),
+    ]);
 
     #[cfg(not(feature = "zk"))]
     {
         Ok(JoltProof {
-            protocol: JoltProtocolConfig::for_zk(false),
+            protocol: JoltProtocolConfig::for_zk(ZkConfig::Transparent),
             commitments: stage0.commitments,
-            stages,
+            stages: JoltStageProofs {
+                stage1_uni_skip_first_round_proof: stage1.uniskip_proof,
+                stage1_sumcheck_proof: stage1.sumcheck_proof,
+                stage2_uni_skip_first_round_proof: stage2.uniskip_proof,
+                stage2_sumcheck_proof: stage2.sumcheck_proof,
+                stage3_sumcheck_proof: stage3.sumcheck_proof,
+                stage4_sumcheck_proof: stage4.sumcheck_proof,
+                stage5_sumcheck_proof: stage5.sumcheck_proof,
+                stage6a_sumcheck_proof: stage6a.sumcheck_proof,
+                stage6b_sumcheck_proof: stage6b.sumcheck_proof,
+                stage7_sumcheck_proof: stage7.sumcheck_proof,
+                pow_nonces,
+            },
             joint_opening_proof: stage8.joint_opening_proof,
             untrusted_advice_commitment: stage0.untrusted_advice_commitment,
             claims: JoltProofClaims::Clear(ClearProofClaims {
@@ -236,53 +257,37 @@ where
     }
     #[cfg(feature = "zk")]
     {
-        use crate::blindfold::{self, ZkFinalOpening, ZkStageWitnesses};
-
-        // The shell: every wire field real, the claims slot a unit
-        // placeholder the stage replay never reads (claims are not absorbed
-        // in ZK — the BlindFold proof replaces them after the tail).
-        let shell = JoltProof::<PCS, VC, ()> {
-            protocol: JoltProtocolConfig::for_zk(true),
+        let shell = JoltProof {
+            protocol: JoltProtocolConfig::for_zk(SELECTED_ZK_CONFIG),
             commitments: stage0.commitments,
-            stages,
+            stages: JoltStageProofs::masked(pow_nonces),
             joint_opening_proof: stage8.joint_opening_proof,
             untrusted_advice_commitment: stage0.untrusted_advice_commitment,
             claims: JoltProofClaims::Zk {
-                blindfold_proof: (),
+                masked: committed.mode.tape().clone(),
+                zk_proof: (),
             },
             trace_length: config.trace_length,
             ram_K: config.ram_K,
             rw_config: config.rw_config,
             one_hot_config: config.one_hot_config,
             trace_polynomial_order: config.trace_polynomial_order,
-            narg: transcript.narg_string().to_vec(),
+            narg: Vec::new(),
         };
-        let witnesses = ZkStageWitnesses {
-            stage1_uniskip: stage1.uniskip_witness,
-            stage1: stage1.committed_witness,
-            stage2_uniskip: stage2.uniskip_witness,
-            stage2: stage2.committed_witness,
-            stage3: stage3.committed_witness,
-            stage4: stage4.committed_witness,
-            stage5: stage5.committed_witness,
-            stage6a: stage6a.committed_witness,
-            stage6b: stage6b.committed_witness,
-            stage7: stage7.committed_witness,
-        };
-        let final_opening = ZkFinalOpening {
-            joint_evaluation: stage8.joint_evaluation,
-            evaluation_blind: stage8.evaluation_blind,
-        };
-        let blindfold_proof = blindfold::prove_blindfold::<F, PCS, VC, T>(
+        let (masked, zk_proof) = prove_blindfold::<F, PCS, VC, T>(
             preprocessing,
             public_io,
             trusted_advice.map(|trusted| &trusted.commitment),
             &shell,
-            &witnesses,
-            &final_opening,
-            &transcript,
+            committed,
+            &ZkFinalOpening {
+                joint_evaluation: stage8.joint_evaluation,
+                evaluation_blind: stage8.evaluation_blind,
+            },
+            &mut transcript,
         )?;
-
-        Ok(shell.with_claims(JoltProofClaims::Zk { blindfold_proof }))
+        let mut proof = shell.with_claims(JoltProofClaims::Zk { masked, zk_proof });
+        proof.narg = transcript.narg_string().to_vec();
+        Ok(proof)
     }
 }

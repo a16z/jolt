@@ -11,6 +11,7 @@ use jolt_openings::CommitmentScheme;
 use jolt_poly::sparse_segments_mle_msb;
 use jolt_program::preprocess::PublicInitialRam;
 use jolt_transcript::FieldTranscript;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_read_write_checking::{
@@ -26,6 +27,7 @@ use super::{
         ram_val_check_init_structure, ram_val_check_initial_evaluation,
         ram_val_check_input_points_from_upstream, ram_val_check_input_values_from_upstream,
         RamValCheck, RamValCheckInitStructure, RamValCheckInitialEvaluation,
+        RamValCheckStagedOpenings,
     },
     registers_read_write_checking::{
         registers_read_write_input_points_from_upstream,
@@ -41,7 +43,7 @@ use crate::{
         pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage3::{Stage3Output, Stage3OutputClaims, Stage3OutputPoints},
-        zk::committed,
+        zk::masked_channel,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -84,14 +86,15 @@ pub fn stage4_input_points_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage4)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     transcript: &mut T,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-    stage3: &Stage3Output<PCS::Field, VC::Output>,
-) -> Result<Stage4Output<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage2: &Stage2Output<PCS::Field>,
+    stage3: &Stage3Output<PCS::Field>,
+) -> Result<Stage4Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -165,10 +168,9 @@ where
     // Draw the batching gammas in declaration order: the registers gamma, under `field-inline`
     // the field-register read-write gamma, then the RAM value-check gamma, each a single
     // `challenge()` in one squeeze run behind the stage-4 proof of work.
-    check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
-    let challenges = sumchecks.draw_challenges(transcript)?;
-
-    if !checked.zk {
+    if !checked.zk.is_masked() {
+        check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
+        let challenges = sumchecks.draw_challenges(transcript)?;
         let claims = &proof.clear_claims()?.stage4;
         let stage2 = stage2.clear()?;
         let stage3 = stage3.clear()?;
@@ -210,33 +212,35 @@ where
     }
 
     {
-        let consistency = sumchecks.verify_zk(&proof.stages.stage4_sumcheck_proof, transcript)?;
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage4_sumcheck_proof,
-            "stage4_sumcheck_proof",
-            sumchecks.output_claim_count(),
-            JoltRelationId::RegistersReadWriteChecking,
-        )?;
-
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points and init structure. Advice / program-image openings live in
-        // BlindFold for ZK proofs, so `derive_opening_points` leaves those leaves
-        // absent in the produced points.
+        // output points and init structure. The staged cells arrive masked
+        // before the batch.
         let input_points = stage4_input_points_from_upstream(
             stage2.batch_output_points(),
             stage3.output_points(),
             &init_structure,
         );
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        // The staged cells are a prover message, so they precede the stage-4
+        // proof of work: the nonce then protects the gammas and the batch
+        // coefficients drawn after them (see `pow`).
+        let staged_points = init_structure.staged_points();
+        let mut masked = masked;
+        let staged = RamValCheckStagedOpenings::receive_masked(
+            &staged_points,
+            &mut masked_channel(masked.as_deref_mut(), transcript)?,
+        )?;
+        check_pow(PowSite::Stage4, &proof.stages.pow_nonces, transcript)?;
+        let challenges = sumchecks.draw_challenges(transcript)?;
+        let mut channel = masked_channel(masked, transcript)?;
+        let mut batch = sumchecks.verify_masked(&input_points, &mut channel)?;
+        batch.output_claims.received.extend(staged);
 
         Ok(Stage4Output::Zk(Stage4ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
+            batch_rounds: batch.rounds,
+            batch_output_claims: batch.output_claims,
             ram_val_check_public_eval,
-            output_points,
+            output_points: batch.output_points,
         }))
     }
 }

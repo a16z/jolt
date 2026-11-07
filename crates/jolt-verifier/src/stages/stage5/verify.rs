@@ -1,10 +1,11 @@
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::FieldRegistersTraceDimensions;
-use jolt_claims::protocols::jolt::{geometry::dimensions::JoltFormulaDimensions, JoltRelationId};
+use jolt_claims::protocols::jolt::geometry::dimensions::JoltFormulaDimensions;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(feature = "field-inline")]
 use super::field_registers_val_evaluation::{
@@ -29,13 +30,13 @@ use super::{
         registers_val_evaluation_input_values_from_upstream, RegistersValEvaluation,
     },
 };
+use crate::stages::zk::masked_channel;
 use crate::{
     proof::JoltProof,
     stages::{
         pow::{check_pow, PowSite},
         stage2::{Stage2BatchOutputClaims, Stage2BatchOutputPoints, Stage2Output},
         stage4::{Stage4Output, Stage4OutputClaims, Stage4OutputPoints},
-        zk::committed,
     },
     verifier::CheckedInputs,
     VerifierError,
@@ -80,14 +81,15 @@ pub fn stage5_input_points_from_upstream<F: JoltField>(
 }
 
 #[jolt_verifier_derive::fs_scope(Stage5)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    stage2: &Stage2Output<PCS::Field, VC::Output>,
-    stage4: &Stage4Output<PCS::Field, VC::Output>,
-) -> Result<Stage5Output<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage2: &Stage2Output<PCS::Field>,
+    stage4: &Stage4Output<PCS::Field>,
+) -> Result<Stage5Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -113,7 +115,7 @@ where
     check_pow(PowSite::Stage5, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if !checked.zk {
+    if !checked.zk.is_masked() {
         let claims = &proof.clear_claims()?.stage5;
         let stage2 = stage2.clear()?;
         let stage4 = stage4.clear()?;
@@ -152,29 +154,19 @@ where
     {
         let stage2 = stage2.zk()?;
         let stage4 = stage4.zk()?;
-        let consistency = sumchecks.verify_zk(&proof.stages.stage5_sumcheck_proof, transcript)?;
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage5_sumcheck_proof,
-            "stage5_sumcheck_proof",
-            sumchecks.output_claim_count(),
-            JoltRelationId::InstructionReadRaf,
-        )?;
-
         // Built via the same wiring as the clear path, off the ZK-agnostic upstream
-        // output points; `derive_opening_points` ignores the instruction relation's
-        // input points, so carrying the real claim-reduction point here is harmless.
+        // output points.
         let input_points =
             stage5_input_points_from_upstream(&stage2.output_points, &stage4.output_points);
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
-        let instruction_r_address = output_points.instruction_r_address();
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
+        let instruction_r_address = batch.output_points.instruction_r_address();
 
         Ok(Stage5Output::Zk(Stage5ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_rounds: batch.rounds,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
             instruction_r_address,
         }))
     }

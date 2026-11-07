@@ -724,12 +724,9 @@ dependencies = [
 name = "jolt-sumcheck"
 version = "0.1.0"
 dependencies = [
- "jolt-crypto",
  "jolt-field",
  "jolt-poly",
- "jolt-r1cs",
  "jolt-transcript",
- "rand_core",
  "serde",
  "thiserror",
  "tracing",
@@ -759,7 +756,6 @@ dependencies = [
 name = "jolt-verifier"
 version = "0.1.0"
 dependencies = [
- "ark-serialize",
  "bincode 2.0.1",
  "common",
  "jolt-claims",
@@ -779,6 +775,7 @@ dependencies = [
  "serde",
  "sha3",
  "thiserror",
+ "tracing",
 ]
 
 [[package]]

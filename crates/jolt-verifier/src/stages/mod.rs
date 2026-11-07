@@ -43,8 +43,8 @@ pub mod zk;
 /// length, RAM size), mapping the layout error to `stage`. Built once during
 /// verification and shared by the stages (5-8) that derive their RA layouts from
 /// it, and reused by the BlindFold input derivation.
-pub fn build_formula_dimensions<PCS, VC, ZkProof>(
-    proof: &JoltProof<PCS, VC, ZkProof>,
+pub fn build_formula_dimensions<PCS, VC, ZkProof, O>(
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     preprocessing: &JoltVerifierPreprocessing<PCS, VC>,
     checked: &CheckedInputs,
     log_t: usize,

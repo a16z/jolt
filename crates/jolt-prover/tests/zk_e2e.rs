@@ -6,6 +6,7 @@
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "zk",
+    not(feature = "akita"),
     not(feature = "field-inline")
 ))]
 mod support;
@@ -13,6 +14,7 @@ mod support;
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "zk",
+    not(feature = "akita"),
     not(feature = "field-inline")
 ))]
 #[expect(
@@ -26,14 +28,20 @@ mod zk {
     use common::jolt_device::JoltDevice;
     use jolt_crypto::{Bn254G1, Pedersen};
     use jolt_dory::{DoryCommitment, DoryScheme};
-    use jolt_field::{Fr, Ring};
+    use jolt_field::{Fr, Ring, Zero};
     use jolt_prover::dory::DoryProverPreprocessing;
+    use jolt_prover::zk_secrets::{self, ZkSecrets};
     use jolt_prover::{JoltBackend, JoltSharedPreprocessing, ProverConfig};
     use jolt_riscv::JoltTraceRow;
-    use jolt_transcript::{Keccak, ProverState, VerifierState};
+    use jolt_transcript::{Keccak, ProverState, VerifierInit, VerifierState};
     use jolt_verifier::proof::{JoltProof, JoltProofClaims};
     use jolt_verifier::VerifierError;
+    use jolt_verifier::{
+        validate_and_seed_transcript, verify_stages_on, MaskedStages, VerifiedStages, JOLT_SESSION,
+    };
+    use jolt_verifier::{JoltProtocolConfig, ZkConfig};
     use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
+    use jolt_zk::masking::{ResidualRelation, ResidualVar};
 
     use crate::support::{self, with_zk_stack, GuestCase, PreparedGuest};
 
@@ -132,8 +140,184 @@ mod zk {
     fn zk_muldiv_reference_backend_proof_is_accepted() {
         with_zk_stack(|| {
             let proved = prove_muldiv(JoltBackend::reference());
+            assert_eq!(
+                proved.proof.protocol,
+                JoltProtocolConfig::for_zk(ZkConfig::BlindFold)
+            );
             assert!(matches!(proved.proof.claims, JoltProofClaims::Zk { .. }));
             verify(&proved).expect("modular ZK proof must verify");
+        });
+    }
+
+    /// A proved muldiv ZK proof, its secrets, and the verifier's masked
+    /// stage outputs replayed from its argument string.
+    struct CheatingProver {
+        masked: MaskedStages<'static, Fr, Bn254G1>,
+        secrets: ZkSecrets<Fr>,
+        /// The honest masked auxiliary block and its relation: a shift that
+        /// leaves the block unchanged leaves the relation unchanged.
+        honest: (Vec<Fr>, ResidualRelation<Fr>),
+    }
+
+    impl CheatingProver {
+        fn new() -> Self {
+            // The masked stages borrow the proof's tape for the rest of the test.
+            let proved: &'static ProvedGuest =
+                Box::leak(Box::new(prove_muldiv(JoltBackend::optimized())));
+            let secrets = zk_secrets::take::<Fr>().expect("a ZK prove records its secrets");
+            let (checked, mut transcript) = validate_and_seed_transcript(
+                &proved.preprocessing.verifier,
+                &proved.public_io,
+                &proved.proof,
+                proved.trusted_advice_commitment.as_ref(),
+                |statement| {
+                    VerifierState::<Keccak>::init(&JOLT_SESSION, statement, &proved.proof.narg)
+                },
+            )
+            .expect("seed the honest proof");
+            let JoltProofClaims::Zk { zk_proof, .. } = &proved.proof.claims else {
+                panic!("a ZK proof carries a masked payload");
+            };
+            let VerifiedStages::Zk(masked) =
+                verify_stages_on::<Fr, DoryScheme, Pedersen<Bn254G1>, _, _>(
+                    &proved.preprocessing.verifier,
+                    &proved.proof,
+                    proved.trusted_advice_commitment.as_ref(),
+                    &checked,
+                    &mut transcript,
+                    Some(zk_proof.pad_commitment.clone()),
+                    None,
+                )
+                .expect("stage spine accepts the honest proof")
+            else {
+                panic!("a ZK proof yields masked stages");
+            };
+            let masked = *masked;
+            let block = Self::masked_auxiliary(&masked, &secrets.pads);
+            let relation = masked.relation(&block).expect("residual relation");
+            let cheater = Self {
+                masked,
+                secrets,
+                honest: (block, relation),
+            };
+            assert_eq!(cheater.violation(&cheater.secrets.pads), None);
+            cheater
+        }
+
+        /// The auxiliary block a prover holding `pads` sends: the masked
+        /// messages already sent decode against `pads`, and the products are
+        /// recomputed from those decoded values to fit.
+        fn masked_auxiliary(masked: &MaskedStages<'_, Fr, Bn254G1>, pads: &[Fr]) -> Vec<Fr> {
+            let auxiliary = masked
+                .residual
+                .auxiliary_values(|operand| Ok(operand.masked - pads[operand.pad.0]))
+                .expect("auxiliary values");
+            let start = masked.session.pads.layout().auxiliary.start;
+            auxiliary
+                .iter()
+                .zip(&pads[start..])
+                .map(|(value, pad)| *value + *pad)
+                .collect()
+        }
+
+        /// The relation that prover's argument string yields.
+        fn relation(&self, pads: &[Fr]) -> ResidualRelation<Fr> {
+            self.masked
+                .relation(&Self::masked_auxiliary(&self.masked, pads))
+                .expect("residual relation")
+        }
+
+        fn violation(&self, pads: &[Fr]) -> Option<usize> {
+            let witness = [self.secrets.joint_evaluation];
+            let block = Self::masked_auxiliary(&self.masked, pads);
+            let (honest_block, honest_relation) = &self.honest;
+            let rebuilt;
+            let relation = if block == *honest_block {
+                honest_relation
+            } else {
+                rebuilt = self.masked.relation(&block).expect("residual relation");
+                &rebuilt
+            };
+            relation
+                .first_violation(pads, &witness)
+                .expect("evaluate residual rows")
+        }
+
+        /// `pads` with `shifts` applied: lowering pad i by δ raises the value
+        /// m̂_i − p_i the masked message m̂_i decodes to by δ.
+        fn shifted(&self, shifts: &[(usize, Fr)]) -> Vec<Fr> {
+            let mut pads = self.secrets.pads.clone();
+            for (slot, delta) in shifts {
+                pads[*slot] -= *delta;
+            }
+            pads
+        }
+    }
+
+    /// Soundness probe: shifting any one decoded base value of the muldiv
+    /// proof by δ, keeping its masked message, and recomputing the
+    /// auxiliary block as a cheating prover would, violates a residual row.
+    /// The challenges stay those of the honest transcript, which a
+    /// cheater's masked messages also reproduce.
+    #[test]
+    fn zk_muldiv_shifting_any_decoded_value_breaks_a_row() {
+        with_zk_stack(|| {
+            let cheater = CheatingProver::new();
+            let delta = Fr::from_u64(7);
+            let base = cheater.masked.session.pads.layout().auxiliary.start;
+            let undetected: Vec<usize> = (0..base)
+                .filter(|&slot| {
+                    cheater
+                        .violation(&cheater.shifted(&[(slot, delta)]))
+                        .is_none()
+                })
+                .collect();
+            assert!(
+                undetected.is_empty(),
+                "decoded values no row catches: {undetected:?}"
+            );
+        });
+    }
+
+    /// The stage-6b runtime alias is sent masked with an equality row to its
+    /// read-RAF source. Shifting the alias cell alone violates that equality
+    /// row; shifting it together with its source keeps them equal, and the
+    /// rows that consume the two copies still catch the shift.
+    #[test]
+    fn zk_muldiv_stage6b_alias_is_bound_to_its_source() {
+        with_zk_stack(|| {
+            let cheater = CheatingProver::new();
+            let honest = cheater.relation(&cheater.secrets.pads);
+            let (row, alias, source) = honest
+                .affine
+                .iter()
+                .enumerate()
+                .find_map(|(row, form)| match form.terms.as_slice() {
+                    [(ResidualVar::Pad(a), ca), (ResidualVar::Pad(b), cb)]
+                        if *ca + *cb == Fr::from_u64(0) =>
+                    {
+                        Some((row, a.0.max(b.0), a.0.min(b.0)))
+                    }
+                    _ => None,
+                })
+                .expect("muldiv's stage 6b aliases a bytecode RA opening");
+            let delta = Fr::from_u64(7);
+
+            let pads = cheater.shifted(&[(alias, delta)]);
+            let relation = cheater.relation(&pads);
+            let witness = [cheater.secrets.joint_evaluation];
+            assert!(!relation.affine[row]
+                .evaluate(&pads, &witness)
+                .expect("evaluate the equality row")
+                .is_zero());
+
+            let pads = cheater.shifted(&[(alias, delta), (source, delta)]);
+            let relation = cheater.relation(&pads);
+            assert!(relation.affine[row]
+                .evaluate(&pads, &witness)
+                .expect("evaluate the equality row")
+                .is_zero());
+            assert!(cheater.violation(&pads).is_some());
         });
     }
 
@@ -141,10 +325,10 @@ mod zk {
     fn zk_muldiv_tampered_blindfold_is_rejected() {
         with_zk_stack(|| {
             let mut proved = prove_muldiv(JoltBackend::reference());
-            let JoltProofClaims::Zk { blindfold_proof } = &mut proved.proof.claims else {
+            let JoltProofClaims::Zk { zk_proof, .. } = &mut proved.proof.claims else {
                 panic!("ZK proof must carry BlindFold claims");
             };
-            blindfold_proof.random_u += Fr::from_u64(1);
+            zk_proof.blindfold.folding.random_u += Fr::from_u64(1);
             assert!(verify(&proved).is_err());
         });
     }

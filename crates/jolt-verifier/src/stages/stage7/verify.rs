@@ -12,6 +12,7 @@ use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
 use jolt_transcript::FieldTranscript;
+use jolt_zk::masking::MaskedSession;
 
 #[cfg(not(feature = "akita"))]
 use super::advice_address_phase::{
@@ -38,7 +39,7 @@ use crate::{
         pow::{check_pow, PowSite},
         stage4::{Stage4ClearOutput, Stage4Output},
         stage6b::{outputs::Stage6bOutputPoints, Stage6bClearOutput, Stage6bOutput},
-        zk::committed,
+        zk::masked_channel,
         PrecommittedSchedule,
     },
     verifier::CheckedInputs,
@@ -50,14 +51,15 @@ use jolt_claims::protocols::jolt::geometry::claim_reductions::advice;
 use jolt_claims::protocols::jolt::JoltAdviceKind;
 
 #[jolt_verifier_derive::fs_scope(Stage7)]
-pub fn verify<PCS, VC, T, ZkProof>(
+pub fn verify<PCS, VC, T, ZkProof, O, P>(
     checked: &CheckedInputs,
-    proof: &JoltProof<PCS, VC, ZkProof>,
+    proof: &JoltProof<PCS, VC, ZkProof, O>,
     formula_dimensions: &JoltFormulaDimensions,
     transcript: &mut T,
-    stage4: &Stage4Output<PCS::Field, VC::Output>,
-    stage6: &Stage6bOutput<PCS::Field, VC::Output>,
-) -> Result<Stage7Output<PCS::Field, VC::Output>, VerifierError>
+    masked: Option<&mut MaskedSession<'_, PCS::Field, P>>,
+    stage4: &Stage4Output<PCS::Field>,
+    stage6: &Stage6bOutput<PCS::Field>,
+) -> Result<Stage7Output<PCS::Field>, VerifierError>
 where
     PCS: CommitmentScheme,
     VC: VectorCommitment<Field = PCS::Field>,
@@ -73,7 +75,7 @@ where
     // weights) lives in the stage 4/6 clear outputs, absent in ZK where those
     // terms are proved by BlindFold and the relations' `derive_output_term` never
     // runs.
-    let clear = if checked.zk {
+    let clear = if checked.zk.is_masked() {
         None
     } else {
         Some((stage4.clear()?, stage6.clear()?))
@@ -99,29 +101,20 @@ where
     check_pow(PowSite::Stage7, &proof.stages.pow_nonces, transcript)?;
     let challenges = sumchecks.draw_challenges(transcript)?;
 
-    if checked.zk {
-        let consistency = sumchecks.verify_zk(&proof.stages.stage7_sumcheck_proof, transcript)?;
-        let batch_output_claims = committed::verify_output_claim_commitments(
-            checked,
-            &proof.stages.stage7_sumcheck_proof,
-            "stage7_sumcheck_proof",
-            sumchecks.output_claim_count(),
-            JoltRelationId::HammingWeightClaimReduction,
-        )?;
-
-        // The produced opening points, derived off the committed batch consistency;
-        // stage 8 reads the hamming point and resolves the precommitted finals off
-        // them. BlindFold recomputes each relation's sumcheck point and publics
-        // independently from `batch_consistency`.
+    if checked.zk.is_masked() {
+        // The produced opening points, derived off the masked rounds; stage 8
+        // reads the hamming point and resolves the precommitted finals off
+        // them. The residual relation recomputes each relation's sumcheck point
+        // and publics independently from `batch_rounds`.
         let input_points = sumchecks.empty_input_points();
-        let output_points =
-            sumchecks.derive_opening_points(&consistency.challenges(), &input_points)?;
+        let batch =
+            sumchecks.verify_masked(&input_points, &mut masked_channel(masked, transcript)?)?;
 
         return Ok(Stage7Output::Zk(Stage7ZkOutput {
             challenges,
-            batch_consistency: consistency,
-            batch_output_claims,
-            output_points,
+            batch_rounds: batch.rounds,
+            batch_output_claims: batch.output_claims,
+            output_points: batch.output_points,
         }));
     }
 
