@@ -204,6 +204,8 @@ codegen-units = 1
 ## deprecated `replace` form because the Akita cutover also needs a Git-source
 ## patch for the shared `jolt-field` package identity below.
 [patch.crates-io]
+rayon = { git = "https://github.com/GUJustin/rayon", rev = "5c5cbb1f2eba6e77b6ae743b5dabb12400da8125" }
+rayon-core = { git = "https://github.com/GUJustin/rayon", rev = "5c5cbb1f2eba6e77b6ae743b5dabb12400da8125" }
 ark-bn254 = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ff = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }
 ark-ec = { git = "https://github.com/a16z/arkworks-algebra", branch = "dev/twist-shout" }

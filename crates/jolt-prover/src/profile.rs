@@ -35,7 +35,6 @@
 use std::error::Error;
 use std::fs;
 use std::io::{Result, Write as _};
-#[cfg(not(feature = "akita"))]
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::result::Result as StdResult;
@@ -336,6 +335,13 @@ pub struct ProfileArgs {
     #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
 
+    /// Opt in to a dedicated Akita prover pool with this active-wait budget,
+    /// in microseconds. Zero skips active waiting; omission keeps the default
+    /// pool policy. Setup and verification keep their default policy.
+    #[cfg(feature = "akita")]
+    #[clap(long)]
+    pub akita_prover_idle_spin_us: Option<u64>,
+
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
     /// optimized`. The profile reserves against it in turn and returns an
@@ -370,34 +376,38 @@ fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
 
 impl ProfileArgs {
     #[cfg(feature = "akita")]
-    fn chunk_profile_suffix(&self) -> String {
-        match self.akita_chunk_profile {
+    fn akita_profile_suffix(&self) -> String {
+        let geometry = match self.akita_chunk_profile {
             AkitaChunkProfile {
                 chunks: 1,
                 levels: 0,
             } => String::new(),
             profile => format!("_w{}r{}", profile.chunks, profile.levels),
+        };
+        match self.akita_prover_idle_spin_us {
+            Some(micros) => format!("{geometry}_spin{micros}us"),
+            None => geometry,
         }
     }
 
     fn workload_name(&self) -> String {
         let name = self.name.as_str().to_string();
         #[cfg(feature = "akita")]
-        let name = format!("{name}{}", self.chunk_profile_suffix());
+        let name = format!("{name}{}", self.akita_profile_suffix());
         name
     }
 
     fn benchmark_name(&self) -> String {
         let name = format!("{}{PROTOCOL_SUFFIX}", self.name.as_str());
         #[cfg(feature = "akita")]
-        let name = format!("{name}{}", self.chunk_profile_suffix());
+        let name = format!("{name}{}", self.akita_profile_suffix());
         name
     }
 
     fn trace_name(&self, scale: u32) -> String {
         let name = trace_name(self.name, scale, self.backend);
         #[cfg(feature = "akita")]
-        let name = format!("{name}{}", self.chunk_profile_suffix());
+        let name = format!("{name}{}", self.akita_profile_suffix());
         name
     }
 }
@@ -837,11 +847,8 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
         &jolt_program,
         program_preprocessing,
         trace_output,
-        backend,
+        args,
         e2e_start,
-        args.memory_budget,
-        #[cfg(feature = "akita")]
-        args.akita_chunk_profile,
     )?;
     let (duration, proof_size) = (run.duration, run.proof_size);
 
@@ -861,6 +868,13 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
             "trace_rows": trace_length,
             "padded_trace_rows": run.padded_trace_rows,
         });
+        #[cfg(feature = "akita")]
+        let metrics = {
+            let mut metrics = metrics;
+            metrics["akita_prover_idle_spin_us"] =
+                serde_json::json!(args.akita_prover_idle_spin_us);
+            metrics
+        };
         fs::write(
             path,
             serde_json::to_vec(&metrics).expect("encode measurement"),
@@ -953,9 +967,8 @@ fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
-    backend: BackendKind,
+    args: &ProfileArgs,
     e2e_start: Instant,
-    memory_budget: Option<MemoryBudget>,
 ) -> ProfileResult<ProvenRun> {
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
@@ -968,7 +981,7 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
-    if let Some(budget) = memory_budget {
+    if let Some(budget) = args.memory_budget {
         let _ = budget.check_known_eager::<Fr>(&config, &trace_output.trace)?;
     }
     let shared_preprocessing =
@@ -993,7 +1006,7 @@ fn prove_workload(
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     ));
 
-    let backend = match backend {
+    let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
         BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
     };
@@ -1060,10 +1073,8 @@ fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
-    backend: BackendKind,
+    args: &ProfileArgs,
     e2e_start: Instant,
-    memory_budget: Option<MemoryBudget>,
-    chunk_profile: AkitaChunkProfile,
 ) -> ProfileResult<ProvenRun> {
     use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
@@ -1071,11 +1082,6 @@ fn prove_workload(
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
-
-    let backend = match backend {
-        BackendKind::Reference => JoltBackend::reference(),
-        BackendKind::Optimized => JoltBackend::optimized(),
-    };
 
     let memory_layout = program_preprocessing.memory_layout.clone();
     let max_trace_length = program_preprocessing.max_padded_trace_length;
@@ -1088,8 +1094,9 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
-    config.akita_chunk_profile = chunk_profile;
-    let budget = memory_budget
+    config.akita_chunk_profile = args.akita_chunk_profile;
+    let budget = args
+        .memory_budget
         .map(|budget| budget.check_known_eager::<AkitaField>(&config, &trace_output.trace))
         .transpose()?;
     let schedule_artifacts =
@@ -1133,6 +1140,16 @@ fn prove_workload(
         }
         None => AkitaScheme::setup(params)?,
     };
+    let prover_pool = args.akita_prover_idle_spin_us.map(|micros| {
+        use jolt_akita::AkitaProverPool;
+        let threads = NonZeroUsize::new(rayon::current_num_threads()).expect("nonzero pool size");
+        AkitaProverPool::new(threads, Some(Duration::from_micros(micros)))
+            .expect("create explicit prover pool")
+    });
+    let pcs_setup = match &prover_pool {
+        Some(pool) => pcs_setup.with_prover_pool(pool.clone()),
+        None => pcs_setup,
+    };
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
     let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
@@ -1163,13 +1180,23 @@ fn prove_workload(
     // The `jolt_prover::prove` root span covers exactly
     // this interval; the Instant is the `--format none` baseline.
     let now = Instant::now();
-    let proof = crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
-        backend.with_witness(&witness),
-        &prover_preprocessing,
-        &config,
-        None,
-        &public_io,
-    )
+    let prove = || {
+        let backend = match args.backend {
+            BackendKind::Reference => JoltBackend::reference(),
+            BackendKind::Optimized => JoltBackend::optimized(),
+        };
+        crate::akita::prove::<AkitaField, AkitaScheme, AkitaVc, ProverState<Keccak>>(
+            backend.with_witness(&witness),
+            &prover_preprocessing,
+            &config,
+            None,
+            &public_io,
+        )
+    };
+    let proof = match &prover_pool {
+        Some(pool) => pool.install(prove),
+        None => prove(),
+    }
     .expect("modular Akita prove");
     let duration = now.elapsed();
 
