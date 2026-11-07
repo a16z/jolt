@@ -257,7 +257,7 @@ pub const WHITEOUT_VERIFIER_SPANS: [&str; 27] = [
     "whiteout_response_lookup",
     "whiteout_lift",
     "whiteout_verify_sigma",
-    "AkitaResponseProver::verify",
+    "AkitaResponseVerifier::verify",
     "response_product_sumcheck",
     "response_row_batch",
     "response_digit_range",

@@ -31,7 +31,7 @@ MODES = ["parallel", "single_threaded", "transported"]
 CONTEXTS = (
     "whiteout_pad_layout",
     "whiteout_response_lookup",
-    "AkitaResponseProver::verify",
+    "AkitaResponseVerifier::verify",
 )
 LINE = re.compile(
     r"Verifier ([0-9.]+)ms parallel \((\d+) threads\), ([0-9.]+)ms single-threaded"
@@ -154,7 +154,7 @@ def label_total(spans, label, context=None):
     return total
 
 
-RESPONSE = "AkitaResponseProver::verify"
+RESPONSE = "AkitaResponseVerifier::verify"
 
 
 def buckets(spans, build):
