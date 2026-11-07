@@ -105,3 +105,41 @@ fn setup_domain_rejects_non_power_of_two_sizes() {
         assert!(original.clone().with_setup_domain(invalid).is_err());
     }
 }
+
+#[test]
+#[cfg(all(feature = "parallel", not(target_family = "wasm")))]
+fn prover_pool_is_local_to_prover_setup() {
+    let original = setup();
+    let pool = AkitaProverPool::new(
+        NonZeroUsize::new(2).expect("nonzero worker count"),
+        Some(Duration::from_micros(64)),
+    )
+    .expect("prover workers spawn");
+    let configured = original.clone().with_prover_pool(pool.clone());
+    let cloned = configured.clone();
+    assert!(original.prover_pool.is_none());
+    assert!(Arc::ptr_eq(
+        &cloned.prover_pool.as_ref().expect("configured pool").0,
+        &pool.0,
+    ));
+    assert_eq!(original.verifier, configured.verifier);
+    assert_eq!(
+        bincode::serde::encode_to_vec(&original.verifier, bincode::config::standard())
+            .expect("original verifier setup serializes"),
+        bincode::serde::encode_to_vec(&configured.verifier, bincode::config::standard())
+            .expect("configured verifier setup serializes"),
+    );
+    configured.with_prover_backend(|| {
+        assert!(pool.0.current_thread_index().is_some());
+        cloned.with_prover_backend(|| {
+            assert!(pool.0.current_thread_index().is_some());
+        });
+        with_backend_pool(|| {
+            assert!(pool.0.current_thread_index().is_none());
+            assert!(backend_pool()
+                .expect("default workers spawn")
+                .current_thread_index()
+                .is_some());
+        });
+    });
+}

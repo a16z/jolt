@@ -50,6 +50,9 @@ mod verifier_setup;
 
 pub use akita_pcs::{AkitaError, TrustedBytes};
 
+#[cfg(feature = "parallel")]
+pub use adapters::AkitaProverPool;
+
 #[cfg(feature = "profiling")]
 #[doc(hidden)]
 pub use adapters::{
