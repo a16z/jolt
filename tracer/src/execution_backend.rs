@@ -88,10 +88,15 @@ impl TracerBackend {
     ///
     /// This is not a process-memory cap or a guarantee that proving fits.
     /// Doubling row/chunk growth can reject a near-limit request that exact
-    /// growth would admit. On the limited route, the pending cycle window imposes
-    /// a setup floor even for a short domain; the trace retains its row capacity for
-    /// subsequent prover-budget checks. An accumulating run requests exactly its
-    /// final rows; a batched run retains at least the domain-sized row reserve.
+    /// growth would admit. Batched setup requires room for the pending cycle
+    /// window and initially reserves `min(R0, N)` rows. A run that finishes
+    /// accumulating requests exactly its final rows instead. Both retain their
+    /// final row capacity for subsequent prover-budget checks.
+    ///
+    /// Batch planning budgets headroom for the current rows and any future
+    /// grown row backing; normal row growth happens during conversion, not
+    /// before the pending window is reserved. Only the accumulation-to-batch
+    /// transition and one-tick fallback may grow rows before the next window.
     ///
     /// Limited tracing rejects `TRACER_PARALLEL >= 2` and
     /// [`ChunkedExecutionBackend::execute`] with
@@ -144,7 +149,7 @@ impl TracerBackend {
 
     /// [`ExecutionBackend::trace`] under `limit`, serially. While converting
     /// every cycle after the next tick fits beside them, the run keeps its
-    /// cycles in one buffer, initially domain-sized and grown by
+    /// cycles in one buffer, initially `limit.initial_rows` cycles and grown by
     /// [`crate::trace_allocation::growth_target`], and converts once at the end. Before a tick for which that or the
     /// growth does not fit, it converts them and batches, replanning its window
     /// after each conversion. When setup or the first tick cannot hold the initial

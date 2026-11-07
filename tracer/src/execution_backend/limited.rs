@@ -566,9 +566,10 @@ impl LimitedTrace {
     /// Reserves the next window at an empty one and returns its batch, the
     /// window less one tick: the longest window up to
     /// the domain-selected pending window whose cycles, field events and
-    /// metadata fit beside every other buffer with the rows grown for it; else
-    /// the longest within the rows' capacity; else one tick, for which rows
-    /// that [`next_emission`] overruns grow while no window is live.
+    /// metadata fit beside other buffers, including headroom for current rows
+    /// and any future grown backing; else the longest within the rows' capacity;
+    /// else one tick, for which rows that [`next_emission`] overruns grow while
+    /// no window is live.
     pub(super) fn plan_batch(
         &mut self,
         cpu: &mut Cpu,
