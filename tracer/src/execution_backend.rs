@@ -833,29 +833,34 @@ mod conversion_tests {
                 let bytecode =
                     BytecodePreprocessing::preprocess(instructions, 0x8000_0000, RV64IMAC_JOLT)
                         .unwrap();
-                let (data, dimensions) = collect_rows(&cycles, &bytecode).unwrap();
-                assert_eq!(data.len(), length);
-                assert_eq!(data.rows()[1].ram_address(), read);
-                assert_eq!(data.rows()[2].ram_address(), write);
-                assert!(data.rows()[3..]
-                    .iter()
-                    .all(|row| *row == JoltTraceRow::default()));
-                assert_eq!(dimensions.trace_length, 3);
-                assert!(!dimensions.ends_in_jump);
-                assert_eq!(
-                    dimensions.ram_bounds.min().map(|address| address.get()),
-                    [read, write]
-                        .into_iter()
-                        .filter(|address| *address != 0)
-                        .min()
-                );
-                assert_eq!(
-                    dimensions.ram_bounds.max().map(|address| address.get()),
-                    [read, write]
-                        .into_iter()
-                        .filter(|address| *address != 0)
-                        .max()
-                );
+                let owned_chunks = vec![Vec::new(), cycles[..2].to_vec(), cycles[2..].to_vec()];
+                for (data, dimensions) in [
+                    collect_rows(&cycles, &bytecode).unwrap(),
+                    collect_owned_chunks(owned_chunks, &bytecode).unwrap(),
+                ] {
+                    assert_eq!(data.len(), length);
+                    assert_eq!(data.rows()[1].ram_address(), read);
+                    assert_eq!(data.rows()[2].ram_address(), write);
+                    assert!(data.rows()[3..]
+                        .iter()
+                        .all(|row| *row == JoltTraceRow::default()));
+                    assert_eq!(dimensions.trace_length, 3);
+                    assert!(!dimensions.ends_in_jump);
+                    assert_eq!(
+                        dimensions.ram_bounds.min().map(|address| address.get()),
+                        [read, write]
+                            .into_iter()
+                            .filter(|address| *address != 0)
+                            .min()
+                    );
+                    assert_eq!(
+                        dimensions.ram_bounds.max().map(|address| address.get()),
+                        [read, write]
+                            .into_iter()
+                            .filter(|address| *address != 0)
+                            .max()
+                    );
+                }
                 let mut mismatched_bytecode = bytecode.clone();
                 mismatched_bytecode.bytecode[1].operands.imm = 8;
                 assert!(matches!(
