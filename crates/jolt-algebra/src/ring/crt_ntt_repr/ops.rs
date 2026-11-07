@@ -4,6 +4,8 @@ use std::mem::size_of;
 #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
 use crate::ntt::avx::{self, AvxNttMode};
 use crate::ntt::butterfly::forward_ntt;
+#[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+use crate::ntt::external;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth, I32_LAZY_DOT_BATCH};
@@ -243,6 +245,20 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
             return;
         }
 
+        #[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+        if params.uses_lazy_i32_dot() {
+            for k in 0..K {
+                external::pointwise_dot_acc(
+                    &mut self.limbs[k],
+                    |product| &lhs[product].limbs[k],
+                    |product| &rhs[product].limbs[k],
+                    lhs.len(),
+                    params.primes[k],
+                );
+            }
+            return;
+        }
+
         for (lhs, rhs) in lhs.iter().zip(rhs) {
             self.add_assign_pointwise_mul(lhs, rhs, params);
         }
@@ -333,10 +349,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// if `digits` is empty or exceeds the selected batch size.
     #[inline]
     #[cfg_attr(
-        not(any(target_arch = "aarch64", target_arch = "x86", target_arch = "x86_64")),
+        not(any(
+            target_arch = "aarch64",
+            target_arch = "x86",
+            target_arch = "x86_64",
+            all(feature = "ntt64-backend", target_arch = "riscv64")
+        )),
         expect(
             unused_variables,
-            reason = "only SIMD targets have a lazy i32 dot kernel; elsewhere the assert above rejects every call"
+            reason = "only SIMD and external-backend targets have a lazy i32 dot kernel; elsewhere the assert above rejects every call"
         )
     )]
     pub fn add_assign_col_pointwise_dot_i8_multi_with_lut_scratch(
@@ -410,6 +431,15 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
                         prime.pinv.to_i64() as i32,
                     );
                 }
+
+                #[cfg(all(feature = "ntt64-backend", target_arch = "riscv64"))]
+                external::pointwise_dot_acc(
+                    &mut acc.limbs[k],
+                    |product| &matrix_row[column_start + product].limbs[k],
+                    |product| &scratch[product],
+                    digits.len(),
+                    prime,
+                );
             }
         }
     }

@@ -52,6 +52,10 @@
 //! - `solinas` — the pseudo-Mersenne backend (scalar, extension, unreduced,
 //!   packed), and the ring, NTT, and FFT modules built on it.
 //! - `binary` — the binary-field backend, off by default.
+//! - `ntt64-backend` — on riscv64, routes the forward 64-point `i32` NTT and
+//!   the lazy `i32` pointwise dot to a backend registered with
+//!   `ntt64_backend!` (see `ntt::ntt64`). Other transforms stay on the
+//!   scalar kernels.
 //! - `asm` — opts into architecture-specific Fp128 assembly kernels on
 //!   AArch64 and x86-64. Without it, Fp128 uses portable Rust.
 //! - `parallel` — activates rayon behind the `cfg_*!` helper macros.
