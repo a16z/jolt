@@ -1,6 +1,7 @@
 //! [`AkitaScheme`]'s masked group opening: the verifier seam of jolt-zk and
 //! the prover's counterpart on [`TraceOneHotCommitment`].
 
+use crate::verifier_resources::PREPARED_VERIFIER_RESOURCES;
 use akita_transcript::TranscriptSponge;
 use jolt_transcript::VerifierState;
 use jolt_zk::masking::{OperandShapeDomain, ResidualRows};
@@ -47,6 +48,14 @@ pub(crate) fn opening_shape(
             groups.num_polys
         ))
         .into());
+    }
+    if setup.backend_cache.whiteout.get().is_none() {
+        if let Some(prepared) = PREPARED_VERIFIER_RESOURCES.whiteout(setup) {
+            let _ = setup.backend_cache.whiteout.get_or_init(|| prepared);
+        }
+    }
+    if let Some(prepared) = setup.backend_cache.whiteout.get() {
+        return prepared.shape(groups);
     }
     whiteout(setup)?.shape(groups)
 }

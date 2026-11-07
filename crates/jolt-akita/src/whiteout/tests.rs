@@ -69,13 +69,20 @@ fn response_catalog() -> Vec<u8> {
 /// A fresh setup of the trace group alone, which plans its catalog and takes
 /// its response rows from the packaged catalog.
 fn fresh() -> WhiteoutSetup {
-    WhiteoutSetup::new(
+    let mut setup = WhiteoutSetup::new(
         None,
         WhiteoutSource::Plan,
         Some((NUM_VARS, NUM_POLYS)),
         Some(response_catalog()),
     )
-    .unwrap()
+    .unwrap();
+    setup
+        .set_capacity(WhiteoutCapacity {
+            pad: 1 << 20,
+            v: 1 << 20,
+        })
+        .unwrap();
+    setup
 }
 
 impl Fixture {
@@ -298,7 +305,11 @@ fn whiteout_ranks_sit_at_the_tables_minimum() {
     let fixture = fixture();
     let layout = layout(&fixture);
     with_ring_dim!(fixture.shape.row().ring_dim(), D, {
-        let pads = WhiteoutTail::pad_commitment::<D>(&layout).unwrap();
+        let (geometry, _, _) = fixture.shape.tail().geometry::<D>(&layout).unwrap();
+        let stream = public_stream(geometry.required_coefficients(), PAD_STREAM_SEED).unwrap();
+        let placement = PadPlacement::new(&layout).unwrap();
+        let (rank, randomness) = WhiteoutTail::pad_rank::<D>(&placement).unwrap();
+        let pads = LatticePadCommitment::<F, D>::new(placement, &stream, rank, randomness).unwrap();
         let width =
             LatticePadCommitment::<F, D>::width(pads.placement(), pads.randomness_columns())
                 .unwrap();
@@ -350,11 +361,18 @@ fn whiteout_pad_rank_steps_at_the_sigma_binding_brackets() {
 /// A setup of the trace group alone that loads `plans`, as a setup decoded
 /// in another process does.
 fn loading(plans: WhiteoutPlans) -> WhiteoutSetup {
-    WhiteoutSetup::from(WhiteoutSetupWire {
+    WhiteoutSetup::try_from(WhiteoutSetupWire {
+        version: 1,
+        payloads: None,
+        capacity: WhiteoutCapacity {
+            pad: 1 << 20,
+            v: 1 << 20,
+        },
         grouped: None,
         plans: Some(plans),
-        response_catalog: None,
+        response_catalog: Some(response_catalog()),
     })
+    .unwrap()
 }
 
 /// The [`WhiteoutPlanError`] `error` carries, if any.
@@ -367,7 +385,18 @@ fn plan_error(error: &ZkError) -> Option<&WhiteoutPlanError> {
 
 /// The error a setup loading `plans` refuses `opening` with.
 fn refusal(plans: WhiteoutPlans, opening: &MaskedOpeningShape) -> ZkError {
-    loading(plans).shape(opening).err().unwrap()
+    WhiteoutSetup::from_parts(
+        None,
+        Some(plans),
+        Some(response_catalog()),
+        Some((opening.num_vars, opening.num_polys)),
+        WhiteoutCapacity {
+            pad: 1 << 20,
+            v: 1 << 20,
+        },
+    )
+    .err()
+    .unwrap()
 }
 
 /// The byte range and value of the first integer field `name` at or after
@@ -523,7 +552,26 @@ fn whiteout_persisted_response_plan_verifies_and_is_validated() {
     let proof = prove(&fixture, 7);
     verify(&fixture, &proof).unwrap();
 
-    let plans = setup.export().unwrap();
+    let mut plans = setup.export().unwrap();
+    let num_vars = with_ring_dim!(fixture.shape.row().ring_dim(), D, {
+        let (_, geometry, rank) = fixture
+            .shape
+            .tail()
+            .geometry::<D>(&layout(&fixture))
+            .unwrap();
+        AkitaResponseVerifier::<WhiteoutResponse>::num_vars(
+            &geometry
+                .response(rank, &CompressionShape::<WhiteoutResponse>::default())
+                .unwrap(),
+        )
+        .map_err(ZkError::from)
+    })
+    .unwrap();
+    plans
+        .responses
+        .as_mut()
+        .unwrap()
+        .retain(|length, _| *length == num_vars);
     assert_eq!(plans.responses.as_ref().map(BTreeMap::len), Some(1));
     let bytes =
         bincode::serde::encode_to_vec(loading(plans.clone()), bincode::config::standard()).unwrap();
@@ -543,7 +591,7 @@ fn whiteout_persisted_response_plan_verifies_and_is_validated() {
     );
     assert!(matches!(
         plan_error(&error),
-        Some(WhiteoutPlanError::Statement(_))
+        Some(WhiteoutPlanError::MissingResponse { .. })
     ));
 
     let mut swapped = plans.clone();
@@ -583,10 +631,131 @@ fn response_catalog_travels_only_without_a_persisted_response_set() {
         .is_some());
     let plans = setup.export().unwrap();
     assert!(plans.responses.is_some());
-    let loaded = WhiteoutSetup::from(WhiteoutSetupWire {
+    let loaded = WhiteoutSetup::try_from(WhiteoutSetupWire {
+        version: 1,
+        payloads: None,
+        capacity: WhiteoutCapacity {
+            pad: 1 << 20,
+            v: 1 << 20,
+        },
         grouped: None,
         plans: Some(plans),
         response_catalog: Some(response_catalog()),
-    });
+    })
+    .unwrap();
     assert!(WhiteoutSetupWire::from(loaded).response_catalog.is_none());
+}
+
+#[test]
+fn capacity_checks_both_stream_boundaries() {
+    let setup = fresh();
+    let fixture = fixture_on(&setup);
+    let layout = layout(&fixture);
+    let required = fixture.shape.tail().requirements(&layout).unwrap();
+    for (stream, capacity) in [
+        (None, required),
+        (
+            Some(WhiteoutStream::Pad),
+            WhiteoutCapacity {
+                pad: required.pad - 1,
+                ..required
+            },
+        ),
+        (
+            Some(WhiteoutStream::V),
+            WhiteoutCapacity {
+                v: required.v - 1,
+                ..required
+            },
+        ),
+    ] {
+        let mut setup = setup.clone();
+        setup.set_capacity(capacity).unwrap();
+        let shape = setup.shape(&opening()).unwrap();
+        let result = with_matrices!(
+            shape.row().matrices,
+            shape.tail().streams,
+            D,
+            _matrices,
+            stream,
+            shape.tail().layout_state::<D>(&layout, stream).map(|_| ())
+        );
+        if let Some(kind) = stream {
+            let error = result.unwrap_err();
+            let error = (if let ZkError::Whiteout(source) = &error {
+                source.downcast_ref::<WhiteoutCapacityError>()
+            } else {
+                None
+            })
+            .unwrap();
+            assert_eq!(error.stream, kind);
+            assert_eq!(error.required, error.available + 1);
+        } else {
+            result.unwrap();
+        }
+    }
+}
+
+#[test]
+fn decoded_capacity_is_bounded_after_the_plans_header_is_checked() {
+    let wire = |capacity| WhiteoutSetupWire {
+        version: 1,
+        capacity,
+        grouped: None,
+        plans: Some(WhiteoutPlans {
+            magic: WHITEOUT_PLANS_MAGIC,
+            version: WHITEOUT_PLANS_VERSION,
+            catalog: CatalogPlan {
+                num_vars: NUM_VARS,
+                num_polys: NUM_POLYS,
+                precommitted: Vec::new(),
+                trace: Vec::new(),
+            },
+            responses: None,
+        }),
+        response_catalog: None,
+        payloads: None,
+    };
+    for (stream, capacity) in [
+        (
+            WhiteoutStream::Pad,
+            WhiteoutCapacity {
+                pad: usize::MAX,
+                v: 0,
+            },
+        ),
+        (
+            WhiteoutStream::V,
+            WhiteoutCapacity {
+                pad: 0,
+                v: usize::MAX,
+            },
+        ),
+    ] {
+        let error = WhiteoutSetup::try_from(wire(capacity)).unwrap_err();
+        let error = (if let ZkError::Whiteout(source) = &error {
+            source.downcast_ref::<WhiteoutCapacityError>()
+        } else {
+            None
+        })
+        .unwrap();
+        assert_eq!(error.stream, stream);
+        assert_eq!(error.required, usize::MAX);
+        let serialized = serde_json::to_string(&wire(capacity)).unwrap();
+        assert!(serde_json::from_str::<WhiteoutSetup>(&serialized).is_err());
+        for bad_magic in [false, true] {
+            let mut wire = wire(capacity);
+            let plans = wire.plans.as_mut().unwrap();
+            if bad_magic {
+                plans.magic = *b"FAIL";
+            } else {
+                plans.version += 1;
+            }
+            let error = WhiteoutSetup::try_from(wire).unwrap_err();
+            assert!(matches!(
+                plan_error(&error),
+                Some(WhiteoutPlanError::Format { .. })
+            ));
+        }
+    }
 }
