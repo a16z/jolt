@@ -141,10 +141,31 @@ pub use virt::VirtualSrl;
 pub use virt::VirtualSrli;
 pub use virt::VirtualSrliw;
 pub use virt::VirtualSrlw;
+pub use virt::VirtualXorRot10;
+pub use virt::VirtualXorRot14;
 pub use virt::VirtualXorRot16;
+pub use virt::VirtualXorRot18;
+pub use virt::VirtualXorRot21;
+pub use virt::VirtualXorRot22;
+pub use virt::VirtualXorRot23;
 pub use virt::VirtualXorRot24;
+pub use virt::VirtualXorRot26;
+pub use virt::VirtualXorRot27;
+pub use virt::VirtualXorRot3;
 pub use virt::VirtualXorRot32;
+pub use virt::VirtualXorRot33;
+pub use virt::VirtualXorRot4;
+pub use virt::VirtualXorRot43;
+pub use virt::VirtualXorRot44;
+pub use virt::VirtualXorRot45;
+pub use virt::VirtualXorRot47;
+pub use virt::VirtualXorRot49;
+pub use virt::VirtualXorRot52;
+pub use virt::VirtualXorRot6;
+pub use virt::VirtualXorRot60;
+pub use virt::VirtualXorRot61;
 pub use virt::VirtualXorRot63;
+pub use virt::VirtualXorRot9;
 pub use virt::VirtualXorRotL1;
 pub use virt::VirtualXorRotW12;
 pub use virt::VirtualXorRotW16;
@@ -439,6 +460,27 @@ pub enum JoltInstruction<T = JoltInstructionRow> {
     StoreB(StoreB<T>),
     StoreH(StoreH<T>),
     StoreW(StoreW<T>),
+    VirtualXorRot3(VirtualXorRot3<T>),
+    VirtualXorRot4(VirtualXorRot4<T>),
+    VirtualXorRot6(VirtualXorRot6<T>),
+    VirtualXorRot9(VirtualXorRot9<T>),
+    VirtualXorRot10(VirtualXorRot10<T>),
+    VirtualXorRot14(VirtualXorRot14<T>),
+    VirtualXorRot18(VirtualXorRot18<T>),
+    VirtualXorRot21(VirtualXorRot21<T>),
+    VirtualXorRot22(VirtualXorRot22<T>),
+    VirtualXorRot23(VirtualXorRot23<T>),
+    VirtualXorRot26(VirtualXorRot26<T>),
+    VirtualXorRot27(VirtualXorRot27<T>),
+    VirtualXorRot33(VirtualXorRot33<T>),
+    VirtualXorRot43(VirtualXorRot43<T>),
+    VirtualXorRot44(VirtualXorRot44<T>),
+    VirtualXorRot45(VirtualXorRot45<T>),
+    VirtualXorRot47(VirtualXorRot47<T>),
+    VirtualXorRot49(VirtualXorRot49<T>),
+    VirtualXorRot52(VirtualXorRot52<T>),
+    VirtualXorRot60(VirtualXorRot60<T>),
+    VirtualXorRot61(VirtualXorRot61<T>),
     VirtualAdvice(VirtualAdvice<T>),
     VirtualAdviceLoad(VirtualAdviceLoad<T>),
     VirtualHostIO(VirtualHostIO<T>),
@@ -638,6 +680,27 @@ impl_jolt_instructions_flags! {
     VirtualRotriw => VirtualROTRIW,
     VirtualXorRot32 => VirtualXORROT32,
     VirtualXorRot24 => VirtualXORROT24,
+    VirtualXorRot3 => VirtualXORROT3,
+    VirtualXorRot4 => VirtualXORROT4,
+    VirtualXorRot6 => VirtualXORROT6,
+    VirtualXorRot9 => VirtualXORROT9,
+    VirtualXorRot10 => VirtualXORROT10,
+    VirtualXorRot14 => VirtualXORROT14,
+    VirtualXorRot18 => VirtualXORROT18,
+    VirtualXorRot21 => VirtualXORROT21,
+    VirtualXorRot22 => VirtualXORROT22,
+    VirtualXorRot23 => VirtualXORROT23,
+    VirtualXorRot26 => VirtualXORROT26,
+    VirtualXorRot27 => VirtualXORROT27,
+    VirtualXorRot33 => VirtualXORROT33,
+    VirtualXorRot43 => VirtualXORROT43,
+    VirtualXorRot44 => VirtualXORROT44,
+    VirtualXorRot45 => VirtualXORROT45,
+    VirtualXorRot47 => VirtualXORROT47,
+    VirtualXorRot49 => VirtualXORROT49,
+    VirtualXorRot52 => VirtualXORROT52,
+    VirtualXorRot60 => VirtualXORROT60,
+    VirtualXorRot61 => VirtualXORROT61,
     VirtualXorRot16 => VirtualXORROT16,
     VirtualXorRot63 => VirtualXORROT63,
     VirtualXorRotW16 => VirtualXORROTW16,

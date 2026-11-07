@@ -115,3 +115,12 @@ pub use xor_rotw6::VirtualXorRotW6;
 pub use xor_rotw7::VirtualXorRotW7;
 pub use xor_rotw8::VirtualXorRotW8;
 pub use zero_extend_word::VirtualZeroExtendWord;
+
+mod xor_rot;
+pub use xor_rot::{
+    VirtualXorRot10, VirtualXorRot14, VirtualXorRot18, VirtualXorRot21, VirtualXorRot22,
+    VirtualXorRot23, VirtualXorRot26, VirtualXorRot27, VirtualXorRot3, VirtualXorRot33,
+    VirtualXorRot4, VirtualXorRot43, VirtualXorRot44, VirtualXorRot45, VirtualXorRot47,
+    VirtualXorRot49, VirtualXorRot52, VirtualXorRot6, VirtualXorRot60, VirtualXorRot61,
+    VirtualXorRot9,
+};

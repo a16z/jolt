@@ -436,6 +436,69 @@ macro_rules! source_extension_for_marker {
     (VirtualXorRot24) => {
         Some(SourceExtension::JoltCustom)
     };
+    (VirtualXorRot3) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot4) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot6) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot9) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot10) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot14) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot18) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot21) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot22) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot23) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot26) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot27) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot33) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot43) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot44) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot45) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot47) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot49) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot52) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot60) => {
+        Some(SourceExtension::JoltCustom)
+    };
+    (VirtualXorRot61) => {
+        Some(SourceExtension::JoltCustom)
+    };
     (VirtualXorRot16) => {
         Some(SourceExtension::JoltCustom)
     };
@@ -931,6 +994,69 @@ macro_rules! source_side_effects_for_marker {
     (VirtualXorRot24) => {
         false
     };
+    (VirtualXorRot3) => {
+        false
+    };
+    (VirtualXorRot4) => {
+        false
+    };
+    (VirtualXorRot6) => {
+        false
+    };
+    (VirtualXorRot9) => {
+        false
+    };
+    (VirtualXorRot10) => {
+        false
+    };
+    (VirtualXorRot14) => {
+        false
+    };
+    (VirtualXorRot18) => {
+        false
+    };
+    (VirtualXorRot21) => {
+        false
+    };
+    (VirtualXorRot22) => {
+        false
+    };
+    (VirtualXorRot23) => {
+        false
+    };
+    (VirtualXorRot26) => {
+        false
+    };
+    (VirtualXorRot27) => {
+        false
+    };
+    (VirtualXorRot33) => {
+        false
+    };
+    (VirtualXorRot43) => {
+        false
+    };
+    (VirtualXorRot44) => {
+        false
+    };
+    (VirtualXorRot45) => {
+        false
+    };
+    (VirtualXorRot47) => {
+        false
+    };
+    (VirtualXorRot49) => {
+        false
+    };
+    (VirtualXorRot52) => {
+        false
+    };
+    (VirtualXorRot60) => {
+        false
+    };
+    (VirtualXorRot61) => {
+        false
+    };
     (VirtualXorRot16) => {
         false
     };
@@ -1235,6 +1361,69 @@ macro_rules! jolt_target_extension_for_marker {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRot24) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot3) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot4) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot6) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot9) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot10) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot14) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot18) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot21) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot22) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot23) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot26) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot27) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot33) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot43) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot44) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot45) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot47) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot49) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot52) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot60) => {
+        Some(JoltTargetExtension::BitManipulation)
+    };
+    (VirtualXorRot61) => {
         Some(JoltTargetExtension::BitManipulation)
     };
     (VirtualXorRot16) => {
@@ -1571,6 +1760,69 @@ macro_rules! jolt_side_effects_for_marker {
         false
     };
     (VirtualXorRot24) => {
+        false
+    };
+    (VirtualXorRot3) => {
+        false
+    };
+    (VirtualXorRot4) => {
+        false
+    };
+    (VirtualXorRot6) => {
+        false
+    };
+    (VirtualXorRot9) => {
+        false
+    };
+    (VirtualXorRot10) => {
+        false
+    };
+    (VirtualXorRot14) => {
+        false
+    };
+    (VirtualXorRot18) => {
+        false
+    };
+    (VirtualXorRot21) => {
+        false
+    };
+    (VirtualXorRot22) => {
+        false
+    };
+    (VirtualXorRot23) => {
+        false
+    };
+    (VirtualXorRot26) => {
+        false
+    };
+    (VirtualXorRot27) => {
+        false
+    };
+    (VirtualXorRot33) => {
+        false
+    };
+    (VirtualXorRot43) => {
+        false
+    };
+    (VirtualXorRot44) => {
+        false
+    };
+    (VirtualXorRot45) => {
+        false
+    };
+    (VirtualXorRot47) => {
+        false
+    };
+    (VirtualXorRot49) => {
+        false
+    };
+    (VirtualXorRot52) => {
+        false
+    };
+    (VirtualXorRot60) => {
+        false
+    };
+    (VirtualXorRot61) => {
         false
     };
     (VirtualXorRot16) => {

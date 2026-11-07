@@ -108,8 +108,8 @@ pub(crate) struct InstructionCycleRow {
     packed_pc_and_flags: u64,
 }
 
-const PACKED_PC_BITS: u32 = 56;
-const PACKED_TABLE_BITS: u32 = 6;
+const PACKED_PC_BITS: u32 = 55;
+const PACKED_TABLE_BITS: u32 = 7;
 const PACKED_PC_MASK: u64 = (1 << PACKED_PC_BITS) - 1;
 const PACKED_TABLE_MASK: u64 = (1 << PACKED_TABLE_BITS) - 1;
 const PACKED_TABLE_SHIFT: u32 = PACKED_PC_BITS;
@@ -816,6 +816,9 @@ impl ScanBlock {
 /// Scan tasks per pool thread, so work stealing balances the phase scan
 /// across heterogeneous cores.
 const SCAN_TASKS_PER_THREAD: usize = 8;
+// Each task allocates and reduces 256 buckets per active suffix. Amortize
+// those tables over enough rows, particularly for many XOR-rotation tables.
+const MIN_SCAN_TASK_BLOCKS: usize = 32;
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct ScanBlocks<F: JoltField> {
@@ -1092,7 +1095,10 @@ impl<F: JoltField> PhaseScan<'_, F> {
         rows: &[InstructionCycleRow],
         u_evals: &mut [F],
     ) -> PhaseSums<F> {
-        let task_blocks = scan_chunk_size(rows.len()).div_ceil(SCAN_TASKS_PER_THREAD * SCAN_BLOCK);
+        let worker_rows = scan_chunk_size(rows.len());
+        let task_blocks = worker_rows
+            .div_ceil(SCAN_TASKS_PER_THREAD * SCAN_BLOCK)
+            .max(MIN_SCAN_TASK_BLOCKS.min(worker_rows.div_ceil(SCAN_BLOCK)));
         let task_rows = task_blocks * SCAN_BLOCK;
         #[cfg(feature = "parallel")]
         {
@@ -1351,7 +1357,7 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             scan_rows.len(),
             scan_chunk_size(scan_rows.len()),
             |range| {
-                let mut present = 0u64;
+                let mut present = 0u128;
                 for row in &scan_rows[range] {
                     if let Some(table) = row.table_index() {
                         if table >= num_tables {
@@ -2710,5 +2716,55 @@ mod tests {
                 assert_parity_case(6, virtuals, 257, Some(case));
             }
         }
+    }
+    #[test]
+    fn keccak_rotation_tables_match_reference() {
+        let log_t = 10;
+        let tables: Vec<_> = LookupTableKind::<RISCV_XLEN>::iter()
+            .filter(|table| {
+                matches!(
+                    table,
+                    LookupTableKind::VirtualXORROT3(..)
+                        | LookupTableKind::VirtualXORROT4(..)
+                        | LookupTableKind::VirtualXORROT6(..)
+                        | LookupTableKind::VirtualXORROT9(..)
+                        | LookupTableKind::VirtualXORROT10(..)
+                        | LookupTableKind::VirtualXORROT14(..)
+                        | LookupTableKind::VirtualXORROT18(..)
+                        | LookupTableKind::VirtualXORROT21(..)
+                        | LookupTableKind::VirtualXORROT22(..)
+                        | LookupTableKind::VirtualXORROT23(..)
+                        | LookupTableKind::VirtualXORROT26(..)
+                        | LookupTableKind::VirtualXORROT27(..)
+                        | LookupTableKind::VirtualXORROT33(..)
+                        | LookupTableKind::VirtualXORROT43(..)
+                        | LookupTableKind::VirtualXORROT44(..)
+                        | LookupTableKind::VirtualXORROT45(..)
+                        | LookupTableKind::VirtualXORROT47(..)
+                        | LookupTableKind::VirtualXORROT49(..)
+                        | LookupTableKind::VirtualXORROT52(..)
+                        | LookupTableKind::VirtualXORROT60(..)
+                        | LookupTableKind::VirtualXORROT61(..)
+                )
+            })
+            .collect();
+        let mut rows = fixture_rows(log_t, 889_911);
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.table_index = TableIndex(Some(tables[index % tables.len()].index()));
+            row.raf_flag = InstructionRafFlag(false);
+        }
+        let dimensions =
+            InstructionReadRafDimensions::new(log_t, 2 * RISCV_XLEN, NonZeroUsize::new(8).unwrap());
+        assert_parity_rows::<Fr>(
+            dimensions,
+            &(0..log_t).map(challenge).collect::<Vec<_>>(),
+            rows.clone(),
+        );
+        #[cfg(feature = "akita")]
+        assert_parity_rows::<Prime128OffsetA7F7>(
+            dimensions,
+            &(0..log_t).map(challenge).collect::<Vec<_>>(),
+            rows,
+        );
     }
 }

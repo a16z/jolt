@@ -47,6 +47,27 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
         match ROTATION {
             16 => &[Prefixes::XorRot16],
             24 => &[Prefixes::XorRot24],
+            3 => &[Prefixes::XorRot3],
+            4 => &[Prefixes::XorRot4],
+            6 => &[Prefixes::XorRot6],
+            9 => &[Prefixes::XorRot9],
+            10 => &[Prefixes::XorRot10],
+            14 => &[Prefixes::XorRot14],
+            18 => &[Prefixes::XorRot18],
+            21 => &[Prefixes::XorRot21],
+            22 => &[Prefixes::XorRot22],
+            23 => &[Prefixes::XorRot23],
+            26 => &[Prefixes::XorRot26],
+            27 => &[Prefixes::XorRot27],
+            33 => &[Prefixes::XorRot33],
+            43 => &[Prefixes::XorRot43],
+            44 => &[Prefixes::XorRot44],
+            45 => &[Prefixes::XorRot45],
+            47 => &[Prefixes::XorRot47],
+            49 => &[Prefixes::XorRot49],
+            52 => &[Prefixes::XorRot52],
+            60 => &[Prefixes::XorRot60],
+            61 => &[Prefixes::XorRot61],
             32 => &[Prefixes::XorRot32],
             63 => &[Prefixes::XorRot63],
             _ => unreachable!("unsupported rotation {ROTATION}"),
@@ -58,6 +79,27 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
         match ROTATION {
             16 => &[Suffixes::One, Suffixes::XorRot16],
             24 => &[Suffixes::One, Suffixes::XorRot24],
+            3 => &[Suffixes::One, Suffixes::XorRot3],
+            4 => &[Suffixes::One, Suffixes::XorRot4],
+            6 => &[Suffixes::One, Suffixes::XorRot6],
+            9 => &[Suffixes::One, Suffixes::XorRot9],
+            10 => &[Suffixes::One, Suffixes::XorRot10],
+            14 => &[Suffixes::One, Suffixes::XorRot14],
+            18 => &[Suffixes::One, Suffixes::XorRot18],
+            21 => &[Suffixes::One, Suffixes::XorRot21],
+            22 => &[Suffixes::One, Suffixes::XorRot22],
+            23 => &[Suffixes::One, Suffixes::XorRot23],
+            26 => &[Suffixes::One, Suffixes::XorRot26],
+            27 => &[Suffixes::One, Suffixes::XorRot27],
+            33 => &[Suffixes::One, Suffixes::XorRot33],
+            43 => &[Suffixes::One, Suffixes::XorRot43],
+            44 => &[Suffixes::One, Suffixes::XorRot44],
+            45 => &[Suffixes::One, Suffixes::XorRot45],
+            47 => &[Suffixes::One, Suffixes::XorRot47],
+            49 => &[Suffixes::One, Suffixes::XorRot49],
+            52 => &[Suffixes::One, Suffixes::XorRot52],
+            60 => &[Suffixes::One, Suffixes::XorRot60],
+            61 => &[Suffixes::One, Suffixes::XorRot61],
             32 => &[Suffixes::One, Suffixes::XorRot32],
             63 => &[Suffixes::One, Suffixes::XorRot63],
             _ => unreachable!("unsupported rotation {ROTATION}"),
@@ -72,6 +114,27 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
         match ROTATION {
             16 => prefixes[Prefixes::XorRot16] * one + xor_rot,
             24 => prefixes[Prefixes::XorRot24] * one + xor_rot,
+            3 => prefixes[Prefixes::XorRot3] * one + xor_rot,
+            4 => prefixes[Prefixes::XorRot4] * one + xor_rot,
+            6 => prefixes[Prefixes::XorRot6] * one + xor_rot,
+            9 => prefixes[Prefixes::XorRot9] * one + xor_rot,
+            10 => prefixes[Prefixes::XorRot10] * one + xor_rot,
+            14 => prefixes[Prefixes::XorRot14] * one + xor_rot,
+            18 => prefixes[Prefixes::XorRot18] * one + xor_rot,
+            21 => prefixes[Prefixes::XorRot21] * one + xor_rot,
+            22 => prefixes[Prefixes::XorRot22] * one + xor_rot,
+            23 => prefixes[Prefixes::XorRot23] * one + xor_rot,
+            26 => prefixes[Prefixes::XorRot26] * one + xor_rot,
+            27 => prefixes[Prefixes::XorRot27] * one + xor_rot,
+            33 => prefixes[Prefixes::XorRot33] * one + xor_rot,
+            43 => prefixes[Prefixes::XorRot43] * one + xor_rot,
+            44 => prefixes[Prefixes::XorRot44] * one + xor_rot,
+            45 => prefixes[Prefixes::XorRot45] * one + xor_rot,
+            47 => prefixes[Prefixes::XorRot47] * one + xor_rot,
+            49 => prefixes[Prefixes::XorRot49] * one + xor_rot,
+            52 => prefixes[Prefixes::XorRot52] * one + xor_rot,
+            60 => prefixes[Prefixes::XorRot60] * one + xor_rot,
+            61 => prefixes[Prefixes::XorRot61] * one + xor_rot,
             32 => prefixes[Prefixes::XorRot32] * one + xor_rot,
             63 => prefixes[Prefixes::XorRot63] * one + xor_rot,
             _ => unreachable!("unsupported rotation {ROTATION}"),
@@ -85,6 +148,17 @@ mod tests {
     use crate::tables::test_utils::{mle_full_hypercube_test, mle_random_test, prefix_suffix_test};
     use crate::XLEN;
     use jolt_field::Fr;
+
+    #[test]
+    fn keccak_rotation_tables_match_their_boolean_values_and_phase_decomposition() {
+        macro_rules! check {
+            ($($rotation:literal),* $(,)?) => { $(
+                mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, $rotation>>();
+                prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, $rotation>>();
+            )* };
+        }
+        check!(3, 4, 6, 9, 10, 14, 18, 21, 22, 23, 26, 27, 33, 43, 44, 45, 47, 49, 52, 60, 61);
+    }
 
     #[test]
     fn mle_random_rot32() {

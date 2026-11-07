@@ -92,6 +92,27 @@ const SUPPORTED: &[&str] = &[
     "VirtualXorRot24",
     "VirtualXorRot16",
     "VirtualXorRot63",
+    "VirtualXorRot3",
+    "VirtualXorRot4",
+    "VirtualXorRot6",
+    "VirtualXorRot9",
+    "VirtualXorRot10",
+    "VirtualXorRot14",
+    "VirtualXorRot18",
+    "VirtualXorRot21",
+    "VirtualXorRot22",
+    "VirtualXorRot23",
+    "VirtualXorRot26",
+    "VirtualXorRot27",
+    "VirtualXorRot33",
+    "VirtualXorRot43",
+    "VirtualXorRot44",
+    "VirtualXorRot45",
+    "VirtualXorRot47",
+    "VirtualXorRot49",
+    "VirtualXorRot52",
+    "VirtualXorRot60",
+    "VirtualXorRot61",
     "VirtualXorRotW16",
     "VirtualXorRotW12",
     "VirtualXorRotW8",
@@ -736,6 +757,27 @@ difftests! {
     diff_sra_reg => |r| shift_reg(r, K::VirtualSRA);
     diff_xorrot32 => |r| alu_rr(r, K::VirtualXORROT32);
     diff_xorrot24 => |r| alu_rr(r, K::VirtualXORROT24);
+    diff_xorrot3 => |r| alu_rr(r, K::VirtualXORROT3);
+    diff_xorrot4 => |r| alu_rr(r, K::VirtualXORROT4);
+    diff_xorrot6 => |r| alu_rr(r, K::VirtualXORROT6);
+    diff_xorrot9 => |r| alu_rr(r, K::VirtualXORROT9);
+    diff_xorrot10 => |r| alu_rr(r, K::VirtualXORROT10);
+    diff_xorrot14 => |r| alu_rr(r, K::VirtualXORROT14);
+    diff_xorrot18 => |r| alu_rr(r, K::VirtualXORROT18);
+    diff_xorrot21 => |r| alu_rr(r, K::VirtualXORROT21);
+    diff_xorrot22 => |r| alu_rr(r, K::VirtualXORROT22);
+    diff_xorrot23 => |r| alu_rr(r, K::VirtualXORROT23);
+    diff_xorrot26 => |r| alu_rr(r, K::VirtualXORROT26);
+    diff_xorrot27 => |r| alu_rr(r, K::VirtualXORROT27);
+    diff_xorrot33 => |r| alu_rr(r, K::VirtualXORROT33);
+    diff_xorrot43 => |r| alu_rr(r, K::VirtualXORROT43);
+    diff_xorrot44 => |r| alu_rr(r, K::VirtualXORROT44);
+    diff_xorrot45 => |r| alu_rr(r, K::VirtualXORROT45);
+    diff_xorrot47 => |r| alu_rr(r, K::VirtualXORROT47);
+    diff_xorrot49 => |r| alu_rr(r, K::VirtualXORROT49);
+    diff_xorrot52 => |r| alu_rr(r, K::VirtualXORROT52);
+    diff_xorrot60 => |r| alu_rr(r, K::VirtualXORROT60);
+    diff_xorrot61 => |r| alu_rr(r, K::VirtualXORROT61);
     diff_xorrot16 => |r| alu_rr(r, K::VirtualXORROT16);
     diff_xorrot63 => |r| alu_rr(r, K::VirtualXORROT63);
     diff_xorrotw16 => |r| alu_rr(r, K::VirtualXORROTW16);
