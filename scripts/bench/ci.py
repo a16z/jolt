@@ -4,6 +4,7 @@
 import argparse
 import contextlib
 import hashlib
+import html
 import json
 import os
 from pathlib import Path
@@ -93,6 +94,8 @@ def resolve(event_name, event, repository, sha):
                 or (submitted['repo'] or {}).get('full_name') != repository
                 or (event['action'] == 'labeled' and event['sender']['login'] != admission['label_actor'])):
             raise ValueError('the labelled PR request is no longer current')
+        if pr.get('mergeable') is False:
+            raise ValueError('PR conflicts with main; resolve the conflicts before benchmarking')
         bench.capture(['git', 'fetch', '--no-tags', 'origin',
                        '+refs/heads/main:refs/e2e/main',
                        f'+refs/pull/{number}/merge:refs/e2e/merge'])
@@ -128,8 +131,6 @@ def plan(args):
     enabled = os.environ.get('JOLT_E2E_ENABLED') == 'true' or bootstrap
     plan = {'tier': tier, 'enabled': False, 'reason': None, 'target_cpu': TARGET_CPU,
             'push_before': event.get('before'), 'push_after': event.get('after'),
-            'request': ({key: event.get('pull_request', {}).get('head', {}).get(key) for key in ('sha', 'ref')}
-                        if name == 'pull_request_target' else None),
             'harness': None, 'runs': [], 'provenance': bench.provenance()[0],
             'config': bench.bundle_file(args.config.resolve(), bench.ROOT), 'expected_builds': {}}
     try:
@@ -191,6 +192,21 @@ def plan(args):
     with Path(os.environ['GITHUB_STEP_SUMMARY']).open('a') as summary:
         summary.write('End-to-end benchmarks: ' + ('enabled' if plan['enabled'] else plan['reason']) + '\n')
     return 0
+
+
+def refusal_comment(args):
+    plan = bench.parse_json(args.plan.read_text())
+    event = bench.provenance()[1]
+    head = event['pull_request']['head']['sha']
+    prov = plan['provenance']
+    url = f'https://github.com/a16z/jolt/actions/runs/{prov["run_id"]}/attempts/{prov["run_attempt"]}'
+    comment = ('<!-- jolt-e2e-benchmark-comment -->\n## End-to-end CPU benchmark\n\n'
+               f'Benchmark not run for submitted head `{head}`.\n\n'
+               f'<pre>{html.escape(plan["reason"])}</pre>\n\n[Planning run]({url})\n')
+    args.out.mkdir(parents=True, exist_ok=True)
+    (args.out / 'pr-comment.md').write_text(comment)
+    with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+        output.write(f'pr_number={prov["pr_number"]}\nhead_sha={head}\n')
 
 
 def load_plan(path):
@@ -542,6 +558,9 @@ def main():
     planning = commands.add_parser('plan')
     planning.add_argument('--out', type=Path, required=True)
     planning.add_argument('--config', type=Path, default=bench.DEFAULT_CONFIG)
+    refusal = commands.add_parser('refusal-comment', help='render a refused PR plan from this workflow')
+    refusal.add_argument('--plan', type=Path, required=True)
+    refusal.add_argument('--out', type=Path, required=True)
     preparation = commands.add_parser('prepare')
     preparation.add_argument('--plan', type=Path, required=True)
     preparation.add_argument('--out', type=Path, required=True)
@@ -571,7 +590,7 @@ def main():
     targeting.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
     return {'prepare': prepare, 'verify': verify, 'execute': execute,
-            'local': local, 'plan': plan, 'finalize': finalize,
+            'local': local, 'plan': plan, 'refusal-comment': refusal_comment, 'finalize': finalize,
             'dispatch': dispatch, 'target': target}[args.command](args)
 
 

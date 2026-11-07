@@ -556,12 +556,14 @@ raw warmup and measured `samples`. A successful sample is `complete`, exit code
 zero, and has all numeric metrics. Failed, incomplete, unsupported, and missing
 points are explicit, with reasons and null metrics. Non-executed plans emit
 a `disabled` or `unsupported` result and no dispatch request. For a labelled PR,
-the completed planning workflow also triggers the existing ingest workflow. It
-authenticates the plan's producer attempt and submitted head, then updates the
-same sticky PR comment with the refusal reason and a planning-run link. This
-path executes no PR code and creates no target job or App check. Unlabelled PRs
-whose planning job was skipped, and plans admitted for execution, produce no
-refusal comment. The CI artifact keeps
+the planning workflow's dependent refusal job reads its own plan artifact and
+updates the same sticky PR comment with the refusal reason and a planning-run
+link. The refusal job checks out only main's code and reuses ingest's comment
+writer. Before posting, it rereads the PR and skips a refusal for a superseded
+head. This path executes no PR code and creates no target job or App check.
+Unlabelled PRs whose planning job was skipped, and plans admitted for execution,
+produce no refusal comment. The PR trigger is filtered to bases named `main`;
+the planner also rejects a non-main base if such a request reaches it. The CI artifact keeps
 raw sample logs, embedded manifests, compiler flags, toolchain and lockfile
 hashes, binary/guest hashes, CPU topology, and host settings. It excludes the
 runtime URS cache and local build payloads. For main/nightly, the separate
@@ -738,6 +740,8 @@ the submitted head. GitHub's merge ref can lag main; the comparison uses its
 actual first parent as the base, not a newer unmerged main revision. Exact-base
 calibration matching and its 48-hour expiry are unchanged. If that older base
 has no matching reference, measurements still run with an unavailable reference.
+When GitHub reports `mergeable: false`, planning instead refuses with a request
+to resolve conflicts with main. Unknown (`null`) mergeability does not block planning.
 Replays older than the label application are refused. Later pushes
 remain admitted while the same label application stays current.
 
@@ -857,11 +861,8 @@ queued at admission and in progress at submission. It fetches the finished
 result ZIP, excluding `runtime-cache` and build payloads but retaining build logs, and serves it for 14 days at
 `<public_base_url>/github-bench/<sha256>.zip`. It dispatches
 `e2e-bench-ingest.yml` on main with the job, producer run/attempt, URL, digest and
-executor exit code. Executor-result ingest accepts only `0xandoroid-ai-agent[bot]`
-on main. Refusal-only ingest instead accepts completion of the trusted PR
-planning workflow and reads its exact-attempt plan artifact; it needs no dispatch
-artifact or executor download. Executor-result ingest caps the download at 1 GiB,
-verifies SHA-256 before opening the ZIP,
+executor exit code. The ingest workflow accepts only `0xandoroid-ai-agent[bot]`
+on main. It caps the download at 1 GiB, verifies SHA-256 before opening the ZIP,
 and treats all downloaded files as data.
 
 The default branch's `publication.py` validates provenance, planned revisions,
@@ -889,6 +890,8 @@ the check summary's values and rounding, independently of the noise references.
 Validated failed or partial PR results replace the comment with
 a comparison-unavailable message. A failed ingest leaves the previous comment
 unchanged. Comment-posting errors do not fail ingest or the benchmark check.
+The shared writer does not serialize find-then-create across concurrent jobs;
+simultaneous first publications can still create duplicate sticky comments.
 Executor failures before a result and failed ingests leave no history record;
 their App check or hosted workflow failure is the visible outcome.
 

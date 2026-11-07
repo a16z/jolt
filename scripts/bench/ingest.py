@@ -4,7 +4,6 @@
 import argparse
 import base64
 import hashlib
-import html
 import io
 import json
 import os
@@ -80,26 +79,15 @@ def artifact_json(run_id, attempt, prefix, filename):
     return bench.parse_json(content.decode()), content, artifact['id']
 
 
-def producer_plan(run_id, attempt):
+def trusted_plan(run_id, attempt):
     actual = ci.github(f'actions/runs/{run_id}/attempts/{attempt}')
     if (actual['id'] != run_id or actual['run_attempt'] != attempt
             or actual['repository']['full_name'] != 'a16z/jolt'
+            or (actual['head_repository'] or {}).get('full_name') != 'a16z/jolt'
             or actual['name'] != bench.WORKFLOW or actual['path'] != bench.WORKFLOW_FILE
             or actual['status'] != 'completed' or actual['conclusion'] != 'success'):
         raise ValueError('plan producer is not a successful trusted workflow attempt')
     plan, raw, plan_id = artifact_json(run_id, attempt, 'jolt-e2e-plan', 'plan.json')
-    prov = plan['provenance']
-    if (prov['workflow'] != bench.WORKFLOW or prov['workflow_file'] != bench.WORKFLOW_FILE
-            or prov['event'] != actual['event'] or prov['ref'] != 'refs/heads/main'
-            or str(prov['run_id']) != str(run_id) or str(prov['run_attempt']) != str(attempt)):
-        raise ValueError('plan provenance differs from its producer')
-    return actual, plan, raw, plan_id
-
-
-def trusted_plan(run_id, attempt):
-    actual, plan, raw, plan_id = producer_plan(run_id, attempt)
-    if (actual['head_repository'] or {}).get('full_name') != 'a16z/jolt':
-        raise ValueError('execution plan requires a same-repository head')
     dispatch, dispatch_raw, dispatch_id = artifact_json(run_id, attempt, 'jolt-e2e-dispatch', 'dispatch.json')
     ci.check_dispatch(dispatch, plan)
     if plan['tier'] == 'calibration' and actual['event'] != 'workflow_dispatch':
@@ -107,6 +95,9 @@ def trusted_plan(run_id, attempt):
     if (dispatch['run_id'], dispatch['run_attempt']) != (run_id, attempt):
         raise ValueError('dispatch is from another run attempt')
     prov = plan['provenance']
+    if (prov['workflow'] != bench.WORKFLOW or prov['workflow_file'] != bench.WORKFLOW_FILE
+            or prov['event'] != actual['event'] or prov['ref'] != 'refs/heads/main'):
+        raise ValueError('plan provenance differs from its producer')
     if plan['tier'] == 'pr':
         prs = actual['pull_requests']
         item = plan['runs'][0]
@@ -139,39 +130,6 @@ def trusted_plan(run_id, attempt):
                'plan_sha256': hashlib.sha256(raw).hexdigest(),
                'dispatch_sha256': hashlib.sha256(dispatch_raw).hexdigest()}
     return plan, dispatch, config_bytes, receipt
-
-
-def refusal(args):
-    event = bench.parse_json(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-    source = event.get('workflow_run', {})
-    if (os.environ.get('GITHUB_EVENT_NAME') != 'workflow_run' or os.environ.get('GITHUB_REF') != 'refs/heads/main'
-            or (source.get('id'), source.get('run_attempt')) != (args.plan_run_id, args.plan_run_attempt)):
-        raise ValueError('refusal publication requires its triggering workflow attempt on main')
-    jobs = ci.github(f'actions/runs/{args.plan_run_id}/attempts/{args.plan_run_attempt}/jobs?per_page=100')['jobs']
-    if any(job['name'] == 'plan' and job['conclusion'] == 'skipped' for job in jobs):
-        return
-    actual, plan, _, _ = producer_plan(args.plan_run_id, args.plan_run_attempt)
-    if actual['event'] != 'pull_request_target' or plan['enabled']:
-        return
-    number = plan['provenance']['pr_number']
-    request = plan['request']
-    if (plan['tier'] != 'pr' or type(number) is not int or number <= 0 or not plan['reason']
-            or not re.fullmatch('[0-9a-f]{40}', request['sha'] or '')
-            or request['sha'] != actual['head_sha'] or request['ref'] != actual['head_branch']
-            or (actual['pull_requests'] and not any(pr['number'] == number and pr['base']['ref'] == 'main'
-                                                  for pr in actual['pull_requests']))):
-        raise ValueError('refused plan is not bound to its PR request')
-    url = f'https://github.com/a16z/jolt/actions/runs/{args.plan_run_id}/attempts/{args.plan_run_attempt}'
-    comment = ('<!-- jolt-e2e-benchmark-comment -->\n## End-to-end CPU benchmark\n\n'
-               f'Benchmark not run for submitted head `{request["sha"]}`.\n\n'
-               f'<pre>{html.escape(plan["reason"])}</pre>\n\n[Planning run]({url})\n')
-    target = args.out / 'result/pr-comment.md'
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(comment)
-    with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
-        output.write(comment)
-    with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-        output.write(f'pr_number={number}\n')
 
 
 def result_files(raw):
@@ -312,18 +270,12 @@ def render_pr_comment(result, summary_path, details_url, exit_code=0):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--refusal', action='store_true', help='publish a non-executed PR plan from workflow_run')
     for name in ('job-id', 'result-url', 'result-sha256'):
-        parser.add_argument('--' + name)
-    parser.add_argument('--executor-exit-code', type=int)
-    for name in ('plan-run-id', 'plan-run-attempt'):
+        parser.add_argument('--' + name, required=True)
+    for name in ('plan-run-id', 'plan-run-attempt', 'executor-exit-code'):
         parser.add_argument('--' + name, type=int, required=True)
     parser.add_argument('--out', type=Path, required=True)
     args = parser.parse_args()
-    if args.refusal:
-        return refusal(args)
-    if any(value is None for value in (args.job_id, args.result_url, args.result_sha256, args.executor_exit_code)):
-        parser.error('executor ingest requires job-id, result-url, result-sha256 and executor-exit-code')
     if (os.environ.get('GITHUB_ACTOR') != APP or os.environ.get('GITHUB_REF') != 'refs/heads/main'
             or args.job_id != f'{args.plan_run_id}-{args.plan_run_attempt}'
             or not re.fullmatch('[0-9a-f]{64}', args.result_sha256)):

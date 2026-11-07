@@ -1,4 +1,3 @@
-import argparse
 import base64
 import copy
 import hashlib
@@ -76,83 +75,6 @@ def inputs(tier='pr'):
 
 
 class IngestTests(unittest.TestCase):
-    def test_refused_plan_reaches_the_existing_sticky_comment_without_a_dispatch(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            event = root / 'event.json'
-            event.write_text(json.dumps({'pull_request': {'number': 7,
-                'head': {'sha': 'b' * 40, 'ref': 'candidate'}}}))
-            env = {'GITHUB_EVENT_PATH': str(event), 'GITHUB_EVENT_NAME': 'pull_request_target',
-                'GITHUB_WORKFLOW': ingest.bench.WORKFLOW, 'GITHUB_REPOSITORY': 'a16z/jolt',
-                'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': 'd' * 40, 'GITHUB_RUN_ID': '123',
-                'GITHUB_RUN_ATTEMPT': '1', 'JOLT_E2E_ENABLED': 'true',
-                'GITHUB_OUTPUT': str(root / 'outputs'), 'GITHUB_STEP_SUMMARY': str(root / 'summary')}
-            reason = 'the PR merge ref must merge a first-parent main commit with the submitted head'
-            with patch.dict(os.environ, env), patch.object(ingest.ci, 'resolve', side_effect=ValueError(reason)):
-                ingest.ci.plan(argparse.Namespace(config=ingest.bench.DEFAULT_CONFIG, out=root / 'plan'))
-            plan_raw = (root / 'plan/plan.json').read_bytes()
-            plan = json.loads(plan_raw)
-            actual = {'id': 123, 'run_attempt': 1, 'repository': {'full_name': 'a16z/jolt'},
-                'head_repository': {'full_name': 'a16z/jolt'}, 'name': ingest.bench.WORKFLOW,
-                'path': ingest.bench.WORKFLOW_FILE, 'status': 'completed', 'conclusion': 'success',
-                'event': 'pull_request_target', 'head_branch': 'candidate', 'head_sha': 'b' * 40,
-                'pull_requests': [{'number': 7, 'base': {'ref': 'main'}}]}
-            event.write_text(json.dumps({'workflow_run': {'id': 123, 'run_attempt': 1}}))
-            argv = ['ingest.py', '--refusal', '--plan-run-id', '123', '--plan-run-attempt', '1',
-                    '--out', str(root / 'ingest')]
-            (root / 'outputs').write_text('')
-            with patch.dict(os.environ, dict(env, GITHUB_EVENT_NAME='workflow_run')), \
-                    patch.object(sys, 'argv', argv), patch.object(ingest.ci, 'github', side_effect=lambda path:
-                        {'jobs': [{'name': 'plan', 'conclusion': 'success'}]} if '/jobs?' in path else actual), \
-                    patch.object(ingest, 'artifact_json', return_value=(plan, plan_raw, 42)) as artifact:
-                ingest.main()
-                artifact.assert_called_once_with(123, 1, 'jolt-e2e-plan', 'plan.json')
-            comment = (root / 'ingest/result/pr-comment.md').read_text()
-            self.assertTrue(comment.startswith('<!-- jolt-e2e-benchmark-comment -->\n'))
-            self.assertIn(reason, comment)
-            self.assertIn('Benchmark not run', comment)
-            self.assertIn('https://github.com/a16z/jolt/actions/runs/123/attempts/1', comment)
-            self.assertEqual((root / 'outputs').read_text(), 'pr_number=7\n')
-            self.assertFalse((root / 'ingest/check/check.json').exists())
-
-    def test_refusal_ignores_executable_and_unrequested_plans_and_rejects_substitution(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            event = root / 'event.json'
-            event.write_text(json.dumps({'workflow_run': {'id': 123, 'run_attempt': 1}}))
-            _, plan, _, _, _, _ = inputs()
-            plan.update(enabled=False, reason='invalid merge <input>', request={'sha': 'b' * 40, 'ref': 'candidate'})
-            actual = {'id': 123, 'run_attempt': 1, 'repository': {'full_name': 'a16z/jolt'},
-                'head_repository': {'full_name': 'outside/jolt'}, 'name': ingest.bench.WORKFLOW,
-                'path': ingest.bench.WORKFLOW_FILE, 'status': 'completed', 'conclusion': 'success',
-                'event': 'pull_request_target', 'head_branch': 'candidate', 'head_sha': 'b' * 40,
-                'pull_requests': [{'number': 7, 'base': {'ref': 'main'}}]}
-            jobs = {'jobs': [{'name': 'plan', 'conclusion': 'success'}]}
-            args = argparse.Namespace(plan_run_id=123, plan_run_attempt=1, out=root / 'out')
-            with patch.dict(os.environ, GITHUB_EVENT_NAME='workflow_run', GITHUB_REF='refs/heads/main',
-                    GITHUB_EVENT_PATH=str(event), GITHUB_OUTPUT=str(root / 'outputs'),
-                    GITHUB_STEP_SUMMARY=str(root / 'summary')), patch.object(ingest.ci, 'github',
-                    side_effect=lambda path: jobs if '/jobs?' in path else actual), \
-                    patch.object(ingest, 'artifact_json', side_effect=lambda *_: (plan, b'{}', 42)):
-                for target, key, value in [(actual, 'path', 'other.yml'), (actual, 'run_attempt', 2),
-                        (plan['provenance'], 'run_id', '999'), (plan['request'], 'sha', 'e' * 40),
-                        (plan['provenance'], 'pr_number', 8)]:
-                    original = target[key]
-                    target[key] = value
-                    with self.subTest(key=key), self.assertRaises(ValueError):
-                        ingest.refusal(args)
-                    target[key] = original
-                with patch.dict(os.environ, GITHUB_EVENT_NAME='workflow_dispatch'), self.assertRaises(ValueError):
-                    ingest.refusal(args)
-                for target, key, value in [(plan, 'enabled', True), (jobs['jobs'][0], 'conclusion', 'skipped')]:
-                    original = target[key]
-                    target[key] = value
-                    ingest.refusal(args)
-                    self.assertFalse(args.out.exists())
-                    target[key] = original
-                ingest.refusal(args)
-            self.assertIn('invalid merge &lt;input&gt;', (root / 'out/result/pr-comment.md').read_text())
-
     def test_pr_comment_filters_strict_three_percent_in_either_metric_and_direction(self):
         result = inputs()[0]
         template = result['cases'].pop()
@@ -288,10 +210,6 @@ class IngestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 ingest.trusted_plan(123, 1)
             actual['pull_requests'][0]['base']['ref'] = 'main'
-            actual['head_repository']['full_name'] = 'outside/jolt'
-            with self.assertRaisesRegex(ValueError, 'same-repository head'):
-                ingest.trusted_plan(123, 1)
-            actual['head_repository']['full_name'] = 'a16z/jolt'
             artifacts.append(copy.deepcopy(artifacts[0]))
             with self.assertRaisesRegex(ValueError, 'exactly one'):
                 ingest.trusted_plan(123, 1)
