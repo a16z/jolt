@@ -149,7 +149,7 @@ impl TracerBackend {
 
     /// [`ExecutionBackend::trace`] under `limit`, serially. While converting
     /// every cycle after the next tick fits beside them, the run keeps its
-    /// cycles in one buffer, initially `limit.initial_rows` cycles and grown by
+    /// cycles in one buffer, with initial capacity target `limit.initial_rows` and grown by
     /// [`crate::trace_allocation::growth_target`], and converts once at the end. Before a tick for which that or the
     /// growth does not fit, it converts them and batches, replanning its window
     /// after each conversion. When setup or the first tick cannot hold the initial
