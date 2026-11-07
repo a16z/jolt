@@ -7,7 +7,7 @@ use jolt_claims::OutputClaims;
 use jolt_crypto::VectorCommitment;
 use jolt_field::JoltField;
 use jolt_openings::CommitmentScheme;
-use jolt_transcript::FieldTranscript;
+use jolt_transcript::{FieldTranscript, PrivateChannel};
 
 #[cfg(not(feature = "akita"))]
 use super::committed_reduction_cycle_phase::{
@@ -541,9 +541,11 @@ fn append_opening_claims<F, T>(
 {
     // Single-sourced with the prover-curation order: both fronts absorb the
     // `stage6b_opening_values` sequence, so the two transcripts cannot drift.
-    for value in stage6b_opening_values(claims, bytecode_read_raf_points, booleanity_point) {
-        transcript.append(&value);
-    }
+    transcript.append_private(&stage6b_opening_values(
+        claims,
+        bytecode_read_raf_points,
+        booleanity_point,
+    ));
 }
 
 #[cfg(test)]
@@ -800,7 +802,7 @@ mod tests {
             want.append(&value);
         }
 
-        assert_eq!(got.absorbed(), want.absorbed());
+        assert_eq!(got.absorbed().concat(), want.absorbed().concat());
     }
 
     #[test]
