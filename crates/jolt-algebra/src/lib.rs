@@ -97,11 +97,13 @@
 )]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod accum;
 mod algebra;
 #[cfg(feature = "binary")]
 mod binary;
 #[cfg(feature = "bn254")]
 mod bn254;
+pub mod checked;
 #[cfg(all(
     feature = "spongefish",
     any(feature = "bn254", feature = "solinas", feature = "binary")
@@ -111,6 +113,7 @@ mod extension;
 #[cfg(feature = "solinas")]
 mod fp128_accumulators;
 mod limbs;
+pub mod narrowing;
 mod ops;
 mod packed;
 pub mod parallel;
@@ -120,6 +123,7 @@ pub mod signed;
 pub mod solinas;
 mod unreduced;
 
+pub use accum::reduce_signed_accum;
 pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
