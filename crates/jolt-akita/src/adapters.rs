@@ -44,7 +44,7 @@ use crate::schedule_artifacts::AkitaScheduleArtifacts;
 use crate::schedule_registry::GroupedScheduleParams;
 use crate::verifier_resources::PREPARED_VERIFIER_RESOURCES;
 #[cfg(feature = "zk")]
-use crate::whiteout::{WhiteoutPlans, WhiteoutSetup};
+use crate::whiteout::{PreparedWhiteout, WhiteoutPlans, WhiteoutSetup};
 
 pub type AkitaField = akita_config::proof_optimized::fp128::Field;
 pub(crate) type AkitaConfig = JoltDenseBounded;
@@ -648,15 +648,19 @@ impl AkitaVerifierScheduleArtifacts {
         }
     }
 
-    pub(crate) fn slots(&mut self) -> Vec<&mut PreparedBytes> {
+    pub(crate) fn slots(&mut self) -> Vec<(&mut PreparedBytes, bool)> {
         match self {
-            Self::Dense { dense, .. } => vec![dense],
-            Self::OneHot { one_hot, .. } => vec![one_hot],
+            Self::Dense { dense, .. } => vec![(dense, false)],
+            Self::OneHot { one_hot, .. } => vec![(one_hot, false)],
             Self::Both { dense, one_hot, .. } => {
-                vec![dense, one_hot]
+                vec![(dense, false), (one_hot, false)]
             }
             #[cfg(feature = "zk")]
-            Self::OneHotWhiteout { one_hot, .. } => vec![one_hot],
+            Self::OneHotWhiteout { one_hot, whiteout } => {
+                let mut slots = vec![(one_hot, false)];
+                slots.extend(whiteout.payload_slots());
+                slots
+            }
         }
     }
 }
@@ -1003,6 +1007,8 @@ impl AkitaVerifierSetup {
 /// ignored by equality and skipped by serde; clones share the cache.
 #[derive(Clone, Default)]
 pub(crate) struct BackendVerifierCache {
+    #[cfg(feature = "zk")]
+    pub(crate) whiteout: Arc<OnceLock<Arc<PreparedWhiteout>>>,
     dense: Arc<OnceLock<Arc<AkitaVerifier<AkitaConfig>>>>,
     one_hot: Arc<OnceLock<Arc<AkitaOneHotBackendVerifier>>>,
     dense_scheme: Arc<OnceLock<Result<Arc<AkitaBackendScheme>, String>>>,
@@ -1038,6 +1044,10 @@ impl BackendVerifierCache {
 
     /// Take `prepared`'s verifiers, which own their matrix and prefix commitments.
     pub(crate) fn adopt(&self, prepared: &Self) {
+        #[cfg(feature = "zk")]
+        if let Some(whiteout) = prepared.whiteout.get() {
+            let _ = self.whiteout.get_or_init(|| Arc::clone(whiteout));
+        }
         if let Some(verifier) = prepared.dense.get() {
             let _ = self.dense.get_or_init(|| Arc::clone(verifier));
         }
