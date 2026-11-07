@@ -574,6 +574,7 @@ fn assert_prefix_kernels_match_materialized<const D: usize>(
 fn zero_suffix_kernels_match_materialized_onehot() {
     for prefix in [0, 1, 3, 4, 5, 17, 31, 32] {
         assert_prefix_kernels_match_materialized::<64>(16, 32, 4, Some(1), 2, prefix);
+        assert_prefix_kernels_match_materialized::<512>(16, 32, 1, Some(1), 2, prefix);
         assert_prefix_kernels_match_materialized::<64>(256, 32, 16, Some(1), 2, prefix);
     }
 }
