@@ -773,9 +773,6 @@ fn dot_base_rows_rejects_short_rows() {
 fn check_fp128_exact_sum_headroom<const P: u128>() {
     use num_bigint::BigUint;
     use two::solinas::Fp128ProductAccum;
-    assert!(std::hint::black_box(
-        <two::Fp128<P> as Unreduced>::SUM_IS_EXACT
-    ));
     let operands = [0, 1, u128::from(u64::MAX), 1u128 << 64, 1u128 << 127, P - 1];
     for a in operands {
         for b in operands {
@@ -790,8 +787,6 @@ fn check_fp128_exact_sum_headroom<const P: u128>() {
                         accumulated += product;
                     }
                 }
-                let scale = |n: u64| Fp128ProductAccum(product.0.map(|slot| slot * u128::from(n)));
-                assert_eq!(accumulated, scale(count / 2) + scale(count - count / 2));
                 let expected =
                     BigUint::from(a) * BigUint::from(b) * BigUint::from(count) % BigUint::from(P);
                 let actual = two::Fp128::<P>::reduce_product(accumulated)

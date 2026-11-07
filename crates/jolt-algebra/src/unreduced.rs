@@ -46,6 +46,7 @@ pub trait Unreduced: Field {
     /// Whether delayed reduction over [`Product`](Self::Product) is exact:
     /// `reduce_product(Σᵢ mul_unreduced(aᵢ, bᵢ)) = Σᵢ aᵢ·bᵢ` for batches
     /// within the accumulator's documented headroom.
+    /// This guarantees sums only, not subtraction or negation in `Product`.
     ///
     /// Conservative default `false`; a field opts in only once its
     /// accumulator is proven exact. Callers that must stay term-for-term
