@@ -1,0 +1,12 @@
+[package]
+name = "jolt-dit"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Data-independent timing (Arm FEAT_DIT) for secret-dependent prover code"
+
+[lints]
+workspace = true
+
+[dependencies]
+rayon.workspace = true
