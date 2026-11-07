@@ -6,7 +6,7 @@ use jolt_claims::{constant, opening};
 use jolt_crypto::{Bn254G1, JoltGroup, PedersenSetup, VectorCommitment};
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomainSpec, SumcheckStatement};
 use jolt_transcript::{prover_transcript, Blake2b512};
-use jolt_zk::{BlindFoldProtocol, BlindFoldWitness, ProverError};
+use jolt_zk::blindfold::{BlindFoldProtocol, BlindFoldWitness, ProverError};
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 use support::*;
@@ -219,7 +219,7 @@ fn assigned_witness_proves_and_verifies_through_the_real_prover() {
     let mut prover_state =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     append_protocol_transcript_prefix(&fixture.protocol, &mut prover_state);
-    let proof = jolt_zk::prove::<F, VC, _, _>(
+    let proof = jolt_zk::blindfold::prove::<F, VC, _, _>(
         &fixture.setup,
         &fixture.protocol,
         &mut prover_state,
@@ -266,7 +266,7 @@ fn product_auxiliaries_solve_and_prove_through_the_real_prover() {
     let mut prover_state =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     append_protocol_transcript_prefix(&fixture.protocol, &mut prover_state);
-    let proof = jolt_zk::prove::<F, VC, _, _>(
+    let proof = jolt_zk::blindfold::prove::<F, VC, _, _>(
         &fixture.setup,
         &fixture.protocol,
         &mut prover_state,
@@ -418,7 +418,7 @@ fn final_opening_rows_stay_hidden_from_public_proof_data() {
     let mut prover_state =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(TRANSCRIPT_LABEL), b"");
     append_protocol_transcript_prefix(&fixture.protocol, &mut prover_state);
-    let proof = jolt_zk::prove::<F, VC, _, _>(
+    let proof = jolt_zk::blindfold::prove::<F, VC, _, _>(
         &fixture.setup,
         &fixture.protocol,
         &mut prover_state,

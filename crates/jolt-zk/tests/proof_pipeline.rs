@@ -4,7 +4,7 @@ mod support;
 
 use jolt_poly::CompressedPoly;
 use jolt_transcript::{prover_transcript, Blake2b512};
-use jolt_zk::VerificationError;
+use jolt_zk::blindfold::VerificationError;
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 use support::*;

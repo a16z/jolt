@@ -1,5 +1,5 @@
 //! Prover-side witness assembly against a built [`BlindFoldProtocol`]: turn
-//! recorder-retained sumcheck secrets into the row matrix [`crate::prove`]
+//! recorder-retained sumcheck secrets into the row matrix [`crate::blindfold::prove`]
 //! consumes, using only the protocol's public parts (layout, matrices,
 //! consistency, dimensions).
 //!
@@ -19,8 +19,8 @@ use jolt_r1cs::SparseRow;
 use jolt_sumcheck::{CommittedSumcheckWitness, SumcheckDomain, SumcheckDomainSpec};
 use rand_core::RngCore;
 
-use crate::r1cs::StageLayout;
-use crate::{BlindFoldProtocol, ProverError};
+use crate::blindfold::r1cs::StageLayout;
+use crate::blindfold::{BlindFoldProtocol, ProverError};
 
 /// The full BlindFold witness matrix and its per-row Pedersen blinds, in the
 /// protocol's row order: coefficient rows, output-claim rows, auxiliary rows,
@@ -32,7 +32,7 @@ pub struct AssignedBlindFoldWitness<F> {
 }
 
 impl<F: JoltField, Com> BlindFoldProtocol<F, Com> {
-    /// Assemble the witness rows and blinds for [`crate::prove`] from the
+    /// Assemble the witness rows and blinds for [`crate::blindfold::prove`] from the
     /// per-stage committed sumcheck witnesses and domains (in protocol stage
     /// order) and the final-opening evaluation scalars/blinds (in
     /// final-opening order). The domains are the caller's protocol
