@@ -104,9 +104,7 @@ class E2eCiTests(unittest.TestCase):
         def api(path, **_):
             return ({'role_name': 'maintain'} if path.startswith('collaborators/')
                     else [labelled] if '/events?' in path else pr)
-        revisions = {'HEAD': 'a' * 40, 'refs/e2e/merge': 'c' * 40,
-                     'c' * 40 + '^1': 'a' * 40, 'c' * 40 + '^2': 'b' * 40,
-                     'refs/e2e/main': 'a' * 40}
+        revisions = {'HEAD': 'a' * 40, 'refs/e2e/merge': 'c' * 40}
         for action in ('labeled', 'synchronize'):
             event = {'action': action, 'label': {'name': 'benchmark'},
                      'sender': {'login': 'maintainer'}, 'pull_request': pr}
@@ -258,7 +256,7 @@ const github = {
             real_capture = ci.bench.capture
             for parents, accepted in [([base, head], True), ([main, head], True),
                                       ([side, head], False), ([base, side], False),
-                                      ([base, head, side], False)]:
+                                      ([base, head, side], False), ([head], False)]:
                 merge = commit('merge', parents)
                 subprocess.run(['git', 'update-ref', 'refs/pull/7/merge', merge], cwd=repo, check=True)
                 with self.subTest(parents=parents), patch.object(ci, 'labelled_pr', return_value=(pr, {})), \
@@ -268,7 +266,7 @@ const github = {
                         self.assertEqual((harness, number), (main, 7))
                         self.assertEqual(runs, [{'base': parents[0], 'head': merge, 'submitted_head': head}])
                     else:
-                        with self.assertRaises(ValueError):
+                        with self.assertRaisesRegex(ValueError, 'first-parent main commit'):
                             ci.resolve('pull_request_target', event, 'a16z/jolt', main)
 
     def test_batch_artifact_has_root_tip_and_explicit_earlier_commit_documents(self):

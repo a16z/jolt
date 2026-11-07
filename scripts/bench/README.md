@@ -737,8 +737,8 @@ and an applier whose current API `role_name` is `maintain` or `admin`, not merel
 `write`. It pins the submitted head and GitHub's merge commit. That commit must
 have exactly two parents: a commit on main's fetched first-parent history, then
 the submitted head. GitHub's merge ref can lag main; the comparison uses its
-actual first parent as the base, not a newer unmerged main revision. Exact-base
-calibration matching and its 48-hour expiry are unchanged. If that older base
+actual first parent as the base, not a newer unmerged main revision. Calibration
+references match this exact base and expire after 48 hours. If that older base
 has no matching reference, measurements still run with an unavailable reference.
 When GitHub reports `mergeable: false`, planning instead refuses with a request
 to resolve conflicts with main. Unknown (`null`) mergeability does not block planning.

@@ -23,6 +23,7 @@ TARGET_CPU = 'znver4'
 TIERS = ('pr', 'main', 'nightly', 'calibration')
 RUN_ONLY_SCOPE = 'artifact-verification-through-results-on-this-host'
 LOCAL_SCOPE = 'sequential-build-preparation-through-results-on-this-host'
+COMMENT_HEADER = '<!-- jolt-e2e-benchmark-comment -->\n## End-to-end CPU benchmark'
 
 
 def git_file(revision, name):
@@ -72,8 +73,8 @@ def labelled_pr(number, *, authenticated):
 def recheck_pr(plan):
     # The hosted planner checks permissions. Public reads on the target bind the
     # same label application after queue/lock waits, without passing it a token.
-    # The plan pins the base and merge it builds. The API base.sha lags merge^1,
-    # and GitHub's merge ref can lag main, so neither is rechecked.
+    # The plan pins the base and merge it builds. GitHub can recompute base.sha
+    # and the merge ref after planning, so neither is rechecked.
     pr, admission = labelled_pr(plan['provenance']['pr_number'], authenticated=False)
     if admission != plan['admission'] or pr['head']['sha'] != plan['runs'][0]['submitted_head']:
         raise ValueError('PR label, branch or head changed after trusted admission')
@@ -200,7 +201,7 @@ def refusal_comment(args):
     head = event['pull_request']['head']['sha']
     prov = plan['provenance']
     url = f'https://github.com/a16z/jolt/actions/runs/{prov["run_id"]}/attempts/{prov["run_attempt"]}'
-    comment = ('<!-- jolt-e2e-benchmark-comment -->\n## End-to-end CPU benchmark\n\n'
+    comment = (f'{COMMENT_HEADER}\n\n'
                f'Benchmark not run for submitted head `{head}`.\n\n'
                f'<pre>{html.escape(plan["reason"])}</pre>\n\n[Planning run]({url})\n')
     args.out.mkdir(parents=True, exist_ok=True)
