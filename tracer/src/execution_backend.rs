@@ -48,6 +48,7 @@ impl TracerBackend {
 
         let (cycles, final_memory, device, advice_tape) =
             if let Some(config) = crate::parallel_config_from_env() {
+                let _span = tracing::info_span!("trace").entered();
                 let emulator = crate::create_emulator(
                     program.elf_bytes(),
                     self.elf_path.as_ref(),
