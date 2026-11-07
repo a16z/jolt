@@ -224,6 +224,8 @@ pub fn serialize_and_print_size(
     Ok(())
 }
 
+/// The compute-advice tape, or `None` without a compute-advice build;
+/// [`TracerBackend::limited_for_row_domain`] documents the budgeted contract.
 #[cfg(feature = "host")]
 pub fn compute_advice_tape(
     source: &dyn host::JoltProgramSource,
@@ -231,6 +233,7 @@ pub fn compute_advice_tape(
     untrusted_advice: &[u8],
     trusted_advice: &[u8],
     memory_layout: &MemoryLayout,
+    memory_budget: Option<MemoryBudget>,
 ) -> Result<Option<Vec<u8>>, Box<dyn StdError + Send + Sync>> {
     let Some(elf) = source.get_elf_compute_advice_contents() else {
         return Ok(None);
@@ -250,21 +253,29 @@ pub fn compute_advice_tape(
         heap_size: memory_layout.heap_size,
         program_size: Some(program.program_end - RAM_START_ADDRESS),
     };
-    let trace = program.trace_with(
-        &mut TracerBackend::new(),
-        TraceInputs::new(
-            inputs.to_vec(),
-            untrusted_advice.to_vec(),
-            trusted_advice.to_vec(),
-            memory_config,
-        ),
-    )?;
-    Ok(trace.advice_tape)
+    let trace_inputs = TraceInputs::new(
+        inputs.to_vec(),
+        untrusted_advice.to_vec(),
+        trusted_advice.to_vec(),
+        memory_config,
+    );
+    Ok(match memory_budget {
+        None => {
+            program
+                .trace_with(&mut TracerBackend::new(), trace_inputs)?
+                .advice_tape
+        }
+        Some(budget) => Some(TracerBackend::execute_advice_tape(
+            &program,
+            trace_inputs,
+            budget.remaining(),
+        )?),
+    })
 }
 
 /// `memory_budget` admits tracing against its remaining bytes through
 /// [`TracerBackend::limited_for_row_domain`], then reserves the known eager
-/// allocations before building the witness; [`compute_advice_tape`] is unbudgeted.
+/// allocations before building the witness; advice-tape capacity is counted.
 #[cfg(all(feature = "host", not(feature = "akita")))]
 #[expect(
     clippy::too_many_arguments,

@@ -25,10 +25,9 @@ use crate::instruction::Cycle;
 use crate::instruction::RISCVCycle;
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 mod limited;
+use crate::trace_allocation::TraceAllocationAllowance;
 use crate::trace_row::cycle_to_trace_row;
-#[cfg(test)]
-use limited::LimitedTrace;
-use limited::{LimitedSetup, TraceLimit};
+use limited::{LimitedSetup, LimitedTrace, TraceLimit};
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
@@ -74,13 +73,17 @@ impl TracerBackend {
     ///   device copies and output reserve.
     /// - Rows and their old/new buffers during growth, the pending cycle window,
     ///   converted-chunk metadata, field events and their merge.
-    /// - Advice tape at each check and the final memory image.
+    /// - Advice tape, host advice writes' guest-copy scratch and tape growth,
+    ///   and the final memory image.
     ///
     /// Not counted:
-    /// - Advice-tape growth/write scratch between checks, ELF headers/symbols,
-    ///   decode/expansion caches, inline advice and provider temporaries.
+    /// - ELF headers/symbols, decode/expansion caches, inline advice and
+    ///   provider temporaries.
     /// - Cycle markers, prints/backtraces, the caller's program/preprocessing,
-    ///   allocator/runtime overhead, and the SDK's `compute_advice_tape` trace.
+    ///   and allocator/runtime overhead.
+    ///
+    /// The SDK's budgeted compute-advice run checks setup and host advice
+    /// writes without allocating a trace; its caches and overhead are uncounted.
     ///
     /// This is not a process-memory cap or a guarantee that proving fits.
     /// Doubling row/chunk growth can reject a near-limit request that exact
@@ -153,7 +156,7 @@ impl TracerBackend {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
-        let setup = LimitedSetup::admit(limit, program, &inputs)?;
+        let setup = limit.admit(program, &inputs)?;
         let bytecode = BytecodePreprocessing::preprocess(
             program.expanded_bytecode.clone(),
             program.entry_address,
@@ -168,10 +171,19 @@ impl TracerBackend {
             &inputs.memory_config,
             inputs.advice_tape.map(AdviceTape::from_bytes),
         );
-        let mut trace = setup.reserve(&mut emulator, &bytecode)?;
+        let resident = setup
+            .reserve_device(&mut emulator)?
+            .saturating_add(bytecode.heap_bytes());
+        let mut trace = LimitedTrace::reserve(limit, resident)?;
+        emulator
+            .get_mut_cpu()
+            .set_advice_write_allowance(trace.advice_write_allowance());
         loop {
             let pending = trace.cycles.len();
             crate::step_emulator(&mut emulator, Some(&mut trace.cycles));
+            if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
+                return Err(refusal.into());
+            }
             // As in `crate::trace`, the first step that emits no row ends the run.
             if trace.cycles.len() == pending {
                 break;
@@ -179,6 +191,9 @@ impl TracerBackend {
             if trace.cycles.len() >= limit.batch_rows {
                 let tape = emulator.get_cpu().advice_tape.capacity();
                 trace.convert_pending(&bytecode, tape)?;
+                emulator
+                    .get_mut_cpu()
+                    .set_advice_write_allowance(trace.advice_write_allowance());
             }
         }
         let (advice_tape, final_memory, device) = crate::finish_emulator(emulator);
@@ -191,6 +206,48 @@ impl TracerBackend {
             Some(image),
             Some(advice_tape.into_bytes()),
         ))
+    }
+    /// The advice tape `program` writes in one serial run without a trace,
+    /// with its requests checked against `limit_bytes`: the compute-advice run
+    /// the SDK makes under a memory budget.
+    ///
+    /// This checks the setup and host advice-write requests listed in
+    /// [`Self::limited_for_row_domain`], without cycles, rows, bytecode
+    /// preprocessing or a final memory image; the same omissions apply.
+    /// It stops at a PC stall or zero-row tick, ignoring `TRACER_PARALLEL`.
+    pub fn execute_advice_tape(
+        program: &JoltProgram,
+        inputs: TraceInputs,
+        limit_bytes: usize,
+    ) -> Result<Vec<u8>, TraceError> {
+        if program.elf_bytes().is_empty() {
+            return Err(TraceError::MissingElfBytes);
+        }
+        let setup = LimitedSetup::admit(limit_bytes, program, &inputs, 0, 0)?;
+        let mut emulator = crate::create_emulator(
+            program.elf_bytes(),
+            None,
+            &inputs.inputs,
+            &inputs.untrusted_advice,
+            &inputs.trusted_advice,
+            &inputs.memory_config,
+            inputs.advice_tape.map(AdviceTape::from_bytes),
+        );
+        let resident = setup.reserve_device(&mut emulator)?;
+        let cpu = emulator.get_mut_cpu();
+        cpu.set_advice_write_allowance(TraceAllocationAllowance::new(limit_bytes, resident));
+        let mut pass = PassOne::new(emulator);
+        loop {
+            let running = pass.step();
+            if let Some(refusal) = pass.emulator().get_cpu().advice_write_refusal() {
+                return Err(refusal.into());
+            }
+            if !running {
+                break;
+            }
+        }
+        let (advice_tape, _, _) = crate::finish_emulator(pass.into_emulator());
+        Ok(advice_tape.into_bytes())
     }
 }
 

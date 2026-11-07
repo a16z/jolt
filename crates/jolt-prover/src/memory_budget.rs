@@ -6,7 +6,7 @@
 //!
 //! Callers admit tracing against [`MemoryBudget::remaining`] through
 //! [the tracer contract](https://github.com/a16z/jolt/blob/main/tracer/src/execution_backend.rs),
-//! which documents the routing proxy, counted storage and omissions.
+//! which also documents the SDK's budgeted compute-advice run.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::JoltField;

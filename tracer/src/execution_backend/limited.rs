@@ -29,27 +29,49 @@ pub(super) struct TraceLimit {
     pub batch_rows: usize,
 }
 
-/// Setup requests of a limited trace, admitted together before any of them
-/// is made.
+impl TraceLimit {
+    pub(super) fn admit(
+        self,
+        program: &JoltProgram,
+        inputs: &TraceInputs,
+    ) -> Result<LimitedSetup, TraceError> {
+        let phase = TraceAllocationPhase::Initial;
+        let window =
+            pending_window(self.batch_rows).ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let storage = sum_bytes(
+            [
+                BytecodePreprocessing::retained_bytes(&program.expanded_bytecode)?,
+                bytes_of::<JoltTraceRow>(self.initial_rows, phase)?,
+                bytes_of::<Cycle>(window, phase)?,
+            ],
+            phase,
+        )?;
+        let preprocess =
+            BytecodePreprocessing::required_allocation_bytes(&program.expanded_bytecode)?;
+        LimitedSetup::admit(self.bytes, program, inputs, storage, preprocess)
+    }
+}
+
+/// Setup requests of a limited run, admitted together with the run's own
+/// setup storage before any of them is made.
 pub(super) struct LimitedSetup {
-    limit: usize,
-    rows: usize,
-    window: usize,
     output_bytes: usize,
-    /// The caller's input and advice buffers, which outlive the trace.
+    /// The caller's input and advice buffers, which outlive the run.
     caller_bytes: usize,
 }
 
 impl LimitedSetup {
-    /// Checks the device's input copies and output reserve, the bytecode
-    /// preprocessing, flat guest memory, the ELF copy setup makes, the initial
-    /// row reserve and the pending window beside the caller's buffers and
-    /// advice tape, and the preprocessing's peak with its bytecode copy beside
-    /// those buffers alone.
+    /// Checks the device's input copies and output reserve, flat guest
+    /// memory, the ELF copy setup makes and `storage` bytes of the run's own
+    /// setup requests beside the caller's buffers and advice tape, and the
+    /// `preprocess` bytes its bytecode preprocessing requests at most, before
+    /// any of those, beside the caller's buffers and tape alone.
     pub(super) fn admit(
-        limit: TraceLimit,
+        limit: usize,
         program: &JoltProgram,
         inputs: &TraceInputs,
+        storage: usize,
+        preprocess: usize,
     ) -> Result<Self, TraceError> {
         let phase = TraceAllocationPhase::Initial;
         let overflow = TraceAllocationError::SizeOverflow { phase };
@@ -59,8 +81,6 @@ impl LimitedSetup {
             program.elf_bytes(),
             Some(&layout),
         ));
-        let rows = limit.initial_rows;
-        let window = pending_window(limit.batch_rows).ok_or(overflow)?;
         let caller_bytes = [
             &inputs.inputs,
             &inputs.untrusted_advice,
@@ -76,42 +96,36 @@ impl LimitedSetup {
                 inputs.untrusted_advice.len(),
                 inputs.trusted_advice.len(),
                 output_bytes,
-                BytecodePreprocessing::retained_bytes(&program.expanded_bytecode)?,
                 bytes_of::<u64>(usize::try_from(memory_words).map_err(|_| overflow)?, phase)?,
                 // `ElfAnalyzer` copies the ELF for the length of setup.
                 program.elf_bytes().len(),
-                bytes_of::<JoltTraceRow>(rows, phase)?,
-                bytes_of::<Cycle>(window, phase)?,
+                storage,
             ],
             phase,
         )?;
-        // `preprocess` frees its copy of the bytecode before any other setup
-        // request, so the copy needs room only beside the caller's buffers.
-        let preprocess =
-            BytecodePreprocessing::required_allocation_bytes(&program.expanded_bytecode)?;
+        // The bytecode preprocessing frees its copy of the bytecode before any
+        // other setup request, so its peak needs room only beside the caller's
+        // buffers.
         let held = caller_bytes.saturating_add(tape_bytes);
-        TraceAllocationAllowance::new(limit.bytes, 0).check_request(
+        TraceAllocationAllowance::new(limit, 0).check_request(
             phase,
             held,
             requests.max(preprocess),
         )?;
         Ok(Self {
-            limit: limit.bytes,
-            rows,
-            window,
             output_bytes,
             caller_bytes,
         })
     }
 
-    /// Makes the admitted output, row and pending-window reservations and
-    /// counts the setup buffers at their observed capacity.
+    /// Makes the admitted output reservation and returns the bytes the
+    /// caller's buffers, the device's input copies and outputs and flat guest
+    /// memory hold at their observed capacity.
     #[expect(clippy::expect_used, reason = "create_emulator installs the device")]
-    pub(super) fn reserve(
-        self,
+    pub(super) fn reserve_device(
+        &self,
         emulator: &mut Emulator,
-        bytecode: &BytecodePreprocessing,
-    ) -> Result<LimitedTrace, TraceAllocationError> {
+    ) -> Result<usize, TraceAllocationError> {
         let phase = TraceAllocationPhase::Initial;
         let cpu = emulator.get_mut_cpu();
         let device = cpu
@@ -120,12 +134,7 @@ impl LimitedSetup {
             .as_mut()
             .expect("JoltDevice was not initialized");
         reserve_exact(&mut device.outputs, self.output_bytes, phase)?;
-        let mut rows = Vec::new();
-        reserve_exact(&mut rows, self.rows, phase)?;
-        let mut cycles = Vec::new();
-        reserve_exact(&mut cycles, self.window, phase)?;
-        let resident = [
-            bytecode.heap_bytes(),
+        Ok([
             self.caller_bytes,
             heap_bytes(&device.inputs),
             heap_bytes(&device.untrusted_advice),
@@ -134,15 +143,7 @@ impl LimitedSetup {
             cpu.mmu.memory.memory.flat_heap_bytes(),
         ]
         .into_iter()
-        .fold(0, usize::saturating_add);
-        Ok(LimitedTrace {
-            limit: self.limit,
-            resident,
-            cycles,
-            rows,
-            chunks: Vec::new(),
-            field_bytes: 0,
-        })
+        .fold(0, usize::saturating_add))
     }
 }
 
@@ -164,6 +165,45 @@ pub(super) struct LimitedTrace {
 }
 
 impl LimitedTrace {
+    /// Makes the admitted reservations of `rows` rows and a `window`-cycle
+    /// pending window beside `resident` bytes.
+    pub(super) fn reserve(
+        limit: TraceLimit,
+        resident: usize,
+    ) -> Result<Self, TraceAllocationError> {
+        let phase = TraceAllocationPhase::Initial;
+        let rows = limit.initial_rows;
+        let window =
+            pending_window(limit.batch_rows).ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let mut row_buffer = Vec::new();
+        reserve_exact(&mut row_buffer, rows, phase)?;
+        let mut cycles = Vec::new();
+        reserve_exact(&mut cycles, window, phase)?;
+        Ok(Self {
+            limit: limit.bytes,
+            resident,
+            cycles,
+            rows: row_buffer,
+            chunks: Vec::new(),
+            field_bytes: 0,
+        })
+    }
+
+    /// What an advice write may request beside every buffer of this trace;
+    /// the write's own check counts the advice tape.
+    pub(super) fn advice_write_allowance(&self) -> TraceAllocationAllowance {
+        let live = [
+            self.resident,
+            heap_bytes(&self.cycles),
+            heap_bytes(&self.rows),
+            heap_bytes(&self.chunks),
+            self.field_bytes,
+        ]
+        .into_iter()
+        .fold(0, usize::saturating_add);
+        TraceAllocationAllowance::new(self.limit, live)
+    }
+
     /// What a request may take beside the resident buffers, the pending
     /// window, the chunks' field events and `tape` bytes of advice tape.
     fn others(&self, tape: usize) -> TraceAllocationAllowance {
