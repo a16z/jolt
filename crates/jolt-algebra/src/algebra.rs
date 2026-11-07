@@ -656,3 +656,43 @@ impl<
     > JoltField for T
 {
 }
+
+/// The offset of [`lift_biased`].
+pub const LIFT_BIAS: u64 = 1 << 63;
+
+/// `x + 2^63` as a field element, by flipping `x`'s top bit: an unsigned
+/// value that is nonzero for every `x > i64::MIN` (in a field with
+/// `p > 2^64`). Its top bit is still `x`'s inverted sign, but the multiplier
+/// never sees a zero or a 0/1 sign selector.
+///
+/// For a product with a secret integer, multiply this and subtract
+/// `F(LIFT_BIAS)` times the factor: the multiplier then never sees a zero or
+/// sign-selected operand. On an Apple M4, a dependent multiply-add chain was
+/// measured to take different time when an operand is a loaded zero, even
+/// under DIT.
+#[inline]
+pub fn lift_biased<F: Field>(x: i64) -> F {
+    F::from_u64((x as u64) ^ LIFT_BIAS)
+}
+
+/// `x` as a field element with no branch on `x`, unlike
+/// [`Field::from_i64`], and no multiplication: [`lift_biased`] minus the
+/// constant bias. The lift for secret values (Whiteout's masks and response
+/// digits).
+#[inline]
+pub fn lift_ct<F: Field>(x: i64) -> F {
+    lift_biased::<F>(x) - F::from_u64(LIFT_BIAS)
+}
+
+#[cfg(all(test, feature = "solinas"))]
+mod lift_ct_tests {
+    use super::{lift_ct, Ring};
+    use crate::Prime128Offset275 as Fp;
+
+    #[test]
+    fn matches_from_i64_at_the_extremes() {
+        for x in [0, 1, -1, 2, -2, i64::MAX, i64::MIN + 1, i64::MIN] {
+            assert_eq!(lift_ct::<Fp>(x), Fp::from_i64(x), "x = {x}");
+        }
+    }
+}
