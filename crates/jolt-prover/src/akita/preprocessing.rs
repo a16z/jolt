@@ -1,4 +1,5 @@
 use akita_params::PolynomialGroupLayout;
+use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
 use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use std::sync::Arc;
 
@@ -60,7 +61,7 @@ pub fn preprocess_full_with_advice(
         trusted_advice,
         &[],
     )?;
-    full_from_params(params, program)
+    full_from_params(params, program, config, untrusted_advice, trusted_advice)
 }
 
 /// Whiteout: [`preprocess_full_with_advice`] on persisted plans
@@ -86,12 +87,15 @@ pub fn preprocess_full_from_plans(
         &[],
     )?
     .with_whiteout_plans(plans);
-    full_from_params(params, program)
+    full_from_params(params, program, config, untrusted_advice, trusted_advice)
 }
 
 fn full_from_params(
     params: AkitaSetupParams,
     program: JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     let (pcs_setup, verifier_setup) = AkitaScheme::setup(params)?;
     let verifier = JoltVerifierPreprocessing::new(
@@ -99,11 +103,20 @@ fn full_from_params(
         verifier_setup,
         None,
     )?;
-    Ok(JoltProverPreprocessing {
+    let preprocessing = JoltProverPreprocessing {
         verifier,
         pcs_setup,
         committed_program: None,
-    })
+    };
+    #[cfg(feature = "zk")]
+    let preprocessing = {
+        let mut preprocessing = preprocessing;
+        super::capacity::provision(&mut preprocessing, config, untrusted_advice, trusted_advice)?;
+        preprocessing
+    };
+    #[cfg(not(feature = "zk"))]
+    let _ = (config, untrusted_advice, trusted_advice);
+    Ok(preprocessing)
 }
 
 /// The grouped Akita setup: the canonical `OneHotTrace` object plus every
@@ -259,7 +272,7 @@ pub fn preprocess_committed_with_advice(
         verifier_setup,
         None,
     )?;
-    Ok(JoltProverPreprocessing {
+    let preprocessing = JoltProverPreprocessing {
         verifier,
         pcs_setup,
         committed_program: Some(CommittedProgramProverData {
@@ -267,7 +280,14 @@ pub fn preprocess_committed_with_advice(
             direct_program,
             trace_order,
         }),
-    })
+    };
+    #[cfg(feature = "zk")]
+    let preprocessing = {
+        let mut preprocessing = preprocessing;
+        super::capacity::provision(&mut preprocessing, config, untrusted_advice, trusted_advice)?;
+        preprocessing
+    };
+    Ok(preprocessing)
 }
 
 pub fn commit_trusted_advice(
@@ -316,7 +336,7 @@ fn advice_physical_num_vars(
     let max_bytes = usize::try_from(max_bytes).map_err(|_| PreprocessingError::InvalidAdvice {
         reason: "advice size does not fit usize".to_owned(),
     })?;
-    let word_vars = (max_bytes / 8).next_power_of_two().ilog2() as usize;
+    let word_vars = CommitmentMatrixShape::advice_from_max_bytes(max_bytes).total_vars();
     advice_packing_plan(kind, word_vars)
         .map(|plan| plan.packing().packed_num_vars())
         .map_err(|error| PreprocessingError::InvalidAdvice {

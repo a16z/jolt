@@ -29,7 +29,7 @@ mod whiteout {
     use common::jolt_device::JoltDevice;
     use jolt_akita::{
         AkitaChunkProfile, AkitaCommitment, AkitaField, AkitaScheduleArtifacts, AkitaScheme,
-        WhiteoutPlans,
+        TrustedBytes, WhiteoutPlans,
     };
     use jolt_field::Ring;
     use jolt_prover::akita;
@@ -93,6 +93,10 @@ mod whiteout {
         .expect("derive config")
     }
 
+    #[expect(
+        clippy::print_stderr,
+        reason = "report provisioned capacities in the end-to-end lane"
+    )]
     fn preprocess(
         setup: Setup,
         run: &PreparedGuest,
@@ -101,7 +105,7 @@ mod whiteout {
         let artifacts =
             AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
         let advice = matches!(setup, Setup::Advice);
-        match setup {
+        let preprocessing = match setup {
             Setup::Muldiv | Setup::Advice => preprocessing::preprocess_full_with_advice(
                 &artifacts,
                 run.preprocessing.clone(),
@@ -113,7 +117,12 @@ mod whiteout {
                 preprocessing::preprocess_committed(&artifacts, run.preprocessing.clone(), config)
             }
         }
-        .expect("Akita preprocessing")
+        .expect("Akita preprocessing");
+        eprintln!(
+            "Whiteout default capacity: {:?}",
+            preprocessing.verifier.pcs_setup.whiteout_capacity()
+        );
+        preprocessing
     }
 
     fn prove(setup: Setup) -> Proved {
@@ -185,8 +194,7 @@ mod whiteout {
 
     /// The verifier preprocessing after a serde round trip: the copy shares
     /// no derived state with the prover's. It loads the persisted catalog
-    /// plan; a setup persisted without response plans plans its response
-    /// schedule on first use.
+    /// plan and prepares every response verifier at load.
     fn transported(preprocessing: &AkitaVerifierPreprocessing) -> AkitaVerifierPreprocessing {
         let encoded = bincode::serde::encode_to_vec(preprocessing, bincode::config::standard())
             .expect("encode verifier preprocessing");
@@ -206,6 +214,53 @@ mod whiteout {
         .expect("an honest proof verifies against transported preprocessing");
     }
 
+    fn assert_verifies_attached(proved: &Proved, proof: &WhiteoutProof) {
+        let mut host = proved.preprocessing.verifier.clone();
+        let bodies = host
+            .pcs_setup
+            .detach_prepared_payloads()
+            .expect("detach Whiteout payloads");
+        let mut guest = transported(&host);
+        assert!(
+            jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+                &guest,
+                &proved.public_io,
+                proof,
+                proved.trusted.as_ref()
+            )
+            .is_err()
+        );
+        let bodies: Vec<_> = bodies
+            .into_iter()
+            .map(|body| {
+                let bytes = Box::leak(body.into_boxed_slice());
+                // SAFETY: these bytes came directly from host preparation; serializers wrote canonical field words.
+                unsafe { TrustedBytes::new(bytes) }
+            })
+            .collect();
+        guest
+            .pcs_setup
+            .attach_prepared_payloads(&bodies)
+            .expect("attach Whiteout payloads");
+        jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+            &guest,
+            &proved.public_io,
+            proof,
+            proved.trusted.as_ref(),
+        )
+        .expect("trusted attached Whiteout verifier");
+        let inline = transported(&guest);
+        assert!(
+            jolt_verifier::verify::<F, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
+                &inline,
+                &proved.public_io,
+                proof,
+                proved.trusted.as_ref()
+            )
+            .is_err()
+        );
+    }
+
     fn honest(setup: Setup) -> (Proved, WhiteoutProof) {
         let mut proved = prove(setup);
         let proof = std::mem::replace(
@@ -219,6 +274,7 @@ mod whiteout {
     #[test]
     fn whiteout_muldiv_verifies_and_rejects_tampering() {
         let (proved, proof) = honest(Setup::Muldiv);
+        assert_verifies_attached(&proved, &proof);
         verify(&proved, &proof).expect("an honest Whiteout proof verifies");
         assert_verifies_transported(&proved, &proof);
 
@@ -256,8 +312,7 @@ mod whiteout {
     /// and a decode and re-encode give the same bytes, with or without
     /// exported plans. A prover and a verifier built from exported plans load
     /// them: a proof on them verifies against the transported preprocessing,
-    /// and plans of another format are refused when the prover first uses
-    /// them, never replanned.
+    /// and plans of another format are refused at preprocessing, never replanned.
     #[test]
     fn whiteout_plans_persist_and_are_consumed() {
         let (proved, _) = honest(Setup::Muldiv);
@@ -287,9 +342,8 @@ mod whiteout {
                 false,
                 plans,
             )
-            .expect("preprocessing from plans")
         };
-        let loaded = from_plans(plans.clone());
+        let loaded = from_plans(plans.clone()).expect("preprocessing from plans");
         let persisted = transported(&loaded.verifier);
         assert_eq!(encode(&persisted), encode(&loaded.verifier));
         assert_ne!(encode(&persisted), bytes);
@@ -303,12 +357,9 @@ mod whiteout {
         let (versioned, _): (WhiteoutPlans, _) =
             bincode::serde::decode_from_slice(&wire, bincode::config::standard())
                 .expect("decode plans");
-        let refused = prove_with(prepare(Setup::Muldiv), &config, from_plans(versioned), None);
-        // The trace commitment, Stage 0, is the first use; the commitment
-        // path carries the refusal as an `OpeningsError` message.
-        let error = refused
-            .proof
-            .expect_err("plans of another format must be refused");
+        let error = from_plans(versioned)
+            .err()
+            .expect("plans of another format must be refused at load");
         assert!(
             error
                 .to_string()
