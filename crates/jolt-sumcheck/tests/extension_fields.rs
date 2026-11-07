@@ -4,8 +4,8 @@ use jolt_field::{Ext2, Field, FpExt4, Prime32Offset99, Prime64Offset59, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_sumcheck::{
     prove_batch, prove_uniskip_clear, BatchMember, BatchPrelude, BooleanHypercube,
-    CenteredIntegerDomain, ClearSumcheckRecorder, CompressedSumcheckProof, ProveRounds,
-    SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
+    CenteredIntegerDomain, ClearSumcheckRecorder, CompressedSumcheckProof, DegreeSchedule,
+    ProveRounds, SequentialRounds, SumcheckClaim, SumcheckError, SumcheckProof, SumcheckRecorder,
     SumcheckVerifier,
 };
 use jolt_transcript::{
@@ -124,8 +124,7 @@ where
             rounds: 2,
             offset: 0,
         }],
-        2,
-        2,
+        DegreeSchedule::uniform(2, 2),
     )
     .unwrap();
     let mut product = ProductOfAffines::new(left, right);

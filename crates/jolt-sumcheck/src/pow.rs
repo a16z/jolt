@@ -8,11 +8,12 @@
 //! `grind_bits_for_loss(d, T::CHALLENGE_SET, SECURITY_BITS)`, where
 //! `T::CHALLENGE_SET` is the [`FieldTranscript`] challenge set for `F`.
 //!
-//! `d` is always the verifier's degree bound for the claim or statement, never
-//! a degree the prover declares, so the difficulty is fixed by the protocol
-//! parameters and the proof cannot lower it. The nonces sit in the proof as a
-//! plain list next to the round messages: one per round when the difficulty
-//! is positive, none when it is zero.
+//! `d` is always the verifier's degree bound for the round (the claim's, or
+//! the round's entry in a batch's public degree schedule), never a degree the
+//! prover declares, so the difficulty is fixed by the protocol parameters and
+//! the proof cannot lower it. The nonces sit in the proof as a plain list next
+//! to the round messages: one for each round whose difficulty is positive, in
+//! round order.
 //!
 //! Only clear proofs grind. Committed (zero-knowledge) proofs run over BN254,
 //! whose challenges need no proof of work, and check that with
@@ -42,7 +43,8 @@ pub fn round_pow_bits<F: Field, T: FieldTranscript<F>>(
 
 /// The verifier's view of a proof's round nonces, checked for count up front.
 pub(crate) struct RoundNonces<'a> {
-    bits: u32,
+    /// Each round's difficulty and, when positive, its nonce's index.
+    rounds: Vec<(u32, usize)>,
     nonces: &'a [u64],
 }
 
@@ -54,15 +56,34 @@ impl<'a> RoundNonces<'a> {
         rounds: usize,
         nonces: &'a [u64],
     ) -> Result<Self, SumcheckError<F>> {
-        let bits = round_pow_bits::<F, T>(degree)?;
-        let expected = if bits == 0 { 0 } else { rounds };
+        Self::scheduled::<F, T>(&vec![degree; rounds], nonces)
+    }
+
+    /// Accepts `nonces` for rounds whose degree bounds are `degrees`: one
+    /// nonce for each round whose difficulty is positive, in round order.
+    pub(crate) fn scheduled<F: Field, T: FieldTranscript<F>>(
+        degrees: &[usize],
+        nonces: &'a [u64],
+    ) -> Result<Self, SumcheckError<F>> {
+        let mut expected = 0;
+        let rounds = degrees
+            .iter()
+            .map(|&degree| {
+                let bits = round_pow_bits::<F, T>(degree)?;
+                let index = expected;
+                if bits > 0 {
+                    expected += 1;
+                }
+                Ok((bits, index))
+            })
+            .collect::<Result<Vec<_>, SumcheckError<F>>>()?;
         if nonces.len() != expected {
             return Err(SumcheckError::WrongNumberOfPowNonces {
                 expected,
                 got: nonces.len(),
             });
         }
-        Ok(Self { bits, nonces })
+        Ok(Self { rounds, nonces })
     }
 
     /// Checks round `round`'s nonce against the transcript, after the round
@@ -72,8 +93,15 @@ impl<'a> RoundNonces<'a> {
         round: usize,
         transcript: &mut T,
     ) -> Result<(), SumcheckError<F>> {
+        let &(bits, index) = self
+            .rounds
+            .get(round)
+            .ok_or(SumcheckError::ProofOfWorkRejected { round })?;
+        let nonce = (bits > 0)
+            .then(|| self.nonces.get(index).copied())
+            .flatten();
         transcript
-            .check_public_grind(self.bits, self.nonces.get(round).copied())
+            .check_public_grind(bits, nonce)
             .map_err(|_| SumcheckError::ProofOfWorkRejected { round })
     }
 }
