@@ -220,12 +220,21 @@ pub(super) fn visit_segment_ring_row_range<const D: usize>(
         source
             .rows
             .fill_rows_with_masks(row_start, populated_indices, populated_masks);
-        for &hot in populated_indices.iter() {
-            if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
-                return Err(AkitaError::InvalidInput(format!(
-                    "trace one-hot row {hot} is outside K={}",
-                    source.one_hot_k
-                )));
+        // A maximum reduction vectorizes the valid-input scan. Keep the
+        // original error path to report the first invalid selector.
+        if populated_indices
+            .iter()
+            .copied()
+            .max()
+            .is_some_and(|hot| hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k)
+        {
+            for &hot in populated_indices.iter() {
+                if hot != NO_SELECTED_ROW && usize::from(hot) >= source.one_hot_k {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "trace one-hot row {hot} is outside K={}",
+                        source.one_hot_k
+                    )));
+                }
             }
         }
         visit(ring, populated_indices, populated_masks);
