@@ -85,6 +85,10 @@ jobs:
             if grep -q '^transcript-blake2b = ' crates/jolt-transcript/Cargo.toml; then
               features+=,jolt-transcript/transcript-blake2b,jolt-transcript/transcript-keccak,jolt-transcript/transcript-poseidon
             fi
+            # The Gaussian sampler bench needs the prover-only sampler.
+            if grep -q '^sample = ' crates/jolt-crypto/Cargo.toml; then
+              features+=,jolt-crypto/sample,jolt-crypto/parallel
+            fi
             cargo bench \
               -p jolt-crypto \
               -p "$field" \
