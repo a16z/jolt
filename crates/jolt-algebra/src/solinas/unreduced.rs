@@ -311,6 +311,7 @@ impl<const P: u128> Unreduced for Fp128<P> {
     // products fit in the u128 slots, including the carry chain in
     // `reduce_product`, so delayed reduction equals the per-term sum.
     const SUM_IS_EXACT: bool = true;
+    const PREFER_REDUCED_PRODUCTS: bool = cfg!(target_arch = "riscv64") && Self::FIELD_INLINE;
 
     #[inline]
     fn mul_unreduced(self, other: Self) -> Fp128ProductAccum {
