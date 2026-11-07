@@ -137,6 +137,12 @@ jobs:
             echo "jolt-verifier enables the prover's proof-of-work search" >&2
             exit 1
           fi
+      # jolt-crypto's lattice primitives sit behind a non-default feature that
+      # no workspace crate enables yet.
+      - name: cargo clippy -p jolt-crypto --features lattice
+        run: |
+          cargo clippy -p jolt-crypto --all-targets --no-default-features --features lattice,parallel
+          cargo clippy -p jolt-crypto --all-targets --no-default-features --features ont-static-base
       # jolt-poly's and jolt-sumcheck's binary features gate the F8 sumcheck
       # domain. No workspace crate enables them, so build them explicitly.
       - name: cargo clippy -p jolt-poly -p jolt-sumcheck --features binary
@@ -854,6 +860,12 @@ jobs:
       - name: Test jolt-utils with parallel
         if: matrix.shard == 2
         run: cargo nextest run -p jolt-utils --features parallel --cargo-quiet
+      # jolt-crypto's lattice primitives sit behind a non-default feature.
+      - name: Test jolt-crypto with lattice
+        if: matrix.shard == 2
+        run: |
+          cargo nextest run -p jolt-crypto --no-default-features --features lattice,parallel --cargo-quiet
+          cargo nextest run -p jolt-crypto --no-default-features --features ont-static-base --cargo-quiet -E 'test(/static_base/)'
       - name: Test jolt-sumcheck with committed proofs
         if: matrix.shard == 0
         run: cargo nextest run -p jolt-sumcheck --features committed,prover --cargo-quiet
