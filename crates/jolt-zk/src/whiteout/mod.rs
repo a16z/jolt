@@ -66,7 +66,7 @@ pub use params::{
 pub use placement::PadPlacement;
 pub use response::{
     CompressedTarget, ResponseLayout, ResponseProver, ResponseRowShape, ResponseRows,
-    ResponseSegment, ResponseStatement, ResponseWeights, ResponseWitness,
+    ResponseSegment, ResponseStatement, ResponseVerifier, ResponseWeights, ResponseWitness,
 };
 #[cfg(feature = "whiteout-prover")]
 pub use sample::sample_zero_constant_term;

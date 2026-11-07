@@ -459,12 +459,51 @@ pub struct CompressedTarget<'a, F> {
     pub payload: &'a [F],
 }
 
-/// Proves the response statement. Akita implements it. The Σ-protocol
-/// absorbed the statement's compressed targets of `N` before `ρ`
-/// ([`super::verify_sigma`]); the response proof does not absorb them again.
+/// Verifies the response proof. The Σ-protocol absorbed the statement's
+/// compressed targets of `N` before `ρ` ([`super::verify_sigma`]); the
+/// response proof does not absorb them again.
 ///
 /// The response proof runs in the proof's NARG string, on the concrete
 /// spongefish states of the implementor's sponge, as Akita's opening does.
+pub trait ResponseVerifier<F: JoltField, const D: usize> {
+    /// The transcript sponge the response proof runs on.
+    type Sponge: DuplexSpongeInterface<U = u8>;
+
+    /// The compression map of the statement's images.
+    fn compression(&self) -> &dyn ImageCompression<F>;
+
+    /// Verifies the response proof of `statement`, reading it from
+    /// `transcript`.
+    ///
+    /// # Errors
+    ///
+    /// [`ZkError`] if the proof is rejected.
+    fn verify_response(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
+    ) -> Result<(), ZkError>;
+}
+
+// TODO(akita#120): make `ResponseProver: ResponseVerifier` and drop its
+// verifying half once Akita implements `ResponseVerifier` for its prover.
+impl<F: JoltField, const D: usize, P: ResponseProver<F, D>> ResponseVerifier<F, D> for P {
+    type Sponge = P::Sponge;
+
+    fn compression(&self) -> &dyn ImageCompression<F> {
+        ResponseProver::compression(self)
+    }
+
+    fn verify_response(
+        &self,
+        statement: &ResponseStatement<'_, F, D>,
+        transcript: &mut VerifierState<'_, Self::Sponge>,
+    ) -> Result<(), ZkError> {
+        ResponseProver::verify_response(self, statement, transcript)
+    }
+}
+
+/// Proves the response statement. Akita implements it.
 pub trait ResponseProver<F: JoltField, const D: usize> {
     /// The transcript sponge the response proof runs on.
     type Sponge: DuplexSpongeInterface<U = u8>;

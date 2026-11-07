@@ -17,7 +17,7 @@ use super::compression::ImageCompression;
 use super::fixture::Instance;
 pub use super::fixture::RawImages;
 pub use super::fixture::F;
-use super::response::{ResponseProver, ResponseStatement, ResponseWitness};
+use super::response::{ResponseProver, ResponseStatement, ResponseVerifier, ResponseWitness};
 use super::sigma::{prove_sigma_with, SelfChecks};
 use super::transport::{receive_bytes, receive_values, send_bytes, send_values};
 use super::{verify_sigma, BlockTarget, LiftedRelation, SigmaSetup};
@@ -85,7 +85,7 @@ impl<const D: usize> ResponseProver<F, D> for SendingResponseProver {
         statement: &ResponseStatement<'_, F, D>,
         transcript: &mut VerifierState<'_, Blake2b512>,
     ) -> Result<(), ZkError> {
-        CheckingResponseProver.verify_response(statement, transcript)
+        ResponseProver::<F, D>::verify_response(&CheckingResponseProver, statement, transcript)
     }
 }
 
@@ -151,7 +151,7 @@ impl<const D: usize> SyntheticSigma<D> {
     /// verifying the response statement.
     pub fn verify<P>(&self, proof: &[u8], response: &P) -> Result<(), ZkError>
     where
-        P: ResponseProver<F, D>,
+        P: ResponseVerifier<F, D>,
         P::Sponge: UniformBytes + DuplexSpongeInit<U = u8>,
     {
         verify_instance(&self.instance, &self.instance.relation, proof, response)
@@ -197,7 +197,7 @@ pub(crate) fn verify_instance<const D: usize, P>(
     response: &P,
 ) -> Result<(), ZkError>
 where
-    P: ResponseProver<F, D>,
+    P: ResponseVerifier<F, D>,
     P::Sponge: UniformBytes + DuplexSpongeInit<U = u8>,
 {
     let mut transcript = verifier_transcript::<P::Sponge>(&PROTOCOL, &BytesMsg(LABEL), proof);
