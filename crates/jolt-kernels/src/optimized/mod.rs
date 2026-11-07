@@ -38,6 +38,8 @@ use self::field_registers_inc_claim_reduction::OptimizedFieldRegistersIncClaimRe
 use self::field_registers_read_write::OptimizedFieldRegistersReadWrite;
 #[cfg(feature = "field-inline")]
 use self::field_registers_val_evaluation::OptimizedFieldRegistersValEvaluation;
+#[cfg(feature = "parallel")]
+use self::parallel_members::ParallelMembers;
 #[cfg(not(feature = "akita"))]
 use crate::commitment::ModeStreamingCommitment;
 
@@ -67,6 +69,8 @@ mod lazy_ra;
 mod one_hot_histograms;
 #[cfg(not(feature = "akita"))]
 pub mod opening;
+#[cfg(feature = "parallel")]
+mod parallel_members;
 pub mod precommitted_reduction;
 mod prefix_product;
 pub mod ram_hamming_booleanity;
@@ -135,7 +139,14 @@ where
     /// Packed commitment schemes use native group commitment/opening paths, so
     /// they cannot satisfy [`jolt_openings::StreamingCommitment`] and must retain their own
     /// boundary slots while sharing the optimized stage 1–7 kernels.
+    ///
+    /// With parallel execution enabled, also schedules independent sum-check
+    /// members concurrently when every member opts in.
     pub fn with_optimized_compute(mut self) -> Self {
+        #[cfg(feature = "parallel")]
+        {
+            self.round_scheduler = Box::new(ParallelMembers);
+        }
         self.spartan_outer_uniskip = Box::new(spartan_outer::OptimizedOuterUniskip);
         self.spartan_outer_remainder = Box::new(spartan_outer::OptimizedOuterRemainder);
         self.spartan_product_uniskip = Box::new(spartan_product::OptimizedProductUniskip);
