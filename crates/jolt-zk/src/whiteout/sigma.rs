@@ -26,9 +26,7 @@ use std::sync::Arc;
 use jolt_crypto::challenge::{
     sample_indexed_challenges_from_seed, OperatorNormRejection, D64_SELECTIVE_L2_CHALLENGE_CONFIG,
 };
-use jolt_crypto::lattice::{
-    AjtaiLevel, GadgetDigits, MatrixShape, MatrixView, PreparedMatrix, CHALLENGE_RING_DIM,
-};
+use jolt_crypto::lattice::{AjtaiLevel, PreparedMatrix, CHALLENGE_RING_DIM};
 #[cfg(feature = "whiteout-prover")]
 use jolt_field::CyclotomicRing;
 use jolt_field::JoltField;
@@ -36,16 +34,15 @@ use jolt_transcript::{ChallengeCodec, FieldTranscript, Transcript, UniformBytes,
 use spongefish::DuplexSpongeInit;
 
 use super::compression::ImageCompression;
+use super::geometry::SigmaGeometry;
 use super::lift::{EvaluationClaims, LiftedRelation};
 use super::linear::{BlockTarget, GadgetTerm, LRow, LinearBlock, ResidualBlock, RingLinearMap};
 use super::pad_commitment::LatticePadCommitment;
 #[cfg(feature = "whiteout-prover")]
 use super::pad_commitment::LatticePadOpening;
-use super::params::{SigmaParams, MAX_RESPONSE_NUM_VARS, RESPONSE_LOG_BASIS};
+use super::params::{SigmaParams, MAX_RESPONSE_NUM_VARS};
 use super::placement::PadPlacement;
-use super::response::{
-    ResponseLayout, ResponseSegment, ResponseStatement, ResponseVerifier, FIELD_LEVELS,
-};
+use super::response::{ResponseLayout, ResponseStatement, ResponseVerifier};
 use super::segments::{Segment, SegmentRole, SegmentTable};
 use super::transport::{
     receive_bytes, receive_values, AttemptFork, ATTEMPT_NONCE_LEN, FORK_SEED_LEN,
@@ -77,7 +74,7 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
     /// The setup for a residual opening of `residual` segments (witness,
     /// inner digits, randomness) with opening rows `blocks`, followed by the
     /// pad segments of `pads` with image `pad_image`, and `A_D` =
-    /// `v_matrix` ([`Self::v_matrix_of`]), whose width must be these rows'.
+    /// `v_matrix`, whose width must be these rows'.
     /// Every segment must have native dimension `D`, so that `N` is linear
     /// over the challenge ring.
     pub fn new(
@@ -87,27 +84,18 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         pad_image: BlockTarget<F, D>,
         v_matrix: Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>,
     ) -> Result<Self, WhiteoutError> {
-        if residual.iter().any(|segment| {
-            matches!(
-                segment.role,
-                SegmentRole::PadDigits | SegmentRole::OperandDigits | SegmentRole::PadRandomness
-            )
-        }) {
-            return Err(WhiteoutError::InvalidRelation(
-                "residual segments may not hold pads",
-            ));
-        }
         let num_residual = residual.len();
-        let mut segments = residual;
-        segments.extend(pads.segments());
-        let table = SegmentTable::new(segments)?;
-        if !D.is_multiple_of(CHALLENGE_RING_DIM)
-            || table.segments().any(|segment| segment.native_dim != D)
-        {
-            return Err(WhiteoutError::InvalidRelation(
-                "every segment must have the setup's native ring dimension",
-            ));
-        }
+        let geometry = SigmaGeometry::new(
+            residual,
+            blocks.iter().map(|block| {
+                (
+                    block.matrix.shape(),
+                    matches!(&block.target, BlockTarget::Compressed { .. }),
+                )
+            }),
+            pads.geometry(),
+        )?;
+        let table = &geometry.table;
         let placed = table.placed();
         let range = |segments: Range<usize>| -> Result<Range<usize>, WhiteoutError> {
             let first = segments.start;
@@ -129,7 +117,6 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
                 .end;
             Ok(start..end)
         };
-        let outputs = Self::output_rows(&blocks, pads);
         let mut linear = Vec::with_capacity(blocks.len() + 1);
         for block in blocks {
             let gadget = match block.gadget {
@@ -164,21 +151,20 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
             target: pad_image,
         });
         let linear = RingLinearMap::new(linear)?;
-        if linear.num_outputs() != outputs {
+        if linear.num_outputs() != geometry.outputs {
             return Err(WhiteoutError::InvariantViolation(
                 "N's output rows differ from the blocks' and the pad commitment's",
             ));
         }
 
-        let message_rings = Self::v_message_rings(outputs);
-        let v_level = Self::v_level_of(message_rings, v_matrix.shape().rows);
+        let v_level = geometry.v_level(v_matrix.shape().rows)?;
         if v_matrix.shape() != v_level.matrix {
             return Err(WhiteoutError::InvalidRelation(
                 "A_D's shape differs from the one V's rows need",
             ));
         }
         Ok(Self {
-            params: SigmaParams::derive(&table)?,
+            params: geometry.params,
             #[cfg(feature = "whiteout-prover")]
             residual_len: pad_start,
             placement: pads.placement().clone(),
@@ -186,80 +172,11 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
                 matrix: pads.l_matrix(),
                 input: randomness,
             },
-            table,
+            table: geometry.table,
             linear,
             v_level,
             v_matrix,
         })
-    }
-
-    /// Challenge rings of `V`: the Σ messages of `num_outputs` rows of `N`
-    /// over `R_D`, plus three.
-    fn v_message_rings(num_outputs: usize) -> usize {
-        (num_outputs * D) / CHALLENGE_RING_DIM + 3
-    }
-
-    /// The output ring rows of `N`: each opening block's rows, then the pad
-    /// commitment's (the order [`Self::new`] stacks them in).
-    fn output_rows(blocks: &[ResidualBlock<F, D>], pads: &LatticePadCommitment<F, D>) -> usize {
-        blocks
-            .iter()
-            .map(|block| block.matrix.shape().rows)
-            .sum::<usize>()
-            + pads.matrix().shape().rows
-    }
-
-    /// `A_D`'s level: `message_rings` challenge rings of `V` in radix-16
-    /// digits, at rank `v_rank`, binding only.
-    fn v_level_of(message_rings: usize, v_rank: usize) -> AjtaiLevel {
-        AjtaiLevel {
-            matrix: MatrixShape {
-                rows: v_rank,
-                width: message_rings * FIELD_LEVELS,
-                ring_dim: CHALLENGE_RING_DIM,
-            },
-            digits: GadgetDigits {
-                log_basis: RESPONSE_LOG_BASIS,
-                levels: FIELD_LEVELS,
-            },
-            message_rings,
-            randomness_columns: 0,
-        }
-    }
-
-    /// The width in challenge-ring columns of `A_D` for opening rows
-    /// `blocks` and the pad commitment `pads`.
-    pub fn v_width(blocks: &[ResidualBlock<F, D>], pads: &LatticePadCommitment<F, D>) -> usize {
-        Self::v_message_rings(Self::output_rows(blocks, pads)) * FIELD_LEVELS
-    }
-
-    /// The public stream length [`Self::v_matrix_of`] reads for `A_D` of
-    /// rank `v_rank`.
-    pub fn v_stream_len(
-        blocks: &[ResidualBlock<F, D>],
-        pads: &LatticePadCommitment<F, D>,
-        v_rank: usize,
-    ) -> usize {
-        v_rank * Self::v_width(blocks, pads) * CHALLENGE_RING_DIM
-    }
-
-    /// `A_D` of rank `v_rank` for opening rows `blocks` and the pad
-    /// commitment `pads`, cut from `v_stream`. A function of their shapes
-    /// alone, so one matrix serves every Σ setup of those shapes.
-    pub fn v_matrix_of(
-        blocks: &[ResidualBlock<F, D>],
-        pads: &LatticePadCommitment<F, D>,
-        v_rank: usize,
-        v_stream: &[F],
-    ) -> Result<Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>, WhiteoutError> {
-        let level = Self::v_level_of(
-            Self::v_message_rings(Self::output_rows(blocks, pads)),
-            v_rank,
-        );
-        Ok(Arc::new(PreparedMatrix::new(&MatrixView::new(
-            level.matrix,
-            v_stream,
-        )?)?))
     }
 
     /// This setup at another rejection parameter α (tests of the abort rate).
@@ -400,35 +317,13 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
         &self,
         compression: &dyn ImageCompression<F>,
     ) -> Result<ResponseLayout, WhiteoutError> {
-        let mut segments: Vec<ResponseSegment> = self
-            .table
-            .segments()
-            .zip(self.params.response_digits())
-            .enumerate()
-            .map(|(segment, (entry, &digits))| ResponseSegment::Response {
-                segment,
-                coefficients: entry.num_coefficients(),
-                digits,
-            })
-            .collect();
-        segments.push(ResponseSegment::V {
-            coefficients: self.v_level.message_rings * CHALLENGE_RING_DIM,
-        });
-        segments.push(ResponseSegment::Theta);
-        let images = self
-            .compressed_targets()
-            .map(|(len, _)| len)
-            .chain(std::iter::once(self.v_image_len()));
-        for (image, coefficients) in images.enumerate() {
-            segments.push(ResponseSegment::Compression {
-                image,
-                coefficients,
-                digits: compression.witness_len(coefficients)?,
-            });
-        }
-        let layout = ResponseLayout { segments };
-        let _ = response_num_vars(layout.len())?;
-        Ok(layout)
+        SigmaGeometry::response_layout(
+            &self.table,
+            &self.params,
+            self.v_level,
+            self.compressed_targets().map(|(len, _)| len),
+            compression,
+        )
     }
 }
 
@@ -436,7 +331,10 @@ impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
 /// [`MAX_RESPONSE_NUM_VARS`] (the size the response proof's soundness is
 /// priced for).
 pub(crate) fn response_num_vars(len: usize) -> Result<u32, WhiteoutError> {
-    let num_vars = len.next_power_of_two().trailing_zeros();
+    let num_vars = len
+        .checked_next_power_of_two()
+        .ok_or(WhiteoutError::Overflow)?
+        .trailing_zeros();
     if num_vars > MAX_RESPONSE_NUM_VARS {
         return Err(WhiteoutError::ResponseTooLarge { num_vars });
     }

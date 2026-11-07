@@ -452,7 +452,12 @@ fn l_row_is_row_rank_of_the_pad_view() {
     let instance = Instance::<256>::new(40);
     let setup = instance.setup();
     let pads = pad_commitment::<256>();
-    let width = pads.segments().iter().map(|s| s.len / 4).sum::<usize>();
+    let width = pads
+        .geometry()
+        .segments()
+        .iter()
+        .map(|s| s.len / 4)
+        .sum::<usize>();
     let data = stream(1 << 18, 21);
     let view = MatrixView::new(
         MatrixShape {

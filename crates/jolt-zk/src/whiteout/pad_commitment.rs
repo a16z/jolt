@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use jolt_crypto::lattice::{MatrixShape, MatrixView, PreparedMatrix, CHALLENGE_RING_DIM};
+use jolt_crypto::lattice::{MatrixShape, PreparedMatrix, CHALLENGE_RING_DIM};
 #[cfg(feature = "whiteout-prover")]
 use jolt_field::balanced_decompose_coefficients_pow2_i8_into;
 #[cfg(feature = "whiteout-prover")]
@@ -47,69 +47,52 @@ pub struct LatticePadOpening {
     pub(crate) digits: Vec<i64>,
 }
 
-/// One pad layout's lattice pad commitment over `R_D`.
-pub struct LatticePadCommitment<F: JoltField, const D: usize> {
+/// Checked matrix and segment geometry, independent of public coefficients.
+#[derive(Clone)]
+pub struct PadGeometry<const D: usize> {
     placement: PadPlacement,
-    matrix: Arc<PreparedMatrix<F, D>>,
-    l_matrix: Arc<PreparedMatrix<F, D>>,
     rank: usize,
     pad_rings: usize,
     operand_rings: usize,
     randomness_columns: usize,
+    width: usize,
+    stream_len: usize,
 }
 
-impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
-    /// The commitment of rank `rank` with `randomness_columns` hiding
-    /// columns, its matrix and row `L` cut from the public `stream`.
+impl<const D: usize> PadGeometry<D> {
     pub fn new(
         placement: PadPlacement,
-        stream: &[F],
         rank: usize,
         randomness_columns: usize,
     ) -> Result<Self, WhiteoutError> {
-        let (pad_rings, operand_rings, width) = Self::geometry(&placement, randomness_columns)?;
-        let full = MatrixView::new(
-            MatrixShape {
-                rows: rank + 1,
-                width,
-                ring_dim: D,
-            },
-            stream,
-        )?;
-        let commitment = MatrixView::new(
-            MatrixShape {
-                rows: rank,
-                width,
-                ring_dim: D,
-            },
-            stream,
-        )?;
-        let mut l_entries = Vec::with_capacity(randomness_columns * D);
-        for column in width - randomness_columns..width {
-            l_entries.extend_from_slice(full.entry(rank, column)?);
-        }
-        let l_view = MatrixView::new(
-            MatrixShape {
-                rows: 1,
-                width: randomness_columns,
-                ring_dim: D,
-            },
-            &l_entries,
-        )?;
+        let (pad_rings, operand_rings, width) = Self::dimensions(&placement, randomness_columns)?;
+        let stream_len = Self::stream_len(&placement, rank, randomness_columns)?;
         Ok(Self {
             placement,
-            matrix: Arc::new(PreparedMatrix::new(&commitment)?),
-            l_matrix: Arc::new(PreparedMatrix::new(&l_view)?),
             rank,
             pad_rings,
             operand_rings,
             randomness_columns,
+            width,
+            stream_len,
         })
+    }
+
+    pub fn matrix_shape(&self) -> MatrixShape {
+        MatrixShape {
+            rows: self.rank,
+            width: self.width,
+            ring_dim: D,
+        }
+    }
+
+    pub fn required_coefficients(&self) -> usize {
+        self.stream_len
     }
 
     /// The pad and operand rings, padded to whole `R_D` elements, and the
     /// matrix width in `R_D` columns.
-    fn geometry(
+    fn dimensions(
         placement: &PadPlacement,
         randomness_columns: usize,
     ) -> Result<(usize, usize, usize), WhiteoutError> {
@@ -119,12 +102,21 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
                 "pad commitment ring dimension must be a multiple of 64",
             ));
         }
-        let pad_rings = placement.pad_rings().next_multiple_of(stride);
-        let operand_rings = placement.operand_rings().next_multiple_of(stride);
+        let pad_rings = placement
+            .pad_rings()
+            .checked_next_multiple_of(stride)
+            .ok_or(WhiteoutError::Overflow)?;
+        let operand_rings = placement
+            .operand_rings()
+            .checked_next_multiple_of(stride)
+            .ok_or(WhiteoutError::Overflow)?;
         Ok((
             pad_rings,
             operand_rings,
-            (pad_rings + operand_rings) / stride + randomness_columns,
+            pad_rings
+                .checked_add(operand_rings)
+                .and_then(|rings| (rings / stride).checked_add(randomness_columns))
+                .ok_or(WhiteoutError::Overflow)?,
         ))
     }
 
@@ -138,7 +130,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         placement: &PadPlacement,
         randomness_columns: usize,
     ) -> Result<usize, WhiteoutError> {
-        Ok(Self::geometry(placement, randomness_columns)?.2)
+        Ok(Self::dimensions(placement, randomness_columns)?.2)
     }
 
     /// The public stream length [`Self::new`] reads: rows `0..=rank` of the
@@ -152,30 +144,16 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         rank: usize,
         randomness_columns: usize,
     ) -> Result<usize, WhiteoutError> {
-        (rank + 1)
-            .checked_mul(Self::width(placement, randomness_columns)?)
+        let width = Self::width(placement, randomness_columns)?;
+        rank.checked_add(1)
+            .and_then(|rows| rows.checked_mul(width))
             .and_then(|len| len.checked_mul(D))
             .ok_or(WhiteoutError::Overflow)
     }
 
-    /// The placement both roles lift the relation by.
-    pub fn placement(&self) -> &PadPlacement {
-        &self.placement
-    }
-
-    /// Coefficients of the image `A_p · s_p`: `rank` elements of `R_D`.
-    pub fn image_len(&self) -> usize {
-        self.rank * D
-    }
-
-    /// The hiding randomness columns `r_p` takes.
-    pub fn randomness_columns(&self) -> usize {
-        self.randomness_columns
-    }
-
     /// The pad segments of `s`, in order: pad digits, operand digits (if any
     /// operand pads), randomness. All Gaussian-masked.
-    pub(crate) fn segments(&self) -> Vec<Segment> {
+    pub fn segments(&self) -> Vec<Segment> {
         let segment = |role, len, log_basis, shape| Segment {
             role,
             len,
@@ -206,6 +184,89 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         ));
         segments
     }
+}
+
+/// One pad layout's lattice pad commitment over `R_D`.
+pub struct LatticePadCommitment<F: JoltField, const D: usize> {
+    geometry: PadGeometry<D>,
+    matrix: Arc<PreparedMatrix<F, D>>,
+    l_matrix: Arc<PreparedMatrix<F, D>>,
+}
+
+impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
+    /// The commitment of rank `rank` with `randomness_columns` hiding
+    /// columns, its matrix and row `L` cut from the public `stream`.
+    pub fn new(
+        placement: PadPlacement,
+        stream: &[F],
+        rank: usize,
+        randomness_columns: usize,
+    ) -> Result<Self, WhiteoutError> {
+        let geometry = PadGeometry::new(placement, rank, randomness_columns)?;
+        let source = PreparedMatrix::from_shared(
+            MatrixShape {
+                rows: 1,
+                width: geometry.required_coefficients() / D,
+                ring_dim: D,
+            },
+            Arc::new(stream.to_vec()),
+        )?;
+        Self::from_geometry(geometry, &source)
+    }
+
+    pub fn from_geometry(
+        geometry: PadGeometry<D>,
+        source: &PreparedMatrix<F, D>,
+    ) -> Result<Self, WhiteoutError> {
+        let shape = geometry.matrix_shape();
+        let l_offset = geometry
+            .stream_len
+            .checked_sub(
+                geometry
+                    .randomness_columns
+                    .checked_mul(D)
+                    .ok_or(WhiteoutError::Overflow)?,
+            )
+            .ok_or(WhiteoutError::Overflow)?;
+        Ok(Self {
+            matrix: Arc::new(source.view(shape, 0)?),
+            l_matrix: Arc::new(source.view(
+                MatrixShape {
+                    rows: 1,
+                    width: geometry.randomness_columns,
+                    ring_dim: D,
+                },
+                l_offset,
+            )?),
+            geometry,
+        })
+    }
+
+    pub fn width(
+        placement: &PadPlacement,
+        randomness_columns: usize,
+    ) -> Result<usize, WhiteoutError> {
+        PadGeometry::<D>::width(placement, randomness_columns)
+    }
+
+    pub(crate) fn geometry(&self) -> &PadGeometry<D> {
+        &self.geometry
+    }
+
+    /// The placement both roles lift the relation by.
+    pub fn placement(&self) -> &PadPlacement {
+        &self.geometry.placement
+    }
+
+    /// Coefficients of the image `A_p · s_p`: `rank` elements of `R_D`.
+    pub fn image_len(&self) -> usize {
+        self.geometry.rank * D
+    }
+
+    /// The hiding randomness columns `r_p` takes.
+    pub fn randomness_columns(&self) -> usize {
+        self.geometry.randomness_columns
+    }
 
     /// The commitment matrix `A_p` (rows `0..rank`).
     pub(crate) fn matrix(&self) -> Arc<PreparedMatrix<F, D>> {
@@ -221,7 +282,8 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
     /// The largest digit magnitude of the pad segments, a hard bound on
     /// every committed coefficient.
     fn digit_bound(&self) -> u64 {
-        self.segments()
+        self.geometry
+            .segments()
             .iter()
             .map(|segment| segment.digit_bound())
             .max()
@@ -249,19 +311,19 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
         g: CyclotomicRing<F, CHALLENGE_RING_DIM>,
         randomness: &[i8],
     ) -> Result<(Vec<CyclotomicRing<F, D>>, LatticePadOpening), WhiteoutError> {
-        if pads.len() != self.placement.num_pads()
-            || randomness.len() != self.randomness_columns * D
+        if pads.len() != self.geometry.placement.num_pads()
+            || randomness.len() != self.geometry.randomness_columns * D
         {
             return Err(WhiteoutError::InvalidRelation(
                 "pads or randomness differ from the commitment's layout",
             ));
         }
         // g is the group after the regular ones (`PadPlacement::g_ring`).
-        let g_start = self.placement.regular_groups() * CHALLENGE_RING_DIM;
+        let g_start = self.geometry.placement.regular_groups() * CHALLENGE_RING_DIM;
         let mut regular = SecretVec::from(vec![F::zero(); g_start + CHALLENGE_RING_DIM]);
-        let mut operands = SecretVec::from(vec![F::zero(); self.placement.num_operands()]);
+        let mut operands = SecretVec::from(vec![F::zero(); self.geometry.placement.num_operands()]);
         for (pad, &value) in pads.iter().enumerate() {
-            let slot = match self.placement.place(PadIndex(pad))? {
+            let slot = match self.geometry.placement.place(PadIndex(pad))? {
                 PadPlace::Regular { group, position } => {
                     regular.get_mut(group * CHALLENGE_RING_DIM + position)
                 }
@@ -278,7 +340,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
 
         let mut rings = Zeroizing::new(vec![
             [0i64; CHALLENGE_RING_DIM];
-            self.pad_rings + self.operand_rings
+            self.geometry.pad_rings + self.geometry.operand_rings
         ]);
         let pad_params = BalancedDecomposePow2Params::<F>::new(PAD_LEVELS, PAD_LOG_BASIS);
         let mut planes = Zeroizing::new(vec![0i8; PAD_LEVELS * CHALLENGE_RING_DIM]);
@@ -304,7 +366,7 @@ impl<F: JoltField, const D: usize> LatticePadCommitment<F, D> {
             );
             for (level, &digit) in digits.iter().enumerate() {
                 let ring = rings
-                    .get_mut(self.pad_rings + PadPlacement::operand_ring(operand, level))
+                    .get_mut(self.geometry.pad_rings + PadPlacement::operand_ring(operand, level))
                     .ok_or(WhiteoutError::InvalidRelation("operand digits overflow"))?;
                 if let Some(constant) = ring.first_mut() {
                     *constant = i64::from(digit);

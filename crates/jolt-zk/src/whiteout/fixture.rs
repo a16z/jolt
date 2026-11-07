@@ -16,13 +16,14 @@ use jolt_crypto::lattice::{
 };
 use jolt_field::{
     balanced_decompose_coefficients_pow2_i8_into, ring::cyclotomic::BalancedDecomposePow2Params,
-    CyclotomicRing, Field, One, Prime128OffsetA7F7, Ring, Zero,
+    CyclotomicRing, Field, JoltField, One, Prime128OffsetA7F7, Ring, Zero,
 };
 use jolt_poly::EqPolynomial;
 use rand_chacha::ChaCha20Rng;
 use rand_core::{RngCore, SeedableRng};
 
 use super::compression::{CompressedImage, ImageCompression};
+use super::geometry::SigmaGeometry;
 use super::placement::PadPlacement;
 use super::response::{PlaneLayout, FIELD_LEVELS};
 use super::segments::{Segment, SegmentMask, SegmentRole, SegmentShape};
@@ -39,6 +40,26 @@ pub type F = Prime128OffsetA7F7;
 pub(crate) const BASE_PADS: usize = 5;
 pub(crate) const PAD_RANK: usize = 2;
 pub(crate) const PAD_RANDOMNESS_COLUMNS: usize = 2;
+
+impl<F: JoltField, const D: usize> SigmaSetup<F, D> {
+    /// `A_D` for the opening blocks and pad commitment, cut from `v_stream`.
+    pub fn v_matrix_of(
+        blocks: &[ResidualBlock<F, D>],
+        pads: &LatticePadCommitment<F, D>,
+        v_rank: usize,
+        v_stream: &[F],
+    ) -> Result<Arc<PreparedMatrix<F, CHALLENGE_RING_DIM>>, WhiteoutError> {
+        let outputs = SigmaGeometry::output_rows(
+            blocks.iter().map(|block| block.matrix.shape()),
+            pads.geometry().matrix_shape(),
+        )?;
+        let level = SigmaGeometry::v_level_of(SigmaGeometry::v_message_rings(outputs, D)?, v_rank)?;
+        Ok(Arc::new(PreparedMatrix::new(&MatrixView::new(
+            level.matrix,
+            v_stream,
+        )?)?))
+    }
+}
 
 pub(crate) fn stream(len: usize, seed: u8) -> Vec<F> {
     derive_public_matrix_prefix(len, &PublicMatrixSeed::shake256_paged_v1([seed; 32])).unwrap()

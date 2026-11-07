@@ -96,18 +96,23 @@ impl ResponseSegment {
         }
     }
 
-    /// The number of digits of `e` in this segment.
-    pub fn num_digits(&self) -> usize {
+    fn digit_shape(&self) -> (usize, usize) {
         match *self {
             Self::Response {
                 coefficients,
                 digits,
                 ..
-            } => coefficients * digits,
-            Self::V { coefficients } => coefficients * FIELD_LEVELS,
-            Self::Theta => THETA_COEFFICIENTS * FIELD_LEVELS,
-            Self::Compression { digits, .. } => digits,
+            } => (coefficients, digits),
+            Self::V { coefficients } => (coefficients, FIELD_LEVELS),
+            Self::Theta => (THETA_COEFFICIENTS, FIELD_LEVELS),
+            Self::Compression { digits, .. } => (digits, 1),
         }
+    }
+
+    /// The number of digits of `e` in this segment.
+    pub fn num_digits(&self) -> usize {
+        let (coefficients, digits) = self.digit_shape();
+        coefficients * digits
     }
 }
 
@@ -411,6 +416,16 @@ pub struct ResponseLayout {
 }
 
 impl ResponseLayout {
+    pub fn checked_len(&self) -> Result<usize, WhiteoutError> {
+        self.segments.iter().try_fold(0usize, |sum, segment| {
+            let (coefficients, digits) = segment.digit_shape();
+            let len = coefficients
+                .checked_mul(digits)
+                .ok_or(WhiteoutError::Overflow)?;
+            sum.checked_add(len).ok_or(WhiteoutError::Overflow)
+        })
+    }
+
     pub fn len(&self) -> usize {
         self.segments.iter().map(ResponseSegment::num_digits).sum()
     }
