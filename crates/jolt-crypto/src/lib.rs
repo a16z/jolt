@@ -15,8 +15,13 @@
 )]
 
 #[cfg(feature = "lattice")]
+use jolt_algebra::AlgebraError;
+
+#[cfg(feature = "lattice")]
 pub mod challenge;
 pub mod ec;
+#[cfg(feature = "lattice")]
+pub mod lattice;
 pub use ec::{JoltGroup, PairingGroup};
 #[cfg(feature = "bn254")]
 pub use ec::{Pedersen, PedersenSetup};
@@ -30,7 +35,8 @@ pub use commitment::{
 #[cfg(feature = "bn254")]
 pub use ec::bn254::{Bn254, Bn254G1, Bn254G2, Bn254GT};
 
-/// Errors from the lattice primitives.
+/// Errors from the lattice primitives: challenge sampling and public-matrix
+/// derivation.
 #[cfg(feature = "lattice")]
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum CryptoError {
@@ -41,11 +47,14 @@ pub enum CryptoError {
     #[error("invalid size: expected {expected}, actual {actual}")]
     InvalidSize { expected: usize, actual: usize },
     /// A parameter that only setup supplies (a challenge family, a rejection
-    /// policy) is invalid.
+    /// policy, a field) is invalid.
     #[error("invalid setup: {0}")]
     InvalidSetup(String),
     /// An invariant this crate maintains failed after its inputs were
     /// admitted; this reports a bug, never a rejected input.
     #[error("internal error: {0}")]
     Internal(String),
+    /// An algebra operation rejected its arguments.
+    #[error(transparent)]
+    Algebra(#[from] AlgebraError),
 }
