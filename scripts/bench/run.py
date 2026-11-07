@@ -585,18 +585,21 @@ def sample_order(paired, warmups, repetitions):
 
 
 def measure(command, env, cwd, log_path):
+    rss_path = log_path.with_suffix('.rss').resolve()
+    # GNU time forks after exec, so the measured child never inherits this
+    # harness's address space and its Linux ru_maxrss floor.
+    timed = ['/usr/bin/time', '--quiet', '--format=%M', '--output', str(rss_path), '--', *command]
     with log_path.open('wb') as log:
         started = time.perf_counter()
-        with subprocess.Popen(command, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
+        with subprocess.Popen(timed, env=env, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
                               start_new_session=True) as child:
             try:
-                _, status, usage = os.wait4(child.pid, 0)
+                child.wait()
                 finished = time.perf_counter()
-                child.returncode = os.waitstatus_to_exitcode(status)
             except BaseException:
                 stop_child(child)
                 raise
-    return child.returncode, finished - started, int(usage.ru_maxrss) * 1024
+    return child.returncode, finished - started, int(rss_path.read_text()) * 1024
 
 
 def validate_metrics(metrics, case):
@@ -815,8 +818,8 @@ def render_comment(result, out):
              'resident set size (RSS).', '',
              'Values are medians; changes use the ratio of head and base medians, with warmups excluded. '
              'Positive changes mean more time or memory.', '',
-             '| Workload / PCS | Physical cores | End-to-end base / head (s) | Signed time change | Observed time reference | Peak RSS base / head (bytes) | Signed RSS change | Observed RSS reference |',
-             '|---|---:|---:|---:|---|---:|---:|---|']
+             '| Workload / PCS | Physical cores | Trace ceiling | Trace rows base / head | End-to-end base / head (s) | Signed time change | Observed time reference | Peak RSS base / head (bytes) | Signed RSS change | Observed RSS reference |',
+             '|---|---:|---:|---:|---:|---:|---|---:|---:|---|']
     repetitions = result['suite']['repetitions']
     builds = {build['leg']: build for build in result['builds']}
     harness_notes = []
@@ -836,12 +839,14 @@ def render_comment(result, out):
                           '<pre>' + code[:MAX_HARNESS_DIFF] + '</pre>',
                           'Harness diff truncated to 12000 characters.' if diff.get('truncated') or
                           len(diff['text']) > MAX_HARNESS_DIFF or len(code) > MAX_HARNESS_DIFF else '', ''])
-    identities = ['| Workload / PCS / physical cores | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
+    identities = ['| Workload / PCS / physical cores / trace ceiling | Base / head raw,padded rows | Base / head binary SHA256 | Base / head guest SHA256 |',
                   '|---|---|---|---|']
+    notable_rows = []
     for case in result['cases']:
         name = case['workload']
         if not re.fullmatch(r'[a-z0-9-]+', name) or case['pcs'] not in ('dory', 'akita'):
             raise ValueError('invalid workload or PCS in comment data')
+        ceiling = f"2^{case['scale_log2']}" if case['scale_log2'] is not None else 'unavailable'
         measurements = {leg: [sample for sample in case['samples']
                               if sample['leg'] == leg and sample['phase'] == 'measure']
                         for leg in ('base', 'head')}
@@ -854,15 +859,16 @@ def render_comment(result, out):
                 for samples in measurements.values()):
             point_status = 'unpaired or incomplete repetitions'
         if point_status != 'complete':
-            lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {point_status} | "
+            lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {ceiling} | unavailable | {point_status} | "
                          'unavailable | unavailable | — | unavailable | unavailable |')
             continue
         medians = {leg: {key: statistics.median(sample['metrics'][key] for sample in values)
                          for key in ('e2e_s', 'peak_rss_bytes')}
                    for leg, values in measurements.items()}
         base, head = medians['base'], medians['head']
-        changes = {key: f'{(head[key] / base[key] - 1) * 100:+.2f}%' if base[key] else 'unavailable (zero base)'
-                   for key in base}
+        ratios = {key: head[key] / base[key] if base[key] else None for key in base}
+        changes = {key: f'{(ratio - 1) * 100:+.2f}%' if ratio is not None else 'unavailable (zero base)'
+                   for key, ratio in ratios.items()}
         calibrated, reason = calibration.for_case(result, case)
         basis = {key: (f"{calibrated[key]['threshold_pct']:.2f}% "
                        f"(max symmetric null {calibrated[key]['max_symmetric_window_delta_pct']:.2f}%)"
@@ -870,9 +876,15 @@ def render_comment(result, out):
         for key in base:
             if not base[key]:
                 basis[key] = 'unavailable: zero base median'
-        lines.append(f"| {name} / {case['pcs']} | {case['physical_cores']} | {base['e2e_s']:.6f} / "
-                     f"{head['e2e_s']:.6f} | {changes['e2e_s']} | {basis['e2e_s']} | {base['peak_rss_bytes']:.0f} / "
-                     f"{head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']} | {basis['peak_rss_bytes']} |")
+        trace_rows = ['; '.join(str(rows) for rows in sorted({sample['metrics']['trace_rows']
+                      for sample in measurements[leg]})) for leg in ('base', 'head')]
+        label = (f"| {name} / {case['pcs']} | {case['physical_cores']} | {ceiling} | "
+                 f"{' / '.join(trace_rows)} |")
+        time_values = f"{base['e2e_s']:.6f} / {head['e2e_s']:.6f} | {changes['e2e_s']}"
+        rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
+        lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
+        if any(ratio is not None and not 0.97 <= ratio <= 1.03 for ratio in ratios.values()):
+            notable_rows.append(f'{label} {time_values} | {rss_values} |')
         rows, binaries, guests = [], [], []
         for leg in ('base', 'head'):
             rows.append('; '.join(f'{raw},{padded}' for raw, padded in sorted({
@@ -881,7 +893,7 @@ def render_comment(result, out):
             build = builds.get(leg, {})
             binaries.append(text((build.get('binaries', {}).get(case['pcs'], {}).get('sha256') or 'unavailable')[:12]))
             guests.append(text((build.get('guests', {}).get(name, {}).get('elf', {}).get('sha256') or 'unavailable')[:12]))
-        identities.append(f"| {name} / {case['pcs']} / {case['physical_cores']} | {' / '.join(rows)} | "
+        identities.append(f"| {name} / {case['pcs']} / {case['physical_cores']} / {ceiling} | {' / '.join(rows)} | "
                           f"{' / '.join(binaries)} | {' / '.join(guests)} |")
     manual = result['suite'].get('calibration') or {}
     source = manual.get('source') or {}
@@ -940,6 +952,7 @@ def render_comment(result, out):
     lines.extend(harness_notes)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text('\n'.join(lines))
+    return notable_rows
 
 
 def suite(args):
