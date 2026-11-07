@@ -53,37 +53,63 @@ impl Ifma52Prime {
         Ok(prime)
     }
 
+    // The scalar fallback's arithmetic below runs on secret ring digits, so
+    // it is branch-free and division-free; only `mul` divides, and it serves
+    // table setup over public values.
+
+    /// `x - m` if `x >= m`, else `x`, without a branch, for `x < 2m < 2^63`
+    /// (so the difference's sign bit is `x < m`).
+    #[inline]
+    fn subtract_if_at_least(x: u64, m: u64) -> u64 {
+        let difference = x.wrapping_sub(m);
+        let borrow = ((difference as i64) >> 63) as u64;
+        difference.wrapping_add(m & borrow)
+    }
+
+    /// `x mod p` for `x < 2p`.
+    #[inline]
+    fn reduce_once(self, x: u64) -> u64 {
+        Self::subtract_if_at_least(x, self.modulus)
+    }
+
+    /// Canonical sum of canonical residues.
     #[inline]
     pub(crate) fn add(self, lhs: u64, rhs: u64) -> u64 {
-        let sum = lhs + rhs;
-        if sum >= self.modulus {
-            sum - self.modulus
-        } else {
-            sum
-        }
+        self.reduce_once(lhs + rhs)
     }
 
+    /// Canonical difference of canonical residues.
     #[inline]
     pub(crate) fn sub(self, lhs: u64, rhs: u64) -> u64 {
-        if lhs >= rhs {
-            lhs - rhs
-        } else {
-            lhs + self.modulus - rhs
-        }
+        self.reduce_once(lhs + self.modulus - rhs)
     }
 
+    /// `lhs rhs mod p` by a variable-time `u128` division: public setup only.
     #[inline]
     pub(crate) fn mul(self, lhs: u64, rhs: u64) -> u64 {
         ((u128::from(lhs) * u128::from(rhs)) % u128::from(self.modulus)) as u64
     }
 
+    /// Canonical `x w mod p` for `x < 2^52` and a canonical `w` with Shoup
+    /// quotient `precon = `[`Self::precondition`]`(w)`; the scalar form of the
+    /// IFMA kernels' multiplier.
+    #[inline]
+    pub(crate) fn mul_precon(self, x: u64, w: u64, precon: u64) -> u64 {
+        let quotient = ((u128::from(x) * u128::from(precon)) >> 52) as u64;
+        // The quotient undershoots `x w / p` by less than 2, so the exact
+        // remainder lies in `[0, 2p)` and the wrapping arithmetic is exact.
+        self.reduce_once(
+            x.wrapping_mul(w)
+                .wrapping_sub(quotient.wrapping_mul(self.modulus)),
+        )
+    }
+
+    /// Canonical residue of a signed coefficient.
     #[inline]
     pub(crate) fn canonical_i16(self, value: i16) -> u64 {
-        if value >= 0 {
-            value as u64
-        } else {
-            self.modulus - u64::from(value.unsigned_abs())
-        }
+        let value = i64::from(value);
+        // `p < 2^50`, so the modulus is a nonnegative `i64`.
+        (value + (self.modulus as i64 & (value >> 63))) as u64
     }
 
     fn pow(self, mut base: u64, mut exponent: u64) -> u64 {
@@ -378,9 +404,18 @@ impl<const D: usize> Ifma52Accumulator<D> {
             // SAFETY: runtime feature detection covers every enabled instruction.
             return unsafe { x86::dot_reduce(self, prime) };
         }
+        // The scalar form of the IFMA `dot_reduce`, without a division.
         Ifma52Residues(std::array::from_fn(|index| {
-            let sum = (u128::from(self.high.0[index]) << 52) + u128::from(self.low.0[index]);
-            (sum % u128::from(prime.modulus)) as u64
+            let low = self.low.0[index];
+            // high 2^52 + low = h1 2^104 + h0 2^52 + l0 with h1 < 2^12.
+            let high = self.high.0[index] + (low >> 52);
+            let x = prime.mul_precon(high & MASK, prime.radix, prime.radix_precon)
+                + prime.mul_precon(high >> 52, prime.radix_squared, prime.radix_squared_precon)
+                + (low & MASK);
+            // x < p + p + 2^52 < 10p, since p > 2^49.
+            [8, 4, 2, 1].iter().fold(x, |x, &multiple| {
+                Ifma52Prime::subtract_if_at_least(x, multiple * prime.modulus)
+            })
         }))
     }
 
@@ -403,9 +438,12 @@ fn scalar_forward<const D: usize>(
     let (mut len, mut blocks) = (D / 2, 1);
     while len != 0 {
         for block in 0..blocks {
-            let twiddle = twiddles.forward[blocks + block];
+            let (twiddle, precon) = (
+                twiddles.forward[blocks + block],
+                twiddles.forward_precon[blocks + block],
+            );
             for index in 2 * len * block..2 * len * block + len {
-                let product = prime.mul(values[index + len], twiddle);
+                let product = prime.mul_precon(values[index + len], twiddle, precon);
                 let value = values[index];
                 values[index] = prime.add(value, product);
                 values[index + len] = prime.sub(value, product);
@@ -437,18 +475,22 @@ fn scalar_inverse<const D: usize>(
     let (mut len, mut blocks) = (1, D / 2);
     while len < D {
         for block in 0..blocks {
-            let twiddle = twiddles.inverse[blocks + block];
+            let (twiddle, precon) = (
+                twiddles.inverse[blocks + block],
+                twiddles.inverse_precon[blocks + block],
+            );
             for index in 2 * len * block..2 * len * block + len {
                 let (x, y) = (values[index], values[index + len]);
                 values[index] = prime.add(x, y);
-                values[index + len] = prime.mul(prime.sub(x, y), twiddle);
+                values[index + len] = prime.mul_precon(prime.sub(x, y), twiddle, precon);
             }
         }
         len *= 2;
         blocks /= 2;
     }
+    let (scale, precon) = (twiddles.inverse_scale[0], twiddles.inverse_scale_precon[0]);
     for value in values.iter_mut() {
-        *value = prime.mul(*value, twiddles.inverse_scale[0]);
+        *value = prime.mul_precon(*value, scale, precon);
     }
 }
 
@@ -551,6 +593,49 @@ mod tests {
         }
         for modulus in IFMA52_PRIMES {
             assert!(Ifma52Prime::new(modulus).is_ok(), "{modulus}");
+        }
+    }
+
+    /// The branch-free scalar arithmetic agrees with `u128` remainders at
+    /// the edges of each documented input range.
+    #[test]
+    fn scalar_arithmetic_matches_u128_remainders() {
+        for &modulus in &IFMA52_PRIMES {
+            let prime = Ifma52Prime::new(modulus).expect("prime");
+            let reference = |value: u128| (value % u128::from(modulus)) as u64;
+            for value in i16::MIN..=i16::MAX {
+                let expected = i64::from(value).rem_euclid(modulus as i64) as u64;
+                assert_eq!(prime.canonical_i16(value), expected, "{value}");
+            }
+            let canonical = [0, 1, 2, modulus / 2, modulus - 2, modulus - 1];
+            for &lhs in &canonical {
+                for &rhs in &canonical {
+                    let (wide_lhs, wide_rhs) = (u128::from(lhs), u128::from(rhs));
+                    assert_eq!(prime.add(lhs, rhs), reference(wide_lhs + wide_rhs));
+                    let difference = wide_lhs + u128::from(modulus) - wide_rhs;
+                    assert_eq!(prime.sub(lhs, rhs), reference(difference));
+                }
+            }
+            let multiplicands = [0, 1, modulus - 1, modulus, 2 * modulus - 1, MASK - 1, MASK];
+            for &w in &canonical {
+                let precon = prime.precondition(w);
+                for &x in &multiplicands {
+                    let expected = reference(u128::from(x) * u128::from(w));
+                    assert_eq!(prime.mul_precon(x, w, precon), expected, "{x} * {w}");
+                }
+            }
+            // A fold leaves `low < p` and `high = 0`; up to
+            // IFMA52_ACCUMULATOR_TERMS products then keep both below 2^63.
+            let extremes = [0, 1, modulus - 1, MASK, 1 << 62, (1 << 63) - 1];
+            for &low in &extremes {
+                for &high in &extremes {
+                    let mut accumulator = Ifma52Accumulator::<64>::ZERO;
+                    accumulator.low.0[0] = low;
+                    accumulator.high.0[0] = high;
+                    let expected = reference((u128::from(high) << 52) + u128::from(low));
+                    assert_eq!(accumulator.reduce(prime, false).0[0], expected);
+                }
+            }
         }
     }
 
