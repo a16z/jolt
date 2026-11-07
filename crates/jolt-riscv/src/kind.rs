@@ -1917,7 +1917,7 @@ impl<T> JoltInstructionMeta for Noop<T> {
 
 macro_rules! define_source_instruction_meta {
     (
-        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($trace_tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         $(
             $(#[$meta])*
@@ -1953,7 +1953,7 @@ crate::for_each_jolt_instruction_kind!(define_jolt_instruction_meta);
 
 macro_rules! define_source_instruction_kind {
     (
-        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($trace_tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         #[expect(
             non_upper_case_globals,

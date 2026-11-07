@@ -219,7 +219,7 @@ pub struct Inline<T = ()>(pub T);
 
 macro_rules! define_source_instruction {
     (
-        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($trace_tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
         /// Typed view over decoded source rows.
         ///

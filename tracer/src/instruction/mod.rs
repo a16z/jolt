@@ -472,11 +472,13 @@ where
     }
 }
 
+mod wire;
+
 macro_rules! define_rv64imac_enums {
     (
-        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => $canonical_name:expr),* $(,)?]
+        instructions: [$($(#[$meta:meta])* $instr:ident => $marker:ident => ($trace_tag:expr, $canonical_name:expr)),* $(,)?]
     ) => {
-        #[derive(Debug, IntoStaticStr, From, Clone, Copy, Serialize, Deserialize, EnumIter, PartialEq)]
+        #[derive(Debug, IntoStaticStr, From, Clone, Copy, EnumIter, PartialEq)]
         pub enum Instruction {
             NoOp,
             UNIMPL,
@@ -489,7 +491,7 @@ macro_rules! define_rv64imac_enums {
         }
 
         #[derive(
-            From, Debug, Copy, Clone, Serialize, Deserialize, IntoStaticStr, EnumIter, EnumCountMacro, PartialEq
+            From, Debug, Copy, Clone, IntoStaticStr, EnumIter, EnumCountMacro, PartialEq
         )]
         pub enum Cycle {
             NoOp,
@@ -498,6 +500,26 @@ macro_rules! define_rv64imac_enums {
                 $instr(RISCVCycle<$instr>),
             )*
             INLINE(RISCVCycle<INLINE>),
+        }
+
+        wire::impl_trace_serde! {
+            Instruction {
+                units: [NoOp => 0, UNIMPL => 1],
+                payloads: [
+                    $($(#[$meta])* $instr => $trace_tag + 1,)*
+                    INLINE => wire::INLINE_CYCLE_TAG + 1,
+                ]
+            }
+        }
+
+        wire::impl_trace_serde! {
+            Cycle {
+                units: [NoOp => 0],
+                payloads: [
+                    $($(#[$meta])* $instr => $trace_tag,)*
+                    INLINE => wire::INLINE_CYCLE_TAG,
+                ]
+            }
         }
 
         impl Cycle {

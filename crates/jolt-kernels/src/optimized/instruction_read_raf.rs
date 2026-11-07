@@ -2638,10 +2638,10 @@ mod tests {
 
     #[test]
     fn repeated_lookup_rows_match_reference_across_scan_tasks() {
-        for prefix in [6003, 1 << 14] {
-            check_repeated_lookup_rows::<Fr>(14, prefix, None);
+        for prefix in [32771, 1 << 16] {
+            check_repeated_lookup_rows::<Fr>(16, prefix, None);
             #[cfg(feature = "akita")]
-            check_repeated_lookup_rows::<Prime128OffsetA7F7>(14, prefix, None);
+            check_repeated_lookup_rows::<Prime128OffsetA7F7>(16, prefix, None);
         }
     }
 
@@ -2659,7 +2659,7 @@ mod tests {
     /// that accumulated the same tables.
     #[test]
     fn parity_multi_task_scan() {
-        assert_parity(11, 8, 24680);
+        assert_parity(16, 8, 24680);
     }
 
     /// 8-, 32- and 64-bit virtual chunks across the third cycle bind's dense

@@ -161,17 +161,6 @@ impl Keccak256SequenceBuilder {
             let c_next = *self.c[(x + 1) % 5];
             self.asm.emit_r(Kind::VirtualXORROTL1, d, c_prev, c_next);
         }
-
-        for x in 0..5 {
-            let d = self.d_lane(x);
-            for y in 0..5 {
-                if Self::fused_theta_rho(x, y).is_some() {
-                    continue;
-                }
-                let a = self.lane(x, y);
-                self.asm.xor(Reg(a), Reg(d), a);
-            }
-        }
     }
 
     /// Walks the 24-lane π cycle backwards from `RHO_PI_FIRST_SOURCE`: each
@@ -193,46 +182,42 @@ impl Keccak256SequenceBuilder {
 
     fn emit_rho_pi_lane(&mut self, source: (usize, usize), destination: u8) {
         let (x, y) = source;
-        if let Some(kind) = Self::fused_theta_rho(x, y) {
-            self.asm
-                .emit_r(kind, destination, self.lane(x, y), self.d_lane(x));
-        } else {
-            self.asm.rotl64(
-                Reg(self.lane(x, y)),
-                (ROTATION_OFFSETS[x][y] + 40) % 64,
-                destination,
-            );
-        }
+        self.asm.emit_r(
+            Self::fused_theta_rho(x, y),
+            destination,
+            self.lane(x, y),
+            self.d_lane(x),
+        );
     }
 
-    fn fused_theta_rho(x: usize, y: usize) -> Option<Kind> {
+    fn fused_theta_rho(x: usize, y: usize) -> Kind {
         match (ROTATION_OFFSETS[x][y] + 40) % 64 {
-            1 => Some(Kind::VirtualXORROT63),
-            32 => Some(Kind::VirtualXORROT32),
-            40 => Some(Kind::VirtualXORROT24),
-            48 => Some(Kind::VirtualXORROT16),
-            61 => Some(Kind::VirtualXORROT3),
-            60 => Some(Kind::VirtualXORROT4),
-            58 => Some(Kind::VirtualXORROT6),
-            55 => Some(Kind::VirtualXORROT9),
-            54 => Some(Kind::VirtualXORROT10),
-            50 => Some(Kind::VirtualXORROT14),
-            46 => Some(Kind::VirtualXORROT18),
-            43 => Some(Kind::VirtualXORROT21),
-            42 => Some(Kind::VirtualXORROT22),
-            41 => Some(Kind::VirtualXORROT23),
-            38 => Some(Kind::VirtualXORROT26),
-            37 => Some(Kind::VirtualXORROT27),
-            31 => Some(Kind::VirtualXORROT33),
-            21 => Some(Kind::VirtualXORROT43),
-            20 => Some(Kind::VirtualXORROT44),
-            19 => Some(Kind::VirtualXORROT45),
-            17 => Some(Kind::VirtualXORROT47),
-            15 => Some(Kind::VirtualXORROT49),
-            12 => Some(Kind::VirtualXORROT52),
-            4 => Some(Kind::VirtualXORROT60),
-            3 => Some(Kind::VirtualXORROT61),
-            _ => None,
+            1 => Kind::VirtualXORROT63,
+            32 => Kind::VirtualXORROT32,
+            40 => Kind::VirtualXORROT24,
+            48 => Kind::VirtualXORROT16,
+            61 => Kind::VirtualXORROT3,
+            60 => Kind::VirtualXORROT4,
+            58 => Kind::VirtualXORROT6,
+            55 => Kind::VirtualXORROT9,
+            54 => Kind::VirtualXORROT10,
+            50 => Kind::VirtualXORROT14,
+            46 => Kind::VirtualXORROT18,
+            43 => Kind::VirtualXORROT21,
+            42 => Kind::VirtualXORROT22,
+            41 => Kind::VirtualXORROT23,
+            38 => Kind::VirtualXORROT26,
+            37 => Kind::VirtualXORROT27,
+            31 => Kind::VirtualXORROT33,
+            21 => Kind::VirtualXORROT43,
+            20 => Kind::VirtualXORROT44,
+            19 => Kind::VirtualXORROT45,
+            17 => Kind::VirtualXORROT47,
+            15 => Kind::VirtualXORROT49,
+            12 => Kind::VirtualXORROT52,
+            4 => Kind::VirtualXORROT60,
+            3 => Kind::VirtualXORROT61,
+            _ => unreachable!("fixed Keccak rho offset has no fused instruction"),
         }
     }
 
