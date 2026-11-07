@@ -120,7 +120,7 @@ class E2ePublicationTests(unittest.TestCase):
             self.assertTrue(text.startswith('<!-- jolt-e2e-benchmark-v1 -->'))
             for case in result['cases']:
                 self.assertIn(f'| {case["workload"]} / {case["pcs"]} | {case["physical_cores"]} '
-                              '| 3.000000 / 3.000000 | +0.00% |', text)
+                              f'| 2^{case["scale_log2"]} | 4 / 4 | 3.000000 / 3.000000 | +0.00% |', text)
             self.assertIn('Shared harness: `' + 'd' * 40 + '`', text)
             self.assertIn('Prover profiles: base `release`; head `release`.', text)
             self.assertIn('Calibration unavailable:', text)
