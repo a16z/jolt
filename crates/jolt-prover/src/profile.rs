@@ -54,7 +54,7 @@ use jolt_field::Fr;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
 #[cfg(all(feature = "field-inline", feature = "akita"))]
 use jolt_akita::AkitaField;
-use jolt_host::{GuestElf, JoltProgramSource, Program};
+use jolt_host::{default_target_dir, GuestElf, JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
@@ -336,18 +336,9 @@ pub struct ProfileArgs {
     #[clap(long, value_parser = parse_akita_chunk_profile, default_value = "w1r0")]
     pub akita_chunk_profile: AkitaChunkProfile,
 
-    /// Explicit memory budget in bytes: an integer with an optional binary
-    /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
-    /// optimized`. The profile reserves against it in turn and returns an
-    /// error at the first reservation that does not fit: the optimized
-    /// prover's known eager reservation, which covers the trace buffers and
-    /// named eager tables only, after tracing and before proving; then, under
-    /// Akita, the rest of the trace output, the program and program
-    /// preprocessing buffers, and the one-hot setup's flat public matrix,
-    /// before PCS setup allocates it. Under Akita every budget fails for
-    /// multi-chunk or field-inline setups, which the matrix check does not
-    /// price. Passing does not mean the whole proof fits, and the budget does
-    /// not cap process memory.
+    /// Budget for selected trace/prover allocations in bytes (KiB/MiB/GiB/TiB
+    /// accepted; optimized backend only, not a process-memory cap); see
+    /// https://github.com/a16z/jolt/blob/main/tracer/src/execution_backend.rs.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -494,8 +485,9 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 ///
 /// Returns a `--memory-budget` below what its checks reserve
 /// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
-/// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
-/// matrix limit does not price.
+/// a trace failure, such as a limited trace's request the budget cannot
+/// hold, and, under Akita, a PCS setup failure, such as a budgeted setup shape
+/// the matrix limit does not price.
 ///
 /// # Panics
 ///
@@ -809,12 +801,16 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     }
     #[cfg(feature = "field-inline")]
     program.set_instruction_profile(RV64IMAC_JOLT_FIELD_INLINE);
-    // Reuse the execution trace for sizing, memory layout, and proving. A
-    // preliminary legacy trace duplicates execution and can leave large
-    // allocator-retained buffers in the measured process.
-    let trace_output = program
-        .trace_with_backend(&mut TracerBackend::new(), &input, &[], &[])
-        .expect("modular trace");
+    program.build(&default_target_dir().to_string_lossy());
+    let elf = program.elf.as_ref().expect("guest build produces an ELF");
+    let mut tracer = args
+        .memory_budget
+        .and_then(|budget| {
+            TracerBackend::limited_for_row_domain(budget.remaining(), max_trace_length)
+        })
+        .unwrap_or_default();
+    tracer.elf_path = Some(elf.path().clone());
+    let trace_output = program.trace_with_backend(&mut tracer, &input, &[], &[])?;
     let trace_length = trace_output.trace.proof_len();
     assert!(
         trace_length.next_power_of_two() <= max_trace_length,

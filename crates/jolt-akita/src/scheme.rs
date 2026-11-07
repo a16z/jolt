@@ -436,8 +436,8 @@ impl AkitaScheme {
     /// [`OpeningsError::SetupExceedsBudget`], before allocating the one-hot
     /// backend setup. Only the one-hot single-chunk setup is priced,
     /// including grouped rows, which that matrix covers because it is sized
-    /// from the grouped catalog. Full-width dense groups build separate,
-    /// unpriced backend setups, so they and every other shape fail with
+    /// from the grouped catalog. Full-width dense groups and every other
+    /// shape are outside this priced contract, so they fail with
     /// [`OpeningsError::InvalidSetup`] before any setup work.
     ///
     /// Passing prices only that matrix, not the complete setup: schedule
@@ -1501,8 +1501,8 @@ mod tests {
         );
     }
 
-    /// Shapes whose setup allocates beyond the priced one-hot backend are
-    /// rejected under any limit, though each builds unbudgeted.
+    /// Shapes outside the matrix-limited contract are rejected under any
+    /// limit, though each builds unbudgeted.
     #[test]
     fn matrix_byte_limit_rejects_shapes_it_does_not_price() {
         use crate::schedule_registry::{DenseGroupLayout, GroupedScheduleParams};

@@ -76,7 +76,9 @@ pub use jolt_openings::CommitmentScheme;
 #[cfg(feature = "host")]
 pub use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "host")]
-pub use jolt_prover::{CommittedProgramProverData, JoltSharedPreprocessing, PreprocessingError};
+pub use jolt_prover::{
+    CommittedProgramProverData, JoltSharedPreprocessing, MemoryBudget, PreprocessingError,
+};
 #[cfg(feature = "host")]
 pub type JoltProverPreprocessing = GenericJoltProverPreprocessing<PCS, VerifierVC>;
 #[cfg(feature = "host")]
@@ -260,6 +262,9 @@ pub fn compute_advice_tape(
     Ok(trace.advice_tape)
 }
 
+/// `memory_budget` admits tracing against its remaining bytes through
+/// [`TracerBackend::limited_for_row_domain`], then reserves the known eager
+/// allocations before building the witness; [`compute_advice_tape`] is unbudgeted.
 #[cfg(all(feature = "host", not(feature = "akita")))]
 #[expect(
     clippy::too_many_arguments,
@@ -274,6 +279,7 @@ pub fn prove_program(
     trusted_advice_commitment: Option<DoryCommitment>,
     trusted_advice_hint: Option<DoryHint>,
     advice_tape: Option<Vec<u8>>,
+    memory_budget: Option<MemoryBudget>,
 ) -> Result<(RV64IMACProof, JoltDevice), Box<dyn StdError + Send + Sync>> {
     let program = Arc::new(source.build_jolt_program()?);
     let program_preprocessing = preprocessing.program_arc().ok_or_else(|| {
@@ -292,6 +298,12 @@ pub fn prove_program(
         heap_size: memory_layout.heap_size,
         program_size: Some(memory_layout.program_size),
     };
+    let max_trace_length = preprocessing.verifier.program.max_padded_trace_length();
+    let mut tracer = memory_budget
+        .and_then(|budget| {
+            TracerBackend::limited_for_row_domain(budget.remaining(), max_trace_length)
+        })
+        .unwrap_or_default();
     let trace_inputs = TraceInputs::new(
         inputs.to_vec(),
         untrusted_advice.to_vec(),
@@ -299,15 +311,18 @@ pub fn prove_program(
         memory_config,
     )
     .with_advice_tape(advice_tape);
-    let trace = program.trace_with(&mut TracerBackend::new(), trace_inputs)?;
+    let trace = program.trace_with(&mut tracer, trace_inputs)?;
     let public_io = trace.device.clone();
     let config = ProverConfig::derive_from_dimensions::<F>(
         trace.dimensions,
         memory_layout,
         preprocessing.verifier.program.min_bytecode_address(),
         preprocessing.verifier.program.program_image_len_words(),
-        preprocessing.verifier.program.max_padded_trace_length(),
+        max_trace_length,
     )?;
+    if let Some(budget) = memory_budget {
+        let _ = budget.check_known_eager::<F>(&config, &trace.trace)?;
+    }
     let witness_config = JoltVmWitnessConfig::new(
         config.trace_length.ilog2() as usize,
         config.ram_K,
@@ -339,4 +354,172 @@ pub fn prove_program(
         &public_io,
     )?;
     Ok((proof, public_io))
+}
+
+#[cfg(all(test, feature = "host", not(feature = "akita")))]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use std::process::Command;
+
+    use jolt_program::execution::{TraceAllocationError, TraceAllocationPhase};
+
+    use super::*;
+
+    const ROUTE_CHILD: &str = "JOLT_SDK_TRACE_ROUTE_CHILD";
+    const ROUTE_TEST: &str =
+        "host_utils::tests::prove_program_routes_its_trace_by_its_memory_budget";
+    const INPUTS: [u8; 6] = [0xbd, 0xaa, 0xde, 0x5, 0x11, 0x5c];
+
+    type Proved = Result<(RV64IMACProof, JoltDevice), Box<dyn StdError + Send + Sync>>;
+
+    fn prove(
+        program: &host::Program,
+        preprocessing: &JoltProverPreprocessing,
+        budget: Option<usize>,
+    ) -> Proved {
+        let budget = budget.map(MemoryBudget::from_bytes);
+        prove_program(
+            program,
+            preprocessing,
+            &INPUTS,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            budget,
+        )
+    }
+
+    fn verify(preprocessing: &JoltProverPreprocessing, proved: Proved) {
+        let (proof, io_device) = proved.unwrap();
+        jolt_verifier::verify::<VerifierField, VerifierPCS, VerifierVC, VerifierTranscript>(
+            &preprocessing.verifier,
+            &io_device,
+            &proof,
+            None,
+        )
+        .unwrap();
+    }
+
+    fn trace_error(proved: Proved) -> TraceError {
+        *proved.err().unwrap().downcast::<TraceError>().unwrap()
+    }
+
+    #[test]
+    fn prove_program_preserves_existing_budget_reservations() {
+        let mut program = host::Program::new("muldiv-guest");
+        #[cfg(feature = "field-inline")]
+        program.enable_field_inline();
+        let preprocessing = preprocess_program(
+            &mut program,
+            MemoryConfig::default(),
+            1 << 16,
+            ProgramPreprocessingMode::Full,
+        )
+        .unwrap();
+        let budget = MemoryBudget::from_bytes(1500 << 20)
+            .reserve::<F>(1492 << 20)
+            .unwrap();
+        let error = trace_error(prove_program(
+            &program,
+            &preprocessing,
+            &INPUTS,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            Some(budget),
+        ));
+        assert!(matches!(
+            error,
+            TraceError::TraceAllocation(TraceAllocationError::LimitExceeded {
+                phase: TraceAllocationPhase::Initial,
+                limit_bytes,
+                ..
+            }) if limit_bytes == budget.remaining()
+        ));
+    }
+
+    /// The budget reaches the tracer's route over the preprocessing domain.
+    /// The threshold is the least budget at which the factory, over that
+    /// domain, keeps the original trace. With `TRACER_PARALLEL=2`, set only in
+    /// a child process of this test binary, no budget, the threshold and 32 GiB
+    /// prove through the original two-pass trace, while one byte less selects
+    /// the limited trace, which rejects it. Without it, that budget proves
+    /// through the limited trace, and a one-byte budget stops at its setup.
+    #[test]
+    fn prove_program_routes_its_trace_by_its_memory_budget() {
+        if let Ok(parallel) = std::env::var(ROUTE_CHILD) {
+            let mut program = host::Program::new("muldiv-guest");
+            #[cfg(feature = "field-inline")]
+            program.enable_field_inline();
+            let memory_config = MemoryConfig {
+                heap_size: 1 << 15,
+                ..Default::default()
+            };
+            let preprocessing = preprocess_program(
+                &mut program,
+                memory_config,
+                1 << 12,
+                ProgramPreprocessingMode::Full,
+            )
+            .unwrap();
+            let domain = preprocessing.verifier.program.max_padded_trace_length();
+            let (mut limited, mut original) = (0, usize::MAX);
+            assert!(TracerBackend::limited_for_row_domain(limited, domain).is_some());
+            assert!(TracerBackend::limited_for_row_domain(original, domain).is_none());
+            while original - limited > 1 {
+                let budget = limited + (original - limited) / 2;
+                match TracerBackend::limited_for_row_domain(budget, domain) {
+                    Some(_) => limited = budget,
+                    None => original = budget,
+                }
+            }
+            #[cfg(not(feature = "field-inline"))]
+            assert_eq!(original, 96 * (1 << 24) + 64 * (1 << 12));
+            if parallel == "2" {
+                for budget in [None, Some(original), Some(32 << 30)] {
+                    verify(&preprocessing, prove(&program, &preprocessing, budget));
+                }
+                assert!(matches!(
+                    trace_error(prove(&program, &preprocessing, Some(limited))),
+                    TraceError::UnsupportedTraceAllocationMode
+                ));
+            } else {
+                verify(
+                    &preprocessing,
+                    prove(&program, &preprocessing, Some(limited)),
+                );
+                assert!(matches!(
+                    trace_error(prove(&program, &preprocessing, Some(1))),
+                    TraceError::TraceAllocation(TraceAllocationError::LimitExceeded {
+                        phase: TraceAllocationPhase::Initial,
+                        limit_bytes: 1,
+                        ..
+                    })
+                ));
+            }
+            return;
+        }
+        for parallel in ["2", "unset"] {
+            let mut child = Command::new(std::env::current_exe().unwrap());
+            child
+                .args(["--exact", ROUTE_TEST, "--nocapture"])
+                .env(ROUTE_CHILD, parallel)
+                .env_remove("JOLT_TRACER_CAPACITY_ROWS");
+            match parallel {
+                "2" => child.env("TRACER_PARALLEL", parallel),
+                _ => child.env_remove("TRACER_PARALLEL"),
+            };
+            let output = child.output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                output.status.success() && stdout.contains("1 passed"),
+                "TRACER_PARALLEL={parallel}: {stdout}{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 }

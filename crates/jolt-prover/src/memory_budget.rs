@@ -3,6 +3,10 @@
 //! transcript or PCS choice. Its checks reserve bytes against it in turn;
 //! [`MemoryBudget::check_known_eager`] reserves the optimized prover's known
 //! eager allocations after tracing and before proving starts.
+//!
+//! Callers admit tracing against [`MemoryBudget::remaining`] through
+//! [the tracer contract](https://github.com/a16z/jolt/blob/main/tracer/src/execution_backend.rs),
+//! which documents the routing proxy, counted storage and omissions.
 
 use jolt_claims::protocols::jolt::geometry::dimensions::REGISTER_ADDRESS_BITS;
 use jolt_field::JoltField;
@@ -115,7 +119,8 @@ const PRICED_IN_STAGE_TERM: Option<usize> = Some(0);
 const NOT_PRICED: Option<usize> = Some(0);
 
 /// An explicit memory request, in bytes, for one optimized proof, and the
-/// bytes its checks have reserved so far. Each check adds its reservation
+/// bytes its checks have reserved so far. Callers admit tracing against its
+/// remaining bytes; each check then adds its reservation
 /// ([`Self::reserve`]) and fails once the total exceeds the request, so a
 /// sequence of passing checks covers everything they priced together. It does
 /// not cap process memory.
@@ -158,8 +163,8 @@ impl MemoryBudget {
     /// [`Self::reserve`]s the bytes a named subset of the eager allocations of
     /// an optimized proof of `trace` under `config` needs. `config` must be
     /// the canonical configuration derived from `trace`; the check does not
-    /// validate it. The profile callers run it after tracing and before
-    /// building the witness.
+    /// validate it. The SDK and profile callers run it after tracing and
+    /// before building the witness.
     ///
     /// # Errors
     ///

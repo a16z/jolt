@@ -60,8 +60,12 @@ tier, slotting into the same instrumented seams.
 
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
-The profile reserves bytes against it in this order and exits with an error
-at the first reservation that does not fit:
+Tracing uses the remaining budget through
+[`TracerBackend::limited_for_row_domain`](https://github.com/a16z/jolt/blob/main/tracer/src/execution_backend.rs),
+which documents the routing proxy, counted storage and omissions.
+
+The profile then reserves bytes against the budget in this order and exits
+with an error at the first reservation that does not fit:
 
 1. After tracing, before proving: the optimized prover's known eager
    reservation, which is the trace buffer at its reserved capacity plus the

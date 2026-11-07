@@ -1,4 +1,4 @@
-const TEST_MEMORY_CAPACITY: u64 = DEFAULT_HEAP_SIZE;
+const RISCV_TEST_MEMORY_CAPACITY: u64 = DEFAULT_HEAP_SIZE;
 
 const PROGRAM_MEMORY_CAPACITY: u64 = DEFAULT_HEAP_SIZE;
 
@@ -33,6 +33,8 @@ use self::elf_analyzer::ElfAnalyzer;
 use self::terminal::Terminal;
 
 use common::constants::{DEFAULT_HEAP_SIZE, RAM_START_ADDRESS};
+use common::jolt_device::MemoryLayout;
+use object::{File, Object, ObjectSymbol, SymbolFlags};
 use std::io::Write;
 use std::path::Path;
 
@@ -213,17 +215,17 @@ impl Emulator {
                 );
             }
             self.is_test = true;
-            self.cpu.get_mut_mmu().init_memory(TEST_MEMORY_CAPACITY);
         } else {
             self.is_test = false;
-            let memory_capacity =
-                if let Some(jolt_device) = self.cpu.get_mut_mmu().jolt_device.as_ref() {
-                    jolt_device.memory_layout.get_total_memory_size()
-                } else {
-                    PROGRAM_MEMORY_CAPACITY
-                };
-            self.cpu.get_mut_mmu().init_memory(memory_capacity);
         }
+        let layout = self
+            .cpu
+            .get_mut_mmu()
+            .jolt_device
+            .as_ref()
+            .map(|device| &device.memory_layout);
+        let capacity = Self::memory_capacity(data, layout);
+        self.cpu.get_mut_mmu().init_memory(capacity);
 
         for header in &program_data_section_headers {
             let sh_addr = header.sh_addr;
@@ -260,6 +262,35 @@ impl Emulator {
         }
 
         self.cpu.update_pc(header.e_entry);
+    }
+
+    pub(crate) fn memory_capacity(elf: &[u8], layout: Option<&MemoryLayout>) -> u64 {
+        let tohost = File::parse(elf)
+            .ok()
+            .and_then(|elf| {
+                elf.symbols()
+                    .filter_map(|symbol| {
+                        let SymbolFlags::Elf { st_info, .. } = symbol.flags() else {
+                            return None;
+                        };
+                        // Match the legacy symbol-type filter and last definition within
+                        // the ELF's single static symbol table, without copying before admission.
+                        if ((st_info.0 & 0x2) == 0x2 || (st_info.0 & 0xf) == 0)
+                            && symbol.name().ok() == Some("tohost")
+                        {
+                            Some(symbol.address())
+                        } else {
+                            None
+                        }
+                    })
+                    .last()
+            })
+            .unwrap_or(0);
+        if tohost != 0 {
+            RISCV_TEST_MEMORY_CAPACITY
+        } else {
+            layout.map_or(PROGRAM_MEMORY_CAPACITY, MemoryLayout::get_total_memory_size)
+        }
     }
 
     pub fn get_cpu(&self) -> &Cpu {
