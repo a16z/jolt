@@ -52,5 +52,5 @@ fn budgeted_profile_proves_through_the_limited_route() {
     let result: Value = serde_json::from_slice(&result.unwrap()).unwrap();
     let bytes: Vec<u8> = serde_json::from_value(result["public_output"].clone()).unwrap();
     let (answer, _): (u128, _) = postcard::take_from_bytes(&bytes).unwrap();
-    assert_eq!(answer, 354224848179261915075);
+    assert_eq!(answer, 354_224_848_179_261_915_075);
 }
