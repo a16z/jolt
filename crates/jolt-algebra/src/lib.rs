@@ -179,8 +179,12 @@ pub use solinas::{
 };
 pub use unreduced::{Fold, Unreduced, WithCommitAccumulator};
 
-#[derive(Debug, thiserror::Error)]
-pub enum FieldError {
+/// Errors from fallible field and ring operations.
+///
+/// Every variant reports a rejected argument; none signals a failed internal
+/// invariant.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AlgebraError {
     #[error("invalid input: {0}")]
     InvalidInput(String),
     #[error("invalid size: expected {expected}, actual {actual}")]
