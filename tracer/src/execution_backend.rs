@@ -5,7 +5,6 @@ use jolt_program::execution::{
     ChunkedExecutionBackend, ExecutionBackend, ExecutionDimensions, ExecutionSummary, JoltProgram,
     MemoryImage, RamAddressBounds, TraceData, TraceError, TraceInputs, TraceOutput,
 };
-#[cfg(test)]
 use jolt_program::execution::{TraceAllocationError, TraceAllocationPhase};
 use jolt_program::expand::MAX_EXPANDED_ROWS_PER_SOURCE;
 use jolt_program::preprocess::BytecodePreprocessing;
@@ -18,16 +17,17 @@ use common::jolt_device::JoltDevice;
 #[cfg(test)]
 use common::jolt_device::MemoryLayout;
 
-use crate::emulator::cpu::AdviceTape;
+use crate::emulator::cpu::{AdviceTape, Cpu};
 use crate::emulator::decode_cache::DecodeCache;
-use crate::instruction::Cycle;
 #[cfg(feature = "field-inline")]
 use crate::instruction::RISCVCycle;
+use crate::instruction::{Cycle, Emission};
 use crate::parallel::{ChunkCheckpoint, ChunkWorker, PassOne, SnapshotPool};
 mod limited;
-use crate::trace_allocation::TraceAllocationAllowance;
+use crate::trace_allocation::doubling_target;
+use crate::trace_allocation::{bytes_of, sum_bytes, TraceAllocationAllowance};
 use crate::trace_row::cycle_to_trace_row;
-use limited::{LimitedSetup, LimitedTrace, TraceLimit};
+use limited::{FinalImage, LimitedSetup, LimitedTrace, TraceLimit};
 
 #[derive(Default, Debug, Clone)]
 pub struct TracerBackend {
@@ -55,8 +55,9 @@ impl TracerBackend {
     /// The original payload proxy is `D = size_of::<Cycle>() * max(R0, N) +
     /// size_of::<JoltTraceRow>() * N`, where `N = row_domain` and `R0` is
     /// `JOLT_TRACER_CAPACITY_ROWS` (default 2^24): original tracing reserves
-    /// `R0` cycles; limited tracing instead reserves `min(R0, N)` rows with
-    /// checked growth and converts at `max(1, min(N, 2^20))` pending cycles,
+    /// `R0` cycles; limited tracing can accumulate cycles while their conversion
+    /// fits, or reserve `min(R0, N)` rows with checked growth and convert at
+    /// at most `max(1, min(N, 2^20))` pending cycles,
     /// with room for one instruction's full expansion past that threshold.
     /// The domain neither counts nor caps emitted
     /// rows, and D is not a peak: a short run can take the limited route even
@@ -71,7 +72,7 @@ impl TracerBackend {
     /// - Bytecode preprocessing, including its input copy and PC map.
     /// - Flat guest memory, the emulator's ELF copy, caller input/advice buffers,
     ///   device copies and output reserve.
-    /// - Rows and their old/new buffers during growth, the pending cycle window,
+    /// - Cycles, rows and their old/new buffers during growth, the pending cycle window,
     ///   converted-chunk metadata, field events and their merge.
     /// - Advice tape, host advice writes' guest-copy scratch and tape growth,
     ///   and the final memory image.
@@ -87,9 +88,15 @@ impl TracerBackend {
     ///
     /// This is not a process-memory cap or a guarantee that proving fits.
     /// Doubling row/chunk growth can reject a near-limit request that exact
-    /// growth would admit. On the limited route, the pending cycle window imposes
-    /// a setup floor even for a short domain; the trace retains its row capacity for
-    /// subsequent prover-budget checks.
+    /// growth would admit. Batched setup requires room for the pending cycle
+    /// window and initially reserves `min(R0, N)` rows. A run that finishes
+    /// accumulating requests exactly its final rows instead. Both retain their
+    /// final row capacity for subsequent prover-budget checks.
+    ///
+    /// Batch planning budgets headroom for the current rows and any future
+    /// grown row backing; normal row growth happens during conversion, not
+    /// before the pending window is reserved. Only the accumulation-to-batch
+    /// transition and one-tick fallback may grow rows before the next window.
     ///
     /// Limited tracing rejects `TRACER_PARALLEL >= 2` and
     /// [`ChunkedExecutionBackend::execute`] with
@@ -140,9 +147,14 @@ impl TracerBackend {
         })
     }
 
-    /// [`ExecutionBackend::trace`] under `limit`, serially: after every tick
-    /// that leaves at least `limit.batch_rows` cycles pending, and at the end, the
-    /// pending cycles are converted into the resident rows.
+    /// [`ExecutionBackend::trace`] under `limit`, serially. While converting
+    /// every cycle after the next tick fits beside them, the run keeps its
+    /// cycles in one buffer, with initial capacity target `limit.initial_rows` and grown by
+    /// [`crate::trace_allocation::growth_target`], and converts once at the end. Before a tick for which that or the
+    /// growth does not fit, it converts them and batches, replanning its window
+    /// after each conversion. When setup or the first tick cannot hold the initial
+    /// cycle reserve, it batches from the start, converting after a tick leaves
+    /// at least `limit.batch_rows` cycles pending, and at the end.
     #[tracing::instrument(skip_all, name = "trace")]
     fn trace_limited(
         &self,
@@ -156,7 +168,26 @@ impl TracerBackend {
         if program.elf_bytes().is_empty() {
             return Err(TraceError::MissingElfBytes);
         }
-        let setup = limit.admit(program, &inputs)?;
+        let config = limit;
+        let limit = config.bytes;
+        let batch_rows = config.batch_rows;
+        let phase = TraceAllocationPhase::Initial;
+        let initial = config.initial_rows;
+        let window =
+            pending_window(batch_rows).ok_or(TraceAllocationError::SizeOverflow { phase })?;
+        let preprocessing = BytecodePreprocessing::retained_bytes(&program.expanded_bytecode)?;
+        let preprocess =
+            BytecodePreprocessing::required_allocation_bytes(&program.expanded_bytecode)?;
+        // Both admissions precede setup, which moves the caller's advice tape.
+        let batched = config.admit(program, &inputs);
+        let accumulating = bytes_of::<Cycle>(initial, phase)
+            .and_then(|cycles| sum_bytes([preprocessing, cycles], phase))
+            .map_err(TraceError::from)
+            .and_then(|storage| LimitedSetup::admit(limit, program, &inputs, storage, preprocess));
+        let (setup, batched) = match accumulating {
+            Ok(setup) => (setup, Some(batched)),
+            Err(_) => (batched?, None),
+        };
         let bytecode = BytecodePreprocessing::preprocess(
             program.expanded_bytecode.clone(),
             program.entry_address,
@@ -174,11 +205,47 @@ impl TracerBackend {
         let resident = setup
             .reserve_device(&mut emulator)?
             .saturating_add(bytecode.heap_bytes());
-        let mut trace = LimitedTrace::reserve(limit, resident)?;
-        emulator
-            .get_mut_cpu()
-            .set_advice_write_allowance(trace.advice_write_allowance());
-        loop {
+        let accumulated = match batched {
+            Some(batched) => {
+                let cpu = emulator.get_mut_cpu();
+                let first = LimitedTrace::accumulating(limit, resident, initial, cpu)?;
+                if first.is_none() {
+                    batched?;
+                }
+                first
+            }
+            None => None,
+        };
+        // The field events of a run that accumulated every cycle; a run that
+        // accumulated first plans each batch after its transition.
+        let mut accumulated_events = None;
+        let (mut trace, mut batch_rows, planned) = match accumulated {
+            Some((mut trace, peeked)) => {
+                let mut events = 0;
+                match trace.accumulate(&mut emulator, &mut events, peeked)? {
+                    Some(next) => {
+                        let phase = TraceAllocationPhase::RowGrowth;
+                        let anchor = trace
+                            .cycles
+                            .len()
+                            .checked_add(next.rows)
+                            .and_then(|rows| doubling_target(initial, rows))
+                            .ok_or(TraceAllocationError::SizeOverflow { phase })?;
+                        let tape = emulator.get_cpu().advice_tape.capacity();
+                        trace.start_batches(&bytecode, tape, anchor, events)?;
+                    }
+                    None => accumulated_events = Some(events),
+                }
+                (trace, 1, true)
+            }
+            None => {
+                let trace = LimitedTrace::reserve(limit, resident, initial, window)?;
+                (trace, batch_rows, false)
+            }
+        };
+        let cpu = emulator.get_mut_cpu();
+        cpu.set_advice_write_allowance(trace.advice_write_allowance(0));
+        while accumulated_events.is_none() {
             let pending = trace.cycles.len();
             crate::step_emulator(&mut emulator, Some(&mut trace.cycles));
             if let Some(refusal) = emulator.get_cpu().advice_write_refusal() {
@@ -188,17 +255,25 @@ impl TracerBackend {
             if trace.cycles.len() == pending {
                 break;
             }
-            if trace.cycles.len() >= limit.batch_rows {
+            if trace.cycles.len() >= batch_rows {
                 let tape = emulator.get_cpu().advice_tape.capacity();
                 trace.convert_pending(&bytecode, tape)?;
-                emulator
-                    .get_mut_cpu()
-                    .set_advice_write_allowance(trace.advice_write_allowance());
+                let cpu = emulator.get_mut_cpu();
+                if planned {
+                    batch_rows = trace.plan_batch(cpu, config.batch_rows)?;
+                }
+                cpu.set_advice_write_allowance(trace.advice_write_allowance(0));
             }
         }
         let (advice_tape, final_memory, device) = crate::finish_emulator(emulator);
-        trace.convert_pending(&bytecode, advice_tape.capacity())?;
-        let (data, dimensions, image) = trace.finish(&final_memory, advice_tape.capacity())?;
+        let tape = advice_tape.capacity();
+        let (data, dimensions, image) = match accumulated_events {
+            Some(events) => trace.finish_accumulated(&bytecode, final_memory, tape, events)?,
+            None => {
+                trace.convert_pending(&bytecode, tape)?;
+                trace.finish(FinalImage::Flat(final_memory.flat_image()), tape)?
+            }
+        };
         Ok(TraceOutput::with_dimensions(
             dimensions,
             Arc::new(data),
@@ -207,6 +282,7 @@ impl TracerBackend {
             Some(advice_tape.into_bytes()),
         ))
     }
+
     /// The advice tape `program` writes in one serial run without a trace,
     /// with its requests checked against `limit_bytes`: the compute-advice run
     /// the SDK makes under a memory budget.
@@ -288,8 +364,9 @@ impl ExecutionBackend for TracerBackend {
 
 const PARALLEL_ROW_CONVERSION_THRESHOLD: usize = 1 << 14;
 
-/// Maximum conversion threshold: 96 MiB of default-build cycles;
-/// a full instruction can carry a batch past this threshold.
+/// Conversion threshold for a trace batching from the start, and the cap for
+/// planned batch thresholds: 96 MiB of default-build cycles. A full instruction
+/// can carry a batch past its threshold.
 const SERIAL_BATCH_ROWS: usize = 1 << 20;
 
 /// Cycles a limited trace can hold pending: each tick starts with fewer than
@@ -310,6 +387,39 @@ fn field_event_count(cycles: &[Cycle]) -> usize {
         .iter()
         .filter(|cycle| cycle.field_inline_trace().is_some())
         .count()
+}
+
+#[cfg(feature = "field-inline")]
+const FIELD_EVENT_BYTES: usize = size_of::<FieldEvent>();
+#[cfg(not(feature = "field-inline"))]
+const FIELD_EVENT_BYTES: usize = 0;
+
+/// The most rows, and field events, one tick emits.
+const TICK_BOUND: Emission = Emission {
+    rows: MAX_EXPANDED_ROWS_PER_SOURCE,
+    field_events: MAX_EXPANDED_ROWS_PER_SOURCE,
+};
+
+/// What the next tick emits: nothing at a PC stall, while the CPU waits for
+/// an interrupt or where its fetch traps, else its instruction's emission.
+fn next_emission(cpu: &mut Cpu) -> Result<Emission, TraceError> {
+    if cpu.has_stalled() {
+        return Ok(Emission::default());
+    }
+    match cpu.peek_instruction() {
+        Some(instruction) => instruction.emission(cpu),
+        None => Ok(Emission::default()),
+    }
+}
+
+/// The parallel slices, or one serial slice, a conversion of `pending` cycles
+/// fills: one converted chunk each.
+fn conversion_slices(pending: usize) -> usize {
+    if pending > PARALLEL_ROW_CONVERSION_THRESHOLD {
+        pending.div_ceil(PARALLEL_ROW_CONVERSION_THRESHOLD)
+    } else {
+        1
+    }
 }
 
 #[derive(Default)]
