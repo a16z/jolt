@@ -9,11 +9,15 @@ use jolt_field::Field;
 /// The values a verifier check is written over.
 ///
 /// A check is written once as a generic function over this trait so that
-/// every verifier that runs it evaluates the same formula. [`ClearDomain`] is
-/// the only implementation here; a masked domain (values as affine forms over
-/// pads, each check a residual row) does not exist yet.
+/// every verifier that runs it evaluates the same formula: the clear verifier
+/// ([`ClearDomain`], where values are field elements and checks compare), a
+/// masked verifier (values are affine forms over pads and each check becomes
+/// a residual row) and a pad layout (values are symbolic and only slots are
+/// counted). The masked and layout domains live in `jolt-zk`'s masking
+/// lowering.
 ///
-/// Implementations must allocate auxiliary slots ([`product`](Self::product))
+/// Implementations must allocate auxiliary slots
+/// ([`define_auxiliary`](Self::define_auxiliary), [`product`](Self::product))
 /// from a formula's structure alone, never from values, so that every domain
 /// running one formula allocates the same slots in the same order, and must
 /// reject an `x` operand that is not a single slot. [`ClearDomain`] does not
@@ -34,6 +38,13 @@ pub trait ClaimDomain<F> {
     /// `value · scale` for a public `scale`.
     fn scale(&self, value: &Self::Value, scale: F) -> Self::Value;
 
+    /// A new auxiliary slot defined by the affine `value`; returns the slot.
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if no slot is left.
+    fn define_auxiliary(&mut self, value: Self::Value) -> Result<Self::Value, Self::Error>;
+
     /// A new auxiliary slot holding `x · y`, where `x` is a single masked or
     /// auxiliary slot; returns the slot.
     ///
@@ -44,18 +55,43 @@ pub trait ClaimDomain<F> {
 
     /// The check `x · y = target`, with no new slot: the product lands on an
     /// existing value, such as a sumcheck's running claim. `x` is as for
-    /// [`product`](Self::product).
+    /// [`product`](Self::product). One pair of
+    /// [`products_into`](Self::products_into).
     ///
     /// # Errors
     ///
-    /// The domain's error if the check fails where it is evaluated or `x` is
-    /// not a single slot.
+    /// As [`products_into`](Self::products_into).
     fn product_into(
         &mut self,
         x: Self::Value,
         y: Self::Value,
         target: Self::Value,
+    ) -> Result<(), Self::Error> {
+        self.products_into((x, y), Vec::new(), target)
+    }
+
+    /// The check `Σ_k x_k · y_k = target` over the pairs `first` and
+    /// `rest`, with no new slot: several products land on one existing
+    /// value, such as a stage's running claim. Each `x_k` is as for
+    /// [`product`](Self::product).
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if the check fails where it is evaluated or an
+    /// `x_k` is not a single slot.
+    fn products_into(
+        &mut self,
+        first: (Self::Value, Self::Value),
+        rest: Vec<(Self::Value, Self::Value)>,
+        target: Self::Value,
     ) -> Result<(), Self::Error>;
+
+    /// The check `value = 0`.
+    ///
+    /// # Errors
+    ///
+    /// The domain's error if the check fails where it is evaluated.
+    fn check_zero(&mut self, value: Self::Value) -> Result<(), Self::Error>;
 }
 
 /// A clear check failed: the values it compares differ.
@@ -70,8 +106,8 @@ impl Display for ClaimMismatch {
 
 impl Error for ClaimMismatch {}
 
-/// The clear verifier's domain: values are field elements, products are
-/// computed directly, and checks compare.
+/// The clear verifier's domain: values are field elements, auxiliary slots
+/// are the values themselves, and checks compare.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ClearDomain;
 
@@ -91,12 +127,28 @@ impl<F: Field> ClaimDomain<F> for ClearDomain {
         *value * scale
     }
 
+    fn define_auxiliary(&mut self, value: F) -> Result<F, ClaimMismatch> {
+        Ok(value)
+    }
+
     fn product(&mut self, x: F, y: F) -> Result<F, ClaimMismatch> {
         Ok(x * y)
     }
 
-    fn product_into(&mut self, x: F, y: F, target: F) -> Result<(), ClaimMismatch> {
-        if x * y == target {
+    fn products_into(
+        &mut self,
+        first: (F, F),
+        rest: Vec<(F, F)>,
+        target: F,
+    ) -> Result<(), ClaimMismatch> {
+        let sum = rest
+            .iter()
+            .fold(first.0 * first.1, |sum, (x, y)| sum + *x * *y);
+        self.check_zero(sum - target)
+    }
+
+    fn check_zero(&mut self, value: F) -> Result<(), ClaimMismatch> {
+        if value.is_zero() {
             Ok(())
         } else {
             Err(ClaimMismatch)
@@ -142,6 +194,29 @@ mod tests {
         assert_eq!(degree_four_leaf(&mut ClearDomain, r, c, claim), Ok(()));
         assert_eq!(
             degree_four_leaf(&mut ClearDomain, r, c, claim + Fp::from_u64(1)),
+            Err(ClaimMismatch)
+        );
+        assert_eq!(
+            ClaimDomain::<Fp>::check_zero(&mut ClearDomain, Fp::from_u64(0)),
+            Ok(())
+        );
+        assert_eq!(ClearDomain.check_zero(Fp::from_u64(1)), Err(ClaimMismatch));
+    }
+
+    #[test]
+    fn clear_domain_checks_a_sum_of_products() {
+        let pairs = [(2, 3), (5, 7), (11, 13)].map(|(x, y)| (Fp::from_u64(x), Fp::from_u64(y)));
+        let target = Fp::from_u64(2 * 3 + 5 * 7 + 11 * 13);
+        assert_eq!(
+            ClearDomain.products_into(pairs[0], pairs[1..].to_vec(), target),
+            Ok(())
+        );
+        assert_eq!(
+            ClearDomain.products_into(pairs[0], pairs[1..].to_vec(), target + Fp::from_u64(1)),
+            Err(ClaimMismatch)
+        );
+        assert_eq!(
+            ClearDomain.products_into(pairs[0], pairs[1..2].to_vec(), target),
             Err(ClaimMismatch)
         );
     }
