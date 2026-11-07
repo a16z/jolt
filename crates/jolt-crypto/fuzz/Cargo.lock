@@ -427,7 +427,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "ark-std",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "jolt-transcript",
  "num-bigint",
@@ -443,8 +443,8 @@ name = "jolt-crypto-fuzz"
 version = "0.0.0"
 dependencies = [
  "bincode",
+ "jolt-algebra",
  "jolt-crypto",
- "jolt-field",
  "libfuzzer-sys",
  "rand_chacha",
  "rand_core",

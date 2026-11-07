@@ -1176,7 +1176,7 @@ dependencies = [
  "ark-ff",
  "ark-serialize",
  "ark-std",
- "jolt-field",
+ "jolt-algebra",
  "jolt-poly",
  "jolt-transcript",
  "num-bigint",

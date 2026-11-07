@@ -4,7 +4,7 @@ use std::{
     marker::PhantomData,
 };
 
-use jolt_field::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
+use jolt_algebra::{Accumulator, CanonicalBytes, JoltField, WithAccumulator};
 use jolt_poly::EqPolynomial;
 use jolt_transcript::Encoding;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
