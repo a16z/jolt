@@ -44,7 +44,7 @@ use super::pad_commitment::LatticePadOpening;
 use super::params::{SigmaParams, MAX_RESPONSE_NUM_VARS, RESPONSE_LOG_BASIS};
 use super::placement::PadPlacement;
 use super::response::{
-    ResponseLayout, ResponseProver, ResponseSegment, ResponseStatement, FIELD_LEVELS,
+    ResponseLayout, ResponseSegment, ResponseStatement, ResponseVerifier, FIELD_LEVELS,
 };
 use super::segments::{Segment, SegmentRole, SegmentTable};
 use super::transport::{
@@ -478,7 +478,7 @@ pub fn verify_sigma<F, const D: usize, P>(
 ) -> Result<(), ZkError>
 where
     F: JoltField + ChallengeCodec,
-    P: ResponseProver<F, D>,
+    P: ResponseVerifier<F, D>,
     P::Sponge: UniformBytes + DuplexSpongeInit<U = u8>,
 {
     setup.check_relation(relation)?;
