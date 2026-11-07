@@ -105,7 +105,7 @@ impl PreparedBytes {
     /// A body is self-aligning: its first byte is a skew `s` in `1..=8` and the
     /// payload starts at offset `s`, chosen so that, with the body on an
     /// 8-byte address, payload offset `aligned_offset` is 8-byte aligned.
-    fn detach(&mut self, aligned_offset: usize) -> Result<Vec<u8>, OpeningsError> {
+    pub(crate) fn detach(&mut self, aligned_offset: usize) -> Result<Vec<u8>, OpeningsError> {
         let skew = 8 - aligned_offset % 8;
         let payload = self.bytes()?;
         let mut body = Vec::with_capacity(skew + payload.len());
@@ -116,7 +116,12 @@ impl PreparedBytes {
         Ok(body)
     }
 
-    fn attach(body: TrustedBytes) -> Result<Self, OpeningsError> {
+    pub(crate) fn attach(body: TrustedBytes) -> Result<Self, OpeningsError> {
+        Self::payload(body).map(Self::Attached)
+    }
+
+    /// The payload of a body framed by [`Self::detach`].
+    pub(crate) fn payload(body: TrustedBytes) -> Result<TrustedBytes, OpeningsError> {
         let skew = usize::from(
             *body
                 .bytes()
@@ -126,10 +131,8 @@ impl PreparedBytes {
         if !(1..=8).contains(&skew) {
             return Err(invalid_setup("malformed prepared payload body skew"));
         }
-        let payload = body
-            .skip(skew)
-            .ok_or_else(|| invalid_setup("truncated prepared payload body"))?;
-        Ok(Self::Attached(payload))
+        body.skip(skew)
+            .ok_or_else(|| invalid_setup("truncated prepared payload body"))
     }
 }
 

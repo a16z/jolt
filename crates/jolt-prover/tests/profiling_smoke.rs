@@ -42,7 +42,8 @@ fn profile_run_emits_conformant_artifacts() {
         #[cfg(feature = "akita")]
         akita_chunk_profile: AkitaChunkProfile::new(1, 0),
         memory_budget: None,
-    });
+    })
+    .unwrap();
 
     let trace_path = artifacts.trace_path.expect("trace path");
     let summary_path = artifacts.summary_path.expect("summary path");

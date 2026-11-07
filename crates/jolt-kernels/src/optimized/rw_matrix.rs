@@ -482,6 +482,41 @@ pub(crate) fn round0_bind<F: JoltField>(columns: &RamAccessColumns, r: F) -> Cyc
     CycleMajorMatrix { entries }
 }
 
+/// Bytes [`round0_bind`] requests at once at most over the `prefix_cycles`
+/// cycles before the trace's constant suffix and `2^log_k` addresses, its
+/// result included, or `None` past `usize::MAX`. A cycle pair emits one entry
+/// per accessing cycle when their columns differ and one entry otherwise, so
+/// at most `prefix_cycles` entries, or `⌈prefix_cycles / 2⌉` with one
+/// address, over at most one split per pair ([`fold_concat_bytes`]).
+pub(crate) fn round0_bind_bytes<F: JoltField>(prefix_cycles: usize, log_k: usize) -> Option<usize> {
+    let pairs = prefix_cycles.div_ceil(2);
+    let entries = if log_k == 0 { pairs } else { prefix_cycles };
+    fold_concat_bytes::<CycleMajorEntry<F>>(entries, pairs.max(1))
+}
+
+/// Bytes a parallel `fold(Vec::new, ..)` over at most `splits` Rayon splits
+/// that pushes at most `entries` `E` values in total, followed by `collect`
+/// and [`par_concat`], requests at once at most, or `None` past `usize::MAX`.
+/// A split's vector grows by doubling from four slots, and each reallocation
+/// holds the old buffer beside the new one, so a split with `n > 0` values
+/// holds at most `4n` slots at any time; the concatenated destination is
+/// reserved at exactly the total. Each split also costs one `collect` list
+/// node (a `Vec` header and two links) and its four-slot vector of headers,
+/// one header in the collected vector, which reserves at least four, and one
+/// `par_concat` slot reference. The serial builds stay within the same
+/// bytes. These are Rust 1.95 `Vec` growth and Rayon 1.12 unindexed
+/// `collect` facts, which the `tests` module measures with a counting
+/// allocator.
+fn fold_concat_bytes<E>(entries: usize, splits: usize) -> Option<usize> {
+    let header = size_of::<Vec<E>>();
+    let per_split = 6 * header + 4 * size_of::<usize>();
+    entries
+        .checked_mul(5)?
+        .checked_mul(size_of::<E>())?
+        .checked_add(splits.checked_mul(per_split)?)?
+        .checked_add(3 * header)
+}
+
 impl<F: JoltField> AddressMajorEntry<F> {
     fn bind(
         even: Option<&Self>,
@@ -746,6 +781,37 @@ impl<F: JoltField> AddressMajorMatrix<F> {
         Self { entries }
     }
 
+    /// Entry bytes [`Self::from_columns`] keeps over the `prefix_cycles`
+    /// cycles before the trace's constant suffix, or `None` past
+    /// `usize::MAX`: at most one entry per cycle, collected sequentially, so
+    /// the doubling growth leaves at most `max(4, 2 · prefix_cycles)` slots.
+    pub fn collected_bytes(prefix_cycles: usize) -> Option<usize> {
+        prefix_cycles
+            .max(2)
+            .checked_mul(2)?
+            .checked_mul(size_of::<AddressMajorEntry<F>>())
+    }
+
+    /// Bytes the first [`Self::bind`] of a matrix built by
+    /// [`Self::from_columns`] over the `prefix_cycles` cycles before the
+    /// trace's constant suffix requests at once at most while it collects, or
+    /// `None` past `usize::MAX`: the old entries at their collected capacity
+    /// ([`Self::collected_bytes`]) beside the bind's collect of at most one
+    /// entry per old entry, over at most one split per column pair
+    /// ([`fold_concat_bytes`]). Binding `val_init` afterwards is not counted.
+    pub fn first_bind_bytes(prefix_cycles: usize) -> Option<usize> {
+        Self::collected_bytes(prefix_cycles)?.checked_add(
+            fold_concat_bytes::<AddressMajorEntry<F>>(prefix_cycles, prefix_cycles.max(1))?,
+        )
+    }
+
+    /// Entry bytes of the bound entries the first [`Self::bind`] keeps after
+    /// dropping the old ones, or `None` past `usize::MAX`: at most one entry
+    /// per cycle, at exact capacity.
+    pub fn bound_bytes(prefix_cycles: usize) -> Option<usize> {
+        prefix_cycles.checked_mul(size_of::<AddressMajorEntry<F>>())
+    }
+
     /// After binding every address, retain the explicit cycle prefix and
     /// the final memory checkpoint as a constant value suffix.
     pub fn into_cycle_tables(self, initial: F) -> (PrefixColumn<F>, PrefixColumn<F>) {
@@ -868,5 +934,162 @@ impl<F: JoltField> AddressMajorMatrix<F> {
             Some(entry) => (entry.ra, entry.val),
             None => (F::zero(), val_init.evals()[0]),
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod tests {
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use jolt_field::{Fr, Ring};
+    use jolt_poly::Polynomial;
+
+    use super::super::ram_trace::{RamAccessColumns, RamAddresses};
+    use super::{round0_bind, round0_bind_bytes, AddressMajorEntry, AddressMajorMatrix};
+
+    /// Live and peak heap bytes across every thread of this test process,
+    /// with a reallocation counted as its new buffer beside the old one.
+    struct CountingAllocator;
+
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+    impl CountingAllocator {
+        fn add(bytes: usize) {
+            let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
+            let _ = PEAK.fetch_max(live, Ordering::Relaxed);
+        }
+
+        fn sub(bytes: usize) {
+            let _ = LIVE.fetch_sub(bytes, Ordering::Relaxed);
+        }
+    }
+
+    // SAFETY: every method forwards its request unchanged to `System`, which
+    // upholds the `GlobalAlloc` contract; the counters only observe sizes.
+    unsafe impl GlobalAlloc for CountingAllocator {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            Self::add(layout.size());
+            // SAFETY: the caller upholds `GlobalAlloc::alloc`'s contract.
+            unsafe { System.alloc(layout) }
+        }
+
+        unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+            Self::add(layout.size());
+            // SAFETY: the caller upholds `GlobalAlloc::alloc_zeroed`'s contract.
+            unsafe { System.alloc_zeroed(layout) }
+        }
+
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: the caller upholds `GlobalAlloc::dealloc`'s contract.
+            unsafe { System.dealloc(ptr, layout) };
+            Self::sub(layout.size());
+        }
+
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            Self::add(new_size);
+            // SAFETY: the caller upholds `GlobalAlloc::realloc`'s contract.
+            let moved = unsafe { System.realloc(ptr, layout, new_size) };
+            Self::sub(if moved.is_null() {
+                new_size
+            } else {
+                layout.size()
+            });
+            moved
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: CountingAllocator = CountingAllocator;
+
+    /// `run`'s result and the most bytes it held at once beyond those live
+    /// when it started. The caller warms the Rayon pool first, so that only
+    /// `run`'s own requests move the counters.
+    fn peak_above_start<R>(run: impl FnOnce() -> R) -> (R, usize) {
+        let start = LIVE.load(Ordering::Relaxed);
+        PEAK.store(start, Ordering::Relaxed);
+        let result = run();
+        (result, PEAK.load(Ordering::Relaxed) - start)
+    }
+
+    const CYCLES: usize = 1 << 12;
+    const LOG_K: usize = 6;
+
+    /// Every cycle accesses `address(cycle)`, so each bind meets its largest
+    /// entry count when adjacent cycles differ.
+    fn columns(address: impl Fn(usize) -> u32) -> RamAccessColumns {
+        RamAccessColumns {
+            addresses: Arc::new(RamAddresses::from(
+                (0..CYCLES).map(address).collect::<Vec<_>>(),
+            )),
+            pre_values: (0..CYCLES as u64).collect(),
+            post_values: (1..=CYCLES as u64).collect(),
+        }
+    }
+
+    /// The round-0 collect stays within [`round0_bind_bytes`] at both entry
+    /// counts it prices: one entry per cycle when adjacent cycles access
+    /// different addresses, one per pair with a single address.
+    #[test]
+    fn round0_bind_stays_within_its_priced_bytes() {
+        let r = Fr::from_u64(7);
+        for (log_k, address, entries) in [
+            (
+                LOG_K,
+                (|cycle| (cycle % (1 << LOG_K)) as u32) as fn(usize) -> u32,
+                CYCLES,
+            ),
+            (0, |_| 0, CYCLES / 2),
+        ] {
+            let columns = columns(address);
+            let _warm = round0_bind::<Fr>(&columns, r);
+            let (matrix, peak) = peak_above_start(|| round0_bind::<Fr>(&columns, r));
+            assert_eq!(matrix.entries.len(), entries);
+            let priced = round0_bind_bytes::<Fr>(CYCLES, log_k).unwrap();
+            assert!(
+                peak <= priced,
+                "log_k = {log_k}: round 0 held {peak} bytes, above the {priced} priced"
+            );
+        }
+    }
+
+    /// The first address-major bind stays within
+    /// [`AddressMajorMatrix::first_bind_bytes`] while it collects, counting
+    /// the old entries it starts with, and within the bound entries beside
+    /// `val_init`'s half-length copy once it binds `val_init`, the window
+    /// the RAM read-write kernel prices; it keeps at most
+    /// [`AddressMajorMatrix::bound_bytes`].
+    #[test]
+    fn address_major_first_bind_stays_within_its_priced_bytes() {
+        let entry = size_of::<AddressMajorEntry<Fr>>();
+        let addresses = 1 << LOG_K;
+        let columns = columns(|cycle| (cycle % addresses) as u32);
+        let r = Fr::from_u64(7);
+        let val_init = || Polynomial::new(vec![Fr::from_u64(3); addresses]);
+        AddressMajorMatrix::<Fr>::from_columns(&columns).bind(r, &mut val_init());
+
+        let mut matrix = AddressMajorMatrix::<Fr>::from_columns(&columns);
+        let old = matrix.entries.capacity() * entry;
+        assert!(old <= AddressMajorMatrix::<Fr>::collected_bytes(CYCLES).unwrap());
+        let mut val_init = val_init();
+        let ((), peak) = peak_above_start(|| matrix.bind(r, &mut val_init));
+        let priced = AddressMajorMatrix::<Fr>::first_bind_bytes(CYCLES)
+            .unwrap()
+            .max(
+                AddressMajorMatrix::<Fr>::bound_bytes(CYCLES).unwrap()
+                    + addresses / 2 * size_of::<Fr>(),
+            );
+        assert!(
+            old + peak <= priced,
+            "first bind held {} bytes, above the {priced} priced",
+            old + peak
+        );
+        assert!(
+            matrix.entries.capacity() * entry
+                <= AddressMajorMatrix::<Fr>::bound_bytes(CYCLES).unwrap()
+        );
     }
 }

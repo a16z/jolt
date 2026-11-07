@@ -2,7 +2,6 @@ use std::path::Path;
 use std::process::Command;
 
 struct CommitInfo {
-    hash: String,
     short_hash: String,
     date: String,
 }
@@ -16,7 +15,7 @@ fn commit_info_from_git() -> Option<CommitInfo> {
         .arg("log")
         .arg("-1")
         .arg("--date=short")
-        .arg("--format=%H %h %cd")
+        .arg("--format=%h %cd")
         .arg("--abbrev=9")
         .output()
     {
@@ -28,18 +27,17 @@ fn commit_info_from_git() -> Option<CommitInfo> {
     let mut parts = stdout.split_whitespace().map(|s| s.to_string());
 
     Some(CommitInfo {
-        hash: parts.next()?,
         short_hash: parts.next()?,
         date: parts.next()?,
     })
 }
 
 fn commit_info() {
-    let Some(git) = commit_info_from_git() else {
-        return;
-    };
+    let git = commit_info_from_git().unwrap_or_else(|| CommitInfo {
+        short_hash: "unknown".to_string(),
+        date: "unknown".to_string(),
+    });
 
-    println!("cargo:rustc-env=GIT_HASH={}", git.hash);
     println!("cargo:rustc-env=GIT_SHORT_HASH={}", git.short_hash);
     println!("cargo:rustc-env=GIT_DATE={}", git.date);
 }

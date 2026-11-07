@@ -16,6 +16,26 @@ nor a Pages-source change.
 | Pull requests | Same-repository PRs with a maintainer/admin-applied `benchmark` label; local build and proof |
 | Manual previews | Explicitly labelled imported measurements, never authenticated main history |
 
+The PR workload matrix is defined in `scripts/bench/suites.json`. At 24 physical
+cores it covers these trace ceilings; the [producer README](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#workloads-and-tiers)
+lists all core counts, operation counts and nightly cases.
+“All five” means Fibonacci, SHA2 chain, SHA3 chain, BTreeMap and secp256k1 ECDSA.
+
+| 24-core ceiling | Akita workloads | Dory workloads |
+| --- | --- | --- |
+| `2^16` | All except secp256k1 | — |
+| `2^18`, `2^20`, `2^24` | All five | — |
+| `2^22` | All five | SHA2, BTreeMap |
+| `2^27` | SHA2 only | — |
+
+The [capacity model](https://github.com/a16z/jolt/blob/main/scripts/bench/README.md#capacity)
+gives per-push forecasts. A main-push job whose tip is superseded when it reaches
+calibration skips only the null, retains every history commit and records its
+reason. Lookup failure retains calibration. Nightly, manual main and bootstrap
+jobs always calibrate.
+Without another matching reference, a PR based on a skipped tip keeps its
+measurements but has a neutral reference-unavailable check.
+
 The PR label persists across pushes. The trusted producer checks the actual label
 applier, current label and merge parents; a write-only collaborator or fork is
 not admitted. The target rechecks the label and PR head after queue/lock waits.
@@ -28,6 +48,11 @@ with matching build and host identities and a 48-hour expiry, in the PR's
 Those bands describe repeated measurements of the same build; they are
 informational, not statistical significance or a future false-positive guarantee.
 The dashboard shows the raw PR measurements without bands.
+
+The sticky PR comment links to full results and benchmark history. It lists every
+core-count/trace-ceiling pair with a recorded process exit, even when no change
+exceeds 3%. Its table keeps only larger time or peak-RSS changes and identifies
+each row's physical cores, `2^k` ceiling and measured base/head trace rows.
 
 A point is the median of complete measured repetitions. The table shows its
 minimum–maximum range; raw JSON retains warmups. Failed cases/builds, incomplete
@@ -168,8 +193,11 @@ source and preview checks do not establish live execution or deployment.
 
 ### Calibration references
 
-Each main-push tip and nightly run first measures a 17-cell, ten-pair null using
-its hosted tip bundle twice. Trusted ingest validates all 374 proof processes and
+Each nightly run, manual main run and still-current main-push tip first measures
+a ten-pair null for every PR case in its pinned suite, using its hosted tip bundle
+twice. With `N` PR cases,
+one warmup and ten measured pairs require `22N` proof processes. Trusted ingest
+validates the complete configured case set and every process, then
 recomputes the informational time/RSS envelopes. It retains the reference and raw
 evidence in the canonical ingest artifact for 30 days. The publisher appends them
 under `dev/prover-history/calibration/<reference-sha256>/` and lists immutable
@@ -187,5 +215,6 @@ Main-only `tier=calibration` bootstrap is allowed while ordinary execution is
 disabled. It adds a local same-source PR-recipe probe after the hosted null;
 bootstrap probes do not enter history trends. After catalog publication, this
 workflow runs `publication.py verify-calibration` against its immutable ingest
-artifact and requires bands for all 17 probe cells. The README's first-run and
+artifact and requires bands for every probe case in that run's pinned PR suite.
+The README's first-run and
 post-main-advance acceptance steps remain prerequisites to ordinary enablement.
