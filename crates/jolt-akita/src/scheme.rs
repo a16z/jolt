@@ -430,18 +430,42 @@ impl Commitment for AkitaScheme {
     type Output = AkitaCommitment;
 }
 
-impl CommitmentScheme for AkitaScheme {
-    type Field = AkitaField;
-    type Proof = AkitaBatchProof;
-    type ProverSetup = AkitaProverSetup;
-    type VerifierSetup = AkitaVerifierSetup;
-    type VerificationContext<'a> = AkitaVerificationContext<'a>;
-    type OpeningHint = AkitaProverHint;
-    type SetupParams = AkitaSetupParams;
+impl AkitaScheme {
+    /// [`CommitmentScheme::setup`] that rejects a request whose flat public
+    /// matrix needs more than `matrix_byte_limit` bytes with
+    /// [`OpeningsError::SetupExceedsBudget`], before allocating the one-hot
+    /// backend setup. Only the one-hot single-chunk setup is priced,
+    /// including grouped rows, which that matrix covers because it is sized
+    /// from the grouped catalog. Full-width dense groups build separate,
+    /// unpriced backend setups, so they and every other shape fail with
+    /// [`OpeningsError::InvalidSetup`] before any setup work.
+    ///
+    /// Passing prices only that matrix, not the complete setup: schedule
+    /// catalogs, backend caches, the setup-prefix export's buffers,
+    /// commitments and hints, and verifier preparation are not counted.
+    /// [`CommitmentScheme::setup`] checks no limit.
+    pub fn setup_with_matrix_byte_limit(
+        params: AkitaSetupParams,
+        matrix_byte_limit: usize,
+    ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
+        if params.flavor != AkitaSetupFlavor::OneHot
+            || params.akita_chunk_profile != AkitaChunkProfile::default()
+            || params
+                .grouped_schedule
+                .as_ref()
+                .is_some_and(|request| request.full_width_arities().next().is_some())
+        {
+            return Err(OpeningsError::InvalidSetup(
+                "a matrix byte limit prices only the one-hot single-chunk setup without full-width dense groups".into(),
+            ));
+        }
+        Self::build_setup(params, Some(matrix_byte_limit))
+    }
 
-    fn setup(
-        params: Self::SetupParams,
-    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
+    fn build_setup(
+        params: AkitaSetupParams,
+        matrix_byte_limit: Option<usize>,
+    ) -> Result<(AkitaProverSetup, AkitaVerifierSetup), OpeningsError> {
         let verifier = Self::verifier_setup_from_params(&params)?;
         let artifacts = &params.schedule_artifacts;
         let one_hot_log_k = validate_one_hot_k(params.one_hot_k).map_err(invalid_setup)?;
@@ -467,7 +491,8 @@ impl CommitmentScheme for AkitaScheme {
             };
         let (one_hot_backend_prover_setup, one_hot_cpu_backend, one_hot_backend_verifier_setup) =
             if params.max_num_vars >= one_hot_log_k && params.flavor != AkitaSetupFlavor::Dense {
-                let backend_prover_setup = crate::adapters::one_hot_setup_prover(&verifier)?;
+                let backend_prover_setup =
+                    crate::adapters::one_hot_setup_prover(&verifier, matrix_byte_limit)?;
                 let cpu_backend = CpuBackend::new(Arc::clone(&backend_prover_setup.expanded))
                     .map_err(invalid_setup)?;
                 let backend_verifier_setup =
@@ -519,6 +544,22 @@ impl CommitmentScheme for AkitaScheme {
             verifier: verifier.clone(),
         };
         Ok((prover, verifier))
+    }
+}
+
+impl CommitmentScheme for AkitaScheme {
+    type Field = AkitaField;
+    type Proof = AkitaBatchProof;
+    type ProverSetup = AkitaProverSetup;
+    type VerifierSetup = AkitaVerifierSetup;
+    type VerificationContext<'a> = AkitaVerificationContext<'a>;
+    type OpeningHint = AkitaProverHint;
+    type SetupParams = AkitaSetupParams;
+
+    fn setup(
+        params: Self::SetupParams,
+    ) -> Result<(Self::ProverSetup, Self::VerifierSetup), OpeningsError> {
+        Self::build_setup(params, None)
     }
 
     fn verifier_setup(prover_setup: &Self::ProverSetup) -> Self::VerifierSetup {
@@ -1415,5 +1456,95 @@ mod tests {
             &mut verifier_transcript,
         )
         .expect_err("direct commitment layout must not be accepted through setup default");
+    }
+
+    /// The flat public matrix an unbudgeted setup generates bounds the
+    /// matrix byte limit exactly: one byte less is rejected, and the
+    /// admitted setup equals the unbudgeted one. The shape is the narrowest
+    /// K=16 trace at the recursive cutover, whose Single row offloads setup
+    /// contributions, so the admitted setup also exports prefix slots.
+    #[test]
+    fn matrix_byte_limit_admits_exactly_the_generated_matrix() {
+        use crate::schedules::emit::{K16_COLUMN_VARIABLES, RECURSIVE_TRACE_LOG_T_CUTOVER};
+
+        let params = || {
+            AkitaSetupParams::one_hot_only(
+                RECURSIVE_TRACE_LOG_T_CUTOVER + K16_COLUMN_VARIABLES,
+                51,
+                [5; 32],
+                AKITA_ONE_HOT_K16,
+                AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2)),
+            )
+        };
+        let (unbudgeted, unbudgeted_verifier) = AkitaScheme::setup(params()).unwrap();
+        let generated = unbudgeted.one_hot_backend_prover_setup.unwrap();
+        assert!(
+            !generated.prefix_slots.is_empty(),
+            "the fixture must export prefix slots"
+        );
+        let required =
+            generated.expanded.shared_matrix().num_field_elements() * size_of::<AkitaField>();
+
+        assert_eq!(
+            AkitaScheme::setup_with_matrix_byte_limit(params(), required - 1).err(),
+            Some(OpeningsError::SetupExceedsBudget {
+                required,
+                limit: required - 1
+            })
+        );
+        let (budgeted, budgeted_verifier) =
+            AkitaScheme::setup_with_matrix_byte_limit(params(), required).unwrap();
+        assert_eq!(budgeted_verifier, unbudgeted_verifier);
+        assert_eq!(
+            budgeted.one_hot_backend_prover_setup.unwrap().prefix_slots,
+            generated.prefix_slots
+        );
+    }
+
+    /// Shapes whose setup allocates beyond the priced one-hot backend are
+    /// rejected under any limit, though each builds unbudgeted.
+    #[test]
+    fn matrix_byte_limit_rejects_shapes_it_does_not_price() {
+        use crate::schedule_registry::{DenseGroupLayout, GroupedScheduleParams};
+
+        let artifacts =
+            AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
+        let chunked_vars =
+            OneHotFamily::from_parts(AKITA_ONE_HOT_K16, AkitaChunkProfile::new(8, 2))
+                .unwrap()
+                .num_vars_range(1)
+                .0;
+        for params in [
+            AkitaSetupParams::new(14, 1, [5; 32], Arc::clone(&artifacts)),
+            AkitaSetupParams::dense_only(14, 1, [5; 32], Arc::clone(&artifacts)),
+            AkitaSetupParams::one_hot_only(
+                chunked_vars,
+                1,
+                [5; 32],
+                AKITA_ONE_HOT_K16,
+                Arc::clone(&artifacts),
+            )
+            .with_akita_chunk_profile(AkitaChunkProfile::new(8, 2)),
+            AkitaSetupParams::one_hot_only_grouped(
+                16,
+                2,
+                2,
+                [5; 32],
+                AKITA_ONE_HOT_K16,
+                Some(GroupedScheduleParams::new(
+                    None,
+                    None,
+                    vec![DenseGroupLayout::FullWidth { num_vars: 14 }],
+                    PolynomialGroupLayout::new(16, 2),
+                )),
+                Arc::clone(&artifacts),
+            ),
+        ] {
+            assert!(matches!(
+                AkitaScheme::setup_with_matrix_byte_limit(params.clone(), usize::MAX),
+                Err(OpeningsError::InvalidSetup(_))
+            ));
+            let _unbudgeted = AkitaScheme::setup(params).unwrap();
+        }
     }
 }

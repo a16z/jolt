@@ -295,23 +295,39 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
         self.assertEqual((pr['warmups'], pr['repetitions']), (1, 3))
         self.assertEqual([(c['workload'], c['pcs'], c['backend'], c['physical_cores'],
                            c['scale_log2'], c['input']['parameters']['operations']) for c in pr['cases']],
-                         [('fibonacci', 'akita', 'optimized', 1, 18, 16000),
+                         [('fibonacci', 'akita', 'optimized', 1, 16, 4000),
                           ('fibonacci', 'akita', 'optimized', 8, 20, 64000),
-                          ('fibonacci', 'akita', 'optimized', 24, 22, 250000),
-                          ('sha2-chain', 'akita', 'optimized', 1, 18, 64),
                           ('sha2-chain', 'akita', 'optimized', 8, 20, 256),
-                          ('sha2-chain', 'dory', 'optimized', 24, 22, 1024),
-                          ('sha2-chain', 'akita', 'optimized', 24, 22, 1024),
-                          ('sha3-chain', 'akita', 'optimized', 1, 18, 48),
                           ('sha3-chain', 'akita', 'optimized', 8, 20, 192),
-                          ('sha3-chain', 'akita', 'optimized', 24, 22, 768),
-                          ('btreemap', 'akita', 'optimized', 1, 18, 128),
                           ('btreemap', 'akita', 'optimized', 8, 20, 512),
-                          ('btreemap', 'dory', 'optimized', 24, 22, 2048),
-                          ('btreemap', 'akita', 'optimized', 24, 22, 2048),
-                          ('secp256k1-batch', 'akita', 'optimized', 1, 18, 1),
                           ('secp256k1-batch', 'akita', 'optimized', 8, 20, 4),
-                          ('secp256k1-batch', 'akita', 'optimized', 24, 22, 16)])
+                          ('fibonacci', 'akita', 'optimized', 24, 16, 4000),
+                          ('sha2-chain', 'akita', 'optimized', 24, 16, 16),
+                          ('sha3-chain', 'akita', 'optimized', 24, 16, 12),
+                          ('btreemap', 'akita', 'optimized', 24, 16, 32),
+                          ('fibonacci', 'akita', 'optimized', 24, 18, 16000),
+                          ('sha2-chain', 'akita', 'optimized', 24, 18, 64),
+                          ('sha3-chain', 'akita', 'optimized', 24, 18, 48),
+                          ('btreemap', 'akita', 'optimized', 24, 18, 128),
+                          ('secp256k1-batch', 'akita', 'optimized', 24, 18, 1),
+                          ('fibonacci', 'akita', 'optimized', 24, 20, 64000),
+                          ('sha2-chain', 'akita', 'optimized', 24, 20, 256),
+                          ('sha3-chain', 'akita', 'optimized', 24, 20, 192),
+                          ('btreemap', 'akita', 'optimized', 24, 20, 512),
+                          ('secp256k1-batch', 'akita', 'optimized', 24, 20, 4),
+                          ('fibonacci', 'akita', 'optimized', 24, 22, 250000),
+                          ('sha2-chain', 'akita', 'optimized', 24, 22, 1024),
+                          ('sha3-chain', 'akita', 'optimized', 24, 22, 768),
+                          ('btreemap', 'akita', 'optimized', 24, 22, 2048),
+                          ('secp256k1-batch', 'akita', 'optimized', 24, 22, 16),
+                          ('fibonacci', 'akita', 'optimized', 24, 24, 1000000),
+                          ('sha2-chain', 'akita', 'optimized', 24, 24, 4096),
+                          ('sha3-chain', 'akita', 'optimized', 24, 24, 3072),
+                          ('btreemap', 'akita', 'optimized', 24, 24, 8192),
+                          ('secp256k1-batch', 'akita', 'optimized', 24, 24, 64),
+                          ('sha2-chain', 'akita', 'optimized', 24, 27, 32768),
+                          ('sha2-chain', 'dory', 'optimized', 24, 22, 1024),
+                          ('btreemap', 'dory', 'optimized', 24, 22, 2048)])
         _, baseline = bench.config_cases(bench.DEFAULT_CONFIG.with_name('pr-baseline.json'), 'pr')
         self.assertEqual([case['id'] for case in baseline], [
             'fibonacci-akita-c1-s18-n16000-v1', 'sha2-chain-akita-c8-s20-n256-v1',
@@ -324,6 +340,12 @@ path.write_text(json.dumps(dict(workload='fibonacci', pcs='dory', backend='optim
             self.assertEqual({case['physical_cores'] for case in supported}, {1, 8, 24})
             self.assertEqual({case['pcs'] for case in supported}, {'dory', 'akita'})
         self.assertGreater(config['tiers']['nightly']['repetitions'], config['tiers']['main']['repetitions'])
+        self.assertEqual([(c['id'], c['pcs'], c['physical_cores'], c['scale_log2'],
+                           c['input']['parameters']['operations'])
+                          for c in config['tiers']['nightly']['cases'] if c['scale_log2'] in (28, 30)],
+                         [('fibonacci-akita-c24-s28-n16000000-v1', 'akita', 24, 28, 16000000),
+                          ('fibonacci-dory-c24-s28-n16000000-v1', 'dory', 24, 28, 16000000),
+                          ('fibonacci-akita-c24-s30-n64000000-v1', 'akita', 24, 30, 64000000)])
 
 
 class BuildCacheTests(unittest.TestCase):
