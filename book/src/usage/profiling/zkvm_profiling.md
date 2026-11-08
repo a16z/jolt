@@ -58,19 +58,27 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 attribution is meaningful relatively — while `optimized` is the performance
 tier, slotting into the same instrumented seams.
 
+`profile --backend optimized --streaming instruction-input` opts into the
+stage-3 instruction-input streaming kernel, for either Dory or Akita. The
+`--streaming` option accepts comma-separated family names. Early rounds
+recompute from the resident trace until the dense tables fit a fixed 4 GiB
+cap; the full trace remains resident. This is not a process-memory cap, and
+streaming can use more memory than eager kernels on small or padded traces.
+The option cannot be combined with `--memory-budget`: the budget checks
+price only eager kernels, not a streaming selection.
+
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
 The profile reserves bytes against it in this order and exits with an error
 at the first reservation that does not fit:
 
 1. After tracing, before PCS setup: the input, the trace output's buffers
-   other than the trace rows, the program and program preprocessing buffers,
-   all at capacity, and the public-I/O clone's request at the device buffers'
-   lengths.
+   other than the trace buffers that step 2 reserves, the program and program
+   preprocessing buffers, all at capacity, and the public-I/O clone's request
+   at the device buffers' lengths.
 2. Before PCS setup: the optimized prover's known eager reservation, which
-   is the trace buffer at its reserved capacity plus the
-   largest stage-1–5 envelope over the trace's rows before its constant
-   padding suffix.
+   is the trace buffer at its reserved capacity plus the largest stage-1–5
+   envelope over the trace's rows before its constant padding suffix.
 3. Under Akita, before the setup allocates its one-hot backend: the setup's
    flat public matrix.
 

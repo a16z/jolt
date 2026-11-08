@@ -22,7 +22,7 @@ use crate::JoltBackend;
 /// The streaming kernel families a backend installs in place of its default
 /// kernels ([`JoltBackend::with_streaming`]). A flag switches every slot of
 /// its family together with the cross-stage state those slots share, so every
-/// value is a valid selection; [`Self::NONE`] keeps every default kernel.
+/// value is a valid selection; the default keeps every default kernel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StreamingFamilies {
     /// The Spartan outer remainder (stage 1); its uni-skip carry is the
@@ -30,13 +30,6 @@ pub struct StreamingFamilies {
     pub spartan: bool,
     /// Stage 3's instruction input virtualization (no cross-stage state).
     pub instruction_input: bool,
-}
-
-impl StreamingFamilies {
-    pub const NONE: Self = Self {
-        spartan: false,
-        instruction_input: false,
-    };
 }
 
 impl<F, PCS> JoltBackend<F, PCS>

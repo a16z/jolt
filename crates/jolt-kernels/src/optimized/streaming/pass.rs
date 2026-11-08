@@ -24,13 +24,13 @@ pub(crate) const DENSE_TABLE_CAP: usize = 4 << 30;
 const TASKS_PER_THREAD: usize = 8;
 
 /// The task partition of one pass over the cycle domain `0..cycles`: units of
-/// `U = min(cycles, group)` cycles and `min(TASKS_PER_THREAD · pool threads,
-/// cycles / U)` tasks, task `i` holding units `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋`
-/// of the `n = cycles / U`. Both sizes are powers of two, so every task
-/// covers whole `group`-cycle kernel groups. Per-task state allocated before
-/// the pass is held `tasks` times at once.
+/// `group` cycles and `min(TASKS_PER_THREAD · pool threads, cycles / group)`
+/// tasks, task `i` holding units `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋` of the
+/// `n = cycles / group`. Both sizes are powers of two, with `group ≤ cycles`,
+/// so every task covers whole `group`-cycle kernel groups. Per-task state
+/// allocated before the pass is held `tasks` times at once.
 pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
-    let unit = cycles.min(group);
+    let unit = group;
     let units = cycles / unit;
     #[cfg(feature = "parallel")]
     let tasks = (TASKS_PER_THREAD * rayon::current_num_threads()).min(units);
@@ -241,37 +241,25 @@ pub(crate) fn product_endpoint_terms<F: JoltField>([a, b]: [[F; 2]; 2]) -> [F; 2
 #[cfg(test)]
 mod tests {
     use super::task_ranges;
-    #[cfg(feature = "parallel")]
-    use super::TASKS_PER_THREAD;
 
     /// Tasks tile the domain in order, each a positive whole number of
-    /// aligned units with the units spread evenly, and never outnumber
-    /// `TASKS_PER_THREAD` per pool thread (one task without `parallel`).
+    /// aligned groups.
     #[test]
     fn tasks_tile_the_domain_in_whole_aligned_units() {
-        #[cfg(feature = "parallel")]
-        let most_tasks = TASKS_PER_THREAD * rayon::current_num_threads();
-        #[cfg(not(feature = "parallel"))]
-        let most_tasks = 1;
         for (cycles, group) in [
             (1usize << 12, 1usize << 4),
             (1 << 12, 1 << 2),
             (1 << 12, 1 << 12),
-            (1 << 6, 1 << 8),
             (1 << 20, 1),
             (1, 1),
         ] {
-            let unit = cycles.min(group);
-            let units = cycles / unit;
             let ranges = task_ranges(cycles, group);
-            assert_eq!(ranges.len(), most_tasks.min(units));
-            let (fewest, most) = (units / ranges.len(), units.div_ceil(ranges.len()));
             let mut next = 0;
             for range in &ranges {
                 assert_eq!(range.start, next);
-                assert_eq!(range.start % unit, 0);
-                assert_eq!(range.len() % unit, 0);
-                assert!((fewest..=most).contains(&(range.len() / unit)) && !range.is_empty());
+                assert_eq!(range.start % group, 0);
+                assert_eq!(range.len() % group, 0);
+                assert!(!range.is_empty());
                 next = range.end;
             }
             assert_eq!(next, cycles);

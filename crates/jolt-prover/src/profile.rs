@@ -52,11 +52,12 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 use jolt_field::JoltField;
-// Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_host::{GuestElf, JoltProgramSource, Program};
+// Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
+use jolt_kernels::optimized::StreamingFamilies;
 use jolt_profiling::summary::{finalize_trace, ProfileSummary, SummaryContext};
 use jolt_profiling::{
     format_memory_size, report_stage_boundaries, setup_tracing_with_trace_path, PeakMemory,
@@ -319,6 +320,13 @@ pub struct ProfileArgs {
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
 
+    /// Comma-separated streaming kernel families: instruction-input. Requires
+    /// --backend optimized. Recomputes early rounds from resident trace rows;
+    /// the fixed table cap is not a process-memory limit. Cannot be combined
+    /// with --memory-budget: its reservations price only eager kernels.
+    #[clap(long, value_parser = parse_streaming_families, conflicts_with = "memory_budget")]
+    pub streaming: Option<StreamingFamilies>,
+
     /// Prebuilt guest ELF; bypasses guest compilation in this process.
     #[clap(long)]
     pub guest_elf: Option<PathBuf>,
@@ -345,9 +353,8 @@ pub struct ProfileArgs {
     /// and the optimized prover's named eager tables. Under Akita it also
     /// reserves the one-hot setup's flat public matrix before allocating it.
     /// Under Akita every budget fails for multi-chunk or field-inline setups,
-    /// which the matrix check does not
-    /// price. Passing does not mean the whole proof fits, and the budget does
-    /// not cap process memory.
+    /// which the matrix check does not price. Passing does not mean the whole
+    /// proof fits, and the budget does not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -366,6 +373,21 @@ fn parse_memory_budget(value: &str) -> StdResult<MemoryBudget, String> {
         .ok_or_else(|| {
             format!("expected bytes with an optional KiB, MiB, GiB or TiB suffix, got {value:?}")
         })
+}
+
+fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String> {
+    let mut families = StreamingFamilies::default();
+    for family in value.split(',') {
+        match family {
+            "instruction-input" => families.instruction_input = true,
+            _ => {
+                return Err(format!(
+                    "unknown streaming family {family:?}; expected instruction-input"
+                ))
+            }
+        }
+    }
+    Ok(families)
 }
 
 impl ProfileArgs {
@@ -496,6 +518,8 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// ([`ProverError::MemoryBudgetExceeded`](crate::ProverError::MemoryBudgetExceeded)),
 /// and, under Akita, a PCS setup failure, such as a budgeted setup shape the
 /// matrix limit does not price.
+/// Streaming selections require the optimized backend and cannot be combined
+/// with a memory budget, whose reservations price only eager kernels.
 ///
 /// # Panics
 ///
@@ -505,6 +529,14 @@ type ProfileResult<T> = StdResult<T, Box<dyn Error + Send + Sync>>;
 /// subscriber-installing format (the global tracing subscriber can only be
 /// set once).
 pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
+    if args.streaming.is_some() {
+        if args.memory_budget.is_some() {
+            return Err("--streaming cannot be combined with --memory-budget: streaming kernels are not priced".into());
+        }
+        if args.backend != BackendKind::Optimized {
+            return Err("--streaming requires --backend optimized".into());
+        }
+    }
     assert!(
         args.memory_budget.is_none() || args.backend == BackendKind::Optimized,
         "--memory-budget checks the optimized prover's reservation; pass --backend optimized"
@@ -864,11 +896,9 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
         &jolt_program,
         program_preprocessing,
         trace_output,
-        backend,
+        args,
         e2e_start,
         memory_budget,
-        #[cfg(feature = "akita")]
-        args.akita_chunk_profile,
     )?;
     let (duration, proof_size) = (run.duration, run.proof_size);
 
@@ -980,7 +1010,7 @@ fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
-    backend: BackendKind,
+    args: &ProfileArgs,
     e2e_start: Instant,
     memory_budget: Option<MemoryBudget>,
 ) -> ProfileResult<ProvenRun> {
@@ -1026,9 +1056,10 @@ fn prove_workload(
         JoltVmWitnessInputs::new(jolt_program, &program_preprocessing, trace_output),
     ));
 
-    let backend = match backend {
+    let backend = match args.backend {
         BackendKind::Reference => JoltBackend::<Fr, DoryScheme>::reference(),
-        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized(),
+        BackendKind::Optimized => JoltBackend::<Fr, DoryScheme>::optimized()
+            .with_streaming(args.streaming.unwrap_or_default()),
     };
 
     // --- The measured window: the full modular prove (witness
@@ -1093,21 +1124,22 @@ fn prove_workload(
     jolt_program: &Arc<JoltProgram>,
     program_preprocessing: JoltProgramPreprocessing,
     trace_output: TraceOutput,
-    backend: BackendKind,
+    args: &ProfileArgs,
     e2e_start: Instant,
     memory_budget: Option<MemoryBudget>,
-    chunk_profile: AkitaChunkProfile,
 ) -> ProfileResult<ProvenRun> {
     use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
-    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_akita::{AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
 
-    let backend = match backend {
+    let backend = match args.backend {
         BackendKind::Reference => JoltBackend::reference(),
-        BackendKind::Optimized => JoltBackend::optimized(),
+        BackendKind::Optimized => {
+            JoltBackend::optimized().with_streaming(args.streaming.unwrap_or_default())
+        }
     };
 
     let memory_layout = program_preprocessing.memory_layout.clone();
@@ -1121,7 +1153,7 @@ fn prove_workload(
         max_trace_length,
     )
     .expect("derive config");
-    config.akita_chunk_profile = chunk_profile;
+    config.akita_chunk_profile = args.akita_chunk_profile;
     let budget = memory_budget
         .map(|budget| {
             reserve_profile_owners::<AkitaField>(
