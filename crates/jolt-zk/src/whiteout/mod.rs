@@ -11,9 +11,11 @@
 //! statement ([`ResponseStatement`]), which a [`ResponseProver`] proves.
 //! Akita's lattice response prover implements it.
 //!
-//! No zero-knowledge mode selects this yet. The verifier-side pieces build
-//! under the `whiteout` feature; the prover side (the Σ prover, the samplers,
-//! the witness alphabet check) additionally needs `whiteout-prover`.
+//! jolt-akita and jolt-prover assemble them into the Whiteout mode. The
+//! verifier-side pieces build under the `whiteout` feature; the prover side
+//! (the Σ prover, the samplers, the witness alphabet check) additionally
+//! needs `whiteout-prover`, which outside this crate only jolt-akita's
+//! `zk-prover` enables.
 //! Randomness comes from a caller-supplied cryptographic RNG; the prover's
 //! secret-dependent work runs in `jolt-dit`'s data-independent-timing pool.
 
