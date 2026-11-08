@@ -567,6 +567,14 @@ impl<F: JoltField> RoundChallenges<F> {
         &self.challenges
     }
 
+    /// The bound-round progress these challenges record.
+    pub(crate) fn progress(&self) -> RoundProgress {
+        RoundProgress {
+            bound: self.challenges.len(),
+            total: self.total,
+        }
+    }
+
     /// Gate for every output-claim / derived-table entry point.
     pub(crate) fn require_complete(&self) -> Result<(), SumcheckKernelError<F>> {
         if self.challenges.len() == self.total {

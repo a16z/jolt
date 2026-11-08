@@ -9,11 +9,16 @@
 //! against the verifier.
 
 mod flags;
+mod native;
+mod streaming;
+
 use flags::PackedFlags;
+use native::NativePairSums;
+pub use streaming::StreamingInstructionInput;
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId};
-use jolt_field::{Accumulator as _, JoltField, WithAccumulator};
+use jolt_field::{Accumulator as _, JoltField};
 use jolt_poly::{bind_prefix_in_place, BindingOrder, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_riscv::InstructionFlags;
 use jolt_sumcheck::{ProveRounds, SumcheckError};
@@ -187,14 +192,10 @@ fn row_extraction_error<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
     }
 }
 
-#[inline]
-fn ext_u64(even: u64, odd: u64) -> (i128, i128) {
-    (i128::from(even), i128::from(odd) - i128::from(even))
-}
-
-#[inline]
-fn ext_flag(even: bool, odd: bool) -> (i64, i64) {
-    (i64::from(even), i64::from(odd) - i64::from(even))
+fn operand_product<F: JoltField>(values: &[F; NUM_TABLES], gamma: F) -> F {
+    let right = values[4] * values[5] + values[6] * values[7] + values[8] * values[9];
+    let left = values[0] * values[1] + values[2] * values[3];
+    right + gamma * left
 }
 
 impl<F: JoltField> OptimizedInstructionInputKernel<F> {
@@ -232,7 +233,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         rows: &BundleStore<InstructionInputRow>,
     ) -> Result<[F; TERMS], WitnessError> {
         const { assert!(TERMS == 2 || TERMS == 3) };
-        type Accumulator<F> = <F as WithAccumulator>::SignedProductAccumulator;
         let access = rows.access();
         let e_out = self.gruen.e_out_current();
         let e_in = self.gruen.e_in_current();
@@ -242,75 +242,13 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         let outer_len = pairs.div_ceil(in_len);
 
         let block = |x_out: usize| -> Result<[F; TERMS], WitnessError> {
-            let mut right_acc = [Accumulator::<F>::default(); TERMS];
-            let mut right_high_acc = [Accumulator::<F>::default(); TERMS];
-            let mut left_acc = [Accumulator::<F>::default(); TERMS];
+            let mut sums = NativePairSums::new();
             let inner_len = (pairs - x_out * in_len).min(in_len);
             for (x_in, &e_in) in e_in[..inner_len].iter().enumerate() {
                 let y = x_out * in_len + x_in;
-                let even = access.row(2 * y)?;
-                let odd = access.row(2 * y + 1)?;
-                let (is_rs1, is_rs1_m) = ext_flag(even.is_rs1.0, odd.is_rs1.0);
-                let (is_pc, is_pc_m) = ext_flag(even.is_pc.0, odd.is_pc.0);
-                let (is_rs2, is_rs2_m) = ext_flag(even.is_rs2.0, odd.is_rs2.0);
-                let (is_imm, is_imm_m) = ext_flag(even.is_imm.0, odd.is_imm.0);
-                let (is_rd, is_rd_m) = ext_flag(even.is_rd.0, odd.is_rd.0);
-                let (rs1, rs1_m) = ext_u64(even.rs1_value.0, odd.rs1_value.0);
-                let (upc, upc_m) = ext_u64(even.unexpanded_pc.0, odd.unexpanded_pc.0);
-                let (rs2, rs2_m) = ext_u64(even.rs2_value.0, odd.rs2_value.0);
-                let (rd, rd_m) = ext_u64(even.rd_write_value.0, odd.rd_write_value.0);
-                let split = |imm: i128| (imm >> 64, i128::from(imm as u64));
-                let (imm_even_high, imm_even_low) = split(even.imm.0);
-                let (imm_odd_high, imm_odd_low) = split(odd.imm.0);
-                let left = [
-                    i128::from(is_rs1) * rs1 + i128::from(is_pc) * upc,
-                    i128::from(is_rs1_m) * rs1_m + i128::from(is_pc_m) * upc_m,
-                ];
-                let right = [
-                    i128::from(is_rs2) * rs2
-                        + i128::from(is_imm) * imm_even_low
-                        + i128::from(is_rd) * rd,
-                    i128::from(is_rs2_m) * rs2_m
-                        + i128::from(is_imm_m) * (imm_odd_low - imm_even_low)
-                        + i128::from(is_rd_m) * rd_m,
-                ];
-                let right_high = [
-                    i128::from(is_imm) * imm_even_high,
-                    i128::from(is_imm_m) * (imm_odd_high - imm_even_high),
-                ];
-                // Flag differences are in {-1, 0, 1}; word and split-immediate
-                // differences have magnitude < 2^64. Each sum fits in i128.
-                for (i, right) in right.into_iter().enumerate() {
-                    right_acc[i].fmadd_i128(e_in, right);
-                    if right_high[i] != 0 {
-                        right_high_acc[i].fmadd_i128(e_in, right_high[i]);
-                    }
-                    left_acc[i].fmadd_i128(e_in, left[i]);
-                }
-                if TERMS == 3 {
-                    let left = i128::from(odd.is_rs1.0) * i128::from(odd.rs1_value.0)
-                        + i128::from(odd.is_pc.0) * i128::from(odd.unexpanded_pc.0);
-                    let right = i128::from(odd.is_rs2.0) * i128::from(odd.rs2_value.0)
-                        + i128::from(odd.is_imm.0) * imm_odd_low
-                        + i128::from(odd.is_rd.0) * i128::from(odd.rd_write_value.0);
-                    let right_high = i128::from(odd.is_imm.0) * imm_odd_high;
-                    right_acc[2].fmadd_i128(e_in, right);
-                    if right_high != 0 {
-                        right_high_acc[2].fmadd_i128(e_in, right_high);
-                    }
-                    left_acc[2].fmadd_i128(e_in, left);
-                }
+                sums.add(&access.row(2 * y)?, &access.row(2 * y + 1)?, e_in);
             }
-            let e_out = e_out[x_out];
-            let mut out = [F::zero(); TERMS];
-            for (slot, ((right, right_high), left)) in out
-                .iter_mut()
-                .zip(right_acc.into_iter().zip(right_high_acc).zip(left_acc))
-            {
-                let right = right.reduce() + right_high.reduce().mul_pow_2(64);
-                *slot = e_out * (right + gamma * left.reduce());
-            }
-            Ok(out)
+            Ok(sums.finish(e_out[x_out], gamma))
         };
         let merge = |mut a: [F; TERMS], b: [F; TERMS]| {
             for (a, b) in a.iter_mut().zip(&b) {
@@ -334,12 +272,6 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             }
             Ok(folded)
         }
-    }
-
-    fn operand_product(&self, values: &[F; NUM_TABLES]) -> F {
-        let right = values[4] * values[5] + values[6] * values[7] + values[8] * values[9];
-        let left = values[0] * values[1] + values[2] * values[3];
-        right + self.gamma * left
     }
 
     /// Sum the quadratic's constant and leading coefficients directly. The
@@ -381,7 +313,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
             },
             |a, b| [a[0] + b[0], a[1] + b[1]],
         );
-        let suffix = self.gruen.suffix_weight(pairs) * self.operand_product(&self.tail);
+        let suffix = self.gruen.suffix_weight(pairs) * operand_product(&self.tail, self.gamma);
         self.gruen.checked_cubic(
             coefficients[0] + suffix,
             coefficients[1],
@@ -395,7 +327,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
                         F::Accumulator::default,
                         |sum, row, _x_in, e_in| {
                             let values = core::array::from_fn(|i| pair_at(i, row).1);
-                            sum.fmadd(e_in, self.operand_product(&values));
+                            sum.fmadd(e_in, operand_product(&values, self.gamma));
                         },
                         |_x_out, e_out, sum| e_out * sum.reduce(),
                         |a, b| a + b,
@@ -412,7 +344,7 @@ impl<F: JoltField> OptimizedInstructionInputKernel<F> {
         match &self.state {
             InputState::Native(rows) => {
                 let suffix = self.gruen.suffix_weight(self.prefix_len.div_ceil(2))
-                    * self.operand_product(&self.tail);
+                    * operand_product(&self.tail, self.gamma);
                 if self.gruen.current_linear_evals().1.is_zero() {
                     let [q_zero, q_leading, q_one] = self
                         .native_q_terms::<3>(rows)
