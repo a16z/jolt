@@ -303,6 +303,13 @@
           "format": "uint32",
           "minimum": 0
         },
+        "streaming_families": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "timestamp_unix_secs": {
           "type": "integer",
           "format": "uint64",
