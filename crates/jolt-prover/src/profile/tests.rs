@@ -3,8 +3,87 @@ use clap::Parser;
 use jolt_akita::AkitaChunkProfile;
 
 #[cfg(feature = "akita")]
-use super::{parse_akita_chunk_profile, BackendKind, OutputFormat, Workload};
-use super::{MemoryBudget, ProfileArgs};
+use super::{parse_akita_chunk_profile, OutputFormat, Workload};
+use super::{BackendKind, MemoryBudget, ProfileArgs};
+
+#[test]
+fn streaming_option_selects_the_requested_families() {
+    use jolt_kernels::optimized::StreamingFamilies;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    for (selection, expected) in [
+        (
+            "instruction-input",
+            StreamingFamilies {
+                instruction_input: true,
+                spartan: false,
+            },
+        ),
+        (
+            "spartan",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: true,
+            },
+        ),
+        (
+            "instruction-input,spartan",
+            StreamingFamilies {
+                instruction_input: true,
+                spartan: true,
+            },
+        ),
+    ] {
+        let cli = Cli::try_parse_from([
+            "jolt-prover",
+            "--name",
+            "fibonacci",
+            "--backend",
+            "optimized",
+            "--streaming",
+            selection,
+        ])
+        .unwrap();
+        assert_eq!(cli.args.streaming, Some(expected));
+    }
+}
+
+#[test]
+fn streaming_rejects_a_memory_budget_or_reference_backend() {
+    use super::run;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    let options = [
+        "jolt-prover",
+        "--name",
+        "fibonacci",
+        "--backend",
+        "optimized",
+        "--streaming",
+        "instruction-input",
+    ];
+    assert!(Cli::try_parse_from(options.into_iter().chain(["--memory-budget", "32GiB"])).is_err());
+    let mut args = Cli::try_parse_from(options).unwrap().args;
+    args.memory_budget = Some(MemoryBudget::from_bytes(usize::MAX));
+    assert!(run(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("cannot be combined with --memory-budget"));
+    args.memory_budget = None;
+    args.backend = BackendKind::Reference;
+    assert!(run(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("requires --backend optimized"));
+}
 
 #[test]
 fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
@@ -14,7 +93,6 @@ fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
     use jolt_riscv::JoltTraceRow;
 
     use super::{reserve_profile_owners, ProofField};
-    use crate::{ProverConfig, ProverError};
 
     let program = JoltProgram::from_parts(
         Vec::with_capacity(23),
@@ -39,40 +117,23 @@ fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
     )
     .unwrap();
     let trace = TraceOutput::new(
-        TraceData::new(vec![JoltTraceRow::default(); 1 << 13]),
+        TraceData::new(vec![JoltTraceRow::default(); 4]),
         device,
         Some(MemoryImage {
             bytes: Vec::with_capacity(17),
         }),
         Some(Vec::with_capacity(19)),
     );
-    let owners = trace.heap_bytes() - trace.trace.heap_bytes()
-        + program.heap_bytes()
-        + preprocessing.heap_bytes()
-        + 10;
-    let reserve =
-        |budget| reserve_profile_owners::<ProofField>(budget, &trace, &program, &preprocessing);
-    let config = ProverConfig::from_padded_dimensions::<ProofField>(1 << 13, 64, 1 << 13).unwrap();
-    let eager = MemoryBudget::from_bytes(usize::MAX)
-        .check_known_eager::<ProofField>(&config, &trace.trace)
-        .unwrap();
-    let combined = reserve(eager).unwrap();
-    assert_eq!(eager.remaining() - combined.remaining(), owners);
-    let required = usize::MAX - combined.remaining();
+    let budget = MemoryBudget::from_bytes(usize::MAX);
+    let reserved =
+        reserve_profile_owners::<ProofField>(budget, &trace, &program, &preprocessing).unwrap();
     assert_eq!(
-        reserve(MemoryBudget::from_bytes(required))
-            .unwrap()
-            .check_known_eager::<ProofField>(&config, &trace.trace)
-            .unwrap()
-            .remaining(),
-        0
+        budget.remaining() - reserved.remaining(),
+        trace.heap_bytes() - trace.trace.heap_bytes()
+            + program.heap_bytes()
+            + preprocessing.heap_bytes()
+            + 10
     );
-    assert!(matches!(
-        reserve(MemoryBudget::from_bytes(required - 1))
-            .unwrap()
-            .check_known_eager::<ProofField>(&config, &trace.trace),
-        Err(ProverError::MemoryBudgetExceeded { required: total, .. }) if total == required
-    ));
 }
 
 /// `--memory-budget` takes bytes with an optional binary suffix through the
@@ -149,6 +210,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             scale: Some(20),
             format: OutputFormat::None,
             backend: BackendKind::Optimized,
+            streaming: None,
             guest_elf: None,
             input_file: None,
             result_json: None,

@@ -4,13 +4,12 @@
 //! `eq(r_1..r_j, ·)`-scaled Lagrange weights (LowToHigh binding gives
 //! `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`). The first round whose tables fit
 //! fills them in the pass that yields its endpoints, and the default kernel's
-//! dense rounds bind them from there. The closing opening walk weighs rows
-//! with split eq tables instead of a table over every cycle.
+//! dense rounds bind them from there.
 
 use std::ops::Range;
 
 use jolt_field::JoltField;
-use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckError;
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::stage1::outer_remainder::OuterRemainder;
@@ -32,12 +31,6 @@ fn remainder_len(log_t: usize) -> usize {
     1usize << SpartanOuterDimensions::rv64(log_t).remainder_rounds()
 }
 
-fn tables_peak_bytes<F: JoltField>(len: usize) -> usize {
-    len.saturating_mul(2)
-        .saturating_add(Polynomial::<F>::in_place_shrink_len(len))
-        .saturating_mul(size_of::<F>())
-}
-
 /// The streaming stage-1 remainder slot.
 pub struct StreamingOuterRemainder;
 
@@ -45,21 +38,6 @@ pub struct StreamingOuterRemainder;
 /// whose tables fit `cap` bytes, or the round count when none does.
 fn crossover_round<F: JoltField>(log_t: usize, cap: usize) -> usize {
     dense_crossover((4 * size_of::<F>()) << log_t, cap, log_t + 1)
-}
-
-impl StreamingOuterRemainder {
-    /// Peak bytes over `2^log_t` cycles: `Az` and `Bz` at the crossover round
-    /// `c`'s `2T / 2^c` entries each ([`tables_peak_bytes`]) plus that pass's
-    /// `2^(c−1)` weight pairs of `DOMAIN` entries. Not counted: per-task pass
-    /// state (a few field elements per task); the closing walk's split eq
-    /// tables (about `2·2^(log_t/2)` entries); the row store; the uni-skip
-    /// carry; the split-eq tables; the field-inline rows.
-    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
-        let crossover = crossover_round::<F>(log_t, DENSE_TABLE_CAP);
-        let weights =
-            (1usize << crossover.saturating_sub(1)).saturating_mul(2 * DOMAIN * size_of::<F>());
-        tables_peak_bytes::<F>(remainder_len(log_t) >> crossover).saturating_add(weights)
-    }
 }
 
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for StreamingOuterRemainder {
