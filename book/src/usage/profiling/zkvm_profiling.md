@@ -60,8 +60,8 @@ tier, slotting into the same instrumented seams.
 
 `profile --backend optimized --streaming instruction-input` opts into the
 stage-3 instruction-input streaming kernel, for either Dory or Akita. The
-`spartan` family selects the stage-1 outer remainder. Combine families with
-`--streaming instruction-input,spartan`. Early rounds
+`spartan` family selects the stage-1 outer and stage-2 product remainders.
+Combine families with `--streaming instruction-input,spartan`. Early rounds
 recompute from the resident trace until the dense tables fit a fixed 4 GiB
 cap; the full trace remains resident. This is not a process-memory cap, and
 streaming can use more memory than eager kernels on small or padded traces.
