@@ -177,6 +177,51 @@ fn memory_budget_parses_bytes_and_binary_suffixes() {
     }
 }
 
+#[test]
+fn streaming_profiles_have_distinct_artifact_and_csv_names() {
+    use super::PROTOCOL_SUFFIX;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    for (selection, suffix) in [
+        (None, ""),
+        (Some("instruction-input"), "_streaming_instruction_input"),
+        (Some("spartan"), "_streaming_spartan"),
+        (
+            Some("instruction-input,spartan"),
+            "_streaming_instruction_input_spartan",
+        ),
+        (
+            Some("spartan,instruction-input"),
+            "_streaming_instruction_input_spartan",
+        ),
+    ] {
+        let mut options = vec![
+            "jolt-prover",
+            "--name",
+            "fibonacci",
+            "--backend",
+            "optimized",
+        ];
+        if let Some(selection) = selection {
+            options.extend(["--streaming", selection]);
+        }
+        let args = Cli::try_parse_from(options).unwrap().args;
+        assert_eq!(args.workload_name(), format!("fibonacci{suffix}"));
+        assert_eq!(
+            args.benchmark_name(),
+            format!("fibonacci{PROTOCOL_SUFFIX}{suffix}")
+        );
+        assert_eq!(
+            args.trace_name(20),
+            format!("modular_fibonacci{PROTOCOL_SUFFIX}_20_optimized{suffix}")
+        );
+    }
+}
+
 #[cfg(feature = "akita")]
 #[test]
 fn chunk_profiles_have_distinct_artifact_and_csv_names() {
