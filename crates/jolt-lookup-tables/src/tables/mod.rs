@@ -192,6 +192,11 @@ pub enum LookupTableKind<const XLEN: usize> {
     AddressOffsetW(AddressOffsetTable<XLEN, 4>),
     VirtualXORROT2(VirtualXORROTTable<XLEN, 2>),
     VirtualXORROT61(VirtualXORROTTable<XLEN, 61>),
+    VirtualXORROT3(VirtualXORROTTable<XLEN, 3>),
+    VirtualXORROT8(VirtualXORROTTable<XLEN, 8>),
+    VirtualXORROT9(VirtualXORROTTable<XLEN, 9>),
+    VirtualXORROT19(VirtualXORROTTable<XLEN, 19>),
+    VirtualXORROT20(VirtualXORROTTable<XLEN, 20>),
 }
 
 macro_rules! dispatch {
@@ -232,6 +237,11 @@ macro_rules! dispatch {
             Self::VirtualXORROT63($t) => $expr,
             Self::VirtualXORROT2($t) => $expr,
             Self::VirtualXORROT61($t) => $expr,
+            Self::VirtualXORROT3($t) => $expr,
+            Self::VirtualXORROT8($t) => $expr,
+            Self::VirtualXORROT9($t) => $expr,
+            Self::VirtualXORROT19($t) => $expr,
+            Self::VirtualXORROT20($t) => $expr,
             Self::VirtualXORROTW16($t) => $expr,
             Self::VirtualXORROTW12($t) => $expr,
             Self::VirtualXORROTW8($t) => $expr,
@@ -349,7 +359,7 @@ mod tests {
 
     #[test]
     fn proof_format_indices_are_stable() {
-        const EXPECTED: [&str; 57] = [
+        const EXPECTED: [&str; 62] = [
             "RangeCheck",
             "RangeCheckAligned",
             "And",
@@ -407,6 +417,11 @@ mod tests {
             "AddressOffsetW",
             "VirtualXORROT2",
             "VirtualXORROT61",
+            "VirtualXORROT3",
+            "VirtualXORROT8",
+            "VirtualXORROT9",
+            "VirtualXORROT19",
+            "VirtualXORROT20",
         ];
 
         let actual = LookupTableKind::<64>::iter()

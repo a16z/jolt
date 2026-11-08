@@ -90,8 +90,8 @@ mod sequence {
     #[test]
     fn rows_include_register_resets() {
         for (funct3, expected) in [
-            (crate::KECCAK256_FUNCT3, 3009),
-            (crate::KECCAK256_ABSORB_PERMUTE_FUNCT3, 3043),
+            (crate::KECCAK256_FUNCT3, 2889),
+            (crate::KECCAK256_ABSORB_PERMUTE_FUNCT3, 2923),
         ] {
             let instruction = InlineTestHarness::create_default_instruction(
                 crate::INLINE_OPCODE,

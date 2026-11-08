@@ -194,6 +194,11 @@ macro_rules! for_each_instruction_kind {
                 VirtualStoreW => StoreW => "jolt.virtual.storew",
                 VirtualXORROT2 => VirtualXorRot2 => "jolt.virtual.xorrot2",
                 VirtualXORROT61 => VirtualXorRot61 => "jolt.virtual.xorrot61",
+                VirtualXORROT3 => VirtualXorRot3 => "jolt.virtual.xorrot3",
+                VirtualXORROT8 => VirtualXorRot8 => "jolt.virtual.xorrot8",
+                VirtualXORROT9 => VirtualXorRot9 => "jolt.virtual.xorrot9",
+                VirtualXORROT19 => VirtualXorRot19 => "jolt.virtual.xorrot19",
+                VirtualXORROT20 => VirtualXorRot20 => "jolt.virtual.xorrot20",
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => "field.add",
                 #[cfg(feature = "field-inline")]
@@ -321,6 +326,11 @@ macro_rules! for_each_jolt_instruction_kind {
                 VirtualStoreW => StoreW => (0x00a7, "jolt.virtual.storew"),
                 VirtualXORROT2 => VirtualXorRot2 => (0x00a8, "jolt.virtual.xorrot2"),
                 VirtualXORROT61 => VirtualXorRot61 => (0x00a9, "jolt.virtual.xorrot61"),
+                VirtualXORROT3 => VirtualXorRot3 => (0x00aa, "jolt.virtual.xorrot3"),
+                VirtualXORROT8 => VirtualXorRot8 => (0x00ab, "jolt.virtual.xorrot8"),
+                VirtualXORROT9 => VirtualXorRot9 => (0x00ac, "jolt.virtual.xorrot9"),
+                VirtualXORROT19 => VirtualXorRot19 => (0x00ad, "jolt.virtual.xorrot19"),
+                VirtualXORROT20 => VirtualXorRot20 => (0x00ae, "jolt.virtual.xorrot20"),
                 #[cfg(feature = "field-inline")]
                 FIELD_ADD => FieldAdd => (0x0100, "field.add"),
                 #[cfg(feature = "field-inline")]

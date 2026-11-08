@@ -195,6 +195,11 @@ pub enum Suffixes {
     AddressOffsetW,
     XorRot2,
     XorRot61,
+    XorRot3,
+    XorRot8,
+    XorRot9,
+    XorRot19,
+    XorRot20,
 }
 
 impl Suffixes {
@@ -261,6 +266,11 @@ impl Suffixes {
             Suffixes::XorRot63 => XorRotSuffix::<63>::suffix_mle(b),
             Suffixes::XorRot2 => XorRotSuffix::<2>::suffix_mle(b),
             Suffixes::XorRot61 => XorRotSuffix::<61>::suffix_mle(b),
+            Suffixes::XorRot3 => XorRotSuffix::<3>::suffix_mle(b),
+            Suffixes::XorRot8 => XorRotSuffix::<8>::suffix_mle(b),
+            Suffixes::XorRot9 => XorRotSuffix::<9>::suffix_mle(b),
+            Suffixes::XorRot19 => XorRotSuffix::<19>::suffix_mle(b),
+            Suffixes::XorRot20 => XorRotSuffix::<20>::suffix_mle(b),
             Suffixes::XorRotW7 => XorRotWSuffix::<7>::suffix_mle(b),
             Suffixes::XorRotW8 => XorRotWSuffix::<8>::suffix_mle(b),
             Suffixes::XorRotW12 => XorRotWSuffix::<12>::suffix_mle(b),
