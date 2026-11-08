@@ -44,16 +44,15 @@ use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
 #[cfg(feature = "akita")]
-use jolt_akita::AkitaChunkProfile;
+use jolt_akita::{AkitaChunkProfile, AkitaField};
 #[cfg(not(feature = "akita"))]
 use jolt_crypto::{Bn254G1, Pedersen};
 #[cfg(not(feature = "akita"))]
 use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
+use jolt_field::JoltField;
 // Keep the inline libraries linked so their host-side registrations reach the tracer.
-#[cfg(all(feature = "field-inline", feature = "akita"))]
-use jolt_akita::AkitaField;
 use jolt_host::{GuestElf, JoltProgramSource, Program};
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
@@ -67,10 +66,10 @@ use jolt_program::execution::{JoltProgram, TraceOutput};
 use jolt_program::preprocess::JoltProgramPreprocessing;
 #[cfg(feature = "field-inline")]
 use jolt_riscv::RV64IMAC_JOLT_FIELD_INLINE;
-#[cfg(all(feature = "field-inline", not(feature = "akita")))]
-type FieldInlineField = Fr;
-#[cfg(all(feature = "field-inline", feature = "akita"))]
-type FieldInlineField = AkitaField;
+#[cfg(not(feature = "akita"))]
+type ProofField = Fr;
+#[cfg(feature = "akita")]
+type ProofField = AkitaField;
 #[cfg(not(feature = "akita"))]
 use jolt_transcript::{Keccak, ProverState, VerifierState};
 use jolt_witness::{JoltVmWitnessConfig, JoltVmWitnessInputs, TraceBackend};
@@ -82,6 +81,7 @@ use crate::JoltBackend;
 use crate::JoltSharedPreprocessing;
 use crate::MemoryBudget;
 use crate::ProverConfig;
+use crate::ProverError;
 
 // Empirically measured RV64IMAC cycles per operation. These values keep
 // current benchmark scales comparable with prior results.
@@ -222,7 +222,7 @@ impl Workload {
 #[cfg(feature = "field-inline")]
 fn eqpoly_inputs() -> Vec<u8> {
     const EQ_PAIRS: [[u64; 2]; 4] = [[3, 5], [7, 2], [11, 13], [1, 9]];
-    jolt_host::field_inline::eqpoly_inputs::<FieldInlineField>(EQ_PAIRS)
+    jolt_host::field_inline::eqpoly_inputs::<ProofField>(EQ_PAIRS)
         .expect("field-ops input encoding")
 }
 
@@ -339,13 +339,13 @@ pub struct ProfileArgs {
     /// Explicit memory budget in bytes: an integer with an optional binary
     /// suffix (KiB, MiB, GiB or TiB; e.g. 32GiB). Requires `--backend
     /// optimized`. The profile reserves against it in turn and returns an
-    /// error at the first reservation that does not fit: the optimized
-    /// prover's known eager reservation, which covers the trace buffers and
-    /// named eager tables only, after tracing and before proving; then, under
-    /// Akita, the rest of the trace output, the program and program
-    /// preprocessing buffers, and the one-hot setup's flat public matrix,
-    /// before PCS setup allocates it. Under Akita every budget fails for
-    /// multi-chunk or field-inline setups, which the matrix check does not
+    /// error at the first reservation that does not fit. After tracing and
+    /// before PCS setup, it reserves the input, the trace output, the program
+    /// and program preprocessing buffers, the public-I/O clone's request,
+    /// and the optimized prover's named eager tables. Under Akita it also
+    /// reserves the one-hot setup's flat public matrix before allocating it.
+    /// Under Akita every budget fails for multi-chunk or field-inline setups,
+    /// which the matrix check does not
     /// price. Passing does not mean the whole proof fits, and the budget does
     /// not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
@@ -779,6 +779,29 @@ fn migrate_legacy_timings_csv(path: &Path) -> Result<()> {
     fs::write(path, migrated)
 }
 
+fn reserve_profile_owners<F: JoltField>(
+    mut budget: MemoryBudget,
+    trace: &TraceOutput,
+    program: &JoltProgram,
+    preprocessing: &JoltProgramPreprocessing,
+) -> StdResult<MemoryBudget, ProverError<F>> {
+    // The eager check owns the trace reservation. The public-I/O clone that
+    // follows PCS setup requests the device buffers' lengths, not capacities.
+    let device = &trace.device;
+    for bytes in [
+        trace.heap_bytes() - trace.trace.heap_bytes(),
+        program.heap_bytes(),
+        preprocessing.heap_bytes(),
+        device.inputs.len(),
+        device.trusted_advice.len(),
+        device.untrusted_advice.len(),
+        device.outputs.len(),
+    ] {
+        budget = budget.reserve::<F>(bytes)?;
+    }
+    Ok(budget)
+}
+
 fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult<()> {
     let workload = args.name;
     let backend = args.backend;
@@ -833,13 +856,17 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
     .expect("program preprocessing");
 
     assert!(!trace_output.device.panic, "benchmark guest panicked");
+    let memory_budget = args
+        .memory_budget
+        .map(|budget| budget.reserve::<ProofField>(input.capacity()))
+        .transpose()?;
     let run = prove_workload(
         &jolt_program,
         program_preprocessing,
         trace_output,
         backend,
         e2e_start,
-        args.memory_budget,
+        memory_budget,
         #[cfg(feature = "akita")]
         args.akita_chunk_profile,
     )?;
@@ -969,6 +996,12 @@ fn prove_workload(
     )
     .expect("derive config");
     if let Some(budget) = memory_budget {
+        let budget = reserve_profile_owners::<Fr>(
+            budget,
+            &trace_output,
+            jolt_program,
+            &program_preprocessing,
+        )?;
         let _ = budget.check_known_eager::<Fr>(&config, &trace_output.trace)?;
     }
     let shared_preprocessing =
@@ -1090,7 +1123,15 @@ fn prove_workload(
     .expect("derive config");
     config.akita_chunk_profile = chunk_profile;
     let budget = memory_budget
-        .map(|budget| budget.check_known_eager::<AkitaField>(&config, &trace_output.trace))
+        .map(|budget| {
+            reserve_profile_owners::<AkitaField>(
+                budget,
+                &trace_output,
+                jolt_program,
+                &program_preprocessing,
+            )?
+            .check_known_eager::<AkitaField>(&config, &trace_output.trace)
+        })
         .transpose()?;
     let schedule_artifacts =
         AkitaScheduleArtifacts::shared_from_default_directory(AkitaChunkProfile::new(8, 2));
@@ -1104,18 +1145,6 @@ fn prove_workload(
     )
     .expect("Akita setup parameters");
     let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
-    // The eager check reserved the trace buffers; the setup matrix stays live
-    // beside them, the rest of the trace output, the program and its
-    // preprocessing. Counts those named buffers only.
-    let budget = budget
-        .map(|budget| {
-            budget.reserve::<AkitaField>(
-                trace_output.heap_bytes() - trace_output.trace.heap_bytes()
-                    + jolt_program.heap_bytes()
-                    + shared.program.heap_bytes(),
-            )
-        })
-        .transpose()?;
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();

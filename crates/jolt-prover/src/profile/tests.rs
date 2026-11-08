@@ -6,6 +6,75 @@ use jolt_akita::AkitaChunkProfile;
 use super::{parse_akita_chunk_profile, BackendKind, OutputFormat, Workload};
 use super::{MemoryBudget, ProfileArgs};
 
+#[test]
+fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
+    use common::jolt_device::JoltDevice;
+    use jolt_program::execution::{JoltProgram, MemoryImage, TraceData, TraceOutput};
+    use jolt_program::preprocess::JoltProgramPreprocessing;
+    use jolt_riscv::JoltTraceRow;
+
+    use super::{reserve_profile_owners, ProofField};
+    use crate::{ProverConfig, ProverError};
+
+    let program = JoltProgram::from_parts(
+        Vec::with_capacity(23),
+        Vec::new(),
+        Vec::with_capacity(31),
+        0,
+        0,
+    );
+    let mut device = JoltDevice::default();
+    device.inputs.reserve_exact(13);
+    device.inputs.extend([1, 2, 3]);
+    device.trusted_advice.extend([4, 5]);
+    device.untrusted_advice.push(6);
+    device.outputs.extend([7, 8, 9, 10]);
+    let preprocessing = JoltProgramPreprocessing::new(
+        Vec::new(),
+        Vec::new(),
+        device.memory_layout.clone(),
+        0,
+        1 << 13,
+        program.profile,
+    )
+    .unwrap();
+    let trace = TraceOutput::new(
+        TraceData::new(vec![JoltTraceRow::default(); 1 << 13]),
+        device,
+        Some(MemoryImage {
+            bytes: Vec::with_capacity(17),
+        }),
+        Some(Vec::with_capacity(19)),
+    );
+    let owners = trace.heap_bytes() - trace.trace.heap_bytes()
+        + program.heap_bytes()
+        + preprocessing.heap_bytes()
+        + 10;
+    let reserve =
+        |budget| reserve_profile_owners::<ProofField>(budget, &trace, &program, &preprocessing);
+    let config = ProverConfig::from_padded_dimensions::<ProofField>(1 << 13, 64, 1 << 13).unwrap();
+    let eager = MemoryBudget::from_bytes(usize::MAX)
+        .check_known_eager::<ProofField>(&config, &trace.trace)
+        .unwrap();
+    let combined = reserve(eager).unwrap();
+    assert_eq!(eager.remaining() - combined.remaining(), owners);
+    let required = usize::MAX - combined.remaining();
+    assert_eq!(
+        reserve(MemoryBudget::from_bytes(required))
+            .unwrap()
+            .check_known_eager::<ProofField>(&config, &trace.trace)
+            .unwrap()
+            .remaining(),
+        0
+    );
+    assert!(matches!(
+        reserve(MemoryBudget::from_bytes(required - 1))
+            .unwrap()
+            .check_known_eager::<ProofField>(&config, &trace.trace),
+        Err(ProverError::MemoryBudgetExceeded { required: total, .. }) if total == required
+    ));
+}
+
 /// `--memory-budget` takes bytes with an optional binary suffix through the
 /// CLI and rejects anything else.
 #[test]
