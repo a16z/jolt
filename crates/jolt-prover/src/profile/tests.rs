@@ -178,6 +178,15 @@ fn streaming_profiles_have_distinct_artifact_and_csv_names() {
     for (selection, suffix) in [
         (None, ""),
         (Some("instruction-input"), "_streaming_instruction_input"),
+        (Some("spartan"), "_streaming_spartan"),
+        (
+            Some("instruction-input,spartan"),
+            "_streaming_instruction_input_spartan",
+        ),
+        (
+            Some("spartan,instruction-input"),
+            "_streaming_instruction_input_spartan",
+        ),
     ] {
         let mut options = vec![
             "jolt-prover",

@@ -65,9 +65,10 @@ stage-3 instruction-input streaming kernel, for either Dory or Akita. The
 recompute from the resident trace until the dense tables fit a fixed 4 GiB
 cap; the full trace remains resident. This is not a process-memory cap, and
 streaming can use more memory than eager kernels on small or padded traces.
-Streaming workload, CSV and trace names append `_streaming_instruction_input`,
-so their run directories, `latest_` links and resumed sweeps stay separate
-from eager runs. `summary.json` records the selection in
+Streaming workload, CSV and trace names append `_streaming_<families>` in
+canonical order (`instruction_input`, then `spartan`), so their run directories,
+`latest_` links and resumed sweeps stay separate from eager runs.
+`summary.json` records the selection in
 `run.streaming_families`; `--result-json` records it in `streaming_families`.
 The option cannot be combined with `--memory-budget`: the budget checks
 price only eager kernels, not a streaming selection.

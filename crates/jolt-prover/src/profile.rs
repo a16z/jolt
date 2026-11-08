@@ -397,6 +397,9 @@ impl ProfileArgs {
         if self.streaming.unwrap_or_default().instruction_input {
             names.push("instruction-input".to_string());
         }
+        if self.streaming.unwrap_or_default().spartan {
+            names.push("spartan".to_string());
+        }
         names
     }
 
