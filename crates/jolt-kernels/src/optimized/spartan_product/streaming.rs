@@ -3,13 +3,12 @@
 //! rows with the uni-skip weights scaled by `eq(r_1..r_j, ·)` (LowToHigh
 //! binding gives `f^(j)(y) = Σ_b eq(r, b)·f(2^j·y + b)`). The first round
 //! whose tables fit fills them in the pass that yields its endpoints, and the
-//! default kernel's dense rounds bind them from there. The closing opening
-//! walk weighs rows with split eq tables instead of a table over every cycle.
+//! default kernel's dense rounds bind them from there.
 
 use std::ops::Range;
 
 use jolt_field::JoltField;
-use jolt_poly::{EqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{EqPolynomial, UnivariatePoly};
 use jolt_sumcheck::SumcheckError;
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::stage2::product_remainder::ProductRemainder;
@@ -27,16 +26,6 @@ use crate::optimized::streaming::{
 use crate::optimized::support::GruenRoundMessage;
 use crate::{KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel};
 
-fn remainder_len(log_t: usize) -> usize {
-    1usize << log_t
-}
-
-fn tables_peak_bytes<F: JoltField>(len: usize) -> usize {
-    len.saturating_mul(2)
-        .saturating_add(Polynomial::<F>::in_place_shrink_len(len))
-        .saturating_mul(size_of::<F>())
-}
-
 /// The streaming stage-2 remainder slot.
 pub struct StreamingProductRemainder;
 
@@ -44,20 +33,6 @@ pub struct StreamingProductRemainder;
 /// whose tables fit `cap` bytes, or the round count when none does.
 fn crossover_round<F: JoltField>(log_t: usize, cap: usize) -> usize {
     dense_crossover((2 * size_of::<F>()) << log_t, cap, log_t)
-}
-
-impl StreamingProductRemainder {
-    /// Peak bytes over `2^log_t` cycles: `left` and `right` at the crossover
-    /// round `c`'s `T / 2^c` entries each ([`tables_peak_bytes`]) plus that
-    /// pass's `2^c` lane-weight rows of `DOMAIN` entries. Not counted:
-    /// per-task pass state (a few field elements per task); the closing walk's
-    /// split eq tables (about `2·2^(log_t/2)` entries); the row store; the
-    /// split-eq tables; the field-inline rows.
-    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
-        let crossover = crossover_round::<F>(log_t, DENSE_TABLE_CAP);
-        let weights = (1usize << crossover).saturating_mul(DOMAIN * size_of::<F>());
-        tables_peak_bytes::<F>(remainder_len(log_t) >> crossover).saturating_add(weights)
-    }
 }
 
 impl<F: JoltField> PrepareKernel<F, ProductRemainder<F>> for StreamingProductRemainder {
@@ -96,7 +71,7 @@ impl<F: JoltField> ProductRemainderKernel<F> {
     /// `T / 2^round`, allocated once at its final capacity and written in
     /// disjoint task slices.
     pub(super) fn fill_tables(&mut self) -> Result<(F, F), WitnessError> {
-        let len = remainder_len(self.challenges.total()) >> self.challenges.bound();
+        let len = (1usize << self.challenges.total()) >> self.challenges.bound();
         let mut left: Vec<F> = unsafe_allocate_zero_vec(len);
         let mut right: Vec<F> = unsafe_allocate_zero_vec(len);
         let [zero, infinity] = self.round_pass(

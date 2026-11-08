@@ -1,9 +1,8 @@
 //! Streaming kernel families: optional alternatives to the default eager
-//! kernels for proofs whose eager tables would not fit memory. A streaming
-//! kernel recomputes its early rounds from the witness's resident rows in
-//! task-partitioned passes instead of materializing trace-sized tables, so it
-//! trades prover time for peak memory. [`JoltBackend::optimized`] keeps the
-//! eager kernels; [`JoltBackend::with_streaming`] installs a selection.
+//! kernels. A streaming kernel recomputes its early rounds from typed rows
+//! in task-partitioned passes instead of materializing trace-sized tables
+//! immediately. [`JoltBackend::optimized`] keeps the eager kernels;
+//! [`JoltBackend::with_streaming`] installs a selection.
 
 mod pass;
 
@@ -29,7 +28,7 @@ use crate::JoltBackend;
 /// The streaming kernel families a backend installs in place of its default
 /// kernels ([`JoltBackend::with_streaming`]). A flag switches every slot of
 /// its family together with the cross-stage state those slots share, so every
-/// value is a valid selection; [`Self::NONE`] keeps every default kernel.
+/// value is a valid selection; the default keeps every default kernel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StreamingFamilies {
     /// The Spartan outer (stage 1) and product (stage 2) remainders; their
@@ -42,14 +41,6 @@ pub struct StreamingFamilies {
     /// RAM event log replaces the default kernels' address column, held from
     /// stage 2 through stage 5, and stage 6b collects its own column.
     pub ram: bool,
-}
-
-impl StreamingFamilies {
-    pub const NONE: Self = Self {
-        spartan: false,
-        instruction_input: false,
-        ram: false,
-    };
 }
 
 impl<F, PCS> JoltBackend<F, PCS>
