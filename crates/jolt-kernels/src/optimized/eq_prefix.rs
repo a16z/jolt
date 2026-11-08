@@ -116,7 +116,7 @@ mod tests {
     use super::*;
     use jolt_field::Fr;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset801F;
     use jolt_poly::{BindingOrder, Polynomial};
 
     fn check<F: JoltField>(term_count: usize) {
@@ -177,7 +177,7 @@ mod tests {
         for terms in [0, 1, 3, 9] {
             check::<Fr>(terms);
             #[cfg(feature = "akita")]
-            check::<Prime128OffsetA7F7>(terms);
+            check::<Prime128Offset801F>(terms);
         }
     }
 }

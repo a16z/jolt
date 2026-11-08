@@ -77,13 +77,13 @@ def expected_patterns(architecture: str) -> dict[str, dict[str, bytes]]:
         return {
             "fp128": {
                 "add": word_bytes(
-                    [fp128.AARCH64_LOAD_A7F7_INTO_W4, *fp128.AARCH64_ADD_BODY]
+                    [*fp128.AARCH64_LOAD_801F_INTO_W4, *fp128.AARCH64_ADD_BODY]
                 ),
                 "sub": word_bytes(
-                    [fp128.AARCH64_LOAD_A7F7_INTO_W4, *fp128.AARCH64_SUB_BODY]
+                    [*fp128.AARCH64_LOAD_801F_INTO_W4, *fp128.AARCH64_SUB_BODY]
                 ),
                 "mul": word_bytes(
-                    [fp128.AARCH64_LOAD_A7F7_INTO_W4, *fp128.AARCH64_MUL_BODY]
+                    [*fp128.AARCH64_LOAD_801F_INTO_W4, *fp128.AARCH64_MUL_BODY]
                 ),
             },
             "fp64": {
@@ -94,10 +94,10 @@ def expected_patterns(architecture: str) -> dict[str, dict[str, bytes]]:
         }
     return {
         "fp128": {
-            "add": fp128.X86_64_LOAD_A7F7_INTO_R8D + fp128.X86_64_ADD_BODY,
-            "sub": fp128.X86_64_LOAD_A7F7_INTO_R8D + fp128.X86_64_SUB_BODY,
+            "add": fp128.X86_64_LOAD_801F_INTO_R8D + fp128.X86_64_ADD_BODY,
+            "sub": fp128.X86_64_LOAD_801F_INTO_R8D + fp128.X86_64_SUB_BODY,
             "mul_baseline": (
-                fp128.X86_64_LOAD_A7F7_INTO_R8D + fp128.X86_64_MUL_BODY
+                fp128.X86_64_LOAD_801F_INTO_R8D + fp128.X86_64_MUL_BODY
             ),
             "mul_bmi2_adx": fp128.X86_64_MUL_BMI2_ADX_BODY,
         },

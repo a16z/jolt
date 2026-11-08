@@ -2,9 +2,9 @@
 
 #[cfg(feature = "bn254")]
 use jolt_algebra::Fr;
-use jolt_algebra::{Accumulator, JoltField};
 #[cfg(feature = "solinas")]
-use jolt_algebra::{Prime128Offset801F, Prime128OffsetA7F7};
+use jolt_algebra::Prime128Offset801F;
+use jolt_algebra::{Accumulator, JoltField};
 use num_bigint::BigUint;
 
 fn check_sum_accumulator<F: JoltField>() {
@@ -45,7 +45,6 @@ fn check_sum_accumulator<F: JoltField>() {
 #[cfg(feature = "solinas")]
 #[test]
 fn fp128_sum_accumulator_obeys_field_sum_and_merge_laws() {
-    check_sum_accumulator::<Prime128OffsetA7F7>();
     check_sum_accumulator::<Prime128Offset801F>();
 }
 

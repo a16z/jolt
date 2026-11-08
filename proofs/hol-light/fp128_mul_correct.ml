@@ -27,13 +27,13 @@ let JOLT_FP128_MUL_GENERIC_CORRECT = time prove
       ==>
       ensures arm
           (\s. aligned_bytes_loaded s (word pc) jolt_fp128_mul_mc /\
-               read PC s = word (pc + 0x4) /\
+               read PC s = word (pc + 0x8) /\
                read X0 s = a0 /\
                read X1 s = a1 /\
                read X2 s = b0 /\
                read X3 s = b1 /\
                read X4 s = word c)
-          (\s. read PC s = word (pc + 0x90) /\
+          (\s. read PC s = word (pc + 0x94) /\
                (bignum_of_wordlist [a0; a1] < jolt_fp128_p c /\
                 bignum_of_wordlist [b0; b1] < jolt_fp128_p c
                 ==> bignum_of_wordlist [read X0 s; read X1 s] =
@@ -289,7 +289,7 @@ let JOLT_FP128_MUL_GENERIC_CORRECT = time prove
       ACCEPT_TAC(ASSUME `r < 2 EXP 128`);
       ACCEPT_TAC(ASSUME `u < 2 EXP 128`)]]);;
 
-(*** The object fixture loads A7F7 before entering the generic body. This
+(*** The object fixture loads 801F before entering the generic body. This
      corollary preserves the whole-function theorem used by the ABI proof. ***)
 let JOLT_FP128_MUL_CORRECT = time prove
  (`!a0 a1 b0 b1 pc.
@@ -300,30 +300,30 @@ let JOLT_FP128_MUL_CORRECT = time prove
                read X1 s = a1 /\
                read X2 s = b0 /\
                read X3 s = b1)
-          (\s. read PC s = word (pc + 0x90) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
+          (\s. read PC s = word (pc + 0x94) /\
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
                 ==> bignum_of_wordlist [read X0 s; read X1 s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_a7f7_p))
+                    jolt_fp128_801f_p))
           (MAYCHANGE [PC; X0; X1; X4; X5; X6; X7; X8; X9; X10; X11; X12] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
    [`a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`] THEN
   REWRITE_TAC[SOME_FLAGS] THEN
-  ENSURES_SEQUENCE_TAC `pc + 0x4`
+  ENSURES_SEQUENCE_TAC `pc + 0x8`
    `\s. aligned_bytes_loaded s (word pc) jolt_fp128_mul_mc /\
         read X0 s = a0 /\ read X1 s = a1 /\
         read X2 s = b0 /\ read X3 s = b1 /\
-        read X4 s = word 4294944759` THEN
+        read X4 s = word 1780711455` THEN
   CONJ_TAC THENL
-   [ARM_SIM_TAC JOLT_FP128_MUL_EXEC [1];
+   [ARM_SIM_TAC JOLT_FP128_MUL_EXEC [1;2];
     MP_TAC(SPECL
-     [`4294944759`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
+     [`1780711455`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
      JOLT_FP128_MUL_GENERIC_CORRECT) THEN
-    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSETA7F7_VALID;
-                JOLT_FP128_A7F7_P_GENERIC] THEN
+    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSET801F_VALID;
+                JOLT_FP128_801F_P_GENERIC] THEN
     MATCH_MP_TAC(REWRITE_RULE[IMP_CONJ] ENSURES_PRECONDITION_THM) THEN
     SIMP_TAC[]]);;
 
@@ -338,12 +338,12 @@ let JOLT_FP128_MUL_SUBROUTINE_CORRECT = time prove
                read X2 s = b0 /\
                read X3 s = b1)
           (\s. read PC s = returnaddress /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
                 ==> bignum_of_wordlist [read X0 s; read X1 s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_a7f7_p))
+                    jolt_fp128_801f_p))
           MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI`,
   ARM_ADD_RETURN_NOSTACK_TAC
     JOLT_FP128_MUL_EXEC JOLT_FP128_MUL_CORRECT);;

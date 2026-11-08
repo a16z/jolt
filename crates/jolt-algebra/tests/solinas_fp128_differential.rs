@@ -308,18 +308,6 @@ fn fp128_offset275_matches() {
 }
 
 #[test]
-fn fp128_offset_a7f7_matches() {
-    let mut rng = rng();
-    check_prime128!(two::Prime128OffsetA7F7, u128::MAX - 0xFFFF_A7F6, &mut rng);
-    assert_eq!(
-        two::pseudo_mersenne_modulus(128, 0xFFFF_A7F7),
-        Some(u128::MAX - 0xFFFF_A7F6)
-    );
-    assert!(!two::is_registered_prime_offset(128, 0xFFFF_A7F7));
-    assert!(two::is_registered_prime_offset(128, 275));
-}
-
-#[test]
 fn fp128_offset_801f_matches() {
     let mut rng = rng();
     check_prime128!(two::Prime128Offset801F, u128::MAX - 0x6A23_801E, &mut rng);
@@ -328,6 +316,7 @@ fn fp128_offset_801f_matches() {
         Some(u128::MAX - 0x6A23_801E)
     );
     assert!(!two::is_registered_prime_offset(128, 0x6A23_801F));
+    assert!(two::is_registered_prime_offset(128, 275));
 }
 
 /// `C = 2^a ± 1` moduli exercise the shift/add and shift/sub branches of
@@ -371,7 +360,7 @@ fn fp128_random_matches_spec() {
     check::<{ u128::MAX - 274 }>();
     check::<{ u128::MAX - 158 }>();
     check::<{ u128::MAX - 2354 }>();
-    check::<{ u128::MAX - 0xFFFF_A7F6 }>();
+    check::<{ u128::MAX - 0x6A23_801E }>();
 }
 
 #[test]
@@ -396,7 +385,7 @@ fn fp128_mul_add_matches_independent_oracle() {
 #[test]
 fn fp128_canonical_constructor_is_const_usable() {
     // SAFETY: one is below every supported prime modulus.
-    const ONE: two::Prime128OffsetA7F7 = unsafe { two::Prime128OffsetA7F7::from_canonical_u128(1) };
+    const ONE: two::Prime128Offset801F = unsafe { two::Prime128Offset801F::from_canonical_u128(1) };
     assert_eq!(ONE.to_u128_checked(), Some(1));
 }
 

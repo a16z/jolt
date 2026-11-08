@@ -82,10 +82,10 @@ mod tests {
         }
         #[cfg(feature = "solinas")]
         {
-            use crate::{Prime128OffsetA7F7, Prime31Offset19, Prime64Offset59, Ring};
+            use crate::{Prime128Offset801F, Prime31Offset19, Prime64Offset59, Ring};
             matches_canonical_bytes(&Prime31Offset19::from_u64(5));
             matches_canonical_bytes(&Prime64Offset59::from_u64(5));
-            matches_canonical_bytes(&Prime128OffsetA7F7::from_u64(5));
+            matches_canonical_bytes(&Prime128Offset801F::from_u64(5));
         }
         #[cfg(feature = "binary")]
         {

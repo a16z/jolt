@@ -254,7 +254,7 @@ impl<F: Ring> Ext2Config<F> for NegOneNr {
 
 /// [`Ext2Config`] with non-residue 2. `F[u]/(u² − 2)` is a field exactly when
 /// `p ≡ ±3 (mod 8)`. Every registered pseudo-Mersenne prime (`2^k − c` with
-/// `c ≡ 3 (mod 8)`) has `p ≡ 5 (mod 8)`. `Prime128OffsetA7F7` is not
+/// `c ≡ 3 (mod 8)`) has `p ≡ 5 (mod 8)`. `Prime128Offset801F` is not
 /// registered and has `p ≡ 1 (mod 8)`: 2 is a square there, and this is not
 /// a field.
 pub struct TwoNr;

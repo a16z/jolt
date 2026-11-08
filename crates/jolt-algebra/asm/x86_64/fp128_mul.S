@@ -12,7 +12,7 @@
 .type C_SYMBOL(jolt_fp128_mul_asm), @function
 #endif
 C_SYMBOL(jolt_fp128_mul_asm):
-#include "fp128_load_a7f7.inc"
+#include "fp128_load_801f.inc"
 #include "fp128_mul_body.inc"
 mov rax, rdi
 mov rdx, rcx

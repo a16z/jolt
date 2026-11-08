@@ -12,7 +12,7 @@
 //!
 //! Which of these are fields depends on the base prime. `Ext2` (non-residue
 //! 2), `FpExt4` and `FpExt8` are fields exactly when `p ≡ ±3 (mod 8)`, which
-//! holds for every registered prime and not for `Prime128OffsetA7F7`. Over
+//! holds for every registered prime and not for `Prime128Offset801F`. Over
 //! any other prime the types are still rings, and the differential tests use
 //! them as such.
 //!

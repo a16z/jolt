@@ -1319,7 +1319,7 @@ mod bundle_access_tests {
 #[cfg(test)]
 mod product_grid_tests {
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset801F;
     use jolt_field::{Accumulator, Fr, JoltField};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -1435,7 +1435,7 @@ mod product_grid_tests {
     #[test]
     fn products_match_direct_evaluations_at_every_supported_length_fp128() {
         for factors in 2..=MAX_GRID_FACTORS {
-            assert_product_grid::<Prime128OffsetA7F7>(factors);
+            assert_product_grid::<Prime128Offset801F>(factors);
         }
     }
 }
@@ -1444,7 +1444,7 @@ mod product_grid_tests {
 mod prefix_cycle_weights_tests {
     use super::PrefixCycleWeights;
     #[cfg(feature = "akita")]
-    use jolt_field::Prime128OffsetA7F7;
+    use jolt_field::Prime128Offset801F;
     use jolt_field::{Fr, JoltField};
     use jolt_poly::eq_index_msb;
 
@@ -1506,6 +1506,6 @@ mod prefix_cycle_weights_tests {
     fn factored_blocks_and_constant_suffix_match_equality_weights() {
         check::<Fr>();
         #[cfg(feature = "akita")]
-        check::<Prime128OffsetA7F7>();
+        check::<Prime128Offset801F>();
     }
 }

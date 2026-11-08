@@ -48,13 +48,13 @@ one of two instruction fragments.
 
 * A baseline fragment takes the modulus offset in a register and works for
   every valid `Fp128` offset on every supported x86-64 processor.
-* A BMI2 and ADX fragment embeds the A7F7 offset and is selected only for that
+* A BMI2 and ADX fragment embeds the 801F offset and is selected only for that
   field when the build enables both CPU features.
 
 The baseline body theorem quantifies over the offset register and proves the
 fragment for every valid Fp128 offset. A separate callable-object corollary
-covers the fixture's literal A7F7 load and return sequence. The BMI2 and ADX
-fragment remains A7F7-specific because its bytes embed that offset. Both public
+covers the fixture's literal 801F load and return sequence. The BMI2 and ADX
+fragment remains 801F-specific because its bytes embed that offset. Both public
 offsets and a test-only generic offset 173 are also differentially tested
 against portable Rust to exercise the Rust dispatch and inline-assembly
 contract.

@@ -7,7 +7,7 @@
 //! Coverage: both `FpExt2` non-residue configs and the quartic/octic towers
 //! over `Fp32`/`Fp64`/`Fp128` bases (registered primes plus `Fp32<251>`,
 //! the one small prime with `p ≡ 3 mod 4` where `NegOneNr` is a genuine
-//! field, `Fp64<2^32 − 99>`, and `Prime128OffsetA7F7`, over which no tower
+//! field, `Fp64<2^32 − 99>`, and `Prime128Offset801F`, over which no tower
 //! is a field). Whether each extension is a field is computed from the
 //! prime ([`quadratic_is_field`], [`ring_subfield_is_field`]), not stated by
 //! hand. Where it is not a field (reducible defining polynomial), inversion
@@ -465,7 +465,6 @@ macro_rules! check_moore {
 const P32: u128 = (1 << 32) - 99;
 const P64: u128 = (1 << 64) - 59;
 const P128: u128 = u128::MAX - 274;
-const P128_A7F7: u128 = u128::MAX - 0xFFFF_A7F6;
 const P128_801F: u128 = u128::MAX - 0x6A23_801E;
 const P251: u128 = 251;
 
@@ -601,15 +600,6 @@ ext_suite!(
 );
 
 ext_suite!(
-    ext2_over_prime128_offset_a7f7,
-    ext4_over_prime128_offset_a7f7,
-    ext8_over_prime128_offset_a7f7,
-    moore_over_prime128_offset_a7f7,
-    two::Prime128OffsetA7F7,
-    P128_A7F7
-);
-
-ext_suite!(
     ext2_over_prime128_offset_801f,
     ext4_over_prime128_offset_801f,
     ext8_over_prime128_offset_801f,
@@ -621,7 +611,7 @@ ext_suite!(
 /// Which towers are fields over each exported prime, as the extension docs
 /// state: over every registered prime `p ≡ 5 (mod 8)`, so `Ext2` (non-residue
 /// 2), `FpExt4` and `FpExt8` are fields and `NegOneNr` is not; over
-/// `Prime128OffsetA7F7` and `Prime128Offset801F`, `p ≡ 1 (mod 8)` and none is.
+/// `Prime128Offset801F`, `p ≡ 1 (mod 8)` and none is.
 #[test]
 fn extension_fields_over_exported_primes() {
     for spec in two::PRIME_OFFSET_SPECS {
@@ -632,14 +622,6 @@ fn extension_fields_over_exported_primes() {
         assert!(ring_subfield_is_field(4, p));
         assert!(ring_subfield_is_field(8, p));
     }
-    type A7f7 = two::Prime128OffsetA7F7;
-    assert_eq!(<A7f7 as CanonicalEncoding>::MODULUS_BITS, 128);
-    assert_eq!(u128::MAX - <A7f7 as PseudoMersenne>::OFFSET + 1, P128_A7F7);
-    assert_eq!(P128_A7F7 % 8, 1);
-    assert!(!quadratic_is_field(2, P128_A7F7));
-    assert!(!quadratic_is_field(P128_A7F7 - 1, P128_A7F7));
-    assert!(!ring_subfield_is_field(4, P128_A7F7));
-    assert!(!ring_subfield_is_field(8, P128_A7F7));
     type F801f = two::Prime128Offset801F;
     assert_eq!(<F801f as CanonicalEncoding>::MODULUS_BITS, 128);
     assert_eq!(u128::MAX - <F801f as PseudoMersenne>::OFFSET + 1, P128_801F);

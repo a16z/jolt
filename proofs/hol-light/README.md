@@ -3,8 +3,8 @@
 The Fp128 proofs cover the register-parameterized scalar addition,
 subtraction, and multiplication bodies for every valid Fp128 offset on
 AArch64 and baseline x86-64. They also prove complete callable objects for
-`Prime128OffsetA7F7`, including the literal constant load and return sequence,
-and the A7F7-specific x86-64 BMI2 and ADX multiplication object. Production
+`Prime128Offset801F`, including the literal constant load and return sequence,
+and the 801F-specific x86-64 BMI2 and ADX multiplication object. Production
 Rust includes the same instruction body files.
 
 The Fp64 proofs cover scalar addition, subtraction, and multiplication for
@@ -41,15 +41,15 @@ The generic body theorems quantify over `C`, assume the same offset bounds as
 the Rust `Fp128` implementation, and start immediately after the fixture
 object's constant-load instruction with `C` in `x4` or `r8`. They prove the
 canonical result modulo `2^128 - C` for every canonical input. Both public
-offsets, 275 and A7F7, have machine-checked proofs that they satisfy those
+offsets, 275 and 801F, have machine-checked proofs that they satisfy those
 bounds.
 
-The A7F7 corollaries cover complete callable AArch64 and Linux x86-64 witness
+The 801F corollaries cover complete callable AArch64 and Linux x86-64 witness
 functions. The baseline x86-64 bodies copy their internal results to the
 System V return registers `rax:rdx`. The BMI2 and ADX multiplication body
 creates its result directly in those registers. These corollaries prove the
 literal load, result moves where present, `ret` behavior, and an ABI-safe
-frame. Separate certificates prove that the A7F7 and 801F moduli are prime.
+frame. A separate certificate proves that the 801F modulus is prime.
 
 The [scalar Fp64 guide](../../book/src/how/formal-verification/field-kernels-fp64.md)
 states the precise Fp64 claim, explains the `2^64 - 59` reduction, and lists
@@ -108,7 +108,7 @@ Use `aarch64` instead of `x86_64` to check the AArch64 path.
 ## Differential fuzzing
 
 The `fp128-asm-differential` target compares assembly with portable arithmetic
-for both public offsets, 275 and A7F7, and a test-only generic offset 173, for
+for both public offsets, 275 and 801F, and a test-only generic offset 173, for
 addition, subtraction, and multiplication. The extra offset ensures the
 register-parameterized path stays independently reachable. On AArch64 it also
 compares the assembly square and fused multiply-add kernels. CI fuzzes the

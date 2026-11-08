@@ -38,7 +38,7 @@ mod add_sub;
     all(feature = "asm", target_arch = "x86_64"),
     all(test, feature = "asm", target_arch = "aarch64")
 ))]
-const A7F7_OFFSET: u64 = 0xffff_a7f7;
+const OFFSET_801F: u64 = 0x6a23_801f;
 #[cfg(all(feature = "fuzzing", target_arch = "x86_64"))]
 const X86_64_BASELINE_BACKEND: u8 = 1;
 #[cfg(all(
@@ -342,10 +342,10 @@ impl<const P: u128> Fp128<P> {
     #[cfg(all(feature = "asm", target_arch = "x86_64"))]
     #[inline(always)]
     fn mul_raw_x86_64_dispatch(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
-        if Self::C_LO == A7F7_OFFSET {
+        if Self::C_LO == OFFSET_801F {
             #[cfg(all(target_feature = "bmi2", target_feature = "adx"))]
             {
-                Self::mul_raw_x86_64_a7f7_bmi2_adx(a, b)
+                Self::mul_raw_x86_64_801f_bmi2_adx(a, b)
             }
             #[cfg(not(all(target_feature = "bmi2", target_feature = "adx")))]
             {
@@ -356,7 +356,7 @@ impl<const P: u128> Fp128<P> {
         }
     }
 
-    /// A7F7 multiplication for x86-64 builds with BMI2 and ADX enabled.
+    /// 801F multiplication for x86-64 builds with BMI2 and ADX enabled.
     ///
     /// `rdi:rsi` starts with `a`, and `rdx:rcx` starts with `b`. The body
     /// finishes directly in the System V result registers `rax:rdx`. It uses
@@ -368,7 +368,7 @@ impl<const P: u128> Fp128<P> {
         target_feature = "adx"
     ))]
     #[inline(always)]
-    fn mul_raw_x86_64_a7f7_bmi2_adx(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
+    fn mul_raw_x86_64_801f_bmi2_adx(a: [u64; 2], b: [u64; 2]) -> [u64; 2] {
         #[cfg(feature = "fuzzing")]
         LAST_X86_64_MUL_BACKEND.store(X86_64_BMI2_ADX_BACKEND, Ordering::Relaxed);
         let [a_lo, a_hi] = a;
@@ -991,7 +991,7 @@ impl<const P: u128> Fp128<P> {
         #[cfg(target_arch = "x86_64")]
         {
             #[cfg(all(target_feature = "bmi2", target_feature = "adx"))]
-            let expected_backend = if Self::C_LO == A7F7_OFFSET {
+            let expected_backend = if Self::C_LO == OFFSET_801F {
                 X86_64_BMI2_ADX_BACKEND
             } else {
                 X86_64_BASELINE_BACKEND
@@ -1337,7 +1337,7 @@ unsafe impl<const P: u128> CheckedBitPattern for Fp128<P> {
 
 #[cfg(all(test, feature = "bytemuck"))]
 mod bytemuck_tests {
-    use super::super::{Prime128Offset275, Prime128Offset801F, Prime128OffsetA7F7};
+    use super::super::{Prime128Offset275, Prime128Offset801F};
     use super::split;
     use bytemuck::checked::{self, CheckedCastError};
     use bytemuck::CheckedBitPattern;
@@ -1360,7 +1360,6 @@ mod bytemuck_tests {
 
     #[test]
     fn only_canonical_limbs_are_valid_bit_patterns() {
-        check::<Prime128OffsetA7F7>(0u128.wrapping_sub(0xFFFF_A7F7));
         check::<Prime128Offset801F>(0u128.wrapping_sub(0x6A23_801F));
         check::<Prime128Offset275>(0u128.wrapping_sub(275));
     }
@@ -1427,7 +1426,7 @@ mod tests {
     fn fp128_asm_matches_portable() {
         check::<{ u128::MAX - 172 }>(); // C = 173, outside the published aliases
         check::<{ u128::MAX - 274 }>();
-        check::<{ u128::MAX - (A7F7_OFFSET as u128 - 1) }>();
+        check::<{ u128::MAX - (OFFSET_801F as u128 - 1) }>();
     }
 }
 

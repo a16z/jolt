@@ -655,7 +655,7 @@ impl<F: JoltField> GruenSplitEqPolynomial<F> {
     reason = "test module asserts successful reconstruction and forbidden lazy endpoint evaluation"
 )]
 mod tests {
-    use jolt_field::{Field, Fr, Prime128OffsetA7F7, Ring};
+    use jolt_field::{Field, Fr, Prime128Offset801F, Ring};
     use num_traits::{One, Zero};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
@@ -1070,7 +1070,7 @@ mod tests {
 
     #[test]
     fn exceptional_gruen_rounds_match_true_products_akita_field() {
-        exceptional_rounds_match_products::<Prime128OffsetA7F7>();
+        exceptional_rounds_match_products::<Prime128Offset801F>();
     }
 
     #[test]

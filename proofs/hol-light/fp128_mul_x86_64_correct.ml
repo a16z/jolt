@@ -332,12 +332,12 @@ let JOLT_FP128_MUL_X86_64_CORRECT = time prove
                read RDX s = b0 /\
                read RCX s = b1)
           (\s. read RIP s = word (pc + 0x9e) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_a7f7_p))
+                    jolt_fp128_801f_p))
           (MAYCHANGE [RIP; RAX; RCX; RDX; RDI; RSI; R8; R9; R10; R11] ,,
            MAYCHANGE SOME_FLAGS ,, MAYCHANGE [events])`,
   MAP_EVERY X_GEN_TAC
@@ -347,14 +347,14 @@ let JOLT_FP128_MUL_X86_64_CORRECT = time prove
    `\s. bytes_loaded s (word pc) (BUTLAST jolt_fp128_mul_x86_64_mc) /\
         read RDI s = a0 /\ read RSI s = a1 /\
         read RDX s = b0 /\ read RCX s = b1 /\
-        read R8 s = word 4294944759` THEN
+        read R8 s = word 1780711455` THEN
   CONJ_TAC THENL
    [X86_SIM_TAC JOLT_FP128_MUL_X86_64_EXEC [1];
     MP_TAC(SPECL
-     [`4294944759`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
+     [`1780711455`; `a0:int64`; `a1:int64`; `b0:int64`; `b1:int64`; `pc:num`]
      JOLT_FP128_MUL_X86_64_GENERIC_CORRECT) THEN
-    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSETA7F7_VALID;
-                JOLT_FP128_A7F7_P_GENERIC] THEN
+    REWRITE_TAC[SOME_FLAGS; JOLT_FP128_OFFSET801F_VALID;
+                JOLT_FP128_801F_P_GENERIC] THEN
     MATCH_MP_TAC(REWRITE_RULE[IMP_CONJ] ENSURES_PRECONDITION_THM) THEN
     SIMP_TAC[]]);;
 
@@ -371,12 +371,12 @@ let JOLT_FP128_MUL_X86_64_SUBROUTINE_CORRECT = time prove
                read RCX s = b1)
           (\s. read RIP s = returnaddress /\
                read RSP s = word_add stackpointer (word 8) /\
-               (bignum_of_wordlist [a0; a1] < jolt_fp128_a7f7_p /\
-                bignum_of_wordlist [b0; b1] < jolt_fp128_a7f7_p
+               (bignum_of_wordlist [a0; a1] < jolt_fp128_801f_p /\
+                bignum_of_wordlist [b0; b1] < jolt_fp128_801f_p
                 ==> bignum_of_wordlist [read RAX s; read RDX s] =
                     (bignum_of_wordlist [a0; a1] *
                      bignum_of_wordlist [b0; b1]) MOD
-                    jolt_fp128_a7f7_p))
+                    jolt_fp128_801f_p))
           (MAYCHANGE [RSP] ,, MAYCHANGE_REGS_AND_FLAGS_PERMITTED_BY_ABI)`,
   X86_PROMOTE_RETURN_NOSTACK_TAC
     jolt_fp128_mul_x86_64_mc JOLT_FP128_MUL_X86_64_CORRECT);;

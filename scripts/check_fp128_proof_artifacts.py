@@ -65,11 +65,11 @@ AARCH64_MUL_BODY = [
     0x9A861141,
 ]
 AARCH64_RET = 0xD65F03C0
-AARCH64_LOAD_A7F7_INTO_W4 = 0x128B0104
-AARCH64_ADD_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_ADD_BODY, AARCH64_RET]
-AARCH64_SUB_WORDS = [AARCH64_LOAD_A7F7_INTO_W4, *AARCH64_SUB_BODY, AARCH64_RET]
+AARCH64_LOAD_801F_INTO_W4 = [0x529003E4, 0x72AD4464]
+AARCH64_ADD_WORDS = [*AARCH64_LOAD_801F_INTO_W4, *AARCH64_ADD_BODY, AARCH64_RET]
+AARCH64_SUB_WORDS = [*AARCH64_LOAD_801F_INTO_W4, *AARCH64_SUB_BODY, AARCH64_RET]
 AARCH64_MUL_WORDS = [
-    AARCH64_LOAD_A7F7_INTO_W4,
+    *AARCH64_LOAD_801F_INTO_W4,
     *AARCH64_MUL_BODY,
     AARCH64_RET,
 ]
@@ -96,13 +96,13 @@ X86_64_MUL_BMI2_ADX_BODY = bytes.fromhex(
     "c4 62 b3 f6 d7 c4 62 fb f6 de 48 89 ca c4 e2 f3 f6 ff "
     "c4 62 cb f6 c6 31 d2 66 4c 0f 38 f6 d0 f3 4c 0f 38 f6 d1 "
     "66 4c 0f 38 f6 df f3 4c 0f 38 f6 de 66 4c 0f 38 f6 c2 "
-    "f3 4c 0f 38 f6 c2 ba f7 a7 ff ff c4 c2 cb f6 fb c4 c2 fb f6 c8 "
+    "f3 4c 0f 38 f6 c2 ba 1f 80 23 6a c4 c2 cb f6 fb c4 c2 fb f6 c8 "
     "49 01 f1 49 11 fa 48 83 d1 00 49 01 c2 48 83 d1 00 48 0f af ca "
     "49 01 c9 49 83 d2 00 4d 19 db 4c 89 c8 48 01 d0 4c 89 d2 "
     "48 83 d2 00 4d 11 db 49 0f 44 c1 49 0f 44 d2"
 )
 X86_64_RET = bytes([0xC3])
-X86_64_LOAD_A7F7_INTO_R8D = bytes.fromhex("41 b8 f7 a7 ff ff")
+X86_64_LOAD_801F_INTO_R8D = bytes.fromhex("41 b8 1f 80 23 6a")
 X86_64_ADD_SUB_ABI_RETURN = bytes.fromhex("48 89 f2 48 89 f8")
 X86_64_MUL_ABI_RETURN = bytes.fromhex("48 89 f8 48 89 ca")
 X86_64_DARWIN_FRAME_ENTER = bytes.fromhex("55 48 89 e5")
@@ -326,19 +326,19 @@ def check_x86_64(
         tool, bmi2_adx_witness, "jolt_fp128_mul_production_witness"
     )
     add_expected = (
-        X86_64_LOAD_A7F7_INTO_R8D
+        X86_64_LOAD_801F_INTO_R8D
         + X86_64_ADD_BODY
         + X86_64_ADD_SUB_ABI_RETURN
         + X86_64_RET
     )
     sub_expected = (
-        X86_64_LOAD_A7F7_INTO_R8D
+        X86_64_LOAD_801F_INTO_R8D
         + X86_64_SUB_BODY
         + X86_64_ADD_SUB_ABI_RETURN
         + X86_64_RET
     )
     mul_expected = (
-        X86_64_LOAD_A7F7_INTO_R8D
+        X86_64_LOAD_801F_INTO_R8D
         + X86_64_MUL_BODY
         + X86_64_MUL_ABI_RETURN
         + X86_64_RET

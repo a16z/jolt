@@ -28,7 +28,7 @@ pub use sub::FIELD_SUB;
 #[cfg(not(feature = "fp128-field-inline"))]
 use jolt_field::Fr;
 #[cfg(feature = "fp128-field-inline")]
-use jolt_field::Prime128OffsetA7F7;
+use jolt_field::Prime128Offset801F;
 use jolt_field::{CanonicalEncoding, Field};
 use jolt_platform::FieldInlineModulus;
 use jolt_program::field_inline::FieldEncodedValue;
@@ -37,7 +37,7 @@ use jolt_program::field_inline::FieldEncodedValue;
 #[cfg(not(feature = "fp128-field-inline"))]
 type ProofField = Fr;
 #[cfg(feature = "fp128-field-inline")]
-type ProofField = Prime128OffsetA7F7;
+type ProofField = Prime128Offset801F;
 
 /// The field field-inline instructions execute over. jolt-host forwards it to
 /// field-inline guest builds, whose SDK conversions prove they were compiled

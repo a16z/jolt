@@ -19,7 +19,7 @@ mod field;
 mod support;
 
 mod gpu {
-    use jolt_field::solinas::{Prime128Offset275, Prime128OffsetA7F7};
+    use jolt_field::solinas::{Prime128Offset275, Prime128Offset801F};
     use jolt_metal::runtime::{
         host_name, Batch, Binding, Device, DeviceBuffer, Grid, LibrarySpec, Pipeline, ShaderLibrary,
     };
@@ -369,8 +369,8 @@ mod gpu {
     }
 
     #[test]
-    fn fp128_a7f7_accumulators_match_jolt_field() {
-        accumulators::<Prime128OffsetA7F7>("fp128_a7f7_accumulators_match_jolt_field", 3);
+    fn fp128_801f_accumulators_match_jolt_field() {
+        accumulators::<Prime128Offset801F>("fp128_801f_accumulators_match_jolt_field", 3);
     }
 
     #[test]
@@ -379,8 +379,8 @@ mod gpu {
     }
 
     #[test]
-    fn fp128_a7f7_accumulator_capacity_is_exact() {
-        capacity_test::<Prime128OffsetA7F7>("fp128_a7f7_accumulator_capacity_is_exact");
+    fn fp128_801f_accumulator_capacity_is_exact() {
+        capacity_test::<Prime128Offset801F>("fp128_801f_accumulator_capacity_is_exact");
     }
 
     #[test]
