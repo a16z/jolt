@@ -194,10 +194,178 @@ impl PreparedSparseChallenge {
     }
 }
 
+pub(super) struct PreparedSubringChallenge<const S: usize> {
+    sparse: PreparedSparseChallenge,
+    doubled: Vec<i8>,
+    l1_bound: usize,
+}
+
+impl<const S: usize> PreparedSubringChallenge<S> {
+    fn new(challenge: &SparseChallenge) -> Result<Self, AkitaError> {
+        let stride = 512 / S;
+        let reduced = SparseChallenge {
+            positions: challenge
+                .positions
+                .iter()
+                .map(|p| p / stride as u32)
+                .collect(),
+            coeffs: challenge.coeffs.clone(),
+        };
+        let mut doubled = vec![0; 2 * S];
+        for (&position, &coefficient) in reduced.positions.iter().zip(&reduced.coeffs) {
+            doubled[position as usize] = -coefficient;
+            doubled[S + position as usize] = coefficient;
+        }
+        Ok(Self {
+            sparse: PreparedSparseChallenge::new::<S>(&reduced)?,
+            doubled,
+            l1_bound: challenge
+                .coeffs
+                .iter()
+                .map(|c| usize::from(c.unsigned_abs()))
+                .sum(),
+        })
+    }
+
+    #[inline(always)]
+    fn add_shift(&self, dst: &mut [i32], shift: usize) {
+        let stride = 512 / S;
+        let base = (shift % stride) * S;
+        let shift = shift / stride;
+        for class in &self.sparse.classes {
+            let cut = usize::from(class.wrap_cuts[shift]);
+            let coefficient = class.coefficient;
+            for &position in &class.positions[..cut] {
+                dst[base + usize::from(position) + shift] += coefficient;
+            }
+            for &position in &class.positions[cut..] {
+                dst[base + usize::from(position) + shift - S] -= coefficient;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn add_rows(&self, dst: &mut [i32], coefficients: &[usize]) {
+        if coefficients.len() < 4 {
+            for &shift in coefficients {
+                self.add_shift(dst, shift);
+            }
+            return;
+        }
+        let mut partial = [0i8; 512];
+        self.add_byte_rows(&mut partial, coefficients);
+        add_byte_partial(dst, &partial);
+    }
+
+    #[inline(always)]
+    fn add_byte_rows(&self, partial: &mut [i8; 512], coefficients: &[usize]) {
+        // Challenge coefficients lie in Z[Y]/(Y^S+1), Y=X^stride.
+        // Each residue of the input is a separate convolution in that ring.
+        // Keep the accumulator in residue-major order until all contributions
+        // have been added; interleaving it per contribution costs more than
+        // the zero coefficients this path avoids.
+        let stride = 512 / S;
+        for &shift in coefficients {
+            let residue = shift % stride;
+            let quotient = shift / stride;
+            let row = &mut partial[residue * S..][..S];
+            let window = &self.doubled[S - quotient..][..S];
+            for (dst, &value) in row.iter_mut().zip(window) {
+                *dst += value;
+            }
+        }
+    }
+}
+
+#[inline(always)]
+fn add_byte_partial(dst: &mut [i32], partial: &[i8; 512]) {
+    for (dst, &value) in dst.iter_mut().zip(partial) {
+        *dst += i32::from(value);
+    }
+}
+
+fn collect_ring_column_shifts(
+    coefficients: &mut Vec<usize>,
+    selected_rows: &[u8],
+    committed_zero_masks: &[u64],
+    num_columns: usize,
+    one_hot_k: usize,
+    column: usize,
+) {
+    coefficients.clear();
+    for (row_offset, (row_indices, &mask)) in selected_rows
+        .chunks_exact(num_columns)
+        .zip(committed_zero_masks)
+        .enumerate()
+    {
+        let hot = row_indices[column];
+        if row_is_committed(hot, mask, column) {
+            coefficients.push(row_offset * one_hot_k + usize::from(hot));
+        }
+    }
+}
+
+#[inline(always)]
+fn add_subring_columns<const S: usize>(
+    dst: &mut [i32],
+    challenges: &[PreparedSubringChallenge<S>],
+    selected_rows: &[u8],
+    committed_zero_masks: &[u64],
+    one_hot_k: usize,
+    coefficients: &mut Vec<usize>,
+) {
+    let mut partial = [0i8; 512];
+    let mut accumulated_bound = 0;
+    for (column, challenge) in challenges.iter().enumerate() {
+        collect_ring_column_shifts(
+            coefficients,
+            selected_rows,
+            committed_zero_masks,
+            challenges.len(),
+            one_hot_k,
+            column,
+        );
+        if coefficients.len() < 4 {
+            for &shift in coefficients.iter() {
+                challenge.add_shift(dst, shift);
+            }
+            continue;
+        }
+        // The row visitor guarantees distinct input shifts. One product is
+        // bounded coefficient-wise by the challenge's L1 norm. Flushing when
+        // the SUM of these bounds would exceed 127 also bounds every byte
+        // intermediate; cancellation is not needed for safety.
+        if accumulated_bound + challenge.l1_bound > 127 {
+            add_byte_partial(dst, &partial);
+            partial.fill(0);
+            accumulated_bound = 0;
+        }
+        challenge.add_byte_rows(&mut partial, coefficients);
+        accumulated_bound += challenge.l1_bound;
+    }
+    if accumulated_bound != 0 {
+        add_byte_partial(dst, &partial);
+    }
+}
+
+fn restore_coefficient_order<const D: usize, const S: usize>(rows: &mut [[i32; D]]) {
+    let stride = D / S;
+    rows.par_iter_mut().for_each(|row| {
+        let original = *row;
+        for i in 0..S {
+            for residue in 0..stride {
+                row[i * stride + residue] = original[residue * S + i];
+            }
+        }
+    });
+}
+
 pub(super) enum PreparedRotations<const D: usize> {
     Compact(Vec<[i8; D]>),
     Dense(Vec<[i16; D]>),
     Sparse(Vec<PreparedSparseChallenge>),
+    Subring128(Vec<PreparedSubringChallenge<128>>),
+    Subring64(Vec<PreparedSubringChallenge<64>>),
 }
 
 impl<const D: usize> PreparedRotations<D> {
@@ -222,11 +390,50 @@ pub(super) fn prepare_rotations<const D: usize>(
     challenges: &[SparseChallenge],
     blocks_per_column: Option<usize>,
     num_columns: usize,
+    one_hot_k: usize,
     mode: DecomposeRotationMode,
 ) -> Result<PreparedRotations<D>, AkitaError> {
     let prepared_blocks = blocks_per_column.map_or(challenges.len(), |blocks_per_column| {
         blocks_per_column * num_columns
     });
+    if mode == DecomposeRotationMode::Auto && D == 512 && (16..D).contains(&one_hot_k) {
+        let eligible = challenges.iter().all(|challenge| {
+            challenge.positions.len() >= 16
+                && challenge
+                    .coeffs
+                    .iter()
+                    .map(|c| usize::from(c.unsigned_abs()))
+                    .sum::<usize>()
+                    <= 127
+        });
+        let divisible = |stride: u32| {
+            challenges
+                .iter()
+                .all(|c| c.positions.iter().all(|p| p % stride == 0))
+        };
+        if eligible && divisible(8) {
+            return (0..prepared_blocks)
+                .into_par_iter()
+                .map(|block| {
+                    PreparedSubringChallenge::new(
+                        &challenges[active_challenge_index(block, blocks_per_column, num_columns)],
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(PreparedRotations::Subring64);
+        }
+        if eligible && divisible(4) {
+            return (0..prepared_blocks)
+                .into_par_iter()
+                .map(|block| {
+                    PreparedSubringChallenge::new(
+                        &challenges[active_challenge_index(block, blocks_per_column, num_columns)],
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()
+                .map(PreparedRotations::Subring128);
+        }
+    }
     let dense_bytes = prepared_blocks
         .checked_mul(D)
         .and_then(|rows| rows.checked_mul(std::mem::size_of::<[i16; D]>()))
@@ -353,6 +560,12 @@ fn add_rotated<const D: usize>(
         }
         PreparedRotations::Sparse(challenges) => {
             add_rotated_sparse(dst, &challenges[prepared_block], coefficient);
+        }
+        PreparedRotations::Subring128(challenges) => {
+            challenges[prepared_block].add_shift(dst, coefficient);
+        }
+        PreparedRotations::Subring64(challenges) => {
+            challenges[prepared_block].add_shift(dst, coefficient);
         }
     }
 }
@@ -520,6 +733,12 @@ fn add_rotated_rows<const D: usize>(
     coefficients: &[usize],
 ) {
     match rotations {
+        PreparedRotations::Subring128(challenges) => {
+            challenges[prepared_block].add_rows(dst, coefficients);
+        }
+        PreparedRotations::Subring64(challenges) => {
+            challenges[prepared_block].add_rows(dst, coefficients);
+        }
         PreparedRotations::Compact(challenges) => {
             let challenge = &challenges[prepared_block];
             for &coefficient in coefficients {
@@ -622,12 +841,13 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         challenges,
         blocks_per_column,
         source.rows.num_columns(),
+        source.one_hot_k,
         rotation_mode,
     );
     let rotations = rotations?;
     let _ = rotation_span.record("dense", rotations.is_dense());
     drop(rotation_guard);
-    let compressed = if segment_rings >= num_positions {
+    let mut compressed = if segment_rings >= num_positions {
         let blocks_per_column = segment_rings / num_positions;
         debug_assert_eq!(blocks_per_column * num_positions, segment_rings);
         let row_alignment = (source.one_hot_k / D).max(1);
@@ -736,25 +956,40 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
                                             &fixed_coefficients[..count],
                                         );
                                     }
+                                } else if let PreparedRotations::Subring128(challenges) = &rotations
+                                {
+                                    add_subring_columns(
+                                        &mut compressed
+                                            [(position - position_start) * num_chunks + chunk],
+                                        &challenges[trace_block * num_columns..][..num_columns],
+                                        selected_rows,
+                                        committed_zero_masks,
+                                        source.one_hot_k,
+                                        &mut coefficients,
+                                    );
+                                } else if let PreparedRotations::Subring64(challenges) = &rotations
+                                {
+                                    add_subring_columns(
+                                        &mut compressed
+                                            [(position - position_start) * num_chunks + chunk],
+                                        &challenges[trace_block * num_columns..][..num_columns],
+                                        selected_rows,
+                                        committed_zero_masks,
+                                        source.one_hot_k,
+                                        &mut coefficients,
+                                    );
                                 } else {
                                     for column in 0..num_columns {
                                         let dst = &mut compressed
                                             [(position - position_start) * num_chunks + chunk];
-                                        coefficients.clear();
-                                        for (row_offset, (row_indices, &committed_zero_mask)) in
-                                            selected_rows
-                                                .chunks_exact(num_columns)
-                                                .zip(committed_zero_masks)
-                                                .enumerate()
-                                        {
-                                            let hot = row_indices[column];
-                                            if row_is_committed(hot, committed_zero_mask, column) {
-                                                coefficients.push(
-                                                    row_offset * source.one_hot_k
-                                                        + usize::from(hot),
-                                                );
-                                            }
-                                        }
+                                        collect_ring_column_shifts(
+                                            &mut coefficients,
+                                            selected_rows,
+                                            committed_zero_masks,
+                                            num_columns,
+                                            source.one_hot_k,
+                                            column,
+                                        );
                                         let prepared_block = trace_block * num_columns + column;
                                         add_rotated_rows(
                                             dst,
@@ -846,6 +1081,13 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         })?;
         compressed
     };
+    match &rotations {
+        PreparedRotations::Subring128(_) => restore_coefficient_order::<D, 128>(&mut compressed),
+        PreparedRotations::Subring64(_) => restore_coefficient_order::<D, 64>(&mut compressed),
+        PreparedRotations::Compact(_)
+        | PreparedRotations::Dense(_)
+        | PreparedRotations::Sparse(_) => {}
+    }
     let _expand_span = tracing::info_span!(
         "trace_onehot_decompose_expand_digits",
         num_positions,
@@ -873,10 +1115,11 @@ pub(super) fn decompose_fold_columns_with_mode<const D: usize>(
         num_digits,
     )
     .entered();
-    Ok(expanded
+    let witnesses = expanded
         .into_iter()
         .map(DecomposeFoldWitness::from_centered_rows::<D>)
-        .collect())
+        .collect();
+    Ok(witnesses)
 }
 
 #[cfg(test)]
@@ -957,5 +1200,118 @@ mod byte_convolution_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[expect(clippy::unwrap_used, reason = "test module")]
+mod subring_convolution_tests {
+    use super::*;
+
+    fn check<const S: usize>() {
+        const D: usize = 512;
+        for weight in [16, 31, 41, 63] {
+            for pattern in 0..4 {
+                let challenge = SparseChallenge {
+                    positions: (0..weight)
+                        .map(|i| (((i * 73 + 11) % S) * (D / S)) as u32)
+                        .collect(),
+                    coeffs: (0..weight)
+                        .map(|i| match pattern {
+                            0 => 1,
+                            1 => -1,
+                            2 => {
+                                if i % 2 == 0 {
+                                    2
+                                } else {
+                                    -1
+                                }
+                            }
+                            _ => 2,
+                        })
+                        .collect(),
+                };
+                challenge.validate::<D>().unwrap();
+                let prepared = PreparedSubringChallenge::<S>::new(&challenge).unwrap();
+                for count in [0, 1, 3, 4, 8, 16, 31, 32, 63, 128, 512] {
+                    let shifts = (0..count).map(|i| (i * 31 + 7) % D).collect::<Vec<_>>();
+                    let mut expected = [17; D];
+                    for &x in &shifts {
+                        for (&y, &c) in challenge.positions.iter().zip(&challenge.coeffs) {
+                            let degree = x + y as usize;
+                            expected[degree % D] += if degree < D {
+                                i32::from(c)
+                            } else {
+                                -i32::from(c)
+                            };
+                        }
+                    }
+                    let mut actual = [[17; D]];
+                    prepared.add_rows(&mut actual[0], &shifts);
+                    restore_coefficient_order::<D, S>(&mut actual);
+                    assert_eq!(
+                        actual[0], expected,
+                        "S={S}, weight={weight}, pattern={pattern}, count={count}"
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_batch_bound<const S: usize>() {
+        const D: usize = 512;
+        for sign in [-1i8, 1] {
+            let challenges = (0..3)
+                .map(|column| SparseChallenge {
+                    positions: (0..32).map(|i| (16 * i) as u32).collect(),
+                    coeffs: (0..32)
+                        .map(|i| sign * if column == 0 && i == 0 { 1 } else { 2 })
+                        .collect(),
+                })
+                .collect::<Vec<_>>();
+            let prepared = challenges
+                .iter()
+                .map(|c| PreparedSubringChallenge::<S>::new(c).unwrap())
+                .collect::<Vec<_>>();
+            let mut expected = [0i32; D];
+            for challenge in &challenges {
+                for shift in (0..32).map(|i| 16 * i + 15) {
+                    for (&position, &coefficient) in
+                        challenge.positions.iter().zip(&challenge.coeffs)
+                    {
+                        let degree = shift + position as usize;
+                        expected[degree % D] += if degree < D {
+                            i32::from(coefficient)
+                        } else {
+                            -i32::from(coefficient)
+                        };
+                    }
+                }
+            }
+            assert_eq!(expected[511], i32::from(sign) * 191);
+            let mut actual = [[0i32; D]];
+            add_subring_columns(
+                &mut actual[0],
+                &prepared,
+                &[15; 32 * 3],
+                &[0; 32],
+                16,
+                &mut Vec::new(),
+            );
+            restore_coefficient_order::<D, S>(&mut actual);
+            assert_eq!(actual[0], expected);
+        }
+    }
+
+    #[test]
+    fn byte_batches_flush_at_the_signed_byte_bound() {
+        check_batch_bound::<64>();
+        check_batch_bound::<128>();
+    }
+
+    #[test]
+    fn embedded_challenges_match_integer_negacyclic_convolution() {
+        check::<64>();
+        check::<128>();
     }
 }
