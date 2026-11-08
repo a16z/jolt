@@ -1,7 +1,8 @@
 //! Verifier state a trusted host prepares for one schedule row.
 //!
 //! An ordinary [`AkitaVerifierSetup`] carries shapes and JSON catalogs and
-//! re-derives the backend key from the setup seed on first use. A verifier
+//! re-derives the backend key from the setup seed: a clear setup on first
+//! use, a Whiteout setup while decoding. A verifier
 //! running as a zkVM guest cannot afford that: seed expansion, catalog
 //! parsing, and the terminal matrix NTT would dominate its cycles. A
 //! [`PreparedVerifier`] carries their results for the single row a proof

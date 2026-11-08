@@ -603,6 +603,19 @@ fn whiteout_persisted_response_plan_verifies_and_is_validated() {
         plan_error(&error),
         Some(WhiteoutPlanError::Inadmissible(_))
     ));
+
+    let below = RESPONSE_NUM_VARS.0 - 1;
+    let mut out_of_range = plans.clone();
+    let _ = out_of_range
+        .responses
+        .as_mut()
+        .unwrap()
+        .insert(below, ResponseRow::plan(below).unwrap().plan);
+    let error = refusal(out_of_range, &opening());
+    assert!(matches!(
+        plan_error(&error),
+        Some(WhiteoutPlanError::Statement(_))
+    ));
 }
 
 /// The packaged response catalog covers every length Jolt's workloads reach,

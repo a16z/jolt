@@ -53,8 +53,11 @@ pub mod emit {
     pub const DENSE_NUM_VARS: (usize, usize) = (14, 35);
     /// Whiteout response lengths `ν` of `e` the packaged catalog holds (muldiv
     /// is 24, fib 2^16 and 2^20 are 25 and 26). The top is the longest `e`
-    /// the response proof admits; a length below the floor is planned in
-    /// process.
+    /// the response proof admits. The floor: admitted pad ranks have
+    /// rank * D >= 1024, so the compression witness plus the other response
+    /// segments exceeds 2^17 digits. A setup's persisted response rows must lie
+    /// in this range; a proof whose length has no row in the setup is
+    /// rejected, never planned.
     #[cfg(feature = "zk")]
     pub const RESPONSE_NUM_VARS: (usize, usize) = (18, MAX_RESPONSE_NUM_VARS as usize);
 

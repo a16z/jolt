@@ -1,4 +1,5 @@
 use super::*;
+use crate::schedules::emit::RESPONSE_NUM_VARS;
 
 /// The response rows a setup holds before any proof, audited when its
 /// catalog is: its persisted response set, which fixes every row, or else
@@ -16,6 +17,17 @@ impl ResponseRows {
         packaged: Option<&[u8]>,
     ) -> Result<Self, ZkError> {
         if let Some(persisted) = persisted {
+            if let Some(num_vars) = persisted
+                .keys()
+                .find(|num_vars| !(RESPONSE_NUM_VARS.0..=RESPONSE_NUM_VARS.1).contains(*num_vars))
+            {
+                return Err(
+                    WhiteoutPlanError::Statement(AkitaError::UnsupportedSchedule(format!(
+                        "no response proof has {num_vars} variables"
+                    )))
+                    .into(),
+                );
+            }
             return Ok(Self::Persisted(
                 persisted
                     .iter()
@@ -36,9 +48,7 @@ impl ResponseRows {
             )
             .map_err(WhiteoutPlanError::Inadmissible)?,
         ));
-        // Admitted pad ranks have rank * D >= 1024; their compression witness
-        // plus the other response segments exceeds 2^17 digits, hence nu >= 18.
-        for num_vars in 18..=27 {
+        for num_vars in RESPONSE_NUM_VARS.0..=RESPONSE_NUM_VARS.1 {
             if rows.row(num_vars)?.is_none() {
                 return Err(WhiteoutPlanError::MissingResponse { num_vars }.into());
             }
@@ -131,7 +141,7 @@ impl ResponsePlans {
     ) -> Result<Self, ZkError> {
         let lengths: Vec<_> = match &rows {
             ResponseRows::Persisted(rows) => rows.keys().copied().collect(),
-            ResponseRows::Packaged(_) => (18..=27).collect(),
+            ResponseRows::Packaged(_) => (RESPONSE_NUM_VARS.0..=RESPONSE_NUM_VARS.1).collect(),
         };
         let mut prepared = BTreeMap::new();
         for num_vars in lengths {
