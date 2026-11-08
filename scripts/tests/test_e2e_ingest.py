@@ -154,28 +154,6 @@ class IngestTests(unittest.TestCase):
             self.assertEqual(cells[10], '3.00%' if cores == 8 else '8.00%')
         self.assertNotIn('no observed envelope', comment)
 
-    def test_pr_comment_zero_base_uses_the_fallback_only_for_that_metric(self):
-        for key, column in [('e2e_s', 7), ('peak_rss_bytes', 10)]:
-            with self.subTest(key=key), tempfile.TemporaryDirectory() as directory:
-                result = inputs()[0]
-                case = result['cases'][0]
-                for sample in case['samples']:
-                    sample['metrics'].update(e2e_s=100 if sample['leg'] == 'base' else 104,
-                        peak_rss_bytes=10000 if sample['leg'] == 'base' else 10400)
-                    if sample['leg'] == 'base':
-                        sample['metrics'][key] = 0
-                bands = {metric: dict(threshold_pct=3, max_symmetric_window_delta_pct=0)
-                         for metric in ('e2e_s', 'peak_rss_bytes')}
-                bands[key]['threshold_pct'] = 20
-                with patch.object(ingest.calibration, 'for_case', return_value=(bands, None)):
-                    comment = ingest.render_pr_comment(result, Path(directory) / 'summary.md',
-                                                       'https://fixture.invalid/results')
-                row = next(line for line in comment.splitlines() if line.startswith('| fibonacci / dory |'))
-                cells = [cell.strip() for cell in row.split('|')]
-                self.assertEqual(cells[column], '3.00% (no observed envelope)')
-                self.assertEqual(row.count('no observed envelope'), 1)
-                self.assertIn('unavailable (zero base)', row)
-
     def test_pr_comment_no_change_marker_and_links(self):
         result = inputs()[0]
         template = result['cases'].pop()

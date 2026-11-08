@@ -885,12 +885,12 @@ def render_comment(result, out):
         rss_values = f"{base['peak_rss_bytes']:.0f} / {head['peak_rss_bytes']:.0f} | {changes['peak_rss_bytes']}"
         lines.append(f"{label} {time_values} | {basis['e2e_s']} | {rss_values} | {basis['peak_rss_bytes']} |")
         thresholds = {key: max(3.0, calibrated[key]['threshold_pct'])
-                      if calibrated and base[key] else 3.0 for key in base}
+                      if calibrated else 3.0 for key in base}
         if any(base[key] and Fraction(str(max(base[key], head[key]))) >
                Fraction(str(min(base[key], head[key]))) * (1 + Fraction(str(thresholds[key])) / 100)
                for key in base):
             threshold_labels = {key: f'{thresholds[key]:.2f}%' +
-                                (' (no observed envelope)' if not calibrated or not base[key] else '')
+                                (' (no observed envelope)' if not calibrated else '')
                                 for key in base}
             notable_rows.append(f"{label} {time_values} | {threshold_labels['e2e_s']} | "
                                 f"{rss_values} | {threshold_labels['peak_rss_bytes']} |")

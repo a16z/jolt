@@ -586,11 +586,10 @@ change exceeds its per-case reporting threshold: the larger of 3% and that
 metric's observed envelope. Selection uses
 `100 * (max(head/base, base/head) - 1) > threshold`, so
 increases and decreases use the same scale as the envelope. Each metric's
-threshold is shown next to its signed change; a missing envelope or zero base
-uses 3%, marked `no observed envelope`. A zero base still has no signed change
-and cannot qualify that metric for listing. These observed envelopes do not
-establish statistical significance. The full-results and benchmark-history links
-are unchanged. The comment always lists the distinct core-count/ceiling pairs
+threshold is shown next to its signed change; a missing envelope uses 3%, marked
+`no observed envelope`. These observed envelopes do not establish statistical
+significance. The comment links to the full results and benchmark history.
+The comment always lists the distinct core-count/ceiling pairs
 with a recorded process exit, including when no row changes; planned cases
 without an exit are not listed as run.
 Only the configured measured repetitions contribute; warmups are excluded.
@@ -898,8 +897,8 @@ Only cells exceeding the larger of 3% and their per-metric observed envelope in
 either time or peak RSS are listed. Selection compares head/base and base/head
 symmetrically, while the values and signed changes retain the check summary's
 rounding. Each listed metric shows its reporting threshold; missing envelopes
-or zero bases use 3% and are marked `no observed envelope`. Zero bases remain
-unavailable comparisons. The full table remains in the linked results.
+use 3% and are marked `no observed envelope`. The full table remains in the
+linked results.
 Validated failed or partial PR results replace the comment with
 a comparison-unavailable message. A failed ingest leaves the previous comment
 unchanged. Comment-posting errors do not fail ingest or the benchmark check.
