@@ -17,6 +17,7 @@ use jolt_openings::CommitmentScheme;
 
 use super::instruction_input::StreamingInstructionInput;
 use super::spartan_outer::StreamingOuterRemainder;
+use super::spartan_product::StreamingProductRemainder;
 use crate::JoltBackend;
 
 /// The streaming kernel families a backend installs in place of its default
@@ -25,8 +26,8 @@ use crate::JoltBackend;
 /// value is a valid selection; [`Self::NONE`] keeps every default kernel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StreamingFamilies {
-    /// The Spartan outer remainder (stage 1); its uni-skip carry is the
-    /// default kernel's.
+    /// The Spartan outer (stage 1) and product (stage 2) remainders; their
+    /// uni-skip carries are the default kernels'.
     pub spartan: bool,
     /// Stage 3's instruction input virtualization (no cross-stage state).
     pub instruction_input: bool,
@@ -54,6 +55,7 @@ where
         } = families;
         if spartan {
             self.spartan_outer_remainder = Box::new(StreamingOuterRemainder);
+            self.spartan_product_remainder = Box::new(StreamingProductRemainder);
         }
         if instruction_input {
             self.instruction_input = Box::new(StreamingInstructionInput);
