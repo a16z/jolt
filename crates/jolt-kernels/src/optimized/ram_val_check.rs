@@ -20,7 +20,7 @@ use rayon::prelude::*;
 use std::sync::Arc;
 
 use super::lazy_ra::{ChunkIndexSource, LazyBind, LazyFoldedRa, DEFAULT_MAX_WIDTH};
-use super::ram_events::{RamEventCounts, RamEventLog};
+use super::ram_events::RamEventLog;
 use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns, RamAddresses, NO_ACCESS};
 use super::rw_matrix::{ColumnEntry, SparseCycleColumn};
 use super::support::{
@@ -149,9 +149,6 @@ fn pin_lt<F: JoltField>(
         lt.final_value(),
     )
 }
-
-// `scalar_window_bytes` is derived for eight-wide lazy address tables only.
-const _: () = assert!(DEFAULT_MAX_WIDTH == 8);
 
 /// Bytes the value check's scalar tables and the RAM access columns request
 /// at their largest over `2^log_t` cycles, `ram_k` addresses and the
@@ -438,32 +435,6 @@ impl<F: JoltField> SumcheckKernel<F> for RamValCheckKernel<F> {
 /// an entry, merge-walking `ra`, never only over the rows both columns share.
 /// The split LT tables are the default kernel's.
 pub struct StreamingRamValCheck;
-
-impl StreamingRamValCheck {
-    /// Bytes the streaming check requests at its largest over `2^log_t`
-    /// cycles, `ram_k` words and the trace's event `counts`: the counterpart
-    /// of [`scalar_window_bytes`], without the event log, the family's carry
-    /// ([`RamEventCounts::log_bytes`]). Preparation builds
-    /// both columns, one entry per increment and per access, beside the
-    /// `K`-entry `eq(r_address)` table; binds work in place, holding one row
-    /// pair's entries as scratch per task (not counted). The split LT tables
-    /// are added throughout. Not counted: per-task round accumulators, the
-    /// boxed kernel and `Vec` headers. Returns `None` on overflow.
-    pub fn peak_bytes<F: JoltField>(
-        log_t: usize,
-        ram_k: usize,
-        counts: RamEventCounts,
-    ) -> Option<usize> {
-        let columns = counts
-            .increments
-            .checked_add(counts.accesses)?
-            .checked_mul(size_of::<ColumnEntry<F>>())?;
-        ram_k
-            .checked_mul(size_of::<F>())?
-            .checked_add(columns)?
-            .checked_add(SplitLt::<F>::peak_bytes(log_t)?)
-    }
-}
 
 impl<F: JoltField> PrepareKernel<F, RamValCheck<F>> for StreamingRamValCheck {
     fn prepare(

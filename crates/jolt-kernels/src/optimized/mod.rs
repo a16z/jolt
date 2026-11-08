@@ -69,7 +69,7 @@ mod one_hot_histograms;
 pub mod opening;
 pub mod precommitted_reduction;
 mod prefix_product;
-pub mod ram_events;
+mod ram_events;
 pub mod ram_hamming_booleanity;
 pub mod ram_output_check;
 pub mod ram_ra_claim_reduction;

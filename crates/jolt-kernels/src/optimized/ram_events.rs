@@ -5,15 +5,13 @@
 //! read-write and RAF kernels and the stage-4 value check read it, and the
 //! stage-5 RA claim reduction, its last consumer, takes it.
 
-use core::ops::Range;
 use std::sync::Arc;
 
 use jolt_field::JoltField;
 use jolt_witness::witnesses::{RamReadValue, RamWriteValue, RemappedRamAddress};
 use jolt_witness::{JoltWitnessPlane, RandomAccessRows, WitnessBundle, WitnessError};
-#[cfg(feature = "parallel")]
-use rayon::prelude::*;
 
+use super::ram_trace::val_init_from_first_accesses;
 use super::streaming::{exact_task_fill, task_ranges, TaskSlots, VISIT_ROWS};
 use crate::{KernelError, ProofSession};
 
@@ -80,68 +78,6 @@ impl RamEvent {
             pre_value: bundle.pre_value.0,
             post_value: bundle.post_value.0,
         })
-    }
-}
-
-/// The trace statistics the streaming RAM kernels' sizes depend on.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RamEventCounts {
-    /// Cycles with a remapped access, a nonzero `RamInc`, or both: the
-    /// [`RamEventLog`]'s length.
-    pub events: usize,
-    /// Cycles with a remapped access.
-    pub accesses: usize,
-    /// Cycles with a nonzero `RamInc`.
-    pub increments: usize,
-}
-
-impl RamEventCounts {
-    /// The counts of `witness`'s first `2^log_t` cycles, from one
-    /// task-partitioned visit of its rows: the predicates the event log and
-    /// the streaming RAM kernels collect by. Fails like the log's collection.
-    pub fn count<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        log_t: usize,
-    ) -> Result<Self, KernelError<F>> {
-        let rows = event_rows(witness, log_t)?;
-        let count = |range: &Range<usize>| Self::count_range(&rows, range.clone());
-        #[cfg(feature = "parallel")]
-        let tasks = task_ranges(1 << log_t, 1)
-            .par_iter()
-            .map(count)
-            .collect::<Vec<_>>();
-        #[cfg(not(feature = "parallel"))]
-        let tasks = task_ranges(1 << log_t, 1)
-            .iter()
-            .map(count)
-            .collect::<Vec<_>>();
-        tasks.into_iter().try_fold(Self::default(), |total, task| {
-            let task = task?;
-            Ok(Self {
-                events: total.events + task.events,
-                accesses: total.accesses + task.accesses,
-                increments: total.increments + task.increments,
-            })
-        })
-    }
-
-    /// Bytes of the [`RamEventLog`] these counts collect: the streaming RAM
-    /// family's carry, held from its stage-2 collection through stage 5.
-    pub fn log_bytes(self) -> usize {
-        self.events.saturating_mul(size_of::<RamEvent>())
-    }
-
-    fn count_range(rows: &RandomAccessRows, range: Range<usize>) -> Result<Self, WitnessError> {
-        let mut counts = Self::default();
-        rows.visit_bundles(range, VISIT_ROWS, |_, bundles: &[RamEventBundle]| {
-            for bundle in bundles {
-                counts.events += usize::from(bundle.is_event());
-                counts.accesses += usize::from(bundle.address.0.is_some());
-                counts.increments += usize::from(bundle.pre_value.0 != bundle.post_value.0);
-            }
-            Ok(())
-        })?;
-        Ok(counts)
     }
 }
 
@@ -217,7 +153,7 @@ impl RamEventLog {
     /// One serial visit per [`task_ranges`] task counts its events and a
     /// second writes them into that task's slots of one exactly sized
     /// allocation ([`exact_task_fill`]). Every remapped address is checked
-    /// against `ram_K` here, once for the whole family.
+    /// against `ram_K` before the log is shared.
     fn collect<F: JoltField>(
         witness: &dyn JoltWitnessPlane<F>,
         log_t: usize,
@@ -232,7 +168,18 @@ impl RamEventLog {
         }
         let events = exact_task_fill(
             &task_ranges(cycles, 1),
-            |range| RamEventCounts::count_range(&rows, range.clone()).map(|counts| counts.events),
+            |range| {
+                let mut count = 0;
+                rows.visit_bundles(
+                    range.clone(),
+                    VISIT_ROWS,
+                    |_, bundles: &[RamEventBundle]| {
+                        count += bundles.iter().filter(|bundle| bundle.is_event()).count();
+                        Ok(())
+                    },
+                )?;
+                Ok(count)
+            },
             |range, slots: &mut TaskSlots<'_, RamEvent>| {
                 rows.visit_bundles(
                     range.clone(),
@@ -280,24 +227,15 @@ impl RamEventLog {
         Ok(())
     }
 
-    /// Recover initial values from each address's first access; untouched
-    /// addresses retain their final value.
-    ///
-    /// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
     pub fn val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
-        let mut val_init = val_final;
-        let mut seen = vec![false; val_init.len()];
-        for event in self.events.iter() {
-            let Some(address) = event.address else {
-                continue;
-            };
-            let address = address as usize;
-            if !seen[address] {
-                seen[address] = true;
-                val_init[address] = F::from_u64(event.pre_value);
-            }
-        }
-        val_init
+        val_init_from_first_accesses(
+            val_final,
+            self.events.iter().filter_map(|event| {
+                event
+                    .address
+                    .map(|address| (address as usize, event.pre_value))
+            }),
+        )
     }
 }
 
@@ -312,8 +250,7 @@ mod tests {
     use super::*;
 
     /// Accesses and nonzero increments, never only their intersection, in
-    /// cycle order; each event's increment is the witness's `RamInc`, and
-    /// the counts agree with the log.
+    /// cycle order; each event's increment is the witness's `RamInc`.
     #[test]
     fn event_log_keeps_accesses_and_increments_in_cycle_order() {
         let shape = FixtureShape {
@@ -358,14 +295,6 @@ mod tests {
             logged[event.cycle as usize] = Fr::from_i128(event.inc());
         }
         assert_eq!(logged, inc);
-        assert_eq!(
-            RamEventCounts::count::<Fr>(&witness, shape.log_t).unwrap(),
-            RamEventCounts {
-                events: 6,
-                accesses: 4,
-                increments: 4,
-            }
-        );
     }
 
     /// A witness without a row handle, an access beyond `ram_K` and a session

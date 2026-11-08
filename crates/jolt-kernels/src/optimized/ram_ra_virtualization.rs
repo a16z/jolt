@@ -63,11 +63,9 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for OptimizedBackend
 }
 
 /// The streaming stage-6b slot: no address column survives the earlier
-/// streaming RAM stages, so preparation collects one (`4·T` bytes, the
-/// default kernel's carry) for this stage alone. It is not checked against
-/// `ram_K` again: the streaming read-write and RAF kernels' event log checks
-/// every remapped address at its stage-2 collection, and every chunk index
-/// is masked to the committed chunk width, so no lookup leaves its table.
+/// streaming RAM stages, so preparation collects one (at most `4·T` bytes,
+/// the default kernel's carry) and checks its addresses against `ram_K` for
+/// this stage alone.
 pub struct StreamingRamRaVirtualization;
 
 impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for StreamingRamRaVirtualization {
@@ -77,8 +75,10 @@ impl<F: JoltField> PrepareKernel<F, RamRaVirtualization<F>> for StreamingRamRaVi
         witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, RamRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = RamRaVirtualization<F>>>, KernelError<F>> {
-        RamRaVirtualizationKernel::prepare(inputs, |log_t, _| {
-            super::ram_trace::collect_addresses(witness, log_t)
+        RamRaVirtualizationKernel::prepare(inputs, |log_t, ram_log_k| {
+            let addresses = super::ram_trace::collect_addresses(witness, log_t)?;
+            super::ram_trace::validate_addresses(&addresses, 1usize << ram_log_k)?;
+            Ok(addresses)
         })
     }
 }
@@ -485,6 +485,44 @@ mod tests {
     use crate::ReferenceBackend;
 
     const CHUNK_BITS: usize = 4;
+
+    #[test]
+    fn out_of_domain_address_fails_in_both_slots() {
+        let shape = FixtureShape {
+            log_t: 3,
+            ram_k: 16,
+        };
+        with_ram_fixture(shape, vec![RamOp::Read { word: 9 }], |witness| {
+            let relation = RamRaVirtualization::<Fr>::new(
+                RamRaVirtualizationDimensions::new(shape.log_t, 1),
+                vec![Fr::from_u64(0); 3],
+                vec![Fr::from_u64(0); shape.log_t],
+                CHUNK_BITS,
+            );
+            let claims = RamRaVirtualizationInputClaims {
+                ram_ra_reduced: Fr::from_u64(0),
+            };
+            let points = RamRaVirtualizationInputClaims::<Vec<Fr>>::default();
+            let challenges = NoChallenges::default();
+            let slots: [&dyn PrepareKernel<Fr, RamRaVirtualization<Fr>>; 2] =
+                [&OptimizedBackend, &StreamingRamRaVirtualization];
+            for slot in slots {
+                assert!(matches!(
+                    slot.prepare(
+                        &mut ProofSession::default(),
+                        witness,
+                        ProverInputs {
+                            relation: &relation,
+                            claims: &claims,
+                            points: &points,
+                            challenges: &challenges,
+                        },
+                    ),
+                    Err(KernelError::InvariantViolation { .. })
+                ));
+            }
+        });
+    }
 
     /// The default slot, and the streaming slot that collects its own
     /// address column, against the reference tier.

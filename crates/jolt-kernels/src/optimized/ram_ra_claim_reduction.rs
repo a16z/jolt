@@ -69,32 +69,6 @@ impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for OptimizedBackend
 /// releases at the phase switch.
 pub struct StreamingRamRaClaimReduction;
 
-impl StreamingRamRaClaimReduction {
-    /// Bytes beside the family's carry, the event log
-    /// ([`RamEventCounts::log_bytes`](super::ram_events::RamEventCounts::log_bytes),
-    /// held until the phase switch), over
-    /// `2^log_t` cycles and `ram_k` words: the
-    /// `K`-entry `eq(r_address)` table and the `TERMS` triples of `P`, `Q`
-    /// and `eq_hi` tables (`2^⌊log_t/2⌋` and `2^⌈log_t/2⌉` entries), plus one
-    /// scatter slot of `Q` tables per pool thread while `Q` is built. Not
-    /// counted: the suffix phase's `H'` table, built after the log is
-    /// released; the reversed prefix point, its eq table and the boxed
-    /// kernel.
-    pub fn peak_bytes<F: JoltField>(log_t: usize, ram_k: usize) -> usize {
-        let prefix = 1usize << (log_t / 2);
-        let suffix = 1usize << (log_t - log_t / 2);
-        #[cfg(feature = "parallel")]
-        let slots = rayon::current_num_threads();
-        #[cfg(not(feature = "parallel"))]
-        let slots = 1;
-        let tables = prefix
-            .saturating_mul(2 + slots)
-            .saturating_add(suffix)
-            .saturating_mul(TERMS);
-        ram_k.saturating_add(tables).saturating_mul(size_of::<F>())
-    }
-}
-
 impl<F: JoltField> PrepareKernel<F, RamRaClaimReduction<F>> for StreamingRamRaClaimReduction {
     fn prepare(
         &self,

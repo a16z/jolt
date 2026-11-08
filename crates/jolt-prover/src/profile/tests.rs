@@ -33,11 +33,19 @@ fn streaming_option_selects_the_requested_families() {
             },
         ),
         (
-            "instruction-input,spartan",
+            "ram",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: false,
+                ram: true,
+            },
+        ),
+        (
+            "instruction-input,spartan,ram",
             StreamingFamilies {
                 instruction_input: true,
                 spartan: true,
-                ram: false,
+                ram: true,
             },
         ),
     ] {

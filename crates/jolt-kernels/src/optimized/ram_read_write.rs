@@ -46,13 +46,13 @@ use jolt_verifier::stages::stage2::ram_read_write_checking::{
 use jolt_witness::JoltWitnessPlane;
 
 use super::prefix_product::PrefixColumn;
-use super::ram_events::{RamEventCounts, RamEventLog};
+use super::ram_events::RamEventLog;
 use super::ram_trace::{ram_access_columns_bytes, RamAccessColumns};
 use super::read_write::ReadWriteOrder;
 use super::rw_matrix::{
     round0_bind, round0_bind_bytes, round0_event_bind, round0_event_q_at_one,
     round0_event_quadratic, round0_q_at_one, round0_quadratic_coefficients, val_slope_term,
-    AddressMajorMatrix, ColumnEntry, CycleMajorEntry, CycleMajorMatrix, SparseCycleColumn,
+    AddressMajorMatrix, CycleMajorMatrix, SparseCycleColumn,
 };
 use super::streaming::FillMismatch;
 use super::support::{map_indices, pin_derived_term_if_derived, GruenRoundMessage};
@@ -745,61 +745,6 @@ impl RamReadWriteBytes {
 /// `inc` and eq tables and builds its matrix from the log.
 pub struct StreamingRamReadWrite;
 
-impl StreamingRamReadWrite {
-    /// Bytes the streaming kernel requests from its preparation through its
-    /// first bind for `dimensions` and the trace's event `counts`, together
-    /// with RAF's two `K`-field tables: the counterpart of
-    /// [`RamReadWriteBytes::new`], or `None` for overflow or a phase split `prepare` rejects.
-    /// The event log beside them is the family's carry
-    /// ([`RamEventCounts::log_bytes`]), not counted here.
-    ///
-    /// Both orders count `val_init` (at least four slots) and its
-    /// first-access flags, the split-eq tables and the RAF tables. Cycle-first adds round 0's bound
-    /// matrix and `inc` column, at most one entry per access and per
-    /// increment; later cycle binds work in place, holding one row pair's
-    /// entries as scratch per task (not counted). Address-first adds the
-    /// dense `inc` and merged eq tables and the larger of the matrix's
-    /// first-bind collect (`AddressMajorMatrix::first_bind_bytes` at the
-    /// access count) and its bound entries beside one half-length copy of a
-    /// `K`-entry table. Later binds are not counted.
-    pub fn first_bind_bytes<F: JoltField>(
-        dimensions: ReadWriteDimensions,
-        counts: RamEventCounts,
-    ) -> Option<usize> {
-        let order = ReadWriteOrder::new::<F>(dimensions).ok()?;
-        let (log_t, log_k) = (dimensions.log_t(), dimensions.log_k());
-        let cycles = 1usize.checked_shl(u32::try_from(log_t).ok()?)?;
-        let addresses = 1usize.checked_shl(u32::try_from(log_k).ok()?)?;
-        let field = |entries: usize| entries.checked_mul(size_of::<F>());
-        let shared = [
-            field(addresses.max(4))?,
-            addresses,
-            GruenSplitEqPolynomial::<F>::low_to_high_bytes(log_t)?,
-            field(addresses.checked_mul(2)?)?,
-        ]
-        .into_iter()
-        .try_fold(0usize, usize::checked_add)?;
-        match order {
-            ReadWriteOrder::CycleFirst => {
-                let matrix = counts
-                    .accesses
-                    .checked_mul(size_of::<CycleMajorEntry<F>>())?;
-                let inc = counts.increments.checked_mul(size_of::<ColumnEntry<F>>())?;
-                shared.checked_add(matrix)?.checked_add(inc)
-            }
-            ReadWriteOrder::AddressFirst => {
-                let first_bind = AddressMajorMatrix::<F>::first_bind_bytes(counts.accesses)?.max(
-                    AddressMajorMatrix::<F>::bound_bytes(counts.accesses)?
-                        .checked_add(field(addresses / 2)?)?,
-                );
-                shared
-                    .checked_add(field(cycles)?.checked_mul(2)?)?
-                    .checked_add(first_bind)
-            }
-        }
-    }
-}
-
 impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for StreamingRamReadWrite {
     fn prepare(
         &self,
@@ -825,9 +770,6 @@ impl<F: JoltField> PrepareKernel<F, RamReadWriteChecking<F>> for StreamingRamRea
         let phase = match order {
             ReadWriteOrder::CycleFirst => Phase::EventRound0 { log, gruen },
             ReadWriteOrder::AddressFirst => {
-                if witness.shape(ram_inc().polynomial_id())?.rows() != 1usize << log_t {
-                    return Err(geometry_mismatch);
-                }
                 let prefix = log
                     .events()
                     .last()

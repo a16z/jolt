@@ -185,8 +185,9 @@ pub(crate) fn bind_groups_in_place<T: Copy + Send + Sync>(
                     .count();
             group.clear();
             group.extend_from_slice(&run[read..end]);
+            let start = write;
             bind(&group, &mut |item| {
-                if write < end {
+                if write - start < group.len() {
                     run[write] = item;
                     write += 1;
                 } else {
@@ -415,8 +416,51 @@ pub(crate) fn product_endpoint_terms<F: JoltField>([a, b]: [[F; 2]; 2]) -> [F; 2
 }
 
 #[cfg(test)]
+#[cfg_attr(
+    feature = "parallel",
+    expect(clippy::unwrap_used, reason = "test module")
+)]
 mod tests {
-    use super::task_ranges;
+    #[cfg(feature = "parallel")]
+    use rayon::ThreadPoolBuilder;
+
+    use super::{bind_groups_in_place, task_ranges, FillMismatch};
+
+    #[test]
+    fn group_overemit_fails_after_an_earlier_group_shrinks() {
+        let check = || {
+            let mut items = vec![0, 0, 1, 1];
+            items.extend([2; 36]);
+            let result = bind_groups_in_place(
+                &mut items,
+                |&item| item,
+                |group, emit| match group[0] {
+                    0 => emit(0),
+                    1 => {
+                        for _ in 0..3 {
+                            emit(1);
+                        }
+                    }
+                    _ => {
+                        for &item in group {
+                            emit(item);
+                        }
+                    }
+                },
+            );
+            assert_eq!(result, Err(FillMismatch));
+        };
+        #[cfg(feature = "parallel")]
+        for threads in [1, 3] {
+            ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(check);
+        }
+        #[cfg(not(feature = "parallel"))]
+        check();
+    }
 
     /// Tasks tile the domain in order, each a positive whole number of
     /// aligned groups.

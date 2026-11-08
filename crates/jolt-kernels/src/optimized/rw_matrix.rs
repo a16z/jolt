@@ -19,8 +19,9 @@
 //! The streaming RAM family starts both matrices from the [`RamEventLog`]
 //! instead: one unbound entry per remapped access. While cycle variables
 //! bind, its cycle-indexed `inc` column is a separate [`SparseCycleColumn`]
-//! over the nonzero increments, which need not be accesses, and every bind
-//! writes one exactly sized allocation ([`exact_task_fill`]).
+//! over the nonzero increments, which need not be accesses. The cycle-first
+//! round-0 bind uses exactly sized destination allocations ([`exact_task_fill`]);
+//! later cycle binds work in place.
 
 use jolt_field::JoltField;
 use jolt_poly::{BindingOrder, Polynomial};

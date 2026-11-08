@@ -393,25 +393,36 @@ impl RamAccessColumns {
         self.pre_values.len().max(self.post_values.len())
     }
 
-    /// Recover initial values from each address's first access; untouched
-    /// addresses retain their final value.
-    ///
-    /// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
     pub fn reconstruct_val_init<F: JoltField>(&self, val_final: Vec<F>) -> Vec<F> {
-        let mut val_init = val_final;
-        let mut seen = vec![false; val_init.len()];
-        for (cycle, &address) in self.addresses.prefix().iter().enumerate() {
-            if address == NO_ACCESS {
-                continue;
-            }
-            let address = address as usize;
-            if !seen[address] {
-                seen[address] = true;
-                val_init[address] = F::from_u64(self.pre_value(cycle));
-            }
-        }
-        val_init
+        val_init_from_first_accesses(
+            val_final,
+            self.addresses
+                .prefix()
+                .iter()
+                .enumerate()
+                .filter(|(_, address)| **address != NO_ACCESS)
+                .map(|(cycle, &address)| (address as usize, self.pre_value(cycle))),
+        )
     }
+}
+
+/// Recover initial values from cycle-ordered accesses; untouched addresses
+/// retain their final value.
+///
+/// WARNING: RAM sumchecks enforce the assumed trace/final-image agreement.
+pub(crate) fn val_init_from_first_accesses<F: JoltField>(
+    val_final: Vec<F>,
+    accesses: impl Iterator<Item = (usize, u64)>,
+) -> Vec<F> {
+    let mut val_init = val_final;
+    let mut seen = vec![false; val_init.len()];
+    for (address, pre_value) in accesses {
+        if !seen[address] {
+            seen[address] = true;
+            val_init[address] = F::from_u64(pre_value);
+        }
+    }
+    val_init
 }
 
 pub(crate) fn validate_addresses<F: JoltField>(
