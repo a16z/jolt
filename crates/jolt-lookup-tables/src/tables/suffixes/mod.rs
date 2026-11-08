@@ -15,6 +15,7 @@ mod and;
 mod andnot;
 mod div_by_zero;
 mod eq;
+mod extract_byte;
 mod gt;
 mod left_is_zero;
 mod left_shift;
@@ -63,6 +64,7 @@ use and::AndSuffix;
 use andnot::AndNotSuffix;
 use div_by_zero::DivByZeroSuffix;
 use eq::EqSuffix;
+use extract_byte::{ByteOffsetSuffix, ExtractByteUnsignedSuffix};
 use gt::GreaterThanSuffix;
 use left_is_zero::LeftOperandIsZeroSuffix;
 use left_shift::LeftShiftSuffix;
@@ -193,6 +195,15 @@ pub enum Suffixes {
     AddressOffsetB,
     AddressOffsetH,
     AddressOffsetW,
+    ByteOffset0,
+    ByteOffset1,
+    ByteOffset2,
+    ByteOffset3,
+    ByteOffset4,
+    ByteOffset5,
+    ByteOffset6,
+    ByteOffset7,
+    ExtractByteUnsigned,
 }
 
 impl Suffixes {
@@ -216,6 +227,14 @@ impl Suffixes {
                 | Suffixes::WindowSign
                 | Suffixes::TopYBit
                 | Suffixes::BottomXBit
+                | Suffixes::ByteOffset0
+                | Suffixes::ByteOffset1
+                | Suffixes::ByteOffset2
+                | Suffixes::ByteOffset3
+                | Suffixes::ByteOffset4
+                | Suffixes::ByteOffset5
+                | Suffixes::ByteOffset6
+                | Suffixes::ByteOffset7
         )
     }
 
@@ -285,6 +304,15 @@ impl Suffixes {
             Suffixes::AddressOffsetB => AddressOffsetSuffix::<1>::suffix_mle(b),
             Suffixes::AddressOffsetH => AddressOffsetSuffix::<2>::suffix_mle(b),
             Suffixes::AddressOffsetW => AddressOffsetSuffix::<4>::suffix_mle(b),
+            Suffixes::ByteOffset0 => ByteOffsetSuffix::<0>::suffix_mle(b),
+            Suffixes::ByteOffset1 => ByteOffsetSuffix::<1>::suffix_mle(b),
+            Suffixes::ByteOffset2 => ByteOffsetSuffix::<2>::suffix_mle(b),
+            Suffixes::ByteOffset3 => ByteOffsetSuffix::<3>::suffix_mle(b),
+            Suffixes::ByteOffset4 => ByteOffsetSuffix::<4>::suffix_mle(b),
+            Suffixes::ByteOffset5 => ByteOffsetSuffix::<5>::suffix_mle(b),
+            Suffixes::ByteOffset6 => ByteOffsetSuffix::<6>::suffix_mle(b),
+            Suffixes::ByteOffset7 => ByteOffsetSuffix::<7>::suffix_mle(b),
+            Suffixes::ExtractByteUnsigned => ExtractByteUnsignedSuffix::suffix_mle(b),
         }
     }
 

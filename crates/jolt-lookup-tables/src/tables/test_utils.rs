@@ -144,6 +144,11 @@ pub fn prefix_suffix_materialization_test<const XLEN: usize, F, T>(
             let mut tables: Vec<Vec<F>> = ALL_PREFIXES
                 .iter()
                 .map(|prefix| {
+                    // Match the prover: materialize only this table's prefixes.
+                    // Unrelated prefixes may require a larger phase size.
+                    if !T::default().prefixes().contains(prefix) {
+                        return vec![F::zero(); 1usize << rounds_per_phase];
+                    }
                     (0..1usize << rounds_per_phase)
                         .map(|x| {
                             prefix

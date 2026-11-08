@@ -128,6 +128,7 @@ use virtual_assert_lte::VirtualAssertLTE;
 use virtual_assert_mulu_no_overflow::VirtualAssertMulUNoOverflow;
 use virtual_assert_valid_div0::VirtualAssertValidDiv0;
 use virtual_assert_valid_unsigned_remainder::VirtualAssertValidUnsignedRemainder;
+use virtual_extract_byte_unsigned::VirtualExtractByteUnsigned;
 use virtual_load_b::VirtualLoadB;
 use virtual_load_h::VirtualLoadH;
 use virtual_load_w::VirtualLoadW;
@@ -343,6 +344,7 @@ pub mod virtual_assert_lte;
 pub mod virtual_assert_mulu_no_overflow;
 pub mod virtual_assert_valid_div0;
 pub mod virtual_assert_valid_unsigned_remainder;
+pub mod virtual_extract_byte_unsigned;
 pub mod virtual_host_io;
 pub mod virtual_load_b;
 pub mod virtual_load_h;
@@ -2792,6 +2794,35 @@ mod tests {
         let mut cpu = exec_cpu();
         exec(&mut cpu, u_type(1, 5, 0x17));
         assert_eq!(cpu.x[5], (ADDR + 0x1000) as i64);
+    }
+
+    #[test]
+    fn lbu_two_rows_cover_offsets_aliasing_and_zero_destination() {
+        let word = 0x80ff_017f_55aa_00feu64;
+        let address = DRAM_BASE + 0x1000;
+        for offset in 0..8 {
+            for imm in [-2048, -1, 0, 2047] {
+                for rd in [0, 1, 3] {
+                    let mut cpu = exec_cpu();
+                    cpu.mmu.store_doubleword(address, word).unwrap();
+                    cpu.write_register(1, (address + offset) as i64 - i64::from(imm));
+                    let base = cpu.x[1];
+                    let instr =
+                        Instruction::decode(i_type(imm, 1, 0b100, rd, 0x03), ADDR, false).unwrap();
+                    let mut trace = Vec::new();
+                    trace_inline_sequence(&instr, &mut cpu, Some(&mut trace));
+                    assert_eq!(trace.len(), 2);
+                    assert!(matches!(trace[0], Cycle::VirtualLoadB(_)));
+                    assert!(matches!(trace[1], Cycle::VirtualExtractByteUnsigned(_)));
+                    let expected = i64::from(word.to_le_bytes()[offset as usize]);
+                    assert_eq!(cpu.x[rd as usize], if rd == 0 { 0 } else { expected });
+                    if rd != 1 {
+                        assert_eq!(cpu.x[1], base);
+                    }
+                    assert_eq!(cpu.mmu.load_doubleword(address).unwrap().0, word);
+                }
+            }
+        }
     }
 
     #[test]

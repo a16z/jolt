@@ -12,6 +12,7 @@ pub mod and;
 pub mod andn;
 pub mod div_by_zero;
 pub mod eq;
+pub mod extract_byte;
 pub mod left_is_zero;
 pub mod left_msb_right_operand;
 pub mod left_msb_right_operand_is_zero;
@@ -58,6 +59,7 @@ use std::ops::Index;
 
 use crate::lookup_bits::LookupBits;
 use address_offset::AddressOffsetPrefix;
+use extract_byte::ExtractBytePrefix;
 use pow2_offset::Pow2OffsetPrefix;
 
 /// A prefix polynomial evaluated at binary points during materialization.
@@ -182,6 +184,22 @@ pub enum Prefixes {
     AddressOffsetB,
     AddressOffsetH,
     AddressOffsetW,
+    ExtractByte0,
+    ExtractByte1,
+    ExtractByte2,
+    ExtractByte3,
+    ExtractByte4,
+    ExtractByte5,
+    ExtractByte6,
+    ExtractByte7,
+    ByteOffset0,
+    ByteOffset1,
+    ByteOffset2,
+    ByteOffset3,
+    ByteOffset4,
+    ByteOffset5,
+    ByteOffset6,
+    ByteOffset7,
 }
 
 /// All prefix variants in discriminant order.
@@ -256,6 +274,23 @@ macro_rules! dispatch_prefix {
             Prefixes::AddressOffsetB => AddressOffsetPrefix::<1>::$method($($args),*),
             Prefixes::AddressOffsetH => AddressOffsetPrefix::<2>::$method($($args),*),
             Prefixes::AddressOffsetW => AddressOffsetPrefix::<4>::$method($($args),*),
+            Prefixes::ExtractByte0 => ExtractBytePrefix::<0, true>::$method($($args),*),
+            Prefixes::ExtractByte1 => ExtractBytePrefix::<1, true>::$method($($args),*),
+            Prefixes::ExtractByte2 => ExtractBytePrefix::<2, true>::$method($($args),*),
+            Prefixes::ExtractByte3 => ExtractBytePrefix::<3, true>::$method($($args),*),
+            Prefixes::ExtractByte4 => ExtractBytePrefix::<4, true>::$method($($args),*),
+            Prefixes::ExtractByte5 => ExtractBytePrefix::<5, true>::$method($($args),*),
+            Prefixes::ExtractByte6 => ExtractBytePrefix::<6, true>::$method($($args),*),
+            Prefixes::ExtractByte7 => ExtractBytePrefix::<7, true>::$method($($args),*),
+            Prefixes::ByteOffset0 => ExtractBytePrefix::<0, false>::$method($($args),*),
+            Prefixes::ByteOffset1 => ExtractBytePrefix::<1, false>::$method($($args),*),
+            Prefixes::ByteOffset2 => ExtractBytePrefix::<2, false>::$method($($args),*),
+            Prefixes::ByteOffset3 => ExtractBytePrefix::<3, false>::$method($($args),*),
+            Prefixes::ByteOffset4 => ExtractBytePrefix::<4, false>::$method($($args),*),
+            Prefixes::ByteOffset5 => ExtractBytePrefix::<5, false>::$method($($args),*),
+            Prefixes::ByteOffset6 => ExtractBytePrefix::<6, false>::$method($($args),*),
+            Prefixes::ByteOffset7 => ExtractBytePrefix::<7, false>::$method($($args),*),
+
         }
     };
 }

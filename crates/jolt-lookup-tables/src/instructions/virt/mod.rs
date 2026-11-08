@@ -7,6 +7,7 @@ pub mod assert_lte;
 pub mod assert_mulu_no_overflow;
 pub mod assert_valid_div0;
 pub mod assert_valid_unsigned_remainder;
+pub mod extract_byte_unsigned;
 pub mod floor_access;
 pub mod host_io;
 pub mod movsign;
