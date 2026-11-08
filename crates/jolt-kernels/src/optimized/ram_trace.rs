@@ -157,14 +157,7 @@ impl SharedRamAddresses {
         log_t: usize,
     ) -> Result<Arc<RamAddresses>, KernelError<F>> {
         if session.state::<Self>().is_none() {
-            let cycles = 1usize << log_t;
-            let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
-                witness,
-                cycles,
-                [NO_ACCESS],
-                |bundle| encode_address(bundle.address.0).map(|address| [address]),
-            )?;
-            session.park(Self(Arc::new(RamAddresses::new(addresses, cycles))));
+            session.park(Self(collect_addresses(witness, log_t)?));
         }
         let addresses = Arc::clone(
             &session
@@ -182,6 +175,21 @@ impl SharedRamAddresses {
         }
         Ok(addresses)
     }
+}
+
+/// Remapped addresses with the trace's implicit no-access suffix.
+pub(crate) fn collect_addresses<F: JoltField>(
+    witness: &dyn JoltWitnessPlane<F>,
+    log_t: usize,
+) -> Result<Arc<RamAddresses>, KernelError<F>> {
+    let cycles = 1usize << log_t;
+    let [addresses] = collect_split_columns::<F, RamAddressBundle, u32, 1>(
+        witness,
+        cycles,
+        [NO_ACCESS],
+        |bundle| encode_address(bundle.address.0).map(|address| [address]),
+    )?;
+    Ok(Arc::new(RamAddresses::new(addresses, cycles)))
 }
 
 fn collect_split_columns<F: JoltField, B, T, const N: usize>(
@@ -420,23 +428,6 @@ pub(crate) fn validate_addresses<F: JoltField>(
         });
     }
     Ok(())
-}
-
-/// Address fold: `out[j] = eq_address[addresses[j]]`, or zero without access.
-pub(crate) fn fold_addresses<F: JoltField>(addresses: &RamAddresses, eq_address: &[F]) -> Vec<F> {
-    let mut values: Vec<F> = addresses
-        .prefix()
-        .iter()
-        .map(|&address| {
-            if address == NO_ACCESS {
-                F::zero()
-            } else {
-                eq_address[address as usize]
-            }
-        })
-        .collect();
-    values.resize(addresses.len(), F::zero());
-    values
 }
 
 const FOLD_CYCLES_CHUNK: usize = 1 << 20;
