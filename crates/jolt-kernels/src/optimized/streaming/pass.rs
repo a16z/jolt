@@ -1,13 +1,13 @@
 //! Task-partitioned row passes: a pass splits the cycle domain into tasks of
 //! whole split-eq groups, at most [`TASKS_PER_THREAD`] per pool thread, and
-//! each task visits its rows once, serially, off the witness's resident rows.
+//! each task visits its rows once, serially
+//! ([`BundleStore::visit`](crate::optimized::support::BundleStore::visit)).
 
-use std::marker::PhantomData;
 use std::ops::Range;
 
 use jolt_field::JoltField;
 use jolt_poly::GruenSplitEqPolynomial;
-use jolt_witness::{JoltWitnessPlane, RandomAccessRows, WitnessBundle, WitnessError};
+use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -17,57 +17,6 @@ pub(crate) const VISIT_ROWS: usize = 1 << 12;
 /// Byte cap on one streaming kernel's dense tables: its rounds recompute
 /// their pairs from the rows until the tables fit ([`dense_crossover`]).
 pub(crate) const DENSE_TABLE_CAP: usize = 4 << 30;
-
-/// The rows a streaming kernel's passes visit: the witness's resident rows,
-/// or, in in-module parity tests, typed rows no trace produces.
-pub(crate) enum KernelRows<B> {
-    Trace(RandomAccessRows, PhantomData<fn() -> B>),
-    #[cfg(test)]
-    Synthetic(Vec<B>),
-}
-
-impl<B: WitnessBundle> KernelRows<B> {
-    /// The witness's resident rows, which must span exactly the
-    /// `2^log_t`-cycle domain; a witness without them fails instead of
-    /// collecting rows.
-    pub(crate) fn from_witness<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        log_t: usize,
-        label: &'static str,
-    ) -> Result<Self, WitnessError> {
-        let rows = witness
-            .random_access()
-            .ok_or(WitnessError::UnavailableView { label })?;
-        if rows.cycles() != 1 << log_t {
-            return Err(WitnessError::InvalidDimensions {
-                label,
-                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
-            });
-        }
-        Ok(Self::Trace(rows, PhantomData))
-    }
-
-    /// One serial visit of `range` in exact `chunk`-row callbacks
-    /// ([`RandomAccessRows::visit_bundles`]).
-    pub(crate) fn visit(
-        &self,
-        range: Range<usize>,
-        chunk: usize,
-        visit: impl FnMut(usize, &[B]) -> Result<(), WitnessError>,
-    ) -> Result<(), WitnessError> {
-        match self {
-            Self::Trace(rows, _) => rows.visit_bundles(range, chunk, visit),
-            #[cfg(test)]
-            Self::Synthetic(rows) => {
-                let mut visit = visit;
-                range
-                    .clone()
-                    .step_by(chunk)
-                    .try_for_each(|start| visit(start, &rows[start..range.end.min(start + chunk)]))
-            }
-        }
-    }
-}
 
 /// Tasks per pool thread in a [`task_ranges`] partition, so work stealing can
 /// even out unequal row costs between tasks.
@@ -281,6 +230,12 @@ where
         .try_fold([F::zero(); N], |sum, task_input| {
             Ok(add(sum, task(task_input)?))
         })
+}
+
+/// `(q(0), q(∞))` terms of one pair of a two-factor product summand `a·b`,
+/// from the factors' `[low, high]` halves.
+pub(crate) fn product_endpoint_terms<F: JoltField>([a, b]: [[F; 2]; 2]) -> [F; 2] {
+    [a[0] * b[0], (a[1] - a[0]) * (b[1] - b[0])]
 }
 
 #[cfg(test)]

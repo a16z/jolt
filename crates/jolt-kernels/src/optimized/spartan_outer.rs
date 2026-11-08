@@ -121,6 +121,9 @@ mod guard_groups;
 use b_folds::PreparedBFolds;
 use guard_groups::{GuardEndpointGroup, GuardEndpoints, GuardGroups, GUARD_ENDPOINT_ENTRIES};
 
+mod streaming;
+pub use streaming::StreamingOuterRemainder;
+
 const DOMAIN: usize = SPARTAN_OUTER_UNISKIP_DOMAIN_SIZE;
 const SECOND_GROUP_LEN: usize = SPARTAN_OUTER_SECOND_GROUP_ROW_COUNT;
 const EXTENDED_SIZE: usize = 2 * DOMAIN - 1;
@@ -197,8 +200,31 @@ impl SpartanOuterRow {
                 fold_guards(lagrange, &values.a_first),
                 fold_guards(lagrange, &values.a_second),
             ],
-            values.fold_b(lagrange),
+            values.fold_b([lagrange, lagrange]),
         )
+    }
+
+    fn fold_streams<F: JoltField>(
+        &self,
+        #[cfg(feature = "field-inline")] field_row: Option<&FieldInlineSpartanRow<F>>,
+        first: &[F],
+        second: &[F],
+    ) -> [(F, F); 2] {
+        #[cfg(feature = "field-inline")]
+        if let Some(field_row) = field_row {
+            let values = self.field_group_values(field_row);
+            let [b_first, b_second] = values.fold_b([first, second]);
+            return [
+                (fold_guards(first, &values.integer.a_first), b_first),
+                (fold_guards(second, &values.integer.a_second), b_second),
+            ];
+        }
+        let values = self.group_values();
+        let [b_first, b_second] = values.fold_b([first, second]);
+        [
+            (fold_guards(first, &values.a_first), b_first),
+            (fold_guards(second, &values.a_second), b_second),
+        ]
     }
 }
 
@@ -285,10 +311,10 @@ struct RowGroupValues {
 }
 
 impl RowGroupValues {
-    fn fold_b<F: JoltField>(&self, weights: &[F]) -> [F; 2] {
+    fn fold_b<F: JoltField>(&self, weights: [&[F]; 2]) -> [F; 2] {
         [
-            fold_values(weights, &self.b_first, &[0; DOMAIN]),
-            fold_values(weights, &self.b_second_lo, &self.b_second_hi),
+            fold_values(weights[0], &self.b_first, &[0; DOMAIN]),
+            fold_values(weights[1], &self.b_second_lo, &self.b_second_hi),
         ]
     }
 }
@@ -337,14 +363,14 @@ impl<F: JoltField> FieldGroupValues<F> {
     }
 
     /// Only B carries field corrections; the A folds are `self.integer`'s.
-    fn fold_b(&self, weights: &[F]) -> [F; 2] {
+    fn fold_b(&self, weights: [&[F]; 2]) -> [F; 2] {
         let [first, second] = self.integer.fold_b(weights);
-        let first_correction: F = weights[RV64_FIRST_GROUP_LEN..]
+        let first_correction: F = weights[0][RV64_FIRST_GROUP_LEN..]
             .iter()
             .zip(self.b_first)
             .map(|(c, b)| *c * b)
             .sum();
-        let second_correction: F = weights[RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
+        let second_correction: F = weights[1][RV64_SECOND_GROUP_LEN..SECOND_GROUP_LEN]
             .iter()
             .zip(self.b_second)
             .map(|(c, b)| *c * b)
@@ -1038,6 +1064,22 @@ impl OptimizedOuterRemainder {
     }
 }
 
+fn take_carry<F: JoltField>(
+    session: &mut ProofSession,
+) -> Result<SpartanOuterCarry<F>, KernelError<F>> {
+    session
+        .take::<SpartanOuterCarry<F>>()
+        .ok_or(KernelError::InvariantViolation {
+            reason: "the outer uni-skip slot parked no carry for the remainder member",
+        })
+}
+
+fn rows_unavailable<F: JoltField>(_: WitnessError) -> SumcheckError<F> {
+    SumcheckError::MissingEvaluationSource {
+        kind: "Spartan outer trace rows",
+    }
+}
+
 impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemainder {
     fn prepare(
         &self,
@@ -1045,12 +1087,7 @@ impl<F: JoltField> PrepareKernel<F, OuterRemainder<F>> for OptimizedOuterRemaind
         _witness: &dyn JoltWitnessPlane<F>,
         inputs: ProverInputs<'_, F, OuterRemainder<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = OuterRemainder<F>>>, KernelError<F>> {
-        let carry =
-            session
-                .take::<SpartanOuterCarry<F>>()
-                .ok_or(KernelError::InvariantViolation {
-                    reason: "the outer uni-skip slot parked no carry for the remainder member",
-                })?;
+        let carry = take_carry(session)?;
         Ok(Box::new(OuterRemainderKernel::prepare(carry, &inputs)?))
     }
 }
@@ -1068,12 +1105,24 @@ struct DerivedWeights<F> {
     bz_constant: [F; 2],
 }
 
-/// The linear-time outer remainder rounds over the joint `(cycle ‖ stream)`
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+enum OuterTables<F: JoltField> {
+    Streamed {
+        dense_round: usize,
+    },
+    Dense {
+        az: PrefixColumn<F>,
+        bz: PrefixColumn<F>,
+    },
+}
+
+/// The outer remainder rounds over the joint `(cycle ‖ stream)`
 /// domain (stream = index LSB, bound `LowToHigh`).
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 struct OuterRemainderKernel<F: JoltField> {
-    az: PrefixColumn<F>,
-    bz: PrefixColumn<F>,
+    tables: OuterTables<F>,
+    #[cfg_attr(feature = "allocative", allocative(skip))]
+    lagrange: [F; DOMAIN],
     prefix_cycles: usize,
     purged: bool,
     split_eq: GruenSplitEqPolynomial<F>,
@@ -1089,7 +1138,7 @@ struct OuterRemainderKernel<F: JoltField> {
     derived: DerivedWeights<F>,
 }
 impl<F: JoltField> OuterRemainderKernel<F> {
-    fn prepare(
+    fn unfilled(
         carry: SpartanOuterCarry<F>,
         inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
     ) -> Result<Self, KernelError<F>> {
@@ -1111,7 +1160,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let uniskip_challenge = inputs.relation.uniskip_challenge();
         let tau_high = tau[log_t + 1];
         let tau_low = &tau[..=log_t];
-        let lagrange_r0 = centered_lagrange_evals::<F>(DOMAIN, uniskip_challenge)?;
+        let lagrange: [F; DOMAIN] = centered_lagrange_evals::<F>(DOMAIN, uniskip_challenge)?
+            .try_into()
+            .map_err(|_| KernelError::InvariantViolation {
+                reason: "centered Lagrange weights must span the uni-skip domain",
+            })?;
         let kernel = centered_lagrange_kernel::<F>(DOMAIN, tau_high, uniskip_challenge)?;
         let split_eq = GruenSplitEqPolynomial::new_with_scaling(
             tau_low,
@@ -1126,9 +1179,31 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             .map(|&variable| outer_opening(variable))
             .collect();
         let derived = Self::derived_weights(uniskip_challenge)?;
-        #[cfg(not(feature = "field-inline"))]
-        let b_folds = PreparedBFolds::new(&derived)?;
+        Ok(Self {
+            tables: OuterTables::Streamed {
+                dense_round: rounds,
+            },
+            lagrange,
+            prefix_cycles,
+            purged: false,
+            split_eq,
+            pending_endpoints: None,
+            challenges: RoundChallenges::new(rounds),
+            rows,
+            #[cfg(feature = "field-inline")]
+            field_rows,
+            opening_ids,
+            derived,
+        })
+    }
 
+    fn fill_eager_tables(&mut self) -> Result<(), KernelError<F>> {
+        let log_t = self.challenges.total() - 1;
+        let prefix_cycles = self.prefix_cycles;
+        let rows = &self.rows;
+        let split_eq = &self.split_eq;
+        #[cfg(not(feature = "field-inline"))]
+        let b_folds = PreparedBFolds::new(&self.derived)?;
         let cycles = 1usize << log_t;
         let mut az: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
         let mut bz: Vec<F> = unsafe_allocate_zero_vec(2 * prefix_cycles);
@@ -1137,14 +1212,14 @@ impl<F: JoltField> OuterRemainderKernel<F> {
         let in_len = e_in.len();
         let width = 2 * in_len;
         let access = rows.access();
-        let lagrange = &lagrange_r0;
+        let lagrange = &self.lagrange;
         let (az_tail, bz_tail) = if prefix_cycles < cycles {
             access.row(prefix_cycles)?.folded_groups(lagrange)
         } else {
             ([F::zero(); 2], [F::zero(); 2])
         };
         #[cfg(feature = "field-inline")]
-        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &field_rows;
+        let field_rows_ref: &[(usize, FieldInlineSpartanRow<F>)] = &self.field_rows;
         // `try_reduce` discards every block result once one block fails, so
         // groups an aborted block leaves in a reused cache never reach a result.
         let block = |groups: &mut RepeatCache<GuardEndpointGroup<F>>,
@@ -1161,11 +1236,11 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 #[cfg(feature = "field-inline")]
                 let (values, [bz_zero, bz_one]) = if let Some(field_row) = field_cursor.advance(t) {
                     let values = row.field_group_values(field_row);
-                    let bz = values.fold_b(lagrange);
+                    let bz = values.fold_b([lagrange, lagrange]);
                     (values.integer, bz)
                 } else {
                     let values = row.group_values();
-                    let bz = values.fold_b(lagrange);
+                    let bz = values.fold_b([lagrange, lagrange]);
                     (values, bz)
                 };
                 #[cfg(feature = "field-inline")]
@@ -1215,7 +1290,7 @@ impl<F: JoltField> OuterRemainderKernel<F> {
             endpoints.0 + tail_mass * az_tail[0] * bz_tail[0],
             endpoints.1 + tail_mass * (az_tail[1] - az_tail[0]) * (bz_tail[1] - bz_tail[0]),
         );
-        Ok(Self {
+        self.tables = OuterTables::Dense {
             az: PrefixColumn {
                 values: az,
                 tail: az_tail,
@@ -1224,17 +1299,18 @@ impl<F: JoltField> OuterRemainderKernel<F> {
                 values: bz,
                 tail: bz_tail,
             },
-            prefix_cycles,
-            purged: false,
-            split_eq,
-            pending_endpoints: Some(endpoints),
-            challenges: RoundChallenges::new(rounds),
-            rows,
-            #[cfg(feature = "field-inline")]
-            field_rows,
-            opening_ids,
-            derived,
-        })
+        };
+        self.pending_endpoints = Some(endpoints);
+        Ok(())
+    }
+
+    fn prepare(
+        carry: SpartanOuterCarry<F>,
+        inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
+    ) -> Result<Self, KernelError<F>> {
+        let mut kernel = Self::unfilled(carry, inputs)?;
+        kernel.fill_eager_tables()?;
+        Ok(kernel)
     }
 
     /// Az/Bz column weights at both stream values over the composed opening-column
@@ -1266,11 +1342,13 @@ impl<F: JoltField> OuterRemainderKernel<F> {
     }
 
     fn bind(&mut self, challenge: F) {
-        let shrunk = self.az.bind(challenge);
-        let _ = self.bz.bind(challenge);
-        if shrunk && !self.purged {
-            self.purged = true;
-            crate::mem::purge_retained_memory(self.challenges.total() - 1);
+        if let OuterTables::Dense { az, bz } = &mut self.tables {
+            let shrunk = az.bind(challenge);
+            let _ = bz.bind(challenge);
+            if shrunk && !self.purged {
+                self.purged = true;
+                crate::mem::purge_retained_memory(self.challenges.total() - 1);
+            }
         }
         self.split_eq.bind(challenge);
         self.challenges.push(challenge);
@@ -1486,14 +1564,24 @@ impl<F: JoltField> ProveRounds<F> for OuterRemainderKernel<F> {
         if let Some(challenge) = bind {
             self.bind(challenge);
         }
-        let (q_zero, q_infinity) = match self.pending_endpoints.take() {
-            Some(endpoints) => endpoints,
-            None => self.az.product_endpoints(&self.bz, &self.split_eq),
-        };
-        self.split_eq
-            .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
-                self.az.product_at_one(&self.bz, &self.split_eq)
-            })
+        if let OuterTables::Streamed { dense_round } = self.tables {
+            if self.challenges.bound() == dense_round {
+                self.pending_endpoints = Some(self.fill_tables().map_err(rows_unavailable)?);
+            }
+        }
+        match &self.tables {
+            OuterTables::Streamed { .. } => self.streamed_round(round, previous_claim),
+            OuterTables::Dense { az, bz } => {
+                let (q_zero, q_infinity) = self
+                    .pending_endpoints
+                    .take()
+                    .unwrap_or_else(|| az.product_endpoints(bz, &self.split_eq));
+                self.split_eq
+                    .checked_cubic(q_zero, q_infinity, previous_claim, round, || {
+                        az.product_at_one(bz, &self.split_eq)
+                    })
+            }
+        }
     }
 
     fn finish_rounds(&mut self, bind: F) -> Result<(), SumcheckError<F>> {
@@ -1898,12 +1986,18 @@ mod tests {
         kernel * total
     }
 
-    fn parity_case(dummy_plane: &dyn JoltWitnessPlane<Fr>, log_t: usize, seed: u64) {
-        parity_case_with_eq(dummy_plane, log_t, seed, None, false, None, None);
+    fn streamed_remainder<F: JoltField>(
+        session: &mut ProofSession,
+        inputs: &ProverInputs<'_, F, OuterRemainder<F>>,
+        log_t: usize,
+        depth: usize,
+    ) -> OuterRemainderKernel<F> {
+        let cap = ((4 * size_of::<F>()) << log_t) >> depth;
+        OuterRemainderKernel::prepare_streamed(take_carry(session).unwrap(), inputs, cap).unwrap()
     }
 
     fn parity_case_with_eq(
-        dummy_plane: &dyn JoltWitnessPlane<Fr>,
+        depth: Option<usize>,
         log_t: usize,
         seed: u64,
         exceptional: Option<ExceptionalEq>,
@@ -2003,10 +2097,10 @@ mod tests {
         let points = SumcheckInputPoints::<Fr, OuterRemainder<Fr>>::default();
         let no_challenges = NoChallenges::<Fr>::default();
 
-        let mut reference_kernel = ReferenceOuterRemainder
-            .prepare(
+        let mut reference_kernel = with_sample_backend(|plane| {
+            ReferenceOuterRemainder.prepare(
                 &mut reference_session,
-                dummy_plane,
+                plane,
                 ProverInputs {
                     relation: &relation,
                     claims: &claims,
@@ -2014,19 +2108,21 @@ mod tests {
                     challenges: &no_challenges,
                 },
             )
-            .unwrap();
-        let mut optimized_kernel = OptimizedOuterRemainder
-            .prepare(
-                &mut optimized_session,
-                dummy_plane,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &no_challenges,
-                },
-            )
-            .unwrap();
+        })
+        .unwrap();
+        let inputs = ProverInputs {
+            relation: &relation,
+            claims: &claims,
+            points: &points,
+            challenges: &no_challenges,
+        };
+        let mut optimized_kernel = match depth {
+            None => {
+                OuterRemainderKernel::prepare(take_carry(&mut optimized_session).unwrap(), &inputs)
+                    .unwrap()
+            }
+            Some(depth) => streamed_remainder(&mut optimized_session, &inputs, log_t, depth),
+        };
 
         let rounds = log_t + 1;
         let challenges: Vec<Fr> = (0..rounds)
@@ -2043,6 +2139,16 @@ mod tests {
         for (round, &challenge) in challenges.iter().enumerate() {
             let reference_round = reference_kernel.prove_round(bind, round, previous).unwrap();
             let optimized_round = optimized_kernel.prove_round(bind, round, previous).unwrap();
+            if let Some(depth) = depth {
+                match &optimized_kernel.tables {
+                    OuterTables::Dense { az, bz } => {
+                        assert!(round >= depth);
+                        assert_eq!(az.values.len(), 1 << (rounds - round));
+                        assert_eq!(az.values.len(), bz.values.len());
+                    }
+                    OuterTables::Streamed { .. } => assert!(round < depth),
+                }
+            }
             assert_eq!(
                 optimized_round, reference_round,
                 "round {round} polynomial, log_t = {log_t}"
@@ -2074,37 +2180,31 @@ mod tests {
 
     #[test]
     fn remainder_matches_reference_at_exceptional_eq_and_zero_scaling() {
-        with_sample_backend(|dummy| {
-            for case in ExceptionalEq::ALL {
-                parity_case_with_eq(dummy, 4, 389, Some(case), false, None, None);
-            }
-            parity_case_with_eq(dummy, 4, 389, None, true, None, None);
-        });
+        for case in ExceptionalEq::ALL {
+            parity_case_with_eq(None, 4, 389, Some(case), false, None, None);
+        }
+        parity_case_with_eq(None, 4, 389, None, true, None, None);
     }
 
     #[test]
     fn remainder_matches_reference_with_repeated_guard_rows() {
-        with_sample_backend(|dummy| {
-            // log_t = 12 gives 64-row blocks; period 48 repeats 16 rows per
-            // block and collides keys in the 128-slot guard-endpoint cache.
-            parity_case_with_eq(dummy, 12, 389, None, false, None, Some(48));
-            parity_case_with_eq(dummy, 12, 390, None, false, Some(3000), Some(48));
-        });
+        // log_t = 12 gives 64-row blocks; period 48 repeats 16 rows per
+        // block and collides keys in the 128-slot guard-endpoint cache.
+        parity_case_with_eq(None, 12, 389, None, false, None, Some(48));
+        parity_case_with_eq(None, 12, 390, None, false, Some(3000), Some(48));
     }
 
     #[test]
     fn constant_stream_tails_match_reference_rounds_and_openings() {
-        with_sample_backend(|dummy| {
-            for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
-                for seed in [389, 390] {
-                    parity_case_with_eq(dummy, 4, seed, None, false, Some(prefix), None);
-                    for case in ExceptionalEq::ALL {
-                        parity_case_with_eq(dummy, 4, seed, Some(case), false, Some(prefix), None);
-                    }
+        for prefix in [0, 1, 3, 7, 8, 9, 15, 16] {
+            for seed in [389, 390] {
+                parity_case_with_eq(None, 4, seed, None, false, Some(prefix), None);
+                for case in ExceptionalEq::ALL {
+                    parity_case_with_eq(None, 4, seed, Some(case), false, Some(prefix), None);
                 }
-                parity_case_with_eq(dummy, 4, 389, None, true, Some(prefix), None);
             }
-        });
+            parity_case_with_eq(None, 4, 389, None, true, Some(prefix), None);
+        }
     }
 
     #[test]
@@ -2154,13 +2254,39 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_parity_with_reference_kernels() {
-        with_sample_backend(|dummy| {
-            for (log_t, seed) in [(1usize, 111u64), (2, 222), (3, 333), (4, 444)] {
-                parity_case(dummy, log_t, seed);
+    fn streamed_remainder_matches_reference_at_every_crossover() {
+        for log_t in [1, 3, 6] {
+            for depth in 0..=log_t + 1 {
+                parity_case_with_eq(Some(depth), log_t, 389, None, false, None, None);
             }
-        });
+        }
+        for depth in [0, 1, 4, 5] {
+            for case in ExceptionalEq::ALL {
+                parity_case_with_eq(Some(depth), 4, 389, Some(case), false, None, None);
+            }
+            parity_case_with_eq(Some(depth), 4, 389, None, true, None, None);
+            for prefix in [0, 1, 3, 7, 16] {
+                for seed in [389, 390] {
+                    parity_case_with_eq(Some(depth), 4, seed, None, false, Some(prefix), None);
+                }
+            }
+        }
+        parity_case_with_eq(Some(13), 13, 389, None, false, None, None);
     }
+
+    #[test]
+    fn synthetic_parity_with_reference_kernels() {
+        for (log_t, seed) in [(1usize, 111u64), (2, 222), (3, 333), (4, 444)] {
+            parity_case_with_eq(None, log_t, seed, None, false, None, None);
+        }
+    }
+
+    type BuildRemainder = fn(
+        &mut ProofSession,
+        &TraceBackend,
+        ProverInputs<'_, Fr, OuterRemainder<Fr>>,
+        usize,
+    ) -> Box<dyn SumcheckKernel<Fr, Relation = OuterRemainder<Fr>>>;
 
     /// The trait-path parity body over a real trace backend: the optimized
     /// bundle walk against the reference's oracle tables, with the remainder
@@ -2169,7 +2295,7 @@ mod tests {
     /// uni-skip reduction at r0 need not equal the joint-domain sum here; the
     /// remainder runs on the true sum, which is what the naive reference
     /// self-checks against.
-    fn sample_case(backend: &TraceBackend, log_t: usize) {
+    fn sample_case(backend: &TraceBackend, log_t: usize, build: BuildRemainder) {
         let tau: Vec<Fr> = (0..log_t + 2)
             .map(|i| Fr::from_u64(29 + 13 * i as u64))
             .collect();
@@ -2243,18 +2369,17 @@ mod tests {
                 },
             )
             .unwrap();
-        let mut optimized_kernel = OptimizedOuterRemainder
-            .prepare(
-                &mut optimized_session,
-                backend,
-                ProverInputs {
-                    relation: &relation,
-                    claims: &claims,
-                    points: &points,
-                    challenges: &no_challenges,
-                },
-            )
-            .unwrap();
+        let mut optimized_kernel = build(
+            &mut optimized_session,
+            backend,
+            ProverInputs {
+                relation: &relation,
+                claims: &claims,
+                points: &points,
+                challenges: &no_challenges,
+            },
+            log_t,
+        );
 
         let challenges: Vec<Fr> = (0..=log_t)
             .map(|i| Fr::from_u64(523 + 17 * i as u64))
@@ -2283,11 +2408,28 @@ mod tests {
     /// row seam.
     #[test]
     fn sample_trace_parity_through_the_trait_path() {
-        #[cfg(not(feature = "field-inline"))]
-        with_sample_backend(|backend| sample_case(backend, 2));
-        #[cfg(feature = "field-inline")]
-        crate::optimized::field_registers_testing::structured_field_register_fixture(12)
-            .with_plane(4, |backend| sample_case(backend, 4));
+        let default: BuildRemainder = |session, backend, inputs, _| {
+            OptimizedOuterRemainder
+                .prepare(session, backend, inputs)
+                .unwrap()
+        };
+        let streaming: BuildRemainder = |session, backend, inputs, _| {
+            StreamingOuterRemainder
+                .prepare(session, backend, inputs)
+                .unwrap()
+        };
+        let at_one: BuildRemainder =
+            |session, _, inputs, log_t| Box::new(streamed_remainder(session, &inputs, log_t, 1));
+        let all_rounds: BuildRemainder = |session, _, inputs, log_t| {
+            Box::new(streamed_remainder(session, &inputs, log_t, log_t + 1))
+        };
+        for build in [default, streaming, at_one, all_rounds] {
+            #[cfg(not(feature = "field-inline"))]
+            with_sample_backend(|backend| sample_case(backend, 2, build));
+            #[cfg(feature = "field-inline")]
+            crate::optimized::field_registers_testing::structured_field_register_fixture(12)
+                .with_plane(4, |backend| sample_case(backend, 4, build));
+        }
     }
 
     #[test]

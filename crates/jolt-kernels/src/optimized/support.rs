@@ -1121,6 +1121,35 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
             Self::Retained(rows) => BundleAccess::Retained(rows),
         }
     }
+
+    /// One serial visit of `range` in callbacks of at most `chunk` rows, each
+    /// receiving its first cycle and the bundles [`BundleAccess::row`] gives
+    /// for those cycles.
+    pub(crate) fn visit(
+        &self,
+        range: Range<usize>,
+        chunk: usize,
+        mut visit: impl FnMut(usize, &[B]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        let rows = match self {
+            Self::Owned(rows) => return rows.visit_bundles(range, chunk, visit),
+            Self::Retained(rows) => rows,
+        };
+        let invalid = |reason: String| WitnessError::InvalidDimensions {
+            label: "kernel row store",
+            reason,
+        };
+        if chunk == 0 {
+            return Err(invalid("visit chunk size must be nonzero".to_owned()));
+        }
+        let visited = rows
+            .get(range.clone())
+            .ok_or_else(|| invalid(format!("cycle range {range:?} exceeds {} rows", rows.len())))?;
+        for (index, bundles) in visited.chunks(chunk).enumerate() {
+            visit(range.start + index * chunk, bundles)?;
+        }
+        Ok(())
+    }
 }
 
 pub(crate) enum BundleAccess<'a, B> {

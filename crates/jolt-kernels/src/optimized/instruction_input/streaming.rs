@@ -24,10 +24,11 @@ use super::{
     OptimizedInstructionInputKernel, NUM_TABLES,
 };
 use crate::optimized::streaming::{
-    dense_crossover, gruen_pair_pass, task_ranges, KernelRows, PairHalves, DENSE_TABLE_CAP,
-    VISIT_ROWS,
+    dense_crossover, gruen_pair_pass, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
 };
-use crate::optimized::support::{try_par_sum_vecs, GruenRoundMessage, RoundChallenges};
+use crate::optimized::support::{
+    try_par_sum_vecs, BundleStore, GruenRoundMessage, RoundChallenges,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
@@ -87,8 +88,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
-        let rows =
-            KernelRows::from_witness(witness, r_product.len(), "instruction input trace rows")?;
+        let rows = BundleStore::resolve(witness, 1usize << r_product.len())?;
         Ok(Box::new(StreamingInstructionInputKernel::new(
             r_product,
             rows,
@@ -107,9 +107,7 @@ struct StreamedRounds<F: JoltField> {
     dense_round: usize,
     gruen: GruenSplitEqPolynomial<F>,
     challenges: RoundChallenges<F>,
-    /// The witness plane owns these rows; it reports them itself.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    rows: KernelRows<InstructionInputRow>,
+    rows: BundleStore<InstructionInputRow>,
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -242,7 +240,7 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
     /// passes [`DENSE_TABLE_CAP`].
     fn new(
         r_product: &[F],
-        rows: KernelRows<InstructionInputRow>,
+        rows: BundleStore<InstructionInputRow>,
         gamma: F,
         dense_cap: usize,
     ) -> Self {
@@ -385,7 +383,7 @@ mod tests {
     use jolt_witness::witnesses::{
         Imm, InstructionFlag, RdWriteValue, Rs1Value, Rs2Value, UnexpandedPc,
     };
-    use jolt_witness::{JoltVmWitnessInputs, TraceBackend};
+    use jolt_witness::TraceBackend;
 
     use super::*;
     use crate::optimized::parity::{probe_input_claim, run_lockstep, ExceptionalEq};
@@ -533,7 +531,7 @@ mod tests {
         let cap = ((NUM_TABLES * size_of::<Fr>()) << log_t) >> depth;
         let mut streaming = StreamingInstructionInputKernel::new(
             r_product,
-            KernelRows::Synthetic(rows),
+            BundleStore::Retained(rows),
             gamma,
             cap,
         );
@@ -668,7 +666,7 @@ mod tests {
         {
             Some(depth) => Box::new(StreamingInstructionInputKernel::new(
                 &r_product,
-                KernelRows::from_witness::<F>(backend, log_t, "trace rows").unwrap(),
+                BundleStore::resolve::<F>(backend, 1 << log_t).unwrap(),
                 challenges.gamma,
                 ((NUM_TABLES * size_of::<F>()) << log_t) >> depth,
             )),
@@ -708,57 +706,5 @@ mod tests {
                 }
             });
         }
-    }
-
-    /// A witness without resident rows, or with another cycle domain, fails
-    /// typed instead of collecting rows.
-    #[test]
-    fn missing_or_mismatched_rows_are_typed() {
-        let log_t = 3;
-        let point = |len: usize| (0..len).map(|i| fr(5 + i as u64)).collect::<Vec<_>>();
-        let claims = InstructionInputInputClaims {
-            right_instruction_input: fr(0),
-            left_instruction_input: fr(0),
-        };
-        let points = InstructionInputInputClaims {
-            right_instruction_input: Vec::new(),
-            left_instruction_input: Vec::new(),
-        };
-        let challenges = InstructionInputChallenges { gamma: fr(3) };
-        let prepare = |witness: &TraceBackend, log_t: usize| {
-            let relation = InstructionInput::new(TraceDimensions::new(log_t), point(log_t));
-            StreamingInstructionInput
-                .prepare(
-                    &mut ProofSession::default(),
-                    witness,
-                    ProverInputs {
-                        relation: &relation,
-                        claims: &claims,
-                        points: &points,
-                        challenges: &challenges,
-                    },
-                )
-                .map(|_| ())
-        };
-        structured_fixture(7).with_plane(log_t, |resident| {
-            // A configured domain shorter than the trace leaves no rows.
-            let mut shortened = TraceBackend::new(
-                resident.config.clone(),
-                JoltVmWitnessInputs::new(
-                    &resident.program,
-                    &resident.preprocessing,
-                    resident.trace.clone(),
-                ),
-            );
-            shortened.config.log_t = 1;
-            assert!(matches!(
-                prepare(&shortened, log_t),
-                Err(KernelError::Witness(WitnessError::UnavailableView { .. }))
-            ));
-            assert!(matches!(
-                prepare(resident, log_t + 1),
-                Err(KernelError::Witness(WitnessError::InvalidDimensions { .. }))
-            ));
-        });
     }
 }
