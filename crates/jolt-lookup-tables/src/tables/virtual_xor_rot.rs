@@ -8,6 +8,12 @@ use crate::tables::PrefixSuffixDecomposition;
 use crate::traits::LookupTable;
 use crate::uninterleave_bits;
 
+/// XOR followed by a fixed right rotation. For LSB-indexed input bits,
+/// the MLE is `sum_i 2^((i - R) mod XLEN) * (x_i + y_i - 2*x_i*y_i)`.
+/// `evaluate_mle` receives challenges in MSB-first order.
+/// At an RV64 decomposition boundary with `2*s` suffix bits, the prefix
+/// owns `i >= s` and the suffix owns `i < s`. Rotating preserves disjoint
+/// output positions, so `prefix * One + suffix` also holds off the Boolean cube.
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct VirtualXORROTTable<const XLEN: usize, const ROTATION: u32>;
 
@@ -49,6 +55,8 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             24 => &[Prefixes::XorRot24],
             32 => &[Prefixes::XorRot32],
             63 => &[Prefixes::XorRot63],
+            2 => &[Prefixes::XorRot2],
+            61 => &[Prefixes::XorRot61],
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -60,6 +68,8 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             24 => &[Suffixes::One, Suffixes::XorRot24],
             32 => &[Suffixes::One, Suffixes::XorRot32],
             63 => &[Suffixes::One, Suffixes::XorRot63],
+            2 => &[Suffixes::One, Suffixes::XorRot2],
+            61 => &[Suffixes::One, Suffixes::XorRot61],
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -74,6 +84,8 @@ impl<const XLEN: usize, const ROTATION: u32> PrefixSuffixDecomposition<XLEN>
             24 => prefixes[Prefixes::XorRot24] * one + xor_rot,
             32 => prefixes[Prefixes::XorRot32] * one + xor_rot,
             63 => prefixes[Prefixes::XorRot63] * one + xor_rot,
+            2 => prefixes[Prefixes::XorRot2] * one + xor_rot,
+            61 => prefixes[Prefixes::XorRot61] * one + xor_rot,
             _ => unreachable!("unsupported rotation {ROTATION}"),
         }
     }
@@ -134,5 +146,38 @@ mod tests {
     #[test]
     fn mle_full_hypercube_rot63() {
         mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 63>>();
+    }
+
+    #[test]
+    fn keccak_rotations_match_mle_and_decomposition() {
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 2>>();
+        mle_full_hypercube_test::<8, Fr, VirtualXORROTTable<8, 61>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 2>>();
+        mle_random_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 61>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 2>>();
+        prefix_suffix_test::<XLEN, Fr, VirtualXORROTTable<XLEN, 61>>();
+    }
+
+    #[test]
+    fn keccak_rotations_match_word_reference() {
+        use crate::interleave_bits;
+        let mut inputs = vec![0, u64::MAX, 0xAAAA_AAAA_AAAA_AAAA, 0x5555_5555_5555_5555];
+        for bit in 0..64 {
+            inputs.push(1 << bit);
+            inputs.push(!(1 << bit));
+        }
+        for &x in &inputs {
+            for &y in &inputs {
+                let index = interleave_bits(x, y);
+                assert_eq!(
+                    VirtualXORROTTable::<64, 2>.materialize_entry(index),
+                    (x ^ y).rotate_right(2),
+                );
+                assert_eq!(
+                    VirtualXORROTTable::<64, 61>.materialize_entry(index),
+                    (x ^ y).rotate_right(61),
+                );
+            }
+        }
     }
 }

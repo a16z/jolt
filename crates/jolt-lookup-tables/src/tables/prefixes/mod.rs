@@ -182,6 +182,8 @@ pub enum Prefixes {
     AddressOffsetB,
     AddressOffsetH,
     AddressOffsetW,
+    XorRot2,
+    XorRot61,
 }
 
 /// All prefix variants in discriminant order.
@@ -229,6 +231,8 @@ macro_rules! dispatch_prefix {
             Prefixes::XorRot24 => xor_rot::XorRotPrefix::<24>::$method($($args),*),
             Prefixes::XorRot32 => xor_rot::XorRotPrefix::<32>::$method($($args),*),
             Prefixes::XorRot63 => xor_rot::XorRotPrefix::<63>::$method($($args),*),
+            Prefixes::XorRot2 => xor_rot::XorRotPrefix::<2>::$method($($args),*),
+            Prefixes::XorRot61 => xor_rot::XorRotPrefix::<61>::$method($($args),*),
             Prefixes::XorRotW7 => xor_rotw::XorRotWPrefix::<7>::$method($($args),*),
             Prefixes::XorRotW8 => xor_rotw::XorRotWPrefix::<8>::$method($($args),*),
             Prefixes::XorRotW12 => xor_rotw::XorRotWPrefix::<12>::$method($($args),*),
