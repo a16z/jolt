@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn materialize_entry_virtualxorrot63() {
         materialize_entry_test!(
-            VirtualXorRot63, VirtualXorRot3, VirtualXorRot8, VirtualXorRot9, VirtualXorRot19, VirtualXorRot20,
+            VirtualXorRot63,
             tracer::instruction::virtual_xor_rot::VirtualXORROT63
         );
     }
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn instruction_inputs_match_constraint_virtualxorrot63() {
         instruction_inputs_match_constraint_test!(
-            VirtualXorRot63, VirtualXorRot3, VirtualXorRot8, VirtualXorRot9, VirtualXorRot19, VirtualXorRot20,
+            VirtualXorRot63,
             tracer::instruction::virtual_xor_rot::VirtualXORROT63
         );
     }
@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn lookup_output_matches_trace_virtualxorrot63() {
         lookup_output_matches_trace_test!(
-            VirtualXorRot63, VirtualXorRot3, VirtualXorRot8, VirtualXorRot9, VirtualXorRot19, VirtualXorRot20,
+            VirtualXorRot63,
             tracer::instruction::virtual_xor_rot::VirtualXORROT63
         );
     }
