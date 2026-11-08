@@ -401,6 +401,9 @@ impl ProfileArgs {
         if self.streaming.unwrap_or_default().spartan {
             names.push("spartan".to_string());
         }
+        if self.streaming.unwrap_or_default().ram {
+            names.push("ram".to_string());
+        }
         names
     }
 
