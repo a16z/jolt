@@ -52,8 +52,8 @@ use jolt_dory::DoryScheme;
 #[cfg(not(feature = "akita"))]
 use jolt_field::Fr;
 use jolt_field::JoltField;
-// Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_host::{GuestElf, JoltProgramSource, Program};
+// Keep the inline libraries linked so their host-side registrations reach the tracer.
 use jolt_inlines_keccak256 as _;
 use jolt_inlines_secp256k1 as _;
 use jolt_inlines_sha2 as _;
@@ -345,9 +345,8 @@ pub struct ProfileArgs {
     /// and the optimized prover's named eager tables. Under Akita it also
     /// reserves the one-hot setup's flat public matrix before allocating it.
     /// Under Akita every budget fails for multi-chunk or field-inline setups,
-    /// which the matrix check does not
-    /// price. Passing does not mean the whole proof fits, and the budget does
-    /// not cap process memory.
+    /// which the matrix check does not price. Passing does not mean the whole
+    /// proof fits, and the budget does not cap process memory.
     #[clap(long, value_parser = parse_memory_budget)]
     pub memory_budget: Option<MemoryBudget>,
 }
@@ -1100,7 +1099,7 @@ fn prove_workload(
 ) -> ProfileResult<ProvenRun> {
     use crate::akita::preprocessing::AkitaVc;
     use crate::JoltProverPreprocessing;
-    use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
+    use jolt_akita::{AkitaScheduleArtifacts, AkitaScheme};
     use jolt_openings::{CommitmentScheme, OpeningsError};
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};

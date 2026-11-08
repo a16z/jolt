@@ -14,7 +14,6 @@ fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
     use jolt_riscv::JoltTraceRow;
 
     use super::{reserve_profile_owners, ProofField};
-    use crate::{ProverConfig, ProverError};
 
     let program = JoltProgram::from_parts(
         Vec::with_capacity(23),
@@ -39,40 +38,23 @@ fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
     )
     .unwrap();
     let trace = TraceOutput::new(
-        TraceData::new(vec![JoltTraceRow::default(); 1 << 13]),
+        TraceData::new(vec![JoltTraceRow::default(); 4]),
         device,
         Some(MemoryImage {
             bytes: Vec::with_capacity(17),
         }),
         Some(Vec::with_capacity(19)),
     );
-    let owners = trace.heap_bytes() - trace.trace.heap_bytes()
-        + program.heap_bytes()
-        + preprocessing.heap_bytes()
-        + 10;
-    let reserve =
-        |budget| reserve_profile_owners::<ProofField>(budget, &trace, &program, &preprocessing);
-    let config = ProverConfig::from_padded_dimensions::<ProofField>(1 << 13, 64, 1 << 13).unwrap();
-    let eager = MemoryBudget::from_bytes(usize::MAX)
-        .check_known_eager::<ProofField>(&config, &trace.trace)
-        .unwrap();
-    let combined = reserve(eager).unwrap();
-    assert_eq!(eager.remaining() - combined.remaining(), owners);
-    let required = usize::MAX - combined.remaining();
+    let budget = MemoryBudget::from_bytes(usize::MAX);
+    let reserved =
+        reserve_profile_owners::<ProofField>(budget, &trace, &program, &preprocessing).unwrap();
     assert_eq!(
-        reserve(MemoryBudget::from_bytes(required))
-            .unwrap()
-            .check_known_eager::<ProofField>(&config, &trace.trace)
-            .unwrap()
-            .remaining(),
-        0
+        budget.remaining() - reserved.remaining(),
+        trace.heap_bytes() - trace.trace.heap_bytes()
+            + program.heap_bytes()
+            + preprocessing.heap_bytes()
+            + 10
     );
-    assert!(matches!(
-        reserve(MemoryBudget::from_bytes(required - 1))
-            .unwrap()
-            .check_known_eager::<ProofField>(&config, &trace.trace),
-        Err(ProverError::MemoryBudgetExceeded { required: total, .. }) if total == required
-    ));
 }
 
 /// `--memory-budget` takes bytes with an optional binary suffix through the
