@@ -568,3 +568,28 @@ mod sequence_tests {
         );
     }
 }
+
+#[test]
+fn field_equality_checks_every_bit() {
+    use crate::{Secp256k1Fq, Secp256k1Fr};
+
+    // Every one-bit value is canonical in both fields, including bit 255.
+    let zero_q = Secp256k1Fq::from_u64_arr(&[0; 4]).unwrap();
+    let zero_r = Secp256k1Fr::from_u64_arr(&[0; 4]).unwrap();
+    for bit in 0..256 {
+        let mut limbs = [0; 4];
+        limbs[bit / 64] = 1 << (bit % 64);
+        let q = Secp256k1Fq::from_u64_arr(&limbs).unwrap();
+        let r = Secp256k1Fr::from_u64_arr(&limbs).unwrap();
+        assert_eq!(q, q.clone());
+        assert_eq!(r, r.clone());
+        assert_ne!(q, zero_q);
+        assert_ne!(r, zero_r);
+        for other_bit in 0..bit {
+            let mut other = [0; 4];
+            other[other_bit / 64] = 1 << (other_bit % 64);
+            assert_ne!(q, Secp256k1Fq::from_u64_arr(&other).unwrap());
+            assert_ne!(r, Secp256k1Fr::from_u64_arr(&other).unwrap());
+        }
+    }
+}
