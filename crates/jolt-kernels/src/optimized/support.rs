@@ -1102,6 +1102,25 @@ pub(crate) enum BundleStore<B> {
 }
 
 impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
+    /// Resident rows spanning exactly the stage's `2^log_t` cycle domain.
+    /// Sources without that view fail instead of materializing a row vector.
+    pub(crate) fn resident<F: JoltField>(
+        witness: &dyn JoltWitnessPlane<F>,
+        log_t: usize,
+        label: &'static str,
+    ) -> Result<Self, WitnessError> {
+        let rows = witness
+            .random_access()
+            .ok_or(WitnessError::UnavailableView { label })?;
+        if rows.cycles() != 1 << log_t {
+            return Err(WitnessError::InvalidDimensions {
+                label,
+                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
+            });
+        }
+        Ok(Self::Owned(rows))
+    }
+
     /// Resolve for a witness plane: the owning handle when the source is
     /// slice-backed (and covers the cycle domain), a materialized collect
     /// otherwise.
@@ -1120,6 +1139,35 @@ impl<B: WitnessBundle + Copy + Send + Sync> BundleStore<B> {
             Self::Owned(rows) => BundleAccess::View(rows),
             Self::Retained(rows) => BundleAccess::Retained(rows),
         }
+    }
+
+    /// One serial visit of `range` in callbacks of at most `chunk` rows, each
+    /// receiving its first cycle and the bundles [`BundleAccess::row`] gives.
+    /// Callers pairing within each callback must align the range and chunk to pairs.
+    pub(crate) fn visit(
+        &self,
+        range: Range<usize>,
+        chunk: usize,
+        mut visit: impl FnMut(usize, &[B]) -> Result<(), WitnessError>,
+    ) -> Result<(), WitnessError> {
+        let rows = match self {
+            Self::Owned(rows) => return rows.visit_bundles(range, chunk, visit),
+            Self::Retained(rows) => rows,
+        };
+        let invalid = |reason: String| WitnessError::InvalidDimensions {
+            label: "kernel row store",
+            reason,
+        };
+        if chunk == 0 {
+            return Err(invalid("visit chunk size must be nonzero".to_owned()));
+        }
+        let visited = rows
+            .get(range.clone())
+            .ok_or_else(|| invalid(format!("cycle range {range:?} exceeds {} rows", rows.len())))?;
+        for (index, bundles) in visited.chunks(chunk).enumerate() {
+            visit(range.start + index * chunk, bundles)?;
+        }
+        Ok(())
     }
 }
 

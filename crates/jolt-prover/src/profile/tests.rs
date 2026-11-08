@@ -3,8 +3,68 @@ use clap::Parser;
 use jolt_akita::AkitaChunkProfile;
 
 #[cfg(feature = "akita")]
-use super::{parse_akita_chunk_profile, BackendKind, OutputFormat, Workload};
-use super::{MemoryBudget, ProfileArgs};
+use super::{parse_akita_chunk_profile, OutputFormat, Workload};
+use super::{BackendKind, MemoryBudget, ProfileArgs};
+
+#[test]
+fn streaming_option_selects_the_requested_families() {
+    use jolt_kernels::optimized::StreamingFamilies;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    let cli = Cli::try_parse_from([
+        "jolt-prover",
+        "--name",
+        "fibonacci",
+        "--backend",
+        "optimized",
+        "--streaming",
+        "instruction-input",
+    ])
+    .unwrap();
+    assert_eq!(
+        cli.args.streaming,
+        Some(StreamingFamilies {
+            instruction_input: true
+        })
+    );
+}
+
+#[test]
+fn streaming_rejects_a_memory_budget_or_reference_backend() {
+    use super::run;
+
+    #[derive(Parser)]
+    struct Cli {
+        #[command(flatten)]
+        args: ProfileArgs,
+    }
+    let options = [
+        "jolt-prover",
+        "--name",
+        "fibonacci",
+        "--backend",
+        "optimized",
+        "--streaming",
+        "instruction-input",
+    ];
+    assert!(Cli::try_parse_from(options.into_iter().chain(["--memory-budget", "32GiB"])).is_err());
+    let mut args = Cli::try_parse_from(options).unwrap().args;
+    args.memory_budget = Some(MemoryBudget::from_bytes(usize::MAX));
+    assert!(run(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("cannot be combined with --memory-budget"));
+    args.memory_budget = None;
+    args.backend = BackendKind::Reference;
+    assert!(run(&args)
+        .unwrap_err()
+        .to_string()
+        .contains("requires --backend optimized"));
+}
 
 #[test]
 fn profile_owners_reserve_capacities_and_the_public_io_request_once() {
@@ -131,6 +191,7 @@ fn chunk_profiles_have_distinct_artifact_and_csv_names() {
             scale: Some(20),
             format: OutputFormat::None,
             backend: BackendKind::Optimized,
+            streaming: None,
             guest_elf: None,
             input_file: None,
             result_json: None,

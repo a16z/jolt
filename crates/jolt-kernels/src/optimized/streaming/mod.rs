@@ -8,8 +8,7 @@
 mod pass;
 
 pub(crate) use pass::{
-    dense_crossover, gruen_pair_pass, task_ranges, KernelRows, PairHalves, DENSE_TABLE_CAP,
-    VISIT_ROWS,
+    dense_crossover, gruen_pair_pass, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
 };
 
 use jolt_field::JoltField;
@@ -21,17 +20,11 @@ use crate::JoltBackend;
 /// The streaming kernel families a backend installs in place of its default
 /// kernels ([`JoltBackend::with_streaming`]). A flag switches every slot of
 /// its family together with the cross-stage state those slots share, so every
-/// value is a valid selection; [`Self::NONE`] keeps every default kernel.
+/// value is a valid selection; the default keeps every default kernel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StreamingFamilies {
     /// Stage 3's instruction input virtualization (no cross-stage state).
     pub instruction_input: bool,
-}
-
-impl StreamingFamilies {
-    pub const NONE: Self = Self {
-        instruction_input: false,
-    };
 }
 
 impl<F, PCS> JoltBackend<F, PCS>

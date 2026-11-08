@@ -58,6 +58,15 @@ Workloads and default scales (`--scale <log2 trace length>` overrides):
 attribution is meaningful relatively — while `optimized` is the performance
 tier, slotting into the same instrumented seams.
 
+`profile --backend optimized --streaming instruction-input` opts into the
+stage-3 instruction-input streaming kernel, for either Dory or Akita. The
+`--streaming` option accepts comma-separated family names. Early rounds
+recompute from the resident trace until the dense tables fit a fixed 4 GiB
+cap; the full trace remains resident. This is not a process-memory cap, and
+streaming can use more memory than eager kernels on small or padded traces.
+The option cannot be combined with `--memory-budget`: the budget checks
+price only eager kernels, not a streaming selection.
+
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).
 The profile reserves bytes against it in this order and exits with an error

@@ -2,12 +2,11 @@
 //! whole split-eq groups, at most [`TASKS_PER_THREAD`] per pool thread, and
 //! each task visits its rows once, serially, off the witness's resident rows.
 
-use std::marker::PhantomData;
 use std::ops::Range;
 
 use jolt_field::JoltField;
 use jolt_poly::GruenSplitEqPolynomial;
-use jolt_witness::{JoltWitnessPlane, RandomAccessRows, WitnessBundle, WitnessError};
+use jolt_witness::WitnessError;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 
@@ -18,70 +17,19 @@ pub(crate) const VISIT_ROWS: usize = 1 << 12;
 /// their pairs from the rows until the tables fit ([`dense_crossover`]).
 pub(crate) const DENSE_TABLE_CAP: usize = 4 << 30;
 
-/// The rows a streaming kernel's passes visit: the witness's resident rows,
-/// or, in in-module parity tests, typed rows no trace produces.
-pub(crate) enum KernelRows<B> {
-    Trace(RandomAccessRows, PhantomData<fn() -> B>),
-    #[cfg(test)]
-    Synthetic(Vec<B>),
-}
-
-impl<B: WitnessBundle> KernelRows<B> {
-    /// The witness's resident rows, which must span exactly the
-    /// `2^log_t`-cycle domain; a witness without them fails instead of
-    /// collecting rows.
-    pub(crate) fn from_witness<F: JoltField>(
-        witness: &dyn JoltWitnessPlane<F>,
-        log_t: usize,
-        label: &'static str,
-    ) -> Result<Self, WitnessError> {
-        let rows = witness
-            .random_access()
-            .ok_or(WitnessError::UnavailableView { label })?;
-        if rows.cycles() != 1 << log_t {
-            return Err(WitnessError::InvalidDimensions {
-                label,
-                reason: format!("{} rows for a 2^{log_t}-cycle stage", rows.cycles()),
-            });
-        }
-        Ok(Self::Trace(rows, PhantomData))
-    }
-
-    /// One serial visit of `range` in exact `chunk`-row callbacks
-    /// ([`RandomAccessRows::visit_bundles`]).
-    pub(crate) fn visit(
-        &self,
-        range: Range<usize>,
-        chunk: usize,
-        visit: impl FnMut(usize, &[B]) -> Result<(), WitnessError>,
-    ) -> Result<(), WitnessError> {
-        match self {
-            Self::Trace(rows, _) => rows.visit_bundles(range, chunk, visit),
-            #[cfg(test)]
-            Self::Synthetic(rows) => {
-                let mut visit = visit;
-                range
-                    .clone()
-                    .step_by(chunk)
-                    .try_for_each(|start| visit(start, &rows[start..range.end.min(start + chunk)]))
-            }
-        }
-    }
-}
-
 /// Tasks per pool thread in a [`task_ranges`] partition, so work stealing can
 /// even out unequal row costs between tasks.
 #[cfg(feature = "parallel")]
 const TASKS_PER_THREAD: usize = 8;
 
 /// The task partition of one pass over the cycle domain `0..cycles`: units of
-/// `U = min(cycles, group)` cycles and `min(TASKS_PER_THREAD · pool threads,
-/// cycles / U)` tasks, task `i` holding units `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋`
-/// of the `n = cycles / U`. Both sizes are powers of two, so every task
-/// covers whole `group`-cycle kernel groups. Per-task state allocated before
-/// the pass is held `tasks` times at once.
+/// `group` cycles and `min(TASKS_PER_THREAD · pool threads, cycles / group)`
+/// tasks, task `i` holding units `⌊i·n/tasks⌋..⌊(i+1)·n/tasks⌋` of the
+/// `n = cycles / group`. Both sizes are powers of two, with `group ≤ cycles`,
+/// so every task covers whole `group`-cycle kernel groups. Per-task state
+/// allocated before the pass is held `tasks` times at once.
 pub(crate) fn task_ranges(cycles: usize, group: usize) -> Vec<Range<usize>> {
-    let unit = cycles.min(group);
+    let unit = group;
     let units = cycles / unit;
     #[cfg(feature = "parallel")]
     let tasks = (TASKS_PER_THREAD * rayon::current_num_threads()).min(units);
@@ -286,37 +234,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::task_ranges;
-    #[cfg(feature = "parallel")]
-    use super::TASKS_PER_THREAD;
 
     /// Tasks tile the domain in order, each a positive whole number of
-    /// aligned units with the units spread evenly, and never outnumber
-    /// `TASKS_PER_THREAD` per pool thread (one task without `parallel`).
+    /// aligned groups.
     #[test]
     fn tasks_tile_the_domain_in_whole_aligned_units() {
-        #[cfg(feature = "parallel")]
-        let most_tasks = TASKS_PER_THREAD * rayon::current_num_threads();
-        #[cfg(not(feature = "parallel"))]
-        let most_tasks = 1;
         for (cycles, group) in [
             (1usize << 12, 1usize << 4),
             (1 << 12, 1 << 2),
             (1 << 12, 1 << 12),
-            (1 << 6, 1 << 8),
             (1 << 20, 1),
             (1, 1),
         ] {
-            let unit = cycles.min(group);
-            let units = cycles / unit;
             let ranges = task_ranges(cycles, group);
-            assert_eq!(ranges.len(), most_tasks.min(units));
-            let (fewest, most) = (units / ranges.len(), units.div_ceil(ranges.len()));
             let mut next = 0;
             for range in &ranges {
                 assert_eq!(range.start, next);
-                assert_eq!(range.start % unit, 0);
-                assert_eq!(range.len() % unit, 0);
-                assert!((fewest..=most).contains(&(range.len() / unit)) && !range.is_empty());
+                assert_eq!(range.start % group, 0);
+                assert_eq!(range.len() % group, 0);
+                assert!(!range.is_empty());
                 next = range.end;
             }
             assert_eq!(next, cycles);

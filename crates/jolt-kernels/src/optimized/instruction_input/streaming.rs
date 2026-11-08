@@ -10,7 +10,7 @@
 
 use jolt_claims::protocols::jolt::relations::instruction::InstructionInputOutputClaims;
 use jolt_field::JoltField;
-use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, Polynomial, UnivariatePoly};
+use jolt_poly::{BindingOrder, EqPolynomial, GruenSplitEqPolynomial, UnivariatePoly};
 use jolt_sumcheck::{ProveRounds, SumcheckError};
 use jolt_utils::unsafe_allocate_zero_vec;
 use jolt_verifier::stages::relations::{
@@ -24,24 +24,19 @@ use super::{
     OptimizedInstructionInputKernel, NUM_TABLES,
 };
 use crate::optimized::streaming::{
-    dense_crossover, gruen_pair_pass, task_ranges, KernelRows, PairHalves, DENSE_TABLE_CAP,
-    VISIT_ROWS,
+    dense_crossover, gruen_pair_pass, task_ranges, PairHalves, DENSE_TABLE_CAP, VISIT_ROWS,
 };
-use crate::optimized::support::{try_par_sum_vecs, GruenRoundMessage, RoundChallenges};
+use crate::optimized::support::{
+    try_par_sum_vecs, BundleStore, GruenRoundMessage, RoundChallenges,
+};
 use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
 const TERMS: usize = 3;
 
-fn tables_peak_bytes<F: JoltField>(len: usize) -> usize {
-    len.saturating_mul(NUM_TABLES)
-        .saturating_add(Polynomial::<F>::in_place_shrink_len(len))
-        .saturating_mul(size_of::<F>())
-}
-
+/// The quadratic's constant and leading coefficients, then its value at one.
 #[inline]
-// The quadratic's constant and leading coefficients, then its value at one.
 fn pair_q_terms<F: JoltField>(
     values: [F; NUM_TABLES],
     steps: [F; NUM_TABLES],
@@ -58,25 +53,13 @@ fn pair_q_terms<F: JoltField>(
 pub struct StreamingInstructionInput;
 
 /// The round whose pass fills the dense tables over `2^rounds` cycles: the
-/// first whose tables fit `cap`, at least round 1 (round 0 reads native rows)
-/// and at most the last round, so the opening values are always table entries.
+/// first whose tables fit `cap`, at least round 1 when there are two or more
+/// rounds, and at most the last round, so openings are always table entries.
 fn crossover_round<F: JoltField>(rounds: usize, cap: usize) -> usize {
     let table_bytes = (NUM_TABLES * size_of::<F>()) << rounds;
     dense_crossover(table_bytes, cap, rounds)
         .max(1)
         .min(rounds.saturating_sub(1))
-}
-
-impl StreamingInstructionInput {
-    /// Peak bytes over `2^log_t` cycles: the dense tables the crossover round
-    /// `c` fills at `T / 2^c` entries each ([`tables_peak_bytes`]) plus that
-    /// pass's `2^c` row weights. Not counted: per-task pass state (a few
-    /// field elements per task); the split-eq tables.
-    pub fn peak_bytes<F: JoltField>(log_t: usize) -> usize {
-        let crossover = crossover_round::<F>(log_t, DENSE_TABLE_CAP);
-        tables_peak_bytes::<F>((1usize << log_t) >> crossover)
-            .saturating_add((1usize << crossover).saturating_mul(size_of::<F>()))
-    }
 }
 
 impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructionInput {
@@ -87,8 +70,7 @@ impl<F: JoltField> PrepareKernel<F, InstructionInput<F>> for StreamingInstructio
         inputs: ProverInputs<'_, F, InstructionInput<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionInput<F>>>, KernelError<F>> {
         let r_product = inputs.relation.product_remainder_opening_point();
-        let rows =
-            KernelRows::from_witness(witness, r_product.len(), "instruction input trace rows")?;
+        let rows = BundleStore::resident(witness, r_product.len(), "instruction input trace rows")?;
         Ok(Box::new(StreamingInstructionInputKernel::new(
             r_product,
             rows,
@@ -107,9 +89,7 @@ struct StreamedRounds<F: JoltField> {
     dense_round: usize,
     gruen: GruenSplitEqPolynomial<F>,
     challenges: RoundChallenges<F>,
-    /// The witness plane owns these rows; it reports them itself.
-    #[cfg_attr(feature = "allocative", allocative(skip))]
-    rows: KernelRows<InstructionInputRow>,
+    rows: BundleStore<InstructionInputRow>,
 }
 
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
@@ -242,7 +222,7 @@ impl<F: JoltField> StreamingInstructionInputKernel<F> {
     /// passes [`DENSE_TABLE_CAP`].
     fn new(
         r_product: &[F],
-        rows: KernelRows<InstructionInputRow>,
+        rows: BundleStore<InstructionInputRow>,
         gamma: F,
         dense_cap: usize,
     ) -> Self {
@@ -381,6 +361,7 @@ mod tests {
     };
     use jolt_claims::protocols::jolt::{InstructionInputPublic, JoltDerivedId, TraceDimensions};
     use jolt_field::{Fr, Ring};
+    use jolt_poly::Polynomial;
     use jolt_verifier::stages::relations::ConcreteSumcheck;
     use jolt_witness::witnesses::{
         Imm, InstructionFlag, RdWriteValue, Rs1Value, Rs2Value, UnexpandedPc,
@@ -454,11 +435,6 @@ mod tests {
             .collect()
     }
 
-    /// The row's ten columns through the witness field encoding.
-    fn column_values(row: &InstructionInputRow) -> [Fr; NUM_TABLES] {
-        row.field_values()
-    }
-
     /// The dense tables' length once the eager kernel holds them.
     fn dense_len(kernel: &StreamingInstructionInputKernel<Fr>) -> Option<usize> {
         match &kernel.phase {
@@ -483,7 +459,11 @@ mod tests {
     ) {
         let log_t = r_product.len();
         let tables: Vec<Vec<Fr>> = (0..NUM_TABLES)
-            .map(|table| rows.iter().map(|row| column_values(row)[table]).collect())
+            .map(|table| {
+                rows.iter()
+                    .map(|row| row.field_values::<Fr>()[table])
+                    .collect()
+            })
             .collect();
         let gamma = fr(0xDADA_CAFE);
         let relation = InstructionInput::<Fr>::new(TraceDimensions::new(log_t), r_product.to_vec());
@@ -533,7 +513,7 @@ mod tests {
         let cap = ((NUM_TABLES * size_of::<Fr>()) << log_t) >> depth;
         let mut streaming = StreamingInstructionInputKernel::new(
             r_product,
-            KernelRows::Synthetic(rows),
+            BundleStore::Retained(rows),
             gamma,
             cap,
         );
@@ -668,7 +648,7 @@ mod tests {
         {
             Some(depth) => Box::new(StreamingInstructionInputKernel::new(
                 &r_product,
-                KernelRows::from_witness::<F>(backend, log_t, "trace rows").unwrap(),
+                BundleStore::resident::<F>(backend, log_t, "trace rows").unwrap(),
                 challenges.gamma,
                 ((NUM_TABLES * size_of::<F>()) << log_t) >> depth,
             )),
