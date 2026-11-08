@@ -76,6 +76,7 @@ use rayon::ThreadPoolBuilder;
 use tracer::execution_backend::TracerBackend;
 
 use crate::JoltBackend;
+#[cfg(not(feature = "akita"))]
 use crate::JoltSharedPreprocessing;
 use crate::ProverConfig;
 
@@ -795,7 +796,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) {
     );
     if let Some(transported) = &run.verifier_transported {
         println!(
-            "modular {bench_name} (2^{scale}, {backend_label}): Verifier {:.3}ms on transported preprocessing, first use ({} threads)",
+            "modular {bench_name} (2^{scale}, {backend_label}): Verifier {:.3}ms on transported preprocessing, decode and first verify ({} threads)",
             transported.seconds() * 1e3,
             transported.threads,
         );
@@ -966,13 +967,11 @@ fn prove_workload(
     chunk_profile: AkitaChunkProfile,
 ) -> ProvenRun {
     use crate::akita::preprocessing::AkitaVc;
-    use crate::JoltProverPreprocessing;
     use jolt_akita::{AkitaField, AkitaScheduleArtifacts, AkitaScheme};
-    use jolt_openings::CommitmentScheme;
     use jolt_transcript::{Keccak, ProverState, VerifierState};
     #[cfg(feature = "zk")]
     use jolt_verifier::JoltProofClaims;
-    use jolt_verifier::{JoltVerifierPreprocessing, ProgramPreprocessing};
+    use jolt_verifier::JoltVerifierPreprocessing;
 
     let backend = match backend {
         BackendKind::Reference => JoltBackend::reference(),
@@ -1002,23 +1001,19 @@ fn prove_workload(
         &[],
     )
     .expect("Akita setup parameters");
-    let shared = JoltSharedPreprocessing::new(program_preprocessing).expect("shared preprocessing");
     let setup_span = tracing::info_span!("profile_pcs_setup", protocol = "akita");
     let setup_guard = setup_span.enter();
     let setup_now = Instant::now();
-    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params).expect("Akita PCS setup");
+    let prover_preprocessing = crate::akita::preprocessing::full_from_params(
+        params,
+        program_preprocessing,
+        &config,
+        false,
+        false,
+    )
+    .expect("Akita preprocessing");
     let setup_duration = setup_now.elapsed();
     drop(setup_guard);
-    let prover_preprocessing = JoltProverPreprocessing::<AkitaScheme, AkitaVc> {
-        verifier: JoltVerifierPreprocessing::new(
-            ProgramPreprocessing::Full(shared.program),
-            verifier_setup,
-            None,
-        )
-        .expect("Akita verifier preprocessing"),
-        pcs_setup,
-        committed_program: None,
-    };
     let program_preprocessing = prover_preprocessing
         .program_arc()
         .expect("full program preprocessing");
@@ -1097,10 +1092,13 @@ fn prove_workload(
     let verifier_single_threaded = jolt_akita::with_single_threaded_verifier_backend(|| {
         measure_verifier(VerificationMode::SingleThreaded, 1, verify)
     });
-    // A verifier in another process holds transported preprocessing. Under
-    // Whiteout it is built from the prover's exported plans (the catalog and
-    // the response schedules), which its first verify loads and validates
-    // instead of planning.
+    // A verifier in another process receives encoded preprocessing; under
+    // Whiteout, built from the prover's exported plans (the catalog and the
+    // response schedules). Its window covers decoding and the first verify,
+    // because Whiteout prepares its verifier state while decoding and clear
+    // Akita prepares its own on first verify; the decoded setup is dropped
+    // after it. Only the setup is cold: thread pools and process-wide tables
+    // stay warm from the verifies above.
     #[cfg(feature = "zk")]
     let persisted = prover_preprocessing
         .verifier
@@ -1125,14 +1123,16 @@ fn prove_workload(
         bincode::config::standard(),
     )
     .expect("encode verifier preprocessing");
-    let transported: JoltVerifierPreprocessing<AkitaScheme, AkitaVc> =
-        bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
-            .expect("decode verifier preprocessing")
-            .0;
+    let mut transported = None;
     let verifier_transported = jolt_akita::with_host_parallel_verifier_backend(|| {
         measure_verifier(VerificationMode::Transported, parallel_threads, || {
+            let transported: &JoltVerifierPreprocessing<AkitaScheme, AkitaVc> = transported.insert(
+                bincode::serde::decode_from_slice(&encoded, bincode::config::standard())
+                    .expect("decode verifier preprocessing")
+                    .0,
+            );
             jolt_verifier::verify::<AkitaField, AkitaScheme, AkitaVc, VerifierState<'_, Keccak>>(
-                &transported,
+                transported,
                 &public_io,
                 &proof,
                 None,

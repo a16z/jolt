@@ -27,7 +27,7 @@ pub struct AkitaScheduleArtifacts {
     one_hot: Vec<AkitaOneHotScheduleArtifact>,
     /// Whiteout's response schedules, one row per `e` length
     /// ([`RESPONSE_CATALOG_FILE`]). A Whiteout setup derives each length's
-    /// one-row plan from it and plans only a length it lacks.
+    /// one-row plan from it and refuses a catalog that lacks one.
     response: Option<Vec<u8>>,
 }
 
@@ -79,7 +79,7 @@ impl AkitaScheduleArtifacts {
     }
 
     /// Adds Whiteout's response catalog. Its bytes are audited when a
-    /// Whiteout setup first needs a response row.
+    /// Whiteout setup is built or decoded.
     fn with_response_catalog(mut self, bytes: Vec<u8>) -> Self {
         self.response = Some(bytes);
         self

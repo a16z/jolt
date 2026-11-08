@@ -4,13 +4,11 @@
 //! and the zero-constant-term sampler, first written in Akita for
 //! LayerZero-Labs/akita#120), and the Σ-protocol of `specs/whiteout-sigma.md`: the lattice pad
 //! commitment, the constant-term lift of the residual relation, the prover
-//! and verifier, and the response statement. It exposes no zero-knowledge
-//! mode yet (`ZkBackend for Whiteout` is W6). The verifier-side pieces build
+//! and verifier, and the response statement. jolt-akita and jolt-prover
+//! assemble them into the Whiteout mode. The verifier-side pieces build
 //! under the `whiteout` feature; the prover-side sampler additionally needs
-//! `whiteout-prover`. WARNING: an Akita verifier build compiles it anyway,
-//! because jolt-akita's `zk` enables `whiteout-prover` for its prover half;
-//! splitting jolt-akita's feature is a follow-up
-//! (`specs/whiteout-jolt-integration.md`, prototype deltas).
+//! `whiteout-prover`, which outside this crate only jolt-akita's `zk-prover`
+//! enables.
 //! Randomness here comes from a caller-supplied cryptographic RNG.
 
 mod challenge;

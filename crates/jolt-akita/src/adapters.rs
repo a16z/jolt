@@ -265,8 +265,8 @@ pub struct AkitaSetupParams {
 pub(crate) enum WhiteoutSource {
     /// Planned at setup.
     Plan,
-    /// Persisted plans, validated on first use and never replaced by
-    /// planning.
+    /// Persisted plans, validated when the setup is built or decoded and
+    /// never replaced by planning.
     Load(WhiteoutPlans),
 }
 
@@ -392,7 +392,7 @@ impl AkitaSetupParams {
     }
 
     /// Whiteout, from persisted plans ([`AkitaVerifierSetup::whiteout_plans`])
-    /// instead of planning: the setup validates them on first use and
+    /// instead of planning: the setup validates them when it is built and
     /// refuses them, never replans, if they fail.
     #[cfg(feature = "zk")]
     pub fn with_whiteout_plans(mut self, plans: WhiteoutPlans) -> Self {
@@ -493,8 +493,10 @@ impl AkitaProverSetup {
 
 /// Serializable public inputs for deriving backend keys.
 ///
-/// The exact validated schedule artifacts are serialized; derived scheme
-/// objects, prepared keys, and caches are rebuilt lazily after transport.
+/// The exact validated schedule artifacts are serialized. After transport a
+/// clear setup rebuilds its scheme objects and backend verifiers on first
+/// use; a Whiteout setup with plans prepares its verifier state while
+/// decoding.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AkitaVerifierSetup {

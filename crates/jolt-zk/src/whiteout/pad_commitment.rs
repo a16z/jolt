@@ -4,8 +4,8 @@
 //! radix-16 digit planes, the operand pads as radix-256 constant digit
 //! polynomials, and the hiding randomness `r_p`, laid out by
 //! [`PadPlacement`], with one Ajtai level of rank `rank` over `R_D`. The
-//! commitment is sent raw until W5 provides compression. Row `rank` of the
-//! same view, on the randomness columns, is the Σ-protocol's row `L`.
+//! image t_p is sent compressed, as cm(t_p) (`committed_pads.rs`). Row `rank`
+//! of the same view, on the randomness columns, is the Σ-protocol's row `L`.
 
 use std::sync::Arc;
 

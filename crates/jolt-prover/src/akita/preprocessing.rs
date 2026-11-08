@@ -70,8 +70,9 @@ pub fn preprocess_full_with_advice(
 
 /// Whiteout: [`preprocess_full_with_advice`] on persisted plans
 /// (`AkitaVerifierSetup::whiteout_plans`) instead of planning: the catalog
-/// and response schedules are validated on first use and refused, never
-/// replanned, if they fail or lack a response length.
+/// and response schedules are audited here and refused, never replanned, if
+/// they fail. A proof whose response length the plans lack is rejected when
+/// it is proven or verified.
 #[cfg(feature = "zk")]
 pub fn preprocess_full_from_plans(
     schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
@@ -94,7 +95,7 @@ pub fn preprocess_full_from_plans(
     full_from_params(params, program, config, untrusted_advice, trusted_advice)
 }
 
-fn full_from_params(
+pub(crate) fn full_from_params(
     params: AkitaSetupParams,
     program: JoltProgramPreprocessing,
     config: &ProverConfig,

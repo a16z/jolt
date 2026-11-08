@@ -77,9 +77,9 @@ cargo run --release -p jolt-akita --bin gen_jolt_schedules -- crates/jolt-akita/
 
 `jolt-fp128-response-digits.aks` holds Whiteout's response rows (family
 `fp128_response_digits`, one row per `e` length `ν = 18..=27`, the top being the response proof's
-`MAX_RESPONSE_NUM_VARS`). Whiteout
-setups derive each length's one-row plan from it and plan in process only a
-length it lacks; `from_directory` loads it when present. Generate it with
+`MAX_RESPONSE_NUM_VARS`). A Whiteout setup derives each length's one-row
+plan from it and refuses a catalog that lacks one; it never plans a response
+row. `from_directory` loads it when present. Generate it with
 `--features zk` and the `response` selector:
 
 ```sh
