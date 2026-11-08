@@ -391,6 +391,23 @@ fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String>
 }
 
 impl ProfileArgs {
+    fn streaming_families(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        if self.streaming.unwrap_or_default().instruction_input {
+            names.push("instruction-input".to_string());
+        }
+        names
+    }
+
+    fn streaming_suffix(&self) -> String {
+        let names = self.streaming_families();
+        if names.is_empty() {
+            String::new()
+        } else {
+            format!("_streaming_{}", names.join("_").replace('-', "_"))
+        }
+    }
+
     #[cfg(feature = "akita")]
     fn chunk_profile_suffix(&self) -> String {
         match self.akita_chunk_profile {
@@ -406,21 +423,21 @@ impl ProfileArgs {
         let name = self.name.as_str().to_string();
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.chunk_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 
     fn benchmark_name(&self) -> String {
         let name = format!("{}{PROTOCOL_SUFFIX}", self.name.as_str());
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.chunk_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 
     fn trace_name(&self, scale: u32) -> String {
         let name = trace_name(self.name, scale, self.backend);
         #[cfg(feature = "akita")]
         let name = format!("{name}{}", self.chunk_profile_suffix());
-        name
+        format!("{name}{}", self.streaming_suffix())
     }
 }
 
@@ -594,6 +611,7 @@ pub fn run(args: &ProfileArgs) -> ProfileResult<ProfileArtifacts> {
         workload: args.workload_name(),
         scale_log2: scale,
         backend: args.backend.as_str().to_string(),
+        streaming_families: args.streaming_families(),
     };
     let (summary_file, summary) =
         finalize_trace(&trace_path, &ctx, peak).expect("finalize chrome trace");
@@ -907,6 +925,7 @@ fn run_workload(args: &ProfileArgs, scale: u32, run_dir: &Path) -> ProfileResult
             "workload": bench_name,
             "pcs": if cfg!(feature = "akita") { "akita" } else { "dory" },
             "backend": backend_label,
+            "streaming_families": args.streaming_families(),
             "scale_log2": scale,
             "e2e_s": run.e2e_duration.as_secs_f64(),
             "prove_s": duration.as_secs_f64(),
