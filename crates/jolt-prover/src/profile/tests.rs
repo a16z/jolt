@@ -15,23 +15,41 @@ fn streaming_option_selects_the_requested_families() {
         #[command(flatten)]
         args: ProfileArgs,
     }
-    let cli = Cli::try_parse_from([
-        "jolt-prover",
-        "--name",
-        "fibonacci",
-        "--backend",
-        "optimized",
-        "--streaming",
-        "instruction-input",
-    ])
-    .unwrap();
-    assert_eq!(
-        cli.args.streaming,
-        Some(StreamingFamilies {
-            instruction_input: true,
-            spartan: false,
-        })
-    );
+    for (selection, expected) in [
+        (
+            "instruction-input",
+            StreamingFamilies {
+                instruction_input: true,
+                spartan: false,
+            },
+        ),
+        (
+            "spartan",
+            StreamingFamilies {
+                instruction_input: false,
+                spartan: true,
+            },
+        ),
+        (
+            "instruction-input,spartan",
+            StreamingFamilies {
+                instruction_input: true,
+                spartan: true,
+            },
+        ),
+    ] {
+        let cli = Cli::try_parse_from([
+            "jolt-prover",
+            "--name",
+            "fibonacci",
+            "--backend",
+            "optimized",
+            "--streaming",
+            selection,
+        ])
+        .unwrap();
+        assert_eq!(cli.args.streaming, Some(expected));
+    }
 }
 
 #[test]

@@ -1,9 +1,8 @@
 //! Streaming kernel families: optional alternatives to the default eager
-//! kernels for proofs whose eager tables would not fit memory. A streaming
-//! kernel recomputes its early rounds from the witness's resident rows in
-//! task-partitioned passes instead of materializing trace-sized tables, so it
-//! trades prover time for peak memory. [`JoltBackend::optimized`] keeps the
-//! eager kernels; [`JoltBackend::with_streaming`] installs a selection.
+//! kernels. A streaming kernel recomputes its early rounds from typed rows
+//! in task-partitioned passes instead of materializing trace-sized tables
+//! immediately. [`JoltBackend::optimized`] keeps the eager kernels;
+//! [`JoltBackend::with_streaming`] installs a selection.
 
 mod pass;
 

@@ -320,8 +320,8 @@ pub struct ProfileArgs {
     #[clap(long, value_enum, default_value = "reference")]
     pub backend: BackendKind,
 
-    /// Comma-separated streaming kernel families: instruction-input. Requires
-    /// --backend optimized. Recomputes early rounds from resident trace rows;
+    /// Comma-separated streaming kernel families: instruction-input, spartan.
+    /// Requires --backend optimized. Recomputes early rounds from resident trace rows;
     /// the fixed table cap is not a process-memory limit. Cannot be combined
     /// with --memory-budget: its reservations price only eager kernels.
     #[clap(long, value_parser = parse_streaming_families, conflicts_with = "memory_budget")]
@@ -380,9 +380,10 @@ fn parse_streaming_families(value: &str) -> StdResult<StreamingFamilies, String>
     for family in value.split(',') {
         match family {
             "instruction-input" => families.instruction_input = true,
+            "spartan" => families.spartan = true,
             _ => {
                 return Err(format!(
-                    "unknown streaming family {family:?}; expected instruction-input"
+                    "unknown streaming family {family:?}; expected instruction-input or spartan"
                 ))
             }
         }
