@@ -35,3 +35,8 @@ pub mod size_class_alloc;
     any(target_arch = "riscv32", target_arch = "riscv64")
 ))]
 mod malloc_shim;
+
+/// Reserved custom-0 opcode for precompile calls.
+pub const PCALL_OPCODE: u32 = 0x0b;
+/// Reserved function block for precompile calls.
+pub const PCALL_FUNCT7: u32 = 0x0a;
