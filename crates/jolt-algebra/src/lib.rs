@@ -117,6 +117,8 @@ pub mod narrowing;
 mod ops;
 mod packed;
 pub mod parallel;
+#[cfg(feature = "solinas")]
+pub mod ring;
 mod schedules;
 pub mod signed;
 #[cfg(feature = "solinas")]
@@ -128,6 +130,8 @@ pub use algebra::{
     Accumulator, AdditiveGroup, CanonicalBytes, CanonicalEncoding, Field, JoltField,
     MaybeAllocative, MaybeEncoding, NaiveAccumulator, PseudoMersenne, Ring, WithAccumulator,
 };
+#[cfg(feature = "solinas")]
+pub use ring::{balanced_decompose_coefficients_pow2_i8_into, CyclotomicRing};
 #[cfg(all(feature = "field-inline-guest", target_arch = "riscv64"))]
 mod field_inline;
 
