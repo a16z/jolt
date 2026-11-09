@@ -11,6 +11,7 @@ use jolt_akita::{
 };
 #[cfg(feature = "field-inline")]
 use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
+use jolt_claims::protocols::jolt::lattice::packing::PrecommittedPackingPlan;
 use jolt_claims::protocols::jolt::lattice::{advice_packing_plan, committed_program_packing_plan};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
@@ -24,14 +25,17 @@ use jolt_verifier::{
 
 use crate::{
     CommittedProgramProverData, JoltProverPreprocessing, PreprocessingError, ProverConfig,
+    ProverError,
 };
 
 use super::one_hot_trace_setup_shape;
-use super::witness::AdviceObject;
 #[cfg(not(feature = "zk"))]
 use super::witness::{commit_advice, commit_direct_program};
 #[cfg(feature = "zk")]
-use super::witness::{commit_advice_hiding, commit_direct_program_hiding};
+use super::witness::{
+    commit_advice_hiding, commit_direct_program_hiding, DirectProgramOpenings, HidingOpening,
+};
+use super::witness::{AdviceObject, DirectProgramObjects};
 
 pub type AkitaVc = NoVectorCommitment<AkitaField>;
 pub type AkitaProverPreprocessing = JoltProverPreprocessing<AkitaScheme, AkitaVc>;
@@ -219,6 +223,84 @@ pub fn preprocess_committed_with_advice(
     untrusted_advice: bool,
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    // Whiteout commits the program objects hiding on the trace setup's
+    // backend, which opens them.
+    #[cfg(feature = "zk")]
+    let commit = |pcs_setup: &AkitaProverSetup,
+                  program: &JoltProgramPreprocessing,
+                  trace_order,
+                  plan: &PrecommittedPackingPlan| {
+        commit_direct_program_hiding::<AkitaScheme>(pcs_setup, program, trace_order, plan, None)
+    };
+    #[cfg(not(feature = "zk"))]
+    let commit = |_: &AkitaProverSetup,
+                  program: &JoltProgramPreprocessing,
+                  trace_order,
+                  plan: &PrecommittedPackingPlan| {
+        commit_direct_program::<AkitaScheme>(schedule_artifacts, program, trace_order, plan)
+    };
+    committed_with(
+        schedule_artifacts,
+        program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        commit,
+    )
+}
+
+/// Whiteout: [`preprocess_committed_with_advice`] for a program a trusted
+/// party committed: rebuilds the prover's hints of the program objects from
+/// the program and `openings`, the commitments and randomness the trusted
+/// party shipped (`specs/whiteout-jolt-integration.md` §5). Doubles as the
+/// auditor's check that `openings` commit to `program`.
+///
+/// # Errors
+///
+/// [`PreprocessingError::InvalidCommittedProgram`] unless the program and
+/// randomness rebuild exactly the shipped commitments.
+#[cfg(feature = "zk")]
+pub fn preprocess_committed_reopened(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+    openings: &DirectProgramOpenings<AkitaScheme>,
+) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    committed_with(
+        schedule_artifacts,
+        program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        |pcs_setup, program, trace_order, plan| {
+            commit_direct_program_hiding::<AkitaScheme>(
+                pcs_setup,
+                program,
+                trace_order,
+                plan,
+                Some(openings),
+            )
+        },
+    )
+}
+
+/// Committed-program preprocessing, with `commit` producing the direct
+/// program objects on the grouped setup.
+fn committed_with(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+    commit: impl FnOnce(
+        &AkitaProverSetup,
+        &JoltProgramPreprocessing,
+        TracePolynomialOrder,
+        &PrecommittedPackingPlan,
+    ) -> Result<DirectProgramObjects<AkitaScheme>, ProverError<AkitaField>>,
+) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     crate::preprocessing::validate_committed_mode(&program)?;
     validate_trace_order(config)?;
     let metadata =
@@ -248,18 +330,11 @@ pub fn preprocess_committed_with_advice(
         trusted_advice,
         &physical_vars,
     )?;
-    // Whiteout commits the program objects hiding on the trace setup's
-    // backend, which opens them.
-    #[cfg(feature = "zk")]
-    let direct_program =
-        commit_direct_program_hiding::<AkitaScheme>(&pcs_setup, &program, trace_order, &plan);
-    #[cfg(not(feature = "zk"))]
-    let direct_program =
-        commit_direct_program::<AkitaScheme>(schedule_artifacts, &program, trace_order, &plan);
-    let direct_program =
-        direct_program.map_err(|error| PreprocessingError::InvalidCommittedProgram {
+    let direct_program = commit(&pcs_setup, &program, trace_order, &plan).map_err(|error| {
+        PreprocessingError::InvalidCommittedProgram {
             reason: error.to_string(),
-        })?;
+        }
+    })?;
     let committed_program = CommittedProgramPreprocessing {
         meta: metadata,
         memory_layout: program.memory_layout.clone(),
@@ -295,16 +370,7 @@ pub fn commit_trusted_advice(
     preprocessing: &AkitaProverPreprocessing,
     advice_bytes: &[u8],
 ) -> Result<AdviceObject<AkitaScheme>, PreprocessingError> {
-    let max_bytes = usize::try_from(
-        preprocessing
-            .verifier
-            .program
-            .memory_layout()
-            .max_trusted_advice_size,
-    )
-    .map_err(|_| PreprocessingError::InvalidAdvice {
-        reason: "trusted advice size does not fit usize".to_owned(),
-    })?;
+    let max_bytes = max_trusted_advice_bytes(preprocessing)?;
     // Whiteout commits trusted advice hiding on the trace setup's backend,
     // which opens it; the object keeps the randomness.
     #[cfg(feature = "zk")]
@@ -313,6 +379,7 @@ pub fn commit_trusted_advice(
         JoltAdviceKind::Trusted,
         advice_bytes,
         max_bytes,
+        None,
     );
     #[cfg(not(feature = "zk"))]
     let object = commit_advice::<AkitaScheme>(
@@ -323,6 +390,48 @@ pub fn commit_trusted_advice(
     );
     object.map_err(|error| PreprocessingError::InvalidAdvice {
         reason: error.to_string(),
+    })
+}
+
+/// Whiteout: rebuilds the prover's trusted-advice object from the advice and
+/// `opening`, the commitment and randomness a trusted party shipped
+/// (`specs/whiteout-jolt-integration.md` §5). Doubles as the auditor's check
+/// that `opening` commits to `advice_bytes`.
+///
+/// # Errors
+///
+/// [`PreprocessingError::InvalidAdvice`] unless the advice and randomness
+/// rebuild exactly the shipped commitment.
+#[cfg(feature = "zk")]
+pub fn reopen_trusted_advice(
+    preprocessing: &AkitaProverPreprocessing,
+    advice_bytes: &[u8],
+    opening: &HidingOpening<AkitaScheme>,
+) -> Result<AdviceObject<AkitaScheme>, PreprocessingError> {
+    commit_advice_hiding::<AkitaScheme>(
+        &preprocessing.pcs_setup,
+        JoltAdviceKind::Trusted,
+        advice_bytes,
+        max_trusted_advice_bytes(preprocessing)?,
+        Some(opening),
+    )
+    .map_err(|error| PreprocessingError::InvalidAdvice {
+        reason: error.to_string(),
+    })
+}
+
+fn max_trusted_advice_bytes(
+    preprocessing: &AkitaProverPreprocessing,
+) -> Result<usize, PreprocessingError> {
+    usize::try_from(
+        preprocessing
+            .verifier
+            .program
+            .memory_layout()
+            .max_trusted_advice_size,
+    )
+    .map_err(|_| PreprocessingError::InvalidAdvice {
+        reason: "trusted advice size does not fit usize".to_owned(),
     })
 }
 
