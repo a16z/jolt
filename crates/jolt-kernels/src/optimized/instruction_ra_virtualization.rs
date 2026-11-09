@@ -35,6 +35,8 @@
 //! exactly as the naive tier's bound `EqCycle` table is checked.
 
 mod categorical;
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
 
 use std::sync::Arc;
 
@@ -73,19 +75,9 @@ impl<F: JoltField> PrepareKernel<F, InstructionRaVirtualization<F>>
         inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = InstructionRaVirtualization<F>>>, KernelError<F>>
     {
-        let relation = inputs.relation;
-        let cycles = 1usize << relation.dimensions().log_t();
-        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
-        Ok(Box::new(OptimizedInstructionRaVirtualizationKernel::new(
-            relation.dimensions().log_t(),
-            relation.dimensions().num_virtual_ra_polys(),
-            relation.dimensions().num_committed_per_virtual(),
-            relation.instruction_address(),
-            relation.instruction_read_raf_cycle(),
-            relation.committed_chunk_bits(),
-            rows,
-            inputs.challenges.gamma,
-        )?))
+        Ok(Box::new(
+            OptimizedInstructionRaVirtualizationKernel::prepare(session, witness, inputs)?,
+        ))
     }
 }
 
@@ -107,6 +99,26 @@ pub struct OptimizedInstructionRaVirtualizationKernel<F: JoltField> {
 }
 
 impl<F: JoltField> OptimizedInstructionRaVirtualizationKernel<F> {
+    fn prepare(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, InstructionRaVirtualization<F>>,
+    ) -> Result<Self, KernelError<F>> {
+        let relation = inputs.relation;
+        let cycles = 1usize << relation.dimensions().log_t();
+        let rows = InstructionCycleRow::shared(session, witness, cycles)?;
+        Self::new(
+            relation.dimensions().log_t(),
+            relation.dimensions().num_virtual_ra_polys(),
+            relation.dimensions().num_committed_per_virtual(),
+            relation.instruction_address(),
+            relation.instruction_read_raf_cycle(),
+            relation.committed_chunk_bits(),
+            rows,
+            inputs.challenges.gamma,
+        )
+    }
+
     #[expect(clippy::too_many_arguments, reason = "mirrors the relation accessors")]
     pub(crate) fn new(
         log_t: usize,
