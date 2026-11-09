@@ -488,7 +488,13 @@ pub(super) fn check_suffixes(gpu: &ReadRafGpu) -> Result<(), MetalError> {
     let mut expected = Vec::new();
     for suffix in suffixes {
         for bits in (0..128).step_by(CHUNK_LEN) {
-            for key in [0u128, 0x8721_1a05_98bf_a37d, u128::from(u64::MAX)] {
+            for key in [
+                0u128,
+                0x8721_1a05_98bf_a37d,
+                u128::from(u64::MAX),
+                u128::MAX,
+                0xda71_c350_286e_b49f_8721_1a05_98bf_a37d,
+            ] {
                 let value = LookupBits::new(key, bits);
                 // The legacy W helper is defined on valid masks with fewer
                 // than 32 leading ones; Rust rejects wider shifts in debug.
