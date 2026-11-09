@@ -302,16 +302,21 @@ impl MetalInstructionRaKernel {
         else {
             return Ok(false);
         };
+        let radix = tables.first().map_or(0, |table| table.len() / width);
         if *prefix_len < minimum
             || self.cpu.num_committed_per_virtual != 4
-            || !matches!(source.chunk_bits, 4 | 8)
-            || source.chunks != tables.len()
+            || !matches!(radix, 16 | 256)
+            || source.num_columns() != tables.len()
         {
+            return Ok(false);
+        }
+        let bits = radix.ilog2() as usize;
+        if tables.len() * bits > 128 {
             return Ok(false);
         }
         let selectors: Vec<_> = (0..tables.len())
             .map(|column| {
-                let shift = (tables.len() - 1 - column) * source.chunk_bits;
+                let shift = (tables.len() - 1 - column) * bits;
                 [u32::from(shift >= 64), (shift % 64) as u32]
             })
             .collect();
