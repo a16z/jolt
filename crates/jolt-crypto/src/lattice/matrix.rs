@@ -119,7 +119,14 @@ pub fn derive_public_matrix_prefix<F: Field + CanonicalEncoding>(
     id: &PublicMatrixSeed,
 ) -> Result<Vec<F>, CryptoError> {
     let modulus = field_modulus_be_bytes::<F>()?;
-    let mut data = vec![F::zero(); num_field_elements];
+    let mut data = Vec::new();
+    data.try_reserve_exact(num_field_elements)
+        .map_err(|error| {
+            CryptoError::InvalidSetup(format!(
+                "cannot allocate {num_field_elements} field elements: {error}"
+            ))
+        })?;
+    data.resize(num_field_elements, F::zero());
     cfg_chunks_mut!(data, id.derivation.page_field_elements())
         .enumerate()
         .for_each(|(page_index, coeffs)| {
