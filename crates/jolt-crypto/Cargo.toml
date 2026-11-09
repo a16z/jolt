@@ -29,12 +29,12 @@ bn254 = [
   "dep:num-bigint",
   "dep:num-integer",
   "dep:num-traits",
-  "jolt-field/bn254",
+  "jolt-algebra/bn254",
 ]
 parallel = ["dep:rayon", "jolt-poly/parallel"]
 
 [dependencies]
-jolt-field = { path = "../jolt-field", default-features = false }
+jolt-algebra = { path = "../jolt-algebra", default-features = false }
 jolt-poly = { path = "../jolt-poly", default-features = false }
 jolt-transcript = { path = "../jolt-transcript", default-features = false }
 serde = { workspace = true, features = ["derive", "alloc"] }

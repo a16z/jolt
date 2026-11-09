@@ -4,7 +4,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 use ark_bn254::{Fq12, Fr};
 use ark_ff::{AdditiveGroup, CyclotomicMultSubgroup, Field as ArkField, PrimeField};
 use ark_serialize::{CanonicalSerialize, Compress, SerializationError, Write};
-use jolt_field::JoltField;
+use jolt_algebra::JoltField;
 
 use jolt_transcript::Encoding;
 

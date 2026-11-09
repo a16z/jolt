@@ -3,11 +3,11 @@
 //! Covers gaps in GT, GLV (2D/4D), Dory vector ops, fixed-base MSM, and
 //! HomomorphicCommitment.
 
+use jolt_algebra::{Field, Fr, Ring};
 use jolt_crypto::ec::bn254::glv;
 use jolt_crypto::{
     Bn254, Bn254G1, Bn254G2, Bn254GT, HomomorphicCommitment, JoltGroup, PairingGroup,
 };
-use jolt_field::{Field, Fr, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
