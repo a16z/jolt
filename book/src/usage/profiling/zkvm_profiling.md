@@ -69,8 +69,8 @@ cargo run --release -p jolt-prover --features profiling,metal -- \
 ```
 
 The prover timer includes source packing, upload, and first-use transformed-key
-preparation. The `metal_trace_commit_dispatch` and
-`metal_instruction_ra_dispatch` spans record `gpu_s` from Metal command-buffer
+preparation. The `metal_trace_commit_dispatch`, `metal_instruction_ra_dispatch`,
+and `metal_outer_dispatch` spans record `gpu_s` from Metal command-buffer
 timestamps. Compare this with their wall time to distinguish GPU execution from
 host preparation and synchronization. Use `--format none` for throughput
 measurements; Chrome tracing adds overhead.

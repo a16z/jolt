@@ -115,7 +115,7 @@ impl TraceOneHotCommitKernel for MetalTraceCommitment {
             ));
         }
         let (_, key) = cached
-            .as_ref()
+            .as_mut()
             .ok_or_else(|| compute_error("missing prepared key"))?;
         let bytes_per_block = checked::product([rows_per_block, columns + size_of::<u64>()])
             .ok_or_else(|| AkitaError::InvalidInput("trace staging size overflows".into()))?;
