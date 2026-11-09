@@ -35,23 +35,23 @@ inline bool address_cached(uint bits, constant AddressParams& p) {
     return bits < p.suffix_bits || (bits <= p.suffix_bits && p.upper_bits == 0);
 }
 inline uint address_leading_ones(ulong value, uint bits) {
-    return bits == 0 ? 0u : uint(clz(~(value << (64 - bits))));
+    return bits == 0 ? 0u : uint(metal::clz(~(value << (64 - bits))));
 }
 inline ulong address_pext(ulong x, ulong y) {
     if (!y) return 0;
-    uint trailing = uint(ctz(y));
+    uint trailing = uint(metal::ctz(y));
     ulong normalized = y >> trailing;
     if ((normalized & (normalized + 1)) == 0) return (x >> trailing) & normalized;
     ulong out = 0;
-    for (uint k = 0; y; k++, y &= y - 1) out |= ((x >> uint(ctz(y))) & 1ul) << k;
+    for (uint k = 0; y; k++, y &= y - 1) out |= ((x >> uint(metal::ctz(y))) & 1ul) << k;
     return out;
 }
 inline ulong address_window_sign(ulong x, ulong y) {
-    return y == 0 ? 0 : (x >> (63 - uint(clz(y)))) & 1ul;
+    return y == 0 ? 0 : (x >> (63 - uint(metal::clz(y)))) & 1ul;
 }
 inline ulong address_scalar(uint opcode, ulong2 suffix, ulong2 operands, uint bits) {
     uint operand_bits = bits / 2;
-    uint trailing = min(uint(ctz(operands.y)), operand_bits);
+    uint trailing = metal::min(uint(metal::ctz(operands.y)), operand_bits);
     uint leading = address_leading_ones(operands.y, operand_bits);
     switch (opcode) {
         case 0: return 1;
@@ -82,9 +82,9 @@ inline ulong address_scalar(uint opcode, ulong2 suffix, ulong2 operands, uint bi
         case 25: return 1ul << leading;
         case 26: return leading >= 64 ? 0 : (operands.x & ~operands.y) << leading;
         case 27: return trailing >= 32 ? 0 : ulong(uint(operands.x) >> trailing);
-        case 28: return 1ul << address_leading_ones(operands.y & 0xfffffffful, min(operand_bits, 32u));
+        case 28: return 1ul << address_leading_ones(operands.y & 0xfffffffful, metal::min(operand_bits, 32u));
         case 29: {
-            uint shift = address_leading_ones(operands.y & 0xfffffffful, min(operand_bits, 32u));
+            uint shift = address_leading_ones(operands.y & 0xfffffffful, metal::min(operand_bits, 32u));
             return shift >= 32 ? 0 : ulong((uint(operands.x) & ~uint(operands.y)) << shift);
         }
         // Rust's u32 shift uses the low five shift bits in release builds;
@@ -97,7 +97,7 @@ inline ulong address_scalar(uint opcode, ulong2 suffix, ulong2 operands, uint bi
                 if (((operands.x >> 31) & 1ul) == 0) return 0;
                 fill = 0xffffffff00000000ul;
             }
-            uint count = min(operand_bits, 32u);
+            uint count = metal::min(operand_bits, 32u);
             for (uint offset = 0; offset < count; offset++) {
                 uint position = 32 - count + offset;
                 if (position) fill += (1ul - ((operands.y >> (count - 1 - offset)) & 1ul)) << position;
@@ -118,9 +118,9 @@ inline ulong address_scalar(uint opcode, ulong2 suffix, ulong2 operands, uint bi
         case 43: return suffix.x & 6ul;
         case 44: return suffix.x & 4ul;
         case 45: return address_pext(operands.x, operands.y);
-        case 46: return 1ul << uint(popcount(operands.y));
+        case 46: return 1ul << uint(metal::popcount(operands.y));
         case 47: return address_window_sign(operands.x, operands.y);
-        case 48: return address_window_sign(operands.x, operands.y) << uint(popcount(operands.y));
+        case 48: return address_window_sign(operands.x, operands.y) << uint(metal::popcount(operands.y));
         case 49: {
             ulong x = suffix.x;
             x = ((x & 0x00ff00ff00ff00fful) << 8) | ((x >> 8) & 0x00ff00ff00ff00fful);
@@ -206,22 +206,22 @@ kernel void address_cache(
 }
 
 template <typename F>
-inline void address_atomic_add(threadgroup atomic_uint* bins, uint field, F value) {
+inline void address_atomic_add(threadgroup metal::atomic_uint* bins, uint field, F value) {
     uint carry = 0;
     for (uint limb = 0; limb < 4; limb++) {
         ulong addend = ulong(value.limb[limb]) + carry;
         uint low = uint(addend);
-        uint old = atomic_fetch_add_explicit(&bins[5 * field + limb], low, memory_order_relaxed);
+        uint old = metal::atomic_fetch_add_explicit(&bins[5 * field + limb], low, metal::memory_order_relaxed);
         carry = uint(addend >> 32) | uint(old > 0xffffffffu - low);
     }
-    if (carry) atomic_fetch_add_explicit(&bins[5 * field + 4], carry, memory_order_relaxed);
+    if (carry) metal::atomic_fetch_add_explicit(&bins[5 * field + 4], carry, metal::memory_order_relaxed);
 }
 template <uint C>
-inline jolt::Fp128<C> address_atomic_reduce(threadgroup atomic_uint* bins, uint field, jolt::Fp128<C>) {
+inline jolt::Fp128<C> address_atomic_reduce(threadgroup metal::atomic_uint* bins, uint field, jolt::Fp128<C>) {
     using F = jolt::Fp128<C>;
     uint4 low;
-    for (uint limb = 0; limb < 4; limb++) low[limb] = atomic_load_explicit(&bins[5 * field + limb], memory_order_relaxed);
-    uint overflow = atomic_load_explicit(&bins[5 * field + 4], memory_order_relaxed);
+    for (uint limb = 0; limb < 4; limb++) low[limb] = metal::atomic_load_explicit(&bins[5 * field + limb], metal::memory_order_relaxed);
+    uint overflow = metal::atomic_load_explicit(&bins[5 * field + 4], metal::memory_order_relaxed);
     // At most 65,536 canonical contributions: the exact sum is <2^144.
     // overflow <=65,535, hence overflow*C fits u64 for the current field.
     return F{jolt::fp128_detail::fold2_canonicalize<C>(low, 0)} + F::from_u64(ulong(overflow) * C);
@@ -236,8 +236,8 @@ kernel void address_histogram(
     uint group [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]]) {
     // This is the only threadgroup allocation: 6*256*5*4=30,720 bytes.
     // Pipeline static storage is checked against the device limit at admission.
-    threadgroup atomic_uint bins[6 * ADDRESS_BINS * 5];
-    for (uint i = tid; i < 6 * ADDRESS_BINS * 5; i += 256) atomic_store_explicit(&bins[i], 0, memory_order_relaxed);
+    threadgroup metal::atomic_uint bins[6 * ADDRESS_BINS * 5];
+    for (uint i = tid; i < 6 * ADDRESS_BINS * 5; i += 256) metal::atomic_store_explicit(&bins[i], 0, metal::memory_order_relaxed);
     metal::threadgroup_barrier(metal::mem_flags::mem_threadgroup);
     AddressJob job = jobs[group];
     for (uint i = job.start + tid; i < job.end; i += 256) {
