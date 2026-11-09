@@ -155,6 +155,12 @@ pub type Prime128Offset275 = Fp128<{ pm(128, 275) }>;
 /// a field: use it at extension degree 1.
 pub type Prime128OffsetA7F7 = Fp128<FIELD_INLINE_FP128_MODULUS>;
 
+/// Prime field for `2^128 − 1_780_711_455` (`C = 0x6A23_801F`): smooth
+/// multiplicative subgroup of order `2^5 · 3^3 · 5^8 = 337_500_000`. Here
+/// `p ≡ 1 (mod 32)`, so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor
+/// `FpExt8` over it is a field: use it at extension degree 1.
+pub type Prime128Offset801F = Fp128<{ pm(128, 0x6A23_801F) }>;
+
 /// The modulus of [`Prime128OffsetA7F7`], the Fp128 field the field-inline
 /// unit computes in under `field-inline-guest-fp128`.
 pub(crate) const FIELD_INLINE_FP128_MODULUS: u128 = pm(128, 0xFFFF_A7F7);
