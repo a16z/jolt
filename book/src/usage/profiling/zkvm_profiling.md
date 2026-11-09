@@ -62,10 +62,12 @@ On macOS, `--features profiling,metal` also enables `--backend metal` for
 Akita. It starts from the optimized CPU backend and selects GPU kernels for
 supported shapes. Trace commitments preserve committed-zero masks and implicit
 padding. Instruction-RA and Booleanity cycle rounds share compact device rows,
-while retaining CPU categorical startup, binding, and output checks.
-ReadRAF shares those rows, retains CPU address rounds and its grouped first
-cycle message, then offloads qualified lazy messages and direct device
-materialization with a small CPU tail.
+use GPU reductions for large prefixes, and retain their canonical lazy binding
+schedule and output checks. ReadRAF shares those rows, keeps coalesced address
+scans on the device, and retains its grouped first cycle message. Qualified
+lazy messages and materialization continue on the device until the small CPU
+tail. Bytecode address and cycle kernels reuse the selector owner with a
+separate signed increment sidecar and the canonical equality-term recipe.
 Root decompose/fold also supports D512/K16 traces with sparse ring challenges,
 including canonical chunked folds. It preserves the CPU digit expansion and
 witness construction. Stage 0 retains its uploaded selector windows for root

@@ -255,6 +255,16 @@ root-fold binary took 25.2315 and 27.8937 s. That variation prevents a firm
 full-proof speedup claim. The frozen binaries, manifests, and observations are
 in `read-raf-metal/` and `read-raf-paired/` under the same artifact directory.
 
+The isolated TensorOps commitment candidate (`50091ea52`, Akita `0ba25771`)
+verified two full T27 proofs and matched every coefficient in all 32 source
+windows. One scalar-first component comparison measured 5.2391 s for scalar
+and 4.8359 s for TensorOps, including source packing and each backend's key
+preparation, but excluding common output allocation, scatter, and RingVec
+construction. GPU times were 4.0317 and 3.5859 s. This diagnostic executes both
+backends within each proof, so its proof timer is not a throughput result.
+Reversed-order comparisons and stage attribution are pending; TensorOps is
+not enabled in this branch. Evidence is in `tensor-component/`.
+
 Reuse existing profiler stage labels and `jolt-eval` telemetry objectives for
 prover/stage time where available. Add only measurements needed to identify GPU
 dispatch time, host preparation, and waiting; keep end-to-end time authoritative.
@@ -289,8 +299,10 @@ identify its callers and replace a concrete duplication or serialization cost.
 It must not put Metal types, relation formulas, or transcript logic into
 `jolt-sumcheck`.
 
-Instruction RA and Booleanity retain the CPU's lazy branch tables, categorical
-startup, and output checks. At the canonical lazy-policy crossover, they
+Instruction RA and Booleanity retain the CPU's lazy branch tables, binding
+schedule, and output checks. Large prefixes use the existing GPU reductions
+from width one onward; small prefixes retain the categorical CPU path. At the
+canonical lazy-policy crossover, they
 materialize directly on the GPU and keep shrinking field prefixes there until
 the small CPU tail. Both use the same selector materialization and fold helper.
 They share one proof-owned compact device row buffer. The session keeps a weak
@@ -311,6 +323,14 @@ implicit tails. Its packed claim byte shares the existing 32-byte instruction
 row, which a proof-owned carry keeps alive for later RA and Booleanity use.
 Focused round and Metal validation checks pass; the full-proof development
 measurements above remain provisional.
+
+Bytecode address pushforwards use split-equality tables and bounded PC
+histograms. A signed-magnitude increment sidecar stays separate from the shared
+selector rows and survives the address-to-cycle handoff. The cycle kernel
+consumes the canonical equality-term recipe, combines repeated PC tuples,
+and materializes RA and increment prefixes at their existing lazy-policy
+crossovers. It retains shrinking prefixes until the CPU tail. Focused reference checks, Metal validation, and integrated lint checks pass;
+full-proof performance measurements are pending.
 
 The sparse register prototype at `5bd928644` passed its independent oracle,
 Metal validation, and full proofs, but its data transfer cost erased the GPU

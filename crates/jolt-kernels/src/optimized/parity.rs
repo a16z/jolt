@@ -11,7 +11,7 @@
 
 #[cfg(not(feature = "akita"))]
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltPolynomialId};
-use jolt_field::{Fr, JoltField, Ring};
+use jolt_field::{Fr, JoltField};
 use jolt_sumcheck::SumcheckError;
 use jolt_verifier::stages::relations::ConcreteSumcheck;
 #[cfg(not(feature = "akita"))]
@@ -22,9 +22,13 @@ use crate::SumcheckKernel;
 /// Deterministic "random-looking" challenge stream for parity runs: distinct
 /// odd scalars, nothing adversarial (parity is exact for any challenges).
 pub(crate) fn synthetic_point(len: usize, seed: u64) -> Vec<Fr> {
+    synthetic_point_for(len, seed)
+}
+
+pub(crate) fn synthetic_point_for<F: JoltField>(len: usize, seed: u64) -> Vec<F> {
     (0..len as u64)
         .map(|index| {
-            Fr::from_u64(
+            F::from_u64(
                 seed.wrapping_mul(6_364_136_223_846_793_005)
                     .wrapping_add(index * 2 + 3),
             )

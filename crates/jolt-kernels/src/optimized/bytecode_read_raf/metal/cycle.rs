@@ -98,6 +98,7 @@ struct CycleState {
     device_inc: Option<DeviceBuffer<AkitaField>>,
     #[cfg_attr(feature = "allocative", allocative(skip))]
     coefficients: Option<DeviceBuffer<AkitaField>>,
+    #[cfg_attr(feature = "allocative", allocative(visit = crate::backend::visit_heap_free_elements))]
     output_openings: Vec<JoltOpeningId>,
 }
 
@@ -164,25 +165,23 @@ impl CycleState {
         ];
         let ra_mode = if self.device_ra.is_some() {
             2
-        } else if bind.is_some()
-            && self
-                .ra
-                .as_ref()
-                .and_then(LazyFoldedRa::next_materialized_len)
-                .is_some()
-        {
-            1
         } else {
-            0
+            usize::from(
+                bind.is_some()
+                    && self
+                        .ra
+                        .as_ref()
+                        .and_then(LazyFoldedRa::next_materialized_len)
+                        .is_some(),
+            )
         };
         let inc_mode = if self.device_inc.is_some() {
             2
-        } else if bind.is_some()
-            && matches!(&self.inc, Some(LazyFusedInc::Lazy { branch_weights, .. }) if branch_weights.len() == 8)
-        {
-            1
         } else {
-            0
+            usize::from(
+                bind.is_some()
+                    && matches!(&self.inc, Some(LazyFusedInc::Lazy { branch_weights, .. }) if branch_weights.len() == 8),
+            )
         };
         if let Some(r) = bind {
             if ra_mode == 0 {

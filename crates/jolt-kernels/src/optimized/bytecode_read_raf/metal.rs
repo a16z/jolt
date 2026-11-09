@@ -238,19 +238,24 @@ impl BytecodeGpu {
         if !self.address_supported || pipeline.max_total_threads_per_threadgroup() < 128 {
             return Err(invalid("128-lane pushforward groups unsupported"));
         }
+        let stage_params: Vec<_> = (0..stages)
+            .step_by(2)
+            .map(|first| {
+                [
+                    prefix as u32,
+                    addresses as u32,
+                    stages as u32,
+                    base.len() as u32,
+                    in_len as u32,
+                    out_len as u32,
+                    group_rows as u32,
+                    first as u32,
+                    STRIPES as u32,
+                ]
+            })
+            .collect();
         let mut batch = Batch::new(&self.device)?;
-        for first in (0..stages).step_by(2) {
-            let params = [
-                prefix as u32,
-                addresses as u32,
-                stages as u32,
-                base.len() as u32,
-                in_len as u32,
-                out_len as u32,
-                group_rows as u32,
-                first as u32,
-                STRIPES as u32,
-            ];
+        for params in &stage_params {
             // SAFETY: groups cover only explicit rows, each hash has at most 128
             // keys in 256 slots, and all lanes reach both local barriers. Global
             // sums are atomic; the following dispatch runs after these writes.
@@ -264,7 +269,7 @@ impl BytecodeGpu {
                         Binding::buffer(&e_lo),
                         Binding::buffer(&e_hi),
                         Binding::buffer(&bins),
-                        Binding::value(&params),
+                        Binding::value(params),
                     ],
                     Grid::linear(groups * 128, 128),
                 )?;
@@ -321,6 +326,10 @@ fn compute_error(error: MetalError) -> SumcheckError<AkitaField> {
 }
 
 #[cfg(all(test, target_os = "macos"))]
+#[expect(
+    clippy::expect_used,
+    reason = "test oracle requires successful Metal execution"
+)]
 pub(super) fn oracle_pushforwards(
     points: &[Vec<AkitaField>],
     base: usize,

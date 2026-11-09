@@ -1091,6 +1091,7 @@ impl OptimizedBytecodeReadRafCycle {
             }
         }
 
+        #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
         let mut terms: Vec<_> = stage_cycle_points[..base_stages]
             .iter()
             .cloned()
@@ -2151,6 +2152,8 @@ mod akita_tests {
         log_k_chunk: u8,
         executor: &dyn PrepareKernel<F, BytecodeReadRafCycle<F>>,
     ) {
+        use crate::optimized::parity::synthetic_point_for;
+
         with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
             let program = backend.program_preprocessing();
             let bytecode_len = program.bytecode.bytecode.len();
@@ -2160,7 +2163,7 @@ mod akita_tests {
                 base_dimensions.layout.bytecode(),
             );
             let stage_cycle_points =
-                std::array::from_fn(|stage| synthetic_point(log_t, 11 + stage as u64));
+                std::array::from_fn(|stage| synthetic_point_for::<F>(log_t, 11 + stage as u64));
             let address_challenges = BytecodeReadRafAddressPhaseChallenges {
                 gamma: F::from_u64(3),
                 stage1_gamma: F::from_u64(5),
@@ -2171,19 +2174,21 @@ mod akita_tests {
             };
             let stage_gammas = address_challenges.stage_gamma_powers();
             #[cfg(feature = "field-inline")]
-            let field_read_write_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 41);
+            let field_read_write_point =
+                synthetic_point_for::<F>(FIELD_REGISTERS_LOG_K + log_t, 41);
             #[cfg(feature = "field-inline")]
-            let field_val_evaluation_point = synthetic_point(FIELD_REGISTERS_LOG_K + log_t, 43);
+            let field_val_evaluation_point =
+                synthetic_point_for::<F>(FIELD_REGISTERS_LOG_K + log_t, 43);
             let relation = BytecodeReadRafCycle::full(BytecodeReadRafCycleInputs {
                 dimensions,
-                r_address: synthetic_point(dimensions.log_k(), 19),
+                r_address: synthetic_point_for::<F>(dimensions.log_k(), 19),
                 stage_cycle_points,
                 entry_bytecode_index: 0,
                 committed_chunk_bits: usize::from(log_k_chunk),
                 table_fold: Some(BytecodeReadRafTableFoldInputs {
                     bytecode: &program.bytecode.bytecode,
-                    register_read_write_point: &synthetic_point(REGISTER_ADDRESS_BITS, 23),
-                    register_val_evaluation_point: &synthetic_point(REGISTER_ADDRESS_BITS, 29),
+                    register_read_write_point: &synthetic_point_for::<F>(REGISTER_ADDRESS_BITS, 23),
+                    register_val_evaluation_point: &synthetic_point_for::<F>(REGISTER_ADDRESS_BITS, 29),
                     stage_gammas: std::array::from_fn(|stage| stage_gammas[stage].as_slice()),
                 }),
                 // All-inactive and well-formed, mirroring `run_pair`: the composed
@@ -2244,7 +2249,7 @@ mod akita_tests {
                 .unwrap();
 
             let claim = probe_input_claim(reference.as_mut());
-            let mut bindings = synthetic_point(log_t, 211);
+            let mut bindings = synthetic_point_for::<F>(log_t, 211);
             if bindings.len() > 2 {
                 bindings[0] = F::zero();
                 bindings[1] = F::one();
