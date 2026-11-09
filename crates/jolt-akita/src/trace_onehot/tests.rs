@@ -204,7 +204,9 @@ fn assert_digit_windows_match_shift_accumulation<const D: usize>() {
     for (column, actual) in actual.iter_mut().enumerate() {
         let mut shifts = Vec::new();
         for (row, (row_indices, &mask)) in selected_rows
-            .chunks_exact(COLUMNS)
+            .as_chunks::<COLUMNS>()
+            .0
+            .iter()
             .zip(&committed_zero_masks)
             .enumerate()
         {
@@ -829,7 +831,7 @@ fn small_k256_blocks_commit_like_materialized_onehot() {
     for (streamed, materialized_source) in streamed.iter().zip(&materialized_columns) {
         let coefficients = materialized_source.source_coefficients().unwrap();
         let mut expected = vec![AkitaWideRing::<D>::zero(); plan.num_live_blocks];
-        for (ring, ring_coefficients) in coefficients.chunks_exact(D).enumerate() {
+        for (ring, ring_coefficients) in coefficients.as_chunks::<D>().0.iter().enumerate() {
             for (index, coefficient) in ring_coefficients.iter().enumerate() {
                 if *coefficient == AkitaField::one() {
                     a_wide[ring % POSITIONS_PER_BLOCK]
@@ -971,7 +973,7 @@ fn ntt_trace_commit_matches_materialized_convolution() {
                 .unwrap();
                 let coefficients = polynomial.source_coefficients().unwrap();
                 let mut expected = vec![AkitaWideRing::<D>::zero(); plan.num_live_blocks];
-                for (ring, coefficients) in coefficients.chunks_exact(D).enumerate() {
+                for (ring, coefficients) in coefficients.as_chunks::<D>().0.iter().enumerate() {
                     for (shift, coefficient) in coefficients.iter().enumerate() {
                         if *coefficient == AkitaField::one() {
                             a_wide[ring % positions]

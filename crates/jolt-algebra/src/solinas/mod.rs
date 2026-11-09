@@ -82,7 +82,7 @@ pub(crate) fn sample_uniform_below<R: rand_core::RngCore>(
     modulus_bits: u32,
 ) -> u128 {
     debug_assert!(modulus > 0);
-    debug_assert_eq!(modulus_bits, u128::BITS - modulus.leading_zeros());
+    debug_assert_eq!(modulus_bits, modulus.bit_width());
     let byte_len = modulus_bits.div_ceil(8) as usize;
     let mask = if modulus_bits == u128::BITS {
         u128::MAX

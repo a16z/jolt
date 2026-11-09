@@ -914,7 +914,7 @@ impl MacroBuilder {
         let panic_fn = self.make_panic(memory_layout.panic);
         let declare_alloc = self.make_allocator();
 
-        // Boot code (_start) is provided by jolt-sdk's boot modules via ZeroOS.
+        // Boot code (__jolt_start) is provided by jolt-sdk's runtime boot module.
         // Both std and no-std modes go through __platform_bootstrap before main().
         let custom_start = quote! {};
 

@@ -219,18 +219,20 @@ fn empty_messages_leave_the_sponge_untouched() {
 
     fn check<H: DuplexSpongeInit<U = u8> + UniformBytes>() {
         let mut prover = prover_transcript::<H>(&SESSION, &INSTANCE);
-        assert!(FieldTranscript::<Fr>::challenge_vector(&mut prover, 0)
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            FieldTranscript::<Fr>::challenge_vector(&mut prover, 0).unwrap(),
+            [] as [Fr; 0]
+        );
         let mut fresh = prover_transcript::<H>(&SESSION, &INSTANCE);
         assert_eq!(
             prover.verifier_message::<[u8; 16]>(),
             fresh.verifier_message::<[u8; 16]>()
         );
         let mut verifier = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
-        assert!(FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0)
-            .unwrap()
-            .is_empty());
+        assert_eq!(
+            FieldTranscript::<Fr>::challenge_vector(&mut verifier, 0).unwrap(),
+            [] as [Fr; 0]
+        );
         let mut fresh = verifier_transcript::<H>(&SESSION, &INSTANCE, &[]);
         assert_eq!(
             verifier.verifier_message::<[u8; 16]>(),
@@ -320,7 +322,12 @@ fn extension_coordinates_follow_the_single_base_pool() {
     fn check<E: ChallengeCodec + ExtField<Base>>() {
         let count = 2 * E::DEGREE;
         let mut tape = vec![0xff; E::challenge_bytes(2).unwrap()];
-        for (value, candidate) in (1u32..).zip(tape.chunks_exact_mut(Base::NUM_BYTES).skip(1)) {
+        for (value, candidate) in (1u32..).zip(
+            tape.as_chunks_mut::<{ Base::NUM_BYTES }>()
+                .0
+                .iter_mut()
+                .skip(1),
+        ) {
             candidate.copy_from_slice(&value.to_le_bytes());
         }
         let bases = Base::decode_challenges(&tape, count).unwrap();

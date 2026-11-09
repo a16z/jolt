@@ -63,7 +63,7 @@ where
     }
     // A bounded low table is shared by all contiguous public-memory segments.
     // Each high-address factor is constant for a whole table-width chunk.
-    let entry_bits = (usize::BITS - (entries - 1).leading_zeros()) as usize;
+    let entry_bits = (entries - 1).bit_width() as usize;
     let low_bits = point.len().min(10).min(entry_bits);
     let split = point.len() - low_bits;
     let width = 1usize << low_bits;
