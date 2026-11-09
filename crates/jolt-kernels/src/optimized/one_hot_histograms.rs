@@ -236,7 +236,7 @@ impl<F: JoltField> InstructionHistogram<F> {
                 }
             }
             Self::Pairs(tables) => {
-                for (table, sums) in tables.iter_mut().zip(sums.chunks_exact_mut(2)) {
+                for (table, sums) in tables.iter_mut().zip(sums.as_chunks_mut::<2>().0) {
                     let (high, low) = sums.split_at_mut(1);
                     for digit in 1..PAIRED_K_CHUNK {
                         let mut high_sum = table[PAIRED_K_CHUNK * digit];

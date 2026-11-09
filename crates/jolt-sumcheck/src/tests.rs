@@ -1693,7 +1693,7 @@ fn clear_proof_nonces_are_a_plain_list() {
     let mut transcript =
         prover_transcript::<Blake2b512>(&jolt_transcript::protocol_tag(b"sumcheck-test"), b"");
     let mut proof = honest_prove(&evals, 3, &mut transcript);
-    assert!(proof.pow_nonces.is_empty());
+    assert_eq!(proof.pow_nonces, [] as [u64; 0]);
     let wire = bincode::serde::encode_to_vec(&proof, config).unwrap();
     let rounds_only = bincode::serde::encode_to_vec(&proof.round_polynomials, config).unwrap();
     assert_eq!(wire, [rounds_only.as_slice(), &[0]].concat());

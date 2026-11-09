@@ -154,7 +154,7 @@ pub const MAX_CHALLENGE_BYTES: usize = 1 << 24;
 
 #[cfg(feature = "solinas")]
 fn ceil_log2(n: u128) -> u32 {
-    u128::BITS - n.saturating_sub(1).leading_zeros()
+    n.saturating_sub(1).bit_width()
 }
 
 #[cfg(feature = "solinas")]

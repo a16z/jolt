@@ -292,7 +292,7 @@ mod tests {
             allocator.take_registers_for_reset()?,
             vec![FIRST_INLINE_REG, FIRST_INLINE_REG + 1]
         );
-        assert!(allocator.take_registers_for_reset()?.is_empty());
+        assert_eq!(allocator.take_registers_for_reset()?, [] as [u8; 0]);
         Ok(())
     }
 

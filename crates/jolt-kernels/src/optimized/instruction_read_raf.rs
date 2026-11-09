@@ -1038,7 +1038,7 @@ impl<F: JoltField> TableScan<F> {
             } => {
                 for (&suffix, row) in suffixes
                     .iter()
-                    .zip(accumulators.chunks_exact_mut(CHUNK_SIZE))
+                    .zip(accumulators.as_chunks_mut::<CHUNK_SIZE>().0)
                 {
                     suffix.accumulate(row, chunk, bits, value);
                 }
@@ -1200,7 +1200,9 @@ impl<F: JoltField> PhaseScan<'_, F> {
             let into = suffixes[range_table.index()]
                 .get_or_insert_with(|| vec![F::zero(); range_table.suffixes().len() * CHUNK_SIZE]);
             for (row, suffix) in into
-                .chunks_exact_mut(CHUNK_SIZE)
+                .as_chunks_mut::<CHUNK_SIZE>()
+                .0
+                .iter_mut()
                 .zip(range_table.suffixes())
             {
                 row[0] += match suffix {
@@ -1538,7 +1540,9 @@ impl<F: JoltField> OptimizedInstructionReadRafKernel<F> {
             .zip(suffixes)
             .filter_map(|(table, sums)| {
                 let polynomials = sums?
-                    .chunks_exact(CHUNK_SIZE)
+                    .as_chunks::<CHUNK_SIZE>()
+                    .0
+                    .iter()
                     .map(|coefficients| Polynomial::new(coefficients.to_vec()))
                     .collect();
                 Some((table, polynomials))
