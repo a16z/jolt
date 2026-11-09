@@ -2,7 +2,7 @@ use core::fmt::Debug;
 
 use jolt_claims::protocols::jolt::JoltOneHotConfig;
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::{Fr, JoltField, Ring};
+use jolt_field::{Fr, Ring};
 use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
 use jolt_riscv::{JoltInstructionKind, JoltInstructionRow, NormalizedOperands, RV64IMAC_JOLT};
@@ -175,21 +175,21 @@ pub(crate) fn structured_fixture(cycles: usize) -> TraceFixture {
     clippy::too_many_arguments,
     reason = "mirrors the seam's input decomposition"
 )]
-pub(crate) fn assert_kernel_parity<F: JoltField, R>(
-    optimized_slot: &dyn PrepareKernel<F, R>,
-    witness: &dyn JoltWitnessPlane<F>,
+pub(crate) fn assert_kernel_parity<R>(
+    optimized_slot: &dyn PrepareKernel<Fr, R>,
+    witness: &dyn JoltWitnessPlane<Fr>,
     relation: &R,
-    claims: &SumcheckInputClaims<F, R>,
-    points: &SumcheckInputPoints<F, R>,
-    challenges: &ConcreteSumcheckChallenges<F, R>,
-    input_claim: F,
-    round_challenges: &[F],
+    claims: &SumcheckInputClaims<Fr, R>,
+    points: &SumcheckInputPoints<Fr, R>,
+    challenges: &ConcreteSumcheckChallenges<Fr, R>,
+    input_claim: Fr,
+    round_challenges: &[Fr],
 ) where
-    R: ConcreteSumcheck<F>,
-    ReferenceBackend: PrepareKernel<F, R>,
-    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>> + PartialEq + Debug,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
+    R: ConcreteSumcheck<Fr>,
+    ReferenceBackend: PrepareKernel<Fr, R>,
+    SumcheckInputClaims<Fr, R>: InputClaims<Fr, OpeningIdOf<Fr, R>>,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr, OpeningIdOf<Fr, R>> + PartialEq + Debug,
+    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, ChallengeIdOf<Fr, R>>,
 {
     assert_kernel_parity_with_session(
         &mut ProofSession::default(),
@@ -210,22 +210,22 @@ pub(crate) fn assert_kernel_parity<F: JoltField, R>(
     clippy::too_many_arguments,
     reason = "mirrors the seam's input decomposition"
 )]
-pub(crate) fn assert_kernel_parity_with_session<F: JoltField, R>(
+pub(crate) fn assert_kernel_parity_with_session<R>(
     optimized_session: &mut ProofSession,
-    optimized_slot: &dyn PrepareKernel<F, R>,
-    witness: &dyn JoltWitnessPlane<F>,
+    optimized_slot: &dyn PrepareKernel<Fr, R>,
+    witness: &dyn JoltWitnessPlane<Fr>,
     relation: &R,
-    claims: &SumcheckInputClaims<F, R>,
-    points: &SumcheckInputPoints<F, R>,
-    challenges: &ConcreteSumcheckChallenges<F, R>,
-    input_claim: F,
-    round_challenges: &[F],
+    claims: &SumcheckInputClaims<Fr, R>,
+    points: &SumcheckInputPoints<Fr, R>,
+    challenges: &ConcreteSumcheckChallenges<Fr, R>,
+    input_claim: Fr,
+    round_challenges: &[Fr],
 ) where
-    R: ConcreteSumcheck<F>,
-    ReferenceBackend: PrepareKernel<F, R>,
-    SumcheckInputClaims<F, R>: InputClaims<F, OpeningIdOf<F, R>>,
-    SumcheckOutputClaims<F, R>: OutputClaims<F, OpeningIdOf<F, R>> + PartialEq + Debug,
-    ConcreteSumcheckChallenges<F, R>: SumcheckChallenges<F, ChallengeIdOf<F, R>>,
+    R: ConcreteSumcheck<Fr>,
+    ReferenceBackend: PrepareKernel<Fr, R>,
+    SumcheckInputClaims<Fr, R>: InputClaims<Fr, OpeningIdOf<Fr, R>>,
+    SumcheckOutputClaims<Fr, R>: OutputClaims<Fr, OpeningIdOf<Fr, R>> + PartialEq + Debug,
+    ConcreteSumcheckChallenges<Fr, R>: SumcheckChallenges<Fr, ChallengeIdOf<Fr, R>>,
 {
     let mut reference_session = ProofSession::default();
     let mut reference = ReferenceBackend
@@ -269,7 +269,7 @@ pub(crate) fn assert_kernel_parity_with_session<F: JoltField, R>(
             "round {round} polynomial mismatch"
         );
         assert_eq!(
-            optimized_poly.evaluate(F::from_u64(0)) + optimized_poly.evaluate(F::from_u64(1)),
+            optimized_poly.evaluate(Fr::from_u64(0)) + optimized_poly.evaluate(Fr::from_u64(1)),
             claim,
             "round {round} running-claim mismatch"
         );

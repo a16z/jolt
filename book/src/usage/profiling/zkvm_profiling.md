@@ -66,9 +66,6 @@ while retaining CPU categorical startup, binding, and output checks.
 ReadRAF shares those rows, retains CPU address rounds and its grouped first
 cycle message, then offloads qualified lazy messages and direct device
 materialization with a small CPU tail.
-Sparse register cycle rounds also keep bound field values on the device while
-the host advances compact topology. Address-first shapes and the final address
-phase retain their optimized CPU implementations.
 Root decompose/fold also supports D512/K16 traces with sparse ring challenges,
 including canonical chunked folds. It packs bounded trace windows and preserves
 the CPU digit expansion and witness construction. Unsupported fold shapes,

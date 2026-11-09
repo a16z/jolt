@@ -49,7 +49,7 @@ impl<F: JoltField> CoeffLut<F> {
         Self { values }
     }
 
-    pub(super) fn bits(&self) -> u32 {
+    fn bits(&self) -> u32 {
         self.values.len().trailing_zeros()
     }
 
@@ -212,61 +212,12 @@ enum CyclePhase<F: JoltField> {
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(super) struct CycleState<F: JoltField>(CyclePhase<F>);
 
-/// Transfers the compact seed and its coefficient tables to a device owner.
-#[cfg(feature = "metal")]
-pub(super) struct SeedTransfer<F> {
-    pub(super) entries: Vec<SeedEntry>,
-    pub(super) ra_lut: CoeffLut<F>,
-    pub(super) wa_lut: CoeffLut<F>,
-    pub(super) rd_inc: Vec<i128>,
-}
-
 #[inline]
 fn raw_bound_inc<F: JoltField>(raw: &[i128], r1: F, y: usize) -> F {
     bound_pair(|j| F::from_i128(raw.get(j).copied().unwrap_or(0)), r1, y)
 }
 
 impl<F: JoltField> CycleState<F> {
-    #[cfg(feature = "metal")]
-    pub(super) fn seed_shape(&self) -> Option<(usize, usize)> {
-        match &self.0 {
-            CyclePhase::Seed { entries, .. } => Some((
-                entries.last().map_or(0, |entry| entry.row() + 1),
-                entries.len(),
-            )),
-            _ => None,
-        }
-    }
-
-    #[cfg(feature = "metal")]
-    pub(super) fn into_seed(self) -> Option<SeedTransfer<F>> {
-        match self.0 {
-            CyclePhase::Seed {
-                entries,
-                ra_lut,
-                wa_lut,
-                rd_inc,
-            } => Some(SeedTransfer {
-                entries,
-                ra_lut,
-                wa_lut,
-                rd_inc,
-            }),
-            _ => None,
-        }
-    }
-
-    #[cfg(feature = "metal")]
-    pub(super) fn from_direct(entries: Vec<SparseEntry<F, F>>, values: Vec<F>) -> Self {
-        Self(CyclePhase::Direct {
-            entries,
-            inc: PrefixColumn {
-                values,
-                tail: [F::zero(); 2],
-            },
-        })
-    }
-
     pub(super) fn new(entries: Vec<SeedEntry>, gamma: F, mut rd_inc: Vec<i128>) -> Self {
         let gamma_sq = gamma * gamma;
         let read: [F; READ_SEED_VALUES] = [F::zero(), gamma, gamma_sq, gamma + gamma_sq];

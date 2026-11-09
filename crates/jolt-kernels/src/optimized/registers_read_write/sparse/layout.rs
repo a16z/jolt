@@ -147,15 +147,15 @@ pub(super) trait MatrixEntry<F: JoltField>: Cell {
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(in crate::optimized::registers_read_write) struct SeedEntry {
-    pub(in crate::optimized::registers_read_write) prev_val: u64,
-    pub(in crate::optimized::registers_read_write) next_val: u64,
+    pub(super) prev_val: u64,
+    pub(super) next_val: u64,
     /// `u32` is safe because collection rejects wider domains.
     ///
     /// [`CollectRegisterEntries::collect`]: crate::optimized::registers_read_write::rows::CollectRegisterEntries::collect
-    pub(in crate::optimized::registers_read_write) row: u32,
-    pub(in crate::optimized::registers_read_write) ra: u8,
-    pub(in crate::optimized::registers_read_write) wa: u8,
-    pub(in crate::optimized::registers_read_write) col: u8,
+    pub(super) row: u32,
+    pub(super) ra: u8,
+    pub(super) wa: u8,
+    pub(super) col: u8,
 }
 
 const _: () = assert!(size_of::<SeedEntry>() == 24);
@@ -287,14 +287,14 @@ impl<F: JoltField> MatrixEntry<F> for SeedEntry {
 
 #[derive(Clone, Copy, Debug)]
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
-pub(in crate::optimized::registers_read_write) struct SparseEntry<F, C> {
-    pub(in crate::optimized::registers_read_write) val: F,
-    pub(in crate::optimized::registers_read_write) prev_val: u64,
-    pub(in crate::optimized::registers_read_write) next_val: u64,
-    pub(in crate::optimized::registers_read_write) row: usize,
-    pub(in crate::optimized::registers_read_write) ra: C,
-    pub(in crate::optimized::registers_read_write) wa: C,
-    pub(in crate::optimized::registers_read_write) col: u8,
+pub(super) struct SparseEntry<F, C> {
+    pub(super) val: F,
+    pub(super) prev_val: u64,
+    pub(super) next_val: u64,
+    pub(super) row: usize,
+    pub(super) ra: C,
+    pub(super) wa: C,
+    pub(super) col: u8,
 }
 
 impl<F: JoltField, C: OneHotCoeff<F>> Cell for SparseEntry<F, C> {

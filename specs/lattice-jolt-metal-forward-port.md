@@ -303,13 +303,14 @@ row, which a proof-owned carry keeps alive for later RA and Booleanity use.
 Focused round and Metal validation checks pass; the full-proof development
 measurements above remain provisional.
 
-Sparse register cycle rounds retain compact seed entries and increments through
-the first bind, then create a device prefix directly at the canonical sparse
-transition. The host advances address masks and offsets; field values and
-indexed/direct selector coefficients remain on the device until the small CPU
-tail. Existing CPU code owns address-first fallback and the final address phase.
-Its independent sparse-boundary oracle and Metal validation pass; full-proof
-performance is the next integration measurement.
+The sparse register prototype at `5bd928644` passed its independent oracle,
+Metal validation, and full proofs, but its data transfer cost erased the GPU
+benefit. Preparation rose from 0.2682 to 1.4401 s, including 1.1721 s packing
+and upload, while round time fell only from 1.9889 to 1.9240 s. The optimized
+CPU implementation is restored. A further attempt must avoid the seed repacking
+and transfer cost or use a later compact handoff; GPU dispatch time alone
+(0.5208 s) is not evidence of an improvement. The frozen prototype and profile
+remain in `registers-metal/` under the artifact directory.
 
 Spartan outer remainder stays on the optimized CPU path. Its initial GPU port
 was correct, but upload and buffer preparation alone exceeded the measured CPU

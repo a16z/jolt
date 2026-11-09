@@ -16,7 +16,7 @@
 use common::jolt_device::{JoltDevice, MemoryLayout};
 use jolt_claims::protocols::jolt::{JoltChallengeId, JoltOneHotConfig};
 use jolt_claims::{InputClaims, OutputClaims, SumcheckChallenges};
-use jolt_field::{Field, Fr};
+use jolt_field::{Field, Fr, Ring};
 use jolt_poly::UnivariatePoly;
 use jolt_program::execution::{JoltProgram, TraceData, TraceOutput};
 use jolt_program::preprocess::{BytecodePreprocessing, JoltProgramPreprocessing, RAMPreprocessing};
@@ -285,12 +285,9 @@ pub(crate) fn random_scalars(count: usize, seed: u64) -> Vec<Fr> {
 /// Trailing-zero-insensitive round-polynomial coefficients: the engine sums
 /// members into `max_degree + 1` slots and trims the batched polynomial, so
 /// a member's trailing zeros never reach the wire.
-pub(crate) fn trimmed<F: Field>(poly: &UnivariatePoly<F>) -> Vec<F> {
+pub(crate) fn trimmed(poly: &UnivariatePoly<Fr>) -> Vec<Fr> {
     let mut coefficients = poly.coefficients().to_vec();
-    while coefficients
-        .last()
-        .is_some_and(|coefficient| coefficient.is_zero())
-    {
+    while coefficients.last() == Some(&Fr::from_u64(0)) {
         let _ = coefficients.pop();
     }
     coefficients
