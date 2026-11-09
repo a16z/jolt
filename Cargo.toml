@@ -460,6 +460,7 @@ jolt-zk = { path = "./crates/jolt-zk" }
 jolt-claims = { path = "./crates/jolt-claims" }
 jolt-claims-derive = { path = "./crates/jolt-claims-derive" }
 jolt-crypto = { path = "./crates/jolt-crypto", default-features = false }
+jolt-dit = { path = "./crates/jolt-dit" }
 jolt-dory = { path = "./crates/jolt-dory" }
 jolt-hyperkzg = { path = "./crates/jolt-hyperkzg" }
 jolt-spartan-verifier = { path = "./crates/jolt-spartan-verifier" }
