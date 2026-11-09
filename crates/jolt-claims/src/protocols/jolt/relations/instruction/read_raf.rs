@@ -9,7 +9,8 @@ use crate::protocols::jolt::geometry::claim_reductions::instruction::{
 };
 use crate::protocols::jolt::geometry::instruction::{
     eq_table_value, instruction_ra, instruction_ra_product, instruction_raf_flag,
-    lookup_table_flag, InstructionReadRafDimensions, READ_RAF_BASE_DEGREE,
+    lookup_table_flag, InstructionReadRafDimensions, READ_RAF_ADDRESS_ROUND_DEGREE,
+    READ_RAF_BASE_DEGREE,
 };
 use crate::protocols::jolt::{
     InstructionReadRafChallenge, InstructionReadRafPublic, JoltExpr, JoltOpeningId, JoltRelationId,
@@ -82,6 +83,18 @@ impl SymbolicSumcheck for ReadRaf {
 
     fn degree(&self) -> usize {
         self.shape.num_virtual_ra_polys() + READ_RAF_BASE_DEGREE
+    }
+
+    /// The address rounds come first (see
+    /// [`InstructionReadRafDimensions::opening_point`]) at degree
+    /// [`READ_RAF_ADDRESS_ROUND_DEGREE`]; the cycle rounds multiply in the
+    /// `num_virtual_ra_polys` `ra` chunks.
+    fn round_degree(&self, round: usize) -> usize {
+        if round < self.shape.instruction_address_bits() {
+            READ_RAF_ADDRESS_ROUND_DEGREE
+        } else {
+            self.degree()
+        }
     }
 
     fn input_expression<F: Ring>(&self) -> JoltExpr<F> {
