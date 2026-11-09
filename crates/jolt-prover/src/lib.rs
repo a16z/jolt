@@ -32,7 +32,7 @@
 
 #[cfg(feature = "akita")]
 pub mod akita;
-#[cfg(feature = "zk")]
+#[cfg(all(feature = "zk", not(feature = "akita")))]
 mod blindfold;
 mod boundary;
 mod config;

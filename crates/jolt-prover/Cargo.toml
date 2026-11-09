@@ -20,7 +20,7 @@ parallel = [
   "jolt-sumcheck/parallel",
   "dep:rayon",
 ]
-prover-fixtures = ["dep:jolt-host"]
+prover-fixtures = ["dep:jolt-host", "dep:zeroize"]
 # Field-inline protocol composition: the field-inline prover — every stage
 # proves the composed protocol, and only field-inline guests are accepted (the
 # witness plane refuses classic-profile traces). The e2e acceptance lives in
@@ -42,7 +42,7 @@ field-inline = [
 # prover proves exactly one protocol: this feature swaps the proof shape to
 # the Akita envelope, so the Dory (elliptic-curve) path `src/dory` is
 # compiled out and the Akita (lattice) path `src/akita` replaces it.
-# Mutually exclusive with `zk` (compile error on the combination).
+# With `whiteout` (`zk` and `akita` together) it proves Whiteout.
 akita = [
   "dep:jolt-akita",
   "dep:akita-params",
@@ -58,7 +58,19 @@ akita = [
 # Compile-time ZK mode: masking sumcheck recorders over committed pads, hiding
 # witness commitments and stage-8 opening, and the BlindFold tail. One compiled
 # prover produces exactly one protocol — there is no runtime mode flag.
-zk = ["jolt-verifier/zk", "jolt-kernels/zk", "dep:jolt-zk", "dep:rand_core"]
+# Whiteout: zero knowledge over Akita. `zk` with `akita` alone is a compile
+# error; this feature is the explicit opt-in. Whiteout's Σ-protocol is not yet
+# shown constant time on every platform: a timing residual in its `N·y`
+# product is open (specs/whiteout-sigma.md, specs/whiteout-jolt-integration.md).
+whiteout = ["zk", "akita", "jolt-verifier/whiteout"]
+zk = [
+  "jolt-verifier/zk",
+  "jolt-kernels/zk",
+  "dep:jolt-zk",
+  "jolt-zk/prover",
+  "dep:rand_core",
+  "jolt-akita?/zk-prover",
+]
 # The profile harness (`[[bin]] jolt-prover`, `profile` subcommand).
 profiling = [
   "dep:bincode",
@@ -97,7 +109,6 @@ allocative = [
 common.workspace = true
 jolt-akita = { workspace = true, optional = true }
 akita-params = { workspace = true, optional = true }
-jolt-zk = { workspace = true, optional = true, features = ["prover"] }
 jolt-claims.workspace = true
 jolt-crypto.workspace = true
 jolt-dory.workspace = true
@@ -116,7 +127,9 @@ jolt-transcript = { workspace = true, features = [
 ] }
 jolt-verifier.workspace = true
 jolt-witness.workspace = true
+jolt-zk = { workspace = true, optional = true }
 rand_core = { workspace = true, features = ["getrandom"], optional = true }
+zeroize = { workspace = true, optional = true }
 rayon = { workspace = true, optional = true }
 thiserror.workspace = true
 tracing.workspace = true
@@ -143,6 +156,7 @@ bincode.workspace = true
 jolt-inlines-keccak256 = { workspace = true, features = ["host"] }
 jolt-inlines-sha2 = { workspace = true, features = ["host"] }
 jolt-platform.workspace = true
+jolt-zk.workspace = true
 sha2.workspace = true
 sha3.workspace = true
 postcard = { workspace = true, features = ["use-std"] }

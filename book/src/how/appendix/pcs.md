@@ -30,7 +30,7 @@ These polynomial commitments tie together the various algebraic claims generated
 | Zero knowledge in Jolt | Available with `zk` via [BlindFold](../blindfold.md) | Not currently supported |
 | Selection | Default | `akita` Cargo feature |
 
-Both backends use transparent setup and exploit Jolt's small, sparse witness values. They share the sumcheck and lookup architecture, but their commitment layouts and final [opening proofs](../architecture/opening-proof.md) differ. The prover and verifier must be built for the same protocol; `akita` and `zk` are mutually exclusive. See [backend selection](../../usage/quickstart.md#choosing-a-commitment-backend) for commands and SDK availability.
+Both backends use transparent setup and exploit Jolt's small, sparse witness values. They share the sumcheck and lookup architecture, but their commitment layouts and final [opening proofs](../architecture/opening-proof.md) differ. The prover and verifier must be built for the same protocol; zero knowledge over Akita (Whiteout) needs the explicit `whiteout` feature. See [backend selection](../../usage/quickstart.md#choosing-a-commitment-backend) for commands and SDK availability.
 
 ## Further Reading
 

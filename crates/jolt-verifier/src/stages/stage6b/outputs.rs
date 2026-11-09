@@ -5,6 +5,8 @@ use jolt_sumcheck::BatchedMaskedRounds;
 use jolt_claims::protocols::jolt::{JoltCommittedPolynomial, JoltOpeningId, JoltRelationId};
 
 use crate::stages::relations::{ClaimRoute, ClaimRoutes, MaskedClaims, SumcheckBatch};
+#[cfg(all(feature = "akita", feature = "zk"))]
+use crate::stages::zk::MaskedMember;
 use crate::VerifierError;
 
 // The per-relation produced-claim structs live in their relation modules
@@ -386,6 +388,14 @@ pub struct Stage6bClearOutput<F: JoltField> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Stage6bZkOutput<F: JoltField> {
+    /// Whiteout: each member's residual lowering, through the clear
+    /// verifier's own public-value owners (`ConcreteSumcheck::masked_member`).
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    pub members: Vec<MaskedMember<F>>,
+    /// Whiteout: the bytecode cycle-phase output weights, which stage 7's
+    /// bytecode address phase reads for its output public.
+    #[cfg(all(feature = "akita", feature = "zk"))]
+    pub bytecode_reduction_weights: Option<BytecodeReductionWeights<F>>,
     pub challenges: Stage6bCarriedChallenges<F>,
     pub batch_rounds: BatchedMaskedRounds<F>,
     pub batch_output_claims: MaskedClaims<F>,

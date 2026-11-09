@@ -1,7 +1,10 @@
 use akita_params::PolynomialGroupLayout;
+use jolt_claims::protocols::jolt::geometry::dimensions::CommitmentMatrixShape;
 use jolt_claims::protocols::jolt::lattice::increments::FusedIncLayout;
 use std::sync::Arc;
 
+#[cfg(feature = "zk")]
+use jolt_akita::WhiteoutPlans;
 use jolt_akita::{
     AkitaField, AkitaProverSetup, AkitaScheduleArtifacts, AkitaScheme, AkitaSetupParams,
     AkitaVerifierSetup, DenseGroupLayout, GroupedScheduleParams,
@@ -11,7 +14,9 @@ use jolt_claims::protocols::field_inline::lattice::FieldIncLayout;
 use jolt_claims::protocols::jolt::lattice::{advice_packing_plan, committed_program_packing_plan};
 use jolt_claims::protocols::jolt::{JoltAdviceKind, TracePolynomialOrder};
 use jolt_crypto::NoVectorCommitment;
-use jolt_openings::{CommitmentScheme, TransparentObjectSetup};
+use jolt_openings::CommitmentScheme;
+#[cfg(not(feature = "zk"))]
+use jolt_openings::TransparentObjectSetup;
 use jolt_program::preprocess::JoltProgramPreprocessing;
 use jolt_verifier::{
     CommittedProgramPreprocessing, JoltVerifierPreprocessing, ProgramPreprocessing,
@@ -22,7 +27,11 @@ use crate::{
 };
 
 use super::one_hot_trace_setup_shape;
-use super::witness::{commit_advice, commit_direct_program, AdviceObject};
+use super::witness::AdviceObject;
+#[cfg(not(feature = "zk"))]
+use super::witness::{commit_advice, commit_direct_program};
+#[cfg(feature = "zk")]
+use super::witness::{commit_advice_hiding, commit_direct_program_hiding};
 
 pub type AkitaVc = NoVectorCommitment<AkitaField>;
 pub type AkitaProverPreprocessing = JoltProverPreprocessing<AkitaScheme, AkitaVc>;
@@ -44,7 +53,7 @@ pub fn preprocess_full_with_advice(
     trusted_advice: bool,
 ) -> Result<AkitaProverPreprocessing, PreprocessingError> {
     validate_trace_order(config)?;
-    let (pcs_setup, verifier_setup) = grouped_setup(
+    let params = grouped_setup_params(
         schedule_artifacts,
         &program,
         config,
@@ -52,16 +61,63 @@ pub fn preprocess_full_with_advice(
         trusted_advice,
         &[],
     )?;
+    full_from_params(params, program, config, untrusted_advice, trusted_advice)
+}
+
+/// Whiteout: [`preprocess_full_with_advice`] on persisted plans
+/// (`AkitaVerifierSetup::whiteout_plans`) instead of planning: the catalog
+/// and response schedules are audited here and refused, never replanned, if
+/// they fail. A proof whose response length the plans lack is rejected when
+/// it is proven or verified.
+#[cfg(feature = "zk")]
+pub fn preprocess_full_from_plans(
+    schedule_artifacts: &Arc<AkitaScheduleArtifacts>,
+    program: JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+    plans: WhiteoutPlans,
+) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    validate_trace_order(config)?;
+    let params = grouped_setup_params(
+        schedule_artifacts,
+        &program,
+        config,
+        untrusted_advice,
+        trusted_advice,
+        &[],
+    )?
+    .with_whiteout_plans(plans);
+    full_from_params(params, program, config, untrusted_advice, trusted_advice)
+}
+
+fn full_from_params(
+    params: AkitaSetupParams,
+    program: JoltProgramPreprocessing,
+    config: &ProverConfig,
+    untrusted_advice: bool,
+    trusted_advice: bool,
+) -> Result<AkitaProverPreprocessing, PreprocessingError> {
+    let (pcs_setup, verifier_setup) = AkitaScheme::setup(params)?;
     let verifier = JoltVerifierPreprocessing::new(
         ProgramPreprocessing::Full(Arc::new(program)),
         verifier_setup,
         None,
     )?;
-    Ok(JoltProverPreprocessing {
+    let preprocessing = JoltProverPreprocessing {
         verifier,
         pcs_setup,
         committed_program: None,
-    })
+    };
+    #[cfg(feature = "zk")]
+    let preprocessing = {
+        let mut preprocessing = preprocessing;
+        super::capacity::provision(&mut preprocessing, config, untrusted_advice, trusted_advice)?;
+        preprocessing
+    };
+    #[cfg(not(feature = "zk"))]
+    let _ = (config, untrusted_advice, trusted_advice);
+    Ok(preprocessing)
 }
 
 /// The grouped Akita setup: the canonical `OneHotTrace` object plus every
@@ -142,6 +198,9 @@ pub(crate) fn grouped_setup_params(
         Arc::clone(schedule_artifacts),
     )
     .with_akita_chunk_profile(config.akita_chunk_profile);
+    // Whiteout commits the trace group hiding and opens it masked.
+    #[cfg(feature = "zk")]
+    let params = params.with_whiteout();
     Ok(params)
 }
 
@@ -189,11 +248,18 @@ pub fn preprocess_committed_with_advice(
         trusted_advice,
         &physical_vars,
     )?;
+    // Whiteout commits the program objects hiding on the trace setup's
+    // backend, which opens them.
+    #[cfg(feature = "zk")]
     let direct_program =
-        commit_direct_program::<AkitaScheme>(schedule_artifacts, &program, trace_order, &plan)
-            .map_err(|error| PreprocessingError::InvalidCommittedProgram {
-                reason: error.to_string(),
-            })?;
+        commit_direct_program_hiding::<AkitaScheme>(&pcs_setup, &program, trace_order, &plan);
+    #[cfg(not(feature = "zk"))]
+    let direct_program =
+        commit_direct_program::<AkitaScheme>(schedule_artifacts, &program, trace_order, &plan);
+    let direct_program =
+        direct_program.map_err(|error| PreprocessingError::InvalidCommittedProgram {
+            reason: error.to_string(),
+        })?;
     let committed_program = CommittedProgramPreprocessing {
         meta: metadata,
         memory_layout: program.memory_layout.clone(),
@@ -207,7 +273,7 @@ pub fn preprocess_committed_with_advice(
         verifier_setup,
         None,
     )?;
-    Ok(JoltProverPreprocessing {
+    let preprocessing = JoltProverPreprocessing {
         verifier,
         pcs_setup,
         committed_program: Some(CommittedProgramProverData {
@@ -215,7 +281,14 @@ pub fn preprocess_committed_with_advice(
             direct_program,
             trace_order,
         }),
-    })
+    };
+    #[cfg(feature = "zk")]
+    let preprocessing = {
+        let mut preprocessing = preprocessing;
+        super::capacity::provision(&mut preprocessing, config, untrusted_advice, trusted_advice)?;
+        preprocessing
+    };
+    Ok(preprocessing)
 }
 
 pub fn commit_trusted_advice(
@@ -232,13 +305,23 @@ pub fn commit_trusted_advice(
     .map_err(|_| PreprocessingError::InvalidAdvice {
         reason: "trusted advice size does not fit usize".to_owned(),
     })?;
-    commit_advice::<AkitaScheme>(
+    // Whiteout commits trusted advice hiding on the trace setup's backend,
+    // which opens it; the object keeps the randomness.
+    #[cfg(feature = "zk")]
+    let object = commit_advice_hiding::<AkitaScheme>(
+        &preprocessing.pcs_setup,
+        JoltAdviceKind::Trusted,
+        advice_bytes,
+        max_bytes,
+    );
+    #[cfg(not(feature = "zk"))]
+    let object = commit_advice::<AkitaScheme>(
         AkitaScheme::transparent_setup_context(&preprocessing.pcs_setup),
         JoltAdviceKind::Trusted,
         advice_bytes,
         max_bytes,
-    )
-    .map_err(|error| PreprocessingError::InvalidAdvice {
+    );
+    object.map_err(|error| PreprocessingError::InvalidAdvice {
         reason: error.to_string(),
     })
 }
@@ -254,7 +337,7 @@ fn advice_physical_num_vars(
     let max_bytes = usize::try_from(max_bytes).map_err(|_| PreprocessingError::InvalidAdvice {
         reason: "advice size does not fit usize".to_owned(),
     })?;
-    let word_vars = (max_bytes / 8).next_power_of_two().ilog2() as usize;
+    let word_vars = CommitmentMatrixShape::advice_from_max_bytes(max_bytes).total_vars();
     advice_packing_plan(kind, word_vars)
         .map(|plan| plan.packing().packed_num_vars())
         .map_err(|error| PreprocessingError::InvalidAdvice {

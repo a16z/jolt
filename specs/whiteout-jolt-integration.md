@@ -28,9 +28,10 @@ Whiteout over Dory and BlindFold over Akita are not built: BlindFold needs a cur
 
 ## 1. Modes and features
 
+- Whiteout is selected by the `whiteout` feature of jolt-verifier, jolt-prover and jolt-sdk, which implies `zk` and `akita`. `zk` with `akita` but without `whiteout` is a compile error: the opt-in is explicit while the Σ-protocol's constant-time claim is open (see Not verified), so a feature graph that happens to unify `zk` and `akita` does not select Whiteout silently.
 - `JoltStatement`'s first word is the zk config: 0 transparent, 1 BlindFold, 2 Whiteout. `SELECTED_ZK_CONFIG` is a `match` on (`zk`, `akita`).
 - jolt-akita's `zk` is the verifier half: the zero-knowledge configurations and the masked opening's verification, with jolt-zk's `whiteout` only. Its `zk-prover` adds the hiding commitments, pads and response prover (jolt-zk's `whiteout-prover`, akita-pcs's `zk-prover`). jolt-prover's `zk` with `akita` selects `zk-prover`. jolt-verifier reaches jolt-akita only through its fixture prover, a dev-dependency.
-- So a Whiteout verifier's normal-edge graph compiles no prover sampler (jolt-zk's `whiteout-prover`, `jolt-dit`, jolt-crypto's `sample`). `cargo tree -p jolt-verifier --features akita,zk -e features,normal` and the same for `jolt-akita --features zk` show it; the Whiteout CI lanes run both checks.
+- So a Whiteout verifier's normal-edge graph compiles no prover sampler (jolt-zk's `whiteout-prover`, `jolt-dit`, jolt-crypto's `sample`). `cargo tree -p jolt-verifier --features whiteout -e features,normal` and the same for `jolt-akita --features zk` show it; the Whiteout CI lanes run both checks.
 
 ## 2. Transcript order (both roles)
 
@@ -116,5 +117,5 @@ On muldiv's final-opening claims, Jolt's rows see one combination and Akita's ro
 
 ## Not verified
 
-- The Σ-protocol's constant-time claim (`specs/whiteout-sigma.md`).
+- The Σ-protocol's constant-time claim. dudect flags a timing residual in the `N·y` product at ring dimension 256 (`specs/whiteout-sigma.md`); it is open, and the `whiteout` opt-in exists because of it. No x86_64 timing run either.
 - x86_64 runs.

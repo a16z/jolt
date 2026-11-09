@@ -3,21 +3,24 @@
 //! Both kernel backends prove the field-ops guest with full-width `FieldRdInc`
 //! values and muldiv with an identically zero `FieldRdInc`, producing identical
 //! wire objects. The field-increment commitment is present in both cases.
-//! Guest acceptance across modes lives in `e2e_matrix.rs`.
+//! Guest acceptance across modes lives in `e2e_matrix.rs`. The clear Akita
+//! proof only; Whiteout's field-inline case is `whiteout_e2e.rs`.
 //! Tamper cases cover the reduced increment claim, commitment layout digest,
 //! batched opening proof, missing commitment, and duplicate batch role.
 
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",
-    feature = "akita"
+    feature = "akita",
+    not(feature = "zk")
 ))]
 mod support;
 
 #[cfg(all(
     feature = "prover-fixtures",
     feature = "field-inline",
-    feature = "akita"
+    feature = "akita",
+    not(feature = "zk")
 ))]
 #[expect(
     clippy::expect_used,

@@ -54,7 +54,7 @@ mod schemes;
 pub use claims::{VerifierOpeningClaim, ZkEvaluationClaim};
 pub use error::OpeningsError;
 pub use jolt_poly::EvaluationClaim;
-pub use prefix::{PrefixPackedClaims, PrefixPackedLayout};
+pub use prefix::{PackedEvaluations, PrefixPackedClaims, PrefixPackedLayout, PrefixSelection};
 
 pub use schemes::{
     AdditivelyHomomorphic, BatchOpeningScheme, CommitmentGroupRole, CommitmentScheme,
