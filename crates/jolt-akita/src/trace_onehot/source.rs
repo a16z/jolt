@@ -16,6 +16,7 @@ use jolt_claims::protocols::jolt::lattice::strategy::MAX_ONE_HOT_TRACE_COLUMNS;
 
 use super::decomposition::TraceOneHotFoldPlan;
 use super::kernels::{trace_commitment_capability, TraceOneHotColumnCommitOperation};
+use super::packing::TraceOneHotPackingPlan;
 use super::NO_SELECTED_ROW;
 use crate::AkitaField;
 
@@ -84,6 +85,17 @@ pub trait TraceOneHotComputeKernel: Debug + Send + Sync {
         one_hot_k: usize,
         plan: CommitInnerPlan,
     ) -> Result<Option<Vec<RingVec<AkitaField>>>, AkitaError>;
+
+    /// Returns base-field partials in column / block / subring order. The
+    /// canonical caller validates the opening point and owns extension encoding.
+    fn coefficient_packing(
+        &self,
+        _rows: &dyn TraceOneHotRows,
+        _one_hot_k: usize,
+        _plan: TraceOneHotPackingPlan<'_>,
+    ) -> Result<Option<Vec<Vec<AkitaField>>>, AkitaError> {
+        Ok(None)
+    }
 
     /// Returns compressed centered coefficients in position/chunk/coefficient
     /// order. The caller owns digit expansion and fold-witness construction.

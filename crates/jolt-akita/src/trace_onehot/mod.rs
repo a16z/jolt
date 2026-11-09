@@ -25,6 +25,7 @@ mod digit_windows;
 mod kernels;
 mod ntt_commit;
 mod one_hot_ntt;
+mod packing;
 mod source;
 mod traversal;
 
@@ -32,6 +33,7 @@ mod traversal;
 mod tests;
 
 pub use decomposition::TraceOneHotFoldPlan;
+pub use packing::TraceOneHotPackingPlan;
 pub use source::{no_selected_row, TraceOneHotColumn, TraceOneHotComputeKernel, TraceOneHotRows};
 
 #[cfg(test)]

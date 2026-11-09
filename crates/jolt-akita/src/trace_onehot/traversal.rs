@@ -281,6 +281,9 @@ where
     let num_columns = source.rows.num_columns();
     let position_weights = plan.tables.position_weights();
     let packing_weights = plan.tables.packing_weights();
+    if let Some(output) = super::packing::try_compute::<E, D>(source, plan, segment_rings)? {
+        return Ok(output);
+    }
 
     // Segments and blocks are both powers of two, so a ring range inside one
     // `span` meets exactly one block per column, at consecutive positions.

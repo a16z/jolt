@@ -72,7 +72,7 @@ pub use scheme::{
 };
 pub use trace_onehot::{
     no_selected_row, TraceOneHotColumn, TraceOneHotComputeKernel, TraceOneHotFoldPlan,
-    TraceOneHotRows,
+    TraceOneHotPackingPlan, TraceOneHotRows,
 };
 
 /// Jolt↔Akita basis-order bridging, exposed so benchmarks measuring the raw

@@ -7,10 +7,14 @@ use akita_error::{checked, AkitaError};
 use akita_metal::onehot::{DeviceK16Sources, OneHotCommitShape};
 use akita_metal::onehot_fold::{OneHotFoldChallenge, OneHotFoldShape, OneHotFoldWorkspace};
 use akita_metal::onehot_ntt::{DeviceOneHotNttKey, OneHotNttWorkspace};
+use akita_metal::onehot_packing::{OneHotPackingShape, OneHotPackingWorkspace};
 use akita_metal::AkitaMetal;
 use akita_pcs::custom_source::CommitInnerPlan;
 use akita_types::{AkitaExpandedSetup, RingVec};
-use jolt_akita::{AkitaField, TraceOneHotComputeKernel, TraceOneHotFoldPlan, TraceOneHotRows};
+use jolt_akita::{
+    AkitaField, TraceOneHotComputeKernel, TraceOneHotFoldPlan, TraceOneHotPackingPlan,
+    TraceOneHotRows,
+};
 use jolt_field::Zero;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
@@ -153,6 +157,78 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
             source: Some(ProofTraceSources::new(&rows, limit)?),
             shared: Arc::clone(&self.shared),
         }))
+    }
+
+    fn coefficient_packing(
+        &self,
+        rows: &dyn TraceOneHotRows,
+        one_hot_k: usize,
+        plan: TraceOneHotPackingPlan<'_>,
+    ) -> Result<Option<Vec<Vec<AkitaField>>>, AkitaError> {
+        let Some(source) = &self.source else {
+            return Ok(None);
+        };
+        source.check_owner(rows)?;
+        let shape = OneHotPackingShape {
+            num_positions: plan.num_positions(),
+            blocks_per_column: plan.blocks_per_column(),
+            num_columns: rows.num_columns(),
+            subring_dimension: plan.subring_dimension(),
+        };
+        if one_hot_k != K
+            || plan.ring_dimension() != D
+            || !shape.is_supported()
+            || plan.segment_rings() < plan.num_positions()
+            || !plan.segment_rings().is_multiple_of(plan.num_positions())
+        {
+            return Ok(None);
+        }
+        let rows_per_block = checked::product([plan.num_positions(), D / K])
+            .ok_or_else(|| compute_error("packing block size overflows"))?;
+        let cache = source
+            .windows
+            .lock()
+            .map_err(|_| compute_error("source cache lock poisoned"))?;
+        let Some(retained) = cache
+            .as_ref()
+            .filter(|cache| cache.rows_per_block == rows_per_block)
+        else {
+            return Ok(None);
+        };
+        let _span = tracing::info_span!(
+            "metal_trace_coefficient_packing",
+            resident_windows = retained.windows.len()
+        )
+        .entered();
+        let mut workspace = OneHotPackingWorkspace::new(
+            &self.shared.metal,
+            shape,
+            plan.position_weights(),
+            plan.packing_weights(),
+        )
+        .map_err(compute_error)?;
+        // Borrow, rather than consume, the exact proof-owned selectors. The
+        // root-fold challenge arrives later and still needs these same windows.
+        for (first_block, sources) in &retained.windows {
+            let dispatch = tracing::info_span!(
+                "metal_trace_packing_dispatch",
+                gpu_s = tracing::field::Empty
+            );
+            let _dispatch = dispatch.enter();
+            let gpu_time = workspace
+                .accumulate(sources, *first_block)
+                .map_err(compute_error)?;
+            let _ = dispatch.record("gpu_s", gpu_time.as_secs_f64());
+        }
+        let per_column = checked::product([plan.blocks_per_column(), plan.subring_dimension()])
+            .ok_or_else(|| compute_error("packing output column width overflows"))?;
+        let output = workspace.read().map_err(compute_error)?;
+        Ok(Some(
+            output
+                .chunks_exact(per_column)
+                .map(<[AkitaField]>::to_vec)
+                .collect(),
+        ))
     }
 
     fn decompose_fold(
