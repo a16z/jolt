@@ -23,7 +23,7 @@ use jolt_field::Field;
 #[cfg(feature = "committed")]
 use jolt_field::JoltField;
 use jolt_poly::{UnivariatePoly, UnivariatePolynomial};
-use jolt_transcript::{Encoding, FieldTranscript, ProverTranscript};
+use jolt_transcript::{Encoding, FieldTranscript, PrivateChannel, ProverTranscript};
 #[cfg(feature = "committed")]
 use rand_core::RngCore;
 
@@ -440,7 +440,7 @@ where
     grind_round(degree, 0, &mut pow_nonces, transcript)?;
     let challenge = transcript.challenge()?;
     let output_claim = round_poly.evaluate(challenge);
-    transcript.append(&output_claim);
+    transcript.append_private(&[output_claim]);
 
     Ok(ProvedUniskip {
         proof: ClearSumcheckProof {
