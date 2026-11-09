@@ -40,6 +40,9 @@
 //! column: the pushforward slot and the committed one-hot hot index are the
 //! same value on every row.
 
+#[cfg(feature = "metal")]
+pub(crate) mod metal;
+
 use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
@@ -85,6 +88,31 @@ use crate::{
     KernelError, PrepareKernel, ProofSession, ProverInputs, SumcheckKernel, SumcheckKernelError,
 };
 
+fn finish_pushforwards<F: JoltField, R>(
+    base_cycle_points: &[Vec<F>],
+    weighted_cycle_points: &[Vec<F>],
+    prefix_len: usize,
+    tail: &R,
+    pc: &impl Fn(&R) -> usize,
+    row_weight: &impl Fn(&R) -> F,
+    mut outputs: Vec<Vec<F>>,
+) -> Vec<Vec<F>> {
+    let address = pc(tail);
+    for (stage, point) in base_cycle_points
+        .iter()
+        .chain(weighted_cycle_points)
+        .enumerate()
+    {
+        let weight = if stage < base_cycle_points.len() {
+            F::one()
+        } else {
+            row_weight(tail)
+        };
+        outputs[stage][address] += EqPolynomial::suffix_sum(point, prefix_len) * weight;
+    }
+    outputs
+}
+
 fn stage_pushforwards<F: JoltField, R: Sync>(
     base_cycle_points: &[Vec<F>],
     weighted_cycle_points: &[Vec<F>],
@@ -105,21 +133,16 @@ fn stage_pushforwards<F: JoltField, R: Sync>(
     // The caller retains an explicit prefix and one representative tail row.
     let prefix_len = rows.len() - 1;
     let tail = &rows[prefix_len];
-    let finish = |mut outputs: Vec<Vec<F>>| {
-        let address = pc(tail);
-        for (stage, point) in base_cycle_points
-            .iter()
-            .chain(weighted_cycle_points)
-            .enumerate()
-        {
-            let weight = if stage < base_stages {
-                F::one()
-            } else {
-                row_weight(tail)
-            };
-            outputs[stage][address] += EqPolynomial::suffix_sum(point, prefix_len) * weight;
-        }
-        outputs
+    let finish = |outputs| {
+        finish_pushforwards(
+            base_cycle_points,
+            weighted_cycle_points,
+            prefix_len,
+            tail,
+            &pc,
+            &row_weight,
+            outputs,
+        )
     };
     let lo_bits = log_t / 2;
     let hi_bits = log_t - lo_bits;
@@ -388,6 +411,43 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
     {
+        Self::prepare_with_pushforwards(
+            session,
+            witness,
+            inputs,
+            |_, rows, base, weighted, addresses| {
+                #[cfg(feature = "akita")]
+                let weight = InstructionCycleRow::fused_inc::<F>;
+                #[cfg(not(feature = "akita"))]
+                let weight = |_: &InstructionCycleRow| F::one();
+                Ok(stage_pushforwards(
+                    base,
+                    weighted,
+                    rows.representatives(),
+                    addresses,
+                    InstructionCycleRow::bytecode_pc,
+                    weight,
+                ))
+            },
+        )
+    }
+}
+
+impl OptimizedBytecodeReadRafAddress {
+    /// Share relation construction while selecting only the trace pushforward executor.
+    fn prepare_with_pushforwards<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, BytecodeReadRafAddressPhase<F>>,
+        pushforwards: impl FnOnce(
+            &mut ProofSession,
+            &Arc<ConstantSuffix<InstructionCycleRow>>,
+            &[Vec<F>],
+            &[Vec<F>],
+            usize,
+        ) -> Result<Vec<Vec<F>>, KernelError<F>>,
+    ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafAddressPhase<F>>>, KernelError<F>>
+    {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let addresses = 1usize << dimensions.log_k();
@@ -486,10 +546,6 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
             )
         };
 
-        #[cfg(not(feature = "akita"))]
-        let row_weight = |_: &InstructionCycleRow| F::one();
-        #[cfg(feature = "akita")]
-        let row_weight = InstructionCycleRow::fused_inc::<F>;
         #[cfg(feature = "field-inline")]
         let active_legs = field_inline_values
             .into_iter()
@@ -514,14 +570,8 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafAddressPhase<F>>
         #[cfg(not(feature = "field-inline"))]
         let walk_points: &[Vec<F>] = stage_cycle_points;
         #[cfg_attr(not(feature = "field-inline"), expect(unused_mut))]
-        let mut pushforwards = stage_pushforwards::<F, _>(
-            walk_points,
-            fused_cycle_points,
-            rows.representatives(),
-            addresses,
-            push_pc,
-            row_weight,
-        );
+        let mut pushforwards =
+            pushforwards(session, &rows, walk_points, fused_cycle_points, addresses)?;
         #[cfg(feature = "field-inline")]
         let field_inline = FieldInlineAddressLegs {
             legs: pushforwards
@@ -1530,10 +1580,11 @@ mod stage_pushforward_tests {
         );
     }
 
-    fn tiled_weighted_pushforwards<F: JoltField>(
+    fn weighted_pushforward_oracle<F: JoltField>(
         log_t: usize,
         base_stages: usize,
         addresses: usize,
+        mut evaluate: impl FnMut(&[Vec<F>], usize, &[(usize, i128)], usize) -> Vec<Vec<F>>,
     ) {
         let weighted_stages = if base_stages == 7 { 4 } else { 1 };
         let points = (0..base_stages + weighted_stages)
@@ -1556,20 +1607,22 @@ mod stage_pushforward_tests {
                 } else {
                     (index * 19 + index / 7) % addresses
                 };
-                let weight = F::from_u64((index % 11) as u64) - F::from_u64(5);
+                let weight = if index % 257 == 0 {
+                    -(u64::MAX as i128)
+                } else {
+                    (index % 11) as i128 - 5
+                };
                 (address, weight)
             })
             .collect::<Vec<_>>();
         for prefix in [0, 1, 9, rows.len() / 2 + 1, rows.len()] {
             let mut dense = rows.clone();
-            dense[prefix..].fill((addresses - 1, F::from_u64(7)));
-            let actual = stage_pushforwards(
-                &points[..base_stages],
-                &points[base_stages..],
+            dense[prefix..].fill((addresses - 1, 7));
+            let actual = evaluate(
+                &points,
+                base_stages,
                 &dense[..(prefix + 1).min(dense.len())],
                 addresses,
-                |row| row.0,
-                |row| row.1,
             );
             for (stage, point) in points.iter().enumerate() {
                 let eq = eq_table(point);
@@ -1578,12 +1631,54 @@ mod stage_pushforward_tests {
                     expected[*address] += if stage < base_stages {
                         value
                     } else {
-                        value * *weight
+                        value * signed::<F>(*weight)
                     };
                 }
                 assert_eq!(actual[stage], expected);
             }
         }
+    }
+
+    fn signed<F: JoltField>(value: i128) -> F {
+        let magnitude = F::from_u64(value.unsigned_abs() as u64);
+        if value < 0 {
+            -magnitude
+        } else {
+            magnitude
+        }
+    }
+
+    fn tiled_weighted_pushforwards<F: JoltField>(
+        log_t: usize,
+        base_stages: usize,
+        addresses: usize,
+    ) {
+        weighted_pushforward_oracle(
+            log_t,
+            base_stages,
+            addresses,
+            |points, base, rows, addresses| {
+                stage_pushforwards(
+                    &points[..base],
+                    &points[base..],
+                    rows,
+                    addresses,
+                    |row| row.0,
+                    |row| signed::<F>(row.1),
+                )
+            },
+        );
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_signed_pushforwards_match_the_cycle_eq_mle() {
+        weighted_pushforward_oracle::<jolt_akita::AkitaField>(
+            14,
+            7,
+            2048,
+            metal::oracle_pushforwards,
+        );
     }
 
     #[test]

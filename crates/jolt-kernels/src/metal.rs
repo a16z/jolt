@@ -3,6 +3,7 @@ use jolt_metal::MetalError;
 use jolt_openings::CommitmentScheme;
 
 use crate::optimized::booleanity::metal::MetalBooleanity;
+use crate::optimized::bytecode_read_raf::metal::MetalBytecodeReadRafAddress;
 use crate::optimized::instruction_ra_virtualization::metal::MetalInstructionRa;
 use crate::optimized::instruction_read_raf::metal::MetalInstructionReadRaf;
 use crate::JoltBackend;
@@ -19,6 +20,7 @@ impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
         self.instruction_read_raf = Box::new(MetalInstructionReadRaf::new()?);
         self.instruction_ra_virtualization = Box::new(MetalInstructionRa::new()?);
         self.booleanity_cycle = Box::new(MetalBooleanity::new()?);
+        self.bytecode_read_raf_address = Box::new(MetalBytecodeReadRafAddress::new()?);
         Ok(self)
     }
 }

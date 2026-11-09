@@ -186,9 +186,19 @@ impl InstructionCycleRow {
 
     #[cfg(feature = "akita")]
     #[inline]
+    pub(crate) fn fused_inc_parts(&self) -> (u64, bool) {
+        (
+            self.fused_inc_magnitude,
+            self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0,
+        )
+    }
+
+    #[cfg(feature = "akita")]
+    #[inline]
     pub(crate) fn fused_inc<F: JoltField>(&self) -> F {
-        let magnitude = F::from_u64(self.fused_inc_magnitude);
-        if self.packed_pc_and_flags & (1 << PACKED_INC_SIGN_SHIFT) != 0 {
+        let (magnitude, negative) = self.fused_inc_parts();
+        let magnitude = F::from_u64(magnitude);
+        if negative {
             -magnitude
         } else {
             magnitude
