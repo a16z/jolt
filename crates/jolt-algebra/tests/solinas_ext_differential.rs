@@ -466,7 +466,7 @@ const P32: u128 = (1 << 32) - 99;
 const P64: u128 = (1 << 64) - 59;
 const P128: u128 = u128::MAX - 274;
 const P128_A7F7: u128 = u128::MAX - 0xFFFF_A7F6;
-const P128_801F: u128 = u128::MAX - 0x6A23_801E;
+const P128_6A23801F: u128 = u128::MAX - 0x6A23_801E;
 const P251: u128 = 251;
 
 type F64Small2 = two::Fp64<4_294_967_197>;
@@ -610,18 +610,18 @@ ext_suite!(
 );
 
 ext_suite!(
-    ext2_over_prime128_offset_801f,
-    ext4_over_prime128_offset_801f,
-    ext8_over_prime128_offset_801f,
-    moore_over_prime128_offset_801f,
-    two::Prime128Offset801F,
-    P128_801F
+    ext2_over_prime128_offset_6a23801f,
+    ext4_over_prime128_offset_6a23801f,
+    ext8_over_prime128_offset_6a23801f,
+    moore_over_prime128_offset_6a23801f,
+    two::Prime128Offset6A23801F,
+    P128_6A23801F
 );
 
 /// Which towers are fields over each exported prime, as the extension docs
 /// state: over every registered prime `p ≡ 5 (mod 8)`, so `Ext2` (non-residue
 /// 2), `FpExt4` and `FpExt8` are fields and `NegOneNr` is not; over
-/// `Prime128OffsetA7F7` and `Prime128Offset801F`, `p ≡ 1 (mod 8)` and none is.
+/// `Prime128OffsetA7F7` and `Prime128Offset6A23801F`, `p ≡ 1 (mod 8)` and none is.
 #[test]
 fn extension_fields_over_exported_primes() {
     for spec in two::PRIME_OFFSET_SPECS {
@@ -640,14 +640,17 @@ fn extension_fields_over_exported_primes() {
     assert!(!quadratic_is_field(P128_A7F7 - 1, P128_A7F7));
     assert!(!ring_subfield_is_field(4, P128_A7F7));
     assert!(!ring_subfield_is_field(8, P128_A7F7));
-    type F801f = two::Prime128Offset801F;
-    assert_eq!(<F801f as CanonicalEncoding>::MODULUS_BITS, 128);
-    assert_eq!(u128::MAX - <F801f as PseudoMersenne>::OFFSET + 1, P128_801F);
-    assert_eq!(P128_801F % 8, 1);
-    assert!(!quadratic_is_field(2, P128_801F));
-    assert!(!quadratic_is_field(P128_801F - 1, P128_801F));
-    assert!(!ring_subfield_is_field(4, P128_801F));
-    assert!(!ring_subfield_is_field(8, P128_801F));
+    type F6a23801f = two::Prime128Offset6A23801F;
+    assert_eq!(<F6a23801f as CanonicalEncoding>::MODULUS_BITS, 128);
+    assert_eq!(
+        u128::MAX - <F6a23801f as PseudoMersenne>::OFFSET + 1,
+        P128_6A23801F
+    );
+    assert_eq!(P128_6A23801F % 8, 1);
+    assert!(!quadratic_is_field(2, P128_6A23801F));
+    assert!(!quadratic_is_field(P128_6A23801F - 1, P128_6A23801F));
+    assert!(!ring_subfield_is_field(4, P128_6A23801F));
+    assert!(!ring_subfield_is_field(8, P128_6A23801F));
 }
 
 #[test]

@@ -159,7 +159,7 @@ pub type Prime128OffsetA7F7 = Fp128<FIELD_INLINE_FP128_MODULUS>;
 /// multiplicative subgroup of order `2^5 · 3^3 · 5^8 = 337_500_000`. Here
 /// `p ≡ 1 (mod 32)`, so neither `Ext2` (non-residue 2 or −1), `FpExt4` nor
 /// `FpExt8` over it is a field: use it at extension degree 1.
-pub type Prime128Offset801F = Fp128<{ pm(128, 0x6A23_801F) }>;
+pub type Prime128Offset6A23801F = Fp128<{ pm(128, 0x6A23_801F) }>;
 
 /// The modulus of [`Prime128OffsetA7F7`], the Fp128 field the field-inline
 /// unit computes in under `field-inline-guest-fp128`.

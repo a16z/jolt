@@ -172,7 +172,7 @@ pub use solinas::{
     Fp128MulU64Accum, Fp128Packing, Fp128ProductAccum, Fp128x8i32, Fp32, Fp32Packing,
     Fp32ProductAccum, Fp32x2i32, Fp64, Fp64Packing, Fp64ProductAccum, Fp64x4i32, FpExt2,
     FpExt2Fp64ProductAccum, FpExt4, FpExt4Fp32ProductAccum, FpExt8, PackedFpExt2, PackedFpExt4,
-    PackedFpExt8, Prime128Offset275, Prime128Offset801F, Prime128OffsetA7F7, Prime24Offset3,
+    PackedFpExt8, Prime128Offset275, Prime128Offset6A23801F, Prime128OffsetA7F7, Prime24Offset3,
     Prime30Offset35, Prime31Offset19, Prime32Offset99, Prime40Offset195, Prime48Offset59,
     Prime56Offset27, Prime64Offset59, PrimeOffsetSpec, PRIME_OFFSET_IMPLEMENTED_MAX_BITS,
     PRIME_OFFSET_MAX, PRIME_OFFSET_SPECS,

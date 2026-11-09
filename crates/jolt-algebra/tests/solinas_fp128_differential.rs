@@ -320,9 +320,13 @@ fn fp128_offset_a7f7_matches() {
 }
 
 #[test]
-fn fp128_offset_801f_matches() {
+fn fp128_offset_6a23801f_matches() {
     let mut rng = rng();
-    check_prime128!(two::Prime128Offset801F, u128::MAX - 0x6A23_801E, &mut rng);
+    check_prime128!(
+        two::Prime128Offset6A23801F,
+        u128::MAX - 0x6A23_801E,
+        &mut rng
+    );
     assert_eq!(
         two::pseudo_mersenne_modulus(128, 0x6A23_801F),
         Some(u128::MAX - 0x6A23_801E)

@@ -445,7 +445,7 @@ mod solinas {
             "2c96bcbf573df48ae896963ea3675f9e",
         ),
     ];
-    const FIX_PRIME128_OFFSET801F: &[(&str, &str)] = &[
+    const FIX_PRIME128_OFFSET6A23801F: &[(&str, &str)] = &[
         (
             "00000000000000000000000000000000",
             "00000000000000000000000000000000",
@@ -816,7 +816,7 @@ mod solinas {
     fn fp128_bytes_match_fixtures() {
         check_prime_rows::<two::Prime128Offset275>(FIX_PRIME128_OFFSET275);
         check_prime_rows::<two::Prime128OffsetA7F7>(FIX_PRIME128_OFFSETA7F7);
-        check_prime_rows::<two::Prime128Offset801F>(FIX_PRIME128_OFFSET801F);
+        check_prime_rows::<two::Prime128Offset6A23801F>(FIX_PRIME128_OFFSET6A23801F);
     }
 
     #[test]
