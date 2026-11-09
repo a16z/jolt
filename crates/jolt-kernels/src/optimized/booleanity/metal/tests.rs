@@ -1,6 +1,7 @@
 #![expect(clippy::unwrap_used, reason = "tests assert exact field arithmetic")]
 
 use jolt_field::{Field, Ring};
+use jolt_lookup_tables::{LookupTableKind, XLEN as RISCV_XLEN};
 use jolt_verifier::stages::stage6b::booleanity::BooleanityInputClaims;
 use jolt_witness::witnesses::FusedInc;
 

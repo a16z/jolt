@@ -94,6 +94,11 @@ enum RoundSource<'a> {
     },
 }
 
+struct RoundOutput {
+    polynomial: UnivariatePoly<AkitaField>,
+    bound_prefix: Option<DeviceBuffer<AkitaField>>,
+}
+
 impl ReadRafGpu {
     fn round(
         &self,
@@ -103,10 +108,7 @@ impl ReadRafGpu {
         tails: &[AkitaField],
         round: usize,
         claim: AkitaField,
-    ) -> Result<
-        (UnivariatePoly<AkitaField>, Option<DeviceBuffer<AkitaField>>),
-        SumcheckError<AkitaField>,
-    > {
+    ) -> Result<RoundOutput, SumcheckError<AkitaField>> {
         let n = tails.len();
         let template = match n {
             9 => "read_raf_round9",
@@ -262,7 +264,10 @@ impl ReadRafGpu {
         }
         totals[n] += suffix;
         let polynomial = eq.checked_toom(&totals[..n], claim, round, || totals[n])?;
-        Ok((polynomial, (mode != 0).then_some(output)))
+        Ok(RoundOutput {
+            polynomial,
+            bound_prefix: (mode != 0).then_some(output),
+        })
     }
 }
 
@@ -369,7 +374,10 @@ impl MetalReadRafKernel {
         if let Some(challenge) = bind {
             gruen.bind(challenge);
         }
-        let (message, values) = self.gpu.round(
+        let RoundOutput {
+            polynomial: message,
+            bound_prefix: values,
+        } = self.gpu.round(
             RoundSource::Lazy {
                 rows,
                 ra,
@@ -447,7 +455,10 @@ impl MetalReadRafKernel {
             let prefixes = device.prefixes.map(|length| length.div_ceil(2));
             let mut gruen = device.gruen.clone();
             gruen.bind(challenge);
-            let (message, values) = self.gpu.round(
+            let RoundOutput {
+                polynomial: message,
+                bound_prefix: values,
+            } = self.gpu.round(
                 RoundSource::Dense {
                     values: &device.values,
                     prefix: device.prefixes[0].max(device.prefixes[1]),
