@@ -74,6 +74,7 @@ jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::absorb::absorb_bytes#0:
 jolt-transcript::scripted.rs::ScriptedTranscript<T,F,S>::init::init#0::T::init(session,&Absorbed(&statement))
 jolt-transcript::scripted.rs::ScriptedTranscript<VerifierState<'a,H>,F,S>::init::init#0::<VerifierState<'a,H>asVerifierInit<'a>>::init(session,&Absorbed(&statement),narg)
 jolt-transcript::scripted.rs::scripted_statement::absorb_bytes#0::script.absorb_bytes(&mutbytes)
+jolt-transcript::shape.rs::ShapeTranscript<H>::absorb::absorb#0::self.state.absorb(message)
 jolt-transcript::transcript.rs::Transcript::append::absorb#0::self.absorb(message)
 jolt-transcript::transcript.rs::Transcript::append_bytes::absorb#0::self.absorb(&BytesMsg(bytes))
 jolt-transcript::transcript.rs::Transcript::append_values::absorb#0::self.absorb(&WordAligned(bytes))
