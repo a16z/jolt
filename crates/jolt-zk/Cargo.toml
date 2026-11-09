@@ -31,6 +31,14 @@ whiteout-test-support = [
   "jolt-transcript/transcript-blake2b",
   "whiteout-prover",
 ]
+# Timing harness for examples/sigma_dudect.rs: exposes the Σ-protocol
+# attempt's steps on a synthetic instance. Diagnostics only.
+whiteout-diagnostics = [
+  "dep:rand_chacha",
+  "jolt-crypto/sample-diagnostics",
+  "jolt-transcript/transcript-blake2b",
+  "whiteout-prover",
+]
 # `CommittedPads::uncommitted`, for tests of protocols written over the
 # masked channel in other crates (Akita's masked levels).
 test-support = []
@@ -101,3 +109,7 @@ required-features = ["prover"]
 [[test]]
 name = "sumcheck_pipeline"
 required-features = ["prover"]
+
+[[example]]
+name = "sigma_dudect"
+required-features = ["whiteout-diagnostics"]
