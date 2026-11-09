@@ -11,6 +11,7 @@ use super::*;
 
 const MIN_GPU_PREFIX: usize = 1 << 16;
 const CPU_TAIL_ROWS: usize = 1 << 12;
+const MAX_SIMDGROUPS: usize = 8;
 
 pub(crate) struct MetalInstructionReadRaf(Arc<ReadRafGpu>);
 
@@ -22,6 +23,10 @@ impl MetalInstructionReadRaf {
             spec = spec.source(name, source);
         }
         let spec = spec
+            .source(
+                "read_raf_geometry",
+                &format!("#define READ_RAF_MAX_SIMDGROUPS {MAX_SIMDGROUPS}"),
+            )
             .source("read_raf.metal", include_str!("read_raf.metal"))
             .instantiate::<AkitaField>("read_raf_round9")
             .instantiate::<AkitaField>("read_raf_round17");
@@ -214,8 +219,10 @@ impl ReadRafGpu {
             if simd == 0 {
                 return Err(compute_error(invalid("zero SIMD width")));
             }
-            let threads = pipeline.max_total_threads_per_threadgroup().min(128) / simd * simd;
-            if threads == 0 || threads / simd > 32 || threads / simd > simd {
+            let simdgroups =
+                (pipeline.max_total_threads_per_threadgroup().min(128) / simd).min(MAX_SIMDGROUPS);
+            let threads = simdgroups * simd;
+            if threads == 0 || simdgroups > simd {
                 return Err(compute_error(invalid("unsupported SIMD geometry")));
             }
             let (rows, tail, previous) = match &source {
