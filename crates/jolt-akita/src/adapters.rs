@@ -390,7 +390,8 @@ pub struct AkitaProverSetup {
 
 impl AkitaProverSetup {
     /// Installs arithmetic prepared for this exact one-hot setup owner.
-    /// Cloned setups share the kernel; replacing the setup domain clears it.
+    /// Cloned setups share setup arithmetic; each trace binds its own source
+    /// kernel at commitment. Replacing the setup domain clears the arithmetic.
     pub fn with_trace_compute_kernel(
         mut self,
         create: impl FnOnce(

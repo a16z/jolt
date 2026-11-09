@@ -370,8 +370,12 @@ sparse challenges. Both obey the plan's ring dimension and column ordering. A
 shape unsupported by a GPU kernel retains the current CPU route before the
 operation starts.
 
-The retained `TraceOneHotComputeKernel` now owns commitment and root-fold
-arithmetic through the same setup/source `Arc`. Decomposition constructs a
+`commit_trace_one_hot` calls `TraceOneHotComputeKernel::bind_source` once for the
+exact `TraceOneHotRows` owner, then shares that child kernel across its column
+views and opening hint. Metal shares the setup, device, and transformed key by
+`Arc`; the setup never retains a child or its trace buffers. The child checks
+source identity and owns any retained selector windows under a mutex.
+Decomposition constructs a
 read-only `TraceOneHotFoldPlan` after the existing geometry, challenge, and
 canonical-range checks. The Metal D512/K16 path accepts sparse ring challenges
 and whole-block segments, then returns compressed centered `i32` coefficients
@@ -379,8 +383,31 @@ in position/chunk/coefficient order. Chunk ranges partition each column's blocks
 challenges remain claim-major. CPU and GPU share digit expansion and witness
 construction, with no coefficient copy for one chunk and one digit. The fold
 reuses bounded row packing and checks term-index and accumulation bounds before
-dispatch. Its performance benefit remains to be measured; coefficient packing
-still uses the current CPU kernel.
+dispatch. Coefficient packing still uses the current CPU kernel.
+
+Stage 0 may retain its existing `DeviceK16Sources` windows for root folding.
+For `P` physical prefix rows and `C` columns, their device payload is
+`C * P + C * ceil(P / 32)` bytes: selectors plus ring classifications. Host masks
+and packing buffers remain transient. The implicit suffix allocates nothing.
+Retention is admitted only when that payload fits the smaller of 8 GiB or
+one-sixteenth of the device's recommended working set. This is an additional
+payload cap, excluding allocator overhead and small per-window host metadata,
+not a reservation or a bound on total prover memory; ordinary Metal allocation
+checks still apply. Smaller memory budgets retain the bounded
+streaming path without storing a partial cache.
+
+Root folding takes the retained windows only when its rows-per-block geometry
+matches commitment. It releases each window after its completed dispatch.
+A mismatched geometry drops the cache and streams; an unopened source releases
+all windows with its source/opening hint. No cache is indexed by dimensions or
+kept in the setup. Device errors propagate rather than retrying GPU work.
+
+The measured T27 Fibonacci geometry has 39 columns and at most 5,398,069,248
+bytes (5.0273 GiB) of resident source payload. The preceding root-fold profile
+spent 0.9311 s packing/uploading and 0.3345 s on GPU execution. Residency has not
+yet been measured. Its acceptance run must verify the same proof, report retained
+bytes and reused window count, compare root-fold packing and total proof time,
+and record peak RSS/footprint and memory after the proof's source handles drop.
 
 Integer limb-NTT and deferred-accumulation kernels retain explicit reconstruction
 and accumulation bounds for every admitted geometry. Changing tile sizes or

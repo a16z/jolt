@@ -235,13 +235,20 @@ impl AkitaScheme {
         } else {
             Some(Self::group_profiles(setup, group_hints)?)
         };
-        let mut source =
-            TraceOneHotColumn::new(setup.one_hot_k(), AKITA_SOURCE_RING_DIMENSION, rows)
-                .map_err(commit_failed)?;
+        let mut source = TraceOneHotColumn::new(
+            setup.one_hot_k(),
+            AKITA_SOURCE_RING_DIMENSION,
+            Arc::clone(&rows),
+        )
+        .map_err(commit_failed)?;
+        let compute_kernel = setup
+            .trace_compute_kernel
+            .as_ref()
+            .map(|kernel| Arc::clone(kernel).bind_source(rows))
+            .transpose()
+            .map_err(commit_failed)?;
         for column in &mut source {
-            column
-                .compute_kernel
-                .clone_from(&setup.trace_compute_kernel);
+            column.compute_kernel.clone_from(&compute_kernel);
         }
         let num_vars = RootPolyMeta::num_vars(
             source

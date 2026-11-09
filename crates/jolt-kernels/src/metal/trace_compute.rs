@@ -1,6 +1,6 @@
 use std::{
     fmt,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
 };
 
 use akita_error::{checked, AkitaError};
@@ -19,15 +19,72 @@ const D: usize = 512;
 const K: usize = 16;
 // Target host packing size; upload briefly overlaps another selector buffer.
 const STAGING_BYTES: usize = 1 << 28;
+// At most 1/16 of the device's recommended working set, capped at 8 GiB.
+// This limits proof-lived selectors separately from transient packing buffers.
+const MAX_RETAINED_SOURCE_BYTES: u64 = 8 << 30;
 #[cfg(feature = "parallel")]
 const PACK_ROWS: usize = 1 << 13;
 
 /// Trace arithmetic attached to an exact commitment setup owner. The Akita
 /// CPU backend retains the source and opening handles.
 pub struct MetalTraceCompute {
+    shared: Arc<MetalTraceSetup>,
+    source: Option<ProofTraceSources>,
+}
+
+struct MetalTraceSetup {
     expanded: Arc<AkitaExpandedSetup<AkitaField>>,
     metal: AkitaMetal,
     key: Mutex<Option<(usize, DeviceOneHotNttKey)>>,
+}
+
+struct ProofTraceSources {
+    owner: Weak<dyn TraceOneHotRows>,
+    retained_bytes: Option<usize>,
+    windows: Mutex<Option<RetainedWindows>>,
+}
+
+struct RetainedWindows {
+    rows_per_block: usize,
+    windows: Vec<(usize, DeviceK16Sources)>,
+}
+
+impl ProofTraceSources {
+    fn new(rows: &Arc<dyn TraceOneHotRows>, limit: usize) -> Result<Self, AkitaError> {
+        let prefix = rows.nonzero_prefix_len();
+        let columns = rows.num_columns();
+        let bytes = checked::product([prefix, columns])
+            .and_then(|hot| {
+                checked::product([prefix.div_ceil(32), columns])
+                    .and_then(|kinds| checked::sum([hot, kinds]))
+            })
+            .ok_or_else(|| compute_error("retained selector size overflows"))?;
+        let retained_bytes = (bytes <= limit).then_some(bytes);
+        tracing::info!(
+            bytes,
+            limit,
+            retain = retained_bytes.is_some(),
+            "Metal trace source retention"
+        );
+        Ok(Self {
+            owner: Arc::downgrade(rows),
+            retained_bytes,
+            windows: Mutex::new(None),
+        })
+    }
+
+    fn check_owner(&self, rows: &dyn TraceOneHotRows) -> Result<(), AkitaError> {
+        let owner = self
+            .owner
+            .upgrade()
+            .ok_or_else(|| compute_error("trace source owner expired"))?;
+        if !std::ptr::eq(owner.as_ref(), rows) {
+            return Err(compute_error(
+                "trace compute kernel belongs to another source",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl fmt::Debug for MetalTraceCompute {
@@ -39,9 +96,12 @@ impl fmt::Debug for MetalTraceCompute {
 impl MetalTraceCompute {
     pub fn new(expanded: Arc<AkitaExpandedSetup<AkitaField>>) -> Result<Self, AkitaError> {
         Ok(Self {
-            expanded,
-            metal: AkitaMetal::new().map_err(compute_error)?,
-            key: Mutex::new(None),
+            shared: Arc::new(MetalTraceSetup {
+                expanded,
+                metal: AkitaMetal::new().map_err(compute_error)?,
+                key: Mutex::new(None),
+            }),
+            source: None,
         })
     }
 
@@ -70,18 +130,40 @@ impl MetalTraceCompute {
             });
         #[cfg(not(feature = "parallel"))]
         rows.fill_rows_with_masks(first_row, &mut selected, &mut masks);
-        DeviceK16Sources::from_row_major(&self.metal, selected, &masks, columns, window_rows)
+        DeviceK16Sources::from_row_major(&self.shared.metal, selected, &masks, columns, window_rows)
             .map_err(compute_error)
     }
 }
 
 impl TraceOneHotComputeKernel for MetalTraceCompute {
+    fn bind_source(
+        self: Arc<Self>,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<Arc<dyn TraceOneHotComputeKernel>, AkitaError> {
+        let device_limit = self
+            .shared
+            .metal
+            .device()
+            .limits()
+            .recommended_max_working_set_size
+            / 16;
+        let limit =
+            usize::try_from(MAX_RETAINED_SOURCE_BYTES.min(device_limit)).unwrap_or(usize::MAX);
+        Ok(Arc::new(Self {
+            source: Some(ProofTraceSources::new(&rows, limit)?),
+            shared: Arc::clone(&self.shared),
+        }))
+    }
+
     fn decompose_fold(
         &self,
         rows: &dyn TraceOneHotRows,
         one_hot_k: usize,
         plan: TraceOneHotFoldPlan<'_>,
     ) -> Result<Option<Vec<i32>>, AkitaError> {
+        if let Some(source) = &self.source {
+            source.check_owner(rows)?;
+        }
         if one_hot_k != K
             || plan.ring_dimension() != D
             || plan.segment_rings() < plan.num_positions()
@@ -131,27 +213,56 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
             blocks_per_column: plan.blocks_per_column(),
             num_columns: columns,
         };
-        let mut workspace =
-            OneHotFoldWorkspace::new(&self.metal, shape, &challenges, plan.chunk_ranges())
-                .map_err(compute_error)?;
         let rows_per_block = checked::product([plan.num_positions(), D / K])
             .ok_or_else(|| compute_error("fold block size overflows"))?;
-        let blocks_per_window = staging_blocks(rows_per_block, columns)?;
-        let active_blocks = prefix.div_ceil(rows_per_block);
-        for first_block in (0..active_blocks).step_by(blocks_per_window) {
-            let blocks = blocks_per_window.min(active_blocks - first_block);
-            let first_row = first_block * rows_per_block;
-            let window_rows = (blocks * rows_per_block).min(rows.num_rows() - first_row);
-            let pack = tracing::info_span!("metal_trace_fold_pack").entered();
-            let sources = self.pack_rows(rows, first_row, window_rows)?;
-            drop(pack);
+        let retained = self
+            .source
+            .as_ref()
+            .map(|source| {
+                source
+                    .windows
+                    .lock()
+                    .map(|mut cache| cache.take())
+                    .map_err(|_| compute_error("source cache lock poisoned"))
+            })
+            .transpose()?
+            .flatten()
+            .filter(|cache| cache.rows_per_block == rows_per_block);
+        let mut workspace =
+            OneHotFoldWorkspace::new(&self.shared.metal, shape, &challenges, plan.chunk_ranges())
+                .map_err(compute_error)?;
+        let mut accumulate = |sources: &DeviceK16Sources, first_block| {
             let dispatch =
                 tracing::info_span!("metal_trace_fold_dispatch", gpu_s = tracing::field::Empty);
             let _dispatch = dispatch.enter();
             let gpu_time = workspace
-                .accumulate(&sources, first_block)
+                .accumulate(sources, first_block)
                 .map_err(compute_error)?;
             let _ = dispatch.record("gpu_s", gpu_time.as_secs_f64());
+            Ok::<_, AkitaError>(())
+        };
+        if let Some(retained) = retained {
+            tracing::info!(
+                resident_windows = retained.windows.len(),
+                "Metal trace fold reuse"
+            );
+            // Each window drops after its completed dispatch. The setup never
+            // owns these buffers; an unopened source also releases them on drop.
+            for (first_block, sources) in retained.windows {
+                accumulate(&sources, first_block)?;
+            }
+        } else {
+            let blocks_per_window = staging_blocks(rows_per_block, columns)?;
+            let active_blocks = prefix.div_ceil(rows_per_block);
+            for first_block in (0..active_blocks).step_by(blocks_per_window) {
+                let blocks = blocks_per_window.min(active_blocks - first_block);
+                let first_row = first_block * rows_per_block;
+                let window_rows = (blocks * rows_per_block).min(rows.num_rows() - first_row);
+                let pack = tracing::info_span!("metal_trace_fold_pack").entered();
+                let sources = self.pack_rows(rows, first_row, window_rows)?;
+                drop(pack);
+                accumulate(&sources, first_block)?;
+            }
         }
         workspace.read().map(Some).map_err(compute_error)
     }
@@ -163,9 +274,12 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
         one_hot_k: usize,
         plan: CommitInnerPlan,
     ) -> Result<Option<Vec<RingVec<AkitaField>>>, AkitaError> {
+        if let Some(source) = &self.source {
+            source.check_owner(rows)?;
+        }
         // Retained sources may be imported by another backend. Only this
         // owner may use the cached key; all other owners use their CPU path.
-        if !std::ptr::eq(expanded, self.expanded.as_ref())
+        if !std::ptr::eq(expanded, self.shared.expanded.as_ref())
             || one_hot_k != K
             || plan.ring_dimension != D
         {
@@ -220,7 +334,29 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
         let output_len = checked::product([plan.num_live_blocks, block_coefficients])
             .ok_or_else(|| AkitaError::InvalidInput("commitment output size overflows".into()))?;
         let mut output = vec![vec![AkitaField::zero(); output_len]; columns];
+        let mut retained_cache = self
+            .source
+            .as_ref()
+            .map(|source| {
+                source
+                    .windows
+                    .lock()
+                    .map_err(|_| compute_error("source cache lock poisoned"))
+            })
+            .transpose()?;
+        if let Some(cache) = &mut retained_cache {
+            **cache = None;
+        }
+        let mut retained = self
+            .source
+            .as_ref()
+            .and_then(|source| source.retained_bytes)
+            .map(|_| RetainedWindows {
+                rows_per_block,
+                windows: Vec::new(),
+            });
         let mut cached = self
+            .shared
             .key
             .lock()
             .map_err(|_| compute_error("key cache lock poisoned"))?;
@@ -228,7 +364,8 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
             let _prepare = tracing::info_span!("metal_trace_commit_prepare_key").entered();
             *cached = Some((
                 key_len,
-                DeviceOneHotNttKey::new(&self.metal, key_coefficients).map_err(compute_error)?,
+                DeviceOneHotNttKey::new(&self.shared.metal, key_coefficients)
+                    .map_err(compute_error)?,
             ));
         }
         let (_, key) = cached
@@ -236,7 +373,7 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
             .ok_or_else(|| compute_error("missing prepared key"))?;
         let blocks_per_window = staging_blocks(rows_per_block, columns)?;
         let active_blocks = prefix.div_ceil(rows_per_block);
-        let mut workspace = OneHotNttWorkspace::new(&self.metal);
+        let mut workspace = OneHotNttWorkspace::new(&self.shared.metal);
         for first_block in (0..active_blocks).step_by(blocks_per_window) {
             let blocks = blocks_per_window.min(active_blocks - first_block);
             let first_row = first_block * rows_per_block;
@@ -265,12 +402,18 @@ impl TraceOneHotComputeKernel for MetalTraceCompute {
                     .ok_or_else(|| compute_error("commitment output window exceeds plan"))?;
                 destination.copy_from_slice(coefficients);
             }
+            if let Some(retained) = &mut retained {
+                retained.windows.push((first_block, sources));
+            }
         }
-        output
+        let output = output
             .into_iter()
             .map(|coefficients| RingVec::from_coeffs_with_ring_dim(coefficients, D))
-            .collect::<Result<Vec<_>, _>>()
-            .map(Some)
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some(cache) = &mut retained_cache {
+            **cache = retained;
+        }
+        Ok(Some(output))
     }
 }
 
@@ -282,4 +425,41 @@ fn staging_blocks(rows_per_block: usize, columns: usize) -> Result<usize, AkitaE
 
 fn compute_error(error: impl fmt::Display) -> AkitaError {
     AkitaError::InvalidInput(format!("Metal trace arithmetic: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Rows;
+
+    impl TraceOneHotRows for Rows {
+        fn num_rows(&self) -> usize {
+            64
+        }
+        fn num_columns(&self) -> usize {
+            1
+        }
+        fn nonzero_prefix_len(&self) -> usize {
+            33
+        }
+        fn fill_row(&self, _row: usize, selected: &mut [u8]) {
+            selected.fill(0);
+        }
+    }
+
+    #[test]
+    fn residency_checks_exact_source_and_bounds_retention() -> Result<(), AkitaError> {
+        let rows: Arc<dyn TraceOneHotRows> = Arc::new(Rows);
+        let other: Arc<dyn TraceOneHotRows> = Arc::new(Rows);
+        // 33 selectors and two ring kinds; the implicit suffix costs no bytes.
+        let retained = ProofTraceSources::new(&rows, 35)?;
+        assert_eq!(retained.retained_bytes, Some(35));
+        assert!(retained.check_owner(rows.as_ref()).is_ok());
+        assert!(retained.check_owner(other.as_ref()).is_err());
+        assert!(ProofTraceSources::new(&rows, 34)?.retained_bytes.is_none());
+        drop(rows);
+        assert!(retained.owner.upgrade().is_none());
+        Ok(())
+    }
 }

@@ -67,8 +67,14 @@ ReadRAF shares those rows, retains CPU address rounds and its grouped first
 cycle message, then offloads qualified lazy messages and direct device
 materialization with a small CPU tail.
 Root decompose/fold also supports D512/K16 traces with sparse ring challenges,
-including canonical chunked folds. It packs bounded trace windows and preserves
-the CPU digit expansion and witness construction. Unsupported fold shapes,
+including canonical chunked folds. It preserves the CPU digit expansion and
+witness construction. Stage 0 retains its uploaded selector windows for root
+folding when their payload fits the smaller of 8 GiB or one-sixteenth of the
+device's recommended working set; otherwise both operations stream bounded
+windows. Retention belongs to the proof's source/opening hint. The shared setup
+keeps only its device and transformed key, and root folding releases reused
+windows after dispatch. Implicit trace padding remains unallocated.
+Unsupported fold shapes,
 coefficient packing, and Spartan outer remainder use the optimized CPU path.
 
 ```bash
@@ -84,6 +90,14 @@ preparation. The `metal_trace_commit_dispatch`, `metal_trace_fold_dispatch`,
 timestamps. Compare this with their wall time to distinguish GPU execution from
 host preparation and synchronization. Use `--format none` for throughput
 measurements; Chrome tracing adds overhead.
+
+The `Metal trace source retention` event records payload bytes, the retention
+limit, and admission; `Metal trace fold reuse` records reused window count.
+On a reuse hit, `metal_trace_fold_pack` is absent. Compare total proof time and
+peak RSS/footprint as well as GPU time: retaining selectors increases memory
+between commitment and opening. The payload cap excludes allocator overhead and
+small per-window host metadata. It does not reserve memory for the rest of the
+prover or replace Metal's allocation checks.
 
 `--memory-budget` (optimized backend only) is an explicit budget in bytes,
 with an optional binary suffix (`KiB`, `MiB`, `GiB` or `TiB`, e.g. `32GiB`).

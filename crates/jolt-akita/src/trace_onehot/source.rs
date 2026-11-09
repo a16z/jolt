@@ -69,6 +69,14 @@ pub trait TraceOneHotRows: Send + Sync + 'static {
 /// A kernel returns `None` only when it declines the setup or geometry before
 /// execution. Once selected, validation and device errors must propagate.
 pub trait TraceOneHotComputeKernel: Debug + Send + Sync {
+    /// Binds arithmetic to one exact source owner. The returned kernel is shared
+    /// by that source's columns and opening hint, not retained by the setup.
+    /// Setup-only device state may remain shared across these source kernels.
+    fn bind_source(
+        self: Arc<Self>,
+        rows: Arc<dyn TraceOneHotRows>,
+    ) -> Result<Arc<dyn TraceOneHotComputeKernel>, AkitaError>;
+
     fn commit(
         &self,
         expanded: &AkitaExpandedSetup<AkitaField>,
