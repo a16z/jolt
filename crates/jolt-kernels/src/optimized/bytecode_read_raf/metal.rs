@@ -11,6 +11,9 @@ use super::super::metal_rows::ResidentInstructionRows;
 use super::super::support::map_indices;
 use super::*;
 
+mod cycle;
+pub(crate) use cycle::MetalBytecodeReadRafCycle;
+
 const STRIPES: usize = 64;
 const MIN_GPU_PREFIX: usize = 1 << 16;
 const MAX_HISTOGRAM_BYTES: usize = 128 << 20;
@@ -18,6 +21,18 @@ const MAX_HISTOGRAM_BYTES: usize = 128 << 20;
 pub(crate) struct MetalBytecodeReadRafAddress(Arc<BytecodeGpu>);
 
 impl MetalBytecodeReadRafAddress {
+    pub(crate) fn cycle(&self) -> MetalBytecodeReadRafCycle {
+        MetalBytecodeReadRafCycle(Arc::clone(&self.0), MIN_GPU_PREFIX)
+    }
+    #[cfg(test)]
+    pub(super) fn cycle_for_oracle(&self) -> MetalBytecodeReadRafCycle {
+        assert!(
+            self.0.cycle_supported,
+            "Metal bytecode cycle must run in the oracle"
+        );
+        MetalBytecodeReadRafCycle(Arc::clone(&self.0), 0)
+    }
+
     pub(crate) fn new() -> Result<Self, MetalError> {
         let device = Device::system_default()?;
         let mut spec = LibrarySpec::new();
@@ -27,15 +42,37 @@ impl MetalBytecodeReadRafAddress {
         let spec = spec
             .source("bytecode_address.metal", include_str!("address.metal"))
             .instantiate::<AkitaField>("bytecode_pushforward")
-            .instantiate::<AkitaField>("bytecode_pushforward_finish");
+            .instantiate::<AkitaField>("bytecode_pushforward_finish")
+            .source("bytecode_cycle.metal", include_str!("cycle.metal"))
+            .instantiate::<AkitaField>("bytecode_cycle_round");
         let library = ShaderLibrary::compile(&device, &spec)?;
-        Ok(Self(Arc::new(BytecodeGpu { device, library })))
+        let fits = |name, threads| -> Result<bool, MetalError> {
+            let pipeline = library.pipeline(&host_name::<AkitaField>(name))?;
+            Ok(pipeline.max_total_threads_per_threadgroup() >= threads
+                && pipeline.static_threadgroup_memory_length()
+                    <= device.limits().max_threadgroup_memory_length)
+        };
+        let address_supported =
+            fits("bytecode_pushforward", 128)? && fits("bytecode_pushforward_finish", 128)?;
+        let cycle_supported = fits("bytecode_cycle_round", 64)?
+            && library
+                .pipeline(&host_name::<AkitaField>("bytecode_cycle_round"))?
+                .thread_execution_width()
+                == 32;
+        Ok(Self(Arc::new(BytecodeGpu {
+            device,
+            library,
+            address_supported,
+            cycle_supported,
+        })))
     }
 }
 
 struct BytecodeGpu {
     device: Device,
     library: ShaderLibrary,
+    address_supported: bool,
+    cycle_supported: bool,
 }
 
 /// Kept separate from the common 32-byte selectors: only Bytecode consumes this
@@ -96,7 +133,8 @@ impl PrepareKernel<AkitaField, BytecodeReadRafAddressPhase<AkitaField>>
             witness,
             inputs,
             |session, rows, base, weighted, addresses| {
-                if rows.prefix_len() < MIN_GPU_PREFIX
+                if !self.0.address_supported
+                    || rows.prefix_len() < MIN_GPU_PREFIX
                     || !admitted(rows.prefix_len(), addresses, base.len() + weighted.len())
                 {
                     return Ok(stage_pushforwards(
@@ -166,7 +204,7 @@ impl BytecodeGpu {
         let hi_bits = point.len() - lo_bits;
         let in_len = 1usize << lo_bits;
         let out_len = 1usize << hi_bits;
-        let group_rows = in_len.min(256);
+        let group_rows = in_len.min(128);
         let groups = prefix.div_ceil(group_rows);
         let _span =
             tracing::info_span!("metal_bytecode_pushforwards", prefix, addresses, stages).entered();
@@ -197,8 +235,8 @@ impl BytecodeGpu {
         let finish = self
             .library
             .pipeline(&host_name::<AkitaField>("bytecode_pushforward_finish"))?;
-        if pipeline.max_total_threads_per_threadgroup() < 256 {
-            return Err(invalid("256-lane pushforward groups unsupported"));
+        if !self.address_supported || pipeline.max_total_threads_per_threadgroup() < 128 {
+            return Err(invalid("128-lane pushforward groups unsupported"));
         }
         let mut batch = Batch::new(&self.device)?;
         for first in (0..stages).step_by(2) {
@@ -213,8 +251,8 @@ impl BytecodeGpu {
                 first as u32,
                 STRIPES as u32,
             ];
-            // SAFETY: groups cover only explicit rows, each hash has at most 256
-            // keys in 512 slots, and all lanes reach both local barriers. Global
+            // SAFETY: groups cover only explicit rows, each hash has at most 128
+            // keys in 256 slots, and all lanes reach both local barriers. Global
             // sums are atomic; the following dispatch runs after these writes.
             unsafe {
                 batch.dispatch_unchecked(
@@ -228,7 +266,7 @@ impl BytecodeGpu {
                         Binding::buffer(&bins),
                         Binding::value(&params),
                     ],
-                    Grid::linear(groups * 256, 256),
+                    Grid::linear(groups * 128, 128),
                 )?;
             }
         }

@@ -960,6 +960,51 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
         inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
     ) -> Result<Box<dyn SumcheckKernel<F, Relation = BytecodeReadRafCycle<F>>>, KernelError<F>>
     {
+        Ok(Box::new(
+            Self::prepare_recipe(session, witness, inputs)?.into_cpu(),
+        ))
+    }
+}
+
+struct CycleRecipe<F: JoltField> {
+    progress: RoundProgress,
+    degree: usize,
+    ra: LazyFoldedRa<F, BytecodePcChunks>,
+    terms: Vec<(Vec<F>, F)>,
+    entry: F,
+    num_vars: usize,
+    prefix_len: usize,
+    #[cfg(feature = "akita")]
+    fused_inc: LazyFusedInc<F>,
+    #[cfg(feature = "akita")]
+    fused_terms: Vec<(Vec<F>, F)>,
+    output_openings: Vec<JoltOpeningId>,
+}
+
+impl<F: JoltField> CycleRecipe<F> {
+    fn into_cpu(self) -> CycleKernel<F> {
+        let mut combined = EqPrefix::new(self.num_vars, self.prefix_len, self.terms);
+        combined.add_to_first(self.entry);
+        CycleKernel {
+            progress: self.progress,
+            degree: self.degree,
+            ra: self.ra,
+            combined,
+            #[cfg(feature = "akita")]
+            fused_inc: self.fused_inc,
+            #[cfg(feature = "akita")]
+            fused_combined: EqPrefix::new(self.num_vars, self.prefix_len, self.fused_terms),
+            output_openings: self.output_openings,
+        }
+    }
+}
+
+impl OptimizedBytecodeReadRafCycle {
+    fn prepare_recipe<F: JoltField>(
+        session: &mut ProofSession,
+        witness: &dyn JoltWitnessPlane<F>,
+        inputs: ProverInputs<'_, F, BytecodeReadRafCycle<F>>,
+    ) -> Result<CycleRecipe<F>, KernelError<F>> {
         let relation = inputs.relation;
         let dimensions = relation.dimensions();
         let r_address = relation.r_address();
@@ -1071,15 +1116,12 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             }
             terms.push((point.to_vec(), weight));
         }
-        let mut combined =
-            EqPrefix::new(dimensions.log_t(), prefix_len, std::mem::take(&mut terms));
         let entry_scalar = eq_address[relation.entry_bytecode_index()];
-        combined.add_to_first(gamma_powers[num_stages + 2] * entry_scalar);
-
+        let entry = gamma_powers[num_stages + 2] * entry_scalar;
         #[cfg(feature = "akita")]
-        let fused_combined = {
+        let fused_terms = {
             let store = stage_values[base_stages];
-            let terms = (base_stages..num_stages)
+            (base_stages..num_stages)
                 .map(|stage| {
                     let value = if stage < base_stages + 2 {
                         store
@@ -1091,8 +1133,7 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
                         gamma_powers[stage] * value,
                     )
                 })
-                .collect();
-            EqPrefix::new(dimensions.log_t(), prefix_len, terms)
+                .collect()
         };
 
         let output_openings = bytecode::read_raf_output_openings(dimensions).bytecode_ra;
@@ -1102,17 +1143,20 @@ impl<F: JoltField> PrepareKernel<F, BytecodeReadRafCycle<F>> for OptimizedByteco
             });
         }
 
-        Ok(Box::new(CycleKernel {
+        Ok(CycleRecipe {
             progress: RoundProgress::new(relation.rounds()),
             degree: relation.degree(),
             ra,
-            combined,
+            terms,
+            entry,
+            num_vars: dimensions.log_t(),
+            prefix_len,
             #[cfg(feature = "akita")]
             fused_inc,
             #[cfg(feature = "akita")]
-            fused_combined,
+            fused_terms,
             output_openings,
-        }))
+        })
     }
 }
 
@@ -2102,7 +2146,11 @@ mod akita_tests {
         );
     }
 
-    fn cycle_parity(log_t: usize, log_k_chunk: u8) {
+    fn cycle_parity_with<F: JoltField>(
+        log_t: usize,
+        log_k_chunk: u8,
+        executor: &dyn PrepareKernel<F, BytecodeReadRafCycle<F>>,
+    ) {
         with_booleanity_backend(log_t, log_k_chunk, |backend, base_dimensions| {
             let program = backend.program_preprocessing();
             let bytecode_len = program.bytecode.bytecode.len();
@@ -2114,12 +2162,12 @@ mod akita_tests {
             let stage_cycle_points =
                 std::array::from_fn(|stage| synthetic_point(log_t, 11 + stage as u64));
             let address_challenges = BytecodeReadRafAddressPhaseChallenges {
-                gamma: Fr::from_u64(3),
-                stage1_gamma: Fr::from_u64(5),
-                stage2_gamma: Fr::from_u64(7),
-                stage3_gamma: Fr::from_u64(11),
-                stage4_gamma: Fr::from_u64(13),
-                stage5_gamma: Fr::from_u64(17),
+                gamma: F::from_u64(3),
+                stage1_gamma: F::from_u64(5),
+                stage2_gamma: F::from_u64(7),
+                stage3_gamma: F::from_u64(11),
+                stage4_gamma: F::from_u64(13),
+                stage5_gamma: F::from_u64(17),
             };
             let stage_gammas = address_challenges.stage_gamma_powers();
             #[cfg(feature = "field-inline")]
@@ -2164,10 +2212,10 @@ mod akita_tests {
             })
             .unwrap();
             let challenges = BytecodeReadRafCyclePhaseCommittedChallenges {
-                gamma: Fr::from_u64(31),
+                gamma: F::from_u64(31),
             };
-            let claims = BytecodeReadRafInputClaims::<Fr>::default();
-            let input_points = BytecodeReadRafInputClaims::<Vec<Fr>>::default();
+            let claims = BytecodeReadRafInputClaims::<F>::default();
+            let input_points = BytecodeReadRafInputClaims::<Vec<F>>::default();
 
             let mut session = ProofSession::default();
             let mut reference = ReferenceBackend
@@ -2182,7 +2230,7 @@ mod akita_tests {
                     },
                 )
                 .unwrap();
-            let mut optimized = OptimizedBytecodeReadRafCycle
+            let mut optimized = executor
                 .prepare(
                     &mut session,
                     backend,
@@ -2196,17 +2244,30 @@ mod akita_tests {
                 .unwrap();
 
             let claim = probe_input_claim(reference.as_mut());
-            run_lockstep(
-                reference.as_mut(),
-                optimized.as_mut(),
-                claim,
-                &synthetic_point(log_t, 211),
-            );
+            let mut bindings = synthetic_point(log_t, 211);
+            if bindings.len() > 2 {
+                bindings[0] = F::zero();
+                bindings[1] = F::one();
+            }
+            run_lockstep(reference.as_mut(), optimized.as_mut(), claim, &bindings);
             assert_eq!(
                 reference.output_claims(&claims).unwrap(),
                 optimized.output_claims(&claims).unwrap()
             );
         });
+    }
+
+    fn cycle_parity(log_t: usize, log_k_chunk: u8) {
+        cycle_parity_with::<Fr>(log_t, log_k_chunk, &OptimizedBytecodeReadRafCycle);
+    }
+
+    #[cfg(all(feature = "metal", target_os = "macos"))]
+    #[test]
+    fn metal_bytecode_cycle_matches_reference_through_resident_handoff() {
+        let gpu = metal::MetalBytecodeReadRafAddress::new().unwrap();
+        for chunk in [4, 8] {
+            cycle_parity_with::<jolt_akita::AkitaField>(6, chunk, &gpu.cycle_for_oracle());
+        }
     }
 
     #[cfg(feature = "field-inline")]

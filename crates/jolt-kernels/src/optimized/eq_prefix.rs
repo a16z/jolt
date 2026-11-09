@@ -8,19 +8,16 @@ use jolt_poly::{bind_prefix_in_place, eq_index_msb, EqPolynomial, TensorEqTable}
 #[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
 pub(crate) struct EqPrefix<F: JoltField> {
     values: Vec<F>,
-    terms: Vec<(Vec<F>, F)>,
-    num_vars: usize,
+    terms: EqTerms<F>,
 }
 
 impl<F: JoltField> EqPrefix<F> {
     pub(crate) fn new(num_vars: usize, prefix_len: usize, terms: Vec<(Vec<F>, F)>) -> Self {
         assert!(prefix_len <= 1usize << num_vars);
         assert!(terms.iter().all(|(point, _)| point.len() == num_vars));
-        let terms: Vec<_> = terms
-            .into_iter()
-            .filter(|(_, weight)| !weight.is_zero())
-            .collect();
+        let terms = EqTerms::new(num_vars, terms);
         let tables: Vec<_> = terms
+            .terms
             .iter()
             .map(|(point, weight)| TensorEqTable::new_with_scaling(point, *weight))
             .collect();
@@ -33,11 +30,13 @@ impl<F: JoltField> EqPrefix<F> {
                 TensorEqTable::sum_at_index(&tables, index)
             })
         };
-        Self {
-            values,
-            terms,
-            num_vars,
-        }
+        Self { values, terms }
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn from_bound_values(values: Vec<F>, terms: EqTerms<F>) -> Self {
+        assert!(values.len() <= 1usize << terms.num_vars);
+        Self { values, terms }
     }
 
     pub(crate) fn add_to_first(&mut self, value: F) {
@@ -49,35 +48,80 @@ impl<F: JoltField> EqPrefix<F> {
         self.values.len()
     }
 
-    fn implicit_value(&self, index: usize) -> F {
-        self.terms
-            .iter()
-            .map(|(point, weight)| *weight * eq_index_msb(point, index as u128))
-            .sum()
-    }
-
     pub(crate) fn pair(&self, row: usize) -> (F, F) {
         let index = 2 * row;
         (
             self.values
                 .get(index)
                 .copied()
-                .unwrap_or_else(|| self.implicit_value(index)),
+                .unwrap_or_else(|| self.terms.value(index)),
             self.values
                 .get(index + 1)
                 .copied()
-                .unwrap_or_else(|| self.implicit_value(index + 1)),
+                .unwrap_or_else(|| self.terms.value(index + 1)),
         )
     }
 
     pub(crate) fn bind(&mut self, challenge: F) {
-        assert!(self.num_vars > 0);
         let boundary = if self.values.len() % 2 == 1 {
-            self.implicit_value(self.values.len())
+            self.terms.value(self.values.len())
         } else {
             F::zero()
         };
         let _ = bind_prefix_in_place(&mut self.values, challenge, boundary);
+        self.terms.bind(challenge);
+    }
+
+    /// Endpoint sums over whole pairs beyond the explicit prefix.
+    pub(crate) fn suffix_pair_sums(&self, start: usize) -> (F, F) {
+        assert!(start * 2 >= self.values.len());
+        self.terms.suffix_pair_sums(start)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn from_evals(values: Vec<F>) -> Self {
+        assert!(values.len().is_power_of_two());
+        Self {
+            terms: EqTerms::new(values.len().ilog2() as usize, Vec::new()),
+            values,
+        }
+    }
+}
+
+/// Storage-independent equality recipe. Both dense prefixes and device-owned
+/// prefixes bind these small terms and complete their implicit suffix identically.
+#[cfg_attr(feature = "allocative", derive(allocative::Allocative))]
+pub(crate) struct EqTerms<F: JoltField> {
+    terms: Vec<(Vec<F>, F)>,
+    num_vars: usize,
+}
+
+impl<F: JoltField> EqTerms<F> {
+    pub(crate) fn new(num_vars: usize, terms: Vec<(Vec<F>, F)>) -> Self {
+        assert!(terms.iter().all(|(point, _)| point.len() == num_vars));
+        Self {
+            terms: terms
+                .into_iter()
+                .filter(|(_, weight)| !weight.is_zero())
+                .collect(),
+            num_vars,
+        }
+    }
+
+    #[cfg(feature = "metal")]
+    pub(crate) fn terms(&self) -> &[(Vec<F>, F)] {
+        &self.terms
+    }
+
+    pub(crate) fn value(&self, index: usize) -> F {
+        self.terms
+            .iter()
+            .map(|(point, weight)| *weight * eq_index_msb(point, index as u128))
+            .sum()
+    }
+
+    pub(crate) fn bind(&mut self, challenge: F) {
+        assert!(self.num_vars > 0);
         for (point, weight) in &mut self.terms {
             let r = point[self.num_vars - 1];
             *weight *= (F::one() - r) * (F::one() - challenge) + r * challenge;
@@ -86,10 +130,8 @@ impl<F: JoltField> EqPrefix<F> {
         self.num_vars -= 1;
     }
 
-    /// Endpoint sums over whole pairs beyond the explicit prefix.
     pub(crate) fn suffix_pair_sums(&self, start: usize) -> (F, F) {
         assert!(self.num_vars > 0);
-        assert!(start * 2 >= self.values.len());
         self.terms
             .iter()
             .fold((F::zero(), F::zero()), |(lo, hi), (point, weight)| {
@@ -98,16 +140,6 @@ impl<F: JoltField> EqPrefix<F> {
                 let one = mass * point[last];
                 (lo + mass - one, hi + one)
             })
-    }
-
-    #[cfg(test)]
-    pub(crate) fn from_evals(values: Vec<F>) -> Self {
-        assert!(values.len().is_power_of_two());
-        Self {
-            num_vars: values.len().ilog2() as usize,
-            values,
-            terms: Vec::new(),
-        }
     }
 }
 
@@ -167,7 +199,7 @@ mod tests {
                     .values
                     .first()
                     .copied()
-                    .unwrap_or_else(|| actual.implicit_value(0));
+                    .unwrap_or_else(|| actual.terms.value(0));
                 assert_eq!(final_value, expected.evals()[0]);
             }
         }

@@ -20,7 +20,9 @@ impl<PCS: CommitmentScheme<Field = AkitaField>> JoltBackend<AkitaField, PCS> {
         self.instruction_read_raf = Box::new(MetalInstructionReadRaf::new()?);
         self.instruction_ra_virtualization = Box::new(MetalInstructionRa::new()?);
         self.booleanity_cycle = Box::new(MetalBooleanity::new()?);
-        self.bytecode_read_raf_address = Box::new(MetalBytecodeReadRafAddress::new()?);
+        let bytecode = MetalBytecodeReadRafAddress::new()?;
+        self.bytecode_read_raf_cycle = Box::new(bytecode.cycle());
+        self.bytecode_read_raf_address = Box::new(bytecode);
         Ok(self)
     }
 }

@@ -31,21 +31,21 @@ template <typename F> kernel void bytecode_pushforward(
     device const F* e_hi [[buffer(4)]], device metal::atomic_uint* output [[buffer(5)]],
     constant BytecodeAddressParams& p [[buffer(6)]], uint group [[threadgroup_position_in_grid]],
     uint lane [[thread_index_in_threadgroup]]) {
-    threadgroup metal::atomic_uint keys[512];
-    threadgroup metal::atomic_uint sums[2 * 512 * 5];
-    for (uint i = lane; i < 512; i += 256) metal::atomic_store_explicit(&keys[i], 0xffffffffu, metal::memory_order_relaxed);
-    for (uint i = lane; i < 2 * 512 * 5; i += 256) metal::atomic_store_explicit(&sums[i], 0, metal::memory_order_relaxed);
+    threadgroup metal::atomic_uint keys[256];
+    threadgroup metal::atomic_uint sums[2 * 256 * 5];
+    for (uint i = lane; i < 256; i += 128) metal::atomic_store_explicit(&keys[i], 0xffffffffu, metal::memory_order_relaxed);
+    for (uint i = lane; i < 2 * 256 * 5; i += 128) metal::atomic_store_explicit(&sums[i], 0, metal::memory_order_relaxed);
     threadgroup_barrier(metal::mem_flags::mem_threadgroup);
     uint row = group * p.group_rows + lane;
     if (lane < p.group_rows && row < p.prefix) {
         uint pc = uint(rows[row].z & 0x00fffffffffffffful);
-        uint slot = (pc * 2654435761u) & 511;
+        uint slot = (pc * 2654435761u) & 255;
         while (true) {
             uint expected = 0xffffffffu;
             if (metal::atomic_compare_exchange_weak_explicit(&keys[slot], &expected, pc, metal::memory_order_relaxed, metal::memory_order_relaxed) || expected == pc) break;
             // Weak CAS may fail spuriously on an empty slot; probing still
             // terminates because at least half of the table remains empty.
-            slot = (slot + 1) & 511;
+            slot = (slot + 1) & 255;
         }
         F increment = F::from_u64(magnitude[row]);
         if ((signs[row >> 6] >> (row & 63)) & 1ul) increment = F::zero() - increment;
@@ -53,17 +53,17 @@ template <typename F> kernel void bytecode_pushforward(
             uint stage = p.first + offset;
             F value = e_lo[ulong(stage) * p.in_len + row % p.in_len];
             if (stage >= p.base_stages) value = value * increment;
-            bytecode_add(&sums[(offset * 512 + slot) * 5], value);
+            bytecode_add(&sums[(offset * 256 + slot) * 5], value);
         }
     }
     threadgroup_barrier(metal::mem_flags::mem_threadgroup);
     uint high = (group * p.group_rows) / p.in_len;
-    for (uint slot = lane; slot < 512; slot += 256) {
+    for (uint slot = lane; slot < 256; slot += 128) {
         uint pc = metal::atomic_load_explicit(&keys[slot], metal::memory_order_relaxed);
         if (pc == 0xffffffffu) continue;
         for (uint offset = 0; offset < 2 && p.first + offset < p.stages; offset++) {
             uint stage = p.first + offset;
-            F value = bytecode_reduce(&sums[(offset * 512 + slot) * 5], F::zero()) * e_hi[ulong(stage) * p.out_len + high];
+            F value = bytecode_reduce(&sums[(offset * 256 + slot) * 5], F::zero()) * e_hi[ulong(stage) * p.out_len + high];
             ulong bin = ((ulong(group % p.stripes) * p.stages + stage) * p.addresses + pc) * 5;
             bytecode_add(&output[bin], value);
         }
