@@ -1,6 +1,6 @@
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use jolt_algebra::{
-    Field, Prime128Offset801F, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Unreduced,
+    Field, Prime128Offset6A23801F, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59, Unreduced,
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
@@ -81,7 +81,7 @@ fn field_arithmetic(c: &mut Criterion) {
     bench_field::<Prime32Offset99>(c, "fp32_c99");
     bench_field::<Prime64Offset59>(c, "fp64_c59");
     bench_field::<Prime128OffsetA7F7>(c, "fp128_a7f7");
-    bench_field::<Prime128Offset801F>(c, "fp128_801f");
+    bench_field::<Prime128Offset6A23801F>(c, "fp128_6a23801f");
     bench_product_reduction(c);
 }
 

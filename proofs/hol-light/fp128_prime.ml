@@ -1,4 +1,4 @@
-(* Primality certificates for the Prime128OffsetA7F7 and Prime128Offset801F moduli. *)
+(* Primality certificates for the Prime128OffsetA7F7 and Prime128Offset6A23801F moduli. *)
 
 needs "Library/pocklington.ml";;
 needs (Filename.concat (Sys.getenv "JOLT_FP128_PROOF_DIR")
@@ -16,9 +16,9 @@ let JOLT_FP128_A7F7_PRIME = prove
     "54317376720913331118684727";
     "340282366920938463463374607427473266697"]);;
 
-let JOLT_FP128_801F_PRIME = prove
- (`prime jolt_fp128_801f_p`,
-  REWRITE_TAC[jolt_fp128_801f_p] THEN (CONV_TAC o PRIME_RULE)
+let JOLT_FP128_6A23801F_PRIME = prove
+ (`prime jolt_fp128_6a23801f_p`,
+  REWRITE_TAC[jolt_fp128_6a23801f_p] THEN (CONV_TAC o PRIME_RULE)
    ["2"; "3"; "5"; "7"; "11"; "13"; "17"; "29"; "53"; "59"; "71";
     "73"; "107"; "127"; "137"; "199"; "241"; "797"; "1499"; "1753";
     "7013"; "15053"; "5306461"; "12373567"; "48787559"; "3317554013";
